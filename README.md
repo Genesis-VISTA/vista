@@ -1,4 +1,4 @@
-# VISTA
+# VISTA (Visual Intelligence for Scientific & Tooling Assistant)
 
 ## MCP Server + Agent (Local Development)
 
