@@ -45,6 +45,7 @@ Expected output is a successful response from the echo tool, confirming that:
 
 ## Repository structure
 
+```
 vista/
 ├─ clients/                      # MCP clients (“agents”) that call server tools
 │  ├─ __init__.py                
@@ -64,7 +65,7 @@ vista/
 ├─ uv.lock                       
 ├─ README.md                     
 └─ .gitignore                    
-
+```
 
 References (temporary):
 
