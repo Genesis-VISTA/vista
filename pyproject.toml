@@ -4,6 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["fastmcp"]
 
+[project.scripts]
+vista = "vista.app:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

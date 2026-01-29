@@ -18,6 +18,8 @@ This repository contains a minimal MCP server built with FastMCP and a simple cl
 From the repository root:
 
 ```bash
+uv venv --python=3.12 .venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 
@@ -25,7 +27,9 @@ uv pip install -e .
 
 Run the server as a module: 
 
-```python -m project_name.app```
+```bash
+python -m vista.app
+```
 
 By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
 
@@ -34,8 +38,9 @@ By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8
 
 In a second terminal (with the server still running):
 
-```python clients/smoke_agent.py```
-
+```bash
+python clients/smoke_agent.py
+```
 
 Expected output is a successful response from the echo tool, confirming that:
 
@@ -73,3 +78,17 @@ References (temporary):
 - [Integrating MCP tools with semantic kernel](https://devblogs.microsoft.com/semantic-kernel/integrating-model-context-protocol-tools-with-semantic-kernel-a-step-by-step-guide/?utm_source=chatgpt.com)
 - [Goose for MCP](https://block.github.io/goose/docs/getting-started/installation)
 - [FastMCP](https://block.github.io/goose/docs/getting-started/installation) 
+
+## Goose Setup
+Install [Goose Desktop](https://block.github.io/goose/docs/quickstart)
+
+In the provider configuration set up your preferred AI provider, e.g. for the AAIMS azure instance set:
+AZURE_OPENAI_ENDPOINT="https://aoai-eastus2-aaims.openai.azure.com"
+AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5"
+AZURE_OPENAI_API_VERSION="2025-01-01-preview"
+API Key=*****
+
+To add the VISTA MCP server just go to Extensions > Add Custom Extension and set the command to:
+```
+uvx --refresh /path/to/vista
+```
