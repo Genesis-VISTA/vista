@@ -8,7 +8,7 @@
 # ///
 """
 Example
-    ./analyze_salt.py --salt BeF2-LiF
+    ./analyze_salt.py --salt AlCl3-KCl
 
 Requires uv to be installed
 """
@@ -20,7 +20,8 @@ import matplotlib.tri as tri
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from collections import defaultdict
-import re
+import tempfile
+from pathlib import Path
 import argparse
 from pathlib import Path
 
@@ -30,6 +31,7 @@ class SaltTPAnalyzer:
         with open(json_file, 'r') as f:
             self.data = json.load(f)
         self.mstdbtp = self.data.get('MSTDBTP', {})
+        self.output = Path(tempfile.mkdtemp(prefix='salt-plots-'))
         
     def parse_composition(self, comp_str):
         """Parse composition string like '0.055-0.945' into list of floats"""
@@ -155,7 +157,6 @@ class SaltTPAnalyzer:
         plt.title(f'Melting Temperature vs Composition\n{salt_name}', fontsize=14, fontweight='bold')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.show()
     
     def plot_ternary_heatmap(self, salt_name, salt_data, property_name='melt'):
         """Plot ternary diagram heatmap for 3-component salt"""
@@ -212,7 +213,6 @@ class SaltTPAnalyzer:
         plt.title(f'Ternary Phase Diagram - {property_name.capitalize()}\n{salt_name}', 
                  fontsize=14, fontweight='bold', pad=20)
         plt.tight_layout()
-        plt.show()
     
     def plot_quaternary_facets(self, salt_name, salt_data, property_name='melt'):
         """Plot quaternary composition as facet plots (4 ternary projections)"""
@@ -275,7 +275,6 @@ class SaltTPAnalyzer:
             ax.axis('off')
         
         plt.tight_layout()
-        plt.show()
     
     def collect_references(self, salt_data):
         """Collect all unique references from the salt data"""
@@ -333,7 +332,12 @@ class SaltTPAnalyzer:
             self.plot_ternary_heatmap(salt_name, salt_data, 'melt')
         elif num_components == 4:
             self.plot_quaternary_facets(salt_name, salt_data, 'melt')
-        
+    
+        dest = self.output / f"{salt_name}.png"
+        dest.unlink(missing_ok=True)
+        plt.savefig(dest)
+        print(f"Plot saved to {dest}")
+
         # Print references
         references = self.collect_references(salt_data)
         self.print_references(references)
@@ -356,8 +360,3 @@ if __name__ == "__main__":
 
     # Analyze a salt
     analyzer.analyze_salt(args.salt)
-    
-    # To analyze multiple salts or specific property:
-    # analyzer.analyze_salt('AlCl3-KCl')
-    # For ternary with different property:
-    # analyzer.plot_ternary_heatmap('Salt-Name-Here', salt_data, 'viscosity')
