@@ -353,7 +353,8 @@ if __name__ == "__main__":
     parser.add_argument("--salt", required=True)
     parser.add_argument("--data")
     args = parser.parse_args()
-    data = args.data or str(Path(__file__).parent / 'data//Molten_Salt_Thermophysical_Properties.json')
+    #data = args.data or str(Path(__file__).parent / 'data//Molten_Salt_Thermophysical_Properties.json')
+    data = args.data or str(Path(__file__).parent.parent / 'assets//Molten_Salt_Thermophysical_Properties.json')
 
     # Initialize analyzer./data/Molten_Salt_Thermophysical_Properties.json
     analyzer = SaltTPAnalyzer(data)

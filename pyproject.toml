@@ -2,7 +2,11 @@
 name = "vista"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["fastmcp"]
+dependencies = [
+    "fastmcp",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.1",
+]
 
 [project.scripts]
 vista = "vista.app:main"
