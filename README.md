@@ -80,7 +80,12 @@ References (temporary):
 - [FastMCP](https://block.github.io/goose/docs/getting-started/installation) 
 
 ## Goose Setup
-Install [Goose Desktop](https://block.github.io/goose/docs/quickstart)
+
+### Prepare your project directory to access skills
+```
+npx skills add ./skills -g -y --agent goose --skill foo
+```
+### Install [Goose Desktop](https://block.github.io/goose/docs/quickstart)
 
 In the provider configuration set up your preferred AI provider, e.g. for the AAIMS azure instance set:
 AZURE_OPENAI_ENDPOINT="https://aoai-eastus2-aaims.openai.azure.com"
