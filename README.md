@@ -23,6 +23,13 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+### Build MCP Apps
+```bash
+cd mcp-apps
+npm install
+npm run build
+```
+
 ### Start the MCP server (HTTP mode)
 
 Run the server as a module: 
@@ -58,14 +65,15 @@ vista/
 ├─ experiments/                  # hold scripts for capabilities/skills
 │  └─ "analyze_<material>.py"
 ├─ scripts/                      # helper scripts (run server/clients, dev helpers)
-├─ tests/                 
+├─ tests/                        
+├─ mcp-apps/                     # MCP Apps (Widget UIs)
 ├─ src/
-│  └─ vista/              
+│  └─ vista/
 │     ├─ __init__.py
 │     ├─ app.py                  # FastMCP server (registers tools/resources)
 │     └─ tools/                  # server-side tool implementations
-│        ├─ __init__.py
-│        └─ echo.py                 
+│        ├─ __init__.py         
+│        └─ echo.py             
 ├─ pyproject.toml                
 ├─ uv.lock                       
 ├─ README.md                     
@@ -97,3 +105,5 @@ To add the VISTA MCP server just go to Extensions > Add Custom Extension and set
 ```
 uvx --refresh /path/to/vista
 ```
+
+Make sure you have built the MCP Apps above first.
