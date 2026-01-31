@@ -5,23 +5,38 @@ MCP server definition exposing tools and resources.
 from __future__ import annotations
 import argparse
 from fastmcp import FastMCP
-
+from fastmcp.tools.tool import ToolResult
+from pathlib import Path
 from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
+from .tools.image_viewer import image_viewer as image_viewer_impl
 
 
 mcp = FastMCP(name="MCP Server")
 
 
-@mcp.tool
+@mcp.tool()
 def run_salt_analysis(salt: str, data_path: str | None = None) -> dict:
     """Run the salt-analysis skill for the given salt name."""
     return run_salt_analysis_impl(salt=salt, data_path=data_path)
 
+@mcp.tool(
+    meta={"ui": {"resourceUri": "ui://image-viewer"}},
+)
+def image_viewer(path: str) -> ToolResult:
+    """
+    Displays an image file to the user using an MCP App UI.
+    """
+    return image_viewer_impl(path)
 
-@mcp.resource("hello://{name}")
-def hello(name: str) -> str:
-    """Return a greeting for the specified name."""
-    return f"Hello, {name}!"
+
+MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
+
+@mcp.resource("ui://image-viewer",
+    mime_type="text/html;profile=mcp-app",
+)
+def image_viewer_resource() -> str:
+    """HTML resource for the image viewer MCP App."""
+    return (MCP_APPS_DIR / "image-viewer.html").read_text()
 
 
 def main():
