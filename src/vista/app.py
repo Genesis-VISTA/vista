@@ -6,17 +6,10 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from .tools.echo import echo as echo_impl
 from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
 
 
 mcp = FastMCP(name="MCP Server")
-
-
-@mcp.tool
-def echo(message: str) -> dict:
-    """Return the provided message."""
-    return echo_impl(message)
 
 
 @mcp.tool
