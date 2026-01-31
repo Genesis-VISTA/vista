@@ -3,7 +3,7 @@ MCP server definition exposing tools and resources.
 """
 
 from __future__ import annotations
-
+import argparse
 from fastmcp import FastMCP
 
 from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
@@ -24,8 +24,14 @@ def hello(name: str) -> str:
     return f"Hello, {name}!"
 
 
-def main() -> None:
-    mcp.run(transport="http", host="127.0.0.1", port=8000)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--transport", default="stdio", choices=['stdio', 'http'])
+    args = parser.parse_args()
+    if args.transport == "http":
+        mcp.run(transport="http", host="0.0.0.0", port=8000)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":
