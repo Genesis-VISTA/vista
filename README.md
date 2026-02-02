@@ -91,7 +91,7 @@ References (temporary):
 
 ### Prepare your project directory to access skills
 ```
-npx skills add ./skills -g -y --agent goose --skill foo
+npx skills add ./skills -g -y --agent goose
 ```
 ### Install [Goose Desktop](https://block.github.io/goose/docs/quickstart)
 
