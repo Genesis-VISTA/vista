@@ -9,7 +9,7 @@ from fastmcp.tools.tool import ToolResult
 from pathlib import Path
 import tempfile
 import logging
-from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
+from .tools.execute_skill_script import execute_skill_script as execute_skill_script_impl
 from .tools.image_viewer import image_viewer as image_viewer_impl
 
 logging.basicConfig(
@@ -22,9 +22,13 @@ mcp = FastMCP(name="MCP Server")
 
 
 @mcp.tool()
-def run_salt_analysis(salt: str, data_path: str | None = None) -> dict:
-    """Run the salt-analysis skill for the given salt name."""
-    return run_salt_analysis_impl(salt=salt, data_path=data_path)
+def execute_skill_script(command: str) -> ToolResult:
+    """
+    Execute a script provided by a skill.
+
+    Prefer using this tool to safely execute scripts under a skills directory.
+    """
+    return execute_skill_script_impl(command)
 
 @mcp.tool(
     meta={"ui": {"resourceUri": "ui://image-viewer"}},
