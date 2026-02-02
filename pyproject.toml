@@ -8,6 +8,11 @@ dependencies = [
     "numpy>=2.4.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
 [project.scripts]
 vista = "vista.app:main"
 

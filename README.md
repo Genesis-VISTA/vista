@@ -20,7 +20,7 @@ From the repository root:
 ```bash
 uv venv --python=3.12 .venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install -e .[dev]
 ```
 
 ### Build MCP Apps
