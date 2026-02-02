@@ -31,7 +31,7 @@ def run_salt_analysis(salt: str, data_path: str | None = None) -> dict:
 )
 def image_viewer(path: str) -> ToolResult:
     """
-    Displays an image file to the user using an MCP App UI.
+    Displays an image file to the user.
     """
     return image_viewer_impl(path)
 
