@@ -45,6 +45,16 @@ def image_viewer_resource() -> str:
     """HTML resource for the image viewer MCP App."""
     return (MCP_APPS_DIR / "image-viewer.html").read_text()
 
+@mcp.resource("ui://{widget}",
+    mime_type="text/html;profile=mcp-app",
+)
+def mcp_apps(widget: str) -> str:
+    """ MCP Apps """
+    html_file = (MCP_APPS_DIR / f"{widget}.html").resolve()
+    # Disallow any ../ etc
+    if not html_file.is_relative_to(MCP_APPS_DIR) or not html_file.exists():
+        raise ValueError(f"{widget} not found")
+    return html_file.read_text()
 
 def main():
     parser = argparse.ArgumentParser()
