@@ -7,9 +7,16 @@ import argparse
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
 from pathlib import Path
+import tempfile
+import logging
 from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
 from .tools.image_viewer import image_viewer as image_viewer_impl
 
+logging.basicConfig(
+    filename=Path(tempfile.gettempdir()) / "vista.log",
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+)
 
 mcp = FastMCP(name="MCP Server")
 
