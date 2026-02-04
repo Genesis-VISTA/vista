@@ -40,7 +40,7 @@ def image_viewer(path: str) -> ToolResult:
     return image_viewer_impl(path)
 
 
-MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
+MCP_APPS_DIR = (Path(__file__).parent / 'mcp-apps').resolve()
 
 @mcp.resource("ui://{widget}",
     mime_type="text/html;profile=mcp-app",
