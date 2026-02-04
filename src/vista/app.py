@@ -42,13 +42,6 @@ def image_viewer(path: str) -> ToolResult:
 
 MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
 
-@mcp.resource("ui://image-viewer",
-    mime_type="text/html;profile=mcp-app",
-)
-def image_viewer_resource() -> str:
-    """HTML resource for the image viewer MCP App."""
-    return (MCP_APPS_DIR / "image-viewer.html").read_text()
-
 @mcp.resource("ui://{widget}",
     mime_type="text/html;profile=mcp-app",
 )
