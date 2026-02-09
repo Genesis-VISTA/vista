@@ -9,7 +9,7 @@ from fastmcp.tools.tool import ToolResult
 from pathlib import Path
 import tempfile
 import logging
-from .tools.salt_analysis import run_salt_analysis as run_salt_analysis_impl
+from .tools.execute_skill_script import execute_skill_script as execute_skill_script_impl
 from .tools.image_viewer import image_viewer as image_viewer_impl
 
 logging.basicConfig(
@@ -22,9 +22,13 @@ mcp = FastMCP(name="MCP Server")
 
 
 @mcp.tool()
-def run_salt_analysis(salt: str, data_path: str | None = None) -> dict:
-    """Run the salt-analysis skill for the given salt name."""
-    return run_salt_analysis_impl(salt=salt, data_path=data_path)
+def execute_skill_script(command: str) -> ToolResult:
+    """
+    Execute a script provided by a skill.
+
+    Prefer using this tool to safely execute scripts under a skills directory.
+    """
+    return execute_skill_script_impl(command)
 
 @mcp.tool(
     meta={"ui": {"resourceUri": "ui://image-viewer"}},
@@ -36,15 +40,18 @@ def image_viewer(path: str) -> ToolResult:
     return image_viewer_impl(path)
 
 
-MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
+MCP_APPS_DIR = (Path(__file__).parent / 'mcp-apps').resolve()
 
-@mcp.resource("ui://image-viewer",
+@mcp.resource("ui://{widget}",
     mime_type="text/html;profile=mcp-app",
 )
-def image_viewer_resource() -> str:
-    """HTML resource for the image viewer MCP App."""
-    return (MCP_APPS_DIR / "image-viewer.html").read_text()
-
+def mcp_apps(widget: str) -> str:
+    """ MCP Apps """
+    html_file = (MCP_APPS_DIR / f"{widget}.html").resolve()
+    # Disallow any ../ etc
+    if not html_file.is_relative_to(MCP_APPS_DIR) or not html_file.exists():
+        raise ValueError(f"{widget} not found")
+    return html_file.read_text()
 
 def main():
     parser = argparse.ArgumentParser()
