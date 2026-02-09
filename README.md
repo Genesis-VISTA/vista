@@ -35,12 +35,12 @@ npm run build
 Run the server as a module: 
 
 ```bash
-python -m vista.app
+python -m vista.app --transport http
 ```
 
 By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
 
-Use stdio transport explicitly when needed:
+To use stdio transport:
 
 ```bash
 python -m vista.app --transport stdio

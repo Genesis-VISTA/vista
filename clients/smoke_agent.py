@@ -15,13 +15,11 @@ async def run_agent() -> None:
     client = Client(MCP_URL)
 
     async with client:
-        result = await client.call_tool(
-            "echo",
-            {"message": "Validate MCP agent-tool wiring"},
-        )
+        result = await client.list_tools()
 
-        print("Agent result:")
-        print(result.structured_content)
+        print("Available tools:")
+        for tool in result:
+            print(tool.name)
 
 
 

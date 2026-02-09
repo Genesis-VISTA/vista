@@ -56,9 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--transport",
-        default="http",
+        default="stdio",
         choices=["stdio", "http"],
-        help="Server transport mode. Default is HTTP on --host/--port.",
+        help="Server transport mode. Default is stdio.",
     )
     parser.add_argument(
         "--host",
