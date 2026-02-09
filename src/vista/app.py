@@ -9,6 +9,7 @@ from fastmcp.tools.tool import ToolResult
 from pathlib import Path
 import tempfile
 import logging
+import functools
 from .tools.execute_skill_script import execute_skill_script as execute_skill_script_impl
 from .tools.image_viewer import image_viewer as image_viewer_impl
 
@@ -40,18 +41,16 @@ def image_viewer(path: str) -> ToolResult:
     return image_viewer_impl(path)
 
 
-MCP_APPS_DIR = (Path(__file__).parent / 'mcp-apps').resolve()
+MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
 
-@mcp.resource("ui://{widget}",
-    mime_type="text/html;profile=mcp-app",
-)
-def mcp_apps(widget: str) -> str:
-    """ MCP Apps """
-    html_file = (MCP_APPS_DIR / f"{widget}.html").resolve()
-    # Disallow any ../ etc
-    if not html_file.is_relative_to(MCP_APPS_DIR) or not html_file.exists():
-        raise ValueError(f"{widget} not found")
-    return html_file.read_text()
+# We could use a single "Resource Template" to dynamically fetch these, but Goose scans the resource
+# list to look for ui resources, so a template confuses it.
+for widget in MCP_APPS_DIR.glob("*.html"):
+    html = widget.read_text()
+    mcp.resource(f"ui://{widget.stem}",
+        name=widget.stem,
+        mime_type="text/html;profile=mcp-app",
+    )(functools.partial(lambda html: html, html))
 
 def main():
     parser = argparse.ArgumentParser()
