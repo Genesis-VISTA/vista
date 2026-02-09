@@ -40,6 +40,12 @@ python -m vista.app
 
 By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
 
+Use stdio transport explicitly when needed:
+
+```bash
+python -m vista.app --transport stdio
+```
+
 
 ### Test the smoke agent (client)
 
