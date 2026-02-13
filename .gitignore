@@ -285,3 +285,7 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
+
+ui/node_modules/
+ui/.next/
+ui/.env.local
