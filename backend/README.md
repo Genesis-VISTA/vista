@@ -13,5 +13,5 @@ uv pip install -e .[dev]
 ## Running
 
 ```bash
-vista-backend
+python -m vista_backend.app
 ```
