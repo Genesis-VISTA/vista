@@ -18,6 +18,9 @@ agent = Agent(
     system_prompt="You are a helpful assistant.",
 )
 
+@agent.tool_plain
+def get_weather(city: str) -> str:
+    return f'The weather in {city} is sunny'
 
 def get_agent() -> Agent:
     return agent

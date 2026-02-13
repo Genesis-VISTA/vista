@@ -1,5 +1,5 @@
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, isToolUIPart } from "ai";
 import {
   Conversation,
   ConversationContent,
@@ -16,6 +16,13 @@ import {
   PromptInputTextarea,
   PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
+import {
+  Tool,
+  ToolHeader,
+  ToolContent,
+  ToolInput,
+  ToolOutput,
+} from "@/components/ai-elements/tool";
 
 const transport = new DefaultChatTransport({
   api: "http://localhost:8000/chat",
@@ -37,19 +44,38 @@ export default function App() {
             messages.map((message) => (
               <Message key={message.id} from={message.role}>
                 <MessageContent>
-                  {message.role === "assistant" ? (
-                    <MessageResponse>
-                      {message.parts
-                        ?.filter((part) => part.type === "text")
-                        .map((part) => part.text)
-                        .join("")}
-                    </MessageResponse>
-                  ) : (
-                    message.parts
-                      ?.filter((part) => part.type === "text")
-                      .map((part) => part.text)
-                      .join("")
-                  )}
+                  {message.parts?.map((part, i) => {
+                    if (part.type === "text") {
+                      return message.role === "assistant" ? (
+                        <MessageResponse key={i}>{part.text}</MessageResponse>
+                      ) : (
+                        <span key={i}>{part.text}</span>
+                      );
+                    }
+                    if (isToolUIPart(part)) {
+                      return (
+                        <Tool key={i}>
+                          <ToolHeader
+                            {...(part.type === "dynamic-tool"
+                              ? { type: part.type, state: part.state, toolName: part.toolName }
+                              : { type: part.type, state: part.state })}
+                          />
+                          <ToolContent>
+                            <ToolInput
+                              input={JSON.stringify(part.input, null, 2)}
+                            />
+                            {part.state === "output-available" && (
+                              <ToolOutput
+                                output={JSON.stringify(part.output, null, 2)}
+                                errorText={part.errorText}
+                              />
+                            )}
+                          </ToolContent>
+                        </Tool>
+                      );
+                    }
+                    return null;
+                  })}
                 </MessageContent>
               </Message>
             ))
