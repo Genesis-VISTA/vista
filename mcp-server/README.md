@@ -2,16 +2,12 @@
 
 A minimal MCP server built with FastMCP and a simple client (“agent”) used to validate end-to-end connectivity.
 
-## Running locally
-
-### Prerequisites
+## Prerequisites
 - Python 3.12+
 - `uv` installed
 - A virtual environment activated (or let `uv` manage installs)
 
-### Install dependencies
-
-From the repository root:
+## Setup
 
 ```bash
 uv venv --python=3.12 .venv
@@ -26,7 +22,7 @@ npm install
 npm run build
 ```
 
-### Start the MCP server (HTTP mode)
+## Start the MCP server
 
 Run the server as a module: 
 
@@ -43,7 +39,7 @@ python -m vista.app --transport stdio
 ```
 
 
-### Test the smoke agent (client)
+## Test the smoke agent (client)
 
 In a second terminal (with the server still running):
 
@@ -56,4 +52,3 @@ Expected output is a successful response from the echo tool, confirming that:
 - the MCP server is running
 - the client can connect
 - tools are registered and callable
-
