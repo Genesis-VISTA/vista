@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 from .agent import get_agent
+from .config import settings
 
 app = FastAPI(title="Vista Backend")
 
@@ -28,7 +29,7 @@ async def chat(request: Request) -> Response:
 
 def main():
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.host, port=settings.port)
 
 
 if __name__ == "__main__":
