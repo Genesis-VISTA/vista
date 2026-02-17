@@ -1,19 +1,20 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
 
+# Loading .env manually so they will be added to os.environ and Pydantic AI will pick them up when
+# making the model
+load_dotenv("../.env")
 
 class Settings(BaseSettings):
-    azure_openai_deployment: str
-    azure_openai_api_key: str
-    azure_openai_endpoint: str
-    azure_openai_api_version: str
-    azure_openai_resource_name: str
+    model: str
+    """
+    Model to run, in format `provier:model`
+    
+    See https://ai.pydantic.dev/api/providers/ for available providers, and the other env vars
+    needed for each.
+    """
 
     host: str = "0.0.0.0"
     port: int = 8000
-
-    model_config = SettingsConfigDict(
-        env_file = "../.env",
-    )
-
 
 settings = Settings()

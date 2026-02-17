@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-from .agent import get_agent
+from .agent import agent
 from .config import settings
 
 app = FastAPI(title="Vista Backend")
@@ -23,7 +23,6 @@ async def health():
 
 @app.post("/chat")
 async def chat(request: Request) -> Response:
-    agent = get_agent()
     return await VercelAIAdapter.dispatch_request(request, agent=agent)
 
 
