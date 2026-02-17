@@ -17,7 +17,7 @@ class McpServerConfig(BaseModel):
     """Command to run (e.g. 'uvx', 'npx', 'python')."""
     args: list[str] = []
     """Arguments to pass to the command."""
-    env: dict[str, str] | None = None
+    env: dict[str, str] = {}
     """Optional extra environment variables for the subprocess."""
 
 

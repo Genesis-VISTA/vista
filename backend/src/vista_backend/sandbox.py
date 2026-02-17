@@ -1,6 +1,7 @@
 from __future__ import annotations
 import abc
 import asyncio
+import os
 from pathlib import Path
 from pydantic_ai.mcp import MCPServerStdio
 from .config import McpServerConfig
@@ -18,10 +19,6 @@ async def check_output(*args, **kwargs):
     if proc.returncode != 0:
         raise RuntimeError(f"cmd '{' '.join(args)}' failed: {stderr.decode()}")
     return stdout, stderr
-
-
-def flatten(arr: list[list]):
-    return [item for sub_list in arr for item in sub_list]
 
 
 class Sandbox(abc.ABC):
@@ -63,6 +60,8 @@ class DockerSandbox(Sandbox):
         volumes: dict[str, str] | None = None,
         env: dict[str, str] | None = None,
     ) -> "DockerSandbox":
+        env = env or {}
+    
         # Build the sandbox image
         await check_output(
             "docker", "build", "-t", IMAGE_NAME, "-f", str(DOCKERFILE_PATH), DOCKERFILE_PATH.parent,
@@ -70,43 +69,42 @@ class DockerSandbox(Sandbox):
 
         # Run container
         run_args = ["docker", "run", "-d"]
-        run_args += flatten([
-            ["-v", f"{host_path}:{container_path}"]
-            for host_path, container_path in (volumes or {}).items()
-        ])
-        run_args += flatten([["-e", f"{k}={v}"] for k, v in (env or {}).items()])
+        for host_path, container_path in (volumes or {}).items():
+            run_args += ["-v", f"{host_path}:{container_path}"]
+        run_args += [f"--env={var}" for var in env.keys()]
         run_args += [IMAGE_NAME, "sleep", "infinity"]
 
-        stdout, stderr = await check_output(*run_args)
+        stdout, stderr = await check_output(*run_args, env = {**os.environ, **env})
         return cls(container_id=stdout.decode().strip())
 
     async def exec(
         self, command: str, args: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> asyncio.subprocess.Process:
+        env = env or {}
         cmd = ["docker", "exec", "-i", self.container_id, command]
-        cmd += flatten([["-e", f"{k}={v}"] for k, v in (env or {}).items()])
-        if args:
-            cmd += args
+        cmd += [f"--env={var}" for var in env.keys()]
+        cmd += (args or [])
         return await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, **env},
         )
 
     def mcp_server(self, config: McpServerConfig) -> MCPServerStdio:
-        env_flags = flatten([["-e", f"{k}={v}"] for k, v in (config.env or {}).items()])
         return MCPServerStdio(
             "docker",
             args=[
                 "exec", "-i",
-                *env_flags,
+                *[f"--env={var}" for var in config.env.keys()],
                 self.container_id,
                 config.command,
                 *config.args,
             ],
             timeout=30,
+            env={**os.environ, **config.env},
         )
 
     async def close(self) -> None:
