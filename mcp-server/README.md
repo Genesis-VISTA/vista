@@ -27,7 +27,7 @@ npm run build
 Run the server as a module: 
 
 ```bash
-python -m vista.app --transport http
+python -m vista_mcp_server.app --transport http
 ```
 
 By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
@@ -35,7 +35,7 @@ By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8
 To use stdio transport:
 
 ```bash
-python -m vista.app --transport stdio
+python -m vista_mcp_server.app --transport stdio
 ```
 
 
@@ -52,3 +52,9 @@ Expected output is a successful response from the echo tool, confirming that:
 - the MCP server is running
 - the client can connect
 - tools are registered and callable
+
+## Usage
+Use uvx to run
+```
+uvx --refresh /path/to/vista/mcp-server
+```

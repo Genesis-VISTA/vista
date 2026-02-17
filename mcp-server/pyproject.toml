@@ -14,7 +14,7 @@ dev = [
 ]
 
 [project.scripts]
-vista = "vista.app:main"
+vista-mcp-server = "vista_mcp_server.app:main"
 
 [build-system]
 requires = ["hatchling"]
