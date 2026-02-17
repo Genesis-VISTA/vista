@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
                             server.command,
                             *server.args,
                         ],
+                        timeout=30,
                     )
                 )
 
