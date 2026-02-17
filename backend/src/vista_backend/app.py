@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 from .agent import make_agent
@@ -13,39 +12,13 @@ from .sandbox import DockerSandbox
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    sandbox = None
-    try:
-        sandboxed_toolsets = []
-        if settings.sandboxed_mcp_servers:
-            sandbox = await DockerSandbox.spawn(
-                volumes={str(settings.data_dir): "/data"},
-            )
-            for server in settings.sandboxed_mcp_servers:
-                env_flags = []
-                for key, value in (server.env or {}).items():
-                    env_flags += ["-e", f"{key}={value}"]
-                sandboxed_toolsets.append(
-                    MCPServerStdio(
-                        "docker",
-                        args=[
-                            "exec", "-i",
-                            *env_flags,
-                            sandbox.container_id,
-                            server.command,
-                            *server.args,
-                        ],
-                        timeout=30,
-                    )
-                )
-
-        agent = make_agent(extra_toolsets=sandboxed_toolsets)
+    async with await DockerSandbox.spawn(
+        volumes={str(settings.data_dir): "/data"},
+    ) as sandbox:
+        agent = make_agent(sandbox)
         app.state.agent = agent
         async with agent:
             yield
-    finally:
-        if sandbox:
-            await sandbox.close()
-
 
 app = FastAPI(title="Vista Backend", lifespan=lifespan)
 
