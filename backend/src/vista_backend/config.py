@@ -19,6 +19,7 @@ class McpServerConfig(BaseModel):
     """Arguments to pass to the command."""
     env: dict[str, str] = {}
     """Optional extra environment variables for the subprocess."""
+    cwd: str|None = None
 
 
 class Settings(BaseSettings):

@@ -32,8 +32,18 @@ class Sandbox(abc.ABC):
 
     @abc.abstractmethod
     async def exec(
-        self, command: str, args: list[str] | None = None
+        self, command: str, args: list[str] | None = None,
+        env: dict[str, str] | None = None, combine_streams = False,
     ) -> asyncio.subprocess.Process: ...
+    """
+    Execute a command inside the sandbox.
+
+    Args:
+        command: Command to run
+        args: args to the command
+        env: environment variables
+        combine_streams: Combine stdout and stderr streams (default False)
+    """
 
     @abc.abstractmethod
     async def close(self) -> None: ...
@@ -79,7 +89,7 @@ class DockerSandbox(Sandbox):
 
     async def exec(
         self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None,
+        env: dict[str, str] | None = None, combine_streams = False,
     ) -> asyncio.subprocess.Process:
         env = env or {}
         cmd = ["docker", "exec", "-i", self.container_id, command]
@@ -89,20 +99,18 @@ class DockerSandbox(Sandbox):
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT if combine_streams else asyncio.subprocess.PIPE,
             env={**os.environ, **env},
         )
 
     def mcp_server(self, config: McpServerConfig) -> MCPServerStdio:
-        return MCPServerStdio(
-            "docker",
-            args=[
-                "exec", "-i",
-                *[f"--env={var}" for var in config.env.keys()],
-                self.container_id,
-                config.command,
-                *config.args,
-            ],
+        args = ["exec", "-i"]
+        args += [f"--env={var}" for var in config.env.keys()]
+        if config.cwd:
+            args += ["-w", config.cwd]
+        args += [self.container_id, config.command, *config.args]
+
+        return MCPServerStdio("docker", args,
             timeout=30,
             env={**os.environ, **config.env},
         )
