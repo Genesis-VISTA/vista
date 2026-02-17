@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,7 +9,13 @@ from .agent import agent
 from .config import settings
 
 
-app = FastAPI(title="Vista Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with agent:
+        yield
+
+
+app = FastAPI(title="Vista Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

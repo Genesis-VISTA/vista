@@ -1,17 +1,30 @@
 from pydantic_settings import BaseSettings
+from pydantic import BaseModel
 from pathlib import Path
 from dotenv import load_dotenv
 from .util import ResolvedPath
+import sys
 
 # Loading .env manually so they will be added to os.environ and Pydantic AI will pick them up when
 # making the model
 load_dotenv("../.env")
 
+
+class McpServerConfig(BaseModel):
+    """Configuration for a stdio MCP server."""
+    command: str
+    """Command to run (e.g. 'uvx', 'npx', 'python')."""
+    args: list[str] = []
+    """Arguments to pass to the command."""
+    env: dict[str, str] | None = None
+    """Optional extra environment variables for the subprocess."""
+
+
 class Settings(BaseSettings):
     model: str
     """
     Model to run, in format `provier:model`
-    
+
     See https://ai.pydantic.dev/api/providers/ for available providers, and the other env vars
     needed for each.
     """
@@ -19,5 +32,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     data_dir: ResolvedPath = Path("./data")
+
+    mcp_servers: list[McpServerConfig] = [
+        # Might be better to use uvx for this
+        McpServerConfig(command=sys.executable, args=["-m", "vista_mcp_server.app"]),
+    ]
 
 settings = Settings()
