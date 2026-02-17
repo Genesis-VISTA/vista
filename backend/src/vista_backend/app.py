@@ -1,22 +1,26 @@
 from contextlib import asynccontextmanager
+from typing import Annotated as A
 
-from fastapi import FastAPI, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 from .agent import make_agent
 from .config import settings
 from .sandbox import DockerSandbox
 
+agent: Agent
+AgentDep = A[Agent, Depends(lambda: agent)]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global agent
     async with await DockerSandbox.spawn(
         volumes={str(settings.data_dir): "/data"},
     ) as sandbox:
         agent = make_agent(sandbox)
-        app.state.agent = agent
         async with agent:
             yield
 
@@ -40,8 +44,8 @@ async def health() -> HealthResponse:
 
 
 @app.post("/chat")
-async def chat(request: Request) -> Response:
-    return await VercelAIAdapter.dispatch_request(request, agent=request.app.state.agent)
+async def chat(request: Request, agent: AgentDep) -> Response:
+    return await VercelAIAdapter.dispatch_request(request, agent=agent)
 
 
 class UploadResponse(BaseModel):
