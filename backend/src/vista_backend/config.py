@@ -31,11 +31,15 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    data_dir: ResolvedPath = Path("./uploads")
+    data_dir: ResolvedPath = Path("./data")
 
     mcp_servers: list[McpServerConfig] = [
         # Might be better to use uvx for this
         McpServerConfig(command=sys.executable, args=["-m", "vista_mcp_server.app"]),
+    ]
+
+    sandboxed_mcp_servers: list[McpServerConfig] = [
+        McpServerConfig(command="npx", args=['-y', '@modelcontextprotocol/server-filesystem', '/']),
     ]
 
 settings = Settings()

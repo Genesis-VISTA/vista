@@ -4,7 +4,7 @@ from pydantic_ai.models import infer_model
 
 from .config import settings
 
-def _make_agent():
+def make_agent(extra_toolsets=None):
     # Pydantic AI will automatically pick up other env vars needed. E.g. for Azure set
     # AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, OPENAI_API_VERSION
     model = infer_model(settings.model)
@@ -18,10 +18,10 @@ def _make_agent():
         for server in settings.mcp_servers
     ]
 
+    toolsets = mcp_servers + (extra_toolsets or [])
+
     agent = Agent(model,
         system_prompt="You are a helpful assistant.",
-        toolsets=mcp_servers,
+        toolsets=toolsets,
     )
     return agent
-
-agent = _make_agent()
