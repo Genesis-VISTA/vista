@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    data_dir: ResolvedPath = Path("./data")
+    data_dir: ResolvedPath = Path("./uploads")
 
     mcp_servers: list[McpServerConfig] = [
         # Might be better to use uvx for this
