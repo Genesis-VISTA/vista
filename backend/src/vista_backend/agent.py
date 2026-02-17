@@ -15,6 +15,7 @@ def make_agent(sandbox: Sandbox):
             server.command,
             args=server.args,
             env=server.env,
+            timeout=15,
         )
         for server in settings.mcp_servers
     ]
