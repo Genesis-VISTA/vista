@@ -35,7 +35,7 @@ class UploadResponse(BaseModel):
     filename: str
 
 @app.post("/upload")
-async def upload(file: UploadFile, filename: str|None) -> UploadResponse:
+async def upload(file: UploadFile, filename: str|None = None) -> UploadResponse:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     filename = filename or file.filename
     if not filename:
