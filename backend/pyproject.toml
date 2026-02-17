@@ -8,11 +8,7 @@ dependencies = [
     "pydantic-ai",
     "pydantic-settings",
     "python-dotenv",
-    "vista-mcp-server",
 ]
-
-[tool.uv.sources]
-vista-mcp-server = { path = "../mcp-server", editable = true }
 
 [project.optional-dependencies]
 dev = [

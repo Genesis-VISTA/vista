@@ -1,13 +1,14 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import BaseModel
 from pathlib import Path
 from dotenv import load_dotenv
 from .util import ResolvedPath
-import sys
 
 # Loading .env manually so they will be added to os.environ and Pydantic AI will pick them up when
 # making the model
 load_dotenv("../.env")
+PROJ_ROOT = Path(__file__).parents[3]
 
 
 class McpServerConfig(BaseModel):
@@ -35,7 +36,7 @@ class Settings(BaseSettings):
 
     mcp_servers: list[McpServerConfig] = [
         # Might be better to use uvx for this
-        McpServerConfig(command=sys.executable, args=["-m", "vista_mcp_server.app"]),
+        McpServerConfig(command="uvx", args=["--refresh", str(PROJ_ROOT / 'mcp-server')]),
     ]
 
     sandboxed_mcp_servers: list[McpServerConfig] = [
