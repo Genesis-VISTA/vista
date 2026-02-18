@@ -16,9 +16,15 @@ AgentDep = A[Agent, Depends(lambda: agent)]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    settings.outputs_dir.mkdir(parents=True, exist_ok=True)
+
     global agent
     async with await DockerSandbox.spawn(
-        volumes=[(settings.data_dir, "/data", 'r')],
+        volumes=[
+            (settings.uploads_dir, "/mnt/user-data/uploads", 'r'),
+            (settings.outputs_dir, "/mnt/user-data/outputs", 'w'),
+        ],
     ) as sandbox:
         agent = make_agent(sandbox)
         async with agent:
@@ -53,11 +59,10 @@ class UploadResponse(BaseModel):
 
 @app.post("/upload")
 async def upload(file: UploadFile, filename: str|None = None) -> UploadResponse:
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
     filename = filename or file.filename
     if not filename:
         raise ValueError("No filename passed")
-    dest = settings.data_dir / filename
+    dest = settings.uploads_dir / filename
     dest.write_bytes(await file.read())
     return UploadResponse(filename=filename)
 
@@ -67,12 +72,12 @@ class ListUploadsResponse(BaseModel):
 
 @app.get("/uploads")
 async def list_uploads() -> ListUploadsResponse:
-    if not settings.data_dir.exists():
+    if not settings.uploads_dir.exists():
         files = []
     else:
         files = [
-            str(f.relative_to(settings.data_dir))
-            for f in settings.data_dir.rglob("*")
+            str(f.relative_to(settings.uploads_dir))
+            for f in settings.uploads_dir.rglob("*")
             if f.is_file()
         ]
     return ListUploadsResponse(files=files)
