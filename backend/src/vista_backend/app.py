@@ -18,7 +18,7 @@ AgentDep = A[Agent, Depends(lambda: agent)]
 async def lifespan(app: FastAPI):
     global agent
     async with await DockerSandbox.spawn(
-        volumes={str(settings.data_dir): "/data"},
+        volumes=[(settings.data_dir, "/data", 'r')],
     ) as sandbox:
         agent = make_agent(sandbox)
         async with agent:

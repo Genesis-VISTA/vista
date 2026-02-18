@@ -2,6 +2,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import os
+from typing import Literal
 from pathlib import Path
 from pydantic_ai.mcp import MCPServerStdio
 from .config import McpServerConfig
@@ -19,13 +20,14 @@ async def check_output(*args, **kwargs):
         raise RuntimeError(f"cmd '{' '.join(args)}' failed: {stderr.decode()}")
     return stdout, stderr
 
+Volume = tuple[Path | str, Path | str, Literal['r', 'w']]
 
 class Sandbox(abc.ABC):
     @classmethod
     @abc.abstractmethod
     async def spawn(
         cls,
-        volumes: dict[str, str] | None = None,
+        volumes: list[Volume] | None = None,
         env: dict[str, str] | None = None,
     ) -> Sandbox: ...
 
@@ -66,13 +68,13 @@ class DockerSandbox(Sandbox):
     @classmethod
     async def spawn(
         cls,
-        volumes: dict[str, str] | None = None,
+        volumes: list[Volume] | None = None,
         env: dict[str, str] | None = None,
         image: str | None = None,
         dockerfile: Path | str | None = None
     ) -> "DockerSandbox":
+        volumes = volumes or []
         env = env or {}
-
         if not image and not dockerfile:
             dockerfile = DEFAULT_SANDBOX_DOCKERFILE
         image = image or "vista-sandbox:latest"
@@ -86,8 +88,9 @@ class DockerSandbox(Sandbox):
 
         # Run container
         run_args = ["docker", "run", "-d"]
-        for host_path, container_path in (volumes or {}).items():
-            run_args += ["-v", f"{host_path}:{container_path}"]
+        for src, dst, mode in volumes:
+            run_args += ["-v", f"{src}:{dst}" + (":ro" if mode == 'r' else '')]
+
         run_args += [f"--env={var}" for var in env.keys()]
         run_args += [image, "sleep", "infinity"]
 
