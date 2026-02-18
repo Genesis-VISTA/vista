@@ -10,7 +10,6 @@ from pathlib import Path
 import tempfile
 import logging
 import functools
-from .tools.execute_skill_script import execute_skill_script as execute_skill_script_impl
 from .tools.image_viewer import image_viewer as image_viewer_impl
 
 logging.basicConfig(
@@ -20,16 +19,6 @@ logging.basicConfig(
 )
 
 mcp = FastMCP(name="MCP Server")
-
-
-@mcp.tool()
-def execute_skill_script(command: str) -> ToolResult:
-    """
-    Execute a script provided by a skill.
-
-    Prefer using this tool to safely execute scripts under a skills directory.
-    """
-    return execute_skill_script_impl(command)
 
 @mcp.tool(
     meta={"ui": {"resourceUri": "ui://image-viewer"}},
