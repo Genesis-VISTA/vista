@@ -6,8 +6,7 @@ from pathlib import Path
 from pydantic_ai.mcp import MCPServerStdio
 from .config import McpServerConfig
 
-DOCKERFILE_PATH = Path(__file__).parents[2] / "Dockerfile.sandbox"
-IMAGE_NAME = "vista-sandbox"
+DEFAULT_SANDBOX_DOCKERFILE = Path(__file__).parents[2] / "sandbox/Dockerfile"
 
 async def check_output(*args, **kwargs):
     proc = await asyncio.create_subprocess_exec(*args,
@@ -69,20 +68,28 @@ class DockerSandbox(Sandbox):
         cls,
         volumes: dict[str, str] | None = None,
         env: dict[str, str] | None = None,
+        image: str | None = None,
+        dockerfile: Path | str | None = None
     ) -> "DockerSandbox":
         env = env or {}
-    
-        # Build the sandbox image
-        await check_output(
-            "docker", "build", "-t", IMAGE_NAME, "-f", str(DOCKERFILE_PATH), DOCKERFILE_PATH.parent,
-        )
+
+        if not image and not dockerfile:
+            dockerfile = DEFAULT_SANDBOX_DOCKERFILE
+        image = image or "vista-sandbox:latest"
+
+        if dockerfile:
+            await check_output(
+                "docker", "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
+            )
+        else:
+            await check_output("docker", "pull", image)
 
         # Run container
         run_args = ["docker", "run", "-d"]
         for host_path, container_path in (volumes or {}).items():
             run_args += ["-v", f"{host_path}:{container_path}"]
         run_args += [f"--env={var}" for var in env.keys()]
-        run_args += [IMAGE_NAME, "sleep", "infinity"]
+        run_args += [image, "sleep", "infinity"]
 
         stdout, stderr = await check_output(*run_args, env = {**os.environ, **env})
         return cls(container_id=stdout.decode().strip())
@@ -116,5 +123,7 @@ class DockerSandbox(Sandbox):
         )
 
     async def close(self) -> None:
-        await check_output("docker", "stop", self.container_id, "-t", "2")
-        await check_output("docker", "rm", self.container_id)
+        proc = await asyncio.create_subprocess_exec("docker", "stop", self.container_id, "-t", "1")
+        await proc.wait()
+        proc = await asyncio.create_subprocess_exec("docker", "rm", "-f", self.container_id)
+        await proc.wait()
