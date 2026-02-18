@@ -18,7 +18,7 @@ export default defineConfig({
         rollupOptions: {
             input: INPUT,
         },
-        outDir: "../src/vista/mcp-apps",
+        outDir: "../src/vista_mcp_server/mcp-apps",
         emptyOutDir: false,
     },
 });
