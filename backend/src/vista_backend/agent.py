@@ -25,7 +25,8 @@ def make_agent(sandbox: Sandbox):
     # AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, OPENAI_API_VERSION
     model = infer_model(settings.model)
 
-    toolsets: list[AbstractToolset] = [
+    toolsets: list[AbstractToolset] = []
+    toolsets += [
         MCPServerStdio(
             server.command,
             args=server.args,
@@ -34,11 +35,11 @@ def make_agent(sandbox: Sandbox):
         )
         for server in settings.mcp_servers
     ]
-
     toolsets.append(make_shell_toolset(sandbox))
-
-    for server in settings.sandboxed_mcp_servers:
-        toolsets.append(sandbox.mcp_server(server))
+    toolsets += [
+        sandbox.mcp_server(server)
+        for server in settings.sandboxed_mcp_servers
+    ]
 
     agent = Agent(model,
         system_prompt="You are a helpful assistant.",

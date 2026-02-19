@@ -1,11 +1,14 @@
 from contextlib import asynccontextmanager
 from typing import Annotated as A
 
-from fastapi import Depends, FastAPI, Request, Response, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, AnyUrl
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.mcp import MCPServer
+from mcp import ReadResourceResult, Tool as MCPTool
+from mcp.shared import exceptions as mcp_exceptions
 
 from .agent import make_agent
 from .config import settings
@@ -81,6 +84,41 @@ async def list_uploads() -> ListUploadsResponse:
             if f.is_file()
         ]
     return ListUploadsResponse(files=files)
+
+
+# @app.get("/outputs/{path:path}")
+# async def get_output(path: str) -> FileResponse:
+#     print(f"get_outputs('{path}')")
+#     file_path = settings.outputs_dir / path
+#     if not file_path.exists() or not file_path.is_file():
+#         raise HTTPException(status_code=404, detail="File not found")
+#     return FileResponse(file_path)
+
+
+@app.get("/mcp-tools")
+async def list_tools() -> list[MCPTool]:
+    """ List MCP tools with their UI resource URIs. """
+    mcp_servers = [s for s in agent.toolsets if isinstance(s, MCPServer)]
+
+    result: list[MCPTool] = []
+    for server in mcp_servers:
+        result += await server.list_tools()
+    return result
+
+
+@app.get("/mcp-resources")
+async def read_mcp_resource(uri: str) -> ReadResourceResult:
+    """ Proxy MCP resource reading """
+    mcp_servers = [s for s in agent.toolsets if isinstance(s, MCPServer)]
+
+    for server in mcp_servers:
+        try:
+            # Using ._client.read_resource instead of .read_resource as PydanticAI loses mime type of text fields
+            return await server._client.read_resource(AnyUrl(uri))
+        except mcp_exceptions.McpError:
+            # TODO: Check for only missing resource error
+            continue
+    raise HTTPException(status_code=404, detail="Resource not found")
 
 
 def main():

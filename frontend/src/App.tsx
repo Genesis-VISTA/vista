@@ -1,3 +1,4 @@
+import React, { useEffect, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, isToolUIPart } from "ai";
 import { FilePanel } from "@/components/file-panel";
@@ -24,11 +25,25 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool";
+import { McpApp } from "@/components/mcp-app";
 
 const transport = new DefaultChatTransport({api: `${BACKEND_URL}/chat`});
 
 export default function App() {
   const { messages, sendMessage, status, stop } = useChat({ transport });
+  const [toolResourceUris, setToolResourceUris] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/mcp-tools`)
+      .then((r) => r.json())
+      .then((tools: any[]) => {
+        const map: Record<string, string> = {};
+        for (const tool of tools) {
+          map[tool.name] = tool._meta?.ui?.resourceUri;
+        }
+        setToolResourceUris(map);
+      })
+  }, []);
 
   return (
     <div className="flex h-screen">
@@ -54,25 +69,38 @@ export default function App() {
                         );
                       }
                       if (isToolUIPart(part)) {
+                        const toolName = part.type === "dynamic-tool" ? part.toolName : part.type.replace(/^tool-/, '');
+                        const resourceUri = toolName ? toolResourceUris[toolName] : undefined;
+                        const hasMcpApp = resourceUri && part.state == "output-available";
                         return (
-                          <Tool key={i}>
-                            <ToolHeader
-                              {...(part.type === "dynamic-tool"
-                                ? { type: part.type, state: part.state, toolName: part.toolName }
-                                : { type: part.type, state: part.state })}
-                            />
-                            <ToolContent>
-                              <ToolInput
-                                input={JSON.stringify(part.input, null, 2)}
-                              />
-                              {part.state === "output-available" && (
-                                <ToolOutput
-                                  output={JSON.stringify(part.output, null, 2)}
-                                  errorText={part.errorText}
-                                />
+                          <React.Fragment key={i}>
+                            <Tool key={i}>
+                              {part.type === "dynamic-tool" ? (
+                                <ToolHeader type={part.type} state={part.state} toolName={part.toolName}/>
+                              ) : (
+                                <ToolHeader type={part.type} state={part.state}/>
                               )}
-                            </ToolContent>
-                          </Tool>
+                              <ToolContent>
+                                <ToolInput input={JSON.stringify(part.input, null, 2)}/>
+                                {part.state === "output-available" && (
+                                  <ToolOutput
+                                    output={JSON.stringify(part.output, null, 2)}
+                                    errorText={part.errorText}
+                                  />
+                                )}
+                              </ToolContent>
+                            </Tool>
+                            {hasMcpApp && (
+                              <McpApp
+                                toolName={toolName}
+                                toolInput={
+                                  (part.input as Record<string, unknown>) ?? {}
+                                }
+                                toolOutput={part.output}
+                                resourceUri={resourceUri}
+                              />
+                            )}
+                          </React.Fragment>
                         );
                       }
                       return null;
