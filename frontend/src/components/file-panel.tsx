@@ -9,7 +9,7 @@ export function FilePanel() {
 
   const fetchFiles = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8000/uploads");
+      const res = await fetch(`${BACKEND_URL}/uploads`);
       if (res.ok) {
         const data = await res.json();
         setFiles(data.files);
@@ -28,7 +28,7 @@ export function FilePanel() {
       const formData = new FormData();
       formData.append("file", file);
       try {
-        await fetch("http://localhost:8000/upload", {
+        await fetch(`${BACKEND_URL}/upload`, {
           method: "POST",
           body: formData,
         });

@@ -25,9 +25,7 @@ import {
   ToolOutput,
 } from "@/components/ai-elements/tool";
 
-const transport = new DefaultChatTransport({
-  api: "http://localhost:8000/chat",
-});
+const transport = new DefaultChatTransport({api: `${BACKEND_URL}/chat`});
 
 export default function App() {
   const { messages, sendMessage, status, stop } = useChat({ transport });
