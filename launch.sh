@@ -18,15 +18,9 @@ npm install
 npm run build
 
 cd "$REPO_ROOT"
-function close_tmux {
-    tmux kill-session -t vista-dev &> /dev/null
-}
-export -f close_tmux
-trap close_tmux INT
-
 tmux new-session \
   -d -s vista-dev \
-  "trap close_tmux INT && cd '$REPO_ROOT/backend' && source .venv/bin/activate && python -m vista_backend.app" \; \
+  "cd '$REPO_ROOT/backend' && source .venv/bin/activate && python -m vista_backend.app" \; \
   split-window -h \
-  "trap close_tmux INT && cd '$REPO_ROOT/frontend' && npm run dev" \; \
+  "cd '$REPO_ROOT/frontend' && npm run dev" \; \
   attach
