@@ -1,4 +1,3 @@
-import { type FileUIPart } from "ai";
 import { AppRenderer, type AppRendererHandle, type McpUiHostContext } from "@mcp-ui/client";
 import { useMemo, useRef } from "react";
 
@@ -11,13 +10,10 @@ const SANDBOX_URL = new URL("/sandbox_proxy.html", window.location.origin);
  *   - ImageContent → { data: "<base64>", media_type: "image/png" }
  *   - TextContent  → "<text string>"
  *
- * Binary results are also sent as Vercel AI FileChunk SSE events, arriving as { type: "file" }
- * parts in the same assistant message. These are passed in as `toolFiles`.
- *
  * AppRenderer expects MCP format:
  *   { content: [{ type: "image", data: "...", mimeType: "..." }, { type: "text", text: "..." }] }
  */
-function toMcpToolResult(output: unknown, toolFiles?: FileUIPart[]): { content: unknown[] } {
+function toMcpToolResult(output: unknown): { content: unknown[] } {
   const items = Array.isArray(output) ? output : [output];
   const content = items.map((item) => {
     if (item && typeof item === "object") {
@@ -38,18 +34,6 @@ function toMcpToolResult(output: unknown, toolFiles?: FileUIPart[]): { content: 
     }
     return item;
   });
-
-  // Append binary results sent as Vercel AI FileChunk parts (data URIs).
-  for (const file of toolFiles ?? []) {
-    const base64 = file.url.split(",")[1] ?? "";
-    // TODO: I don't think this is handling the media type right, why wipe to image and blob?
-    content.push({
-      type: file.mediaType.startsWith("image/") ? "image" : "blob",
-      data: base64,
-      mimeType: file.mediaType,
-    });
-  }
-
   return { content };
 }
 
@@ -57,16 +41,15 @@ interface McpAppProps {
   toolName: string;
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
-  toolFiles?: FileUIPart[];
   resourceUri: string;
 }
 
 /**
  * Renders an MCP App
  */
-export function McpApp({ toolName, toolInput, toolOutput, toolFiles, resourceUri }: McpAppProps) {
+export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppProps) {
   const appRef = useRef<AppRendererHandle>(null);
-  const toolResult = useMemo(() => toMcpToolResult(toolOutput, toolFiles), [toolOutput, toolFiles]);
+  const toolResult = useMemo(() => toMcpToolResult(toolOutput), [toolOutput]);
 
   const hostContext: McpUiHostContext = {
       displayMode: "inline",
@@ -119,7 +102,6 @@ export function McpApp({ toolName, toolInput, toolOutput, toolFiles, resourceUri
         // onListResources={async (params) => {}}
         // onListResourceTemplates={async () => {}}
         onReadResource={async ({ uri }) => {
-          console.log("MCP APP onReadResource", {uri})
           const response = await fetch(
             `${BACKEND_URL}/mcp/resources?uri=${encodeURIComponent(uri)}`
           );

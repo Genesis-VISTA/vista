@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, isToolUIPart, type FileUIPart } from "ai";
+import { DefaultChatTransport, isToolUIPart } from "ai";
 import { FilePanel } from "@/components/file-panel";
 import {
   Conversation,
@@ -58,25 +58,6 @@ export default function App() {
               />
             ) : (
               messages.map((message) => {
-                // Associate { type: "file" } parts with the tool part that immediately precedes them.
-                // PydanticAI sends binary results as FileChunk SSE events that arrive as file parts
-                // in the same assistant message, right after the tool-output part.
-                // See notes in backend/src/vista_backend/agent.py:_pack_binary_results for how this
-                // hack works.
-                const filesByToolIndex = new Map<number, Array<FileUIPart>>();
-                let lastToolIdx = -1;
-                message.parts?.forEach((part, i) => {
-                  if (isToolUIPart(part)) {
-                    lastToolIdx = i;
-                  } else if (part.type === "file" && lastToolIdx >= 0) {
-                    const files = filesByToolIndex.get(lastToolIdx) ?? [];
-                    files.push(part);
-                    filesByToolIndex.set(lastToolIdx, files);
-                  } else {
-                    lastToolIdx = -1;
-                  }
-                });
-
                 return (
                   <Message key={message.id} from={message.role}>
                     <MessageContent>
@@ -114,7 +95,6 @@ export default function App() {
                                   toolName={toolName}
                                   toolInput={part.input ?? {} as any}
                                   toolOutput={part.output}
-                                  toolFiles={filesByToolIndex.get(i)}
                                   resourceUri={resourceUri}
                                 />
                               )}
