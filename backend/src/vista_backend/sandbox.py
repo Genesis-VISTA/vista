@@ -50,7 +50,7 @@ class Sandbox(abc.ABC):
     async def close(self) -> None: ...
 
     @abc.abstractmethod
-    def mcp_server(self, config: McpServerConfig) -> MCPServerStdio:
+    def mcp_server(self, config: McpServerConfig, **kwargs) -> MCPServerStdio:
         """Wrap an MCP server config so it runs inside this sandbox."""
         ...
 
@@ -113,17 +113,18 @@ class DockerSandbox(Sandbox):
             env={**os.environ, **env},
         )
 
-    def mcp_server(self, config: McpServerConfig) -> MCPServerStdio:
+    def mcp_server(self, config: McpServerConfig, **kwargs) -> MCPServerStdio:
         args = ["exec", "-i"]
         args += [f"--env={var}" for var in config.env.keys()]
         if config.cwd:
             args += ["-w", config.cwd]
         args += [self.container_id, config.command, *config.args]
 
-        return MCPServerStdio("docker", args,
-            timeout=30,
-            env={**os.environ, **config.env},
-        )
+        return MCPServerStdio("docker", args, **{
+            "env": {**os.environ, **config.env},
+            "timeout": 60,
+            **kwargs,
+        })
 
     async def close(self) -> None:
         proc = await asyncio.create_subprocess_exec("docker", "stop", self.container_id, "-t", "1")
