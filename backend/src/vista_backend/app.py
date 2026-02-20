@@ -95,7 +95,7 @@ async def list_uploads() -> ListUploadsResponse:
 #     return FileResponse(file_path)
 
 
-@app.get("/mcp-tools")
+@app.get("/mcp/tools")
 async def list_tools() -> list[MCPTool]:
     """ List MCP tools with their UI resource URIs. """
     mcp_servers = [s for s in agent.toolsets if isinstance(s, MCPServer)]
@@ -106,7 +106,7 @@ async def list_tools() -> list[MCPTool]:
     return result
 
 
-@app.get("/mcp-resources")
+@app.get("/mcp/resources")
 async def read_mcp_resource(uri: str) -> ReadResourceResult:
     """ Proxy MCP resource reading """
     mcp_servers = [s for s in agent.toolsets if isinstance(s, MCPServer)]

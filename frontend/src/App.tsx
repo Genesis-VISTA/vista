@@ -34,7 +34,7 @@ export default function App() {
   const [toolResourceUris, setToolResourceUris] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetch(`${BACKEND_URL}/mcp-tools`)
+    fetch(`${BACKEND_URL}/mcp/tools`)
       .then((r) => r.json())
       .then((tools: any[]) => {
         const map: Record<string, string> = {};

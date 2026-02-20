@@ -54,6 +54,9 @@
     //   params: {}
     // }, '*');
 
+    // TODO: Better security handling here, seems the typical approach involves a nested iframe and
+    // CSP policies to enforce sandboxing.
+
     window.addEventListener('message', (event) => {
       const data = event.data;
       if (!data || typeof data !== 'object') return;

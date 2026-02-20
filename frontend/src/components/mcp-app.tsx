@@ -1,16 +1,7 @@
-import { AppRenderer, type AppRendererHandle } from "@mcp-ui/client";
+import { AppRenderer, type AppRendererHandle, type McpUiHostContext } from "@mcp-ui/client";
 import { useMemo, useRef } from "react";
 
-// sandbox_proxy.html is served from /public by Vite
 const SANDBOX_URL = new URL("/sandbox_proxy.html", window.location.origin);
-// Stable reference — must not be recreated per render.
-
-interface McpAppProps {
-  toolName: string;
-  toolInput: Record<string, unknown>;
-  toolOutput: unknown;
-  resourceUri: string;
-}
 
 /**
  * Convert pydantic-ai's serialized tool output to MCP CallToolResult format.
@@ -22,7 +13,7 @@ interface McpAppProps {
  * AppRenderer expects MCP format:
  *   { content: [{ type: "image", data: "...", mimeType: "..." }, { type: "text", text: "..." }] }
  */
-function toMcpToolResult(output: unknown): { content: unknown[] } { // TODO: What.
+function toMcpToolResult(output: unknown): { content: unknown[] } {
   const items = Array.isArray(output) ? output : [output];
   const content = items.map((item) => {
     if (item && typeof item === "object") {
@@ -46,12 +37,34 @@ function toMcpToolResult(output: unknown): { content: unknown[] } { // TODO: Wha
   return { content };
 }
 
+interface McpAppProps {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolOutput: unknown;
+  resourceUri: string;
+}
+
 /**
  * Renders an MCP App
  */
 export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppProps) {
   const appRef = useRef<AppRendererHandle>(null);
   const toolResult = useMemo(() => toMcpToolResult(toolOutput), [toolOutput]);
+
+  const hostContext: McpUiHostContext = {
+      displayMode: "inline",
+      availableDisplayModes: ["inline"],
+      // toolInfo: undefined,
+      // theme: undefined,
+      // styles: undefined,
+      // containerDimensions: undefined,
+      locale: navigator.language,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      userAgent: navigator.userAgent,
+      platform: "web",
+      // deviceCapabilities: undefined,
+      // safeAreaInsets: undefined,
+  };
 
   return (
     <div className="not-prose mt-2 w-full overflow-hidden rounded-md border">
@@ -61,30 +74,44 @@ export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppP
         toolResourceUri={resourceUri}
         sandbox={{ url: SANDBOX_URL }}
         toolInput={toolInput}
+        // toolInputPartial=
         toolResult={toolResult as any}
-        hostContext={{displayMode: "inline"}}
+        // toolCancelled=
+        hostContext={hostContext}
+        onOpenLink={async ({ url }) => {
+          window.open(url, "_blank");
+          return {};
+        }}
+        // onMessage={async (params) => {
+        //   // Guest requested to append a message to chat
+        //   return {}
+        // }}
+        onLoggingMessage={({ level, logger, data }) => {
+          console.log(`[MCP App]${logger ? ` [${logger}]` : ""}[${level ?? "info"}]:`, data);
+        }}
+        onError={(error) => {
+          console.error("MCP App error:", error);
+        }}
+        // onSizeChanged={(params) => {
+        //   // Guest requested a size change
+        // }}
+
+        // These are proxies to the MCP server. The MCP App can call tools, and read resources
+        // I don't think all of these are actually used?
+        // onCallTool={async (params) => {}}
+        // onListResources={async (params) => {}}
+        // onListResourceTemplates={async () => {}}
         onReadResource={async ({ uri }) => {
           const response = await fetch(
-            `${BACKEND_URL}/mcp-resources?uri=${encodeURIComponent(uri)}`
+            `${BACKEND_URL}/mcp/resources?uri=${encodeURIComponent(uri)}`
           );
           if (!response.ok) {
             throw new Error(`Failed to read resource: ${uri}`);
           }
           return response.json();
         }}
-        onOpenLink={async ({ url }) => {
-          window.open(url, "_blank");
-          return {};
-        }}
-        onMessage={async (params) => {
-          console.log("MCP App message:", params);
-          return {};
-        }}
-        onError={(error) => {
-          console.error("MCP App error:", error);
-        }}
-        // onCallTool
-        // onListResources
+        // Handle other MCP messages like sampling/createMessage
+        // onFallbackRequest={async (request) => {}}
       />
     </div>
   );
