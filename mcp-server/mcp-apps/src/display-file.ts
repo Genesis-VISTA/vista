@@ -1,28 +1,84 @@
 import { App } from "@modelcontextprotocol/ext-apps";
+import { marked } from "marked";
 
 async function main() {
     const loading = document.getElementById("loading") as HTMLDivElement;
-    const img = document.getElementById("image") as HTMLImageElement;
     const error = document.getElementById("error") as HTMLDivElement;
+    const container = document.getElementById("container") as HTMLDivElement;
 
-    const app = new App({ name: "Image Viewer", version: "1.0.0" });
-
-    app.ontoolresult = (result) => {
+    function displayError(msg: string) {
+        console.error(msg)
         loading.style.display = "none";
+        error.style.display = "block";
+        error.textContent = msg;
+    }
 
-        const imageData = result.content?.find(c => c.type === "image");
-        if (imageData) {
-            img.src = "data:" + imageData.mimeType + ";base64," + imageData.data;
-            img.style.display = "block";
-            error.style.display = "none";
+    const app = new App({ name: "File Viewer", version: "1.0.0" });
+
+    app.ontoolresult = async (result) => {
+        let uri: string|undefined;
+        try {
+            uri = JSON.parse(result.content!.find((c) => c.type === "text")!.text).uri;
+        } catch {}
+        if (!uri) {
+            console.error(`Invalid tool result:`, result)
+            displayError(`Invalid tool result format.`);
+            return
+        }
+
+        let response: Response;
+        try {
+            response = await fetch(uri);
+        } catch (e) {
+            displayError(`Failed to fetch file: ${e}`);
+            return;
+        }
+        if (!response.ok) {
+            displayError(`Failed to fetch file: ${response.status} ${response.statusText}`);
+            return;
+        }
+
+        const contentType = response.headers.get("Content-Type") ?? "";
+
+        loading.style.display = "none";
+        container.style.display = "block";
+        container.innerHTML = ''; // clear container
+
+        if (contentType.startsWith("image/") || /\.(png|jpg|jpeg)$/i.test(uri)) {
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const img = document.createElement("img");
+            img.src = objectUrl;
+            img.alt = uri;
+            container.appendChild(img);
+        } else if (contentType.includes("application/pdf") || /\.pdf$/i.test(uri)) {
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const embed = document.createElement("embed");
+            embed.src = objectUrl;
+            embed.type = "application/pdf";
+            container.appendChild(embed);
+        } else if (contentType.startsWith("text/html") || /\.(htm|html)$/i.test(uri)) {
+            const html = await response.text();
+            const iframe = document.createElement("iframe");
+            iframe.srcdoc = html;
+            iframe.sandbox.add("allow-scripts");
+            container.appendChild(iframe);
+        } else if (contentType.startsWith("text/markdown") || /\.(md|markdown)$/i.test(uri)) {
+            const text = await response.text();
+            const div = document.createElement("div");
+            div.className = "markdown";
+            div.innerHTML = await marked(text);
+            container.appendChild(div);
         } else {
-            img.style.display = "none";
-            error.textContent = "Failed to display image: No image data in result";
-            error.style.display = "block";
+            const text = await response.text();
+            const pre = document.createElement("pre");
+            pre.textContent = text;
+            container.appendChild(pre);
         }
     };
 
     await app.connect();
 }
 
-main()
+main();

@@ -63,6 +63,7 @@ def make_agent(sandbox: Sandbox):
             server.command,
             args=server.args,
             env=server.env,
+            cwd=server.cwd,
             timeout=15,
             process_tool_call=_pack_binary_results,
         )

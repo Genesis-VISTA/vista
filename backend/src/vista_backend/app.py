@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated as A
 
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, AnyUrl
 from pydantic_ai import Agent
@@ -86,13 +87,12 @@ async def list_uploads() -> ListUploadsResponse:
     return ListUploadsResponse(files=files)
 
 
-# @app.get("/outputs/{path:path}")
-# async def get_output(path: str) -> FileResponse:
-#     print(f"get_outputs('{path}')")
-#     file_path = settings.outputs_dir / path
-#     if not file_path.exists() or not file_path.is_file():
-#         raise HTTPException(status_code=404, detail="File not found")
-#     return FileResponse(file_path)
+@app.get("/download/{path:path}")
+async def download(path: str) -> FileResponse:
+    file_path = settings.data_dir / path
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)
 
 
 @app.get("/mcp/tools")

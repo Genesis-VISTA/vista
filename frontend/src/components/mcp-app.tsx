@@ -30,8 +30,8 @@ function toMcpToolResult(output: unknown, toolFiles?: FileUIPart[]): { content: 
           mimeType: obj["media_type"],
         };
       }
-      // Already in MCP format or unknown object
-      return item;
+      // VercelAIAdapter deserializes things that look like JSON
+      return { type: "text", text: JSON.stringify(obj) };
     }
     if (typeof item === "string") {
       return { type: "text", text: item };

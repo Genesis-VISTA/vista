@@ -6,6 +6,7 @@ dependencies = [
     "fastmcp==2.14.4",
     "matplotlib>=3.10.8",
     "numpy>=2.4.1",
+    "pydantic-settings>=2.0",
 ]
 
 [project.optional-dependencies]

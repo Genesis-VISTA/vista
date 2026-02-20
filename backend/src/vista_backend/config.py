@@ -45,8 +45,7 @@ class Settings(BaseSettings):
         return self.data_dir / 'outputs'
 
     mcp_servers: list[McpServerConfig] = [
-        # Might be better to use uvx for this
-        McpServerConfig(command="uvx", args=["--refresh", str(PROJ_ROOT / 'mcp-server')]),
+        McpServerConfig(command="uvx", args=["--refresh", "."], cwd=str(PROJ_ROOT / 'mcp-server')),
     ]
 
     sandboxed_mcp_servers: list[McpServerConfig] = [

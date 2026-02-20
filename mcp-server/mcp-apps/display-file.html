@@ -5,18 +5,31 @@
     <title>Display File</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        .container {
-            max-width: 100%;
-            text-align: center;
+        body { font-family: sans-serif; }
+        #loading { padding: 1rem; color: #666; }
+        #error { padding: 1rem; color: #c00; }
+        #container img { max-width: 100%; display: block; }
+        #container embed,
+        #container iframe { width: 100%; height: 80vh; border: none; display: block; }
+        #container pre {
+            padding: 1rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: monospace;
+            font-size: 0.875rem;
         }
+        .markdown { padding: 1rem; line-height: 1.6; }
+        .markdown h1, .markdown h2, .markdown h3 { margin: 1rem 0 0.5rem; }
+        .markdown p { margin-bottom: 0.75rem; }
+        .markdown pre { background: #f4f4f4; padding: 0.75rem; border-radius: 4px; overflow-x: auto; }
+        .markdown code { font-family: monospace; font-size: 0.875rem; }
+        .markdown ul, .markdown ol { margin: 0.5rem 0 0.5rem 1.5rem; }
     </style>
   </head>
   <body>
-    <div class="container">
-        <div id="loading" class="loading">Loading image...</div>
-        <img id="image" style="display: none;" alt="Displayed image">
-        <div id="error" class="error" style="display: none;"></div>
-    </div>
+    <div id="loading">Loading...</div>
+    <div id="error" style="display: none;"></div>
+    <div id="container" style="display: none;"></div>
     <script type="module" src="/src/display-file.ts"></script>
   </body>
 </html>

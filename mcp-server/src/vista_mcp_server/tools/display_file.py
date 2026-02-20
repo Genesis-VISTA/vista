@@ -1,36 +1,22 @@
+import re
+import json
 from fastmcp.tools.tool import ToolResult
-from mcp.types import ImageContent, Annotations, TextContent
-import mimetypes
-import base64
-from pathlib import Path
+from mcp.types import TextContent
 
-def display_file(path: str) -> ToolResult:
-    """
-    Displays an image file to the user using an MCP App UI.
+def display_file(uri: str, allowed_uris: list[str], uri_map: dict[str, str]) -> ToolResult:
+    if uri.startswith("/"):
+        # Handle if the model puts a path instead of a uri
+        uri = "file://" + uri
 
-    Args:
-        path: Path to the image file to display.
-    """
-    if not Path(path).exists():
-        raise ValueError(f"Image file not found: {path}")
+    if not any(re.search(pattern, uri) for pattern in allowed_uris):
+        raise ValueError(f"URI not allowed: {uri}")
 
-    mime_type, encoding = mimetypes.guess_type(path)
-    if not mime_type or not mime_type.startswith('image/'):
-        raise ValueError(f"{path} is not an image")
+    mapped_uri = uri
+    for prefix, replacement in uri_map.items():
+        if uri.startswith(prefix):
+            mapped_uri = replacement + uri[len(prefix):]
+            break
 
-    image_data = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
-
-    return ToolResult(
-        content=[
-            ImageContent(
-                type="image",
-                data=image_data,
-                mimeType=mime_type,
-                annotations=Annotations(
-                    audience=["user"],
-                    priority=0.9
-                )
-            ),
-            TextContent(type = "text", text = f"Showed user {path}"),
-        ],
-    )
+    return ToolResult(content=[
+        TextContent(type="text", text=json.dumps({"uri": mapped_uri})),
+    ])
