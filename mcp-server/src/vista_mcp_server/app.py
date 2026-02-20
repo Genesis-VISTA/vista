@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import logging
 import functools
-from .tools.image_viewer import image_viewer as image_viewer_impl
+from .tools.display_file import display_file as display_file_impl
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -21,13 +21,13 @@ logging.basicConfig(
 mcp = FastMCP(name="MCP Server")
 
 @mcp.tool(
-    meta={"ui": {"resourceUri": "ui://image-viewer"}},
+    meta={"ui": {"resourceUri": "ui://display-file"}},
 )
-def image_viewer(path: str) -> ToolResult:
+def display_file(path: str) -> ToolResult:
     """
     Displays an image file to the user.
     """
-    return image_viewer_impl(path)
+    return display_file_impl(path)
 
 
 MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'

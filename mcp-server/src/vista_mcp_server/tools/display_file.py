@@ -4,7 +4,7 @@ import mimetypes
 import base64
 from pathlib import Path
 
-def image_viewer(path: str) -> ToolResult:
+def display_file(path: str) -> ToolResult:
     """
     Displays an image file to the user using an MCP App UI.
 
