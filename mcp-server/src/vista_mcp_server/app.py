@@ -7,6 +7,7 @@ import argparse
 from typing import Annotated as A
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
+from fastmcp.server.apps import AppConfig, ResourceCSP
 from pathlib import Path
 import tempfile
 import logging
@@ -23,7 +24,7 @@ logging.basicConfig(
 mcp = FastMCP(name="MCP Server")
 
 @mcp.tool(
-    meta={"ui": {"resourceUri": "ui://display-file"}},
+    app=AppConfig(resource_uri="ui://display-file.html"),
 )
 def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> ToolResult:
     """
@@ -31,15 +32,10 @@ def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> ToolResult:
     """
     return display_file_impl(uri, allowed_uris=settings.allowed_uris, uri_map=settings.uri_map)
 
-
-# We could use a single "Resource Template" to dynamically fetch these, but Goose scans the resource
-# list to look for ui resources, so a template confuses it.
-for widget in settings.mcp_apps_dir.glob("*.html"):
-    html = widget.read_text()
-    mcp.resource(f"ui://{widget.stem}",
-        name=widget.stem,
-        mime_type="text/html;profile=mcp-app",
-    )(functools.partial(lambda html: html, html))
+@mcp.resource("ui://display-file.html")
+@functools.cache
+def display_file_resource():
+    return (settings.mcp_apps_dir / "display-file.html").read_text()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
