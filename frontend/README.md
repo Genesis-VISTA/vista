@@ -1,6 +1,11 @@
 # Vista Frontend
 
-Vista Frontend
+Vista frontend.
+
+Based on React & Vite. Uses the [Vercel AI SDK](https://www.npmjs.com/package/ai-elements) to provide standard chat-ui components.
+
+It also supports [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) using the [`@mcp-ui/client`](https://mcpui.dev/guide/client/walkthrough) package.
+This enables interactive tool results.
 
 ## Setup
 
@@ -14,4 +19,4 @@ npm install
 npm run dev
 ```
 
-The dev server starts on http://localhost:5173. It connects to the backend at http://localhost:8000 -- make sure `vista-backend` is running first.
+Dev server starts at http://localhost:5173. Requires the backend running at http://localhost:8000.

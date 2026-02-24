@@ -1,60 +1,39 @@
-# VISTA MCP Server
+# Vista MCP Server
 
-A minimal MCP server built with FastMCP and a simple client (“agent”) used to validate end-to-end connectivity.
+FastMCP server that provides tools to the Vista backend agent.
 
-## Prerequisites
-- Python 3.12+
-- `uv` installed
-- A virtual environment activated (or let `uv` manage installs)
+## MCP Apps
+
+This MCP server provides some [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) to provide
+interactive tool result widgets, under ./mcp-server/mcp-apps.
+
 
 ## Setup
 
-```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-uv pip install -e .[dev]
-```
-
-### Build MCP Apps
+Build MCP Apps
 ```bash
 cd mcp-apps
 npm install
 npm run build
+cd ..
 ```
 
-## Start the MCP server
-
-Run the server as a module: 
-
+Run in stdio transport
 ```bash
-python -m vista_mcp_server.app --transport http
+uv venv --python=3.12 .venv
+source .venv/bin/activate
+uv pip install -e .[dev]
+uvx --env-file ../.env --refresh .
 ```
 
-By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
-
-To use stdio transport:
-
+To run in http transport mode
 ```bash
-python -m vista_mcp_server.app --transport stdio
+uvx --env-file ../.env --refresh . --transport http
 ```
 
+## Configuration
 
-## Test the smoke agent (client)
-
-In a second terminal (with the server still running):
-
-```bash
-python clients/smoke_agent.py
-```
-
-Expected output is a successful response from the echo tool, confirming that:
-
-- the MCP server is running
-- the client can connect
-- tools are registered and callable
-
-## Usage
-Use uvx to run
-```
-uvx --refresh /path/to/vista/mcp-server
-```
+| Env variable             | Description                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `VISTA_MCP_ALLOWED_URIS` | JSON array of regex parters for permitted URIS in the display_file tool        |
+| `VISTA_MCP_URI_MAP`      | JSON object mapping URI prefixes to replacement URLs for the display_file tool |

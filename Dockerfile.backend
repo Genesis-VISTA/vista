@@ -1,0 +1,31 @@
+# ── Stage 1: Build MCP app UI bundles ───────────────────────────────────────
+FROM node:24-slim AS mcp-apps-builder
+
+WORKDIR /build
+
+COPY mcp-server/mcp-apps/package*.json mcp-server/mcp-apps/
+RUN npm ci --prefix mcp-server/mcp-apps
+COPY mcp-server/mcp-apps/ mcp-server/mcp-apps/
+RUN npm run build --prefix mcp-server/mcp-apps
+
+
+# ── Stage 2: Backend runtime ─────────────────────────────────────────────────
+FROM python:3.12-slim
+
+# Copy binaries from official images — avoids apt package availability issues
+COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
+
+WORKDIR /app
+COPY mcp-server/ ./mcp-server/
+COPY --from=mcp-apps-builder /build/mcp-server/src/vista_mcp_server/mcp-apps ./mcp-server/src/vista_mcp_server/mcp-apps
+
+COPY backend/ ./backend/
+RUN uv pip install --system -e ./backend/
+
+# Pre-install the mcp-server tool into uv's tool cache
+RUN cd /app/mcp-server && uv tool install .
+
+EXPOSE 8000
+CMD ["python", "-m", "vista_backend.app"]

@@ -1,0 +1,25 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.venv
+**/*.egg-info
+
+# Node
+**/node_modules
+
+# Build outputs (rebuilt inside Docker)
+frontend/dist
+mcp-server/src/vista_mcp_server/mcp-apps
+
+# Dev / local data
+.env
+**/data
+tmp/
+**/dist
+
+# Version control
+.git
+
+# Misc
+**/.DS_Store

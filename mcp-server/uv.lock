@@ -1814,6 +1814,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pydantic-settings" },
 ]
 
 [package.optional-dependencies]
@@ -1826,6 +1827,7 @@ requires-dist = [
     { name = "fastmcp", specifier = "==2.14.4" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "numpy", specifier = ">=2.4.1" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
 ]
 provides-extras = ["dev"]
