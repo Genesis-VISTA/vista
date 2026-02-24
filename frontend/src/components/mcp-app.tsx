@@ -1,5 +1,5 @@
 import { AppRenderer, type AppRendererHandle, type McpUiHostContext } from "@mcp-ui/client";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 
 const SANDBOX_URL = new URL("/sandbox_proxy.html", window.location.origin);
 
@@ -50,6 +50,7 @@ interface McpAppProps {
 export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppProps) {
   const appRef = useRef<AppRendererHandle>(null);
   const toolResult = useMemo(() => toMcpToolResult(toolOutput), [toolOutput]);
+  const [height, setHeight] = useState(0);
 
   const hostContext: McpUiHostContext = {
       displayMode: "inline",
@@ -67,7 +68,10 @@ export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppP
   };
 
   return (
-    <div className="not-prose mt-2 w-full overflow-hidden rounded-md border">
+    <div
+      className="not-prose mt-2 w-full overflow-hidden rounded-md border"
+      style={{ height: height > 0 ? height : undefined }}
+    >
       <AppRenderer
         ref={appRef}
         toolName={toolName}
@@ -93,9 +97,11 @@ export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppP
         onError={(error) => {
           console.error("MCP App error:", error);
         }}
-        // onSizeChanged={(params) => {
-        //   // Guest requested a size change
-        // }}
+        onSizeChanged={({ height }) => {
+          if (height && height > 0) {
+            setHeight(height);
+          }
+        }}
 
         // These are proxies to the MCP server. The MCP App can call tools, and read resources
         // onCallTool={async (params) => {}}

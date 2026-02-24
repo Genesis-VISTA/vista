@@ -40,8 +40,6 @@ async function main() {
 
         const contentType = response.headers.get("Content-Type") ?? "";
 
-        loading.style.display = "none";
-        container.style.display = "block";
         container.innerHTML = ''; // clear container
 
         if (contentType.startsWith("image/") || /\.(png|jpg|jpeg)$/i.test(uri)) {
@@ -50,6 +48,9 @@ async function main() {
             const img = document.createElement("img");
             img.src = objectUrl;
             img.alt = uri;
+            await new Promise<void>((resolve) => {
+                img.complete ? resolve() : (img.onload = img.onerror = () => resolve());
+            });
             container.appendChild(img);
         } else if (contentType.includes("application/pdf") || /\.pdf$/i.test(uri)) {
             const blob = await response.blob();
@@ -76,6 +77,10 @@ async function main() {
             pre.textContent = text;
             container.appendChild(pre);
         }
+
+        loading.style.display = "none";
+        container.style.display = "block";
+        error.style.display = "none";
     };
 
     await app.connect();
