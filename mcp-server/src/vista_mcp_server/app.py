@@ -32,11 +32,9 @@ def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> ToolResult:
     return display_file_impl(uri, allowed_uris=settings.allowed_uris, uri_map=settings.uri_map)
 
 
-MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
-
 # We could use a single "Resource Template" to dynamically fetch these, but Goose scans the resource
 # list to look for ui resources, so a template confuses it.
-for widget in MCP_APPS_DIR.glob("*.html"):
+for widget in settings.mcp_apps_dir.glob("*.html"):
     html = widget.read_text()
     mcp.resource(f"ui://{widget.stem}",
         name=widget.stem,
