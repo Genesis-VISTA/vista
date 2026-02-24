@@ -1,0 +1,27 @@
+{
+  "name": "@modelcontextprotocol/quickstart",
+  "version": "0.4.1",
+  "type": "module",
+  "private": true,
+  "description": "Quickstart MCP App Server example",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/modelcontextprotocol/ext-apps",
+    "directory": "examples/quickstart"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc --noEmit && node build.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.0",
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.5",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}
