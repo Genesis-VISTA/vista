@@ -16,6 +16,9 @@ async function main() {
     const app = new App({ name: "File Viewer", version: "1.0.0" });
 
     app.ontoolresult = async (result) => {
+        // TODO: Fix the sizing here, can use hostContext info do to so
+        let hostContext = await app.getHostContext();
+
         let uri: string|undefined;
         try {
             uri = JSON.parse(result.content!.find((c) => c.type === "text")!.text).uri;
@@ -82,6 +85,10 @@ async function main() {
         container.style.display = "block";
         error.style.display = "none";
     };
+
+    app.onhostcontextchanged = (newHostContext) => {
+        // TODO
+    }
 
     await app.connect();
 }

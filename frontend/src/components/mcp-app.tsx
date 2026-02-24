@@ -1,5 +1,5 @@
 import { AppRenderer, type AppRendererHandle, type McpUiHostContext } from "@mcp-ui/client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const SANDBOX_URL = new URL("/sandbox_proxy.html", window.location.origin);
 
@@ -48,9 +48,29 @@ interface McpAppProps {
  * Renders an MCP App
  */
 export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<AppRendererHandle>(null);
   const toolResult = useMemo(() => toMcpToolResult(toolOutput), [toolOutput]);
   const [height, setHeight] = useState(0);
+  const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined);
+  const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      setContainerWidth(Math.round(el.getBoundingClientRect().width) || undefined);
+      setMaxHeight(Math.min(500, Math.max(100, Math.round(window.innerHeight * 0.25))));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
 
   const hostContext: McpUiHostContext = {
       displayMode: "inline",
@@ -58,7 +78,12 @@ export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppP
       // toolInfo: undefined,
       // theme: undefined,
       // styles: undefined,
-      // containerDimensions: undefined,
+      containerDimensions: {
+        height: undefined,
+        maxHeight,
+        width: undefined,
+        maxWidth: containerWidth,
+      },
       locale: navigator.language,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       userAgent: navigator.userAgent,
@@ -69,6 +94,7 @@ export function McpApp({ toolName, toolInput, toolOutput, resourceUri }: McpAppP
 
   return (
     <div
+      ref={containerRef}
       className="not-prose mt-2 w-full overflow-hidden rounded-md border"
       style={{ height: height > 0 ? height : undefined }}
     >
