@@ -1,3 +1,5 @@
+/data
+
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,python,git,linux,macos,windows
 
@@ -186,6 +188,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.sample
 .venv
 env/
 venv/

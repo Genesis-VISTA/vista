@@ -1,3 +1,4 @@
+import os
 from pydantic_ai import Agent, AbstractToolset, RunContext
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models import infer_model
@@ -43,7 +44,7 @@ def make_agent(sandbox: Sandbox):
         MCPServerStdio(
             server.command,
             args=server.args,
-            env=server.env,
+            env={**os.environ, **server.env},
             cwd=server.cwd,
             timeout=15,
         )
