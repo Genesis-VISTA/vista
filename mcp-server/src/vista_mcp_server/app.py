@@ -4,16 +4,12 @@ MCP server definition exposing tools and resources.
 
 from __future__ import annotations
 import argparse
-from typing import Annotated as A
 from fastmcp import FastMCP
-from fastmcp.tools.tool import ToolResult
-from fastmcp.server.apps import AppConfig, ResourceCSP
 from pathlib import Path
 import tempfile
 import logging
-import functools
-from .tools.display_file import display_file as display_file_impl
 from .config import settings
+from .display_file import mcp as display_file_mcp
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -21,21 +17,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-mcp = FastMCP(name="MCP Server")
+mcp = FastMCP(name="VISTA MCP Server")
+mcp.mount(display_file_mcp)
 
-@mcp.tool(
-    app=AppConfig(resource_uri="ui://display-file.html"),
-)
-def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> ToolResult:
-    """
-    Displays a file to the user. Supports images, text, markdown, PDF, and HTML.
-    """
-    return display_file_impl(uri, allowed_uris=settings.allowed_uris, uri_map=settings.uri_map)
-
-@mcp.resource("ui://display-file.html")
-@functools.cache
-def display_file_resource():
-    return (settings.mcp_apps_dir / "display-file.html").read_text()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
