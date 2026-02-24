@@ -1,10 +1,10 @@
-from pydantic_ai import Agent, AbstractToolset
+from pydantic_ai import Agent, AbstractToolset, RunContext
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models import infer_model
-
 import textwrap
 from .config import settings
 from .sandbox import Sandbox
+from .dummy_model import get_dummy_model
 from .shell_tool import make_shell_toolset
 
 # No longer needed as I'm return paths instead of image data in display_file tool.
@@ -38,10 +38,6 @@ from .shell_tool import make_shell_toolset
 
 
 def make_agent(sandbox: Sandbox):
-    # Pydantic AI will automatically pick up other env vars needed. E.g. for Azure set
-    # AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, OPENAI_API_VERSION
-    model = infer_model(settings.model)
-
     toolsets: list[AbstractToolset] = []
     toolsets += [
         MCPServerStdio(
@@ -58,6 +54,13 @@ def make_agent(sandbox: Sandbox):
         sandbox.mcp_server(server)
         for server in settings.sandboxed_mcp_servers
     ]
+
+    # Pydantic AI will automatically pick up other env vars needed. E.g. for Azure set
+    # AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, OPENAI_API_VERSION
+    if settings.model == "dummy":
+        model = get_dummy_model()
+    else:
+        model = infer_model(settings.model)
 
     agent = Agent(model,
         toolsets=toolsets,
