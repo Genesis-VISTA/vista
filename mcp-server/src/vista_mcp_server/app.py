@@ -10,6 +10,7 @@ import tempfile
 import logging
 from .config import settings
 from .display_file import mcp as display_file_mcp
+from .shell import mcp as shell_mcp
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -19,6 +20,7 @@ logging.basicConfig(
 
 mcp = FastMCP(name="VISTA MCP Server")
 mcp.mount(display_file_mcp)
+mcp.mount(shell_mcp)
 
 
 def build_parser() -> argparse.ArgumentParser:
