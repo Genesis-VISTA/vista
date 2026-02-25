@@ -4,6 +4,10 @@ set -euo pipefail
 # Set root directory variable
 REPO_ROOT=$(dirname $(realpath "${BASH_SOURCE[0]}"))
 
+cd "$REPO_ROOT/mcp-server/mcp-apps"
+npm install
+npm run build
+
 cd "$REPO_ROOT/ui"
 npm install
 
