@@ -9,6 +9,7 @@ npm install
 
 # Launch backend and frontend
 cd "$REPO_ROOT"
+
 tmux new-session \
   -d -s vista-dev \
   "cd mcp-server && uv run --env-file ./.env vista-mcp-server --transport=http" \; \

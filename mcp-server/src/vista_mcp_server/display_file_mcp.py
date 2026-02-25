@@ -38,7 +38,7 @@ class DisplayFileResult(BaseModel):
 @mcp.tool(
     app=AppConfig(resource_uri="ui://display-file.html"),
 )
-def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> DisplayFileResult:
+def display_files(uri: A[str, "Absolute path to file, or a URI"]) -> DisplayFileResult:
     """
     Displays a file to the user. Supports images, text, markdown, PDF, and HTML.
     """

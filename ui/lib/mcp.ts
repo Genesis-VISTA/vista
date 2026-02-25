@@ -7,6 +7,10 @@ const MCP_PROTOCOL_VERSION = "2024-11-05";
 
 let mcpSessionId: string | null = null;
 
+export function resetMcpSession(): void {
+  mcpSessionId = null;
+}
+
 export function getMcpBaseUrl(): string {
   return process.env.MCP_BASE_URL || DEFAULT_MCP_BASE_URL;
 }

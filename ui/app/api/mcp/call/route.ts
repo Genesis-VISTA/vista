@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { extname, resolve } from "node:path";
 import type { ExecutionResult } from "@/lib/types";
 import { callMcpRpc } from "@/lib/mcp";
 
@@ -105,7 +105,7 @@ function findUriDeep(payload: unknown, depth = 0): string | null {
 }
 
 async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string): Promise<ExecutionResult> {
-  if (tool !== "display_file") return envelope;
+  if (tool !== "display_files") return envelope;
   if (envelope.ui?.kind === "html") return envelope;
 
   const uri = findUriDeep(envelope.data) ?? findUriDeep(envelope.stdout);
@@ -118,6 +118,14 @@ async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string)
     } catch {
       filePath = uri.slice("file://".length);
     }
+  }
+
+  // Map sandbox container paths to host paths for UI-side file loading.
+  if (filePath.startsWith("/mnt/artifacts/")) {
+    filePath = resolve(process.cwd(), "..", "artifacts", filePath.slice("/mnt/artifacts/".length));
+  }
+  if (filePath.startsWith("/mnt/skills/")) {
+    filePath = resolve(process.cwd(), "..", "skills", filePath.slice("/mnt/skills/".length));
   }
 
   if (!filePath.startsWith("/")) return envelope;

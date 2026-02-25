@@ -195,10 +195,10 @@ export default function HomePage() {
   }
 
   async function runSaltAnalysis() {
-    const tool = "bash";
+    const tool = "sandbox_mcp";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
-    const command = `skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
+    const command = `/mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
 
     try {
       const response = await fetch("/api/mcp/call", {
@@ -215,7 +215,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({ tool: "display_files", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           if (previewResult.ui?.kind === "html") {

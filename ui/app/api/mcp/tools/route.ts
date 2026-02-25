@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resetMcpSession } from "@/lib/mcp";
 import { discoverMcpTools, type McpToolsDiscoveryResult } from "@/lib/mcp-tools";
 
 export const dynamic = "force-dynamic";
@@ -6,6 +7,7 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
+    resetMcpSession();
     const result = await discoverMcpTools(2000);
     return NextResponse.json(result satisfies McpToolsDiscoveryResult, {
       status: 200,
