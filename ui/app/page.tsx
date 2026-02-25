@@ -5,10 +5,34 @@ import ReactMarkdown from "react-markdown";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
 
+type McpHealth = {
+  ok: boolean;
+  mcpBaseUrl: string;
+  detail?: string;
+};
+
+type McpToolsResponse = {
+  ok: boolean;
+  tools: Array<{ name: string; description?: string; inputSchema?: any }>;
+  error?: string;
+};
+
+type ChatApiResponse = {
+  ok: boolean;
+  response: string;
+  tools?: Array<{ name: string; description?: string; inputSchema?: any }>;
+  error?: string;
+};
+
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
   const output = result.stdout ? result.stdout.slice(0, 240) : "";
   return `${status}${output ? `: ${output}` : ""}`;
+}
+
+function getPlotPath(result: ExecutionResult): string | null {
+  const artifact = result.artifacts.find((item) => item.type === "plot" && typeof item.url === "string");
+  return artifact?.url || null;
 }
 
 export default function HomePage() {
@@ -22,10 +46,15 @@ export default function HomePage() {
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
-  const [richUi, setRichUi] = useState(false);
 
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
   const [isCalling, setIsCalling] = useState(false);
+  const [mcpHealth, setMcpHealth] = useState<McpHealth | null>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const [mcpTools, setMcpTools] = useState<McpToolsResponse | null>(null);
+  const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [useLlm, setUseLlm] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -58,37 +87,106 @@ export default function HomePage() {
     }
   }
 
-  function sendUserMessage() {
+  async function sendUserMessage() {
     const text = input.trim();
     if (!text) return;
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text
+    };
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", content: text }
+      userMessage
     ]);
     setInput("");
+
+    if (!useLlm) return;
+
+    setIsChatLoading(true);
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: text })
+      });
+      const data = (await response.json()) as ChatApiResponse;
+      const content = data.ok
+        ? data.response
+        : `LLM unavailable: ${data.error || "Unknown error"}`;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content
+        }
+      ]);
+
+      if (Array.isArray(data.tools)) {
+        setMcpTools({
+          ok: true,
+          tools: data.tools
+        });
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "LLM unavailable: failed to call /api/chat."
+        }
+      ]);
+    } finally {
+      setIsChatLoading(false);
+    }
   }
 
   async function runSaltAnalysis() {
-    const tool = richUi ? "analyze_salt_ui" : "run_salt_analysis";
+    const tool = "execute_skill_script";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
+    const command = `skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
 
     try {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args: { salt } })
+        body: JSON.stringify({ tool, args: { command } })
       });
 
       const result = (await response.json()) as ExecutionResult;
-      setLatestResult(result);
+      let finalResult = result;
+      const plotPath = getPlotPath(result);
+      if (plotPath) {
+        try {
+          const previewResponse = await fetch("/api/mcp/call", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tool: "image_viewer", args: { path: plotPath } })
+          });
+          const previewResult = (await previewResponse.json()) as ExecutionResult;
+          if (previewResult.ui?.kind === "html") {
+            finalResult = {
+              ...result,
+              ui: previewResult.ui
+            };
+          }
+        } catch {
+          // Keep original result if preview lookup fails.
+        }
+      }
+
+      setLatestResult(finalResult);
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: "tool",
-          content: `Tool ${tool} finished. ${formatResultSummary(result)}`,
-          result
+          content: `Tool ${tool} finished. ${formatResultSummary(finalResult)}`,
+          result: finalResult
         }
       ]);
     } catch {
@@ -113,6 +211,40 @@ export default function HomePage() {
     } finally {
       setIsCalling(false);
       setShowAnalyzeModal(false);
+    }
+  }
+
+  async function checkMcpHealth() {
+    setIsCheckingHealth(true);
+    try {
+      const response = await fetch("/api/mcp/health");
+      const data = (await response.json()) as McpHealth;
+      setMcpHealth(data);
+    } catch {
+      setMcpHealth({
+        ok: false,
+        mcpBaseUrl: "unknown",
+        detail: "Failed to call /api/mcp/health"
+      });
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  }
+
+  async function listMcpTools() {
+    setIsLoadingTools(true);
+    try {
+      const response = await fetch("/api/mcp/tools");
+      const data = (await response.json()) as McpToolsResponse;
+      setMcpTools(data);
+    } catch {
+      setMcpTools({
+        ok: false,
+        tools: [],
+        error: "Failed to call /api/mcp/tools"
+      });
+    } finally {
+      setIsLoadingTools(false);
     }
   }
 
@@ -178,11 +310,21 @@ export default function HomePage() {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") sendUserMessage();
+              if (event.key === "Enter") {
+                void sendUserMessage();
+              }
             }}
           />
-          <button className="button" onClick={sendUserMessage}>
-            Add
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6a6258" }}>
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(event) => setUseLlm(event.target.checked)}
+            />
+            Use LLM
+          </label>
+          <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
+            {isChatLoading ? "Thinking..." : "Add"}
           </button>
         </div>
       </section>
@@ -192,28 +334,94 @@ export default function HomePage() {
           <div className="panel-title">Latest Output</div>
         </div>
         <div className="panel-body">
-          {!latestResult && <div className="chat-bubble">No execution yet.</div>}
-          {latestResult && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div className="output-card">
-                {JSON.stringify(
-                  {
-                    ok: latestResult.ok,
-                    stdout: latestResult.stdout,
-                    stderr: latestResult.stderr,
-                    data: latestResult.data,
-                    artifacts: latestResult.artifacts,
-                    meta: latestResult.meta
-                  },
-                  null,
-                  2
-                )}
-              </div>
-              {latestResult.ui?.kind === "html" && (
+          <div className="output-split">
+            <div className="output-top">
+              {!latestResult && <div className="chat-bubble">No figure yet.</div>}
+              {latestResult && latestResult.ui?.kind === "html" && (
                 <SandboxedHtmlCard html={latestResult.ui.html} />
               )}
+              {latestResult && latestResult.ui?.kind !== "html" && (
+                <div className="chat-bubble">No image or plot rendered for this result.</div>
+              )}
             </div>
-          )}
+
+            <div className="output-bottom">
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <button className="button ghost" onClick={checkMcpHealth} disabled={isCheckingHealth}>
+                  {isCheckingHealth ? "Checking MCP..." : "MCP Status"}
+                </button>
+                <button className="button ghost" onClick={listMcpTools} disabled={isLoadingTools}>
+                  {isLoadingTools ? "Loading tools..." : "List MCP Tools"}
+                </button>
+              </div>
+
+              {mcpHealth && (
+                <div className="chat-bubble" style={{ marginBottom: 12 }}>
+                  MCP: {mcpHealth.ok ? "Connected" : "Disconnected"} ({mcpHealth.mcpBaseUrl})
+                  {mcpHealth.detail ? ` - ${mcpHealth.detail}` : ""}
+                </div>
+              )}
+
+              {mcpTools && (
+                <div className="chat-bubble" style={{ marginBottom: 12 }}>
+                  {mcpTools.ok ? "Discovered tools:" : "Tool discovery failed:"}
+                  {mcpTools.ok && mcpTools.tools.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      {mcpTools.tools.map((tool) => (
+                        <div key={tool.name}>{tool.name}</div>
+                      ))}
+                    </div>
+                  )}
+                  {mcpTools.ok && mcpTools.tools.length === 0 && (
+                    <div style={{ marginTop: 6 }}>No tools returned.</div>
+                  )}
+                  {!mcpTools.ok && mcpTools.error && (
+                    <div className="error" style={{ marginTop: 6 }}>{mcpTools.error}</div>
+                  )}
+                </div>
+              )}
+
+              {!latestResult && <div className="chat-bubble">No execution yet.</div>}
+              {latestResult && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {!!latestResult.meta?.analysisSummary && (
+                    <div className="chat-bubble">
+                      {(() => {
+                        const summary = latestResult.meta.analysisSummary as Record<string, unknown>;
+                        const measurements = typeof summary.measurements === "number" ? summary.measurements : null;
+                        const compositions = typeof summary.compositions === "number" ? summary.compositions : null;
+                        const references = typeof summary.references === "number" ? summary.references : null;
+                        const plotPath = typeof summary.plotPath === "string" ? summary.plotPath : null;
+                        return (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            <strong>Salt Analysis Summary</strong>
+                            <div>Measurements: {measurements ?? "n/a"}</div>
+                            <div>Compositions: {compositions ?? "n/a"}</div>
+                            <div>References: {references ?? "n/a"}</div>
+                            {plotPath && <div>Plot: {plotPath}</div>}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  <div className="output-card">
+                    {JSON.stringify(
+                      {
+                        ok: latestResult.ok,
+                        stdout: latestResult.stdout,
+                        stderr: latestResult.stderr,
+                        data: latestResult.data,
+                        artifacts: latestResult.artifacts,
+                        meta: latestResult.meta
+                      },
+                      null,
+                      2
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -252,14 +460,6 @@ export default function HomePage() {
                   value={saltInput}
                   onChange={(event) => setSaltInput(event.target.value)}
                 />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={richUi}
-                  onChange={(event) => setRichUi(event.target.checked)}
-                />
-                Use rich UI tool if available
               </label>
               <button className="button secondary" onClick={runSaltAnalysis} disabled={isCalling}>
                 {isCalling ? "Running..." : "Run analysis"}

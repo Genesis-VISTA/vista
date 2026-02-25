@@ -28,7 +28,7 @@ html, body {
 
 main {
   display: grid;
-  grid-template-columns: 280px 1fr 360px;
+  grid-template-columns: 240px 1fr 460px;
   gap: 16px;
   padding: 16px;
   min-height: 100vh;
@@ -139,6 +139,9 @@ main {
   border: 1px solid var(--line);
   font-size: 14px;
   line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-bubble.user {
@@ -202,6 +205,10 @@ main {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
 }
 
 .tag {
@@ -218,4 +225,29 @@ main {
 
 .error {
   color: var(--danger);
+}
+
+.output-split {
+  display: grid;
+  grid-template-rows: minmax(220px, 42%) minmax(260px, 58%);
+  gap: 12px;
+  min-height: 0;
+  height: calc(100vh - 180px);
+}
+
+.output-top,
+.output-bottom {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 12px;
+  min-height: 0;
+}
+
+.output-top {
+  overflow: auto;
+}
+
+.output-bottom {
+  overflow: auto;
 }

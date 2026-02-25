@@ -289,3 +289,4 @@ $RECYCLE.BIN/
 ui/node_modules/
 ui/.next/
 ui/.env.local
+artifacts/

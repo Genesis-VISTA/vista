@@ -1,39 +1,170 @@
 # Vista UI
 
-This UI is a Next.js App Router console for MCP skills and tool execution. It talks to the MCP server through the orchestrator routes under `ui/app/api` and never calls MCP directly from the browser.
+Next.js App Router tool console and orchestrator for the VISTA MCP backend.
 
-## Run
+The browser never calls MCP directly. All calls flow through `ui/app/api/*` route handlers.
 
-Terminal 1: Start the MCP server over HTTP
+## What This UI Supports
+
+- Browse local skills from `project-root/skills/**/SKILL.md`
+- Run MCP tools through `/api/mcp/call`
+- Check MCP connectivity and discover tools
+- Optional advisory LLM chat (`/api/chat`) with manual tool execution only
+- Salt analysis quick action (`execute_skill_script`) with plot preview
+
+## Prerequisites
+
+- Python 3.12+
+- Node.js 18+ (or 20+ recommended)
+- `uv` installed
+
+## First-Time Setup (After Clone)
+
+1. Install Python dependencies (repo root):
 
 ```bash
-python -m vista.app --transport http --host 127.0.0.1 --port 8000
-# or, if using uv script entrypoint:
-# uv run vista --transport http --host 127.0.0.1 --port 8000
+uv venv --python=3.12 .venv
+source .venv/bin/activate
+uv pip install -e .[dev]
 ```
 
-Terminal 2: Start the UI
+2. Install UI dependencies:
 
 ```bash
 cd ui
 npm install
-npm run dev
 ```
 
-The UI reads `MCP_BASE_URL` on the server side only. If not set, it defaults to `http://127.0.0.1:8000/mcp`.
-Use `ui/.env.example` as the baseline:
+3. Create local UI env file:
+
+```bash
+cp .env.example .env.local
+```
+
+4. Edit `ui/.env.local` as needed. Minimum:
 
 ```bash
 MCP_BASE_URL=http://127.0.0.1:8000/mcp
 ```
 
+Optional LLM settings:
+
+```bash
+OPENAI_API_KEY=changeme
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_STYLE=responses
+OPENAI_CHAT_URL=
+OPENAI_AUTH_MODE=bearer
+OPENAI_TIMEOUT_MS=30000
+```
+
+Azure example:
+
+```bash
+OPENAI_API_KEY=<azure_key>
+OPENAI_API_STYLE=chat_completions
+OPENAI_AUTH_MODE=api_key
+OPENAI_CHAT_URL=https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2025-01-01-preview
+OPENAI_TIMEOUT_MS=30000
+```
+
+## Run Locally
+
+Terminal 1 (repo root): start MCP server over HTTP
+
+```bash
+python3 -m vista.app --transport http --host 127.0.0.1 --port 8000
+# or:
+# uv run vista --transport http --host 127.0.0.1 --port 8000
+```
+
+Terminal 2:
+
+```bash
+cd ui
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Quick Test Plan
+
+1. MCP health:
+
+```bash
+curl http://localhost:3000/api/mcp/health
+```
+
+Expected:
+- `ok: true`
+
+2. MCP tools:
+
+```bash
+curl http://localhost:3000/api/mcp/tools
+```
+
+Expected:
+- tool list including `execute_skill_script`, `image_viewer`
+
+3. Salt analysis run:
+
+```bash
+curl -X POST http://localhost:3000/api/mcp/call \
+  -H "content-type: application/json" \
+  -d '{"tool":"execute_skill_script","args":{"command":"skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl"}}'
+```
+
+Expected:
+- success output
+- `Plot saved to .../artifacts/salt-plots/AlCl3-KCl.png`
+
+4. Plot view (manual check):
+
+```bash
+curl -X POST http://localhost:3000/api/mcp/call \
+  -H "content-type: application/json" \
+  -d '{"tool":"image_viewer","args":{"path":"artifacts/salt-plots/AlCl3-KCl.png"}}'
+```
+
+5. LLM chat (if API key configured):
+
+```bash
+curl -X POST http://localhost:3000/api/chat \
+  -H "content-type: application/json" \
+  -d '{"message":"What MCP tools are available?"}'
+```
+
+## Troubleshooting
+
+- `Address already in use` on port 8000:
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+kill <PID>
+```
+
+- MCP returns `Missing session ID` or `Not Acceptable`:
+  - use UI routes (`/api/mcp/*`) instead of calling raw MCP endpoint from browser
+  - UI orchestrator handles session + accept headers
+
+- `/api/chat` timeout:
+  - increase `OPENAI_TIMEOUT_MS` in `ui/.env.local` (for example `30000`)
+
 ## Repo Structure
 
-```
+```text
 project-root/
 ├─ clients/
-├─ scripts/
 ├─ skills/
 ├─ src/
-└─ ui/                  # Next.js App Router UI + orchestrator API routes
+└─ ui/
+   ├─ app/
+   ├─ components/
+   ├─ lib/
+   └─ README.md
 ```

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ExecutionResult } from "@/lib/types";
-
-const DEFAULT_MCP_BASE_URL = "http://127.0.0.1:8000/mcp";
+import { callMcpRpc } from "@/lib/mcp";
 
 function createEnvelope(partial: Partial<ExecutionResult>): ExecutionResult {
   return {
@@ -45,6 +44,33 @@ function extractUiHtml(payload: unknown): string | null {
   if (Array.isArray(obj.contents)) return extractUiHtml(obj.contents);
   if (Array.isArray(obj.content)) return extractUiHtml(obj.content);
   return null;
+}
+
+function extractPlotPath(stdout: string): string | null {
+  const match = stdout.match(/Plot saved to\s+(.+)/);
+  if (!match) return null;
+  return match[1].trim();
+}
+
+function extractMetric(stdout: string, name: string): number | null {
+  const regex = new RegExp(`${name}:\\s*(\\d+)`, "i");
+  const match = stdout.match(regex);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function extractReferencesCount(stdout: string): number | null {
+  const referencesSection = stdout.split("References");
+  if (referencesSection.length < 2) return null;
+  const tail = referencesSection[referencesSection.length - 1];
+  const matches = tail.match(/\[\d+\]/g);
+  return matches ? matches.length : 0;
+}
+
+function toImageUiHtml(mimeType: string, base64Data: string): string {
+  const src = `data:${mimeType};base64,${base64Data}`;
+  return `<img src="${src}" alt="MCP tool image output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
 }
 
 function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
@@ -109,10 +135,43 @@ function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
           envelope.ui = { kind: "html", html: htmlText };
         }
       }
+
+      if (
+        envelope.ui?.kind !== "html" &&
+        contentItem.type === "image" &&
+        typeof contentItem.data === "string" &&
+        typeof contentItem.mimeType === "string"
+      ) {
+        envelope.ui = {
+          kind: "html",
+          html: toImageUiHtml(contentItem.mimeType, contentItem.data)
+        };
+      }
     }
 
     if (envelope.data === undefined && Object.keys(resultObj).length > 0) {
       envelope.data = resultObj;
+    }
+
+    if (tool === "execute_skill_script" && envelope.stdout) {
+      const plotPath = extractPlotPath(envelope.stdout);
+      if (plotPath) {
+        envelope.artifacts.push({
+          type: "plot",
+          name: "analysis_plot",
+          url: plotPath
+        });
+      }
+
+      envelope.meta = {
+        ...envelope.meta,
+        analysisSummary: {
+          measurements: extractMetric(envelope.stdout, "Total measurements"),
+          compositions: extractMetric(envelope.stdout, "Number of compositions"),
+          references: extractReferencesCount(envelope.stdout),
+          plotPath
+        }
+      };
     }
 
     return envelope;
@@ -138,56 +197,30 @@ export async function POST(request: Request) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing tool name." }), { status: 400 });
   }
 
-  const mcpBaseUrl = process.env.MCP_BASE_URL || DEFAULT_MCP_BASE_URL;
-  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now());
-
   // TODO: Add shell runner with allowlists + sandboxing for future bash execution support.
-  const payload = {
-    jsonrpc: "2.0",
-    id: requestId,
-    method: "tools/call",
-    params: {
-      name: tool,
-      arguments: args
-    }
-  };
-
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const { response, text: responseText, json } = await callMcpRpc(
+      "tools/call",
+      {
+        name: tool,
+        arguments: args
+      },
+      20000
+    );
 
-    try {
-      const response = await fetch(mcpBaseUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        return NextResponse.json(
-          createEnvelope({
-            ok: false,
-            stderr: `MCP error (${response.status}): ${text}`,
-            meta: { tool, status: response.status }
-          }),
-          { status: 502 }
-        );
-      }
-
-      const responseText = await response.text();
-      let raw: unknown;
-      try {
-        raw = responseText ? JSON.parse(responseText) : null;
-      } catch {
-        raw = responseText;
-      }
-      const normalized = normalizeMcpResult(raw, tool);
-      return NextResponse.json(normalized);
-    } finally {
-      clearTimeout(timeout);
+    if (!response.ok) {
+      return NextResponse.json(
+        createEnvelope({
+          ok: false,
+          stderr: `MCP error (${response.status}): ${responseText}`,
+          meta: { tool, status: response.status }
+        }),
+        { status: 502 }
+      );
     }
+
+    const normalized = normalizeMcpResult(json, tool);
+    return NextResponse.json(normalized);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const isAbort = error instanceof Error && error.name === "AbortError";

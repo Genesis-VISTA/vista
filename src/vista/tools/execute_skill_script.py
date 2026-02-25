@@ -9,9 +9,12 @@ from pathlib import Path
 from fastmcp.tools.tool import ToolResult
 from mcp.types import TextContent
 
-# Just support .agents and .goose now.
-# See https://github.com/vercel-labs/skills/blob/main/src/agents.ts for other agents config dirs
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Support local project skills plus standard agent skill directories.
+# See https://github.com/vercel-labs/skills/blob/main/src/agents.ts for other agents config dirs.
 SKILL_DIRECTORIES = [
+    str(REPO_ROOT / "skills"),
     ".agents/skills",
     "~/.agents/skills",
     ".goose/skills",
