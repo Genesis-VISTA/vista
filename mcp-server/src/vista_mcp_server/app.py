@@ -4,15 +4,12 @@ MCP server definition exposing tools and resources.
 
 from __future__ import annotations
 import argparse
-from typing import Annotated as A
 from fastmcp import FastMCP
-from fastmcp.tools.tool import ToolResult
 from pathlib import Path
 import tempfile
 import logging
-import functools
-from .tools.display_file import display_file as display_file_impl
 from .config import settings
+from .display_file import mcp as display_file_mcp
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -20,28 +17,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-mcp = FastMCP(name="MCP Server")
+mcp = FastMCP(name="VISTA MCP Server")
+mcp.mount(display_file_mcp)
 
-@mcp.tool(
-    meta={"ui": {"resourceUri": "ui://display-file"}},
-)
-def display_file(uri: A[str, "Absolute path to file, or a URI"]) -> ToolResult:
-    """
-    Displays a file to the user. Supports images, text, markdown, PDF, and HTML.
-    """
-    return display_file_impl(uri, allowed_uris=settings.allowed_uris, uri_map=settings.uri_map)
-
-
-MCP_APPS_DIR = Path(__file__).parent / 'mcp-apps'
-
-# We could use a single "Resource Template" to dynamically fetch these, but Goose scans the resource
-# list to look for ui resources, so a template confuses it.
-for widget in MCP_APPS_DIR.glob("*.html"):
-    html = widget.read_text()
-    mcp.resource(f"ui://{widget.stem}",
-        name=widget.stem,
-        mime_type="text/html;profile=mcp-app",
-    )(functools.partial(lambda html: html, html))
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
