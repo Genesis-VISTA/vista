@@ -17,17 +17,6 @@ async def check_output(*args, **kwargs):
         raise RuntimeError(f"cmd '{' '.join(args)}' failed: {stderr.decode()}")
     return stdout, stderr
 
-
-async def try_check_output(*args, **kwargs):
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        **kwargs,
-    )
-    stdout, stderr = await proc.communicate()
-    return proc.returncode, stdout, stderr
-
 Volume = tuple[Path | str, Path | str, Literal['r', 'w']]
 
 class Sandbox(abc.ABC):
@@ -76,36 +65,10 @@ class DockerSandbox(Sandbox):
         if not image and not dockerfile:
             raise ValueError("You must specify image or dockerfile")
 
-        docker_ok, _, docker_err = await try_check_output("docker", "info")
-        if docker_ok != 0:
-            message = docker_err.decode().strip()
-            raise RuntimeError(
-                "Docker daemon is not reachable. Start Docker Desktop and retry. "
-                f"Original error: {message}"
-            )
-
         if dockerfile:
-            dockerfile = Path(dockerfile)
-            context_dir = str(dockerfile.parent)
-
-            # Prefer buildx to avoid legacy builder issues on recent Docker versions.
-            buildx_ok, _, _ = await try_check_output("docker", "buildx", "version")
-            if buildx_ok == 0:
-                await check_output(
-                    "docker",
-                    "buildx",
-                    "build",
-                    "--load",
-                    "-t",
-                    image,
-                    "-f",
-                    str(dockerfile),
-                    context_dir,
-                )
-            else:
-                await check_output(
-                    "docker", "build", "-t", image, "-f", str(dockerfile), context_dir,
-                )
+            await check_output(
+                "docker", "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
+            )
         else:
             await check_output("docker", "pull", image)
 
@@ -114,7 +77,7 @@ class DockerSandbox(Sandbox):
         for src, dst, mode in volumes:
             run_args += ["-v", f"{src}:{dst}" + (":ro" if mode == 'r' else '')]
 
-        run_args += [f"--env={var}={value}" for var, value in env.items()]
+        run_args += [f"--env={var}" for var in env.keys()]
         run_args += [image, "sleep", "infinity"]
 
         stdout, stderr = await check_output(*run_args, env = {**os.environ, **env})
@@ -122,14 +85,11 @@ class DockerSandbox(Sandbox):
 
     async def exec(
         self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams = False,
+        env: dict[str, str] | None = None, combine_streams = False,
     ) -> asyncio.subprocess.Process:
         env = env or {}
-        cmd = ["docker", "exec", "-i"]
-        if cwd:
-            cmd += ["-w", cwd]
-        cmd += [f"--env={var}={value}" for var, value in env.items()]
-        cmd += [self.container_id, command]
+        cmd = ["docker", "exec", "-i", self.container_id, command]
+        cmd += [f"--env={var}" for var in env.keys()]
         cmd += (args or [])
         return await asyncio.create_subprocess_exec(
             *cmd,
