@@ -20,18 +20,18 @@ import matplotlib.tri as tri
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 from collections import defaultdict
-import tempfile
 from pathlib import Path
 import argparse
-from pathlib import Path
 
 class SaltTPAnalyzer:
-    def __init__(self, json_file):
+    def __init__(self, json_file, output_dir=None):
         """Initialize with JSON file path"""
         with open(json_file, 'r') as f:
             self.data = json.load(f)
         self.mstdbtp = self.data.get('MSTDBTP', {})
-        self.output = Path(tempfile.mkdtemp(prefix='salt-plots-'))
+        default_output = Path(__file__).resolve().parents[3] / "artifacts" / "salt-plots"
+        self.output = Path(output_dir) if output_dir else default_output
+        self.output.mkdir(parents=True, exist_ok=True)
         
     def parse_composition(self, comp_str):
         """Parse composition string like '0.055-0.945' into list of floats"""
@@ -352,12 +352,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--salt", required=True)
     parser.add_argument("--data")
+    parser.add_argument("--output-dir")
     args = parser.parse_args()
     #data = args.data or str(Path(__file__).parent / 'data//Molten_Salt_Thermophysical_Properties.json')
     data = args.data or str(Path(__file__).parent.parent / 'assets//Molten_Salt_Thermophysical_Properties.json')
 
     # Initialize analyzer./data/Molten_Salt_Thermophysical_Properties.json
-    analyzer = SaltTPAnalyzer(data)
+    analyzer = SaltTPAnalyzer(data, output_dir=args.output_dir)
 
     # Analyze a salt
     analyzer.analyze_salt(args.salt)
