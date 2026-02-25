@@ -165,7 +165,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "image_viewer", args: { path: plotPath } })
+            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           if (previewResult.ui?.kind === "html") {
