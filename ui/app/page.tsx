@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
@@ -30,12 +30,18 @@ function formatResultSummary(result: ExecutionResult): string {
   return `${status}${output ? `: ${output}` : ""}`;
 }
 
-function getPlotPath(result: ExecutionResult): string | null {
-  const artifact = result.artifacts.find((item) => item.type === "plot" && typeof item.url === "string");
-  return artifact?.url || null;
+function extractPlotPath(stdout: string): string | null {
+  const match = stdout.match(/Plot saved to\s+(.+)/);
+  if (!match) return null;
+  return match[1].trim();
 }
 
 export default function HomePage() {
+  const mainRef = useRef<HTMLElement | null>(null);
+  const [activeResizer, setActiveResizer] = useState<"left" | "right" | null>(null);
+  const [skillsWidth, setSkillsWidth] = useState(240);
+  const [vizWidth, setVizWidth] = useState(460);
+
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
@@ -55,6 +61,50 @@ export default function HomePage() {
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [useLlm, setUseLlm] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
+
+  useEffect(() => {
+    if (!activeResizer) return;
+
+    const minSkills = 180;
+    const minViz = 320;
+    const minConsole = 420;
+    const splitterTotal = 20;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const container = mainRef.current;
+      if (!container || window.innerWidth <= 1100) return;
+
+      const rect = container.getBoundingClientRect();
+      const maxSkills = rect.width - vizWidth - minConsole - splitterTotal;
+      const maxViz = rect.width - skillsWidth - minConsole - splitterTotal;
+
+      if (activeResizer === "left") {
+        const raw = event.clientX - rect.left;
+        const next = Math.max(minSkills, Math.min(raw, maxSkills));
+        setSkillsWidth(next);
+      } else if (activeResizer === "right") {
+        const raw = rect.right - event.clientX;
+        const next = Math.max(minViz, Math.min(raw, maxViz));
+        setVizWidth(next);
+      }
+    };
+
+    const onPointerUp = () => {
+      setActiveResizer(null);
+    };
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+
+    return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [activeResizer, skillsWidth, vizWidth]);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -145,7 +195,7 @@ export default function HomePage() {
   }
 
   async function runSaltAnalysis() {
-    const tool = "execute_skill_script";
+    const tool = "bash";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
     const command = `skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
@@ -159,7 +209,7 @@ export default function HomePage() {
 
       const result = (await response.json()) as ExecutionResult;
       let finalResult = result;
-      const plotPath = getPlotPath(result);
+      const plotPath = extractPlotPath(result.stdout || "");
       if (plotPath) {
         try {
           const previewResponse = await fetch("/api/mcp/call", {
@@ -175,7 +225,7 @@ export default function HomePage() {
             };
           }
         } catch {
-          // Keep original result if preview lookup fails.
+          // Keep original result when preview lookup fails.
         }
       }
 
@@ -249,7 +299,15 @@ export default function HomePage() {
   }
 
   return (
-    <main>
+    <main
+      ref={mainRef}
+      style={
+        {
+          "--skills-width": `${skillsWidth}px`,
+          "--viz-width": `${vizWidth}px`
+        } as CSSProperties
+      }
+    >
       <section className="panel">
         <div className="panel-header">
           <div className="panel-title">Skills</div>
@@ -276,6 +334,14 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      <div
+        className="panel-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize skills panel"
+        onPointerDown={() => setActiveResizer("left")}
+      />
 
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
@@ -328,6 +394,14 @@ export default function HomePage() {
           </button>
         </div>
       </section>
+
+      <div
+        className="panel-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize output panel"
+        onPointerDown={() => setActiveResizer("right")}
+      />
 
       <section className="panel">
         <div className="panel-header">

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { readFile } from "node:fs/promises";
+import { extname } from "node:path";
 import type { ExecutionResult } from "@/lib/types";
 import { callMcpRpc } from "@/lib/mcp";
 
@@ -46,31 +48,92 @@ function extractUiHtml(payload: unknown): string | null {
   return null;
 }
 
-function extractPlotPath(stdout: string): string | null {
-  const match = stdout.match(/Plot saved to\s+(.+)/);
-  if (!match) return null;
-  return match[1].trim();
-}
-
-function extractMetric(stdout: string, name: string): number | null {
-  const regex = new RegExp(`${name}:\\s*(\\d+)`, "i");
-  const match = stdout.match(regex);
-  if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
-}
-
-function extractReferencesCount(stdout: string): number | null {
-  const referencesSection = stdout.split("References");
-  if (referencesSection.length < 2) return null;
-  const tail = referencesSection[referencesSection.length - 1];
-  const matches = tail.match(/\[\d+\]/g);
-  return matches ? matches.length : 0;
-}
-
 function toImageUiHtml(mimeType: string, base64Data: string): string {
   const src = `data:${mimeType};base64,${base64Data}`;
   return `<img src="${src}" alt="MCP tool image output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
+}
+
+function getMimeTypeFromPath(filePath: string): string {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+function findUriDeep(payload: unknown, depth = 0): string | null {
+  if (depth > 6 || payload == null) return null;
+
+  if (typeof payload === "string") {
+    const trimmed = payload.trim();
+    if (trimmed.startsWith("file://") || trimmed.startsWith("/")) return trimmed;
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return findUriDeep(JSON.parse(trimmed), depth + 1);
+      } catch {
+        return null;
+      }
+    }
+    const fileUriMatch = trimmed.match(/file:\/\/[^\s"']+/);
+    if (fileUriMatch) return fileUriMatch[0];
+    const absPathMatch = trimmed.match(/\/[^\s"']+\.(png|jpe?g|gif|webp|svg)/i);
+    if (absPathMatch) return absPathMatch[0];
+    return null;
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = findUriDeep(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+
+  if (typeof obj.uri === "string") return obj.uri;
+  if (typeof obj.path === "string" && obj.path.startsWith("/")) return obj.path;
+
+  for (const value of Object.values(obj)) {
+    const found = findUriDeep(value, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string): Promise<ExecutionResult> {
+  if (tool !== "display_file") return envelope;
+  if (envelope.ui?.kind === "html") return envelope;
+
+  const uri = findUriDeep(envelope.data) ?? findUriDeep(envelope.stdout);
+  if (!uri) return envelope;
+
+  let filePath = uri;
+  if (uri.startsWith("file://")) {
+    try {
+      filePath = decodeURIComponent(uri.slice("file://".length));
+    } catch {
+      filePath = uri.slice("file://".length);
+    }
+  }
+
+  if (!filePath.startsWith("/")) return envelope;
+
+  try {
+    const bytes = await readFile(filePath);
+    const mimeType = getMimeTypeFromPath(filePath);
+    if (!mimeType.startsWith("image/")) return envelope;
+    const base64Data = bytes.toString("base64");
+    return {
+      ...envelope,
+      ui: { kind: "html", html: toImageUiHtml(mimeType, base64Data) }
+    };
+  } catch {
+    return envelope;
+  }
 }
 
 function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
@@ -153,27 +216,6 @@ function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
       envelope.data = resultObj;
     }
 
-    if (tool === "execute_skill_script" && envelope.stdout) {
-      const plotPath = extractPlotPath(envelope.stdout);
-      if (plotPath) {
-        envelope.artifacts.push({
-          type: "plot",
-          name: "analysis_plot",
-          url: plotPath
-        });
-      }
-
-      envelope.meta = {
-        ...envelope.meta,
-        analysisSummary: {
-          measurements: extractMetric(envelope.stdout, "Total measurements"),
-          compositions: extractMetric(envelope.stdout, "Number of compositions"),
-          references: extractReferencesCount(envelope.stdout),
-          plotPath
-        }
-      };
-    }
-
     return envelope;
   }
 
@@ -219,7 +261,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const normalized = normalizeMcpResult(json, tool);
+    const normalized = await addDisplayFileFallbackUi(normalizeMcpResult(json, tool), tool);
     return NextResponse.json(normalized);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

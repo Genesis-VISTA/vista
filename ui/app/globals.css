@@ -28,7 +28,7 @@ html, body {
 
 main {
   display: grid;
-  grid-template-columns: 240px 1fr 460px;
+  grid-template-columns: var(--skills-width, 240px) 10px minmax(420px, 1fr) 10px var(--viz-width, 460px);
   gap: 16px;
   padding: 16px;
   min-height: 100vh;
@@ -37,6 +37,28 @@ main {
 @media (max-width: 1100px) {
   main {
     grid-template-columns: 1fr;
+  }
+}
+
+.panel-resizer {
+  width: 10px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #e7d4bf 0%, #d5b796 100%);
+  border: 1px solid #cfad89;
+  cursor: col-resize;
+  align-self: stretch;
+  opacity: 0.7;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.panel-resizer:hover {
+  opacity: 1;
+  transform: scaleX(1.08);
+}
+
+@media (max-width: 1100px) {
+  .panel-resizer {
+    display: none;
   }
 }
 

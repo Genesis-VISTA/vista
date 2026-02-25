@@ -10,7 +10,7 @@ The browser never calls MCP directly. All calls flow through `ui/app/api/*` rout
 - Run MCP tools through `/api/mcp/call`
 - Check MCP connectivity and discover tools
 - Optional advisory LLM chat (`/api/chat`) with manual tool execution only
-- Salt analysis quick action (`execute_skill_script`) with plot preview
+- Salt analysis quick action (`bash`) showing the generated command string
 
 ## Prerequisites
 
@@ -110,29 +110,20 @@ curl http://localhost:3000/api/mcp/tools
 ```
 
 Expected:
-- tool list including `execute_skill_script`, `image_viewer`
+- tool list including `display_file`, `bash`
 
-3. Salt analysis run:
+3. Salt analysis command pass-through:
 
 ```bash
 curl -X POST http://localhost:3000/api/mcp/call \
   -H "content-type: application/json" \
-  -d '{"tool":"execute_skill_script","args":{"command":"skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl"}}'
+  -d '{"tool":"bash","args":{"command":"skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl"}}'
 ```
 
 Expected:
-- success output
-- `Plot saved to .../artifacts/salt-plots/AlCl3-KCl.png`
+- response echoes the command string passed to `bash`
 
-4. Plot view (manual check):
-
-```bash
-curl -X POST http://localhost:3000/api/mcp/call \
-  -H "content-type: application/json" \
-  -d '{"tool":"image_viewer","args":{"path":"artifacts/salt-plots/AlCl3-KCl.png"}}'
-```
-
-5. LLM chat (if API key configured):
+4. LLM chat (if API key configured):
 
 ```bash
 curl -X POST http://localhost:3000/api/chat \

@@ -11,7 +11,7 @@ npm install
 cd "$REPO_ROOT"
 tmux new-session \
   -d -s vista-dev \
-  "cd mcp-server && uvx --env-file ./.env --refresh . --transport=http" \; \
+  "cd mcp-server && uv run --env-file ./.env vista-mcp-server --transport=http" \; \
   split-window -h \
   "cd ui && npm run dev" \; \
   attach
