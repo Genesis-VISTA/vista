@@ -105,7 +105,7 @@ function findUriDeep(payload: unknown, depth = 0): string | null {
 }
 
 async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string): Promise<ExecutionResult> {
-  if (tool !== "display_files") return envelope;
+  if (tool !== "display_file") return envelope;
   if (envelope.ui?.kind === "html") return envelope;
 
   const uri = findUriDeep(envelope.data) ?? findUriDeep(envelope.stdout);

@@ -21,6 +21,7 @@ type ChatApiResponse = {
   ok: boolean;
   response: string;
   tools?: Array<{ name: string; description?: string; inputSchema?: any }>;
+  executions?: Array<{ tool: string; args: Record<string, unknown>; ok: boolean; output: string; error?: string }>;
   error?: string;
 };
 
@@ -59,7 +60,6 @@ export default function HomePage() {
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [mcpTools, setMcpTools] = useState<McpToolsResponse | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [useLlm, setUseLlm] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   useEffect(() => {
@@ -151,8 +151,6 @@ export default function HomePage() {
     ]);
     setInput("");
 
-    if (!useLlm) return;
-
     setIsChatLoading(true);
     try {
       const response = await fetch("/api/chat", {
@@ -173,6 +171,17 @@ export default function HomePage() {
           content
         }
       ]);
+
+      if (Array.isArray(data.executions) && data.executions.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          ...data.executions.map((run) => ({
+            id: crypto.randomUUID(),
+            role: "tool" as const,
+            content: `Tool ${run.tool} ${run.ok ? "executed" : "failed"}.\n${run.ok ? run.output : run.error || "Unknown error"}`
+          }))
+        ]);
+      }
 
       if (Array.isArray(data.tools)) {
         setMcpTools({
@@ -215,7 +224,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_files", args: { uri: plotPath } })
+            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           if (previewResult.ui?.kind === "html") {
@@ -381,14 +390,6 @@ export default function HomePage() {
               }
             }}
           />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6a6258" }}>
-            <input
-              type="checkbox"
-              checked={useLlm}
-              onChange={(event) => setUseLlm(event.target.checked)}
-            />
-            Use LLM
-          </label>
           <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
             {isChatLoading ? "Thinking..." : "Add"}
           </button>

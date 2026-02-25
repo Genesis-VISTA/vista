@@ -17,8 +17,8 @@ class AppSettings(BaseSettings):
     image: str = "vista-sandbox"
 
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = [
-        (Path(__file__).parents[3] / 'skills', '/mnt/skills', 'r'),
-        (Path(__file__).parents[3] / 'artifacts', '/mnt/artifacts', 'w'),
+        ('../skills', '/mnt/skills', 'r'),
+        ('../artifacts', '/mnt/artifacts', 'w'),
     ]
     """
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
