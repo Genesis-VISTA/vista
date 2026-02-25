@@ -16,7 +16,9 @@ class AppSettings(BaseSettings):
     dockerfile: ResolvedPath = Path(__file__).parent / "docker/Dockerfile"
     image: str = "vista-sandbox"
 
-    volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = []
+    volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = [
+        (Path(__file__).parents[3] / 'skills', '/mnt/skills', 'r'),
+    ]
     """
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
