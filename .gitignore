@@ -1,4 +1,5 @@
-/data
+# Built MCP Apps
+/src/vista/mcp-apps/
 
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,python,git,linux,macos,windows
@@ -83,6 +84,7 @@ dist/
 downloads/
 eggs/
 .eggs/
+lib64/
 parts/
 sdist/
 var/
@@ -284,3 +286,8 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
+
+ui/node_modules/
+ui/.next/
+ui/.env.local
+artifacts/
