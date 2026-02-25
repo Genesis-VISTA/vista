@@ -17,18 +17,14 @@ mcp = FastMCP(name="Shell")
 
 @mcp.tool()
 async def bash(
-    command: A[str, "Absolute path to file, or a URI"],
-    description: A[str, ""] = "",
+    command: A[str, "Bash command to run"],
+    description: A[str, "Why I'm running this command"] = "",
 ) -> str:
     """
     Run a bash command.
 
     Avoid commands that produce a large amount of output, and consider piping those outputs to
     files.
-
-    Args:
-        command: Bash command to run
-        description: Why I'm running this command
     """
     proc = await asyncio.create_subprocess_exec(
         "bash", "-c", command,
