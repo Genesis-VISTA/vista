@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import path from "path";
-import fs from "fs/promises";
+import fs from "fs";
 import matter from "gray-matter";
+import { findSkillMd } from "@/lib/skills";
+import { config } from "@/app/config";
 
 export async function GET(
   _request: Request,
@@ -12,18 +14,21 @@ export async function GET(
     return NextResponse.json({ error: "Skill not found" }, { status: 404 });
   }
 
-  const repoRoot = path.resolve(process.cwd(), "..");
-  const skillPath = path.join(repoRoot, "skills", slug, "SKILL.md");
+  const skillDir = path.join(config.skillsDir, slug);
+  const skillMd = findSkillMd(skillDir);
+  if (skillMd === null) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
 
   try {
-    const raw = await fs.readFile(skillPath, "utf8");
+    const raw = fs.readFileSync(skillMd, "utf8");
     const parsed = matter(raw);
     return NextResponse.json({
       slug,
       frontmatter: parsed.data ?? {},
-      markdown: parsed.content
+      markdown: parsed.content,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Skill not found" }, { status: 404 });
   }
 }
