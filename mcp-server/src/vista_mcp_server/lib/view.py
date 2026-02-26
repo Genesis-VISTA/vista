@@ -30,12 +30,14 @@ def _build_tree(paths: list[str], root: str) -> dict:
         children  - dict[str, node] (only meaningful when is_dir is True)
         truncated - True when the node's children have been collapsed to "..."
     """
-    root = root.rstrip('/')
+    # Normalise: strip trailing slashes but keep '/' as-is so that
+    # relative_to and path-joining work correctly for the filesystem root.
+    root = root.rstrip('/') or '/'
 
     # A path is a directory if any other path is directly under it.
     dir_set: set[str] = {root}
     for p in paths:
-        p = p.rstrip('/')
+        p = p.rstrip('/') or '/'
         parent = str(PurePosixPath(p).parent)
         if parent != p:
             dir_set.add(parent)
@@ -49,10 +51,11 @@ def _build_tree(paths: list[str], root: str) -> dict:
             'truncated': False,
         }
 
-    root_node = make_node(root, PurePosixPath(root).name or root)
+    # PurePosixPath('/').name == '' so the root renders as '/' not '//'
+    root_node = make_node(root, PurePosixPath(root).name)
 
     for path in sorted(paths):
-        path = path.rstrip('/')
+        path = path.rstrip('/') or '/'
         if path == root:
             continue
         try:
@@ -64,7 +67,8 @@ def _build_tree(paths: list[str], root: str) -> dict:
         node = root_node
         for i, part in enumerate(parts):
             if part not in node['children']:
-                full_path = root + '/' + '/'.join(parts[:i + 1])
+                # Use PurePosixPath to avoid double-slash when root == '/'
+                full_path = str(PurePosixPath(root) / '/'.join(parts[:i + 1]))
                 node['children'][part] = make_node(full_path, part)
             node = node['children'][part]
 

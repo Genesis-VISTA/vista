@@ -4,7 +4,7 @@ Tests for vista_mcp_server.lib.view utility functions.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -33,7 +33,7 @@ def make_find_output(root: str, rel_paths: list[str]) -> str:
     for rel in rel_paths:
         parts = rel.split('/')
         for i in range(len(parts)):
-            full = root + '/' + '/'.join(parts[:i + 1])
+            full = str(PurePosixPath(root) / '/'.join(parts[:i + 1]))
             if full not in seen:
                 paths.append(full)
                 seen.add(full)
@@ -287,6 +287,23 @@ class TestFormatDirectoryListing:
         # Skip root line; next should be the directory.
         non_root = [l for l in lines if l.strip() and 'proj/' not in l]
         assert non_root[0].strip().endswith('/')
+
+    def test_root_filesystem_listing(self):
+        """Listing '/' must show root as '/' and stay within the line limit."""
+        top_dirs = [
+            'bin', 'boot', 'dev', 'etc', 'home', 'lib', 'lib64',
+            'media', 'mnt', 'opt', 'proc', 'run', 'sbin',
+            'srv', 'sys', 'tmp', 'usr', 'var',
+        ]
+        files = list(top_dirs)
+        # Enough nested entries to push the count over DIRECTORY_LINE_LIMIT.
+        files += [f'usr/bin/tool{i}' for i in range(30)]
+        files += [f'etc/app{i}.conf' for i in range(20)]
+        output = make_find_output('/', files)
+        result = format_directory_listing(output, '/')
+        lines = result.splitlines()
+        assert lines[0] == '/'
+        assert len(lines) <= DIRECTORY_LINE_LIMIT + 1
 
 
 # ---------------------------------------------------------------------------
