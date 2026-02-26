@@ -398,3 +398,13 @@ class TestViewPath:
         f.write_text("a\nb\nc")
         result = await view_path(sandbox, "/test/f.txt", (10, 20))
         assert result.startswith("Error:")
+
+    @pytest.mark.anyio
+    async def test_directory_depth_limited(self, sb):
+        sandbox, tmp_path = sb
+        # depth from /test: a=1, b=2, c=3, d=4 — 'd' and its contents are beyond -maxdepth 3
+        (tmp_path / "a" / "b" / "c" / "d").mkdir(parents=True)
+        (tmp_path / "a" / "b" / "c" / "d" / "deep.txt").write_text("deep")
+        result = await view_path(sandbox, "/test")
+        assert "deep.txt" not in result
+        assert "a/" in result

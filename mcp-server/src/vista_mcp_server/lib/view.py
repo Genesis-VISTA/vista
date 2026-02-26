@@ -279,7 +279,7 @@ async def view_path(
     file_type = stat_out.decode().strip()
 
     if file_type == "directory":
-        proc = await sandbox.exec("find", args=[path])
+        proc = await sandbox.exec("find", args=[path, "-maxdepth", "3"])
         stdout, _ = await proc.communicate()
         return format_directory_listing(stdout.decode(), path)
     elif file_type == "regular file":
