@@ -45,7 +45,7 @@ async def bash(
 
 
 @mcp.tool()
-async def create_file(*,
+async def create_file(
     path: A[str, "Path to the file"],
     content: A[str, "Content to write"],
 ):
