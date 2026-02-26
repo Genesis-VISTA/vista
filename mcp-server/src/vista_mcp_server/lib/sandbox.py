@@ -64,6 +64,8 @@ class DockerSandbox(Sandbox):
         env = env or {}
         if not image and not dockerfile:
             raise ValueError("You must specify image or dockerfile")
+        if not image:
+            image = "vista-sandbox"
 
         if dockerfile:
             await check_output(

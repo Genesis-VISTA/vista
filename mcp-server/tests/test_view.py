@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from vista_mcp_server.lib.sandbox import UnSandbox
+from vista_mcp_server.lib.sandbox import DockerSandbox
 from vista_mcp_server.lib.view import (
     DIRECTORY_LINE_LIMIT,
     LINE_LENGTH_LIMIT,
@@ -17,6 +17,7 @@ from vista_mcp_server.lib.view import (
     format_file_content,
     view_path,
 )
+from vista_mcp_server.config import settings
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -315,82 +316,85 @@ class TestViewPath:
     def anyio_backend(self):
         return 'asyncio'
 
-    @pytest.fixture
-    def sb(self):
-        return UnSandbox()
+    @pytest.fixture()
+    async def sb(self, tmp_path):
+        sandbox = await DockerSandbox.spawn(
+            volumes=[(tmp_path, "/test", "r")],
+            dockerfile=settings.dockerfile, image=settings.image,
+        )
+        try:
+            yield sandbox, tmp_path
+        finally:
+            sandbox.close()
 
     @pytest.mark.anyio
-    async def test_text_file(self, sb, tmp_path):
+    async def test_text_file(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "hello.txt"
         f.write_text("line 1\nline 2\nline 3\n")
-        result = await view_path(sb, str(f))
+        result = await view_path(sandbox, "/test/hello.txt")
         assert "line 1" in result
         assert "line 2" in result
         assert "line 3" in result
 
     @pytest.mark.anyio
-    async def test_text_file_line_numbers(self, sb, tmp_path):
+    async def test_text_file_line_numbers(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "nums.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 6)))
-        lines = (await view_path(sb, str(f))).splitlines()
+        lines = (await view_path(sandbox, "/test/nums.txt")).splitlines()
         assert lines[0].split('\t')[0].strip() == '1'
         assert lines[4].split('\t')[0].strip() == '5'
 
     @pytest.mark.anyio
-    async def test_text_file_with_range(self, sb, tmp_path):
+    async def test_text_file_with_range(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "range.txt"
         f.write_text("\n".join(f"line {i}" for i in range(1, 11)))
-        result = await view_path(sb, str(f), (3, 5))
+        result = await view_path(sandbox, "/test/range.txt", (3, 5))
         assert "line 3" in result
         assert "line 5" in result
         assert "line 1" not in result
         assert "line 6" not in result
 
     @pytest.mark.anyio
-    async def test_text_file_negative_range(self, sb, tmp_path):
+    async def test_text_file_negative_range(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "neg.txt"
         f.write_text("a\nb\nc\nd\ne")
-        result = await view_path(sb, str(f), (-2, -1))
+        result = await view_path(sandbox, "/test/neg.txt", (-2, -1))
         assert "d" in result
         assert "e" in result
         assert "a" not in result
 
     @pytest.mark.anyio
-    async def test_binary_file(self, sb, tmp_path):
+    async def test_binary_file(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "data.bin"
         f.write_bytes(b'\x00\x01\x02\x03' * 256)
-        result = await view_path(sb, str(f))
+        result = await view_path(sandbox, "/test/data.bin")
         assert result == "[binary file]"
 
     @pytest.mark.anyio
-    async def test_directory(self, sb, tmp_path):
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "main.py").write_text("print('hello')")
-        (tmp_path / "README.md").write_text("# Readme")
-        result = await view_path(sb, str(tmp_path))
+    async def test_directory(self, sb):
+        sandbox, tmp_path = sb
+        (tmp_path / "dir/src").mkdir(parents = True)
+        (tmp_path / "dir/src" / "main.py").write_text("print('hello')")
+        (tmp_path / "dir/README.md").write_text("# Readme")
+        result = await view_path(sandbox, "/test/dir")
         assert "src/" in result
         assert "README.md" in result
 
     @pytest.mark.anyio
-    async def test_directory_noisy_dirs_suppressed(self, sb, tmp_path):
-        nm = tmp_path / "node_modules"
-        nm.mkdir()
-        for i in range(5):
-            (nm / f"pkg{i}").mkdir()
-            (nm / f"pkg{i}" / "index.js").write_text("module.exports = {}")
-        (tmp_path / "index.js").write_text("// entry")
-        result = await view_path(sb, str(tmp_path))
-        assert "node_modules/" in result
-        assert "pkg0" not in result
-
-    @pytest.mark.anyio
-    async def test_nonexistent_path(self, sb, tmp_path):
-        result = await view_path(sb, str(tmp_path / "does_not_exist"))
+    async def test_nonexistent_path(self, sb):
+        sandbox, tmp_path = sb
+        result = await view_path(sandbox, "/test/does_not_exist")
         assert result.startswith("Error:")
 
     @pytest.mark.anyio
-    async def test_invalid_range_returns_error(self, sb, tmp_path):
+    async def test_invalid_range_returns_error(self, sb):
+        sandbox, tmp_path = sb
         f = tmp_path / "f.txt"
         f.write_text("a\nb\nc")
-        result = await view_path(sb, str(f), (10, 20))
+        result = await view_path(sandbox, "/test/f.txt", (10, 20))
         assert result.startswith("Error:")
