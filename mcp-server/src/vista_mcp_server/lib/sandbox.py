@@ -110,3 +110,29 @@ class DockerSandbox(Sandbox):
         # Should change close back to async when I can
         subprocess.run(["docker", "stop", self.container_id, "-t", "1"], capture_output=True)
         subprocess.run(["docker", "rm", "-f", self.container_id], capture_output=True)
+
+
+class UnSandbox(Sandbox):
+    """
+    "Sandbox" implementation that executes commands on the directly. Only intended for tests.
+    """
+
+    @classmethod
+    async def spawn(cls, **kwargs) -> "UnSandbox":
+        return UnSandbox()
+
+    async def exec(
+        self, command: str, args: list[str] | None = None,
+        env: dict | None = None, cwd: str | None = None, combine_streams: bool = False,
+    ) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            command, *(args or []),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT if combine_streams else asyncio.subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+        )
+
+    def close(self) -> None:
+        pass

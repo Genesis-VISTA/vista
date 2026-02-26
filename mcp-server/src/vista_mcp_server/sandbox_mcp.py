@@ -4,12 +4,11 @@ MCP Server to run basic shell commands
 
 from __future__ import annotations
 from typing import Annotated as A
-import sys
-from fastmcp import FastMCP, Context
+from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
-import asyncio
 from .config import settings
 from .lib.sandbox import Sandbox, DockerSandbox
+from .lib.view import view_path
 
 sandbox: Sandbox
 """ I should be able to use ctx.lifespan_context for this, but it doesn't work when mounted. """
@@ -55,6 +54,21 @@ async def create_file(
     proc = await sandbox.exec("tee", args = [path])
     await proc.communicate(content.encode())
     return f"Successfully created {path}"
+
+
+@mcp.tool()
+async def view(
+    path: A[str, "Path to the file or directory"],
+    range: A[tuple[int, int]|None,
+        "Optional range to view for files. Format: [start_line, end_line]. lines are indexed at 1. Negative numbers index from end of file."
+    ] = None
+):
+    """
+    View files and directories. For text files, displays numbered lines.
+    Handles truncating large outputs.
+    """
+    return await view_path(sandbox, path, range)
+
 
 # TODO:
 # - Output filtering in shell
