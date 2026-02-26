@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { fetchWithTimeout } from "@/lib/mcp";
 import { discoverMcpTools } from "@/lib/mcp-tools";
+import { toPrompt, findSkills } from "@/lib/skills";
+import { config } from "@/app/config";
 
 type ChatRequest = {
   message: string;
@@ -20,13 +22,9 @@ const DEFAULT_OPENAI_TIMEOUT_MS = 30000;
 function buildSystemPrompt(): string {
   return [
     "You are an orchestrator assistant for an MCP-enabled tool console.",
-    "You can only provide advisory responses in this iteration.",
-    "Allowed outputs:",
-    "1) list available MCP tools with short descriptions.",
-    "2) explain how to manually call /api/mcp/call with { tool, args }.",
-    "Never claim you executed tools and never invent tool outputs.",
-    "Do not produce shell commands unless specifically required for manual API testing."
-  ].join(" ");
+    "",
+    toPrompt(findSkills([config.skillsDir]))
+  ].join("\n");
 }
 
 function summarizeTools(tools: Array<{ name: string; description?: string }>): string {
