@@ -87,11 +87,14 @@ class DockerSandbox(Sandbox):
 
     async def exec(
         self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, combine_streams = False,
+        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams = False,
     ) -> asyncio.subprocess.Process:
         env = env or {}
-        cmd = ["docker", "exec", "-i", self.container_id, command]
-        cmd += [f"--env={var}" for var in env.keys()]
+        cmd = ["docker", "exec", "-i"]
+        if cwd:
+            cmd += ["-w", cwd]
+        cmd += [f"--env={var}={value}" for var, value in env.items()]
+        cmd += [self.container_id, command]
         cmd += (args or [])
         return await asyncio.create_subprocess_exec(
             *cmd,

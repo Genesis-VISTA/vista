@@ -198,7 +198,7 @@ export default function HomePage() {
     const tool = "bash";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
-    const command = `skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
+    const command = `python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt}`;
 
     try {
       const response = await fetch("/api/mcp/call", {
