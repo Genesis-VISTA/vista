@@ -38,7 +38,7 @@ async def bash(
     Avoid commands that produce a large amount of output, and consider piping those outputs to
     files.
     """
-    proc = await sandbox.exec("bash", args = ["-c", command], cwd="/mnt", combine_streams=True)
+    proc = await sandbox.exec("bash", args = ["-c", command], combine_streams=True)
     stdout, _ = await proc.communicate()
     return stdout.decode()
 
