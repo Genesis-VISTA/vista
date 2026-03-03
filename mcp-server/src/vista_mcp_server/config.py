@@ -10,6 +10,7 @@ class AppSettings(BaseSettings):
 
     uri_map: dict[str, str] = {
         "file:///mnt/data/output/": f"file://{Path('../data/output').resolve()}/",
+        "file:///mnt/data/uploads/": f"file://{Path('../data/uploads').resolve()}/",
     }
     """ Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks. """
 
@@ -20,9 +21,11 @@ class AppSettings(BaseSettings):
 
     skills_dir: ResolvedPath = Path("../skills")
     output_dir: ResolvedPath = Path("../data/output")
+    uploads_dir: ResolvedPath = Path("../data/uploads")
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = [
         (Path("../skills"), Path("/mnt/skills"), 'r'),
         (Path("../data/output"), Path("/mnt/data/output"), 'w'),
+        (Path("../data/uploads"), Path("/mnt/data/uploads"), 'w'),
     ]
     """
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
