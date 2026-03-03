@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
@@ -24,6 +24,18 @@ type ChatApiResponse = {
   error?: string;
 };
 
+type UploadFileInfo = {
+  name: string;
+  size: number;
+  modifiedAt: string;
+};
+
+type UploadResponse = {
+  ok: boolean;
+  saved?: string[];
+  error?: string;
+};
+
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
   const output = result.stdout ? result.stdout.slice(0, 240) : "";
@@ -38,9 +50,15 @@ function extractPlotPath(stdout: string): string | null {
 
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
-  const [activeResizer, setActiveResizer] = useState<"left" | "right" | null>(null);
-  const [skillsWidth, setSkillsWidth] = useState(240);
+  const leftSplitRef = useRef<HTMLDivElement | null>(null);
+  const outputSplitRef = useRef<HTMLDivElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [activeColumnResizer, setActiveColumnResizer] = useState<"left" | "right" | null>(null);
+  const [activeRowResizer, setActiveRowResizer] = useState<"left" | "right" | null>(null);
+  const [skillsWidth, setSkillsWidth] = useState(300);
   const [vizWidth, setVizWidth] = useState(460);
+  const [leftTopHeight, setLeftTopHeight] = useState(500);
+  const [rightTopHeight, setRightTopHeight] = useState(430);
 
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
@@ -61,9 +79,16 @@ export default function HomePage() {
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [useLlm, setUseLlm] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [uploads, setUploads] = useState<UploadFileInfo[]>([]);
+  const [isLoadingUploads, setIsLoadingUploads] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [isDragOverUploads, setIsDragOverUploads] = useState(false);
+  const [deletingUploadName, setDeletingUploadName] = useState("");
 
   useEffect(() => {
-    if (!activeResizer) return;
+    if (!activeColumnResizer) return;
 
     const minSkills = 180;
     const minViz = 320;
@@ -78,11 +103,11 @@ export default function HomePage() {
       const maxSkills = rect.width - vizWidth - minConsole - splitterTotal;
       const maxViz = rect.width - skillsWidth - minConsole - splitterTotal;
 
-      if (activeResizer === "left") {
+      if (activeColumnResizer === "left") {
         const raw = event.clientX - rect.left;
         const next = Math.max(minSkills, Math.min(raw, maxSkills));
         setSkillsWidth(next);
-      } else if (activeResizer === "right") {
+      } else if (activeColumnResizer === "right") {
         const raw = rect.right - event.clientX;
         const next = Math.max(minViz, Math.min(raw, maxViz));
         setVizWidth(next);
@@ -90,7 +115,7 @@ export default function HomePage() {
     };
 
     const onPointerUp = () => {
-      setActiveResizer(null);
+      setActiveColumnResizer(null);
     };
 
     document.body.style.userSelect = "none";
@@ -104,7 +129,49 @@ export default function HomePage() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [activeResizer, skillsWidth, vizWidth]);
+  }, [activeColumnResizer, skillsWidth, vizWidth]);
+
+  useEffect(() => {
+    if (!activeRowResizer) return;
+
+    const splitterSize = 10;
+    const minTop = 170;
+    const minBottom = 180;
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (window.innerWidth <= 1100) return;
+
+      const container = activeRowResizer === "left" ? leftSplitRef.current : outputSplitRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const raw = event.clientY - rect.top;
+      const maxTop = rect.height - minBottom - splitterSize;
+      const next = Math.max(minTop, Math.min(raw, maxTop));
+
+      if (activeRowResizer === "left") {
+        setLeftTopHeight(next);
+      } else {
+        setRightTopHeight(next);
+      }
+    };
+
+    const onPointerUp = () => {
+      setActiveRowResizer(null);
+    };
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+
+    return () => {
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [activeRowResizer]);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -198,7 +265,8 @@ export default function HomePage() {
     const tool = "bash";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
-    const command = `/mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
+    const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
+    const t0 = performance.now();
 
     try {
       const response = await fetch("/api/mcp/call", {
@@ -206,18 +274,22 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tool, args: { command } })
       });
+      const t1 = performance.now();
 
       const result = (await response.json()) as ExecutionResult;
       let finalResult = result;
       const plotPath = extractPlotPath(result.stdout || "");
+      let previewMs = 0;
       if (plotPath) {
         try {
+          const previewStart = performance.now();
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
+          previewMs = performance.now() - previewStart;
           if (previewResult.ui?.kind === "html") {
             finalResult = {
               ...result,
@@ -235,7 +307,9 @@ export default function HomePage() {
         {
           id: crypto.randomUUID(),
           role: "tool",
-          content: `Tool ${tool} finished. ${formatResultSummary(finalResult)}`,
+          content:
+            `Tool ${tool} finished. ${formatResultSummary(finalResult)} ` +
+            `(mcp: ${Math.round(t1 - t0)}ms, preview: ${Math.round(previewMs)}ms, total: ${Math.round(performance.now() - t0)}ms)`,
           result: finalResult
         }
       ]);
@@ -298,40 +372,238 @@ export default function HomePage() {
     }
   }
 
+  const loadUploads = useCallback(async () => {
+    setIsLoadingUploads(true);
+    try {
+      const response = await fetch("/api/uploads");
+      const data = (await response.json()) as UploadFileInfo[];
+      setUploads(Array.isArray(data) ? data : []);
+    } catch {
+      setUploads([]);
+    } finally {
+      setIsLoadingUploads(false);
+    }
+  }, []);
+
+  async function refreshUploads() {
+    await loadUploads();
+    setUploadMessage((prev) => (prev.startsWith("Deleted ") ? "" : prev));
+  }
+
+  useEffect(() => {
+    void loadUploads();
+  }, [loadUploads]);
+
+  async function uploadFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    setUploadError("");
+    setUploadMessage("");
+
+    try {
+      const form = new FormData();
+      for (const file of Array.from(files)) {
+        form.append("files", file);
+      }
+
+      const response = await fetch("/api/uploads", {
+        method: "POST",
+        body: form
+      });
+      const data = (await response.json()) as UploadResponse;
+
+      if (!response.ok || !data.ok) {
+        setUploadError(data.error || "Upload failed.");
+        return;
+      }
+
+      const savedCount = Array.isArray(data.saved) ? data.saved.length : 0;
+      setUploadMessage(savedCount > 0 ? `${savedCount} file(s) uploaded.` : "Upload complete.");
+      await loadUploads();
+    } catch {
+      setUploadError("Upload failed.");
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function deleteUpload(name: string) {
+    setDeletingUploadName(name);
+    setUploadError("");
+    setUploadMessage("");
+    try {
+      const response = await fetch(`/api/uploads/${encodeURIComponent(name)}`, {
+        method: "DELETE"
+      });
+      const data = (await response.json()) as UploadResponse;
+      if (!response.ok || !data.ok) {
+        setUploadError(data.error || "Delete failed.");
+        return;
+      }
+      setUploadMessage(`Deleted ${name}.`);
+      await loadUploads();
+    } catch {
+      setUploadError("Delete failed.");
+    } finally {
+      setDeletingUploadName("");
+    }
+  }
+
   return (
     <main
       ref={mainRef}
       style={
         {
           "--skills-width": `${skillsWidth}px`,
-          "--viz-width": `${vizWidth}px`
+          "--viz-width": `${vizWidth}px`,
+          "--left-top-height": `${leftTopHeight}px`,
+          "--right-top-height": `${rightTopHeight}px`
         } as CSSProperties
       }
     >
-      <section className="panel">
-        <div className="panel-header">
-          <div className="panel-title">Skills</div>
-          <span className="tag">{skills.length} loaded</span>
-        </div>
-        <div className="panel-body">
-          <input
-            className="input"
-            placeholder="Search skills"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredSkills.map((skill) => (
-              <div
-                key={skill.slug}
-                className="skill-item"
-                onClick={() => openSkill(skill.slug)}
-              >
-                <div className="skill-name">{skill.name}</div>
-                <div className="skill-desc">{skill.description || "No description"}</div>
+      <section className="left-stack">
+        <div className="left-split" ref={leftSplitRef}>
+          <section className="panel">
+            <div className="panel-header">
+              <div className="panel-title">Data</div>
+              <span className="tag">/mnt/data/uploads</span>
+            </div>
+            <div className="panel-body">
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <button
+                  className="button"
+                  onClick={() => uploadInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  {isUploading ? "Uploading..." : "Upload +"}
+                </button>
+                <button className="button ghost" onClick={() => void refreshUploads()} disabled={isLoadingUploads}>
+                  {isLoadingUploads ? "Refreshing..." : "Refresh"}
+                </button>
               </div>
-            ))}
-          </div>
+              <div
+                className={`dropzone ${isDragOverUploads ? "active" : ""}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDragOverUploads(true);
+                }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setIsDragOverUploads(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setIsDragOverUploads(false);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setIsDragOverUploads(false);
+                  void uploadFiles(event.dataTransfer.files);
+                }}
+                onClick={() => uploadInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    uploadInputRef.current?.click();
+                  }
+                }}
+              >
+                Drag and drop files here, or click to browse.
+              </div>
+              <input
+                ref={uploadInputRef}
+                type="file"
+                multiple
+                style={{ display: "none" }}
+                onChange={(event) => {
+                  void uploadFiles(event.target.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+
+              {uploadMessage && (
+                <div className="chat-bubble tool" style={{ marginBottom: 8 }}>
+                  {uploadMessage}
+                </div>
+              )}
+              {uploadError && (
+                <div className="chat-bubble" style={{ marginBottom: 8 }}>
+                  <div className="error">{uploadError}</div>
+                </div>
+              )}
+
+              <div className="upload-list">
+                {uploads.length === 0 && (
+                  <div className="chat-bubble">
+                    {isLoadingUploads ? "Loading uploads..." : "No uploaded files yet."}
+                  </div>
+                )}
+                {uploads.map((file) => (
+                  <div key={file.name} className="upload-item">
+                    <div className="upload-name">{file.name}</div>
+                    <div className="upload-meta">
+                      {(file.size / 1024).toFixed(1)} KB - {new Date(file.modifiedAt).toLocaleString()}
+                    </div>
+                    <div className="upload-actions">
+                      <a
+                        className="button ghost button-xs"
+                        href={`/api/uploads/${encodeURIComponent(file.name)}`}
+                        download={file.name}
+                      >
+                        Download
+                      </a>
+                      <button
+                        className="button ghost button-xs"
+                        onClick={() => void deleteUpload(file.name)}
+                        disabled={deletingUploadName === file.name}
+                      >
+                        {deletingUploadName === file.name ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+          <div
+            className="stack-resizer"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize left stack"
+            onPointerDown={() => setActiveRowResizer("left")}
+          />
+
+          <section className="panel">
+            <div className="panel-header">
+              <div className="panel-title">Skills</div>
+              <span className="tag">{skills.length} loaded</span>
+            </div>
+            <div className="panel-body">
+              <input
+                className="input"
+                placeholder="Search skills"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                {filteredSkills.map((skill) => (
+                  <div
+                    key={skill.slug}
+                    className="skill-item"
+                    onClick={() => openSkill(skill.slug)}
+                  >
+                    <div className="skill-name">{skill.name}</div>
+                    <div className="skill-desc">{skill.description || "No description"}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -340,15 +612,27 @@ export default function HomePage() {
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize skills panel"
-        onPointerDown={() => setActiveResizer("left")}
+        onPointerDown={() => setActiveColumnResizer("left")}
       />
 
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
           <div className="panel-title">Console</div>
-          <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
-            Analyze salt…
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
+              Analyze salt…
+            </button>
+            <label className="toggle-wrap">
+              <span className="toggle-label">Use LLM</span>
+              <input
+                className="toggle-input"
+                type="checkbox"
+                checked={useLlm}
+                onChange={(event) => setUseLlm(event.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
         </div>
         <div className="panel-body" style={{ flex: 1 }}>
           <div className="chat-list">
@@ -381,14 +665,6 @@ export default function HomePage() {
               }
             }}
           />
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6a6258" }}>
-            <input
-              type="checkbox"
-              checked={useLlm}
-              onChange={(event) => setUseLlm(event.target.checked)}
-            />
-            Use LLM
-          </label>
           <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
             {isChatLoading ? "Thinking..." : "Add"}
           </button>
@@ -400,7 +676,7 @@ export default function HomePage() {
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize output panel"
-        onPointerDown={() => setActiveResizer("right")}
+        onPointerDown={() => setActiveColumnResizer("right")}
       />
 
       <section className="panel">
@@ -408,7 +684,7 @@ export default function HomePage() {
           <div className="panel-title">Latest Output</div>
         </div>
         <div className="panel-body">
-          <div className="output-split">
+          <div className="output-split" ref={outputSplitRef}>
             <div className="output-top">
               {!latestResult && <div className="chat-bubble">No figure yet.</div>}
               {latestResult && latestResult.ui?.kind === "html" && (
@@ -418,6 +694,13 @@ export default function HomePage() {
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
               )}
             </div>
+            <div
+              className="stack-resizer"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize output stack"
+              onPointerDown={() => setActiveRowResizer("right")}
+            />
 
             <div className="output-bottom">
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
