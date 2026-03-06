@@ -36,6 +36,16 @@ type UploadResponse = {
   error?: string;
 };
 
+const MODEL_SERVICES = ["AmSC model services"];
+const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
+const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
+
+const PLACEHOLDER_DATASETS = [
+  "allenai/scientific_papers",
+  "OpenDFM/ScienceQA",
+  "bigbio/pubmed_qa"
+];
+
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
   const output = result.stdout ? result.stdout.slice(0, 240) : "";
@@ -48,11 +58,65 @@ function extractPlotPath(stdout: string): string | null {
   return match[1].trim();
 }
 
+function parseReferencesFromStdout(stdout: string): string[] {
+  if (!stdout) return [];
+  const refs: string[] = [];
+  const lines = stdout.split(/\r?\n/);
+  let inReferencesSection = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    if (/^references\b/i.test(trimmed)) {
+      inReferencesSection = true;
+      continue;
+    }
+
+    if (inReferencesSection) {
+      if (/^=+$/.test(trimmed)) continue;
+      const cleaned = trimmed
+        .replace(/^\[\d+\]\s*/, "")
+        .replace(/^[-*]\s*/, "")
+        .trim();
+      if (cleaned) refs.push(cleaned);
+      continue;
+    }
+
+    const inlineRef = trimmed.match(/\b(10\.\d{4,9}\/\S+|https?:\/\/\S+)/i);
+    if (inlineRef?.[1]) refs.push(inlineRef[1]);
+  }
+
+  return refs;
+}
+
+function extractReferences(result: ExecutionResult | null): string[] {
+  if (!result) return [];
+  const candidates: string[] = [];
+
+  if (Array.isArray(result.meta?.references)) {
+    for (const item of result.meta.references) {
+      if (typeof item === "string" && item.trim()) candidates.push(item.trim());
+    }
+  }
+
+  const dataRefs = (result.data as Record<string, unknown> | undefined)?.references;
+  if (Array.isArray(dataRefs)) {
+    for (const item of dataRefs) {
+      if (typeof item === "string" && item.trim()) candidates.push(item.trim());
+    }
+  }
+
+  candidates.push(...parseReferencesFromStdout(result.stdout || ""));
+  return Array.from(new Set(candidates));
+}
+
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const leftSplitRef = useRef<HTMLDivElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeColumnResizer, setActiveColumnResizer] = useState<"left" | "right" | null>(null);
   const [activeRowResizer, setActiveRowResizer] = useState<"left" | "right" | null>(null);
   const [skillsWidth, setSkillsWidth] = useState(300);
@@ -86,6 +150,14 @@ export default function HomePage() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [isDragOverUploads, setIsDragOverUploads] = useState(false);
   const [deletingUploadName, setDeletingUploadName] = useState("");
+  const [chatService] = useState(MODEL_SERVICES[0]);
+  const [chatFamily, setChatFamily] = useState(MODEL_FAMILIES[0]);
+  const [chatOpenModel, setChatOpenModel] = useState(OPEN_MODELS[0]);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
+  const [isServiceExpanded, setIsServiceExpanded] = useState(false);
+  const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
+  const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
+  const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
 
   useEffect(() => {
     if (!activeColumnResizer) return;
@@ -179,6 +251,19 @@ export default function HomePage() {
       .then((data) => setSkills(Array.isArray(data) ? data : []))
       .catch(() => setSkills([]));
   }, []);
+
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const node = modelMenuRef.current;
+      if (!node) return;
+      if (!node.contains(event.target as Node)) {
+        setIsModelMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [isModelMenuOpen]);
 
   const filteredSkills = useMemo(() => {
     const term = filter.trim().toLowerCase();
@@ -472,15 +557,30 @@ export default function HomePage() {
             <div className="panel-body">
               <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
                 <button
-                  className="button"
+                  className="button button-sm"
                   onClick={() => uploadInputRef.current?.click()}
                   disabled={isUploading}
                 >
                   {isUploading ? "Uploading..." : "Upload +"}
                 </button>
-                <button className="button ghost" onClick={() => void refreshUploads()} disabled={isLoadingUploads}>
+                <button className="button ghost button-sm" onClick={() => void refreshUploads()} disabled={isLoadingUploads}>
                   {isLoadingUploads ? "Refreshing..." : "Refresh"}
                 </button>
+              </div>
+              <div className="catalog-row">
+                <label className="model-label catalog-label" htmlFor="data-model-select">AmSC Data Catalog</label>
+                <select
+                  id="data-model-select"
+                  className="input model-select model-select-full"
+                  value={dataModel}
+                  onChange={(event) => setDataModel(event.target.value)}
+                >
+                  {PLACEHOLDER_DATASETS.map((dataset) => (
+                    <option key={dataset} value={dataset}>
+                      {dataset}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div
                 className={`dropzone ${isDragOverUploads ? "active" : ""}`}
@@ -617,7 +717,84 @@ export default function HomePage() {
 
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
-          <div className="panel-title">Console</div>
+          <div className="panel-header-stack">
+            <div className="panel-title">Chat with</div>
+            <div className="model-cascade-menu" ref={modelMenuRef}>
+              <button
+                type="button"
+                className="input model-menu-trigger"
+                onClick={() => {
+                  setIsModelMenuOpen((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setIsServiceExpanded(true);
+                      setIsOpenModelsExpanded(chatFamily === "open models");
+                    }
+                    return next;
+                  });
+                }}
+              >
+                {chatService} / {chatFamily === "open models" ? chatOpenModel : chatFamily}
+              </button>
+
+              {isModelMenuOpen && (
+                <div className="model-menu level1">
+                  <button
+                    type="button"
+                    className="model-menu-item has-children"
+                    onMouseEnter={() => setIsServiceExpanded(true)}
+                    onClick={() => setIsServiceExpanded((prev) => !prev)}
+                  >
+                    {chatService}
+                  </button>
+
+                  {isServiceExpanded && (
+                    <div className="model-menu level2">
+                      {MODEL_FAMILIES.map((family) => (
+                        <button
+                          type="button"
+                          key={family}
+                          className={`model-menu-item ${family === "open models" ? "has-children" : ""}`}
+                          onMouseEnter={() => setIsOpenModelsExpanded(family === "open models")}
+                          onClick={() => {
+                            setChatFamily(family);
+                            if (family !== "open models") {
+                              setIsModelMenuOpen(false);
+                              setIsOpenModelsExpanded(false);
+                            } else {
+                              setIsOpenModelsExpanded(true);
+                            }
+                          }}
+                        >
+                          {family}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {isServiceExpanded && isOpenModelsExpanded && (
+                    <div className="model-menu level3">
+                      {OPEN_MODELS.map((model) => (
+                        <button
+                          type="button"
+                          key={model}
+                          className="model-menu-item"
+                          onClick={() => {
+                            setChatFamily("open models");
+                            setChatOpenModel(model);
+                            setIsModelMenuOpen(false);
+                            setIsOpenModelsExpanded(false);
+                          }}
+                        >
+                          {model}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
               Analyze salt…
@@ -656,7 +833,7 @@ export default function HomePage() {
         <div className="chat-input-row">
           <input
             className="input"
-            placeholder="Type a note for your run..."
+            placeholder="Type your prompt and press Enter..."
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -666,7 +843,7 @@ export default function HomePage() {
             }}
           />
           <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
-            {isChatLoading ? "Thinking..." : "Add"}
+            {isChatLoading ? "Thinking..." : "⏎"}
           </button>
         </div>
       </section>
@@ -692,6 +869,18 @@ export default function HomePage() {
               )}
               {latestResult && latestResult.ui?.kind !== "html" && (
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
+              )}
+              {latestReferences.length > 0 && (
+                <details className="reference-box" open>
+                  <summary>References ({latestReferences.length})</summary>
+                  <div className="reference-list">
+                    {latestReferences.map((ref, index) => (
+                      <div key={`${ref}-${index}`} className="reference-item">
+                        [{index + 1}] {ref}
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
             </div>
             <div
