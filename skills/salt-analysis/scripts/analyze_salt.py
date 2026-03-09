@@ -107,11 +107,20 @@ class SaltTPAnalyzer:
                 print(f"    Count: {vals['count']}")
                 print(f"    Range: {vals['min']:.2f} - {vals['max']:.2f}")
     
-    def print_single_component(self, salt_data):
-        """Print all TP values for single component salt"""
+    def print_single_component(self, salt_name, salt_data):
+        """Print all TP values and create a bar chart for single component salt"""
         print(f"\n{'='*60}")
         print("Thermophysical Properties")
         print(f"{'='*60}")
+        
+        # Collect scalar properties for plotting
+        prop_names = []
+        prop_values = []
+        prop_units = {
+            'melt': 'K', 'boil': 'K', 'density': 'g/cm³',
+            'viscosity': 'Pa·s', 'heat_capacity': 'J/(mol·K)',
+            'thermal_conductivity': 'W/(m·K)', 'molecular_weight': 'g/mol',
+        }
         
         for comp, data in salt_data['evaluated'].items():
             if comp == 'molecular_weight':
@@ -122,6 +131,38 @@ class SaltTPAnalyzer:
                     print(f"\n  {prop.upper()}:")
                     for key, val in prop_data.items():
                         print(f"    {key}: {val}")
+                    # Collect scalar values for the chart
+                    if 'value' in prop_data and isinstance(prop_data['value'], (int, float)):
+                        prop_names.append(prop)
+                        prop_values.append(prop_data['value'])
+        
+        if not prop_names:
+            print("No scalar properties available for plotting.")
+            return
+        
+        # Create a summary figure with subplots
+        fig, axes = plt.subplots(1, len(prop_names), figsize=(4 * len(prop_names), 5))
+        if len(prop_names) == 1:
+            axes = [axes]
+        
+        colors = ['#2196F3', '#FF5722', '#4CAF50', '#FFC107', '#9C27B0', '#00BCD4']
+        
+        for idx, (name, value) in enumerate(zip(prop_names, prop_values)):
+            ax = axes[idx]
+            color = colors[idx % len(colors)]
+            ax.bar([name], [value], color=color, width=0.5, edgecolor='white', linewidth=2)
+            ax.set_ylabel(prop_units.get(name, ''), fontsize=11)
+            ax.set_title(name.replace('_', ' ').title(), fontsize=12, fontweight='bold')
+            ax.tick_params(axis='x', labelbottom=False)
+            # Add value label on the bar
+            ax.text(0, value, f'  {value:.1f}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+            ax.set_xlim(-0.5, 0.5)
+            ax.grid(axis='y', alpha=0.3)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+        
+        fig.suptitle(f'Thermophysical Properties — {salt_name}', fontsize=14, fontweight='bold', y=1.02)
+        plt.tight_layout()
     
     def plot_binary_melt(self, salt_name, salt_data):
         """Plot melting temperature vs composition for binary salt"""
@@ -325,7 +366,7 @@ class SaltTPAnalyzer:
         
         # Handle based on number of components
         if num_components == 1:
-            self.print_single_component(salt_data)
+            self.print_single_component(salt_name, salt_data)
         elif num_components == 2:
             self.plot_binary_melt(salt_name, salt_data)
         elif num_components == 3:
@@ -335,8 +376,11 @@ class SaltTPAnalyzer:
     
         dest = self.output / f"{salt_name}.png"
         dest.unlink(missing_ok=True)
-        plt.savefig(dest)
-        print(f"Plot saved to {dest}")
+        if plt.get_fignums():
+            plt.savefig(dest, bbox_inches='tight')
+            print(f"Plot saved to {dest}")
+        else:
+            print(f"No plot generated for {salt_name} (no plottable data found).")
 
         # Print references
         references = self.collect_references(salt_data)

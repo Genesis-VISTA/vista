@@ -1,33 +1,56 @@
 ---
 name: salt-analysis
-description: Analyze molten salt thermophysical properties from the MSTDB-TP database. Supports phase diagram plotting, statistical queries (counts, extremes, comparisons), reference extraction, and custom property visualization for binary, ternary, and quaternary salt systems.
+description: Analyze molten salt thermophysical properties from the MSTDB-TP database. Two scripts are available — analyze_salt.py for property statistics and raw data plots, and plot_phase_diagram.py for proper liquidus phase diagrams with spline-fitted curves, eutectic identification, and labeled phase regions.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 license: Proprietary
 ---
 
 # Salt Analysis Skill
 
-## Quick Start — Phase Diagram
-Execute `analyze_salt.py` to generate a phase diagram for a salt. Do NOT read the script or database files — just execute.
+## Scripts
+
+### 1. plot_phase_diagram.py — Liquidus Phase Diagrams (PREFERRED for phase diagram requests)
+Generates proper liquidus phase diagrams with spline-fitted curves, eutectic/minimum identification, labeled phase regions, pure-component endpoint melting points, and uncertainty bands.
+
+```bash
+MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py --salt <SALT_NAME> --output-dir /mnt/data/output/salt-plots
+```
+
+What it produces:
+- **Binary salts**: Liquidus curve (cubic spline), eutectic point marked, "Liquid", "Liquid + Solid A", "Liquid + Solid B" region labels, pure-component endpoint annotations, uncertainty band
+- **Ternary salts**: Isothermal liquidus contours on a ternary triangle, eutectic valley minimum marked, endpoint melting temperatures annotated
+- **Quaternary salts**: Four faceted ternary projections with contours
+
+Use this when the user asks for: "phase diagram", "liquidus diagram", "eutectic point", "phase regions", "melting curve"
+
+### 2. analyze_salt.py — Property Statistics and Raw Data Plots
+Prints statistics (measurement counts, property ranges) and generates raw melting-temperature-vs-composition plots. Also prints all references and DOIs.
 
 ```bash
 MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt <SALT_NAME> --output-dir /mnt/data/output/salt-plots
 ```
 
-Example:
-```bash
-MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl --output-dir /mnt/data/output/salt-plots
-```
+Use this when the user asks for: "statistics", "properties", "references", "how many measurements", or a simple data overview
 
-This generates a plot and prints statistics and references. The plot is automatically displayed when the output contains "Plot saved to ...".
+## When to Use Which Script
+
+| User asks for | Script to use |
+|---|---|
+| "phase diagram" | plot_phase_diagram.py |
+| "liquidus curve" | plot_phase_diagram.py |
+| "eutectic point/temperature" | plot_phase_diagram.py |
+| "show me the melting data" | analyze_salt.py |
+| "statistics for salt X" | analyze_salt.py |
+| "references for salt X" | analyze_salt.py |
+| "properties of salt X" | analyze_salt.py |
+| "plot salt X" (ambiguous) | plot_phase_diagram.py (prefer phase diagram) |
 
 ## Database Queries
+For database-wide statistical queries, write a short Python script via `run_bash`.
 The database is at: `/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json`
 
-For statistical queries, write a short Python script with `run_bash`:
-
-### Count salts by element (e.g., fluoride salts)
+### Count salts by element
 ```python
 python3 -c "
 import json
@@ -40,7 +63,7 @@ for s in fluoride: print(f'  {s}')
 "
 ```
 
-### Find most studied salt (most compositions)
+### Find most studied salt
 ```python
 python3 -c "
 import json
@@ -53,7 +76,7 @@ for salt, count in top: print(f'{salt}: {count} compositions')
 "
 ```
 
-### Find highest value for a property
+### Find highest property value
 ```python
 python3 -c "
 import json
@@ -73,62 +96,8 @@ print(f'Salt: {best_salt}, Composition: {best_comp}')
 "
 ```
 
-### Extract references for a salt
-```python
-python3 -c "
-import json
-with open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json') as f:
-    data = json.load(f)
-salt_data = data['MSTDBTP']['evaluated'].get('AlCl3-KCl', {})
-refs = set()
-for comp, props in salt_data.items():
-    if comp == 'molecular_weight': continue
-    for prop, pdata in props.items():
-        if isinstance(pdata, dict):
-            if 'reference' in pdata: refs.add(pdata['reference'])
-            if 'DOI' in pdata: refs.add(pdata['DOI'])
-for i, ref in enumerate(sorted(refs), 1): print(f'[{i}] {ref}')
-"
-```
-
-## Custom Plotting
-For zoom, different properties, or custom ranges, write a matplotlib script:
-
-```python
-MPLBACKEND=Agg python3 -c "
-import json, matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-with open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json') as f:
-    data = json.load(f)
-
-salt_data = data['MSTDBTP']['evaluated']['AlCl3-KCl']
-comps, vals = [], []
-for comp, props in salt_data.items():
-    if comp == 'molecular_weight': continue
-    comp_val = float(comp.split('-')[0])
-    if 'PROPERTY' in props and isinstance(props['PROPERTY'], dict) and 'value' in props['PROPERTY']:
-        comps.append(comp_val)
-        vals.append(props['PROPERTY']['value'])
-
-plt.figure(figsize=(10,6))
-plt.plot(comps, vals, 'o-')
-plt.xlim(XMIN, XMAX)  # zoom range
-plt.xlabel('Mole Fraction')
-plt.ylabel('Property Value')
-plt.title('Custom Plot')
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.savefig('/mnt/data/output/salt-plots/custom_plot.png')
-print('Plot saved to /mnt/data/output/salt-plots/custom_plot.png')
-"
-```
-
-Replace PROPERTY, XMIN, XMAX with actual values based on the user's request.
-
 ## Available Properties
-Common properties in the database: `melt`, `boil`, `density`, `viscosity`, `heat_capacity`, `thermal_conductivity`, `molecular_weight`
+`melt`, `boil`, `density`, `viscosity`, `heat_capacity`, `thermal_conductivity`, `surface_tension`, `molecular_weight`
 
 ## Output
 - Plots go to `/mnt/data/output/salt-plots/`
