@@ -344,46 +344,23 @@ export default function HomePage() {
 
       // Process tool calls from the agent
       if (Array.isArray(data.toolCalls)) {
+        // Find the last tool call that produced displayable HTML (plot/image)
         for (const tc of data.toolCalls) {
-          // If a display_file call returned HTML, show it in the output panel
-          if (tc.tool === "display_file" && tc.displayHtml) {
+          if (tc.displayHtml) {
             setLatestResult({
               ok: true,
               stdout: tc.stdout || "",
               stderr: tc.stderr || "",
               artifacts: [],
-              meta: { tool: "display_file" },
+              meta: {
+                tool: tc.tool,
+                analysisSummary: tc.plotPath
+                  ? { plotPath: tc.plotPath }
+                  : undefined,
+                references: parseReferencesFromStdout(tc.stdout || "")
+              },
               ui: { kind: "html", html: tc.displayHtml }
             });
-          }
-          // If a bash call produced a plot, try to display it
-          else if (tc.tool === "run_bash" && tc.plotPath) {
-            try {
-              const previewResponse = await fetch("/api/mcp/call", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ tool: "display_file", args: { uri: tc.plotPath } })
-              });
-              const previewResult = (await previewResponse.json()) as ExecutionResult;
-              if (previewResult.ui?.kind === "html") {
-                setLatestResult({
-                  ok: true,
-                  stdout: tc.stdout || "",
-                  stderr: tc.stderr || "",
-                  artifacts: [],
-                  meta: {
-                    tool: "run_bash",
-                    analysisSummary: {
-                      plotPath: tc.plotPath
-                    },
-                    references: parseReferencesFromStdout(tc.stdout || "")
-                  },
-                  ui: previewResult.ui
-                });
-              }
-            } catch {
-              // If display_file fails, still show the text result
-            }
           }
         }
 

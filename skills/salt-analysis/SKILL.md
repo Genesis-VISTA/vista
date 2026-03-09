@@ -20,7 +20,7 @@ Example:
 MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl --output-dir /mnt/data/output/salt-plots
 ```
 
-This generates a plot and prints statistics and references. After running, use `display_file` with the printed plot path to show it.
+This generates a plot and prints statistics and references. The plot is automatically displayed when the output contains "Plot saved to ...".
 
 ## Database Queries
 The database is at: `/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json`
@@ -133,4 +133,4 @@ Common properties in the database: `melt`, `boil`, `density`, `viscosity`, `heat
 ## Output
 - Plots go to `/mnt/data/output/salt-plots/`
 - Always use `MPLBACKEND=Agg` before matplotlib
-- Always call `display_file` after generating a plot
+- Always print "Plot saved to <path>" so the UI can auto-display the image
