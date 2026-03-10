@@ -31,8 +31,25 @@ type ChatResponse = {
   error?: string;
 };
 
+/** Shape returned by MCP tools/list */
+type McpToolDef = {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+};
+
+/** OpenAI function-calling tool format */
+type OpenAiTool = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+};
+
 /* ------------------------------------------------------------------ */
-/*  Logging helper                                                     */
+/*  Logging                                                            */
 /* ------------------------------------------------------------------ */
 
 function log(
@@ -102,14 +119,10 @@ function getAzureConfig(): {
   headers: Record<string, string>;
   model: string;
 } {
-  const azureEndpoint = (process.env.AZURE_OPENAI_ENDPOINT || "").replace(
-    /\/+$/,
-    ""
-  );
+  const azureEndpoint = (process.env.AZURE_OPENAI_ENDPOINT || "").replace(/\/+$/, "");
   const azureKey = process.env.AZURE_OPENAI_API_KEY || "";
   const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME || "";
-  const azureApiVersion =
-    process.env.AZURE_OPENAI_API_VERSION || "2025-01-01-preview";
+  const azureApiVersion = process.env.AZURE_OPENAI_API_VERSION || "2025-01-01-preview";
 
   if (azureEndpoint && azureKey && azureDeployment) {
     return {
@@ -119,27 +132,15 @@ function getAzureConfig(): {
     };
   }
 
-  // Fallback: generic OpenAI-compatible endpoint
-  const chatUrlOverride = (process.env.OPENAI_CHAT_URL || "")
-    .trim()
-    .replace(/\/+$/, "");
-  const baseUrl = (
-    process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
-  ).replace(/\/+$/, "");
-  const apiKey = (process.env.OPENAI_API_KEY || "").replace(
-    /^["'\s]+|["'\s]+$/g,
-    ""
-  );
+  const chatUrlOverride = (process.env.OPENAI_CHAT_URL || "").trim().replace(/\/+$/, "");
+  const baseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const apiKey = (process.env.OPENAI_API_KEY || "").replace(/^["'\s]+|["'\s]+$/g, "");
   const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
   const authMode = (process.env.OPENAI_AUTH_MODE || "bearer").toLowerCase();
 
   let url: string;
   if (chatUrlOverride) {
-    if (
-      authMode === "api_key" &&
-      !chatUrlOverride.includes("/openai/") &&
-      !chatUrlOverride.includes("/chat/completions")
-    ) {
+    if (authMode === "api_key" && !chatUrlOverride.includes("/openai/") && !chatUrlOverride.includes("/chat/completions")) {
       url = `${chatUrlOverride}/openai/deployments/${model}/chat/completions?api-version=${azureApiVersion}`;
     } else if (chatUrlOverride.includes("/chat/completions")) {
       url = chatUrlOverride;
@@ -161,184 +162,144 @@ function getAzureConfig(): {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Web search implementation                                          */
+/*  MCP tool discovery                                                 */
 /* ------------------------------------------------------------------ */
 
 /**
- * Execute a real web search using Bing Search API (Azure) or SerpAPI.
+ * Discover tools from the MCP server via JSON-RPC tools/list,
+ * then convert them to OpenAI function-calling format.
  *
- * Required env vars (pick one):
- *   BING_SEARCH_API_KEY              – Azure Bing Search v7 key
- *   BING_SEARCH_ENDPOINT             – optional, defaults to https://api.bing.microsoft.com
- *   SERP_API_KEY                     – SerpAPI key (alternative)
- *
- * If neither is set, returns a fallback message asking the LLM to use
- * its own knowledge.
+ * The MCP server exposes: bash, create_file, view, display_file, web_search.
+ * We expose a curated subset to the LLM (bash as "run_bash", web_search).
  */
-async function executeWebSearch(query: string): Promise<string> {
-  const bingKey = process.env.BING_SEARCH_API_KEY || "";
-  const bingEndpoint = (
-    process.env.BING_SEARCH_ENDPOINT || "https://api.bing.microsoft.com"
-  ).replace(/\/+$/, "");
-  const serpKey = process.env.SERP_API_KEY || "";
 
-  // ---- Bing Search API v7 ----
-  if (bingKey) {
-    try {
-      const url = `${bingEndpoint}/v7.0/search?q=${encodeURIComponent(query)}&count=5&responseFilter=Webpages`;
-      log("INFO", "WebSearch:Bing", `Searching Bing`, { query, url });
+// Which MCP tools to expose to the LLM, and how to rename them
+const TOOL_EXPOSE_MAP: Record<string, string> = {
+  bash: "run_bash",
+  web_search: "web_search",
+};
 
-      const resp = await fetch(url, {
-        method: "GET",
-        headers: { "Ocp-Apim-Subscription-Key": bingKey },
-      });
+// Description overrides — augment MCP descriptions with agent-specific context
+const TOOL_DESCRIPTION_OVERRIDES: Record<string, string> = {
+  run_bash:
+    "Run a bash command inside the MCP sandbox. " +
+    "ALWAYS use this tool — never answer data questions from memory. " +
+    "The sandbox has Python 3, numpy, matplotlib, and scipy. " +
+    "Skills are at /mnt/skills/, output goes to /mnt/data/output/. " +
+    "The salt database JSON is at /mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json. " +
+    "The analysis script is at /mnt/skills/salt-analysis/scripts/analyze_salt.py. " +
+    "The phase diagram script is at /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py. " +
+    "When a plot is saved, it is automatically displayed to the user.",
+};
 
-      if (!resp.ok) {
-        const errText = await resp.text();
-        log("ERROR", "WebSearch:Bing", `Bing API error (${resp.status})`, {
-          error: errText.slice(0, 300),
-        });
-        return `Web search failed (Bing HTTP ${resp.status}). Answer using your scientific knowledge about: "${query}"`;
-      }
-
-      const data = await resp.json();
-      const pages =
-        (data as Record<string, unknown>).webPages as
-          | Record<string, unknown>
-          | undefined;
-      const results = (pages?.value as Array<Record<string, unknown>>) || [];
-
-      if (results.length === 0) {
-        log("INFO", "WebSearch:Bing", `No results for query`, { query });
-        return `No web results found for "${query}". Answer using your scientific knowledge.`;
-      }
-
-      const formatted = results
-        .slice(0, 5)
-        .map((r, i) => {
-          const name = r.name || "Untitled";
-          const snippet = r.snippet || "";
-          const url = r.url || "";
-          return `[${i + 1}] ${name}\n    ${snippet}\n    URL: ${url}`;
-        })
-        .join("\n\n");
-
-      log("INFO", "WebSearch:Bing", `Got ${results.length} results`, {
-        query,
-      });
-      return `Web search results for "${query}":\n\n${formatted}\n\nUse these results to inform your answer. Cite sources when relevant.`;
-    } catch (err) {
-      log("ERROR", "WebSearch:Bing", `Bing search exception`, {
-        error: err instanceof Error ? err.message : "Unknown",
-      });
-      return `Web search failed. Answer using your scientific knowledge about: "${query}"`;
-    }
-  }
-
-  // ---- SerpAPI fallback ----
-  if (serpKey) {
-    try {
-      const url = `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${serpKey}&num=5`;
-      log("INFO", "WebSearch:Serp", `Searching SerpAPI`, { query });
-
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        log("ERROR", "WebSearch:Serp", `SerpAPI error (${resp.status})`);
-        return `Web search failed (SerpAPI HTTP ${resp.status}). Answer using your scientific knowledge about: "${query}"`;
-      }
-
-      const data = (await resp.json()) as Record<string, unknown>;
-      const organic = (data.organic_results as Array<Record<string, unknown>>) || [];
-
-      if (organic.length === 0) {
-        return `No web results found for "${query}". Answer using your scientific knowledge.`;
-      }
-
-      const formatted = organic
-        .slice(0, 5)
-        .map((r, i) => {
-          const title = r.title || "Untitled";
-          const snippet = r.snippet || "";
-          const link = r.link || "";
-          return `[${i + 1}] ${title}\n    ${snippet}\n    URL: ${link}`;
-        })
-        .join("\n\n");
-
-      log("INFO", "WebSearch:Serp", `Got ${organic.length} results`, { query });
-      return `Web search results for "${query}":\n\n${formatted}\n\nUse these results to inform your answer. Cite sources when relevant.`;
-    } catch (err) {
-      log("ERROR", "WebSearch:Serp", `SerpAPI exception`, {
-        error: err instanceof Error ? err.message : "Unknown",
-      });
-      return `Web search failed. Answer using your scientific knowledge about: "${query}"`;
-    }
-  }
-
-  // ---- No search API configured — graceful fallback ----
-  log("WARN", "WebSearch", `No search API key configured (set BING_SEARCH_API_KEY or SERP_API_KEY). Falling back to LLM knowledge.`);
-  return (
-    `No web search API is configured. Answer the following question using your scientific knowledge:\n"${query}"\n\n` +
-    `To enable live web search, set BING_SEARCH_API_KEY (Azure Bing Search v7) or SERP_API_KEY (SerpAPI) in your .env file.`
-  );
+// Reverse map: OpenAI tool name → MCP tool name
+const TOOL_REVERSE_MAP: Record<string, string> = {};
+for (const [mcpName, openaiName] of Object.entries(TOOL_EXPOSE_MAP)) {
+  TOOL_REVERSE_MAP[openaiName] = mcpName;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Tool definitions (OpenAI function-calling format)                  */
-/* ------------------------------------------------------------------ */
+let cachedTools: OpenAiTool[] | null = null;
+let cachedToolsTime = 0;
+const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
 
-const TOOLS = [
-  {
-    type: "function" as const,
-    function: {
-      name: "run_bash",
-      description:
-        "Run a bash command inside the MCP sandbox. " +
-        "ALWAYS use this tool — never answer data questions from memory. " +
-        "The sandbox has Python 3, numpy, and matplotlib. " +
-        "Skills are at /mnt/skills/, output goes to /mnt/data/output/. " +
-        "The salt database JSON is at /mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json. " +
-        "The analysis script is at /mnt/skills/salt-analysis/scripts/analyze_salt.py. " +
-        "The phase diagram script is at /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py. " +
-        "When a plot is saved, it is automatically displayed to the user.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          command: {
-            type: "string",
-            description: "The bash command to execute",
-          },
+async function discoverTools(): Promise<OpenAiTool[]> {
+  const now = Date.now();
+  if (cachedTools && now - cachedToolsTime < TOOL_CACHE_TTL_MS) {
+    return cachedTools;
+  }
+
+  log("INFO", "ToolDiscovery", "Fetching tools from MCP server via tools/list");
+
+  try {
+    const { response, json } = await callMcpRpc("tools/list", {}, 5000);
+    if (!response.ok) {
+      log("WARN", "ToolDiscovery", `MCP tools/list failed (HTTP ${response.status})`);
+      return cachedTools ?? buildFallbackTools();
+    }
+
+    const envelope = json as Record<string, unknown> | null;
+    const result = (envelope?.result ?? envelope) as Record<string, unknown> | null;
+    const rawTools = Array.isArray(result?.tools) ? result.tools : [];
+
+    const mcpTools: McpToolDef[] = rawTools
+      .filter((t: unknown) => t && typeof t === "object")
+      .map((t: unknown) => {
+        const obj = t as Record<string, unknown>;
+        return {
+          name: typeof obj.name === "string" ? obj.name : "",
+          description: typeof obj.description === "string" ? obj.description : undefined,
+          inputSchema: typeof obj.inputSchema === "object" && obj.inputSchema ? obj.inputSchema as Record<string, unknown> : undefined,
+        };
+      });
+
+    log("INFO", "ToolDiscovery", `Discovered ${mcpTools.length} MCP tools`, {
+      names: mcpTools.map((t) => t.name),
+    });
+
+    // Convert MCP tools → OpenAI function-calling format, filtering to exposed set
+    const openaiTools: OpenAiTool[] = [];
+    for (const mcp of mcpTools) {
+      const exposedName = TOOL_EXPOSE_MAP[mcp.name];
+      if (!exposedName) continue; // not exposed to the LLM
+
+      const description = TOOL_DESCRIPTION_OVERRIDES[exposedName] ?? mcp.description ?? "";
+      const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
+
+      openaiTools.push({
+        type: "function",
+        function: { name: exposedName, description, parameters },
+      });
+    }
+
+    if (openaiTools.length === 0) {
+      log("WARN", "ToolDiscovery", "No matching tools after filtering — using fallback");
+      cachedTools = buildFallbackTools();
+    } else {
+      cachedTools = openaiTools;
+    }
+
+    cachedToolsTime = now;
+    log("INFO", "ToolDiscovery", `Exposing ${cachedTools.length} tools to LLM`, {
+      names: cachedTools.map((t) => t.function.name),
+    });
+    return cachedTools;
+  } catch (err) {
+    log("ERROR", "ToolDiscovery", `tools/list failed: ${err instanceof Error ? err.message : "Unknown"}`);
+    return cachedTools ?? buildFallbackTools();
+  }
+}
+
+/** Hardcoded fallback if MCP discovery fails */
+function buildFallbackTools(): OpenAiTool[] {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "run_bash",
+        description: TOOL_DESCRIPTION_OVERRIDES.run_bash,
+        parameters: {
+          type: "object",
+          properties: { command: { type: "string", description: "The bash command to execute" } },
+          required: ["command"],
         },
-        required: ["command"],
       },
     },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "web_search",
-      description:
-        "Search the web for scientific literature, research groups, recent studies, " +
-        "and trends related to molten salts or nuclear energy topics. " +
-        "If a web search API key is configured, returns real search results with titles, snippets, and URLs. " +
-        "If no API key is available, you should answer using your own scientific knowledge. " +
-        "Use this AFTER querying the local database (when relevant) to supplement " +
-        "with external research. Good for: finding research groups, recent papers, " +
-        "emerging trends, or answering questions beyond the database scope.",
-      parameters: {
-        type: "object" as const,
-        properties: {
-          query: {
-            type: "string",
-            description:
-              "A specific, well-formed search query. Use scientific terms. " +
-              'Example: "FLiBe molten salt viscosity measurement recent studies"',
-          },
+    {
+      type: "function",
+      function: {
+        name: "web_search",
+        description:
+          "Search the web for scientific literature, research groups, recent studies, and trends. " +
+          "Use AFTER querying the local database when relevant.",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string", description: "The search query" } },
+          required: ["query"],
         },
-        required: ["query"],
       },
     },
-  },
-];
+  ];
+}
 
 /* ------------------------------------------------------------------ */
 /*  System prompt                                                      */
@@ -347,12 +308,7 @@ const TOOLS = [
 function buildSystemPrompt(): string {
   const skillsPrompt = toPrompt(findSkills([config.skillsDir]));
 
-  const dbPath = join(
-    config.skillsDir,
-    "salt-analysis",
-    "assets",
-    "Molten_Salt_Thermophysical_Properties.json"
-  );
+  const dbPath = join(config.skillsDir, "salt-analysis", "assets", "Molten_Salt_Thermophysical_Properties.json");
   let saltListSummary = "";
   try {
     const raw = readFileSync(dbPath, "utf8");
@@ -383,13 +339,13 @@ function buildSystemPrompt(): string {
     ``,
     `## Skill Scripts`,
     ``,
-    `### plot_phase_diagram.py — Liquidus Phase Diagrams (for "phase diagram" requests)`,
+    `### plot_phase_diagram.py — Liquidus Phase Diagrams`,
     `Location: /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py`,
     `Usage:  MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py --salt <SALT_NAME> --output-dir /mnt/data/output/salt-plots`,
     ``,
     `What it produces:`,
-    `- Binary: spline-fitted liquidus curve, eutectic point (green triangle), pure-component endpoint melting points, uncertainty band, labeled phase regions (Liquid / Liquid+Solid A / Liquid+Solid B / Solid A+Solid B)`,
-    `- Ternary: isothermal liquidus contours on a ternary triangle, eutectic valley minimum, endpoint temperatures`,
+    `- Binary: spline-fitted liquidus curve, eutectic point, pure-component endpoints, uncertainty band, labeled phase regions`,
+    `- Ternary: isothermal liquidus contours, eutectic valley minimum, endpoint temperatures`,
     `- Quaternary: four faceted ternary projections with contours`,
     ``,
     `Use when the user says: "phase diagram", "liquidus", "eutectic", "phase regions", "melting curve"`,
@@ -398,12 +354,7 @@ function buildSystemPrompt(): string {
     `Location: /mnt/skills/salt-analysis/scripts/analyze_salt.py`,
     `Usage:  MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt <SALT_NAME> --output-dir /mnt/data/output/salt-plots`,
     ``,
-    `What it does:`,
-    `- Prints statistics: total measurements, compositions, property ranges`,
-    `- Generates raw melting-temperature-vs-composition plots (no phase labels, no spline, no eutectic detection)`,
-    `- Prints all references with DOIs`,
-    `- Saves plot to /mnt/data/output/salt-plots/<SALT_NAME>.png`,
-    ``,
+    `What it does: prints statistics, generates raw data plots, prints all references with DOIs`,
     `Use when the user says: "statistics", "properties", "references", "how many measurements", "data overview"`,
     ``,
     `## Database path and structure`,
@@ -411,22 +362,15 @@ function buildSystemPrompt(): string {
     `Structure: { "MSTDBTP": { "estimates": {...}, "evaluated": { "<salt>": { "<composition>": { "<property>": { ... } } } } } }`,
     ``,
     `### Property data formats`,
-    `Properties store data in TWO different formats depending on the property:`,
-    ``,
     `**Scalar properties (melt, boil):** have a "value" field with a single number.`,
     `  { "value": 1024.0, "abs_uncertainty": 5.0, "reference": "...", "DOI": "..." }`,
     ``,
     `**Temperature-dependent properties (viscosity, density, heat_capacity, thermal_conductivity, surface_tension):**`,
     `  have a "values" field containing Arrhenius/polynomial COEFFICIENTS, NOT direct measurements.`,
     `  { "values": [A, B], "range": [T_min, T_max], "pct_uncertainty": ..., "reference": "...", "DOI": "..." }`,
-    ``,
-    `  For viscosity: mu(T) = A * exp(B / T)  where A and B are the first two entries in "values".`,
-    `  For density:   rho(T) = A + B*T        where "values": [A, B] are polynomial coefficients.`,
-    `  Some entries have 3+ coefficients for higher-order fits.`,
-    `  "range": [T_min, T_max] gives the valid temperature range in Kelvin.`,
-    ``,
-    `  IMPORTANT: To compare viscosity across salts, compute mu(T) = values[0] * exp(values[1] / T)`,
-    `  at a reference temperature (e.g., T = 973 K). Do NOT compare the raw coefficient values directly.`,
+    `  For viscosity: mu(T) = A * exp(B / T). For density: rho(T) = A + B*T.`,
+    `  To compare viscosity across salts, compute mu(T) = values[0] * exp(values[1] / T)`,
+    `  at a reference temperature (e.g., T = 973 K). Do NOT compare raw coefficients directly.`,
     ``,
     `Available properties: melt, boil, density, viscosity, heat_capacity, thermal_conductivity, surface_tension, molecular_weight`,
     `Compositions: dash-separated mole fractions (e.g. "0.055-0.945").`,
@@ -435,115 +379,56 @@ function buildSystemPrompt(): string {
     ``,
     `### Type 1a: Phase diagram → use plot_phase_diagram.py`,
     `"Show me the phase diagram for BeF2-LiF" → run_bash: plot_phase_diagram.py --salt BeF2-LiF ...`,
-    `"Plot the phase diagram for AlCl3-KCl" → run_bash: plot_phase_diagram.py --salt AlCl3-KCl ...`,
     `"What is the eutectic point of KCl-MgCl2?" → run_bash: plot_phase_diagram.py --salt KCl-MgCl2 ...`,
     ``,
     `### Type 1b: Properties / statistics / references → use analyze_salt.py`,
     `"What are the properties of AlCl3-KCl?" → run_bash: analyze_salt.py --salt AlCl3-KCl ...`,
-    `"Where does the AlCl3-KCl data come from?" → run_bash: analyze_salt.py --salt AlCl3-KCl ... (prints refs)`,
-    `"Show me the data for UF3" → run_bash: analyze_salt.py --salt UF3 ...`,
+    `"Where does the data come from?" → run_bash: analyze_salt.py --salt <SALT> ... (prints refs)`,
     ``,
-    `### Type 1b: Database-wide statistics → Python script via run_bash`,
+    `### Type 1c: Database-wide statistics → Python script via run_bash`,
     `"How many fluoride salts?" → Python: count salts with "F" in name (exclude "Fe")`,
     `"Most studied salt?" → Python: find salt with most composition entries`,
     `"Which salt has highest melting temperature?" → Python: scan all melt values`,
     ``,
-    `### Type 1c: Custom plot (zoom, different property) → Python/matplotlib via run_bash`,
-    `These are follow-up requests that modify a previous plot. Write a custom Python script.`,
+    `### Type 1d: Custom plot (zoom, different property) → Python/matplotlib via run_bash`,
+    `"Zoom in to mole percentage around 0.5" → matplotlib with plt.xlim(0.4, 0.6)`,
+    `"What about thermal conductivity?" → extract thermal_conductivity and plot vs composition`,
+    `For follow-up queries, use the salt name from the conversation history.`,
     ``,
-    `"Zoom in to mole percentage around 0.5" → Write matplotlib script that:`,
-    `  1. Loads the JSON, extracts the same salt's melt data`,
-    `  2. Plots with plt.xlim(0.4, 0.6) to zoom in`,
-    `  3. Saves to /mnt/data/output/salt-plots/custom_zoom.png`,
-    `  4. Prints "Plot saved to /mnt/data/output/salt-plots/custom_zoom.png"`,
+    `### Type 2: Research trends — REQUIRES MULTI-STEP TOOL USE`,
+    `Step 1: Check local database with run_bash (if question mentions a salt/property)`,
+    `Step 2: Call web_search with a specific scientific query`,
+    `Step 3: Synthesize both sources. Cite DOIs from DB and URLs from web search.`,
     ``,
-    `"What about thermal conductivity?" → Write matplotlib script that:`,
-    `  1. Loads the JSON, extracts the same salt's thermal_conductivity data instead of melt`,
-    `  2. For each composition, reads props["thermal_conductivity"]["values"] (coefficient list) or props["thermal_conductivity"]["value"]`,
-    `  3. Plots thermal_conductivity vs composition`,
-    `  4. Saves to /mnt/data/output/salt-plots/custom_thermal_conductivity.png`,
-    `  5. Prints "Plot saved to /mnt/data/output/salt-plots/custom_thermal_conductivity.png"`,
-    ``,
-    `IMPORTANT: For follow-up queries, use the salt name from the conversation history (the previous turn).`,
-    `IMPORTANT: Always set MPLBACKEND=Agg and save to /mnt/data/output/salt-plots/.`,
-    ``,
-    `### Type 2: Research trends and external knowledge — REQUIRES MULTI-STEP TOOL USE`,
-    ``,
-    `These questions ask about research groups, literature trends, promising materials, or topics beyond the database.`,
-    `You MUST follow this multi-step workflow:`,
-    ``,
-    `**Step 1: Check the local database first (if the question mentions a specific salt or property).**`,
-    `Call run_bash with a Python script to check what data exists. Example:`,
-    `  python3 -c "import json; d=json.load(open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json')); e=d['MSTDBTP']['evaluated']; print('FLiBe' if 'BeF2-LiF' in e else 'Not in DB'); [print(f'  {k}: {len(v)} compositions') for k,v in e.items() if 'BeF2' in k or 'LiF' in k]"`,
-    ``,
-    `**Step 2: Search the web for external research.**`,
-    `Call web_search with a specific, scientific query. Examples:`,
-    `  "FLiBe molten salt viscosity research groups 2024"`,
-    `  "molten salt reactor tritium breeding ratio improvement methods"`,
-    `  "low viscosity fluoride salt candidates nuclear applications"`,
-    ``,
-    `Good queries are specific — include the salt name, property, and context (e.g., "nuclear", "MSR", "coolant").`,
-    `Bad queries are vague — avoid just "molten salt research" or "best salt".`,
-    ``,
-    `**Step 3: Synthesize both sources in your answer.**`,
-    `Combine what the database shows (compositions, property values, references) with what web search found (research groups, recent papers, trends).`,
-    `Always cite sources: DOIs from the database and URLs from web search.`,
-    ``,
-    `#### Type 2 examples:`,
-    ``,
-    `User: "Has any group studied FLiBe?"`,
-    `→ Step 1: run_bash — check if BeF2-LiF (FLiBe) exists in the database, list its properties and references`,
-    `→ Step 2: web_search — "FLiBe BeF2-LiF molten salt research groups studies"`,
-    `→ Step 3: Answer combining DB data (X compositions, Y properties measured, refs) with web results (groups at ORNL, MIT, etc.)`,
-    ``,
-    `User: "What is the most promising salt for better viscosity?"`,
-    `→ Step 1: run_bash — Python script to compute viscosity at a reference temperature and rank salts:`,
-    `  python3 -c "`,
-    `  import json, math`,
-    `  d=json.load(open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json'))`,
-    `  e=d['MSTDBTP']['evaluated']`,
-    `  T=973.0  # reference temperature in K`,
-    `  results=[]`,
-    `  for salt,comps in e.items():`,
-    `    for comp,props in comps.items():`,
-    `      v=props.get('viscosity')`,
-    `      if isinstance(v,dict) and isinstance(v.get('values'),list) and len(v['values'])>=2:`,
-    `        A,B=float(v['values'][0]),float(v['values'][1])`,
-    `        r=v.get('range',[0,9999])`,
-    `        if isinstance(r,list) and len(r)==2 and r[0]<=T<=r[1]:`,
-    `          try: mu=A*math.exp(B/T)`,
-    `          except: continue`,
-    `          if 0<mu<10: results.append((salt,comp,mu,v.get('DOI'),v.get('reference')))`,
-    `  results.sort(key=lambda x:x[2])`,
-    `  print(f'Salts ranked by viscosity at {T}K ({len(results)} entries):')`,
-    `  for i,(s,c,mu,doi,ref) in enumerate(results[:15],1): print(f'{i}. {s} ({c}): {mu:.4f} Pa·s  DOI:{doi}')`,
-    `  "`,
-    `→ Step 2: web_search — "low viscosity molten salt candidates nuclear reactor coolant"`,
-    `→ Step 3: Answer with DB rankings + literature perspective on promising candidates`,
-    ``,
-    `User: "How to improve the yield of tritium?"`,
-    `→ Step 1: (skip — this is a general nuclear engineering question, not a database query)`,
-    `→ Step 2: web_search — "tritium breeding ratio improvement molten salt reactor lithium enrichment"`,
-    `→ Step 3: Answer with web search findings about breeding blanket design, Li-6 enrichment, etc.`,
+    `For viscosity ranking, compute mu(T) = A*exp(B/T) at T=973K:`,
+    `  python3 -c "import json,math; d=json.load(open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json')); e=d['MSTDBTP']['evaluated']; results=[]; [results.append((s,c,A*math.exp(B/973),v.get('DOI'))) for s,comps in e.items() for c,props in comps.items() for v in [props.get('viscosity',{})] if isinstance(v,dict) and isinstance(v.get('values'),list) and len(v['values'])>=2 for A,B in [(float(v['values'][0]),float(v['values'][1]))] if isinstance(v.get('range'),list) and len(v['range'])==2 and v['range'][0]<=973<=v['range'][1] and 0<A*math.exp(B/973)<10]; results.sort(key=lambda x:x[2]); [print(f'{i}. {s} ({c}): {mu:.4f} Pa·s DOI:{doi}') for i,(s,c,mu,doi) in enumerate(results[:15],1)]"`,
     ``,
     `## Rules`,
     `- ALWAYS call run_bash — never answer data questions without running code first.`,
-    `- For "show me the phase diagram" / "phase diagram" / "liquidus" / "eutectic" → use plot_phase_diagram.py.`,
-    `- For "statistics" / "properties" / "references" / "data overview" → use analyze_salt.py.`,
-    `- For follow-up requests (zoom, different property) → write custom Python/matplotlib via run_bash.`,
-    `- If ambiguous ("show me salt X"), use plot_phase_diagram.py as the default for multi-component salts.`,
-    `- ALWAYS set MPLBACKEND=Agg before any matplotlib usage.`,
-    `- ALWAYS print "Plot saved to <path>" when saving plots so the UI displays them.`,
-    `- For Type 2 questions: ALWAYS call at least one tool (run_bash and/or web_search). Never answer a research trend question from memory alone.`,
+    `- For "phase diagram" / "liquidus" / "eutectic" → plot_phase_diagram.py.`,
+    `- For "statistics" / "properties" / "references" → analyze_salt.py.`,
+    `- If ambiguous ("show me salt X"), use plot_phase_diagram.py for multi-component salts.`,
+    `- ALWAYS set MPLBACKEND=Agg. ALWAYS print "Plot saved to <path>".`,
+    `- For Type 2: ALWAYS call at least one tool. Never answer research questions from memory alone.`,
     `- Include references/DOIs from the database and URLs from web search.`,
     `- Be concise but thorough.`,
   ].join("\n");
 }
 
 /* ------------------------------------------------------------------ */
-/*  Execute a tool call via MCP                                        */
+/*  Generic MCP tool execution                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Execute a tool call by routing it through the MCP server.
+ *
+ * The LLM sees tool names like "run_bash" and "web_search".
+ * We map these back to MCP tool names ("bash", "web_search")
+ * and call them via JSON-RPC tools/call.
+ *
+ * After the MCP call returns, we apply post-processing:
+ *   - detect "Plot saved to /path/file.png" in stdout and embed the image
+ */
 async function executeTool(
   toolName: string,
   toolInput: Record<string, unknown>
@@ -561,119 +446,72 @@ async function executeTool(
     displayHtml: null,
   };
 
+  // Map OpenAI tool name back to MCP tool name
+  const mcpToolName = TOOL_REVERSE_MAP[toolName] ?? toolName;
+
+  // Log skill-script detection for run_bash
+  if (mcpToolName === "bash") {
+    const command = String(toolInput.command || "");
+    if (command.includes("plot_phase_diagram.py")) {
+      const salt = command.match(/--salt\s+(\S+)/)?.[1] || "unknown";
+      log("INFO", "Tool:run_bash", `Calling plot_phase_diagram.py skill script`, { salt });
+    } else if (command.includes("analyze_salt.py")) {
+      const salt = command.match(/--salt\s+(\S+)/)?.[1] || "unknown";
+      log("INFO", "Tool:run_bash", `Calling analyze_salt.py skill script`, { salt });
+    } else if (command.includes("python")) {
+      log("INFO", "Tool:run_bash", `Running custom Python script`, { commandPreview: command.slice(0, 200) });
+    } else {
+      log("INFO", "Tool:run_bash", `Running bash command`, { commandPreview: command.slice(0, 200) });
+    }
+  }
+
   try {
-    if (toolName === "run_bash") {
-      const command = String(toolInput.command || "");
+    // Route through MCP
+    const timeoutMs = mcpToolName === "bash" ? 60000 : 20000;
+    const { response, json } = await callMcpRpc(
+      "tools/call",
+      { name: mcpToolName, arguments: toolInput },
+      timeoutMs
+    );
 
-      if (command.includes("plot_phase_diagram.py")) {
-        const saltMatch = command.match(/--salt\s+(\S+)/);
-        log("INFO", "Tool:run_bash", `Calling plot_phase_diagram.py skill script`, {
-          salt: saltMatch?.[1] || "unknown",
-        });
-      } else if (command.includes("analyze_salt.py")) {
-        const saltMatch = command.match(/--salt\s+(\S+)/);
-        log("INFO", "Tool:run_bash", `Calling analyze_salt.py skill script`, {
-          salt: saltMatch?.[1] || "unknown",
-        });
-      } else if (command.includes("python")) {
-        log("INFO", "Tool:run_bash", `Running custom Python script`, {
-          commandPreview: command.slice(0, 200),
-        });
-      } else {
-        log("INFO", "Tool:run_bash", `Running bash command`, {
-          commandPreview: command.slice(0, 200),
-        });
-      }
+    const content = extractMcpContent(json);
+    result.stdout = content.text;
+    result.ok = response.ok;
 
-      const { response, json } = await callMcpRpc(
-        "tools/call",
-        { name: "bash", arguments: { command } },
-        60000
-      );
+    const elapsed = Date.now() - t0;
+    log("INFO", `Tool:${toolName}`, `Completed in ${elapsed}ms`, {
+      ok: result.ok,
+      stdoutLength: result.stdout.length,
+      stdoutPreview: result.stdout.slice(0, 300),
+    });
 
-      const content = extractMcpContent(json);
-      result.stdout = content.text;
-      result.ok = response.ok;
-
-      const elapsed = Date.now() - t0;
-      log("INFO", "Tool:run_bash", `Completed in ${elapsed}ms`, {
-        ok: result.ok,
-        stdoutLength: result.stdout.length,
-        stdoutPreview: result.stdout.slice(0, 300),
-      });
-
-      // Extract plot path — match only real file paths (starting with /)
-      const plotMatch = result.stdout.match(/Plot saved to\s+(\/\S+\.(?:png|jpg|jpeg|svg|gif))/);
-      if (plotMatch) {
-        result.plotPath = plotMatch[1].trim();
-        log("INFO", "Tool:run_bash", `Plot detected, reading image`, {
-          plotPath: result.plotPath,
-        });
-        const html = readImageAsBase64Html(result.plotPath);
-        if (html) {
-          result.displayHtml = html;
-          log(
-            "INFO",
-            "Tool:run_bash",
-            `Image embedded as base64 HTML (${html.length} chars)`
-          );
-        } else {
-          log("WARN", "Tool:run_bash", `Failed to read plot image from disk`, {
-            plotPath: result.plotPath,
-          });
-        }
-      }
-    } else if (toolName === "display_file") {
-      const uri = String(toolInput.uri || "");
-      const filePath = uri.startsWith("file://")
-        ? uri.slice("file://".length)
-        : uri;
-      log("INFO", "Tool:display_file", `Reading file from disk`, { filePath });
-      const html = readImageAsBase64Html(filePath);
+    // Post-processing: detect saved plots and embed as base64
+    const plotMatch = result.stdout.match(/Plot saved to\s+(\/\S+\.(?:png|jpg|jpeg|svg|gif))/);
+    if (plotMatch) {
+      result.plotPath = plotMatch[1].trim();
+      log("INFO", `Tool:${toolName}`, `Plot detected, reading image`, { plotPath: result.plotPath });
+      const html = readImageAsBase64Html(result.plotPath);
       if (html) {
         result.displayHtml = html;
-        result.ok = true;
-        result.stdout = "The file has been displayed to the user.";
+        log("INFO", `Tool:${toolName}`, `Image embedded (${html.length} chars)`);
       } else {
-        result.ok = false;
-        result.stderr = `Could not read image file: ${filePath}`;
-        log("WARN", "Tool:display_file", result.stderr);
+        log("WARN", `Tool:${toolName}`, `Failed to read plot image`, { plotPath: result.plotPath });
       }
-    } else if (toolName === "web_search") {
-      const query = String(toolInput.query || "");
-      log("INFO", "Tool:web_search", `Executing web search`, { query });
-
-      const searchResult = await executeWebSearch(query);
-
-      const elapsed = Date.now() - t0;
-      result.stdout = searchResult;
-      result.ok = true;
-      log("INFO", "Tool:web_search", `Completed in ${elapsed}ms`, {
-        resultLength: searchResult.length,
-        resultPreview: searchResult.slice(0, 300),
-      });
-    } else {
-      log("WARN", "Tool:Unknown", `Unknown tool called: ${toolName}`);
-      result.stderr = `Unknown tool: ${toolName}`;
     }
   } catch (err) {
     const elapsed = Date.now() - t0;
-    result.stderr =
-      err instanceof Error ? err.message : "Unknown tool execution error";
-    log("ERROR", `Tool:${toolName}`, `Tool failed after ${elapsed}ms: ${result.stderr}`);
+    result.stderr = err instanceof Error ? err.message : "Unknown tool execution error";
+    log("ERROR", `Tool:${toolName}`, `Failed after ${elapsed}ms: ${result.stderr}`);
   }
 
   return result;
 }
 
-function extractMcpContent(
-  json: unknown
-): { text: string; html: string | null } {
+function extractMcpContent(json: unknown): { text: string; html: string | null } {
   let text = "";
   let html: string | null = null;
 
-  if (!json || typeof json !== "object")
-    return { text: String(json || ""), html };
+  if (!json || typeof json !== "object") return { text: String(json || ""), html };
 
   const obj = json as Record<string, unknown>;
   const resultObj = (obj.result ?? obj) as Record<string, unknown>;
@@ -687,12 +525,8 @@ function extractMcpContent(
     }
     if (ci.type === "resource") {
       const resource = ci.resource as Record<string, unknown> | undefined;
-      const mimeType =
-        typeof resource?.mimeType === "string" ? resource.mimeType : "";
-      if (
-        mimeType.includes("text/html") &&
-        typeof resource?.text === "string"
-      ) {
+      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
+      if (mimeType.includes("text/html") && typeof resource?.text === "string") {
         html = resource.text;
       }
     }
@@ -715,8 +549,7 @@ async function runAgentLoop(
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
   const azureConfig = getAzureConfig();
 
-  const hasAzure =
-    !!process.env.AZURE_OPENAI_ENDPOINT && !!process.env.AZURE_OPENAI_API_KEY;
+  const hasAzure = !!process.env.AZURE_OPENAI_ENDPOINT && !!process.env.AZURE_OPENAI_API_KEY;
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
   if (!hasAzure && !hasOpenAI) {
     log("ERROR", "Agent", "No API key configured");
@@ -727,6 +560,9 @@ async function runAgentLoop(
       toolCalls: [],
     };
   }
+
+  // Discover tools from MCP server
+  const tools = await discoverTools();
 
   const systemPrompt = buildSystemPrompt();
   const toolCalls: ToolCallResult[] = [];
@@ -749,20 +585,18 @@ async function runAgentLoop(
     model: azureConfig.model,
     userMessage: userMessage.slice(0, 200),
     historyTurns: recentHistory.length,
+    toolCount: tools.length,
+    toolNames: tools.map((t) => t.function.name),
   });
 
   const maxIterations = 10;
   for (let i = 0; i < maxIterations; i++) {
     const iterStart = Date.now();
-    log(
-      "INFO",
-      "Agent:LLM",
-      `Iteration ${i + 1}/${maxIterations} — sending request to LLM`
-    );
+    log("INFO", "Agent:LLM", `Iteration ${i + 1}/${maxIterations} — sending request to LLM`);
 
     const payload: Record<string, unknown> = {
       messages,
-      tools: TOOLS,
+      tools,
       tool_choice: "auto",
     };
     if (!process.env.AZURE_OPENAI_ENDPOINT) {
@@ -777,24 +611,17 @@ async function runAgentLoop(
         body: JSON.stringify(payload),
       });
     } catch (fetchErr) {
-      const msg =
-        fetchErr instanceof Error ? fetchErr.message : "Unknown error";
+      const msg = fetchErr instanceof Error ? fetchErr.message : "Unknown error";
       log("ERROR", "Agent:LLM", `Failed to connect: ${msg}`);
-      throw new Error(
-        `Failed to connect to LLM endpoint (${azureConfig.url}): ${msg}`
-      );
+      throw new Error(`Failed to connect to LLM endpoint (${azureConfig.url}): ${msg}`);
     }
 
     const responseText = await resp.text();
     const llmElapsed = Date.now() - iterStart;
 
     if (!resp.ok) {
-      log("ERROR", "Agent:LLM", `HTTP ${resp.status} after ${llmElapsed}ms`, {
-        responsePreview: responseText.slice(0, 300),
-      });
-      throw new Error(
-        `Azure OpenAI error (${resp.status}): ${responseText.slice(0, 500)}`
-      );
+      log("ERROR", "Agent:LLM", `HTTP ${resp.status} after ${llmElapsed}ms`, { responsePreview: responseText.slice(0, 300) });
+      throw new Error(`Azure OpenAI error (${resp.status}): ${responseText.slice(0, 500)}`);
     }
 
     let data: Record<string, unknown>;
@@ -802,18 +629,12 @@ async function runAgentLoop(
       data = JSON.parse(responseText);
     } catch {
       log("ERROR", "Agent:LLM", `Non-JSON response after ${llmElapsed}ms`);
-      throw new Error(
-        `LLM returned non-JSON (${resp.status}). First 200 chars: ${responseText.slice(0, 200)}`
-      );
+      throw new Error(`LLM returned non-JSON (${resp.status}). First 200 chars: ${responseText.slice(0, 200)}`);
     }
 
-    const choices = data.choices as
-      | Array<Record<string, unknown>>
-      | undefined;
+    const choices = data.choices as Array<Record<string, unknown>> | undefined;
     const choice = choices?.[0];
-    const assistantMsg = choice?.message as
-      | Record<string, unknown>
-      | undefined;
+    const assistantMsg = choice?.message as Record<string, unknown> | undefined;
 
     if (!assistantMsg) {
       log("WARN", "Agent:LLM", `No message in response after ${llmElapsed}ms`);
@@ -823,11 +644,8 @@ async function runAgentLoop(
     messages.push(assistantMsg);
 
     const finishReason = choice?.finish_reason as string | undefined;
-    const msgToolCalls = assistantMsg.tool_calls as
-      | Array<Record<string, unknown>>
-      | undefined;
-    const textContent =
-      typeof assistantMsg.content === "string" ? assistantMsg.content : "";
+    const msgToolCalls = assistantMsg.tool_calls as Array<Record<string, unknown>> | undefined;
+    const textContent = typeof assistantMsg.content === "string" ? assistantMsg.content : "";
 
     log("INFO", "Agent:LLM", `Response received in ${llmElapsed}ms`, {
       finishReason,
@@ -837,11 +655,7 @@ async function runAgentLoop(
     });
 
     if (finishReason !== "tool_calls" || !msgToolCalls?.length) {
-      log(
-        "INFO",
-        "Agent",
-        `Completed after ${i + 1} iteration(s), ${toolCalls.length} tool call(s)`
-      );
+      log("INFO", "Agent", `Completed after ${i + 1} iteration(s), ${toolCalls.length} tool call(s)`);
       return { response: textContent, toolCalls };
     }
 
@@ -850,9 +664,7 @@ async function runAgentLoop(
       const toolName = typeof fnObj?.name === "string" ? fnObj.name : "";
       let toolInput: Record<string, unknown> = {};
       try {
-        toolInput = JSON.parse(
-          typeof fnObj?.arguments === "string" ? fnObj.arguments : "{}"
-        );
+        toolInput = JSON.parse(typeof fnObj?.arguments === "string" ? fnObj.arguments : "{}");
       } catch {
         toolInput = {};
       }
@@ -888,24 +700,15 @@ export async function POST(request: Request) {
     body = (await request.json()) as ChatRequest;
   } catch {
     return NextResponse.json(
-      {
-        ok: false,
-        response: "",
-        error: "Invalid JSON body.",
-      } satisfies ChatResponse,
+      { ok: false, response: "", error: "Invalid JSON body." } satisfies ChatResponse,
       { status: 400 }
     );
   }
 
-  const message =
-    typeof body.message === "string" ? body.message.trim() : "";
+  const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) {
     return NextResponse.json(
-      {
-        ok: false,
-        response: "",
-        error: "Message is required.",
-      } satisfies ChatResponse,
+      { ok: false, response: "", error: "Message is required." } satisfies ChatResponse,
       { status: 400 }
     );
   }
