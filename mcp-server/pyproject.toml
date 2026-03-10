@@ -3,6 +3,7 @@ name = "vista-mcp-server"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncssh>=2.14",
     "fastmcp>=3.1.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.1",
