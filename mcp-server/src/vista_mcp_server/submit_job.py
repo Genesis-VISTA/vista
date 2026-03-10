@@ -10,17 +10,24 @@ import asyncssh
 import shlex
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
+from .config import settings
 
 HOST = "frontier.olcf.ornl.gov"
 
 ssh_conn: asyncssh.SSHClientConnection | None = None
 
+
 def prompt_credentials() -> tuple[str, str]:
-    # use sys.stderr to avoid issues when running MCP on stdio
-    print(f"\nSSH login required for {HOST}\n", file=sys.stderr, end="")
-    print(f"Username: ", file=sys.stderr, end="")
-    username = input()
-    password = getpass.getpass(prompt="Password: ", stream=sys.stderr)
+    username = settings.hpc_username
+    password = settings.hpc_password
+    if not username or not password:
+        # use sys.stderr to avoid issues when running MCP on stdio
+        print(f"\nSSH login required for {HOST}\n", file=sys.stderr, end="")
+    if not username:
+        print(f"Username: ", file=sys.stderr, end="")
+        username = input()
+    if not password:
+        password = getpass.getpass(prompt="Password: ", stream=sys.stderr)
     return username, password
 
 

@@ -31,9 +31,14 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
+    hpc_username: str | None = None
+    """ Username for the HPC system """
+    hpc_password: str | None = None
+    """ Password for the HPC system """
+
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
-        env_file="../.env",
+        env_file=["./.env"],
         extra='ignore',
     )
 

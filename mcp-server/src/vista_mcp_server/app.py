@@ -1,17 +1,8 @@
-"""
-MCP server definition exposing tools and resources.
-"""
-
 from __future__ import annotations
 import argparse
-from fastmcp import FastMCP
 from pathlib import Path
 import tempfile
 import logging
-from .config import settings
-from .display_file_mcp import mcp as display_file_mcp
-from .sandbox_mcp import mcp as sandbox_mcp
-from .submit_job import mcp as submit_job_mcp
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -19,13 +10,9 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-mcp = FastMCP(name="VISTA MCP Server")
-mcp.mount(submit_job_mcp)
-mcp.mount(display_file_mcp)
-mcp.mount(sandbox_mcp)
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
+    parser.add_argument('--version', action='version', version='%(prog)s 0.1')
     parser.add_argument(
         "--transport",
         default="stdio",
@@ -49,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    from .server import mcp
     if args.transport == "http":
         mcp.run(transport="http", host=args.host, port=args.port)
     else:
