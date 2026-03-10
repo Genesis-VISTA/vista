@@ -169,27 +169,13 @@ function getAzureConfig(): {
  * Discover tools from the MCP server via JSON-RPC tools/list,
  * then convert them to OpenAI function-calling format.
  *
- * The MCP server exposes: bash, create_file, view, display_file, web_search.
- * We expose a curated subset to the LLM (bash as "run_bash", web_search).
+ * The MCP server exposes: bash, create_file, view, display_file.
+ * We expose bash (as "run_bash") to the LLM.
  */
 
 // Which MCP tools to expose to the LLM, and how to rename them
 const TOOL_EXPOSE_MAP: Record<string, string> = {
   bash: "run_bash",
-  web_search: "web_search",
-};
-
-// Description overrides — augment MCP descriptions with agent-specific context
-const TOOL_DESCRIPTION_OVERRIDES: Record<string, string> = {
-  run_bash:
-    "Run a bash command inside the MCP sandbox. " +
-    "ALWAYS use this tool — never answer data questions from memory. " +
-    "The sandbox has Python 3, numpy, matplotlib, and scipy. " +
-    "Skills are at /mnt/skills/, output goes to /mnt/data/output/. " +
-    "The salt database JSON is at /mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json. " +
-    "The analysis script is at /mnt/skills/salt-analysis/scripts/analyze_salt.py. " +
-    "The phase diagram script is at /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py. " +
-    "When a plot is saved, it is automatically displayed to the user.",
 };
 
 // Reverse map: OpenAI tool name → MCP tool name
@@ -242,7 +228,7 @@ async function discoverTools(): Promise<OpenAiTool[]> {
       const exposedName = TOOL_EXPOSE_MAP[mcp.name];
       if (!exposedName) continue; // not exposed to the LLM
 
-      const description = TOOL_DESCRIPTION_OVERRIDES[exposedName] ?? mcp.description ?? "";
+      const description = mcp.description ?? "";
       const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
 
       openaiTools.push({
@@ -269,32 +255,18 @@ async function discoverTools(): Promise<OpenAiTool[]> {
   }
 }
 
-/** Hardcoded fallback if MCP discovery fails */
+/** Hardcoded fallback if MCP discovery fails — minimal descriptions */
 function buildFallbackTools(): OpenAiTool[] {
   return [
     {
       type: "function",
       function: {
         name: "run_bash",
-        description: TOOL_DESCRIPTION_OVERRIDES.run_bash,
+        description: "Run a bash command inside the sandbox. Use for all database queries and script execution.",
         parameters: {
           type: "object",
           properties: { command: { type: "string", description: "The bash command to execute" } },
           required: ["command"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "web_search",
-        description:
-          "Search the web for scientific literature, research groups, recent studies, and trends. " +
-          "Use AFTER querying the local database when relevant.",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "The search query" } },
-          required: ["query"],
         },
       },
     },
@@ -322,7 +294,8 @@ function buildSystemPrompt(): string {
 
   return [
     `You are VISTA, a scientific assistant for molten salt thermophysical properties.`,
-    `You have access to a molten salt database and analysis scripts via run_bash, and web search via web_search.`,
+    `You have access to a molten salt database and analysis scripts via run_bash.`,
+    `For questions beyond the database (research trends, groups, general nuclear science), answer using your own scientific knowledge.`,
     ``,
     skillsPrompt,
     ``,
@@ -335,7 +308,7 @@ function buildSystemPrompt(): string {
     `4. For database-wide queries (counting salts, finding extremes across all salts), write a short Python script via run_bash.`,
     `5. Plots are AUTOMATICALLY displayed when stdout contains "Plot saved to ...". Do NOT call any display tool.`,
     `6. ALWAYS set MPLBACKEND=Agg before running any matplotlib code.`,
-    `7. For research trend questions, follow the Type 2 workflow below — it REQUIRES calling tools.`,
+    `7. For research trend questions beyond the database, first query the database with run_bash if a salt/property is mentioned, then answer using your scientific knowledge.`,
     ``,
     `## Skill Scripts`,
     ``,
@@ -366,11 +339,14 @@ function buildSystemPrompt(): string {
     `  { "value": 1024.0, "abs_uncertainty": 5.0, "reference": "...", "DOI": "..." }`,
     ``,
     `**Temperature-dependent properties (viscosity, density, heat_capacity, thermal_conductivity, surface_tension):**`,
-    `  have a "values" field containing Arrhenius/polynomial COEFFICIENTS, NOT direct measurements.`,
-    `  { "values": [A, B], "range": [T_min, T_max], "pct_uncertainty": ..., "reference": "...", "DOI": "..." }`,
-    `  For viscosity: mu(T) = A * exp(B / T). For density: rho(T) = A + B*T.`,
-    `  To compare viscosity across salts, compute mu(T) = values[0] * exp(values[1] / T)`,
-    `  at a reference temperature (e.g., T = 973 K). Do NOT compare raw coefficients directly.`,
+    `  have a "values" field containing model COEFFICIENTS, NOT direct measurements.`,
+    `  { "values": [A, B, ...], "range": [T_min, T_max], "pct_uncertainty": ..., "reference": "...", "DOI": "..." }`,
+    ``,
+    `  Viscosity model (2-coefficient entries):  mu(mPa·s) = A * exp(B / (R*T))  where R=8.314 J/(mol·K)`,
+    `  Viscosity model (3-coefficient entries):  mu(mPa·s) = exp(A + B/T + C/T²)`,
+    `  Density model:  rho(g/cm³) = A + B*T  (polynomial)`,
+    `  NOTE: "range" can be [0.0, 0.0] meaning unset — treat those entries as valid.`,
+    `  NOTE: Viscosity unit is mPa·s (millipascal-seconds), NOT Pa·s.`,
     ``,
     `Available properties: melt, boil, density, viscosity, heat_capacity, thermal_conductivity, surface_tension, molecular_weight`,
     `Compositions: dash-separated mole fractions (e.g. "0.055-0.945").`,
@@ -395,13 +371,52 @@ function buildSystemPrompt(): string {
     `"What about thermal conductivity?" → extract thermal_conductivity and plot vs composition`,
     `For follow-up queries, use the salt name from the conversation history.`,
     ``,
-    `### Type 2: Research trends — REQUIRES MULTI-STEP TOOL USE`,
-    `Step 1: Check local database with run_bash (if question mentions a salt/property)`,
-    `Step 2: Call web_search with a specific scientific query`,
-    `Step 3: Synthesize both sources. Cite DOIs from DB and URLs from web search.`,
+    `### Type 2: Research trends and general scientific questions`,
+    `These questions ask about research groups, literature trends, promising materials, or topics beyond the database.`,
     ``,
-    `For viscosity ranking, compute mu(T) = A*exp(B/T) at T=973K:`,
-    `  python3 -c "import json,math; d=json.load(open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json')); e=d['MSTDBTP']['evaluated']; results=[]; [results.append((s,c,A*math.exp(B/973),v.get('DOI'))) for s,comps in e.items() for c,props in comps.items() for v in [props.get('viscosity',{})] if isinstance(v,dict) and isinstance(v.get('values'),list) and len(v['values'])>=2 for A,B in [(float(v['values'][0]),float(v['values'][1]))] if isinstance(v.get('range'),list) and len(v['range'])==2 and v['range'][0]<=973<=v['range'][1] and 0<A*math.exp(B/973)<10]; results.sort(key=lambda x:x[2]); [print(f'{i}. {s} ({c}): {mu:.4f} Pa·s DOI:{doi}') for i,(s,c,mu,doi) in enumerate(results[:15],1)]"`,
+    `**Step 1: Check the local database first (if the question mentions a specific salt or property).**`,
+    `Call run_bash with a Python script to check what data exists.`,
+    ``,
+    `**Step 2: Answer using your scientific knowledge.**`,
+    `Combine what the database shows (compositions, property values, references) with your knowledge of molten salt science, nuclear engineering, and relevant research.`,
+    `Cite DOIs from the database when available.`,
+    ``,
+    `Examples:`,
+    `User: "Has any group studied FLiBe?"`,
+    `→ Step 1: run_bash — check if BeF2-LiF exists in the database, list its properties and references`,
+    `→ Step 2: Answer combining DB data with your knowledge of FLiBe research (ORNL, MSR program, etc.)`,
+    ``,
+    `User: "What is the most promising salt for better viscosity?"`,
+    `→ Step 1: run_bash — compute viscosity at T=973K for all salts, rank by lowest`,
+    `→ Step 2: Answer with DB rankings + your knowledge of promising candidates and trade-offs`,
+    ``,
+    `User: "How to improve the yield of tritium?"`,
+    `→ Step 1: skip (general nuclear engineering question, not a database query)`,
+    `→ Step 2: Answer directly from your knowledge about breeding blanket design, Li-6 enrichment, etc.`,
+    ``,
+    `For viscosity ranking, use this exact script via run_bash:`,
+    `  python3 -c "`,
+    `  import json, math`,
+    `  R=8.314; T=973.0`,
+    `  d=json.load(open('/mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json'))`,
+    `  e=d['MSTDBTP']['evaluated']; rows=[]`,
+    `  for s,comps in e.items():`,
+    `    for c,props in comps.items():`,
+    `      v=props.get('viscosity')`,
+    `      if not isinstance(v,dict): continue`,
+    `      vals=v.get('values'); rng=v.get('range',[0,0])`,
+    `      if not isinstance(vals,list) or len(vals)<2: continue`,
+    `      Tmin,Tmax=(rng if isinstance(rng,list) and len(rng)==2 else (0,0))`,
+    `      if not ((Tmin<=T<=Tmax) or (Tmin==0 and Tmax==0)): continue`,
+    `      try:`,
+    `        if len(vals)==2: mu=float(vals[0])*math.exp(float(vals[1])/(R*T))`,
+    `        else: mu=math.exp(float(vals[0])+float(vals[1])/T+float(vals[2])/(T*T))`,
+    `      except: continue`,
+    `      if 0<mu<100: rows.append((s,c,mu,v.get('DOI'),v.get('reference')))`,
+    `  rows.sort(key=lambda x:x[2])`,
+    `  print(f'Salts ranked by viscosity at {T}K ({len(rows)} entries):')`,
+    `  for i,(s,c,mu,doi,ref) in enumerate(rows[:20],1): print(f'{i}. {s} ({c}): {mu:.4f} mPa-s DOI:{doi}')`,
+    `  "`,
     ``,
     `## Rules`,
     `- ALWAYS call run_bash — never answer data questions without running code first.`,
@@ -409,8 +424,8 @@ function buildSystemPrompt(): string {
     `- For "statistics" / "properties" / "references" → analyze_salt.py.`,
     `- If ambiguous ("show me salt X"), use plot_phase_diagram.py for multi-component salts.`,
     `- ALWAYS set MPLBACKEND=Agg. ALWAYS print "Plot saved to <path>".`,
-    `- For Type 2: ALWAYS call at least one tool. Never answer research questions from memory alone.`,
-    `- Include references/DOIs from the database and URLs from web search.`,
+    `- For research/trend questions: query the database first if relevant, then answer from your own scientific knowledge.`,
+    `- Include references/DOIs from the database when available.`,
     `- Be concise but thorough.`,
   ].join("\n");
 }
@@ -422,9 +437,8 @@ function buildSystemPrompt(): string {
 /**
  * Execute a tool call by routing it through the MCP server.
  *
- * The LLM sees tool names like "run_bash" and "web_search".
- * We map these back to MCP tool names ("bash", "web_search")
- * and call them via JSON-RPC tools/call.
+ * The LLM sees "run_bash" which maps back to MCP tool "bash"
+ * via TOOL_REVERSE_MAP, then calls it via JSON-RPC tools/call.
  *
  * After the MCP call returns, we apply post-processing:
  *   - detect "Plot saved to /path/file.png" in stdout and embed the image

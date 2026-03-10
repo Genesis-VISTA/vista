@@ -11,7 +11,6 @@ import logging
 from .config import settings
 from .display_file_mcp import mcp as display_file_mcp
 from .sandbox_mcp import mcp as sandbox_mcp
-from .web_search_mcp import mcp as web_search_mcp
 
 logging.basicConfig(
     filename=Path(tempfile.gettempdir()) / "vista.log",
@@ -22,7 +21,6 @@ logging.basicConfig(
 mcp = FastMCP(name="VISTA MCP Server")
 mcp.mount(display_file_mcp)
 mcp.mount(sandbox_mcp)
-mcp.mount(web_search_mcp)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
