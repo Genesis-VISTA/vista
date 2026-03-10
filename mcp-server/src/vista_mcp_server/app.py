@@ -20,9 +20,9 @@ logging.basicConfig(
 )
 
 mcp = FastMCP(name="VISTA MCP Server")
-# mcp.mount(display_file_mcp)
-# mcp.mount(sandbox_mcp)
 mcp.mount(submit_job_mcp)
+mcp.mount(display_file_mcp)
+mcp.mount(sandbox_mcp)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
