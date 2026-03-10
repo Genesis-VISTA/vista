@@ -344,10 +344,8 @@ export default function HomePage() {
 
       // Process tool calls from the agent
       if (Array.isArray(data.toolCalls)) {
-        // Find the last tool call that produced a plot
         for (const tc of data.toolCalls) {
           if (tc.displayHtml) {
-            // Backend already got HTML from display_file MCP tool
             setLatestResult({
               ok: true,
               stdout: tc.stdout || "",
@@ -362,32 +360,6 @@ export default function HomePage() {
               },
               ui: { kind: "html", html: tc.displayHtml }
             });
-          } else if (tc.plotPath) {
-            // Backend display_file didn't return HTML — call /api/mcp/call as fallback
-            try {
-              const previewResponse = await fetch("/api/mcp/call", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ tool: "display_file", args: { uri: tc.plotPath } })
-              });
-              const previewResult = (await previewResponse.json()) as ExecutionResult;
-              if (previewResult.ui?.kind === "html") {
-                setLatestResult({
-                  ok: true,
-                  stdout: tc.stdout || "",
-                  stderr: tc.stderr || "",
-                  artifacts: [],
-                  meta: {
-                    tool: tc.tool,
-                    analysisSummary: { plotPath: tc.plotPath },
-                    references: parseReferencesFromStdout(tc.stdout || "")
-                  },
-                  ui: previewResult.ui
-                });
-              }
-            } catch {
-              // display_file fallback failed — plot won't render
-            }
           }
         }
 

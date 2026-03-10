@@ -216,6 +216,11 @@ function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
       envelope.data = resultObj;
     }
 
+    // If stdout contains an <img> tag (e.g. from display_file), promote to ui.html
+    if (envelope.ui?.kind !== "html" && envelope.stdout.includes("<img")) {
+      envelope.ui = { kind: "html", html: envelope.stdout };
+    }
+
     return envelope;
   }
 

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { callMcpRpc } from "@/lib/mcp";
 import { toPrompt, findSkills } from "@/lib/skills";
 import { config } from "@/app/config";
-import { readFileSync, existsSync } from "fs";
-import { join, extname, resolve } from "path";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -64,45 +64,6 @@ function log(
   if (level === "ERROR") console.error(`${prefix} ${message}${suffix}`);
   else if (level === "WARN") console.warn(`${prefix} ${message}${suffix}`);
   else console.log(`${prefix} ${message}${suffix}`);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Image fallback — used when display_file MCP tool doesn't return HTML */
-/* ------------------------------------------------------------------ */
-
-function sandboxPathToHost(sandboxPath: string): string | null {
-  const projectRoot = resolve(config.skillsDir, "..");
-  const mappings: Array<[string, string]> = [
-    ["/mnt/data/output", join(projectRoot, "data", "output")],
-    ["/mnt/data/uploads", join(projectRoot, "data", "uploads")],
-    ["/mnt/skills", join(projectRoot, "skills")],
-  ];
-  for (const [sandboxPrefix, hostPrefix] of mappings) {
-    if (sandboxPath.startsWith(sandboxPrefix)) {
-      return hostPrefix + sandboxPath.slice(sandboxPrefix.length);
-    }
-  }
-  return null;
-}
-
-function readImageAsBase64Html(sandboxPath: string): string | null {
-  const hostPath = sandboxPathToHost(sandboxPath);
-  if (!hostPath) return null;
-  try {
-    if (!existsSync(hostPath)) return null;
-    const ext = extname(hostPath).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-      ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-    };
-    const mimeType = mimeMap[ext];
-    if (!mimeType) return null;
-    const bytes = readFileSync(hostPath);
-    const base64 = bytes.toString("base64");
-    return `<img src="data:${mimeType};base64,${base64}" alt="Plot output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
-  } catch {
-    return null;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -500,37 +461,54 @@ async function executeTool(
       result.plotPath = plotMatch[1].trim();
       log("INFO", `Tool:${toolName}`, `Plot detected, calling display_file`, { plotPath: result.plotPath });
 
-      // Try display_file MCP tool first
+      let dfSuccess = false;
       try {
-        const { response: dfResp, json: dfJson } = await callMcpRpc(
+        log("INFO", `Tool:${toolName}`, `Calling display_file MCP tool now...`);
+        const dfResult = await callMcpRpc(
           "tools/call",
           { name: "display_file", arguments: { uri: result.plotPath } },
-          20000
+          30000
         );
+        const dfResp = dfResult.response;
+        const dfText = dfResult.text;
+        const dfJson = dfResult.json;
+
+        log("INFO", `Tool:${toolName}`, `display_file MCP response received`, {
+          httpOk: dfResp.ok,
+          httpStatus: dfResp.status,
+          textLength: (dfText || "").length,
+          textPreview: (dfText || "").slice(0, 300),
+        });
 
         if (dfResp.ok) {
-          const dfContent = extractMcpContent(dfJson);
-          if (dfContent.html) {
-            result.displayHtml = dfContent.html;
-            log("INFO", `Tool:${toolName}`, `display_file returned HTML (${dfContent.html.length} chars)`);
+          const dfObj = dfJson as Record<string, unknown> | null;
+          if (dfObj?.error) {
+            log("INFO", `Tool:${toolName}`, `display_file returned JSON-RPC error: ${JSON.stringify(dfObj.error).slice(0, 500)}`);
+          } else {
+            const dfContent = extractMcpContent(dfJson);
+            const imgHtml = dfContent.html || dfContent.text;
+            if (imgHtml && imgHtml.includes("<img")) {
+              result.displayHtml = imgHtml;
+              dfSuccess = true;
+              log("INFO", `Tool:${toolName}`, `display_file SUCCESS — image HTML (${imgHtml.length} chars)`);
+            } else {
+              log("INFO", `Tool:${toolName}`, `display_file returned no <img> tag`, {
+                htmlLen: dfContent.html?.length || 0,
+                textLen: dfContent.text?.length || 0,
+                textPreview: (dfContent.text || "").slice(0, 300),
+              });
+            }
           }
         } else {
-          log("WARN", `Tool:${toolName}`, `display_file MCP call failed (HTTP ${dfResp.status})`);
+          log("INFO", `Tool:${toolName}`, `display_file HTTP error ${dfResp.status}: ${(dfText || "").slice(0, 500)}`);
         }
       } catch (dfErr) {
-        log("WARN", `Tool:${toolName}`, `display_file call threw: ${dfErr instanceof Error ? dfErr.message : "Unknown"}`);
+        const errMsg = dfErr instanceof Error ? `${dfErr.name}: ${dfErr.message}` : String(dfErr);
+        log("INFO", `Tool:${toolName}`, `display_file EXCEPTION: ${errMsg}`);
       }
 
-      // Fallback: read image directly from disk if display_file didn't produce HTML
-      if (!result.displayHtml) {
-        log("INFO", `Tool:${toolName}`, `display_file did not return HTML — reading image from disk`);
-        const html = readImageAsBase64Html(result.plotPath);
-        if (html) {
-          result.displayHtml = html;
-          log("INFO", `Tool:${toolName}`, `Image embedded from disk (${html.length} chars)`);
-        } else {
-          log("WARN", `Tool:${toolName}`, `Failed to read image from disk`, { plotPath: result.plotPath });
-        }
+      if (!dfSuccess) {
+        log("INFO", `Tool:${toolName}`, `display_file did not produce HTML — image will not be rendered server-side. plotPath set for frontend fallback.`);
       }
     }
   } catch (err) {
