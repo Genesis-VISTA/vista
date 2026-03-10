@@ -67,7 +67,7 @@ function log(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Image / file helpers                                               */
+/*  Image fallback — used when display_file MCP tool doesn't return HTML */
 /* ------------------------------------------------------------------ */
 
 function sandboxPathToHost(sandboxPath: string): string | null {
@@ -85,23 +85,18 @@ function sandboxPathToHost(sandboxPath: string): string | null {
   return null;
 }
 
-function getMimeType(filePath: string): string {
-  const ext = extname(filePath).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".gif") return "image/gif";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".svg") return "image/svg+xml";
-  return "application/octet-stream";
-}
-
 function readImageAsBase64Html(sandboxPath: string): string | null {
   const hostPath = sandboxPathToHost(sandboxPath);
   if (!hostPath) return null;
   try {
     if (!existsSync(hostPath)) return null;
-    const mimeType = getMimeType(hostPath);
-    if (!mimeType.startsWith("image/")) return null;
+    const ext = extname(hostPath).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+      ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+    };
+    const mimeType = mimeMap[ext];
+    if (!mimeType) return null;
     const bytes = readFileSync(hostPath);
     const base64 = bytes.toString("base64");
     return `<img src="data:${mimeType};base64,${base64}" alt="Plot output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
@@ -499,17 +494,43 @@ async function executeTool(
       stdoutPreview: result.stdout.slice(0, 300),
     });
 
-    // Post-processing: detect saved plots and embed as base64
+    // Post-processing: detect saved plots and display via display_file MCP tool
     const plotMatch = result.stdout.match(/Plot saved to\s+(\/\S+\.(?:png|jpg|jpeg|svg|gif))/);
     if (plotMatch) {
       result.plotPath = plotMatch[1].trim();
-      log("INFO", `Tool:${toolName}`, `Plot detected, reading image`, { plotPath: result.plotPath });
-      const html = readImageAsBase64Html(result.plotPath);
-      if (html) {
-        result.displayHtml = html;
-        log("INFO", `Tool:${toolName}`, `Image embedded (${html.length} chars)`);
-      } else {
-        log("WARN", `Tool:${toolName}`, `Failed to read plot image`, { plotPath: result.plotPath });
+      log("INFO", `Tool:${toolName}`, `Plot detected, calling display_file`, { plotPath: result.plotPath });
+
+      // Try display_file MCP tool first
+      try {
+        const { response: dfResp, json: dfJson } = await callMcpRpc(
+          "tools/call",
+          { name: "display_file", arguments: { uri: result.plotPath } },
+          20000
+        );
+
+        if (dfResp.ok) {
+          const dfContent = extractMcpContent(dfJson);
+          if (dfContent.html) {
+            result.displayHtml = dfContent.html;
+            log("INFO", `Tool:${toolName}`, `display_file returned HTML (${dfContent.html.length} chars)`);
+          }
+        } else {
+          log("WARN", `Tool:${toolName}`, `display_file MCP call failed (HTTP ${dfResp.status})`);
+        }
+      } catch (dfErr) {
+        log("WARN", `Tool:${toolName}`, `display_file call threw: ${dfErr instanceof Error ? dfErr.message : "Unknown"}`);
+      }
+
+      // Fallback: read image directly from disk if display_file didn't produce HTML
+      if (!result.displayHtml) {
+        log("INFO", `Tool:${toolName}`, `display_file did not return HTML — reading image from disk`);
+        const html = readImageAsBase64Html(result.plotPath);
+        if (html) {
+          result.displayHtml = html;
+          log("INFO", `Tool:${toolName}`, `Image embedded from disk (${html.length} chars)`);
+        } else {
+          log("WARN", `Tool:${toolName}`, `Failed to read image from disk`, { plotPath: result.plotPath });
+        }
       }
     }
   } catch (err) {
