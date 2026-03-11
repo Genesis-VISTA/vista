@@ -4,6 +4,7 @@ MCP for remote HPC job submission.
 
 from __future__ import annotations
 import getpass
+import json
 import sys
 import re
 import subprocess
@@ -140,6 +141,7 @@ async def submit_job(
         args.extend(['-N', str(nodes)])
     if time_limit:
         args.extend(["-t", time_limit])
+    args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/logs/slurm-%j.out"])
     args.append(str(remote_job_script))
     args.extend(shlex.split(script_args))
 
@@ -152,3 +154,21 @@ async def submit_job(
         raise ValueError("Job failed to launch: " + result)
 
     return result
+
+
+@mcp.tool()
+async def get_job_status(job_id: str) -> str:
+    """Get the status and logs of a submitted Slurm job."""
+    sacct_out = await remote_bash("sacct", "--json", "-j", job_id)
+    try:
+        sacct_jobs = json.loads(sacct_out)["jobs"]
+    except:
+        raise ValueError("Malformed sacct output")
+    if len(sacct_jobs) <= 0:
+        raise ValueError(f"No job {job_id} found")
+
+    state = sacct_jobs[0]['state']['current'][0]
+    log_path = f"{settings.remote_hpc_jobs_dir}/logs/slurm-{job_id}.out"
+    logs = await remote_bash("bash", "-c", f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+
+    return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
