@@ -111,6 +111,25 @@ function extractReferences(result: ExecutionResult | null): string[] {
   return Array.from(new Set(candidates));
 }
 
+function extractPredictionSummary(result: ExecutionResult | null): Record<string, unknown> | null {
+  if (!result?.stdout) return null;
+
+  const summaryLine = result.stdout
+    .split(/\r?\n/)
+    .find((line) => line.trim().startsWith("SUMMARY_JSON:"));
+  if (!summaryLine) return null;
+
+  const jsonText = summaryLine.replace(/^.*SUMMARY_JSON:\s*/, "").trim();
+  if (!jsonText) return null;
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const leftSplitRef = useRef<HTMLDivElement | null>(null);
@@ -134,6 +153,9 @@ export default function HomePage() {
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
+  const [showPredictModal, setShowPredictModal] = useState(false);
+  const [predictFormulaInput, setPredictFormulaInput] = useState("NaCl");
+  const [predictCompInput, setPredictCompInput] = useState("Pure Salt");
 
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
   const [isCalling, setIsCalling] = useState(false);
@@ -158,6 +180,7 @@ export default function HomePage() {
   const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
   const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
+  const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
 
   useEffect(() => {
     if (!activeColumnResizer) return;
@@ -420,6 +443,86 @@ export default function HomePage() {
     } finally {
       setIsCalling(false);
       setShowAnalyzeModal(false);
+    }
+  }
+
+  async function runSaltPrediction() {
+    const tool = "bash";
+    setIsCalling(true);
+    const formula = predictFormulaInput.trim() || "NaCl";
+    const comp = predictCompInput.trim() || "Pure Salt";
+    const command =
+      "MPLBACKEND=Agg python3 /mnt/skills/salt-prediction/scripts/predict_salt.py " +
+      `--formula "${formula}" --comp "${comp}" --output-dir /mnt/data/output/salt-prediction`;
+    const t0 = performance.now();
+
+    try {
+      const response = await fetch("/api/mcp/call", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tool, args: { command } })
+      });
+      const t1 = performance.now();
+
+      const result = (await response.json()) as ExecutionResult;
+      let finalResult = result;
+      const plotPath = extractPlotPath(result.stdout || "");
+      let previewMs = 0;
+      if (plotPath) {
+        try {
+          const previewStart = performance.now();
+          const previewResponse = await fetch("/api/mcp/call", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+          });
+          const previewResult = (await previewResponse.json()) as ExecutionResult;
+          previewMs = performance.now() - previewStart;
+          if (previewResult.ui?.kind === "html") {
+            finalResult = {
+              ...result,
+              ui: previewResult.ui
+            };
+          }
+        } catch {
+          // Keep original result when preview lookup fails.
+        }
+      }
+
+      setLatestResult(finalResult);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "tool",
+          content:
+            `Tool ${tool} finished. ${formatResultSummary(finalResult)} ` +
+            `(mcp: ${Math.round(t1 - t0)}ms, preview: ${Math.round(previewMs)}ms, total: ${Math.round(performance.now() - t0)}ms)`,
+          result: finalResult
+        }
+      ]);
+    } catch {
+      const result: ExecutionResult = {
+        ok: false,
+        stdout: "",
+        stderr: "Failed to call orchestrator route.",
+        artifacts: [],
+        meta: { tool },
+        ui: { kind: "none" }
+      };
+      setLatestResult(result);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "tool",
+          content: `Tool ${tool} failed.`,
+          result
+        }
+      ]);
+    } finally {
+      setIsCalling(false);
+      setShowPredictModal(false);
     }
   }
 
@@ -799,6 +902,9 @@ export default function HomePage() {
             <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
               Analyze salt…
             </button>
+            <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
+              Predict salt…
+            </button>
             <label className="toggle-wrap">
               <span className="toggle-label">Use LLM</span>
               <input
@@ -870,7 +976,27 @@ export default function HomePage() {
               {latestResult && latestResult.ui?.kind !== "html" && (
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
               )}
-              {latestReferences.length > 0 && (
+              {latestPredictionSummary && (
+                <details className="reference-box" open>
+                  <summary>Prediction Summary</summary>
+                  <div className="reference-list">
+                    <div className="reference-item">Samples: {String(latestPredictionSummary.samples ?? "n/a")}</div>
+                    <div className="reference-item">Features: {String(latestPredictionSummary.features ?? "n/a")}</div>
+                    <div className="reference-item">Train size: {String(latestPredictionSummary.train_size ?? "n/a")}</div>
+                    <div className="reference-item">Test size: {String(latestPredictionSummary.test_size ?? "n/a")}</div>
+                    <div className="reference-item">MAE: {String(latestPredictionSummary.mae_k ?? "n/a")} K</div>
+                    <div className="reference-item">RMSE: {String(latestPredictionSummary.rmse_k ?? "n/a")} K</div>
+                    <div className="reference-item">R2: {String(latestPredictionSummary.r2 ?? "n/a")}</div>
+                    <div className="reference-item">
+                      Predicted ({String(latestPredictionSummary.formula ?? "n/a")} |{" "}
+                      {String(latestPredictionSummary.composition ?? "n/a")}):{" "}
+                      {String(latestPredictionSummary.predicted_melting_point_k ?? "n/a")} +/-{" "}
+                      {String(latestPredictionSummary.predicted_uncertainty_k ?? "n/a")} K
+                    </div>
+                  </div>
+                </details>
+              )}
+              {!latestPredictionSummary && latestReferences.length > 0 && (
                 <details className="reference-box" open>
                   <summary>References ({latestReferences.length})</summary>
                   <div className="reference-list">
@@ -1009,6 +1135,40 @@ export default function HomePage() {
               </label>
               <button className="button secondary" onClick={runSaltAnalysis} disabled={isCalling}>
                 {isCalling ? "Running..." : "Run analysis"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPredictModal && (
+        <div className="modal-backdrop" onClick={() => setShowPredictModal(false)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header">
+              <div className="panel-title">Predict Salt</div>
+              <button className="button ghost" onClick={() => setShowPredictModal(false)}>
+                Close
+              </button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Formula
+                <input
+                  className="input"
+                  value={predictFormulaInput}
+                  onChange={(event) => setPredictFormulaInput(event.target.value)}
+                />
+              </label>
+              <label>
+                Composition
+                <input
+                  className="input"
+                  value={predictCompInput}
+                  onChange={(event) => setPredictCompInput(event.target.value)}
+                />
+              </label>
+              <button className="button secondary" onClick={runSaltPrediction} disabled={isCalling}>
+                {isCalling ? "Running..." : "Run prediction"}
               </button>
             </div>
           </div>
