@@ -34,7 +34,6 @@ AVAILABLE_JOBS = get_available_jobs()
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
 SESSION_REMOTE_HPC_JOBS_DIR = settings.remote_hpc_jobs_dir / settings.session_id
-HOST = "frontier.olcf.ornl.gov"
 ssh_conn: asyncssh.SSHClientConnection | None = None
 
 
@@ -65,9 +64,9 @@ async def remote_bash(command: str) -> str:
 async def app_lifespan(server):
     global ssh_conn
 
-    ssh_conn = await asyncssh.connect(HOST, client_factory=TTYSSHClient)
+    ssh_conn = await asyncssh.connect(settings.hpc_host, client_factory=TTYSSHClient)
 
-    print(f"Connected to {HOST}", file=sys.stderr)
+    print(f"Connected to {settings.hpc_host}", file=sys.stderr)
 
     await ssh_conn.run(
         f'mkdir -p {shlex.quote(str(SESSION_REMOTE_HPC_JOBS_DIR.parent))}',

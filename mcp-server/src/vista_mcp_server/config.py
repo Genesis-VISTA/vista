@@ -35,6 +35,7 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
+    hpc_host: str = "frontier.olcf.ornl.gov"
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
     remote_hpc_jobs_dir: ResolvedPath = Path("/lustre/orion/stf218/proj-shared/vista/")
     """
