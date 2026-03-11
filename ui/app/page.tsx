@@ -17,10 +17,21 @@ type McpToolsResponse = {
   error?: string;
 };
 
+type ToolCallInfo = {
+  tool: string;
+  args: Record<string, unknown>;
+  stdout: string;
+  stderr: string;
+  ok: boolean;
+  plotPath?: string | null;
+  displayHtml?: string | null;
+};
+
 type ChatApiResponse = {
   ok: boolean;
   response: string;
   tools?: Array<{ name: string; description?: string; inputSchema?: any }>;
+  toolCalls?: ToolCallInfo[];
   error?: string;
 };
 
@@ -163,7 +174,7 @@ export default function HomePage() {
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [mcpTools, setMcpTools] = useState<McpToolsResponse | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [useLlm, setUseLlm] = useState(false);
+  const [useLlm, setUseLlm] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [uploads, setUploads] = useState<UploadFileInfo[]>([]);
   const [isLoadingUploads, setIsLoadingUploads] = useState(false);
@@ -330,15 +341,20 @@ export default function HomePage() {
 
     setIsChatLoading(true);
     try {
+      // Build history from existing messages for context
+      const history = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role, content: m.content }));
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text, history })
       });
       const data = (await response.json()) as ChatApiResponse;
       const content = data.ok
         ? data.response
-        : `LLM unavailable: ${data.error || "Unknown error"}`;
+        : `Agent unavailable: ${data.error || "Unknown error"}`;
 
       setMessages((prev) => [
         ...prev,
@@ -348,6 +364,47 @@ export default function HomePage() {
           content
         }
       ]);
+
+      // Process tool calls from the agent
+      if (Array.isArray(data.toolCalls)) {
+        for (const tc of data.toolCalls) {
+          if (tc.displayHtml) {
+            setLatestResult({
+              ok: true,
+              stdout: tc.stdout || "",
+              stderr: tc.stderr || "",
+              artifacts: [],
+              meta: {
+                tool: tc.tool,
+                analysisSummary: tc.plotPath
+                  ? { plotPath: tc.plotPath }
+                  : undefined,
+                references: parseReferencesFromStdout(tc.stdout || "")
+              },
+              ui: { kind: "html", html: tc.displayHtml }
+            });
+          }
+        }
+
+        // Add tool call summary messages
+        const toolSummaries = data.toolCalls
+          .filter((tc) => tc.tool === "run_bash" || tc.tool === "web_search")
+          .map((tc) => {
+            const label = tc.tool === "run_bash" ? "Code execution" : "Web search";
+            const status = tc.ok ? "completed" : "failed";
+            return `${label} ${status}`;
+          });
+        if (toolSummaries.length > 0) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "tool",
+              content: `Agent actions: ${toolSummaries.join(", ")}`
+            }
+          ]);
+        }
+      }
 
       if (Array.isArray(data.tools)) {
         setMcpTools({
@@ -361,7 +418,7 @@ export default function HomePage() {
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: "LLM unavailable: failed to call /api/chat."
+          content: "Agent unavailable: failed to call /api/chat."
         }
       ]);
     } finally {
@@ -906,7 +963,7 @@ export default function HomePage() {
               Predict salt…
             </button>
             <label className="toggle-wrap">
-              <span className="toggle-label">Use LLM</span>
+              <span className="toggle-label">Agent</span>
               <input
                 className="toggle-input"
                 type="checkbox"
@@ -921,12 +978,16 @@ export default function HomePage() {
           <div className="chat-list">
             {messages.length === 0 && (
               <div className="chat-bubble">
-                No messages yet. Use the quick action to run the salt analysis tool.
+                Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
               </div>
             )}
             {messages.map((msg) => (
               <div key={msg.id} className={`chat-bubble ${msg.role}`}>
-                {msg.content}
+                {msg.role === "assistant" ? (
+                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                ) : (
+                  msg.content
+                )}
                 {msg.result && !msg.result.ok && (
                   <div className="error" style={{ marginTop: 6 }}>
                     {msg.result.stderr}
@@ -939,7 +1000,7 @@ export default function HomePage() {
         <div className="chat-input-row">
           <input
             className="input"
-            placeholder="Type your prompt and press Enter..."
+            placeholder="Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -949,7 +1010,7 @@ export default function HomePage() {
             }}
           />
           <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
-            {isChatLoading ? "Thinking..." : "⏎"}
+            {isChatLoading ? "Agent working..." : "⏎"}
           </button>
         </div>
       </section>

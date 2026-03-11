@@ -33,10 +33,22 @@ async def bash(
     command: A[str, "Bash command to run"],
 ) -> str:
     """
-    Run a bash command.
+    Run a bash command inside the sandbox.
 
-    Avoid commands that produce a large amount of output, and consider piping those outputs to
-    files.
+    ALWAYS use this tool for any question about the molten salt database.
+    Never answer data questions from memory — run code to get precise values.
+
+    The sandbox has Python 3, numpy, matplotlib, and scipy.
+    Skills are mounted at /mnt/skills/, output goes to /mnt/data/output/.
+
+    Key paths:
+      Database JSON: /mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json
+      Analysis script: /mnt/skills/salt-analysis/scripts/analyze_salt.py
+      Phase diagram script: /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py
+
+    When a plot is saved, it is automatically displayed to the user.
+    Always set MPLBACKEND=Agg before running matplotlib.
+    Avoid commands that produce a large amount of output — pipe to files instead.
     """
     proc = await sandbox.exec("bash", args = ["-c", command], combine_streams=True)
     stdout, _ = await proc.communicate()
