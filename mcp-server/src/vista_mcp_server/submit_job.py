@@ -142,6 +142,7 @@ async def submit_job(
     if time_limit:
         args.extend(["-t", time_limit])
     args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/logs/slurm-%j.out"])
+    args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
     args.extend(shlex.split(script_args))
 
@@ -159,12 +160,12 @@ async def submit_job(
 @mcp.tool()
 async def get_job_status(job_id: str) -> str:
     """Get the status and logs of a submitted Slurm job."""
-    sacct_out = await remote_bash("sacct", "--json", "-j", job_id)
+    sacct_out = await remote_bash("bash", "-c", f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except:
         raise ValueError("Malformed sacct output")
-    if len(sacct_jobs) <= 0:
+    if len(sacct_jobs) <= 0 or not sacct_jobs[0]['name'].startswith("vista-"):
         raise ValueError(f"No job {job_id} found")
 
     state = sacct_jobs[0]['state']['current'][0]
