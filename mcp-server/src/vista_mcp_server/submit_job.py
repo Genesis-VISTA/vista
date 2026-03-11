@@ -64,8 +64,8 @@ async def remote_bash(command: str) -> str:
 async def app_lifespan(server):
     global ssh_conn
 
+    print(f"Connecting to {settings.hpc_host}...", file=sys.stderr)
     ssh_conn = await asyncssh.connect(settings.hpc_host, client_factory=TTYSSHClient)
-
     print(f"Connected to {settings.hpc_host}", file=sys.stderr)
 
     await ssh_conn.run(
