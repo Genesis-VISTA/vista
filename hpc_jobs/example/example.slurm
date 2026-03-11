@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH -J example
-#SBATCH -t 0:10:00
+#SBATCH -t 0:02:00
 #SBATCH -A stf218
 #SBATCH -N 1
 

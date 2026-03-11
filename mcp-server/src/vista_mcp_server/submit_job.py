@@ -17,8 +17,24 @@ from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
 from .config import settings
 
-HOST = "frontier.olcf.ornl.gov"
 
+def get_available_jobs() -> dict[str, Path]:
+    jobs = {}
+    for file in settings.local_hpc_jobs_dir.iterdir():
+        if file.is_dir():
+            slurm_scripts = list(file.glob("*.slurm"))
+            if len(slurm_scripts) != 1:
+                raise ValueError(f"Expected to find one .slurm script in {file}, found {len(slurm_scripts)}")
+            slurm_script = slurm_scripts[0]
+            jobs[file.name] = slurm_script.relative_to(settings.local_hpc_jobs_dir)
+    return jobs
+
+
+AVAILABLE_JOBS = get_available_jobs()
+MAX_NODES = 64
+MAX_TIME = "4:00:00"
+SESSION_REMOTE_HPC_JOBS_DIR = settings.remote_hpc_jobs_dir / settings.session_id
+HOST = "frontier.olcf.ornl.gov"
 ssh_conn: asyncssh.SSHClientConnection | None = None
 
 
@@ -58,17 +74,6 @@ async def remote_bash(command: str) -> str:
     return result.stdout
 
 
-def get_available_jobs() -> dict[str, Path]:
-    jobs = {}
-    for file in settings.local_hpc_jobs_dir.iterdir():
-        if file.is_dir():
-            slurm_scripts = list(file.glob("*.slurm"))
-            if len(slurm_scripts) != 1:
-                raise ValueError(f"Expected to find one .slurm script in {file}, found {len(slurm_scripts)}")
-            slurm_script = slurm_scripts[0]
-            jobs[file.name] = slurm_script.relative_to(settings.local_hpc_jobs_dir)
-    return jobs
-
 @lifespan
 async def app_lifespan(server):
     global ssh_conn
@@ -84,28 +89,26 @@ async def app_lifespan(server):
     print(f"Connected to {HOST}", file=sys.stderr)
 
     await ssh_conn.run(
-        f'rm -rf {shlex.quote(str(settings.remote_hpc_jobs_dir))} && ' + 
-        f'mkdir -p {shlex.quote(str(settings.remote_hpc_jobs_dir.parent))}',
+        f'mkdir -p {shlex.quote(str(SESSION_REMOTE_HPC_JOBS_DIR.parent))}',
         check=True,
     )
     await asyncssh.scp(
         str(settings.local_hpc_jobs_dir),
-        (ssh_conn, str(settings.remote_hpc_jobs_dir)),
+        (ssh_conn, str(SESSION_REMOTE_HPC_JOBS_DIR)),
         recurse=True,
     )
-    print(f"Synced jobs to {settings.remote_hpc_jobs_dir}", file=sys.stderr)
+    print(f"Synced jobs to {SESSION_REMOTE_HPC_JOBS_DIR}", file=sys.stderr)
 
     try:
         yield
     finally:
+        # TODO: we need to clean up old directories, but I don't want to immediately delete the
+        # session dirs as the job may still be running when you close the mcp server
         ssh_conn.close()
 
 
 mcp = FastMCP(name="Submit Job", lifespan=app_lifespan)
 
-AVAILABLE_JOBS = get_available_jobs()
-MAX_NODES = 64
-MAX_TIME = "4:00:00"
 
 @mcp.tool(
     description=textwrap.dedent(f"""
@@ -134,7 +137,7 @@ async def submit_hpc_job(
     if time_limit and parse_time_limit(time_limit) > parse_time_limit(MAX_TIME):
         raise ValueError(f"Time limit to large (max: {MAX_TIME})")
 
-    remote_job_script = settings.remote_hpc_jobs_dir / AVAILABLE_JOBS[job]
+    remote_job_script = SESSION_REMOTE_HPC_JOBS_DIR / AVAILABLE_JOBS[job]
 
     args = ["sbatch"]
     args.extend(["--chdir", str(remote_job_script.parent)])
