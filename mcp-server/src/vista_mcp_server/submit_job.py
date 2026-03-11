@@ -3,7 +3,6 @@ MCP for remote HPC job submission.
 """
 
 from __future__ import annotations
-import getpass
 import json
 import sys
 import re
@@ -17,7 +16,7 @@ import shlex
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
 from .config import settings
-
+from .lib.ssh import TTYSSHClient
 
 def get_available_jobs() -> dict[str, Path]:
     jobs = {}
@@ -38,19 +37,6 @@ SESSION_REMOTE_HPC_JOBS_DIR = settings.remote_hpc_jobs_dir / settings.session_id
 HOST = "frontier.olcf.ornl.gov"
 ssh_conn: asyncssh.SSHClientConnection | None = None
 
-
-def prompt_credentials() -> tuple[str, str]:
-    username = settings.hpc_username
-    password = settings.hpc_password
-    if not username or not password:
-        # use sys.stderr to avoid issues when running MCP on stdio
-        print(f"\nSSH login required for {HOST}\n", file=sys.stderr, end="")
-    if not username:
-        print(f"Username: ", file=sys.stderr, end="")
-        username = input()
-    if not password:
-        password = getpass.getpass(prompt="Password: ", stream=sys.stderr)
-    return username, password
 
 def parse_time_limit(s: str):
     """Parse a time delta string in 'h:mm:ss' format."""
@@ -79,13 +65,7 @@ async def remote_bash(command: str) -> str:
 async def app_lifespan(server):
     global ssh_conn
 
-    username, password = prompt_credentials()
-
-    ssh_conn = await asyncssh.connect(
-        HOST,
-        username=username, password=password,
-        known_hosts=None, # TODO
-    )
+    ssh_conn = await asyncssh.connect(HOST, client_factory=TTYSSHClient)
 
     print(f"Connected to {HOST}", file=sys.stderr)
 

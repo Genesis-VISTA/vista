@@ -15,11 +15,6 @@ uvx --env-file ./.env --refresh . --version
 cd "$REPO_ROOT/ui"
 npm install
 
-read -p 'HPC Username: ' VISTA_MCP_HPC_USERNAME
-read -p 'HPC Password: ' -s VISTA_MCP_HPC_PASSWORD
-export VISTA_MCP_HPC_USERNAME
-export VISTA_MCP_HPC_PASSWORD
-
 # Launch backend and frontend
 tmux new-session \
   -d -s vista-dev \
