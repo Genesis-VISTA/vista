@@ -43,14 +43,15 @@ def parse_time_limit(s: str):
     except:
         raise ValueError(f"Invalid time limit: {s}")
 
-async def remote_bash(*args: str) -> str:
+async def remote_bash(command: str) -> str:
     """
     Run a bash command on the remote HPC system
     """
     if ssh_conn is None:
         raise RuntimeError("SSH connection is not available.")
 
-    result = await ssh_conn.run(shlex.join(args), check=False,
+    # TODO: Make sure this is always using bash regardless of user shell
+    result = await ssh_conn.run(command, check=False,
         stdout = subprocess.PIPE,
         stderr = subprocess.STDOUT,
     )
@@ -120,7 +121,7 @@ MAX_TIME = "4:00:00"
             The slurm job id.
     """),
 )
-async def submit_job(
+async def submit_hpc_job(
     job: str,
     nodes: int | None = None,
     time_limit: str | None = None,
@@ -146,7 +147,7 @@ async def submit_job(
     args.append(str(remote_job_script))
     args.extend(shlex.split(script_args))
 
-    result = await remote_bash(*args)
+    result = await remote_bash(shlex.join(args))
 
     match = re.search(r"submitted batch job (\d+)", result.lower())
     if match:
@@ -158,9 +159,15 @@ async def submit_job(
 
 
 @mcp.tool()
-async def get_job_status(job_id: str) -> str:
-    """Get the status and logs of a submitted Slurm job."""
-    sacct_out = await remote_bash("bash", "-c", f"sacct --json -j {shlex.quote(job_id)} --user $USER")
+async def get_hpc_job_status(job_id: str) -> str:
+    """
+    Get the status and logs of a submitted Slurm job.
+    
+    Args:
+        job_id: The slurm job id
+
+    """
+    sacct_out = await remote_bash(f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except:
@@ -170,6 +177,6 @@ async def get_job_status(job_id: str) -> str:
 
     state = sacct_jobs[0]['state']['current'][0]
     log_path = f"{settings.remote_hpc_jobs_dir}/logs/slurm-{job_id}.out"
-    logs = await remote_bash("bash", "-c", f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+    logs = await remote_bash(f"cat {shlex.quote(log_path)} 2>/dev/null || true")
 
     return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
