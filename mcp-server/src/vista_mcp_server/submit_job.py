@@ -10,6 +10,7 @@ import re
 import subprocess
 import asyncssh
 import textwrap
+import time
 from datetime import timedelta
 from pathlib import Path
 import shlex
@@ -183,3 +184,32 @@ async def get_hpc_job_status(job_id: str) -> str:
     logs = await remote_bash(f"cat {shlex.quote(log_path)} 2>/dev/null || true")
 
     return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
+
+
+@mcp.tool()
+async def list_hpc_jobs() -> str:
+    """
+    List all submitted HPC jobs.
+    """
+    sacct_out = await remote_bash("sacct --json --allocations --user $USER")
+    try:
+        sacct_jobs = json.loads(sacct_out)["jobs"]
+    except Exception:
+        raise ValueError("Malformed sacct output")
+
+    cutoff = time.time() - 24 * 60 * 60
+
+    lines = []
+    for job in sacct_jobs:
+        if not job["name"].startswith("vista-"):
+            continue
+        job_id = str(job["job_id"])
+
+        state = job["state"]["current"][0]
+        end_time = job.get("time", {}).get("end", 0)
+        if end_time and end_time < cutoff:
+            continue
+
+        lines.append(f"{job_id} {state}")
+
+    return "\n".join(lines) if lines else "No jobs found."
