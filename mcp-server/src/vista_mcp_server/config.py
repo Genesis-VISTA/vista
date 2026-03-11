@@ -35,6 +35,12 @@ class AppSettings(BaseSettings):
     """ Username for the HPC system """
     hpc_password: str | None = None
     """ Password for the HPC system """
+    local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
+    remote_hpc_jobs_dir: ResolvedPath = Path("/lustre/orion/stf218/proj-shared/vista/")
+    """
+    Folder on the HPC cluster where the hpc_jobs will be copied. NOTE: will overwrite the folder's
+    content if it exists.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
