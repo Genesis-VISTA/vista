@@ -1,6 +1,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Annotated as A
+import getpass
+import uuid
+from datetime import datetime
 from .lib.types import ResolvedPath
 
 
@@ -31,9 +35,19 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
+    hpc_host: str = "frontier.olcf.ornl.gov"
+    local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
+    remote_hpc_jobs_dir: ResolvedPath = Path("/lustre/orion/stf218/proj-shared/vista/")
+    """
+    Folder on the HPC cluster where the hpc_jobs will be copied.
+    """
+
+    session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
+    """ Unique id for the Vista session """
+
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
-        env_file="../.env",
+        env_file=["./.env"],
         extra='ignore',
     )
 
