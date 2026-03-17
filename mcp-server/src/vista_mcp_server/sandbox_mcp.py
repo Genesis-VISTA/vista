@@ -29,7 +29,7 @@ async def app_lifespan(server):
 mcp = FastMCP(name="Sandbox", lifespan=app_lifespan)
 
 @mcp.tool()
-async def bash(
+async def run_bash(
     command: A[str, "Bash command to run"],
 ) -> str:
     """
