@@ -132,6 +132,9 @@ function getAzureConfig(): {
 // Which MCP tools to expose to the LLM, and how to rename them
 const TOOL_EXPOSE_MAP: Record<string, string> = {
   bash: "run_bash",
+  submit_hpc_job: "submit_hpc_job",
+  get_hpc_job_status: "get_hpc_job_status",
+  list_hpc_jobs: "list_hpc_jobs",
 };
 
 // Reverse map: OpenAI tool name → MCP tool name
@@ -254,6 +257,13 @@ function buildSystemPrompt(): string {
     `For questions beyond the database (research trends, groups, general nuclear science), answer using your own scientific knowledge.`,
     ``,
     skillsPrompt,
+    ``,
+    `## HPC Job Submission (Frontier)`,
+    `To run jobs on the Frontier HPC cluster, use these tools directly — do NOT use run_bash:`,
+    `- submit_hpc_job(job, nodes?, time_limit?, script_args?): Submit a Slurm job. Available jobs: example, forge-tune.`,
+    `- get_hpc_job_status(job_id): Check the status and logs of a submitted job.`,
+    `- list_hpc_jobs(): List all recently submitted jobs.`,
+    `Use submit_hpc_job whenever the user asks to run, launch, or execute anything on Frontier or the HPC cluster.`,
     ``,
     `## CRITICAL RULES — read these first`,
     `1. You MUST call run_bash for ANY question about the database. NEVER answer data questions from memory or guess values/counts.`,

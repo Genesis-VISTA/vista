@@ -37,7 +37,7 @@ class AppSettings(BaseSettings):
 
     hpc_host: str = "frontier.olcf.ornl.gov"
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
-    remote_hpc_jobs_dir: ResolvedPath = Path("/lustre/orion/stf218/proj-shared/vista/")
+    remote_hpc_jobs_dir: Path = Path("/lustre/orion/stf218/proj-shared/vista/")
     """
     Folder on the HPC cluster where the hpc_jobs will be copied.
     """
