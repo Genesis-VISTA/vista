@@ -18,8 +18,8 @@ cd "$REPO_ROOT/ui"
 npm install
 
 cd "$REPO_ROOT"
-UI_CMD="cd '$REPO_ROOT/ui' && npm run dev; exec sleep infinity"
-SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uvx --env-file ../.env . --transport=http; exec sleep infinity"
+UI_CMD="cd '$REPO_ROOT/ui' && npm run dev; exec bash"
+SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uvx --env-file ../.env . --transport=http; exec bash"
 
 # Launches a command in a new terminal window
 launch_terminal() {
