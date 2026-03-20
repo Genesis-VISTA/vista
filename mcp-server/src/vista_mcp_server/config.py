@@ -45,9 +45,13 @@ class AppSettings(BaseSettings):
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """
 
+    omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
+    omd_api_key: str
+    """ Key for the AmSC Open Metadata Server. Get this from https://api.i2-core.american-science-cloud.org """
+
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
-        env_file=["./.env"],
+        env_file=["./.env", "../.env"],
         extra='ignore',
     )
 

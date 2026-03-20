@@ -121,32 +121,14 @@ function getAzureConfig(): {
 /*  MCP tool discovery                                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * Discover tools from the MCP server via JSON-RPC tools/list,
- * then convert them to OpenAI function-calling format.
- *
- * The MCP server exposes: bash, create_file, view, display_file.
- * We expose bash (as "run_bash") to the LLM.
- */
-
-// Which MCP tools to expose to the LLM, and how to rename them
-const TOOL_EXPOSE_MAP: Record<string, string> = {
-  bash: "run_bash",
-  submit_hpc_job: "submit_hpc_job",
-  get_hpc_job_status: "get_hpc_job_status",
-  list_hpc_jobs: "list_hpc_jobs",
-};
-
-// Reverse map: OpenAI tool name → MCP tool name
-const TOOL_REVERSE_MAP: Record<string, string> = {};
-for (const [mcpName, openaiName] of Object.entries(TOOL_EXPOSE_MAP)) {
-  TOOL_REVERSE_MAP[openaiName] = mcpName;
-}
-
 let cachedTools: OpenAiTool[] | null = null;
 let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
 
+/**
+ * Discover tools from the MCP server via JSON-RPC tools/list,
+ * then convert them to OpenAI function-calling format.
+ */
 async function discoverTools(): Promise<OpenAiTool[]> {
   const now = Date.now();
   if (cachedTools && now - cachedToolsTime < TOOL_CACHE_TTL_MS) {
@@ -184,15 +166,12 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     // Convert MCP tools → OpenAI function-calling format, filtering to exposed set
     const openaiTools: OpenAiTool[] = [];
     for (const mcp of mcpTools) {
-      const exposedName = TOOL_EXPOSE_MAP[mcp.name];
-      if (!exposedName) continue; // not exposed to the LLM
-
       const description = mcp.description ?? "";
       const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
 
       openaiTools.push({
         type: "function",
-        function: { name: exposedName, description, parameters },
+        function: { name: mcp.name, description, parameters },
       });
     }
 
