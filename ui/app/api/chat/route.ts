@@ -148,6 +148,10 @@ let cachedTools: OpenAiTool[] | null = null;
 let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
 
+/**
+ * Discover tools from the MCP server via JSON-RPC tools/list,
+ * then convert them to OpenAI function-calling format.
+ */
 async function discoverTools(): Promise<OpenAiTool[]> {
   const now = Date.now();
   if (cachedTools && now - cachedToolsTime < TOOL_CACHE_TTL_MS) {
@@ -185,15 +189,12 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     // Convert MCP tools → OpenAI function-calling format, filtering to exposed set
     const openaiTools: OpenAiTool[] = [];
     for (const mcp of mcpTools) {
-      const exposedName = TOOL_EXPOSE_MAP[mcp.name];
-      if (!exposedName) continue; // not exposed to the LLM
-
       const description = mcp.description ?? "";
       const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
 
       openaiTools.push({
         type: "function",
-        function: { name: exposedName, description, parameters },
+        function: { name: mcp.name, description, parameters },
       });
     }
 
