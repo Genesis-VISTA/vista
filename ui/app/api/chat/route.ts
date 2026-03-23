@@ -121,6 +121,29 @@ function getAzureConfig(): {
 /*  MCP tool discovery                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Discover tools from the MCP server via JSON-RPC tools/list,
+ * then convert them to OpenAI function-calling format.
+ *
+ * The MCP server exposes: bash, create_file, view, display_file.
+ * We expose bash (as "run_bash") to the LLM.
+ */
+
+// Which MCP tools to expose to the LLM, and how to rename them
+const TOOL_EXPOSE_MAP: Record<string, string> = {
+  bash: "run_bash",
+  submit_hpc_job: "submit_hpc_job",
+  get_hpc_job_status: "get_hpc_job_status",
+  list_hpc_jobs: "list_hpc_jobs",
+  rag_search: "rag_search",
+};
+
+// Reverse map: OpenAI tool name → MCP tool name
+const TOOL_REVERSE_MAP: Record<string, string> = {};
+for (const [mcpName, openaiName] of Object.entries(TOOL_EXPOSE_MAP)) {
+  TOOL_REVERSE_MAP[openaiName] = mcpName;
+}
+
 let cachedTools: OpenAiTool[] | null = null;
 let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
@@ -208,6 +231,23 @@ function buildFallbackTools(): OpenAiTool[] {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "rag_search",
+        description:
+          "Search the indexed literature corpus (papers, reports, technical notes) for passages relevant to a query. " +
+          "Use for qualitative, conceptual, or literature-review questions. Returns passages with source citations (title, authors, journal, year, DOI).",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Natural-language search query over the molten salt literature corpus" },
+            n_results: { type: "integer", description: "Number of passages to return (1-20, default 5)" },
+          },
+          required: ["query"],
+        },
+      },
+    },
   ];
 }
 
@@ -232,8 +272,8 @@ function buildSystemPrompt(): string {
 
   return [
     `You are VISTA, a scientific assistant for molten salt thermophysical properties.`,
-    `You have access to a molten salt database and analysis scripts via run_bash.`,
-    `For questions beyond the database (research trends, groups, general nuclear science), answer using your own scientific knowledge.`,
+    `You have access to a molten salt database and analysis scripts via run_bash, and a literature search tool (rag_search) over indexed research papers.`,
+    `For questions beyond the database and literature corpus (general nuclear science, broad research trends), answer using your own scientific knowledge.`,
     ``,
     skillsPrompt,
     ``,
@@ -243,6 +283,27 @@ function buildSystemPrompt(): string {
     `- get_hpc_job_status(job_id): Check the status and logs of a submitted job.`,
     `- list_hpc_jobs(): List all recently submitted jobs.`,
     `Use submit_hpc_job whenever the user asks to run, launch, or execute anything on Frontier or the HPC cluster.`,
+    ``,
+    `## Literature Search (RAG)`,
+    `You have access to a rag_search tool that searches over an indexed corpus of molten salt research papers, reports, and technical notes.`,
+    ``,
+    `**When to use rag_search:**`,
+    `- Qualitative or conceptual questions: "What corrosion challenges exist for FLiBe?", "How is thermal conductivity typically measured?"`,
+    `- Literature review questions: "What do recent studies say about tritium management in FHRs?"`,
+    `- Finding references, experimental methods, or discussion of specific phenomena from the literature`,
+    `- When the user asks about research context, background, or the state of knowledge on a topic`,
+    ``,
+    `**When NOT to use rag_search (use run_bash instead):**`,
+    `- Quantitative lookups: melting points, viscosity values, density at a specific temperature`,
+    `- Database statistics: counting salts, finding extremes, ranking properties`,
+    `- Phase diagrams, plots, or any visualization`,
+    ``,
+    `**When to use BOTH rag_search and run_bash:**`,
+    `- "What is known about FLiBe corrosion and what does our database say?" → rag_search for qualitative context, run_bash for database values`,
+    `- Research trend questions that also reference specific salts or properties in the database`,
+    ``,
+    `When citing rag_search results, ALWAYS include the citation information returned by the tool (title, authors, year, DOI).`,
+    `Format citations inline like: (Author et al., Year, DOI: ...) or as a references section at the end of your response.`,
     ``,
     `## CRITICAL RULES — read these first`,
     `1. You MUST call run_bash for ANY question about the database. NEVER answer data questions from memory or guess values/counts.`,
@@ -322,22 +383,33 @@ function buildSystemPrompt(): string {
     `**Step 1: Check the local database first (if the question mentions a specific salt or property).**`,
     `Call run_bash with a Python script to check what data exists.`,
     ``,
-    `**Step 2: Answer using your scientific knowledge.**`,
-    `Combine what the database shows (compositions, property values, references) with your knowledge of molten salt science, nuclear engineering, and relevant research.`,
-    `Cite DOIs from the database when available.`,
+    `**Step 2: Search the literature corpus with rag_search.**`,
+    `Call rag_search to find relevant passages from indexed papers. This provides qualitative context, experimental details, and additional references beyond the structured database.`,
+    ``,
+    `**Step 3: Synthesize your answer.**`,
+    `Combine the database results (Step 1), literature passages (Step 2), and your own scientific knowledge.`,
+    `Cite DOIs from both the database and rag_search results.`,
     ``,
     `Examples:`,
     `User: "Has any group studied FLiBe?"`,
     `→ Step 1: run_bash — check if BeF2-LiF exists in the database, list its properties and references`,
-    `→ Step 2: Answer combining DB data with your knowledge of FLiBe research (ORNL, MSR program, etc.)`,
+    `→ Step 2: rag_search("FLiBe research experimental studies") — find literature discussing FLiBe`,
+    `→ Step 3: Answer combining DB data, literature passages, and your knowledge of FLiBe research (ORNL, MSR program, etc.)`,
+    ``,
+    `User: "What corrosion challenges exist for fluoride salts in reactor piping?"`,
+    `→ Step 1: skip (not a database lookup)`,
+    `→ Step 2: rag_search("corrosion fluoride salt reactor piping") — find relevant literature passages`,
+    `→ Step 3: Answer combining literature findings with your own knowledge, citing all sources`,
     ``,
     `User: "What is the most promising salt for better viscosity?"`,
     `→ Step 1: run_bash — compute viscosity at T=973K for all salts, rank by lowest`,
-    `→ Step 2: Answer with DB rankings + your knowledge of promising candidates and trade-offs`,
+    `→ Step 2: rag_search("low viscosity molten salt candidates") — find literature on promising salts`,
+    `→ Step 3: Answer with DB rankings + literature context + your knowledge of trade-offs`,
     ``,
     `User: "How to improve the yield of tritium?"`,
     `→ Step 1: skip (general nuclear engineering question, not a database query)`,
-    `→ Step 2: Answer directly from your knowledge about breeding blanket design, Li-6 enrichment, etc.`,
+    `→ Step 2: rag_search("tritium breeding yield improvement") — check if literature corpus has relevant papers`,
+    `→ Step 3: Answer combining any literature findings with your knowledge about breeding blanket design, Li-6 enrichment, etc.`,
     ``,
     `For viscosity ranking, use this exact script via run_bash:`,
     `  python3 -c "`,
@@ -369,8 +441,10 @@ function buildSystemPrompt(): string {
     `- For "statistics" / "properties" / "references" → analyze_salt.py.`,
     `- If ambiguous ("show me salt X"), use plot_phase_diagram.py for multi-component salts.`,
     `- ALWAYS set MPLBACKEND=Agg. ALWAYS print "Plot saved to <path>".`,
-    `- For research/trend questions: query the database first if relevant, then answer from your own scientific knowledge.`,
-    `- Include references/DOIs from the database when available.`,
+    `- For literature/qualitative questions → use rag_search. Include full citations (title, authors, DOI) from the returned results.`,
+    `- For complex questions, combine rag_search (for literature context) with run_bash (for quantitative data). Cite both the literature and database DOIs.`,
+    `- For research/trend questions: query the database first if relevant, use rag_search for literature context, then synthesize with your own scientific knowledge.`,
+    `- Include references/DOIs from the database and rag_search results when available.`,
     `- Be concise but thorough.`,
   ].join("\n");
 }
