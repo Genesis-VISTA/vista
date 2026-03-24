@@ -49,6 +49,9 @@ class AppSettings(BaseSettings):
     omd_api_key: str
     """ Key for the AmSC Open Metadata Server. Get this from https://api.i2-core.american-science-cloud.org """
 
+    rag_db_path: ResolvedPath = Path("../rag_db")
+    rag_model: str = "google/embeddinggemma-300m"
+
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
         env_file=["./.env", "../.env"],
