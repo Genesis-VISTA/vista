@@ -126,7 +126,9 @@ async function ensureSession(timeoutMs: number): Promise<void> {
     method: "initialize",
     params: {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: {
+        elicitation: {}
+      },
       clientInfo: {
         name: "vercel-vista-ui",
         version: "0.1.0"
@@ -166,4 +168,181 @@ export async function callMcpRpc(method: string, params: Record<string, unknown>
     result = await postRpc(payload, timeoutMs, true);
   }
   return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Elicitation support                                                */
+/* ------------------------------------------------------------------ */
+
+export type ElicitationRequest = {
+  id: string | number;
+  message: string;
+  requestedSchema: Record<string, unknown>;
+};
+
+export type ElicitationResponse = {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+};
+
+/**
+ * Send a JSON-RPC **response** back to the MCP server (used for
+ * replying to server-initiated requests like elicitation/create).
+ */
+async function postRpcResponse(
+  id: string | number,
+  result: unknown,
+  timeoutMs: number
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream"
+  };
+  if (mcpSessionId) {
+    headers["mcp-session-id"] = mcpSessionId;
+  }
+
+  await fetchWithTimeout(
+    getMcpBaseUrl(),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id, result })
+    },
+    timeoutMs
+  );
+}
+
+/**
+ * Call an MCP tool with support for mid-call elicitation.
+ *
+ * POSTs tools/call, then reads the response. If the MCP server sends
+ * an SSE stream containing an `elicitation/create` JSON-RPC request,
+ * the `onElicitation` callback is invoked so the caller can collect
+ * user input. The elicitation response is POSTed back and reading
+ * continues until the final tool result arrives.
+ *
+ * Falls back to standard buffered read when the response is plain JSON.
+ */
+export async function callMcpToolWithElicitation(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  onElicitation: (req: ElicitationRequest) => Promise<ElicitationResponse>,
+  timeoutMs = 120_000
+): Promise<RpcResult> {
+  await ensureSession(timeoutMs);
+
+  const rpcId = `tools/call-${Date.now()}`;
+  const payload = {
+    jsonrpc: "2.0",
+    id: rpcId,
+    method: "tools/call",
+    params: { name: toolName, arguments: toolArgs }
+  };
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream"
+  };
+  if (mcpSessionId) {
+    headers["mcp-session-id"] = mcpSessionId;
+  }
+
+  const response = await fetchWithTimeout(
+    getMcpBaseUrl(),
+    { method: "POST", headers, body: JSON.stringify(payload) },
+    timeoutMs
+  );
+
+  const maybeSessionId =
+    response.headers.get("mcp-session-id") ??
+    response.headers.get("Mcp-Session-Id");
+  if (maybeSessionId) {
+    mcpSessionId = maybeSessionId;
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+
+  // Non-SSE response: fall back to buffered read (no elicitation)
+  if (!contentType.includes("text/event-stream")) {
+    const text = await response.text();
+    return { response, text, json: parseMcpPayload(text, contentType) };
+  }
+
+  // SSE response: read incrementally looking for elicitation requests
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalJson: unknown = null;
+  let fullText = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    // Keep the last (possibly incomplete) line in the buffer
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      fullText += line + "\n";
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        continue;
+      }
+
+      // Server-initiated elicitation request
+      if (
+        parsed.jsonrpc === "2.0" &&
+        parsed.method === "elicitation/create" &&
+        parsed.id != null
+      ) {
+        const params = parsed.params as Record<string, unknown> | undefined;
+        const elicitReq: ElicitationRequest = {
+          id: parsed.id as string | number,
+          message: typeof params?.message === "string" ? params.message : "",
+          requestedSchema:
+            (params?.requestedSchema as Record<string, unknown>) ?? {}
+        };
+
+        const elicitResp = await onElicitation(elicitReq);
+        await postRpcResponse(elicitReq.id, elicitResp, timeoutMs);
+        continue;
+      }
+
+      // JSON-RPC response (the tool result)
+      if (
+        parsed.jsonrpc === "2.0" &&
+        ("result" in parsed || "error" in parsed)
+      ) {
+        finalJson = parsed;
+      }
+    }
+  }
+
+  // Process any remaining buffer
+  if (buffer.startsWith("data:")) {
+    const data = buffer.slice(5).trim();
+    if (data && data !== "[DONE]") {
+      fullText += buffer + "\n";
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>;
+        if (parsed.jsonrpc === "2.0" && ("result" in parsed || "error" in parsed)) {
+          finalJson = parsed;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const json = finalJson ?? parseMcpPayload(fullText, contentType);
+  return { response, text: fullText, json };
 }

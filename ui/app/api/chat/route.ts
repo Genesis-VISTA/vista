@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { callMcpRpc } from "@/lib/mcp";
+import { callMcpRpc, callMcpToolWithElicitation } from "@/lib/mcp";
+import type { ElicitationRequest, ElicitationResponse } from "@/lib/mcp";
+import { registerElicitation } from "@/lib/elicitation-bridge";
 import { toPrompt, findSkills } from "@/lib/skills";
 import { config } from "@/app/config";
 import { readFileSync } from "fs";
@@ -24,13 +26,6 @@ type ToolCallResult = {
   displayHtml?: string | null;
 };
 
-type ChatResponse = {
-  ok: boolean;
-  response: string;
-  toolCalls?: ToolCallResult[];
-  error?: string;
-};
-
 /** Shape returned by MCP tools/list */
 type McpToolDef = {
   name: string;
@@ -47,6 +42,13 @@ type OpenAiTool = {
     parameters: Record<string, unknown>;
   };
 };
+
+/** SSE event types sent to the browser */
+type SseEvent =
+  | { type: "elicitation"; id: string; message: string; schema: Record<string, unknown> }
+  | { type: "agent_response"; response: string; toolCalls: ToolCallResult[] }
+  | { type: "error"; error: string }
+  | { type: "done" };
 
 /* ------------------------------------------------------------------ */
 /*  Logging                                                            */
@@ -393,15 +395,14 @@ function buildSystemPrompt(): string {
 /**
  * Execute a tool call by routing it through the MCP server.
  *
- * The LLM sees "run_bash" which maps back to MCP tool "bash"
- * via TOOL_REVERSE_MAP, then calls it via JSON-RPC tools/call.
- *
- * After the MCP call returns, we apply post-processing:
- *   - detect "Plot saved to /path/file.png" in stdout and embed the image
+ * When an `onElicitation` callback is provided, uses the streaming
+ * `callMcpToolWithElicitation` path so that mid-call credential
+ * prompts can be relayed to the user.
  */
 async function executeTool(
   toolName: string,
-  toolInput: Record<string, unknown>
+  toolInput: Record<string, unknown>,
+  onElicitation?: (req: ElicitationRequest) => Promise<ElicitationResponse>
 ): Promise<ToolCallResult> {
   const t0 = Date.now();
   log("INFO", "Tool:Start", `Invoking tool: ${toolName}`, { args: toolInput });
@@ -433,13 +434,31 @@ async function executeTool(
   }
 
   try {
-    // Route through MCP
-    const timeoutMs = toolName === "bash" ? 60000 : 20000;
-    const { response, json } = await callMcpRpc(
-      "tools/call",
-      { name: toolName, arguments: toolInput },
-      timeoutMs
-    );
+    const baseTimeout = 60_000;
+    // Use elicitation-aware path when callback provided, with longer timeout
+    const timeoutMs = onElicitation ? Math.max(baseTimeout, 120_000) : baseTimeout;
+
+    let response: Response;
+    let json: unknown;
+
+    if (onElicitation) {
+      const rpcResult = await callMcpToolWithElicitation(
+        toolName,
+        toolInput,
+        onElicitation,
+        timeoutMs
+      );
+      response = rpcResult.response;
+      json = rpcResult.json;
+    } else {
+      const rpcResult = await callMcpRpc(
+        "tools/call",
+        { name: toolName, arguments: toolInput },
+        timeoutMs
+      );
+      response = rpcResult.response;
+      json = rpcResult.json;
+    }
 
     const content = extractMcpContent(json);
     result.stdout = content.text;
@@ -555,7 +574,8 @@ function extractMcpContent(json: unknown): { text: string; html: string | null }
 
 async function runAgentLoop(
   userMessage: string,
-  history: Array<{ role: string; content: string }>
+  history: Array<{ role: string; content: string }>,
+  sendEvent: (event: SseEvent) => void
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
   const azureConfig = getAzureConfig();
 
@@ -598,6 +618,25 @@ async function runAgentLoop(
     toolCount: tools.length,
     toolNames: tools.map((t) => t.function.name),
   });
+
+  // Build the onElicitation callback that bridges to the browser via SSE
+  const onElicitation = async (req: ElicitationRequest): Promise<ElicitationResponse> => {
+    const bridgeId = `elicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    log("INFO", "Elicitation", `Received elicitation request`, { bridgeId, mcpId: req.id, message: req.message });
+
+    // Send elicitation event to browser via SSE
+    sendEvent({
+      type: "elicitation",
+      id: bridgeId,
+      message: req.message,
+      schema: req.requestedSchema,
+    });
+
+    // Wait for browser to POST back via /api/chat/elicitation
+    const resp = await registerElicitation(bridgeId);
+    log("INFO", "Elicitation", `Got response from browser`, { bridgeId, action: resp.action });
+    return resp;
+  };
 
   const maxIterations = 10;
   for (let i = 0; i < maxIterations; i++) {
@@ -679,7 +718,7 @@ async function runAgentLoop(
         toolInput = {};
       }
 
-      const tcResult = await executeTool(toolName, toolInput);
+      const tcResult = await executeTool(toolName, toolInput, onElicitation);
       toolCalls.push(tcResult);
 
       let resultContent = tcResult.stdout || tcResult.stderr || "(no output)";
@@ -700,7 +739,7 @@ async function runAgentLoop(
 }
 
 /* ------------------------------------------------------------------ */
-/*  POST handler                                                       */
+/*  POST handler — returns SSE stream                                  */
 /* ------------------------------------------------------------------ */
 
 export async function POST(request: Request) {
@@ -710,7 +749,7 @@ export async function POST(request: Request) {
     body = (await request.json()) as ChatRequest;
   } catch {
     return NextResponse.json(
-      { ok: false, response: "", error: "Invalid JSON body." } satisfies ChatResponse,
+      { ok: false, response: "", error: "Invalid JSON body." },
       { status: 400 }
     );
   }
@@ -718,31 +757,48 @@ export async function POST(request: Request) {
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) {
     return NextResponse.json(
-      { ok: false, response: "", error: "Message is required." } satisfies ChatResponse,
+      { ok: false, response: "", error: "Message is required." },
       { status: 400 }
     );
   }
 
   const history = Array.isArray(body.history) ? body.history : [];
 
-  try {
-    const { response, toolCalls } = await runAgentLoop(message, history);
-    const elapsed = Date.now() - requestStart;
-    log("INFO", "POST", `Request completed in ${elapsed}ms`, {
-      toolCallCount: toolCalls.length,
-      responseLength: response.length,
-    });
-    return NextResponse.json(
-      { ok: true, response, toolCalls } satisfies ChatResponse,
-      { status: 200 }
-    );
-  } catch (error) {
-    const elapsed = Date.now() - requestStart;
-    const errMsg = error instanceof Error ? error.message : "Unknown error";
-    log("ERROR", "POST", `Request failed after ${elapsed}ms: ${errMsg}`);
-    return NextResponse.json(
-      { ok: false, response: "", error: errMsg } satisfies ChatResponse,
-      { status: 502 }
-    );
-  }
+  const encoder = new TextEncoder();
+  const stream = new TransformStream();
+  const writer = stream.writable.getWriter();
+
+  const sendEvent = (event: SseEvent) => {
+    const data = `data: ${JSON.stringify(event)}\n\n`;
+    writer.write(encoder.encode(data)).catch(() => {});
+  };
+
+  // Run agent loop in background, writing SSE events as it goes
+  (async () => {
+    try {
+      const { response, toolCalls } = await runAgentLoop(message, history, sendEvent);
+      const elapsed = Date.now() - requestStart;
+      log("INFO", "POST", `Request completed in ${elapsed}ms`, {
+        toolCallCount: toolCalls.length,
+        responseLength: response.length,
+      });
+      sendEvent({ type: "agent_response", response, toolCalls });
+    } catch (error) {
+      const elapsed = Date.now() - requestStart;
+      const errMsg = error instanceof Error ? error.message : "Unknown error";
+      log("ERROR", "POST", `Request failed after ${elapsed}ms: ${errMsg}`);
+      sendEvent({ type: "error", error: errMsg });
+    } finally {
+      sendEvent({ type: "done" });
+      writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(stream.readable, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    },
+  });
 }

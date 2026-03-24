@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
+import ElicitationModal from "@/components/ElicitationModal";
 import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
 
 type McpHealth = {
@@ -176,6 +177,11 @@ export default function HomePage() {
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [useLlm, setUseLlm] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [pendingElicitation, setPendingElicitation] = useState<{
+    id: string;
+    message: string;
+    schema: Record<string, unknown>;
+  } | null>(null);
   const [uploads, setUploads] = useState<UploadFileInfo[]>([]);
   const [isLoadingUploads, setIsLoadingUploads] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -323,6 +329,64 @@ export default function HomePage() {
     }
   }
 
+  async function handleElicitationSubmit(
+    id: string,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>
+  ) {
+    setPendingElicitation(null);
+    try {
+      await fetch("/api/chat/elicitation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, action, content })
+      });
+    } catch {
+      // bridge timeout will auto-cancel if POST fails
+    }
+  }
+
+  function processAgentResponse(data: { response: string; toolCalls: ToolCallInfo[] }) {
+    const content = data.response || "(no response)";
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "assistant", content }
+    ]);
+
+    if (Array.isArray(data.toolCalls)) {
+      for (const tc of data.toolCalls) {
+        if (tc.displayHtml) {
+          setLatestResult({
+            ok: true,
+            stdout: tc.stdout || "",
+            stderr: tc.stderr || "",
+            artifacts: [],
+            meta: {
+              tool: tc.tool,
+              analysisSummary: tc.plotPath ? { plotPath: tc.plotPath } : undefined,
+              references: parseReferencesFromStdout(tc.stdout || "")
+            },
+            ui: { kind: "html", html: tc.displayHtml }
+          });
+        }
+      }
+
+      const toolSummaries = data.toolCalls
+        .filter((tc) => tc.tool === "run_bash" || tc.tool === "web_search")
+        .map((tc) => {
+          const label = tc.tool === "run_bash" ? "Code execution" : "Web search";
+          const status = tc.ok ? "completed" : "failed";
+          return `${label} ${status}`;
+        });
+      if (toolSummaries.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "tool", content: `Agent actions: ${toolSummaries.join(", ")}` }
+        ]);
+      }
+    }
+  }
+
   async function sendUserMessage() {
     const text = input.trim();
     if (!text) return;
@@ -341,7 +405,6 @@ export default function HomePage() {
 
     setIsChatLoading(true);
     try {
-      // Build history from existing messages for context
       const history = messages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role, content: m.content }));
@@ -351,66 +414,62 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ message: text, history })
       });
-      const data = (await response.json()) as ChatApiResponse;
-      const content = data.ok
-        ? data.response
-        : `Agent unavailable: ${data.error || "Unknown error"}`;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content
-        }
-      ]);
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-      // Process tool calls from the agent
-      if (Array.isArray(data.toolCalls)) {
-        for (const tc of data.toolCalls) {
-          if (tc.displayHtml) {
-            setLatestResult({
-              ok: true,
-              stdout: tc.stdout || "",
-              stderr: tc.stderr || "",
-              artifacts: [],
-              meta: {
-                tool: tc.tool,
-                analysisSummary: tc.plotPath
-                  ? { plotPath: tc.plotPath }
-                  : undefined,
-                references: parseReferencesFromStdout(tc.stdout || "")
-              },
-              ui: { kind: "html", html: tc.displayHtml }
-            });
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+
+          let event: { type: string; [key: string]: unknown };
+          try {
+            event = JSON.parse(data);
+          } catch {
+            continue;
+          }
+
+          switch (event.type) {
+            case "elicitation":
+              setPendingElicitation({
+                id: event.id as string,
+                message: event.message as string,
+                schema: event.schema as Record<string, unknown>
+              });
+              break;
+
+            case "agent_response":
+              processAgentResponse({
+                response: event.response as string,
+                toolCalls: event.toolCalls as ToolCallInfo[]
+              });
+              break;
+
+            case "error":
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: `Agent error: ${event.error || "Unknown error"}`
+                }
+              ]);
+              break;
+
+            case "done":
+              break;
           }
         }
-
-        // Add tool call summary messages
-        const toolSummaries = data.toolCalls
-          .filter((tc) => tc.tool === "run_bash" || tc.tool === "web_search")
-          .map((tc) => {
-            const label = tc.tool === "run_bash" ? "Code execution" : "Web search";
-            const status = tc.ok ? "completed" : "failed";
-            return `${label} ${status}`;
-          });
-        if (toolSummaries.length > 0) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "tool",
-              content: `Agent actions: ${toolSummaries.join(", ")}`
-            }
-          ]);
-        }
-      }
-
-      if (Array.isArray(data.tools)) {
-        setMcpTools({
-          ok: true,
-          tools: data.tools
-        });
       }
     } catch {
       setMessages((prev) => [
@@ -1234,6 +1293,15 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      )}
+
+      {pendingElicitation && (
+        <ElicitationModal
+          id={pendingElicitation.id}
+          message={pendingElicitation.message}
+          schema={pendingElicitation.schema}
+          onSubmit={handleElicitationSubmit}
+        />
       )}
     </main>
   );
