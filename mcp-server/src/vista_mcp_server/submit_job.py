@@ -36,8 +36,6 @@ MAX_TIME = "4:00:00"
 SESSION_REMOTE_HPC_JOBS_DIR = settings.remote_hpc_jobs_dir / settings.session_id
 ssh_conn: asyncssh.SSHClientConnection | None = None
 
-print(SESSION_REMOTE_HPC_JOBS_DIR, flush=True)
-
 def parse_time_limit(s: str):
     """Parse a time delta string in 'h:mm:ss' format."""
     try:
