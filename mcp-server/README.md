@@ -20,15 +20,12 @@ cd ..
 
 Run in stdio transport
 ```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-uv pip install -e .[dev]
-uvx --env-file ../.env --refresh .
+uv run --env-file ../.env vista-mcp-server --transport=stdio
 ```
 
 To run in http transport mode
 ```bash
-uvx --env-file ../.env --refresh . --transport http
+uv run --env-file ../.env vista-mcp-server --transport=http
 ```
 
 ## Configuration

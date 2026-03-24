@@ -1,12 +1,9 @@
 from __future__ import annotations
 import argparse
-from pathlib import Path
-import tempfile
 import logging
 
 logging.basicConfig(
-    filename=Path(tempfile.gettempdir()) / "vista.log",
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 

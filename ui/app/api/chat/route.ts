@@ -121,29 +121,6 @@ function getAzureConfig(): {
 /*  MCP tool discovery                                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * Discover tools from the MCP server via JSON-RPC tools/list,
- * then convert them to OpenAI function-calling format.
- *
- * The MCP server exposes: bash, create_file, view, display_file.
- * We expose bash (as "run_bash") to the LLM.
- */
-
-// Which MCP tools to expose to the LLM, and how to rename them
-const TOOL_EXPOSE_MAP: Record<string, string> = {
-  bash: "run_bash",
-  submit_hpc_job: "submit_hpc_job",
-  get_hpc_job_status: "get_hpc_job_status",
-  list_hpc_jobs: "list_hpc_jobs",
-  rag_search: "rag_search",
-};
-
-// Reverse map: OpenAI tool name → MCP tool name
-const TOOL_REVERSE_MAP: Record<string, string> = {};
-for (const [mcpName, openaiName] of Object.entries(TOOL_EXPOSE_MAP)) {
-  TOOL_REVERSE_MAP[openaiName] = mcpName;
-}
-
 let cachedTools: OpenAiTool[] | null = null;
 let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
@@ -164,7 +141,7 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     const { response, json } = await callMcpRpc("tools/list", {}, 5000);
     if (!response.ok) {
       log("WARN", "ToolDiscovery", `MCP tools/list failed (HTTP ${response.status})`);
-      return cachedTools ?? buildFallbackTools();
+      return cachedTools ?? [];
     }
 
     const envelope = json as Record<string, unknown> | null;
@@ -198,12 +175,7 @@ async function discoverTools(): Promise<OpenAiTool[]> {
       });
     }
 
-    if (openaiTools.length === 0) {
-      log("WARN", "ToolDiscovery", "No matching tools after filtering — using fallback");
-      cachedTools = buildFallbackTools();
-    } else {
-      cachedTools = openaiTools;
-    }
+    cachedTools = openaiTools;
 
     cachedToolsTime = now;
     log("INFO", "ToolDiscovery", `Exposing ${cachedTools.length} tools to LLM`, {
@@ -212,43 +184,8 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     return cachedTools;
   } catch (err) {
     log("ERROR", "ToolDiscovery", `tools/list failed: ${err instanceof Error ? err.message : "Unknown"}`);
-    return cachedTools ?? buildFallbackTools();
+    return cachedTools ?? [];
   }
-}
-
-/** Hardcoded fallback if MCP discovery fails — minimal descriptions */
-function buildFallbackTools(): OpenAiTool[] {
-  return [
-    {
-      type: "function",
-      function: {
-        name: "run_bash",
-        description: "Run a bash command inside the sandbox. Use for all database queries and script execution.",
-        parameters: {
-          type: "object",
-          properties: { command: { type: "string", description: "The bash command to execute" } },
-          required: ["command"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "rag_search",
-        description:
-          "Search the indexed literature corpus (papers, reports, technical notes) for passages relevant to a query. " +
-          "Use for qualitative, conceptual, or literature-review questions. Returns passages with source citations (title, authors, journal, year, DOI).",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Natural-language search query over the molten salt literature corpus" },
-            n_results: { type: "integer", description: "Number of passages to return (1-20, default 5)" },
-          },
-          required: ["query"],
-        },
-      },
-    },
-  ];
 }
 
 /* ------------------------------------------------------------------ */
@@ -479,11 +416,8 @@ async function executeTool(
     displayHtml: null,
   };
 
-  // Map OpenAI tool name back to MCP tool name
-  const mcpToolName = TOOL_REVERSE_MAP[toolName] ?? toolName;
-
   // Log skill-script detection for run_bash
-  if (mcpToolName === "bash") {
+  if (toolName === "bash") {
     const command = String(toolInput.command || "");
     if (command.includes("plot_phase_diagram.py")) {
       const salt = command.match(/--salt\s+(\S+)/)?.[1] || "unknown";
@@ -500,10 +434,10 @@ async function executeTool(
 
   try {
     // Route through MCP
-    const timeoutMs = mcpToolName === "bash" ? 60000 : 20000;
+    const timeoutMs = toolName === "bash" ? 60000 : 20000;
     const { response, json } = await callMcpRpc(
       "tools/call",
-      { name: mcpToolName, arguments: toolInput },
+      { name: toolName, arguments: toolInput },
       timeoutMs
     );
 

@@ -109,7 +109,7 @@ API Key=*****
 
 To add the VISTA MCP server just go to Extensions > Add Custom Extension and set the command to:
 ```
-uvx --refresh /path/to/vista
+cd path/to/vista && uv run --env-file ../.env vista-mcp-server --transport=http
 ```
 
 Make sure you have built the MCP Apps above first.

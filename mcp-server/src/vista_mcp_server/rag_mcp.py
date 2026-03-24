@@ -33,14 +33,6 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Defaults — overridable via env vars prefixed VISTA_MCP_
-# ---------------------------------------------------------------------------
-import os
-
-RAG_DB_PATH = os.getenv("VISTA_MCP_RAG_DB_PATH", str(Path("../rag_db").resolve()))
-RAG_MODEL = os.getenv("VISTA_MCP_RAG_MODEL", "google/embeddinggemma-300m")
-
-# ---------------------------------------------------------------------------
 # Module-level state (populated in lifespan)
 # ---------------------------------------------------------------------------
 _encoder: SentenceTransformer | None = None
@@ -53,9 +45,9 @@ async def app_lifespan(server):
     """Load the embedding model and open ChromaDB collections at startup."""
     global _encoder, _text_collection, _citation_collection
 
-    db_path = RAG_DB_PATH
-    logger.info("RAG: loading embedding model %s", RAG_MODEL)
-    _encoder = SentenceTransformer(RAG_MODEL, device="cpu")
+    db_path = str(settings.rag_db_path)
+    logger.info("RAG: loading embedding model %s", settings.rag_model)
+    _encoder = SentenceTransformer(settings.rag_model, device="cpu")
 
     logger.info("RAG: opening ChromaDB at %s", db_path)
     client = chromadb.PersistentClient(path=db_path)
@@ -188,7 +180,7 @@ async def rag_search(
         return (
             "ERROR: RAG database is not available. "
             "The text_chunks collection could not be loaded from "
-            f"{RAG_DB_PATH}. Please check that the database has been built."
+            f"{settings.rag_db_path}. Please check that the database has been built."
         )
 
     n_results = max(1, min(n_results, 20))

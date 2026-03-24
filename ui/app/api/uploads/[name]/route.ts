@@ -26,8 +26,8 @@ function contentTypeForFile(filePath: string): string {
   return "application/octet-stream";
 }
 
-export async function GET(_request: Request, { params }: { params: { name: string } }) {
-  const safeName = getSafeName(params.name);
+export async function GET(_request: Request, { params }: { params: Promise<{ name: string }> }) {
+  const safeName = getSafeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
   }
@@ -51,8 +51,8 @@ export async function GET(_request: Request, { params }: { params: { name: strin
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: { name: string } }) {
-  const safeName = getSafeName(params.name);
+export async function DELETE(_request: Request, { params }: { params: Promise<{ name: string }> }) {
+  const safeName = getSafeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
   }
