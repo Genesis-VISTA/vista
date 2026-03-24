@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "test": "jest --forceExit"
+    "lint": "eslint ."
   },
   "dependencies": {
     "dompurify": "^3.3.3",
