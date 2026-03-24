@@ -11,15 +11,14 @@ npm install
 npm run build
 
 cd "$REPO_ROOT/mcp-server"
-# Pre-populate the uvx cache
-uvx --env-file ../.env --refresh . --version
+uv sync
 
 cd "$REPO_ROOT/ui"
 npm install
 
 cd "$REPO_ROOT"
 UI_CMD="cd '$REPO_ROOT/ui' && npm run dev; exec bash"
-SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uvx --env-file ../.env . --transport=http; exec bash"
+SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uv run --env-file ../.env vista-mcp-server --transport=http; exec bash"
 
 # Launches a command in a new terminal window
 launch_terminal() {
