@@ -95,19 +95,27 @@ class SSHLoginInfo:
 
 
 async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
-    result = await ctx.elicit(
-        message=f"Log in to {settings.hpc_host} to run:\n{message}",
-        response_type=SSHLoginInfo
-    )
-
-    if result.action == "accept":
-        ssh_conn = await asyncssh.connect(settings.hpc_host,
-            username = result.data.user,
-            password = result.data.password,
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
+        result = await ctx.elicit(
+            message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
+            response_type=SSHLoginInfo
         )
-        return ssh_conn
-    else:
-        raise Exception("Unable to launch job, user cancelled login")
+
+        if result.action != "accept":
+            raise Exception("Unable to launch job, user cancelled login")
+
+        try:
+            return await asyncssh.connect(settings.hpc_host,
+                username = result.data.user,
+                password = result.data.password,
+            )
+        except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
+            if attempt >= max_attempts:
+                raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
+            else:
+                logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
 
 
 @mcp.tool(
