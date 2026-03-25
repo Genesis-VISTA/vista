@@ -1,13 +1,33 @@
 import { NextResponse } from "next/server";
-import { discoverMcpTools, type McpToolsDiscoveryResult } from "@/lib/mcp-tools";
+import { getMcpClient } from "@/lib/mcp-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type McpToolSummary = {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+};
+
+type McpToolsDiscoveryResult = {
+  ok: boolean;
+  tools: McpToolSummary[];
+  error?: string;
+};
+
 export async function GET() {
   try {
-    const result = await discoverMcpTools(2000);
-    return NextResponse.json(result satisfies McpToolsDiscoveryResult, {
+    const client = await getMcpClient();
+    const { tools } = await client.listTools(undefined, { signal: AbortSignal.timeout(5000) });
+
+    const summaries: McpToolSummary[] = tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
+
+    return NextResponse.json({ ok: true, tools: summaries } satisfies McpToolsDiscoveryResult, {
       status: 200,
       headers: {
         "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate"
@@ -20,7 +40,7 @@ export async function GET() {
       {
         ok: false,
         tools: [],
-        error: isAbort ? "Tool discovery timed out after 2000ms." : message
+        error: isAbort ? "Tool discovery timed out." : message
       } satisfies McpToolsDiscoveryResult,
       {
         status: 200,

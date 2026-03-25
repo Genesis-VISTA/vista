@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { callMcpRpc, callMcpToolWithElicitation } from "@/lib/mcp";
-import type { ElicitationRequest, ElicitationResponse } from "@/lib/mcp";
+import { getMcpClient } from "@/lib/mcp-client";
+import { ElicitRequestSchema, type ElicitRequestFormParams, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { registerElicitation } from "@/lib/elicitation-bridge";
 import { toPrompt, findSkills } from "@/lib/skills";
 import { config } from "@/app/config";
@@ -24,13 +24,6 @@ type ToolCallResult = {
   ok: boolean;
   plotPath?: string | null;
   displayHtml?: string | null;
-};
-
-/** Shape returned by MCP tools/list */
-type McpToolDef = {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
 };
 
 /** OpenAI function-calling tool format */
@@ -128,8 +121,7 @@ let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
 
 /**
- * Discover tools from the MCP server via JSON-RPC tools/list,
- * then convert them to OpenAI function-calling format.
+ * Discover tools from the MCP server then convert them to OpenAI function-calling format.
  */
 async function discoverTools(): Promise<OpenAiTool[]> {
   const now = Date.now();
@@ -137,48 +129,28 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     return cachedTools;
   }
 
-  log("INFO", "ToolDiscovery", "Fetching tools from MCP server via tools/list");
+  log("INFO", "ToolDiscovery", "Fetching tools from MCP server");
 
   try {
-    const { response, json } = await callMcpRpc("tools/list", {}, 5000);
-    if (!response.ok) {
-      log("WARN", "ToolDiscovery", `MCP tools/list failed (HTTP ${response.status})`);
-      return cachedTools ?? [];
-    }
-
-    const envelope = json as Record<string, unknown> | null;
-    const result = (envelope?.result ?? envelope) as Record<string, unknown> | null;
-    const rawTools = Array.isArray(result?.tools) ? result.tools : [];
-
-    const mcpTools: McpToolDef[] = rawTools
-      .filter((t: unknown) => t && typeof t === "object")
-      .map((t: unknown) => {
-        const obj = t as Record<string, unknown>;
-        return {
-          name: typeof obj.name === "string" ? obj.name : "",
-          description: typeof obj.description === "string" ? obj.description : undefined,
-          inputSchema: typeof obj.inputSchema === "object" && obj.inputSchema ? obj.inputSchema as Record<string, unknown> : undefined,
-        };
-      });
-
-    log("INFO", "ToolDiscovery", `Discovered ${mcpTools.length} MCP tools`, {
-      names: mcpTools.map((t) => t.name),
+    const client = await getMcpClient();
+    const { tools: rawTools } = await client.listTools(undefined, {
+      signal: AbortSignal.timeout(5000),
     });
 
-    // Convert MCP tools → OpenAI function-calling format, filtering to exposed set
-    const openaiTools: OpenAiTool[] = [];
-    for (const mcp of mcpTools) {
-      const description = mcp.description ?? "";
-      const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
+    log("INFO", "ToolDiscovery", `Discovered ${rawTools.length} MCP tools`, {
+      names: rawTools.map((t) => t.name),
+    });
 
-      openaiTools.push({
-        type: "function",
-        function: { name: mcp.name, description, parameters },
-      });
-    }
+    const openaiTools: OpenAiTool[] = rawTools.map((mcp) => ({
+      type: "function" as const,
+      function: {
+        name: mcp.name,
+        description: mcp.description ?? "",
+        parameters: (mcp.inputSchema ?? { type: "object", properties: {} }) as Record<string, unknown>,
+      },
+    }));
 
     cachedTools = openaiTools;
-
     cachedToolsTime = now;
     log("INFO", "ToolDiscovery", `Exposing ${cachedTools.length} tools to LLM`, {
       names: cachedTools.map((t) => t.function.name),
@@ -393,16 +365,48 @@ function buildSystemPrompt(): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * Execute a tool call by routing it through the MCP server.
+ * Extract text and HTML from an SDK CallToolResult.
+ * The SDK returns `{ content: [...], isError? }` directly — no JSON-RPC
+ * envelope to unwrap.
+ */
+function extractSdkContent(sdkResult: unknown): { text: string; html: string | null } {
+  let text = "";
+  let html: string | null = null;
+
+  if (!sdkResult || typeof sdkResult !== "object") return { text: String(sdkResult || ""), html };
+
+  const obj = sdkResult as Record<string, unknown>;
+  const content = Array.isArray(obj.content) ? obj.content : [];
+
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const ci = item as Record<string, unknown>;
+    if (ci.type === "text" && typeof ci.text === "string") {
+      text += (text ? "\n" : "") + ci.text;
+    }
+    if (ci.type === "resource") {
+      const resource = ci.resource as Record<string, unknown> | undefined;
+      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
+      if (mimeType.includes("text/html") && typeof resource?.text === "string") {
+        html = resource.text;
+      }
+    }
+  }
+
+  return { text, html };
+}
+
+/**
+ * Execute a tool call via the MCP SDK client.
  *
- * When an `onElicitation` callback is provided, uses the streaming
- * `callMcpToolWithElicitation` path so that mid-call credential
- * prompts can be relayed to the user.
+ * When an `onElicitation` callback is provided, registers it as the
+ * client's elicitation request handler so mid-call credential prompts
+ * are relayed to the browser.
  */
 async function executeTool(
   toolName: string,
   toolInput: Record<string, unknown>,
-  onElicitation?: (req: ElicitationRequest) => Promise<ElicitationResponse>
+  onElicitation?: (req: ElicitRequestFormParams) => Promise<ElicitResult>
 ): Promise<ToolCallResult> {
   const t0 = Date.now();
   log("INFO", "Tool:Start", `Invoking tool: ${toolName}`, { args: toolInput });
@@ -434,35 +438,29 @@ async function executeTool(
   }
 
   try {
-    const baseTimeout = 60_000;
-    // Use elicitation-aware path when callback provided, with longer timeout
-    const timeoutMs = onElicitation ? Math.max(baseTimeout, 120_000) : baseTimeout;
+    const client = await getMcpClient();
+    const timeoutMs = onElicitation ? 300_000 : 60_000; // 5 min for elicitation, 60s otherwise
 
-    let response: Response;
-    let json: unknown;
-
+    // Register elicitation handler directly on the client for this call
     if (onElicitation) {
-      const rpcResult = await callMcpToolWithElicitation(
-        toolName,
-        toolInput,
-        onElicitation,
-        timeoutMs
-      );
-      response = rpcResult.response;
-      json = rpcResult.json;
-    } else {
-      const rpcResult = await callMcpRpc(
-        "tools/call",
-        { name: toolName, arguments: toolInput },
-        timeoutMs
-      );
-      response = rpcResult.response;
-      json = rpcResult.json;
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+        const params = request.params;
+        if (!("requestedSchema" in params)) {
+          return { action: "decline" as const };
+        }
+        return await onElicitation(params);
+      });
     }
 
-    const content = extractMcpContent(json);
+    const sdkResult = await client.callTool(
+      { name: toolName, arguments: toolInput },
+      undefined,
+      { signal: AbortSignal.timeout(timeoutMs) }
+    );
+
+    const content = extractSdkContent(sdkResult);
     result.stdout = content.text;
-    result.ok = response.ok;
+    result.ok = !sdkResult.isError;
 
     const elapsed = Date.now() - t0;
     log("INFO", `Tool:${toolName}`, `Completed in ${elapsed}ms`, {
@@ -480,43 +478,29 @@ async function executeTool(
       let dfSuccess = false;
       try {
         log("INFO", `Tool:${toolName}`, `Calling display_file MCP tool now...`);
-        const dfResult = await callMcpRpc(
-          "tools/call",
+        const dfResult = await client.callTool(
           { name: "display_file", arguments: { uri: result.plotPath } },
-          30000
+          undefined,
+          { signal: AbortSignal.timeout(30000) }
         );
-        const dfResp = dfResult.response;
-        const dfText = dfResult.text;
-        const dfJson = dfResult.json;
+
+        const dfContent = extractSdkContent(dfResult);
+        const imgHtml = dfContent.html || dfContent.text;
 
         log("INFO", `Tool:${toolName}`, `display_file MCP response received`, {
-          httpOk: dfResp.ok,
-          httpStatus: dfResp.status,
-          textLength: (dfText || "").length,
-          textPreview: (dfText || "").slice(0, 300),
+          isError: !!dfResult.isError,
+          htmlLen: dfContent.html?.length || 0,
+          textLen: dfContent.text?.length || 0,
         });
 
-        if (dfResp.ok) {
-          const dfObj = dfJson as Record<string, unknown> | null;
-          if (dfObj?.error) {
-            log("INFO", `Tool:${toolName}`, `display_file returned JSON-RPC error: ${JSON.stringify(dfObj.error).slice(0, 500)}`);
-          } else {
-            const dfContent = extractMcpContent(dfJson);
-            const imgHtml = dfContent.html || dfContent.text;
-            if (imgHtml && imgHtml.includes("<img")) {
-              result.displayHtml = imgHtml;
-              dfSuccess = true;
-              log("INFO", `Tool:${toolName}`, `display_file SUCCESS — image HTML (${imgHtml.length} chars)`);
-            } else {
-              log("INFO", `Tool:${toolName}`, `display_file returned no <img> tag`, {
-                htmlLen: dfContent.html?.length || 0,
-                textLen: dfContent.text?.length || 0,
-                textPreview: (dfContent.text || "").slice(0, 300),
-              });
-            }
-          }
+        if (imgHtml && imgHtml.includes("<img")) {
+          result.displayHtml = imgHtml;
+          dfSuccess = true;
+          log("INFO", `Tool:${toolName}`, `display_file SUCCESS — image HTML (${imgHtml.length} chars)`);
         } else {
-          log("INFO", `Tool:${toolName}`, `display_file HTTP error ${dfResp.status}: ${(dfText || "").slice(0, 500)}`);
+          log("INFO", `Tool:${toolName}`, `display_file returned no <img> tag`, {
+            textPreview: (dfContent.text || "").slice(0, 300),
+          });
         }
       } catch (dfErr) {
         const errMsg = dfErr instanceof Error ? `${dfErr.name}: ${dfErr.message}` : String(dfErr);
@@ -524,7 +508,7 @@ async function executeTool(
       }
 
       if (!dfSuccess) {
-        log("INFO", `Tool:${toolName}`, `display_file did not produce HTML — image will not be rendered server-side. plotPath set for frontend fallback.`);
+        log("INFO", `Tool:${toolName}`, `display_file did not produce HTML — plotPath set for frontend fallback.`);
       }
     }
   } catch (err) {
@@ -534,38 +518,6 @@ async function executeTool(
   }
 
   return result;
-}
-
-function extractMcpContent(json: unknown): { text: string; html: string | null } {
-  let text = "";
-  let html: string | null = null;
-
-  if (!json || typeof json !== "object") return { text: String(json || ""), html };
-
-  const obj = json as Record<string, unknown>;
-  const resultObj = (obj.result ?? obj) as Record<string, unknown>;
-
-  const content = Array.isArray(resultObj?.content) ? resultObj.content : [];
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const ci = item as Record<string, unknown>;
-    if (ci.type === "text" && typeof ci.text === "string") {
-      text += (text ? "\n" : "") + ci.text;
-    }
-    if (ci.type === "resource") {
-      const resource = ci.resource as Record<string, unknown> | undefined;
-      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
-      if (mimeType.includes("text/html") && typeof resource?.text === "string") {
-        html = resource.text;
-      }
-    }
-  }
-
-  if (!text && typeof resultObj?.stdout === "string") {
-    text = resultObj.stdout;
-  }
-
-  return { text, html };
 }
 
 /* ------------------------------------------------------------------ */
@@ -620,9 +572,9 @@ async function runAgentLoop(
   });
 
   // Build the onElicitation callback that bridges to the browser via SSE
-  const onElicitation = async (req: ElicitationRequest): Promise<ElicitationResponse> => {
+  const onElicitation = async (req: ElicitRequestFormParams): Promise<ElicitResult> => {
     const bridgeId = `elicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    log("INFO", "Elicitation", `Received elicitation request`, { bridgeId, mcpId: req.id, message: req.message });
+    log("INFO", "Elicitation", `Received elicitation request`, { bridgeId, message: req.message });
 
     // Send elicitation event to browser via SSE
     sendEvent({

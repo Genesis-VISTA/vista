@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { resolveElicitation } from "@/lib/elicitation-bridge";
+import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 
 type ElicitationSubmit = {
   id: string;
-  action: "accept" | "decline" | "cancel";
-  content?: Record<string, unknown>;
+  action: ElicitResult["action"];
+  content?: ElicitResult["content"];
 };
 
 export async function POST(request: Request) {

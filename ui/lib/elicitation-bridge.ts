@@ -4,14 +4,10 @@
  *
  * Both run in the same Next.js Node.js process sharing module scope.
  */
-
-export type ElicitationResponse = {
-  action: "accept" | "decline" | "cancel";
-  content?: Record<string, unknown>;
-};
+import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 
 type PendingEntry = {
-  resolve: (resp: ElicitationResponse) => void;
+  resolve: (resp: ElicitResult) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
@@ -24,11 +20,11 @@ const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
  * Register a pending elicitation. Returns a promise that resolves when
  * the browser submits the form via resolveElicitation().
  */
-export function registerElicitation(id: string): Promise<ElicitationResponse> {
+export function registerElicitation(id: string): Promise<ElicitResult> {
   // Cancel any previous entry with the same id
   cancelElicitation(id);
 
-  return new Promise<ElicitationResponse>((resolve, reject) => {
+  return new Promise<ElicitResult>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
       resolve({ action: "cancel" });
@@ -44,7 +40,7 @@ export function registerElicitation(id: string): Promise<ElicitationResponse> {
  */
 export function resolveElicitation(
   id: string,
-  response: ElicitationResponse
+  response: ElicitResult
 ): boolean {
   const entry = pending.get(id);
   if (!entry) return false;
