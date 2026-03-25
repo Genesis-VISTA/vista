@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { callMcpRpc } from "@/lib/mcp";
+import { getMcpClient } from "@/lib/mcp-client";
+import { ElicitRequestSchema, type ElicitRequestFormParams, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import { registerElicitation } from "@/lib/elicitation-bridge";
 import { toPrompt, findSkills } from "@/lib/skills";
 import { config } from "@/app/config";
 import { readFileSync } from "fs";
@@ -24,20 +26,6 @@ type ToolCallResult = {
   displayHtml?: string | null;
 };
 
-type ChatResponse = {
-  ok: boolean;
-  response: string;
-  toolCalls?: ToolCallResult[];
-  error?: string;
-};
-
-/** Shape returned by MCP tools/list */
-type McpToolDef = {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-};
-
 /** OpenAI function-calling tool format */
 type OpenAiTool = {
   type: "function";
@@ -47,6 +35,13 @@ type OpenAiTool = {
     parameters: Record<string, unknown>;
   };
 };
+
+/** SSE event types sent to the browser */
+type SseEvent =
+  | { type: "elicitation"; id: string; message: string; schema: Record<string, unknown> }
+  | { type: "agent_response"; response: string; toolCalls: ToolCallResult[] }
+  | { type: "error"; error: string }
+  | { type: "done" };
 
 /* ------------------------------------------------------------------ */
 /*  Logging                                                            */
@@ -126,8 +121,7 @@ let cachedToolsTime = 0;
 const TOOL_CACHE_TTL_MS = 60_000; // re-discover every 60s
 
 /**
- * Discover tools from the MCP server via JSON-RPC tools/list,
- * then convert them to OpenAI function-calling format.
+ * Discover tools from the MCP server then convert them to OpenAI function-calling format.
  */
 async function discoverTools(): Promise<OpenAiTool[]> {
   const now = Date.now();
@@ -135,48 +129,28 @@ async function discoverTools(): Promise<OpenAiTool[]> {
     return cachedTools;
   }
 
-  log("INFO", "ToolDiscovery", "Fetching tools from MCP server via tools/list");
+  log("INFO", "ToolDiscovery", "Fetching tools from MCP server");
 
   try {
-    const { response, json } = await callMcpRpc("tools/list", {}, 5000);
-    if (!response.ok) {
-      log("WARN", "ToolDiscovery", `MCP tools/list failed (HTTP ${response.status})`);
-      return cachedTools ?? [];
-    }
-
-    const envelope = json as Record<string, unknown> | null;
-    const result = (envelope?.result ?? envelope) as Record<string, unknown> | null;
-    const rawTools = Array.isArray(result?.tools) ? result.tools : [];
-
-    const mcpTools: McpToolDef[] = rawTools
-      .filter((t: unknown) => t && typeof t === "object")
-      .map((t: unknown) => {
-        const obj = t as Record<string, unknown>;
-        return {
-          name: typeof obj.name === "string" ? obj.name : "",
-          description: typeof obj.description === "string" ? obj.description : undefined,
-          inputSchema: typeof obj.inputSchema === "object" && obj.inputSchema ? obj.inputSchema as Record<string, unknown> : undefined,
-        };
-      });
-
-    log("INFO", "ToolDiscovery", `Discovered ${mcpTools.length} MCP tools`, {
-      names: mcpTools.map((t) => t.name),
+    const client = await getMcpClient();
+    const { tools: rawTools } = await client.listTools(undefined, {
+      signal: AbortSignal.timeout(5000),
     });
 
-    // Convert MCP tools → OpenAI function-calling format, filtering to exposed set
-    const openaiTools: OpenAiTool[] = [];
-    for (const mcp of mcpTools) {
-      const description = mcp.description ?? "";
-      const parameters = mcp.inputSchema ?? { type: "object", properties: {} };
+    log("INFO", "ToolDiscovery", `Discovered ${rawTools.length} MCP tools`, {
+      names: rawTools.map((t) => t.name),
+    });
 
-      openaiTools.push({
-        type: "function",
-        function: { name: mcp.name, description, parameters },
-      });
-    }
+    const openaiTools: OpenAiTool[] = rawTools.map((mcp) => ({
+      type: "function" as const,
+      function: {
+        name: mcp.name,
+        description: mcp.description ?? "",
+        parameters: (mcp.inputSchema ?? { type: "object", properties: {} }) as Record<string, unknown>,
+      },
+    }));
 
     cachedTools = openaiTools;
-
     cachedToolsTime = now;
     log("INFO", "ToolDiscovery", `Exposing ${cachedTools.length} tools to LLM`, {
       names: cachedTools.map((t) => t.function.name),
@@ -391,17 +365,48 @@ function buildSystemPrompt(): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * Execute a tool call by routing it through the MCP server.
+ * Extract text and HTML from an SDK CallToolResult.
+ * The SDK returns `{ content: [...], isError? }` directly — no JSON-RPC
+ * envelope to unwrap.
+ */
+function extractSdkContent(sdkResult: unknown): { text: string; html: string | null } {
+  let text = "";
+  let html: string | null = null;
+
+  if (!sdkResult || typeof sdkResult !== "object") return { text: String(sdkResult || ""), html };
+
+  const obj = sdkResult as Record<string, unknown>;
+  const content = Array.isArray(obj.content) ? obj.content : [];
+
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const ci = item as Record<string, unknown>;
+    if (ci.type === "text" && typeof ci.text === "string") {
+      text += (text ? "\n" : "") + ci.text;
+    }
+    if (ci.type === "resource") {
+      const resource = ci.resource as Record<string, unknown> | undefined;
+      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
+      if (mimeType.includes("text/html") && typeof resource?.text === "string") {
+        html = resource.text;
+      }
+    }
+  }
+
+  return { text, html };
+}
+
+/**
+ * Execute a tool call via the MCP SDK client.
  *
- * The LLM sees "run_bash" which maps back to MCP tool "bash"
- * via TOOL_REVERSE_MAP, then calls it via JSON-RPC tools/call.
- *
- * After the MCP call returns, we apply post-processing:
- *   - detect "Plot saved to /path/file.png" in stdout and embed the image
+ * When an `onElicitation` callback is provided, registers it as the
+ * client's elicitation request handler so mid-call credential prompts
+ * are relayed to the browser.
  */
 async function executeTool(
   toolName: string,
-  toolInput: Record<string, unknown>
+  toolInput: Record<string, unknown>,
+  onElicitation?: (req: ElicitRequestFormParams) => Promise<ElicitResult>
 ): Promise<ToolCallResult> {
   const t0 = Date.now();
   log("INFO", "Tool:Start", `Invoking tool: ${toolName}`, { args: toolInput });
@@ -433,17 +438,29 @@ async function executeTool(
   }
 
   try {
-    // Route through MCP
-    const timeoutMs = toolName === "bash" ? 60000 : 20000;
-    const { response, json } = await callMcpRpc(
-      "tools/call",
+    const client = await getMcpClient();
+    const timeoutMs = onElicitation ? 300_000 : 60_000; // 5 min for elicitation, 60s otherwise
+
+    // Register elicitation handler directly on the client for this call
+    if (onElicitation) {
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+        const params = request.params;
+        if (!("requestedSchema" in params)) {
+          return { action: "decline" as const };
+        }
+        return await onElicitation(params);
+      });
+    }
+
+    const sdkResult = await client.callTool(
       { name: toolName, arguments: toolInput },
-      timeoutMs
+      undefined,
+      { signal: AbortSignal.timeout(timeoutMs) }
     );
 
-    const content = extractMcpContent(json);
+    const content = extractSdkContent(sdkResult);
     result.stdout = content.text;
-    result.ok = response.ok;
+    result.ok = !sdkResult.isError;
 
     const elapsed = Date.now() - t0;
     log("INFO", `Tool:${toolName}`, `Completed in ${elapsed}ms`, {
@@ -461,43 +478,29 @@ async function executeTool(
       let dfSuccess = false;
       try {
         log("INFO", `Tool:${toolName}`, `Calling display_file MCP tool now...`);
-        const dfResult = await callMcpRpc(
-          "tools/call",
+        const dfResult = await client.callTool(
           { name: "display_file", arguments: { uri: result.plotPath } },
-          30000
+          undefined,
+          { signal: AbortSignal.timeout(30000) }
         );
-        const dfResp = dfResult.response;
-        const dfText = dfResult.text;
-        const dfJson = dfResult.json;
+
+        const dfContent = extractSdkContent(dfResult);
+        const imgHtml = dfContent.html || dfContent.text;
 
         log("INFO", `Tool:${toolName}`, `display_file MCP response received`, {
-          httpOk: dfResp.ok,
-          httpStatus: dfResp.status,
-          textLength: (dfText || "").length,
-          textPreview: (dfText || "").slice(0, 300),
+          isError: !!dfResult.isError,
+          htmlLen: dfContent.html?.length || 0,
+          textLen: dfContent.text?.length || 0,
         });
 
-        if (dfResp.ok) {
-          const dfObj = dfJson as Record<string, unknown> | null;
-          if (dfObj?.error) {
-            log("INFO", `Tool:${toolName}`, `display_file returned JSON-RPC error: ${JSON.stringify(dfObj.error).slice(0, 500)}`);
-          } else {
-            const dfContent = extractMcpContent(dfJson);
-            const imgHtml = dfContent.html || dfContent.text;
-            if (imgHtml && imgHtml.includes("<img")) {
-              result.displayHtml = imgHtml;
-              dfSuccess = true;
-              log("INFO", `Tool:${toolName}`, `display_file SUCCESS — image HTML (${imgHtml.length} chars)`);
-            } else {
-              log("INFO", `Tool:${toolName}`, `display_file returned no <img> tag`, {
-                htmlLen: dfContent.html?.length || 0,
-                textLen: dfContent.text?.length || 0,
-                textPreview: (dfContent.text || "").slice(0, 300),
-              });
-            }
-          }
+        if (imgHtml && imgHtml.includes("<img")) {
+          result.displayHtml = imgHtml;
+          dfSuccess = true;
+          log("INFO", `Tool:${toolName}`, `display_file SUCCESS — image HTML (${imgHtml.length} chars)`);
         } else {
-          log("INFO", `Tool:${toolName}`, `display_file HTTP error ${dfResp.status}: ${(dfText || "").slice(0, 500)}`);
+          log("INFO", `Tool:${toolName}`, `display_file returned no <img> tag`, {
+            textPreview: (dfContent.text || "").slice(0, 300),
+          });
         }
       } catch (dfErr) {
         const errMsg = dfErr instanceof Error ? `${dfErr.name}: ${dfErr.message}` : String(dfErr);
@@ -505,7 +508,7 @@ async function executeTool(
       }
 
       if (!dfSuccess) {
-        log("INFO", `Tool:${toolName}`, `display_file did not produce HTML — image will not be rendered server-side. plotPath set for frontend fallback.`);
+        log("INFO", `Tool:${toolName}`, `display_file did not produce HTML — plotPath set for frontend fallback.`);
       }
     }
   } catch (err) {
@@ -517,45 +520,14 @@ async function executeTool(
   return result;
 }
 
-function extractMcpContent(json: unknown): { text: string; html: string | null } {
-  let text = "";
-  let html: string | null = null;
-
-  if (!json || typeof json !== "object") return { text: String(json || ""), html };
-
-  const obj = json as Record<string, unknown>;
-  const resultObj = (obj.result ?? obj) as Record<string, unknown>;
-
-  const content = Array.isArray(resultObj?.content) ? resultObj.content : [];
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const ci = item as Record<string, unknown>;
-    if (ci.type === "text" && typeof ci.text === "string") {
-      text += (text ? "\n" : "") + ci.text;
-    }
-    if (ci.type === "resource") {
-      const resource = ci.resource as Record<string, unknown> | undefined;
-      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
-      if (mimeType.includes("text/html") && typeof resource?.text === "string") {
-        html = resource.text;
-      }
-    }
-  }
-
-  if (!text && typeof resultObj?.stdout === "string") {
-    text = resultObj.stdout;
-  }
-
-  return { text, html };
-}
-
 /* ------------------------------------------------------------------ */
 /*  Azure OpenAI agentic loop                                          */
 /* ------------------------------------------------------------------ */
 
 async function runAgentLoop(
   userMessage: string,
-  history: Array<{ role: string; content: string }>
+  history: Array<{ role: string; content: string }>,
+  sendEvent: (event: SseEvent) => void
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
   const azureConfig = getAzureConfig();
 
@@ -598,6 +570,25 @@ async function runAgentLoop(
     toolCount: tools.length,
     toolNames: tools.map((t) => t.function.name),
   });
+
+  // Build the onElicitation callback that bridges to the browser via SSE
+  const onElicitation = async (req: ElicitRequestFormParams): Promise<ElicitResult> => {
+    const bridgeId = `elicit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    log("INFO", "Elicitation", `Received elicitation request`, { bridgeId, message: req.message });
+
+    // Send elicitation event to browser via SSE
+    sendEvent({
+      type: "elicitation",
+      id: bridgeId,
+      message: req.message,
+      schema: req.requestedSchema,
+    });
+
+    // Wait for browser to POST back via /api/chat/elicitation
+    const resp = await registerElicitation(bridgeId);
+    log("INFO", "Elicitation", `Got response from browser`, { bridgeId, action: resp.action });
+    return resp;
+  };
 
   const maxIterations = 10;
   for (let i = 0; i < maxIterations; i++) {
@@ -679,7 +670,7 @@ async function runAgentLoop(
         toolInput = {};
       }
 
-      const tcResult = await executeTool(toolName, toolInput);
+      const tcResult = await executeTool(toolName, toolInput, onElicitation);
       toolCalls.push(tcResult);
 
       let resultContent = tcResult.stdout || tcResult.stderr || "(no output)";
@@ -700,7 +691,7 @@ async function runAgentLoop(
 }
 
 /* ------------------------------------------------------------------ */
-/*  POST handler                                                       */
+/*  POST handler — returns SSE stream                                  */
 /* ------------------------------------------------------------------ */
 
 export async function POST(request: Request) {
@@ -710,7 +701,7 @@ export async function POST(request: Request) {
     body = (await request.json()) as ChatRequest;
   } catch {
     return NextResponse.json(
-      { ok: false, response: "", error: "Invalid JSON body." } satisfies ChatResponse,
+      { ok: false, response: "", error: "Invalid JSON body." },
       { status: 400 }
     );
   }
@@ -718,31 +709,48 @@ export async function POST(request: Request) {
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) {
     return NextResponse.json(
-      { ok: false, response: "", error: "Message is required." } satisfies ChatResponse,
+      { ok: false, response: "", error: "Message is required." },
       { status: 400 }
     );
   }
 
   const history = Array.isArray(body.history) ? body.history : [];
 
-  try {
-    const { response, toolCalls } = await runAgentLoop(message, history);
-    const elapsed = Date.now() - requestStart;
-    log("INFO", "POST", `Request completed in ${elapsed}ms`, {
-      toolCallCount: toolCalls.length,
-      responseLength: response.length,
-    });
-    return NextResponse.json(
-      { ok: true, response, toolCalls } satisfies ChatResponse,
-      { status: 200 }
-    );
-  } catch (error) {
-    const elapsed = Date.now() - requestStart;
-    const errMsg = error instanceof Error ? error.message : "Unknown error";
-    log("ERROR", "POST", `Request failed after ${elapsed}ms: ${errMsg}`);
-    return NextResponse.json(
-      { ok: false, response: "", error: errMsg } satisfies ChatResponse,
-      { status: 502 }
-    );
-  }
+  const encoder = new TextEncoder();
+  const stream = new TransformStream();
+  const writer = stream.writable.getWriter();
+
+  const sendEvent = (event: SseEvent) => {
+    const data = `data: ${JSON.stringify(event)}\n\n`;
+    writer.write(encoder.encode(data)).catch(() => {});
+  };
+
+  // Run agent loop in background, writing SSE events as it goes
+  (async () => {
+    try {
+      const { response, toolCalls } = await runAgentLoop(message, history, sendEvent);
+      const elapsed = Date.now() - requestStart;
+      log("INFO", "POST", `Request completed in ${elapsed}ms`, {
+        toolCallCount: toolCalls.length,
+        responseLength: response.length,
+      });
+      sendEvent({ type: "agent_response", response, toolCalls });
+    } catch (error) {
+      const elapsed = Date.now() - requestStart;
+      const errMsg = error instanceof Error ? error.message : "Unknown error";
+      log("ERROR", "POST", `Request failed after ${elapsed}ms: ${errMsg}`);
+      sendEvent({ type: "error", error: errMsg });
+    } finally {
+      sendEvent({ type: "done" });
+      writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(stream.readable, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    },
+  });
 }

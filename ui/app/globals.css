@@ -580,3 +580,70 @@ main {
     display: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Elicitation modal + RJSF form styles                               */
+/* ------------------------------------------------------------------ */
+
+.elicitation-modal {
+  z-index: 25;
+}
+
+.elicitation-message {
+  font-size: 14px;
+  color: var(--ink);
+  margin: 0 0 4px 0;
+  line-height: 1.45;
+}
+
+.elicitation-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* RJSF field labels */
+.elicitation-modal .form-group label,
+.elicitation-modal .field-description,
+.elicitation-modal .control-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* RJSF text inputs */
+.elicitation-modal .form-control {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.elicitation-modal .form-control:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+/* RJSF field spacing */
+.elicitation-modal .form-group {
+  margin-bottom: 12px;
+}
+
+/* RJSF validation errors */
+.elicitation-modal .text-danger,
+.elicitation-modal .error-detail {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Hide RJSF's built-in submit button (we render custom buttons) */
+.elicitation-modal .form-group:last-child > button[type="submit"] {
+  display: none;
+}

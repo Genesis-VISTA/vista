@@ -4,21 +4,26 @@ MCP for remote HPC job submission.
 
 from __future__ import annotations
 import json
-import sys
 import re
 import subprocess
 import asyncssh
 import textwrap
 import time
+import json
+import dataclasses
 from datetime import timedelta
+import logging
 from pathlib import Path
 import shlex
-from fastmcp import FastMCP
-from fastmcp.server.lifespan import lifespan
+from fastmcp import FastMCP, Context
 from .config import settings
-from .lib.ssh import TTYSSHClient
 
-def get_available_jobs() -> dict[str, Path]:
+@dataclasses.dataclass
+class JobInfo:
+    slurm_script: Path
+    description: str
+
+def get_available_jobs() -> dict[str, JobInfo]:
     jobs = {}
     for file in settings.local_hpc_jobs_dir.iterdir():
         if file.is_dir():
@@ -26,15 +31,28 @@ def get_available_jobs() -> dict[str, Path]:
             if len(slurm_scripts) != 1:
                 raise ValueError(f"Expected to find one .slurm script in {file}, found {len(slurm_scripts)}")
             slurm_script = slurm_scripts[0]
-            jobs[file.name] = slurm_script.relative_to(settings.local_hpc_jobs_dir)
+            readme = file / "README.md"
+            if not readme.exists():
+                raise ValueError(f"No README.md in {file}")
+            description = readme.read_text().strip()
+            if not description.startswith(f"# {file.name}"):
+                raise ValueError(f'Job README.md should start with "# {file.name}" header')
+            jobs[file.name] = JobInfo(
+                slurm_script=slurm_script.relative_to(file),
+                description=description,
+            )
     return jobs
 
 
 AVAILABLE_JOBS = get_available_jobs()
+
+
+def build_job_descriptions() -> str:
+    return '\n\n\n'.join(info.description for name, info in AVAILABLE_JOBS.items())
+
+
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
-SESSION_REMOTE_HPC_JOBS_DIR = settings.remote_hpc_jobs_dir / settings.session_id
-ssh_conn: asyncssh.SSHClientConnection | None = None
 
 def parse_time_limit(s: str):
     """Parse a time delta string in 'h:mm:ss' format."""
@@ -44,49 +62,60 @@ def parse_time_limit(s: str):
     except:
         raise ValueError(f"Invalid time limit: {s}")
 
-async def remote_bash(command: str) -> str:
+
+async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str) -> str:
     """
     Run a bash command on the remote HPC system
     """
-    if ssh_conn is None:
-        raise RuntimeError("SSH connection is not available.")
-
-    # TODO: Make sure this is always using bash regardless of user shell
-    result = await ssh_conn.run(command, check=False,
+    result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", check=False,
         stdout = subprocess.PIPE,
         stderr = subprocess.STDOUT,
     )
     return result.stdout
 
 
-@lifespan
-async def app_lifespan(server):
-    global ssh_conn
-
-    print(f"Connecting to {settings.hpc_host}...", file=sys.stderr)
-    ssh_conn = await asyncssh.connect(settings.hpc_host, client_factory=TTYSSHClient)
-    print(f"Connected to {settings.hpc_host}", file=sys.stderr)
-
-    await ssh_conn.run(
-        f'mkdir -p {shlex.quote(str(SESSION_REMOTE_HPC_JOBS_DIR.parent))}',
-        check=True,
-    )
-    await asyncssh.scp(
-        str(settings.local_hpc_jobs_dir),
-        (ssh_conn, str(SESSION_REMOTE_HPC_JOBS_DIR)),
-        recurse=True,
-    )
-    print(f"Synced jobs to {SESSION_REMOTE_HPC_JOBS_DIR}", file=sys.stderr)
-
-    try:
-        yield
-    finally:
-        # TODO: we need to clean up old directories, but I don't want to immediately delete the
-        # session dirs as the job may still be running when you close the mcp server
-        ssh_conn.close()
+def get_tool_call_string(tool: str, /, **kwargs):
+    kwargs = {k: v for k, v in kwargs.items() if v != None}
+    if kwargs:
+        return (
+            f"{tool}(\n" +
+            ',\n'.join(f"  {k}={json.dumps(v)}" for k, v in kwargs.items()) +
+            "\n)"
+        )
+    else:
+        return f"{tool}()"
 
 
-mcp = FastMCP(name="Submit Job", lifespan=app_lifespan)
+mcp = FastMCP("Submit Job")
+
+@dataclasses.dataclass
+class SSHLoginInfo:
+    user: str
+    password: str
+
+
+async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
+        result = await ctx.elicit(
+            message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
+            response_type=SSHLoginInfo
+        )
+
+        if result.action != "accept":
+            raise Exception("Unable to launch job, user cancelled login")
+
+        try:
+            return await asyncssh.connect(settings.hpc_host,
+                username = result.data.user,
+                password = result.data.password,
+            )
+        except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
+            if attempt >= max_attempts:
+                raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
+            else:
+                logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
 
 
 @mcp.tool(
@@ -101,13 +130,18 @@ mcp = FastMCP(name="Submit Job", lifespan=app_lifespan)
 
         Returns:
             The slurm job id.
-    """),
+
+        Available Jobs:
+
+        {textwrap.indent(build_job_descriptions(), '        ').strip()}
+    """).strip(),
 )
 async def submit_hpc_job(
+    ctx: Context,
     job: str,
     nodes: int | None = None,
     time_limit: str | None = None,
-    script_args: str = "",
+    script_args: str | None = None,
 ) -> str:
     if job not in AVAILABLE_JOBS:
         raise ValueError(f"{job} is not recognized, should be one of: {' '.join(AVAILABLE_JOBS)}")
@@ -116,8 +150,27 @@ async def submit_hpc_job(
     if time_limit and parse_time_limit(time_limit) > parse_time_limit(MAX_TIME):
         raise ValueError(f"Time limit to large (max: {MAX_TIME})")
 
-    remote_job_script = SESSION_REMOTE_HPC_JOBS_DIR / AVAILABLE_JOBS[job]
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("submit_hpc_job",
+            job = job,
+            nodes = nodes,
+            time_limit = time_limit,
+            script_args = script_args,
+        ),
+    )
 
+    remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
+    check_result = await ssh_conn.run(f"test -d {shlex.quote(str(remote_job_dir))}", check=False)
+    if check_result.returncode != 0:
+        await ssh_conn.run(f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}', check=True)
+        await asyncssh.scp(
+            str(settings.local_hpc_jobs_dir / job),
+            (ssh_conn, str(remote_job_dir)),
+            recurse=True,
+        )
+        logging.info(f"Synced job to {remote_job_dir}")
+
+    remote_job_script =  remote_job_dir / AVAILABLE_JOBS[job].slurm_script
     args = ["sbatch"]
     args.extend(["--chdir", str(remote_job_script.parent)])
     if nodes:
@@ -127,13 +180,15 @@ async def submit_hpc_job(
     args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/logs/slurm-%j.out"])
     args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
-    args.extend(shlex.split(script_args))
+    if script_args:
+        args.extend(shlex.split(script_args))
 
-    result = await remote_bash(shlex.join(args))
+    result = await remote_bash(ssh_conn, shlex.join(args))
 
     match = re.search(r"submitted batch job (\d+)", result.lower())
     if match:
         result = match[1]
+        logging.info(f"Submitted job {result} to {settings.hpc_host}")
     else:
         raise ValueError("Job failed to launch: " + result)
 
@@ -141,15 +196,18 @@ async def submit_hpc_job(
 
 
 @mcp.tool()
-async def get_hpc_job_status(job_id: str) -> str:
+async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
     """
     Get the status and logs of a submitted Slurm job.
-    
+
     Args:
         job_id: The slurm job id
 
     """
-    sacct_out = await remote_bash(f"sacct --json -j {shlex.quote(job_id)} --user $USER")
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
+    )
+    sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except:
@@ -159,17 +217,20 @@ async def get_hpc_job_status(job_id: str) -> str:
 
     state = sacct_jobs[0]['state']['current'][0]
     log_path = f"{settings.remote_hpc_jobs_dir}/logs/slurm-{job_id}.out"
-    logs = await remote_bash(f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+    logs = await remote_bash(ssh_conn, f"cat {shlex.quote(log_path)} 2>/dev/null || true")
 
     return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
 
 
 @mcp.tool()
-async def list_hpc_jobs() -> str:
+async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all submitted HPC jobs.
     """
-    sacct_out = await remote_bash("sacct --json --allocations --user $USER")
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("get_hpc_job_status"),
+    )
+    sacct_out = await remote_bash(ssh_conn, "sacct --json --allocations --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except Exception:

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { callMcpRpc, getMcpBaseUrl } from "@/lib/mcp";
+import { getMcpClient, getMcpBaseUrl } from "@/lib/mcp-client";
 
 type HealthResponse = {
   ok: boolean;
@@ -10,18 +10,9 @@ type HealthResponse = {
 export async function GET() {
   const mcpBaseUrl = getMcpBaseUrl();
   try {
-    const { response, text } = await callMcpRpc("tools/list", {}, 2000);
-    const result: HealthResponse = {
-      ok: response.ok,
-      mcpBaseUrl
-    };
-
-    if (!response.ok) {
-      result.detail = `MCP responded with HTTP ${response.status}: ${text}`;
-      return NextResponse.json(result, { status: 200 });
-    }
-
-    return NextResponse.json(result, { status: 200 });
+    const client = await getMcpClient();
+    await client.listTools(undefined, { signal: AbortSignal.timeout(5000) });
+    return NextResponse.json({ ok: true, mcpBaseUrl } satisfies HealthResponse, { status: 200 });
   } catch (error) {
     const isAbort = error instanceof Error && error.name === "AbortError";
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -30,7 +21,7 @@ export async function GET() {
       {
         ok: false,
         mcpBaseUrl,
-        detail: isAbort ? "MCP health check timed out after 2000ms." : message
+        detail: isAbort ? "MCP health check timed out." : message
       } satisfies HealthResponse,
       { status: 200 }
     );

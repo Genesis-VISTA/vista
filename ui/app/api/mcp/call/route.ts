@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ExecutionResult } from "@/lib/types";
-import { callMcpRpc } from "@/lib/mcp";
+import { getMcpClient } from "@/lib/mcp-client";
 
 function createEnvelope(partial: Partial<ExecutionResult>): ExecutionResult {
   return {
@@ -136,95 +136,58 @@ async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string)
   }
 }
 
-function normalizeMcpResult(raw: unknown, tool: string): ExecutionResult {
-  const envelope = createEnvelope({ ok: true, meta: { tool } });
+/**
+ * Normalize an SDK CallToolResult into our ExecutionResult envelope.
+ */
+function normalizeSdkResult(sdkResult: Record<string, unknown>, tool: string): ExecutionResult {
+  const envelope = createEnvelope({ ok: !sdkResult.isError, meta: { tool } });
 
-  if (!raw || typeof raw !== "object") {
-    envelope.data = raw;
-    return envelope;
-  }
+  const content = Array.isArray(sdkResult.content) ? sdkResult.content : [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const ci = item as Record<string, unknown>;
 
-  const response = raw as Record<string, unknown>;
-  if (response.error) {
-    const rpcError = response.error as Record<string, unknown>;
-    const code = typeof rpcError?.code === "number" ? rpcError.code : undefined;
-    if (code !== undefined) {
-      envelope.meta = { ...envelope.meta, rpcErrorCode: code };
-    }
-    envelope.ok = false;
-    envelope.stderr = typeof response.error === "string" ? response.error : JSON.stringify(response.error, null, 2);
-    return envelope;
-  }
-
-  const result = response.result ?? response;
-
-  if (result && typeof result === "object") {
-    const resultObj = result as Record<string, unknown>;
-    if (typeof resultObj.stdout === "string") envelope.stdout = resultObj.stdout;
-    if (typeof resultObj.stderr === "string") envelope.stderr = resultObj.stderr;
-    if (typeof resultObj.ok === "boolean") envelope.ok = resultObj.ok;
-    if (resultObj.data !== undefined) envelope.data = resultObj.data;
-    if (Array.isArray(resultObj.artifacts)) {
-      envelope.artifacts = resultObj.artifacts
-        .filter((item) => item && typeof item === "object")
-        .map((item) => {
-          const obj = item as Record<string, unknown>;
-          return {
-            type: typeof obj.type === "string" ? obj.type : "unknown",
-            name: typeof obj.name === "string" ? obj.name : "artifact",
-            url: typeof obj.url === "string" ? obj.url : undefined
-          };
-        });
+    if (ci.type === "text" && typeof ci.text === "string") {
+      envelope.stdout += envelope.stdout ? `\n${ci.text}` : ci.text;
     }
 
-    const uiFromResult = extractUiHtml(resultObj);
-    if (uiFromResult) {
-      envelope.ui = { kind: "html", html: uiFromResult };
-    }
-
-    const content = Array.isArray(resultObj.content) ? resultObj.content : [];
-    for (const item of content) {
-      if (!item || typeof item !== "object") continue;
-      const contentItem = item as Record<string, unknown>;
-      if (contentItem.type === "text" && typeof contentItem.text === "string") {
-        envelope.stdout += envelope.stdout ? `\n${contentItem.text}` : contentItem.text;
-      }
-
-      if (contentItem.type === "resource") {
-        const resource = contentItem.resource as Record<string, unknown> | undefined;
-        const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
-        const htmlText = typeof resource?.text === "string" ? resource.text : null;
-        if (envelope.ui?.kind !== "html" && mimeType.includes("text/html") && htmlText) {
-          envelope.ui = { kind: "html", html: htmlText };
-        }
-      }
-
-      if (
-        envelope.ui?.kind !== "html" &&
-        contentItem.type === "image" &&
-        typeof contentItem.data === "string" &&
-        typeof contentItem.mimeType === "string"
-      ) {
-        envelope.ui = {
-          kind: "html",
-          html: toImageUiHtml(contentItem.mimeType, contentItem.data)
-        };
+    if (ci.type === "resource") {
+      const resource = ci.resource as Record<string, unknown> | undefined;
+      const mimeType = typeof resource?.mimeType === "string" ? resource.mimeType : "";
+      const htmlText = typeof resource?.text === "string" ? resource.text : null;
+      if (envelope.ui?.kind !== "html" && mimeType.includes("text/html") && htmlText) {
+        envelope.ui = { kind: "html", html: htmlText };
       }
     }
 
-    if (envelope.data === undefined && Object.keys(resultObj).length > 0) {
-      envelope.data = resultObj;
+    if (
+      envelope.ui?.kind !== "html" &&
+      ci.type === "image" &&
+      typeof ci.data === "string" &&
+      typeof ci.mimeType === "string"
+    ) {
+      envelope.ui = {
+        kind: "html",
+        html: toImageUiHtml(ci.mimeType as string, ci.data as string)
+      };
     }
-
-    // If stdout contains an <img> tag (e.g. from display_file), promote to ui.html
-    if (envelope.ui?.kind !== "html" && envelope.stdout.includes("<img")) {
-      envelope.ui = { kind: "html", html: envelope.stdout };
-    }
-
-    return envelope;
   }
 
-  envelope.data = result;
+  // Check for UI html in the full result structure
+  const uiFromResult = extractUiHtml(sdkResult);
+  if (uiFromResult && envelope.ui?.kind !== "html") {
+    envelope.ui = { kind: "html", html: uiFromResult };
+  }
+
+  if (Object.keys(sdkResult).length > 0) {
+    envelope.data = sdkResult;
+  }
+
+  // If stdout contains an <img> tag (e.g. from display_file), promote to ui.html
+  if (envelope.ui?.kind !== "html" && envelope.stdout.includes("<img")) {
+    envelope.ui = { kind: "html", html: envelope.stdout };
+  }
+
   return envelope;
 }
 
@@ -236,7 +199,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     tool = typeof body.tool === "string" ? body.tool : "";
     args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
-  } catch (error) {
+  } catch {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Invalid JSON body." }), { status: 400 });
   }
 
@@ -244,29 +207,18 @@ export async function POST(request: Request) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing tool name." }), { status: 400 });
   }
 
-  // TODO: Add shell runner with allowlists + sandboxing for future bash execution support.
   try {
-    const { response, text: responseText, json } = await callMcpRpc(
-      "tools/call",
-      {
-        name: tool,
-        arguments: args
-      },
-      20000
+    const client = await getMcpClient();
+    const sdkResult = await client.callTool(
+      { name: tool, arguments: args },
+      undefined,
+      { signal: AbortSignal.timeout(60000) }
     );
 
-    if (!response.ok) {
-      return NextResponse.json(
-        createEnvelope({
-          ok: false,
-          stderr: `MCP error (${response.status}): ${responseText}`,
-          meta: { tool, status: response.status }
-        }),
-        { status: 502 }
-      );
-    }
-
-    const normalized = await addDisplayFileFallbackUi(normalizeMcpResult(json, tool), tool);
+    const normalized = await addDisplayFileFallbackUi(
+      normalizeSdkResult(sdkResult as Record<string, unknown>, tool),
+      tool
+    );
     return NextResponse.json(normalized);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -274,8 +226,8 @@ export async function POST(request: Request) {
     return NextResponse.json(
       createEnvelope({
         ok: false,
-        stderr: isAbort ? "MCP unreachable: request timed out after 20000ms." : `MCP unreachable: ${message}`,
-        meta: { tool, timeoutMs: 20000 }
+        stderr: isAbort ? "MCP unreachable: request timed out after 60000ms." : `MCP unreachable: ${message}`,
+        meta: { tool, timeoutMs: 60000 }
       }),
       { status: 502 }
     );
