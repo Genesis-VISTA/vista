@@ -9,6 +9,7 @@ import subprocess
 import asyncssh
 import textwrap
 import time
+import json
 import dataclasses
 from datetime import timedelta
 import logging
@@ -53,6 +54,18 @@ async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str) -> s
     return result.stdout
 
 
+def get_tool_call_string(tool: str, /, **kwargs):
+    kwargs = {k: v for k, v in kwargs.items() if v != None}
+    if kwargs:
+        return (
+            f"{tool}(\n" +
+            ',\n'.join(f"  {k}={json.dumps(v)}" for k, v in kwargs.items()) +
+            "\n)"
+        )
+    else:
+        return f"{tool}()"
+
+
 mcp = FastMCP("Submit Job")
 
 @dataclasses.dataclass
@@ -61,9 +74,9 @@ class SSHLoginInfo:
     password: str
 
 @mcp.tool
-async def ssh_login(ctx: Context) -> asyncssh.SSHClientConnection:
+async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
     result = await ctx.elicit(
-        message=f"Log in to {settings.hpc_host}",
+        message=f"Log in to {settings.hpc_host} to run:\n{message}",
         response_type=SSHLoginInfo
     )
 
@@ -99,7 +112,7 @@ async def submit_hpc_job(
     job: str,
     nodes: int | None = None,
     time_limit: str | None = None,
-    script_args: str = "",
+    script_args: str | None = None,
 ) -> str:
     if job not in AVAILABLE_JOBS:
         raise ValueError(f"{job} is not recognized, should be one of: {' '.join(AVAILABLE_JOBS)}")
@@ -108,7 +121,14 @@ async def submit_hpc_job(
     if time_limit and parse_time_limit(time_limit) > parse_time_limit(MAX_TIME):
         raise ValueError(f"Time limit to large (max: {MAX_TIME})")
 
-    ssh_conn = await ssh_login(ctx)
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("submit_hpc_job",
+            job = job,
+            nodes = nodes,
+            time_limit = time_limit,
+            script_args = script_args,
+        ),
+    )
 
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
     check_result = await ssh_conn.run(f"test -d {shlex.quote(str(remote_job_dir))}", check=False)
@@ -131,7 +151,8 @@ async def submit_hpc_job(
     args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/logs/slurm-%j.out"])
     args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
-    args.extend(shlex.split(script_args))
+    if script_args:
+        args.extend(shlex.split(script_args))
 
     result = await remote_bash(ssh_conn, shlex.join(args))
 
@@ -154,7 +175,9 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
         job_id: The slurm job id
 
     """
-    ssh_conn = await ssh_login(ctx)
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
+    )
     sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
@@ -175,7 +198,9 @@ async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all submitted HPC jobs.
     """
-    ssh_conn = await ssh_login(ctx)
+    ssh_conn = await ssh_login(ctx,
+        message = get_tool_call_string("get_hpc_job_status"),
+    )
     sacct_out = await remote_bash(ssh_conn, "sacct --json --allocations --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]

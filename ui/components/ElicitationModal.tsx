@@ -56,7 +56,7 @@ export default function ElicitationModal({ id, message, schema, onSubmit }: Prop
           <div className="panel-title">Credentials Required</div>
         </div>
         <div className="modal-body">
-          {message && <p className="elicitation-message">{message}</p>}
+          {message && <p className="elicitation-message" style={{ whiteSpace: "pre-wrap" }}>{message}</p>}
           <Form
             schema={schema as RJSFSchema}
             uiSchema={uiSchema}
