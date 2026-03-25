@@ -18,7 +18,12 @@ import shlex
 from fastmcp import FastMCP, Context
 from .config import settings
 
-def get_available_jobs() -> dict[str, Path]:
+@dataclasses.dataclass
+class JobInfo:
+    slurm_script: Path
+    description: str
+
+def get_available_jobs() -> dict[str, JobInfo]:
     jobs = {}
     for file in settings.local_hpc_jobs_dir.iterdir():
         if file.is_dir():
@@ -26,11 +31,26 @@ def get_available_jobs() -> dict[str, Path]:
             if len(slurm_scripts) != 1:
                 raise ValueError(f"Expected to find one .slurm script in {file}, found {len(slurm_scripts)}")
             slurm_script = slurm_scripts[0]
-            jobs[file.name] = slurm_script.relative_to(file)
+            readme = file / "README.md"
+            if not readme.exists():
+                raise ValueError(f"No README.md in {file}")
+            description = readme.read_text().strip()
+            if not description.startswith(f"# {file.name}"):
+                raise ValueError(f'Job README.md should start with "# {file.name}" header')
+            jobs[file.name] = JobInfo(
+                slurm_script=slurm_script.relative_to(file),
+                description=description,
+            )
     return jobs
 
 
 AVAILABLE_JOBS = get_available_jobs()
+
+
+def build_job_descriptions() -> str:
+    return '\n\n\n'.join(info.description for name, info in AVAILABLE_JOBS.items())
+
+
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
 
@@ -73,7 +93,7 @@ class SSHLoginInfo:
     user: str
     password: str
 
-@mcp.tool
+
 async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
     result = await ctx.elicit(
         message=f"Log in to {settings.hpc_host} to run:\n{message}",
@@ -90,9 +110,6 @@ async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
         raise Exception("Unable to launch job, user cancelled login")
 
 
-mcp = FastMCP(name="Submit Job")
-
-
 @mcp.tool(
     description=textwrap.dedent(f"""
         Submit a Slurm job to the HPC system.
@@ -105,7 +122,11 @@ mcp = FastMCP(name="Submit Job")
 
         Returns:
             The slurm job id.
-    """),
+
+        Available Jobs:
+
+        {textwrap.indent(build_job_descriptions(), '        ').strip()}
+    """).strip(),
 )
 async def submit_hpc_job(
     ctx: Context,
@@ -141,7 +162,7 @@ async def submit_hpc_job(
         )
         logging.info(f"Synced job to {remote_job_dir}")
 
-    remote_job_script =  remote_job_dir / AVAILABLE_JOBS[job]
+    remote_job_script =  remote_job_dir / AVAILABLE_JOBS[job].slurm_script
     args = ["sbatch"]
     args.extend(["--chdir", str(remote_job_script.parent)])
     if nodes:
