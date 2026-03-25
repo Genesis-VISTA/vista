@@ -5,6 +5,7 @@ import os
 import subprocess
 from typing import Literal, Sequence
 from pathlib import Path
+import logging
 
 async def check_output(*args, **kwargs):
     proc = await asyncio.create_subprocess_exec(*args,
@@ -68,11 +69,14 @@ class DockerSandbox(Sandbox):
             image = "vista-sandbox"
 
         if dockerfile:
+            logging.info("Building sandbox docker image...")
             await check_output(
                 "docker", "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
             )
         else:
+            logging.info("Pulling sandbox docker image...")
             await check_output("docker", "pull", image)
+        logging.info("Launching sandbox docker image...")
 
         # Run container
         run_args = ["docker", "run", "-d"]

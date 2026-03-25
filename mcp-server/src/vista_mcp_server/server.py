@@ -11,7 +11,6 @@ mcp = FastMCP(name="VISTA MCP Server")
 mcp.mount(submit_job_mcp)
 mcp.mount(display_file_mcp)
 mcp.mount(sandbox_mcp)
-
 mcp.mount(rag_mcp)
 
 mcp.mount(create_proxy(StreamableHttpTransport(
