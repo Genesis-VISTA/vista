@@ -71,7 +71,8 @@ async def create_file(
 @mcp.tool()
 async def view(
     path: A[str, "Path to the file or directory"],
-    range: A[tuple[int, int]|None,
+    # Using tuple[int, int] creates a "prefixItems" schema that confuses openai.azure.com
+    range: A[list[int]|None,
         "Optional range to view for files. Format: [start_line, end_line]. lines are indexed at 1. Negative numbers index from end of file."
     ] = None
 ):
@@ -79,7 +80,9 @@ async def view(
     View files and directories. For text files, displays numbered lines.
     Handles truncating large outputs.
     """
-    return await view_path(sandbox, path, range)
+    if range is not None and len(range) != 2:
+        raise ValueError("range must be exactly [start, end]")
+    return await view_path(sandbox, path, tuple(range))
 
 
 # TODO:
