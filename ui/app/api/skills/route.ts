@@ -16,7 +16,8 @@ export async function GET() {
           description: props.description,
           path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
         }];
-      } catch {
+      } catch (error) {
+        console.warn(`[skills] Skipping invalid skill '${skillDir}':`, error);
         return [];
       }
     });
