@@ -3,6 +3,7 @@ MCP for remote HPC job submission.
 """
 
 from __future__ import annotations
+import asyncio
 import json
 import re
 import subprocess
@@ -15,6 +16,7 @@ from datetime import timedelta
 import logging
 from pathlib import Path
 import shlex
+import tenacity
 from fastmcp import FastMCP, Context
 from .config import settings
 
@@ -63,14 +65,25 @@ def parse_time_limit(s: str):
         raise ValueError(f"Invalid time limit: {s}")
 
 
-async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str) -> str:
+@tenacity.retry(
+    stop = tenacity.stop_after_attempt(4),
+    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
+    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
+    reraise = True,
+)
+async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str, **kwargs) -> str:
     """
     Run a bash command on the remote HPC system
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
+    if you run a command too soon after the previous, so retry with delay when that happens.
     """
-    result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", check=False,
-        stdout = subprocess.PIPE,
-        stderr = subprocess.STDOUT,
-    )
+    kwargs = {
+        "check": False,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        **kwargs,
+    }
+    result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", **kwargs)
     return result.stdout
 
 
@@ -162,9 +175,10 @@ async def submit_hpc_job(
     )
 
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await ssh_conn.run(f"test -d {shlex.quote(str(remote_job_dir))}", check=False)
-    if check_result.returncode != 0:
-        await ssh_conn.run(f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}', check=True)
+    check_result = await remote_bash(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
+    if check_result.strip() != "true":
+        await remote_bash(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
+        await asyncio.sleep(1)
         await asyncssh.scp(
             str(settings.local_hpc_jobs_dir / job),
             (ssh_conn, str(remote_job_dir)),
