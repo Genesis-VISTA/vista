@@ -46,7 +46,7 @@ class AppSettings(BaseSettings):
     """ Unique id for the Vista session """
 
     omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
-    omd_api_key: str
+    omd_api_key: str | None = None
     """ Key for the AmSC Open Metadata Server. Get this from https://api.i2-core.american-science-cloud.org """
 
     rag_db_path: ResolvedPath = Path("../rag_db")
