@@ -7,14 +7,18 @@ export async function GET() {
   try {
     const skillDirs = findSkills([config.skillsDir]);
 
-    const skills = skillDirs.map((skillDir) => {
-      const props = readProperties(skillDir);
-      return {
-        slug: path.basename(skillDir),
-        name: props.name,
-        description: props.description,
-        path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
-      };
+    const skills = skillDirs.flatMap((skillDir) => {
+      try {
+        const props = readProperties(skillDir);
+        return [{
+          slug: path.basename(skillDir),
+          name: props.name,
+          description: props.description,
+          path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
+        }];
+      } catch {
+        return [];
+      }
     });
 
     skills.sort((a, b) => a.slug.localeCompare(b.slug));

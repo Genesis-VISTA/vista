@@ -327,8 +327,15 @@ export function toPrompt(skillDirs: string[]): string {
 
   for (const dir of skillDirs) {
     const resolved = path.resolve(dir);
-    const props = readProperties(resolved);
-    const skillMd = findSkillMd(resolved)!;
+    let props: SkillProperties;
+    let skillMd: string | null;
+    try {
+      props = readProperties(resolved);
+      skillMd = findSkillMd(resolved);
+    } catch {
+      continue;
+    }
+    if (skillMd === null) continue;
 
     lines.push(
       "  <skill>",
