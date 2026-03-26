@@ -146,6 +146,7 @@ export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const leftSplitRef = useRef<HTMLDivElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeColumnResizer, setActiveColumnResizer] = useState<"left" | "right" | null>(null);
@@ -195,9 +196,23 @@ export default function HomePage() {
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [isServiceExpanded, setIsServiceExpanded] = useState(false);
   const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
   const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
+
+  function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
+    const node = chatListRef.current;
+    if (!node) return;
+    node.scrollTo({ top: node.scrollHeight, behavior });
+  }
+
+  function handleChatScroll() {
+    const node = chatListRef.current;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    setShowJumpToLatest(distanceFromBottom > 96);
+  }
 
   useEffect(() => {
     if (!activeColumnResizer) return;
@@ -400,6 +415,8 @@ export default function HomePage() {
       userMessage
     ]);
     setInput("");
+    setShowJumpToLatest(false);
+    requestAnimationFrame(() => scrollChatToLatest("auto"));
 
     if (!useLlm) return;
 
@@ -697,6 +714,11 @@ export default function HomePage() {
   useEffect(() => {
     void loadUploads();
   }, [loadUploads]);
+
+  useEffect(() => {
+    if (showJumpToLatest) return;
+    scrollChatToLatest("auto");
+  }, [messages, isChatLoading, showJumpToLatest]);
 
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -1033,8 +1055,8 @@ export default function HomePage() {
             </label>
           </div>
         </div>
-        <div className="panel-body" style={{ flex: 1 }}>
-          <div className="chat-list">
+        <div className="panel-body" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+          <div ref={chatListRef} className="chat-list" onScroll={handleChatScroll}>
             {messages.length === 0 && (
               <div className="chat-bubble">
                 Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
@@ -1054,7 +1076,31 @@ export default function HomePage() {
                 )}
               </div>
             ))}
+            {isChatLoading && (
+              <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
+                <span className="thinking-loader" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>Working on it...</span>
+              </div>
+            )}
           </div>
+          {showJumpToLatest && (
+            <button
+              type="button"
+              className="chat-jump-latest"
+              aria-label="Jump to latest"
+              title="Jump to latest"
+              onClick={() => {
+                setShowJumpToLatest(false);
+                scrollChatToLatest("smooth");
+              }}
+            >
+              ↓
+            </button>
+          )}
         </div>
         <div className="chat-input-row">
           <input
