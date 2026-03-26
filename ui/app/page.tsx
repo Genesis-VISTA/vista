@@ -509,7 +509,7 @@ export default function HomePage() {
   }
 
   async function runSaltAnalysis() {
-    const tool = "bash";
+    const tool = "run_bash";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
     const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
@@ -586,7 +586,7 @@ export default function HomePage() {
   }
 
   async function runSaltPrediction() {
-    const tool = "bash";
+    const tool = "run_bash";
     setIsCalling(true);
     const formula = predictFormulaInput.trim() || "NaCl";
     const comp = predictCompInput.trim() || "Pure Salt";
@@ -1309,4 +1309,3 @@ export default function HomePage() {
     </main>
   );
 }
-
