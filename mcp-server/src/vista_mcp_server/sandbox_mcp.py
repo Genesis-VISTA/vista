@@ -82,7 +82,7 @@ async def view(
     """
     if range is not None and len(range) != 2:
         raise ValueError("range must be exactly [start, end]")
-    return await view_path(sandbox, path, tuple(range))
+    return await view_path(sandbox, path, tuple(range) if range is not None else None)
 
 
 # TODO:
