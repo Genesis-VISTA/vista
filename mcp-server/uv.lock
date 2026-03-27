@@ -3116,6 +3116,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-magic" },
     { name = "sentence-transformers" },
+    { name = "tenacity" },
 ]
 
 [package.optional-dependencies]
@@ -3134,6 +3135,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-magic", specifier = ">=0.4.27" },
     { name = "sentence-transformers", specifier = ">=3.0" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 provides-extras = ["dev"]
 

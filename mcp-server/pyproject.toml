@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-magic>=0.4.27",
     "sentence-transformers>=3.0",
+    "tenacity>=9.1.4",
 ]
 
 [project.optional-dependencies]
