@@ -142,6 +142,12 @@ function extractPredictionSummary(result: ExecutionResult | null): Record<string
   }
 }
 
+function formatTimestampUtc(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toISOString().replace("T", " ").replace(".000Z", " UTC");
+}
+
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const leftSplitRef = useRef<HTMLDivElement | null>(null);
@@ -788,7 +794,17 @@ export default function HomePage() {
         } as CSSProperties
       }
     >
-      <section className="left-stack">
+      <header className="app-topbar">
+        <div className="app-title">VISTA</div>
+        <img
+          className="app-logo"
+          src="/genesis-amsc-lockup-horizontal-white-lg.png"
+          alt="Genesis x AmSC logo"
+        />
+      </header>
+
+      <div className="workspace">
+        <section className="left-stack">
         <div className="left-split" ref={leftSplitRef}>
           <section className="panel">
             <div className="panel-header">
@@ -888,7 +904,7 @@ export default function HomePage() {
                   <div key={file.name} className="upload-item">
                     <div className="upload-name">{file.name}</div>
                     <div className="upload-meta">
-                      {(file.size / 1024).toFixed(1)} KB - {new Date(file.modifiedAt).toLocaleString()}
+                      {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
                     </div>
                     <div className="upload-actions">
                       <a
@@ -1261,7 +1277,8 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </section>
+        </section>
+      </div>
 
       {showSkillModal && selectedSkill && (
         <div className="modal-backdrop" onClick={() => setShowSkillModal(false)}>
