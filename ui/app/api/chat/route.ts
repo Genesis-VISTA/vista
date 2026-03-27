@@ -41,11 +41,15 @@ type SseEvent =
   | { type: "elicitation"; id: string; message: string; schema: Record<string, unknown> }
   | { type: "agent_response"; response: string; toolCalls: ToolCallResult[] }
   | { type: "error"; error: string }
+  | { type: "log"; level: string; area: string; message: string; extra?: Record<string, unknown> }
   | { type: "done" };
 
 /* ------------------------------------------------------------------ */
 /*  Logging                                                            */
 /* ------------------------------------------------------------------ */
+
+/** Active SSE sender — set during runAgentLoop so log() can stream to browser */
+let activeSendEvent: ((event: SseEvent) => void) | null = null;
 
 function log(
   level: "INFO" | "WARN" | "ERROR",
@@ -59,6 +63,15 @@ function log(
   if (level === "ERROR") console.error(`${prefix} ${message}${suffix}`);
   else if (level === "WARN") console.warn(`${prefix} ${message}${suffix}`);
   else console.log(`${prefix} ${message}${suffix}`);
+
+  // Stream to browser if an SSE connection is active
+  if (activeSendEvent) {
+    try {
+      activeSendEvent({ type: "log", level, area, message, extra });
+    } catch {
+      // ignore SSE write failures
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -533,6 +546,10 @@ async function runAgentLoop(
 
   const hasAzure = !!process.env.AZURE_OPENAI_ENDPOINT && !!process.env.AZURE_OPENAI_API_KEY;
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
+
+  // Wire up SSE log streaming for this request
+  activeSendEvent = sendEvent;
+
   if (!hasAzure && !hasOpenAI) {
     log("ERROR", "Agent", "No API key configured");
     return {
@@ -687,6 +704,7 @@ async function runAgentLoop(
   }
 
   log("WARN", "Agent", `Reached max iterations (${maxIterations})`);
+  activeSendEvent = null;
   return { response: "Agent reached maximum iterations.", toolCalls };
 }
 
@@ -741,6 +759,7 @@ export async function POST(request: Request) {
       log("ERROR", "POST", `Request failed after ${elapsed}ms: ${errMsg}`);
       sendEvent({ type: "error", error: errMsg });
     } finally {
+      activeSendEvent = null;
       sendEvent({ type: "done" });
       writer.close().catch(() => {});
     }

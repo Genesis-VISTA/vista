@@ -6,6 +6,15 @@ import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
 import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
 
+type LogEntry = {
+  id: string;
+  ts: string;
+  level: string;
+  area: string;
+  message: string;
+  extra?: Record<string, unknown>;
+};
+
 type McpHealth = {
   ok: boolean;
   mcpBaseUrl: string;
@@ -196,6 +205,8 @@ export default function HomePage() {
   const [isServiceExpanded, setIsServiceExpanded] = useState(false);
   const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
   const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
+  const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
   const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
 
@@ -400,6 +411,7 @@ export default function HomePage() {
       userMessage
     ]);
     setInput("");
+    setAgentLogs([]);
 
     if (!useLlm) return;
 
@@ -466,6 +478,17 @@ export default function HomePage() {
               ]);
               break;
 
+            case "log":
+              setAgentLogs((prev) => [...prev, {
+                id: crypto.randomUUID(),
+                ts: new Date().toISOString(),
+                level: event.level as string,
+                area: event.area as string,
+                message: event.message as string,
+                extra: event.extra as Record<string, unknown> | undefined,
+              }]);
+              break;
+
             case "done":
               break;
           }
@@ -486,7 +509,7 @@ export default function HomePage() {
   }
 
   async function runSaltAnalysis() {
-    const tool = "bash";
+    const tool = "run_bash";
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
     const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
@@ -563,7 +586,7 @@ export default function HomePage() {
   }
 
   async function runSaltPrediction() {
-    const tool = "bash";
+    const tool = "run_bash";
     setIsCalling(true);
     const formula = predictFormulaInput.trim() || "NaCl";
     const comp = predictCompInput.trim() || "Pure Salt";
@@ -697,6 +720,10 @@ export default function HomePage() {
   useEffect(() => {
     void loadUploads();
   }, [loadUploads]);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [agentLogs]);
 
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -1138,80 +1165,56 @@ export default function HomePage() {
             />
 
             <div className="output-bottom">
-              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                <button className="button ghost" onClick={checkMcpHealth} disabled={isCheckingHealth}>
-                  {isCheckingHealth ? "Checking MCP..." : "MCP Status"}
-                </button>
-                <button className="button ghost" onClick={listMcpTools} disabled={isLoadingTools}>
-                  {isLoadingTools ? "Loading tools..." : "List MCP Tools"}
-                </button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Agent Logs</span>
+                  <span style={{ fontSize: 11, color: "var(--fg-muted)", fontFamily: "monospace" }}>
+                    {agentLogs.length > 0 ? `${agentLogs.length} entries` : ""}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="button ghost button-xs" onClick={checkMcpHealth} disabled={isCheckingHealth}>
+                    {isCheckingHealth ? "Checking..." : "MCP Status"}
+                  </button>
+                  <button className="button ghost button-xs" onClick={listMcpTools} disabled={isLoadingTools}>
+                    {isLoadingTools ? "Loading..." : "Tools"}
+                  </button>
+                  <button className="button ghost button-xs" onClick={() => setAgentLogs([])}>
+                    Clear
+                  </button>
+                </div>
               </div>
 
               {mcpHealth && (
-                <div className="chat-bubble" style={{ marginBottom: 12 }}>
-                  MCP: {mcpHealth.ok ? "Connected" : "Disconnected"} ({mcpHealth.mcpBaseUrl})
-                  {mcpHealth.detail ? ` - ${mcpHealth.detail}` : ""}
+                <div className="log-status-bar">
+                  MCP: {mcpHealth.ok ? "✓ Connected" : "✗ Disconnected"} ({mcpHealth.mcpBaseUrl})
+                  {mcpHealth.detail ? ` — ${mcpHealth.detail}` : ""}
                 </div>
               )}
 
-              {mcpTools && (
-                <div className="chat-bubble" style={{ marginBottom: 12 }}>
-                  {mcpTools.ok ? "Discovered tools:" : "Tool discovery failed:"}
-                  {mcpTools.ok && mcpTools.tools.length > 0 && (
-                    <div style={{ marginTop: 6 }}>
-                      {mcpTools.tools.map((tool) => (
-                        <div key={tool.name}>{tool.name}</div>
-                      ))}
-                    </div>
-                  )}
-                  {mcpTools.ok && mcpTools.tools.length === 0 && (
-                    <div style={{ marginTop: 6 }}>No tools returned.</div>
-                  )}
-                  {!mcpTools.ok && mcpTools.error && (
-                    <div className="error" style={{ marginTop: 6 }}>{mcpTools.error}</div>
-                  )}
+              {mcpTools && mcpTools.ok && mcpTools.tools.length > 0 && (
+                <div className="log-status-bar">
+                  Tools: {mcpTools.tools.map((t) => t.name).join(", ")}
                 </div>
               )}
 
-              {!latestResult && <div className="chat-bubble">No execution yet.</div>}
-              {latestResult && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {!!latestResult.meta?.analysisSummary && (
-                    <div className="chat-bubble">
-                      {(() => {
-                        const summary = latestResult.meta.analysisSummary as Record<string, unknown>;
-                        const measurements = typeof summary.measurements === "number" ? summary.measurements : null;
-                        const compositions = typeof summary.compositions === "number" ? summary.compositions : null;
-                        const references = typeof summary.references === "number" ? summary.references : null;
-                        const plotPath = typeof summary.plotPath === "string" ? summary.plotPath : null;
-                        return (
-                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                            <strong>Salt Analysis Summary</strong>
-                            <div>Measurements: {measurements ?? "n/a"}</div>
-                            <div>Compositions: {compositions ?? "n/a"}</div>
-                            <div>References: {references ?? "n/a"}</div>
-                            {plotPath && <div>Plot: {plotPath}</div>}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
-                  <div className="output-card">
-                    {JSON.stringify(
-                      {
-                        ok: latestResult.ok,
-                        stdout: latestResult.stdout,
-                        stderr: latestResult.stderr,
-                        data: latestResult.data,
-                        artifacts: latestResult.artifacts,
-                        meta: latestResult.meta
-                      },
-                      null,
-                      2
+              <div className="log-viewer">
+                {agentLogs.length === 0 && (
+                  <div className="log-empty">Waiting for agent activity…</div>
+                )}
+                {agentLogs.map((entry) => (
+                  <div key={entry.id} className={`log-line log-${entry.level.toLowerCase()}`}>
+                    <span className="log-ts">{entry.ts.slice(11, 23)}</span>
+                    <span className="log-level">{entry.level}</span>
+                    <span className="log-area">[{entry.area}]</span>
+                    <span className="log-msg">{entry.message}</span>
+                    {entry.extra && (
+                      <span className="log-extra"> {JSON.stringify(entry.extra)}</span>
                     )}
                   </div>
-                </div>
-              )}
+                ))}
+                <div ref={logEndRef} />
+              </div>
             </div>
           </div>
         </div>

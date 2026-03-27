@@ -522,8 +522,11 @@ main {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel-2);
-  padding: 12px;
+  padding: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .output-top {
@@ -646,4 +649,82 @@ main {
 /* Hide RJSF's built-in submit button (we render custom buttons) */
 .elicitation-modal .form-group:last-child > button[type="submit"] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Agent Log Viewer                                                   */
+/* ------------------------------------------------------------------ */
+
+.log-viewer {
+  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  background: #12100e;
+  color: #c9c1b6;
+  padding: 8px 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 1px 0;
+}
+
+.log-ts {
+  color: #5c564d;
+  margin-right: 6px;
+}
+
+.log-level {
+  font-weight: 600;
+  margin-right: 6px;
+  min-width: 38px;
+  display: inline-block;
+}
+
+.log-area {
+  color: #b8860b;
+  margin-right: 6px;
+}
+
+.log-msg {
+  color: #c9c1b6;
+}
+
+.log-extra {
+  color: #5c564d;
+  margin-left: 4px;
+  font-size: 10px;
+}
+
+.log-info .log-level {
+  color: #5a9e6f;
+}
+
+.log-warn .log-level {
+  color: #d4a843;
+}
+
+.log-error .log-level {
+  color: #c9503c;
+}
+
+.log-empty {
+  color: #5c564d;
+  padding: 16px 4px;
+  font-style: italic;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+}
+
+.log-status-bar {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  padding: 4px 10px;
+  background: #1a1714;
+  color: #8a8278;
+  border-bottom: 1px solid #2a2520;
 }
