@@ -1,22 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# Set root directory variable
 REPO_ROOT=$(dirname $(realpath "${BASH_SOURCE[0]}"))
+cd "$REPO_ROOT"
 
 MODE="${1:-tmux}"
 
-cd "$REPO_ROOT/mcp-server/mcp-apps"
-npm install
-npm run build
+./build.sh
 
-cd "$REPO_ROOT/mcp-server"
-uv sync
-
-cd "$REPO_ROOT/ui"
-npm install
-
-cd "$REPO_ROOT"
 UI_CMD="cd '$REPO_ROOT/ui' && npm run dev; exec bash"
 SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uv run --env-file ../.env vista-mcp-server --transport=http; exec bash"
 

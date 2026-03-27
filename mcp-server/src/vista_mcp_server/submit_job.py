@@ -110,6 +110,8 @@ async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
             return await asyncssh.connect(settings.hpc_host,
                 username = result.data.user,
                 password = result.data.password,
+                login_timeout = 60,
+                connect_timeout = 60,
             )
         except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
             if attempt >= max_attempts:

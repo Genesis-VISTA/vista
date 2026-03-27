@@ -9,14 +9,21 @@ from .lib.types import ResolvedPath
 
 
 class AppSettings(BaseSettings):
-    allowed_uris: list[str] = [".*"]
-    """ List of regex patterns. A URI must match at least one to be allowed. """
-
-    uri_map: dict[str, str] = {
-        "file:///mnt/data/output/": f"file://{Path('../data/output').resolve()}/",
-        "file:///mnt/data/uploads/": f"file://{Path('../data/uploads').resolve()}/",
-    }
-    """ Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks. """
+    # TODO: these are currently unused
+    # allowed_uris: list[str] = [".*"]
+    # """
+    # List of regex patterns. A URI must match at least one to be allowed.
+    # This is used to limit what files the display_file tool can render.
+    # """
+    #
+    # uri_map: dict[str, str] = {
+    #     "file:///mnt/data/output/": f"file://{Path('../data/output').resolve()}/",
+    #     "file:///mnt/data/uploads/": f"file://{Path('../data/uploads').resolve()}/",
+    # }
+    # """
+    # Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks.
+    # Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
+    # """
 
     mcp_apps_dir: ResolvedPath = Path(__file__).parent / 'mcp-apps'
 
@@ -46,8 +53,11 @@ class AppSettings(BaseSettings):
     """ Unique id for the Vista session """
 
     omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
-    omd_api_key: str
-    """ Key for the AmSC Open Metadata Server. Get this from https://api.i2-core.american-science-cloud.org """
+    omd_api_key: str | None = None
+    """
+    Key for the AmSC Open Metadata Server.
+    Same key as the AmSC inference API, get it from https://api.i2-core.american-science-cloud.org
+    """
 
     rag_db_path: ResolvedPath = Path("../rag_db")
     rag_model: str = "google/embeddinggemma-300m"

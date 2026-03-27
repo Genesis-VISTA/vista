@@ -1,115 +1,61 @@
 # VISTA (Visual Intelligence for Scientific & Tooling Assistant)
 
-## MCP Server + Agent (Local Development)
+## Architecture
 
-This repository contains a minimal MCP server built with FastMCP and a simple client (“agent”) used to validate end-to-end connectivity.
+- `./mcp-server`
+    - A MCP Server containing tools for sandboxed code execution, remote HPC job submission, and other tasks
+- `./hpc_jobs`
+    - Predefined jobs that the agent can submit to the remote HPC system
+- `./skills`
+    - Agent Skill files
+- `./ui`
+    - Frontend UI and agent loop that calls the tools in the mcp-server
 
----
+## Prerequisites
 
-## Running locally
-
-### Prerequisites
 - Python 3.12+
-- `uv` installed
-- A virtual environment activated (or let `uv` manage installs)
+- Node.js 20+
+- [uv](https://docs.astral.sh/uv/)
+- Docker (for sandboxed code execution)
 
-### Install dependencies
+## Environment Setup
 
-From the repository root:
+Copy the sample env file:
+```bash
+cp .env.sample .env
+```
+and fill out your env keys and settings.
+
+At least set:
+- `OPENAI_API_KEY` with your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)
+- `VISTA_MCP_OMD_API_KEY` this also uses the AmSC inference API key
+- `VISTA_MCP_REMOTE_HPC_JOBS_DIR` where to upload HPC jobs, e.g. `/ccs/home/<username>/vista`
+
+## Launch
+The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
+```bash
+./launch.sh
+```
+Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox Docker image).
+Then go to https://localhost:3000
+
+You can use
+```bash
+./launch.sh terminal
+```
+to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+
+### Manual launch
+Run:
+```bash
+./build.sh
+```
+
+Then launch in separate terminals run:
+```bash
+cd ./ui && npm run dev
+```
 
 ```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-uv pip install -e .[dev]
+cd ./mcp-server && uv run --env-file ../.env vista-mcp-server --transport=http
 ```
-
-### Build MCP Apps
-```bash
-cd mcp-apps
-npm install
-npm run build
-```
-
-### Start the MCP server (HTTP mode)
-
-Run the server as a module: 
-
-```bash
-python -m vista.app --transport http
-```
-
-By default, the server starts at: [http://127.0.0.1:8000/mcp](http://127.0.0.1:8000/mcp)
-
-To use stdio transport:
-
-```bash
-python -m vista.app --transport stdio
-```
-
-
-### Test the smoke agent (client)
-
-In a second terminal (with the server still running):
-
-```bash
-python clients/smoke_agent.py
-```
-
-Expected output is a successful response from the echo tool, confirming that:
-
-- the MCP server is running
-- the client can connect
-- tools are registered and callable
-
-## Repository structure
-
-```
-vista/
-├─ clients/                      # MCP clients (“agents”) that call server tools
-│  ├─ __init__.py                
-│  └─ smoke_agent.py             # connectivity test client
-├─ experiments/                  # hold scripts for capabilities/skills
-│  └─ "analyze_<material>.py"
-├─ scripts/                      # helper scripts (run server/clients, dev helpers)
-├─ tests/                        
-├─ mcp-apps/                     # MCP Apps (Widget UIs)
-├─ src/
-│  └─ vista/
-│     ├─ __init__.py
-│     ├─ app.py                  # FastMCP server (registers tools/resources)
-│     └─ tools/                  # server-side tool implementations
-│        ├─ __init__.py         
-│        └─ echo.py             
-├─ pyproject.toml                
-├─ uv.lock                       
-├─ README.md                     
-└─ .gitignore                    
-```
-
-References (temporary):
-
-- [Agent skills doc](https://agentskills.io/home)
-- [Integrating MCP tools with semantic kernel](https://devblogs.microsoft.com/semantic-kernel/integrating-model-context-protocol-tools-with-semantic-kernel-a-step-by-step-guide/?utm_source=chatgpt.com)
-- [Goose for MCP](https://block.github.io/goose/docs/getting-started/installation)
-- [FastMCP](https://block.github.io/goose/docs/getting-started/installation) 
-
-## Goose Setup
-
-### Prepare your project directory to access skills
-```
-npx skills add ./skills -g -y --agent goose
-```
-### Install [Goose Desktop](https://block.github.io/goose/docs/quickstart)
-
-In the provider configuration set up your preferred AI provider, e.g. for the AAIMS azure instance set:
-AZURE_OPENAI_ENDPOINT="https://aoai-eastus2-aaims.openai.azure.com"
-AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5"
-AZURE_OPENAI_API_VERSION="2025-01-01-preview"
-API Key=*****
-
-To add the VISTA MCP server just go to Extensions > Add Custom Extension and set the command to:
-```
-cd path/to/vista && uv run --env-file ../.env vista-mcp-server --transport=http
-```
-
-Make sure you have built the MCP Apps above first.
