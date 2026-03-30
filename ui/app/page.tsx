@@ -823,12 +823,14 @@ export default function HomePage() {
       }
     >
       <header className="app-topbar">
-        <div className="app-title">VISTA</div>
-        <img
-          className="app-logo"
-          src="/Genesis x AmSC lockup_Horizontal_White-lg.png"
-          alt="Genesis x AmSC logo"
-        />
+        <div className="app-brand">
+          <img
+            className="app-logo"
+            src="/genesis-amsc-lockup-horizontal-white-lg.png"
+            alt="Genesis x AmSC logo"
+          />
+          <div className="app-title">VISTA</div>
+        </div>
       </header>
 
       <div className="workspace">

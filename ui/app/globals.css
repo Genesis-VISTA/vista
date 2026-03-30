@@ -92,8 +92,8 @@ html, body {
 main {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 4px;
+  padding: 4px 12px;
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
@@ -111,17 +111,25 @@ main {
   background: #112a4d;
   border: 1px solid #004573;
   border-radius: 12px;
-  min-height: 50px;
-  padding: 5px 12px;
+  min-height: 40px;
+  padding: 2px 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex: 0 0 auto;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+  min-width: 0;
 }
 
 .app-title {
   font-family: "Figtree", sans-serif;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: #f2f2f2;
@@ -133,9 +141,9 @@ main {
   display: block;
   width: auto;
   max-width: min(70vw, 520px);
-  height: 40px;
+  height: 30px;
   object-fit: contain;
-  object-position: right center;
+  object-position: left center;
   flex-shrink: 0;
 }
 
@@ -145,19 +153,19 @@ main {
   }
 
   .app-topbar {
-    min-height: 48px;
+    min-height: 38px;
   }
 
   .app-title {
-    font-size: 19px;
+    font-size: 16px;
   }
 
   .app-logo {
     width: auto;
     max-width: min(62vw, 300px);
-    height: 34px;
+    height: 26px;
     object-fit: contain;
-    object-position: right center;
+    object-position: left center;
   }
 }
 
