@@ -8,8 +8,19 @@ MODE="${1:-tmux}"
 
 ./build.sh
 
-UI_CMD="cd '$REPO_ROOT/ui' && npm run dev; exec bash"
-SERVER_CMD="cd '$REPO_ROOT/mcp-server' && uv run --env-file ../.env vista-mcp-server --transport=http; exec bash"
+BACKEND_URL="http://localhost:8000/mcp"
+UI_CMD="
+  cd '$REPO_ROOT/ui' &&
+  echo 'Waiting for MCP backend...' &&
+  until curl -s -o /dev/null -w '' '$BACKEND_URL'; do sleep 1; done &&
+  npm run dev;
+  exec bash
+"
+SERVER_CMD="
+  cd '$REPO_ROOT/mcp-server' &&
+  uv run --env-file ../.env vista-mcp-server --transport=http;
+  exec bash
+"
 
 # Launches a command in a new terminal window
 launch_terminal() {
