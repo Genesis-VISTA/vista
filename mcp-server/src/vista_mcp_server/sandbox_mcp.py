@@ -16,6 +16,9 @@ sandbox: Sandbox
 @lifespan
 async def app_lifespan(server):
     global sandbox
+    # Create the volume directories first so they don't get created by docker and owned by the container user
+    for host_path, container_path, mode in settings.volumes:
+        host_path.mkdir(parents=True, exist_ok=True)
     sandbox = await DockerSandbox.spawn(
         volumes=settings.volumes,
         dockerfile=settings.dockerfile,
