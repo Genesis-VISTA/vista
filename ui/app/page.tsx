@@ -826,7 +826,7 @@ export default function HomePage() {
         <div className="app-title">VISTA</div>
         <img
           className="app-logo"
-          src="/genesis-amsc-lockup-horizontal-white-lg.png"
+          src="/Genesis x AmSC lockup_Horizontal_White-lg.png"
           alt="Genesis x AmSC logo"
         />
       </header>
