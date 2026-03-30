@@ -158,8 +158,8 @@ main {
 .panel-resizer {
   width: 10px;
   border-radius: 999px;
-  background: #9ce2ff;
-  border: 1px solid #00608c;
+  background: #5c5f6b;
+  border: 1px solid #252526;
   cursor: col-resize;
   align-self: stretch;
   opacity: 0.7;
@@ -203,8 +203,8 @@ main {
 .stack-resizer {
   height: 10px;
   border-radius: 999px;
-  background: #9ce2ff;
-  border: 1px solid #00608c;
+  background: #5c5f6b;
+  border: 1px solid #252526;
   cursor: row-resize;
   justify-self: stretch;
   opacity: 0.7;
