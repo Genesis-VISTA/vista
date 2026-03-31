@@ -224,6 +224,9 @@ async def submit_hpc_job(
             recurse=True,
         )
         logging.info(f"Synced job to {remote_job_dir}")
+        # TODO: should clean up the job script eventually, but don't want to do it on close as we may
+        # want to leave jobs running between sessions. Probably best would be to periodically delete
+        # completed jobs from old sessions in the dir.
 
     remote_job_script =  remote_job_dir / AVAILABLE_JOBS[job].slurm_script
     args = ["sbatch"]
@@ -232,7 +235,7 @@ async def submit_hpc_job(
         args.extend(['-N', str(nodes)])
     if time_limit:
         args.extend(["-t", time_limit])
-    args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/logs/slurm-%j.out"])
+    args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/out/%j/log.out"])
     args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
     if script_args:
@@ -271,7 +274,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
         raise ValueError(f"No job {job_id} found")
 
     state = sacct_jobs[0]['state']['current'][0]
-    log_path = f"{settings.remote_hpc_jobs_dir}/logs/slurm-{job_id}.out"
+    log_path = f"{settings.remote_hpc_jobs_dir}/out/{job_id}/log.out"
     logs = await remote_bash(ssh_conn, f"cat {shlex.quote(log_path)} 2>/dev/null || true")
 
     return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
