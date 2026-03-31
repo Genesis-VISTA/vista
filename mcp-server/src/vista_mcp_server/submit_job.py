@@ -235,6 +235,7 @@ async def submit_hpc_job(
         args.extend(['-N', str(nodes)])
     if time_limit:
         args.extend(["-t", time_limit])
+    args.extend(["--export", f"VISTA_OUT={settings.remote_hpc_jobs_dir}/out"])
     args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/out/%j/log.out"])
     args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
