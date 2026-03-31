@@ -1,11 +1,21 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
+import textwrap
 from typing import Literal, Annotated as A
 import getpass
 import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath
+
+FRONTIER_SETUP_SCRIPT = textwrap.dedent(r"""
+    export VISTA_OUT="$VISTA_OUT/$SLURM_JOB_ID"
+    mkdir -p "$VISTA_OUT"
+
+    export https_proxy="http://proxy.ccs.ornl.gov:3128";
+    export http_proxy="http://proxy.ccs.ornl.gov:3128";
+    export no_proxy="localhost,127.0.0.1,0.0.0.0";
+""").strip()
 
 
 class AppSettings(BaseSettings):
@@ -45,9 +55,9 @@ class AppSettings(BaseSettings):
     hpc_host: str = "frontier.olcf.ornl.gov"
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
     remote_hpc_jobs_dir: Path = Path("/lustre/orion/stf218/proj-shared/vista/")
-    """
-    Folder on the HPC cluster where the hpc_jobs will be copied.
-    """
+    """ Folder on the HPC cluster where the hpc_jobs will be copied. """
+    remote_hpc_jobs_setup_script: str = FRONTIER_SETUP_SCRIPT
+    """ Script to run before the setup of every job. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """
