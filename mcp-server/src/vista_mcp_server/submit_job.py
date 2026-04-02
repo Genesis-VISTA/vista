@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 import shlex
 import tenacity
+from cachetools import TTLCache
 from fastmcp import FastMCP, Context
 from .config import settings
 
@@ -99,38 +100,75 @@ def get_tool_call_string(tool: str, /, **kwargs):
         return f"{tool}()"
 
 
-mcp = FastMCP("Submit Job")
-
 @dataclasses.dataclass
 class SSHLoginInfo:
     user: str
     password: str
 
 
-async def ssh_login(ctx: Context, message: str) -> asyncssh.SSHClientConnection:
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
-        result = await ctx.elicit(
-            message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
-            response_type=SSHLoginInfo
-        )
+@dataclasses.dataclass
+class Confirmation:
+    confrim: bool = False
 
-        if result.action != "accept":
-            raise Exception("Unable to launch job, user cancelled login")
 
-        try:
-            return await asyncssh.connect(settings.hpc_host,
-                username = result.data.user,
-                password = result.data.password,
-                login_timeout = 60,
-                connect_timeout = 60,
+# FastMCP has a `ctx.set_stat` function but it can only store serializable types, so we'll keep our
+# own map of MCP session id to SSHClientConnection. This may cause problems if we scale the MCP up
+#to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
+_ssh_connections: TTLCache[str, asyncssh.SSHClientConnection] = TTLCache(maxsize=128, ttl=3600)
+
+async def get_ssh_conn(
+    ctx: Context, message: str, force_confirmation = False,
+) -> asyncssh.SSHClientConnection:
+    """
+    Elicit for SSH credentials, or use the cached SSH connection.
+    Pass force_confirmation if you want to always have a confirmation checkbox even if the ssh
+    connection is cached.
+    """
+    if ctx.session_id not in _ssh_connections:
+        logging.info(f"Requesting user login to {settings.hpc_host}")
+        max_attempts = 3
+        attempt = 1
+        conn = None
+        while attempt <= max_attempts and not conn:
+            retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
+            result = await ctx.elicit(
+                message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
+                response_type=SSHLoginInfo
             )
-        except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
-            if attempt >= max_attempts:
-                raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
-            else:
-                logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
+
+            if result.action != "accept":
+                raise Exception("Unable to launch job, user cancelled login")
+
+            try:
+                conn = await asyncssh.connect(settings.hpc_host,
+                    username = result.data.user,
+                    password = result.data.password,
+                    login_timeout = 60,
+                    connect_timeout = 60,
+                )
+            except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
+                if attempt >= max_attempts:
+                    raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
+                else:
+                    logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
+
+            attempt += 1
+        _ssh_connections[ctx.session_id] = conn
+    elif force_confirmation:
+        logging.info(f"Using cached ssh connection to {settings.hpc_host}, with forced confirmation")
+        result = await ctx.elicit(
+            message=f"Confirm running on {settings.hpc_host}:\n{message}",
+            response_type=Confirmation,
+        )
+        if result.action != "accept" or not result.data.confrim:
+            raise Exception("Job submission cancelled by user")
+    else:
+        logging.info(f"Using cached ssh connection to {settings.hpc_host}")
+
+    return _ssh_connections[ctx.session_id]
+
+
+mcp = FastMCP("Submit Job")
 
 
 @mcp.tool(
@@ -165,13 +203,14 @@ async def submit_hpc_job(
     if time_limit and parse_time_limit(time_limit) > parse_time_limit(MAX_TIME):
         raise ValueError(f"Time limit to large (max: {MAX_TIME})")
 
-    ssh_conn = await ssh_login(ctx,
+    ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("submit_hpc_job",
             job = job,
             nodes = nodes,
             time_limit = time_limit,
             script_args = script_args,
         ),
+        force_confirmation = True,
     )
 
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
@@ -220,7 +259,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
         job_id: The slurm job id
 
     """
-    ssh_conn = await ssh_login(ctx,
+    ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
     )
     sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
@@ -243,8 +282,8 @@ async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all submitted HPC jobs.
     """
-    ssh_conn = await ssh_login(ctx,
-        message = get_tool_call_string("get_hpc_job_status"),
+    ssh_conn = await get_ssh_conn(ctx,
+        message = get_tool_call_string("list_hpc_jobs"),
     )
     sacct_out = await remote_bash(ssh_conn, "sacct --json --allocations --user $USER")
     try:
