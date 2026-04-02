@@ -188,13 +188,10 @@ def parse_json_to_records(json_data):
             # JSON format does not store an explicit composition ratio.
             # If your JSON includes composition data under a different key,
             # replace the logic below accordingly.
-            parts = formula.split('-')
-            if len(parts) == 1:
+            if entry_id == '1':
                 comp = 'Pure Salt'
-            else:
-                # Equal molar fractions for each component
-                n = len(parts)
-                comp = '-'.join([f"{1/n:.6f}"] * n)
+            else: 
+                comp = entry_id
 
             records.append({
                 'formula': formula,
