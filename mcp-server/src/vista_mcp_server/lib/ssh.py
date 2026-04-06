@@ -1,6 +1,8 @@
 import sys
 import getpass
 import asyncssh
+from fastmcp import Context
+from pydantic import Field, create_model
 
 
 class TTYSSHClient(asyncssh.SSHClient):
@@ -29,3 +31,42 @@ class TTYSSHClient(asyncssh.SSHClient):
             return responses
         finally:
             tty.close()
+
+
+class MCPElicitationSSHClient(asyncssh.SSHClient):
+    """
+    SSHClient that prompts via MCP elicitation.
+    """
+
+    def __init__(self, ctx: Context, login_message: str | None = None):
+        super().__init__()
+        self.ctx = ctx
+        self.login_message = login_message or "Login:"
+
+    def kbdint_auth_requested(self) -> str:
+        return ""
+
+    async def kbdint_challenge_received(
+        self, name: str, instructions: str, lang: str, prompts: list[tuple[str, bool]],
+    ) -> list[str] | None:
+        if not prompts:
+            return []
+
+        fields = {}
+        for i, (prompt_text, echo) in enumerate(prompts):
+            fields[f"field_{i}"] = (str, Field(title=prompt_text))
+        ChallengeResponse = create_model("ChallengeResponse", **fields)
+
+        message = self.login_message
+        if instructions:
+            message = f"{message}\n{instructions}"
+
+        result = await self.ctx.elicit(
+            message=message,
+            response_type=ChallengeResponse,
+        )
+
+        if result.action != "accept":
+            return None
+
+        return [getattr(result.data, f"field_{i}") for i in range(len(prompts))]
