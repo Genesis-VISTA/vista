@@ -213,12 +213,13 @@ async def submit_hpc_job(
         force_confirmation = True,
     )
 
-    setup_script = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
+    setup_script_path = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
     check_result = await remote_bash(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
     if check_result.strip() != "true":
         await remote_bash(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
-        await remote_bash(ssh_conn, f'echo {shlex.quote(settings.remote_hpc_jobs_setup_script)} > {shlex.quote(str(setup_script))}')
+        setup_script = settings.get_hpc_setup_script()
+        await remote_bash(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
         await asyncio.sleep(1)
         await asyncssh.scp(
             str(settings.local_hpc_jobs_dir / job),
@@ -237,7 +238,7 @@ async def submit_hpc_job(
         args.extend(['-N', str(nodes)])
     if time_limit:
         args.extend(["-t", time_limit])
-    args.extend(["--export", f"ALL,VISTA_SETUP_SCRIPT={setup_script},VISTA_OUT={settings.remote_hpc_jobs_dir}/out"])
+    args.extend(["--export", f"ALL,VISTA_SETUP_SCRIPT={setup_script_path}"])
     args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/out/%j/log.out"])
     args.extend(["-J", f"vista-{job}"])
     args.append(str(remote_job_script))
