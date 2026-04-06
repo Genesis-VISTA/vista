@@ -137,7 +137,7 @@ class Confirmation:
 
 # FastMCP has a `ctx.set_stat` function but it can only store serializable types, so we'll keep our
 # own map of MCP session id to SSHClientConnection. This may cause problems if we scale the MCP up
-#to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
+# to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
 _ssh_connections: TTLCache[str, asyncssh.SSHClientConnection] = TTLCache(maxsize=128, ttl=3600)
 
 async def get_ssh_conn(
