@@ -3,9 +3,10 @@ MCP for remote HPC job submission.
 """
 
 from __future__ import annotations
-import asyncio
 import json
 import re
+import os
+import itertools
 import subprocess
 import asyncssh
 import textwrap
@@ -94,6 +95,21 @@ async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str, **kw
     }
     result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", **kwargs)
     return result.stdout
+
+
+@tenacity.retry(
+    stop = tenacity.stop_after_attempt(4),
+    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
+    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
+    reraise = True,
+)
+async def scp_retry(*args):
+    """
+    Transfer files via scp.
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
+    if you run a command too soon after the previous, so retry with delay when that happens.
+    """
+    await asyncssh.scp(*args, recurse=True)
 
 
 def get_tool_call_string(tool: str, /, **kwargs):
@@ -228,12 +244,7 @@ async def submit_hpc_job(
         await remote_bash(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
         setup_script = settings.get_hpc_setup_script()
         await remote_bash(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
-        await asyncio.sleep(1)
-        await asyncssh.scp(
-            str(settings.local_hpc_jobs_dir / job),
-            (ssh_conn, str(remote_job_dir)),
-            recurse=True,
-        )
+        await scp_retry(str(settings.local_hpc_jobs_dir / job), (ssh_conn, str(remote_job_dir)))
         logging.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
         # want to leave jobs running between sessions. Probably best would be to periodically delete
@@ -288,11 +299,73 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
     if len(sacct_jobs) <= 0 or not sacct_jobs[0]['name'].startswith("vista-"):
         raise ValueError(f"No job {job_id} found")
 
-    state = sacct_jobs[0]['state']['current'][0]
-    log_path = f"{settings.remote_hpc_jobs_dir}/out/{job_id}/log.out"
-    logs = await remote_bash(ssh_conn, f"cat {shlex.quote(log_path)} 2>/dev/null || true")
+    metadata = {
+        "JOB_ID": job_id,
+        "STATE": sacct_jobs[0]['state']['current'][0],
+    }
 
-    return f"JOB ID: {job_id}\nSTATE: {state}\nLOGS:\n{logs}"
+    output_dir = settings.remote_hpc_jobs_dir / "out" / job_id
+
+    log_path = output_dir / "log.out"
+    logs = await remote_bash(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
+
+    excludes = ['**/.venv*/*', '**/__pycache__/*']
+    find_result = await remote_bash(ssh_conn, shlex.join([
+        "find", str(output_dir),
+        "-maxdepth", "3",
+        "-type", "f",
+        *itertools.chain(*[["-not", "-path", e] for e in excludes]),
+    ]) + " 2>/dev/null")
+    files = [
+        str(Path(line.strip()).relative_to(output_dir))
+        for line in find_result.strip().splitlines()
+    ]
+    files = files[:20]
+
+    return "\n\n".join([
+        "\n".join(f"{k}={v}" for k, v in metadata.items()),
+        "--- LOGS ---",
+        logs.strip() if logs.strip() else "(no logs yet)",
+        "--- OUTPUT FILES ---",
+        "\n".join(files) if files else "(no output files yet)",
+    ])
+
+
+@mcp.tool()
+async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> str:
+    """
+    Download output files from an HPC job.
+
+    Args:
+        job_id: The slurm job id
+        files: List of file paths to download. Relative to the jobs output directory (as shown by get_hpc_job_status).
+
+    Returns:
+        The downloaded file paths.
+    """
+    job_id = validate_job_id(job_id)
+
+    ssh_conn = await get_ssh_conn(ctx,
+        message = get_tool_call_string("get_hpc_job_outputs", job_id = job_id, files = files),
+    )
+
+    remote_out_dir = settings.remote_hpc_jobs_dir / "out" / job_id
+    local_out_dir = settings.output_dir / job_id
+    sandbox_out_dir = Path("/mnt/data/output") / job_id
+
+    downloaded = []
+    for file in files:
+        remote_path = Path(os.path.normpath(remote_out_dir / file))
+        if not remote_path.is_relative_to(remote_out_dir):
+            raise ValueError(f'Invalid path "{file}", must be under job output dir')
+        local_path = local_out_dir / remote_path.relative_to(remote_out_dir)
+        sandbox_path = sandbox_out_dir / remote_path.relative_to(remote_out_dir)
+        
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        await scp_retry((ssh_conn, remote_path), str(local_path))
+        downloaded.append(str(sandbox_path))
+
+    return "Downloaded files:\n" + "\n".join(downloaded)
 
 
 @mcp.tool()
