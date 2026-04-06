@@ -4,7 +4,6 @@
 #SBATCH -A stf218
 #SBATCH -N 1
 
-echo "$VISTA_SETUP_SCRIPT"
 source "$VISTA_SETUP_SCRIPT"
 
 module load cray-python
