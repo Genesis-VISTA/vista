@@ -57,6 +57,7 @@ def build_job_descriptions() -> str:
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
 
+
 def parse_time_limit(s: str):
     """Parse a time delta string in 'h:mm:ss' format."""
     try:
@@ -64,6 +65,13 @@ def parse_time_limit(s: str):
         return timedelta(hours=int(hours), minutes=int(minutes), seconds=int(seconds))
     except:
         raise ValueError(f"Invalid time limit: {s}")
+
+
+def validate_job_id(job_id: str):
+    job_id = job_id.strip().lstrip("0")
+    if not re.fullmatch(r"\d+", job_id):
+        raise ValueError(f"Invalid job id {job_id}")
+    return job_id
 
 
 @tenacity.retry(
@@ -266,9 +274,12 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
         job_id: The slurm job id
 
     """
+    job_id = validate_job_id(job_id)
+
     ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
     )
+
     sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
