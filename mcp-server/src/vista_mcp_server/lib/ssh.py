@@ -1,6 +1,7 @@
 import sys
 import getpass
 import asyncssh
+from collections import OrderedDict
 from fastmcp import Context
 from pydantic import Field, create_model
 
@@ -52,9 +53,12 @@ class MCPElicitationSSHClient(asyncssh.SSHClient):
         if not prompts:
             return []
 
-        fields = {}
+        fields = OrderedDict()
         for i, (prompt_text, echo) in enumerate(prompts):
-            fields[f"field_{i}"] = (str, Field(title=prompt_text))
+            # This is kinda hacky, but the Frontend elicitation modal will hide inputs on password_*
+            # fields. I can't pass `format: password` as MCP doesn't support it, and
+            # json_schema_extra gets stripped off as well.
+            fields[f"{'field' if echo else 'password'}_{i}"] = (str, Field(title=prompt_text))
         ChallengeResponse = create_model("ChallengeResponse", **fields)
 
         message = self.login_message
@@ -69,4 +73,4 @@ class MCPElicitationSSHClient(asyncssh.SSHClient):
         if result.action != "accept":
             return None
 
-        return [getattr(result.data, f"field_{i}") for i in range(len(prompts))]
+        return [getattr(result.data, f) for f in fields.keys()]

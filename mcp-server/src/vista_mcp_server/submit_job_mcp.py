@@ -163,7 +163,7 @@ async def get_ssh_conn(
             username = username,
             login_timeout = 60,
             connect_timeout = 60,
-            client_factory=lambda: MCPElicitationSSHClient(ctx, f"Log in to {settings.hpc_host}"),
+            client_factory=lambda: MCPElicitationSSHClient(ctx, f"Log in to {username}@{settings.hpc_host}"),
         )
         _ssh_connections[ctx.session_id] = conn
     elif force_confirmation:
