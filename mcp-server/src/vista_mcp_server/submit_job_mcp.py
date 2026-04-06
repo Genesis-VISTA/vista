@@ -13,6 +13,8 @@ import textwrap
 import time
 import json
 import dataclasses
+from typing import Annotated as A
+from pydantic import BaseModel, Field
 from datetime import timedelta
 import logging
 from pathlib import Path
@@ -21,6 +23,7 @@ import tenacity
 from cachetools import TTLCache
 from fastmcp import FastMCP, Context
 from .config import settings
+from .lib.ssh import MCPElicitationSSHClient
 
 @dataclasses.dataclass
 class JobInfo:
@@ -124,21 +127,18 @@ def get_tool_call_string(tool: str, /, **kwargs):
         return f"{tool}()"
 
 
-@dataclasses.dataclass
-class SSHLoginInfo:
-    user: str
-    password: str
+class SSHUsername(BaseModel):
+    username: A[str, Field(title="User Name")]
 
-
-@dataclasses.dataclass
-class Confirmation:
-    confrim: bool = False
+class Confirmation(BaseModel):
+    confirm: bool = False
 
 
 # FastMCP has a `ctx.set_stat` function but it can only store serializable types, so we'll keep our
 # own map of MCP session id to SSHClientConnection. This may cause problems if we scale the MCP up
 # to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
 _ssh_connections: TTLCache[str, asyncssh.SSHClientConnection] = TTLCache(maxsize=128, ttl=3600)
+
 
 async def get_ssh_conn(
     ctx: Context, message: str, force_confirmation = False,
@@ -150,33 +150,21 @@ async def get_ssh_conn(
     """
     if ctx.session_id not in _ssh_connections:
         logging.info(f"Requesting user login to {settings.hpc_host}")
-        max_attempts = 3
-        attempt = 1
-        conn = None
-        while attempt <= max_attempts and not conn:
-            retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
-            result = await ctx.elicit(
-                message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
-                response_type=SSHLoginInfo
-            )
 
-            if result.action != "accept":
-                raise Exception("Unable to launch job, user cancelled login")
+        result = await ctx.elicit(
+            message=f"Log in to {settings.hpc_host} to run:\n{message}",
+            response_type=SSHUsername,
+        )
+        if result.action != "accept":
+            raise Exception("Unable to launch job, user cancelled login")
+        username = result.data.username
 
-            try:
-                conn = await asyncssh.connect(settings.hpc_host,
-                    username = result.data.user,
-                    password = result.data.password,
-                    login_timeout = 60,
-                    connect_timeout = 60,
-                )
-            except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
-                if attempt >= max_attempts:
-                    raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
-                else:
-                    logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
-
-            attempt += 1
+        conn = await asyncssh.connect(settings.hpc_host,
+            username = username,
+            login_timeout = 60,
+            connect_timeout = 60,
+            client_factory=lambda: MCPElicitationSSHClient(ctx, f"Log in to {settings.hpc_host}"),
+        )
         _ssh_connections[ctx.session_id] = conn
     elif force_confirmation:
         logging.info(f"Using cached ssh connection to {settings.hpc_host}, with forced confirmation")
@@ -184,7 +172,7 @@ async def get_ssh_conn(
             message=f"Confirm running on {settings.hpc_host}:\n{message}",
             response_type=Confirmation,
         )
-        if result.action != "accept" or not result.data.confrim:
+        if result.action != "accept" or not result.data.confirm:
             raise Exception("Job submission cancelled by user")
     else:
         logging.info(f"Using cached ssh connection to {settings.hpc_host}")
