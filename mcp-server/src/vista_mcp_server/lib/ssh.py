@@ -1,8 +1,8 @@
-import sys
-import getpass
+import sys, getpass, subprocess, shlex
 import asyncssh
 from collections import OrderedDict
 from fastmcp import Context
+import tenacity
 from pydantic import Field, create_model
 
 
@@ -74,3 +74,46 @@ class MCPElicitationSSHClient(asyncssh.SSHClient):
             return None
 
         return [getattr(result.data, f) for f in fields.keys()]
+
+
+
+@tenacity.retry(
+    stop = tenacity.stop_after_attempt(4),
+    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
+    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
+    reraise = True,
+)
+async def ssh_bash_retry(ssh_conn: asyncssh.SSHClientConnection, command: str|list[str], **kwargs) -> str:
+    """
+    Run a bash command on the remote HPC system
+
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
+    if you run a command too soon after the previous, so retry with delay when that happens.
+    """
+    if not isinstance(command, str):
+        command = shlex.join(command)
+
+    kwargs = {
+        "check": False,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        **kwargs,
+    }
+    result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", **kwargs)
+    return result.stdout
+
+
+@tenacity.retry(
+    stop = tenacity.stop_after_attempt(4),
+    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
+    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
+    reraise = True,
+)
+async def scp_retry(*args):
+    """
+    Transfer files via scp.
+
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
+    if you run a command too soon after the previous, so retry with delay when that happens.
+    """
+    await asyncssh.scp(*args, recurse=True)
