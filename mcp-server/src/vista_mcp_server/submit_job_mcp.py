@@ -82,38 +82,46 @@ async def get_ssh_conn(
     Pass force_confirmation if you want to always have a confirmation checkbox even if the ssh
     connection is cached.
     """
+    final_host = settings.hpc_host[-1]
+
     if ctx.session_id not in _ssh_connections:
-        logging.info(f"Requesting user login to {settings.hpc_host}")
+        logging.info(f"User login to {final_host}")
 
-        result = await ctx.elicit(
-              message=f"Log in to {settings.hpc_host} to run:\n{message}",
-              response_type=SSHLoginInfo,
-        )
-        if result.action != "accept":
-            raise Exception("Unable to launch job, user cancelled login")
-        username = result.data.username
-        password = result.data.password
+        conn = None
+        for i, host in enumerate(settings.hpc_host):
+            is_final_host = (i == len(settings.hpc_host) - 1)
+            if is_final_host:
+                prompt_message = f"Log in to {host} to run:\n{message}"
+            else:
+                prompt_message = f"Log in to {host} (jump host to {final_host})"
+            result = await ctx.elicit(message=prompt_message, response_type=SSHLoginInfo)
 
-        conn = await asyncssh.connect(settings.hpc_host,
-            username = username,
-            login_timeout = 60,
-            connect_timeout = 60,
-            client_factory = lambda: MCPElicitationSSHClient(ctx,
-                login_message = f"Log in to {username}@{settings.hpc_host}",
-                password = password,
-            ),
-        )
+            if result.action != "accept":
+                raise Exception("Unable to launch job, user cancelled login")
+            username = result.data.username
+            password = result.data.password
+
+            conn = await asyncssh.connect(host,
+                username = username,
+                login_timeout = 60,
+                connect_timeout = 60,
+                tunnel = conn,
+                client_factory = lambda: MCPElicitationSSHClient(ctx,
+                    login_message = f"Log in to {username}@{host}",
+                    password = password,
+                ),
+            )
         _ssh_connections[ctx.session_id] = conn
     elif force_confirmation:
-        logging.info(f"Using cached ssh connection to {settings.hpc_host}, with forced confirmation")
+        logging.info(f"Using cached ssh connection to {final_host}, with forced confirmation")
         result = await ctx.elicit(
-            message=f"Confirm running on {settings.hpc_host}:\n{message}",
+            message=f"Confirm running on {final_host}:\n{message}",
             response_type=Confirmation,
         )
         if result.action != "accept" or not result.data.confirm:
             raise Exception("Job submission cancelled by user")
     else:
-        logging.info(f"Using cached ssh connection to {settings.hpc_host}")
+        logging.info(f"Using cached ssh connection to {final_host}")
 
     return _ssh_connections[ctx.session_id]
 
@@ -195,7 +203,7 @@ async def submit_hpc_job(
     match = re.search(r"submitted batch job (\d+)", result.lower())
     if match:
         result = match[1]
-        logging.info(f"Submitted job {result} to {settings.hpc_host}")
+        logging.info(f"Submitted job {result} to {settings.hpc_host[-1]}")
     else:
         raise ValueError("Job failed to launch: " + result)
 
