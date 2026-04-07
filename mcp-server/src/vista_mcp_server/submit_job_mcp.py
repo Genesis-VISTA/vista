@@ -60,8 +60,9 @@ MAX_NODES = 64
 MAX_TIME = "4:00:00"
 
 
-class SSHUsername(BaseModel):
-    username: A[str, Field(title="User Name")]
+class SSHLoginInfo(BaseModel):
+    username: str
+    password: str = ""
 
 class Confirmation(BaseModel):
     confirm: bool = False
@@ -85,18 +86,22 @@ async def get_ssh_conn(
         logging.info(f"Requesting user login to {settings.hpc_host}")
 
         result = await ctx.elicit(
-            message=f"Log in to {settings.hpc_host} to run:\n{message}",
-            response_type=SSHUsername,
+              message=f"Log in to {settings.hpc_host} to run:\n{message}",
+              response_type=SSHLoginInfo,
         )
         if result.action != "accept":
             raise Exception("Unable to launch job, user cancelled login")
         username = result.data.username
+        password = result.data.password
 
         conn = await asyncssh.connect(settings.hpc_host,
             username = username,
             login_timeout = 60,
             connect_timeout = 60,
-            client_factory=lambda: MCPElicitationSSHClient(ctx, f"Log in to {username}@{settings.hpc_host}"),
+            client_factory = lambda: MCPElicitationSSHClient(ctx,
+                login_message = f"Log in to {username}@{settings.hpc_host}",
+                password = password,
+            ),
         )
         _ssh_connections[ctx.session_id] = conn
     elif force_confirmation:

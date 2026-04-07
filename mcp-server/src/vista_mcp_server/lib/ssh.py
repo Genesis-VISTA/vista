@@ -39,10 +39,13 @@ class MCPElicitationSSHClient(asyncssh.SSHClient):
     SSHClient that prompts via MCP elicitation.
     """
 
-    def __init__(self, ctx: Context, login_message: str | None = None):
+    def __init__(self, ctx: Context, *,
+        login_message: str | None = None, password: str | None = None,
+    ):
         super().__init__()
-        self.ctx = ctx
-        self.login_message = login_message or "Login:"
+        self._ctx = ctx
+        self._login_message = login_message or "Login:"
+        self._password = password
 
     def kbdint_auth_requested(self) -> str:
         return ""
@@ -52,20 +55,25 @@ class MCPElicitationSSHClient(asyncssh.SSHClient):
     ) -> list[str] | None:
         if not prompts:
             return []
+        # Use the pre-provided password if given
+        elif self._password and len(prompts) == 1 and not prompts[0][1]:
+            password = self._password
+            self._password = None
+            return [password]
 
         fields = OrderedDict()
         for i, (prompt_text, echo) in enumerate(prompts):
             # This is kinda hacky, but the Frontend elicitation modal will hide inputs on password_*
             # fields. I can't pass `format: password` as MCP doesn't support it, and
-            # json_schema_extra gets stripped off as well.
+            # json_schema_extra fields get stripped off as well.
             fields[f"{'field' if echo else 'password'}_{i}"] = (str, Field(title=prompt_text))
         ChallengeResponse = create_model("ChallengeResponse", **fields)
 
-        message = self.login_message
+        message = self._login_message
         if instructions:
             message = f"{message}\n{instructions}"
 
-        result = await self.ctx.elicit(
+        result = await self._ctx.elicit(
             message=message,
             response_type=ChallengeResponse,
         )
