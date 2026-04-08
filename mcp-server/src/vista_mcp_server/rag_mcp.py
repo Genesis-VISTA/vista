@@ -159,7 +159,7 @@ mcp = FastMCP(name="RAG Search", lifespan=app_lifespan)
 async def rag_search(
     query: A[str, "Natural-language search query over the molten salt literature corpus"],
     n_results: A[int, "Number of passages to return (1–20)"] = 5,
-) -> str:
+):
     """
     Search the indexed literature corpus (papers, reports, technical notes)
     for passages relevant to the query.

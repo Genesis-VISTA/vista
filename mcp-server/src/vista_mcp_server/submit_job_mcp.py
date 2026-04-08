@@ -153,7 +153,7 @@ async def submit_hpc_job(
     nodes: int | None = None,
     time_limit: str | None = None,
     script_args: str | None = None,
-) -> str:
+):
     if job not in AVAILABLE_JOBS:
         raise ValueError(f"{job} is not recognized, should be one of: {' '.join(AVAILABLE_JOBS)}")
     if nodes and nodes > MAX_NODES:
@@ -211,7 +211,7 @@ async def submit_hpc_job(
 
 
 @mcp.tool()
-async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
+async def get_hpc_job_status(ctx: Context, job_id: str):
     """
     Get the status and logs of a submitted Slurm job.
 
@@ -266,7 +266,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
 
 
 @mcp.tool()
-async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> str:
+async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]):
     """
     Download output files from an HPC job.
 
@@ -303,7 +303,7 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
 
 
 @mcp.tool()
-async def list_hpc_jobs(ctx: Context) -> str:
+async def list_hpc_jobs(ctx: Context):
     """
     List all submitted HPC jobs.
     """

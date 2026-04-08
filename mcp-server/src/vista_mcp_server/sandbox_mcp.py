@@ -34,7 +34,7 @@ mcp = FastMCP(name="Sandbox", lifespan=app_lifespan)
 @mcp.tool()
 async def run_bash(
     command: A[str, "Bash command to run"],
-) -> str:
+):
     """
     Run a bash command inside the sandbox.
 
