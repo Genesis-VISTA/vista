@@ -12,6 +12,7 @@ dependencies = [
     "python-magic>=0.4.27",
     "sentence-transformers>=3.0",
     "tenacity>=9.1.4",
+    "cachetools>=7.0.5",
 ]
 
 [project.optional-dependencies]
