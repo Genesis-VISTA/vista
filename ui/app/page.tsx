@@ -49,6 +49,7 @@ type UploadFileInfo = {
   name: string;
   size: number;
   modifiedAt: string;
+  source?: "upload" | "generated";
 };
 
 type UploadResponse = {
@@ -217,6 +218,14 @@ export default function HomePage() {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
   const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
+  const uploadedFiles = useMemo(
+    () => uploads.filter((file) => file.source !== "generated"),
+    [uploads]
+  );
+  const tritiumResultFiles = useMemo(
+    () => uploads.filter((file) => file.source === "generated"),
+    [uploads]
+  );
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
     const node = chatListRef.current;
@@ -930,30 +939,71 @@ export default function HomePage() {
                     {isLoadingUploads ? "Loading uploads..." : "No uploaded files yet."}
                   </div>
                 )}
-                {uploads.map((file) => (
-                  <div key={file.name} className="upload-item">
-                    <div className="upload-name">{file.name}</div>
-                    <div className="upload-meta">
-                      {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                {uploads.length > 0 && (
+                  <>
+                    <div className="upload-section">
+                      <div className="upload-section-title">Uploads</div>
+                      {uploadedFiles.length === 0 && (
+                        <div className="chat-bubble">No uploaded files yet.</div>
+                      )}
+                      {uploadedFiles.map((file) => (
+                        <div key={file.name} className="upload-item">
+                          <div className="upload-name">{file.name}</div>
+                          <div className="upload-meta">
+                            {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                          </div>
+                          <div className="upload-actions">
+                            <a
+                              className="button ghost button-xs upload-action-btn"
+                              href={`/api/uploads/${encodeURIComponent(file.name)}`}
+                              download={file.name}
+                            >
+                              Download
+                            </a>
+                            <button
+                              className="button ghost button-xs upload-action-btn"
+                              onClick={() => void deleteUpload(file.name)}
+                              disabled={deletingUploadName === file.name}
+                            >
+                              {deletingUploadName === file.name ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="upload-actions">
-                      <a
-                        className="button ghost button-xs"
-                        href={`/api/uploads/${encodeURIComponent(file.name)}`}
-                        download={file.name}
-                      >
-                        Download
-                      </a>
-                      <button
-                        className="button ghost button-xs"
-                        onClick={() => void deleteUpload(file.name)}
-                        disabled={deletingUploadName === file.name}
-                      >
-                        {deletingUploadName === file.name ? "Deleting..." : "Delete"}
-                      </button>
+
+                    <div className="upload-section">
+                      <div className="upload-section-title">Tritium Breeding Results</div>
+                      {tritiumResultFiles.length === 0 && (
+                        <div className="chat-bubble">No tritium breeding results yet.</div>
+                      )}
+                      {tritiumResultFiles.map((file) => (
+                        <div key={file.name} className="upload-item">
+                          <div className="upload-name">{file.name}</div>
+                          <div className="upload-meta">
+                            {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                          </div>
+                          <div className="upload-actions">
+                            <a
+                              className="button ghost button-xs upload-action-btn"
+                              href={`/api/uploads/${encodeURIComponent(file.name)}`}
+                              download={file.name}
+                            >
+                              Download
+                            </a>
+                            <button
+                              className="button ghost button-xs upload-action-btn"
+                              onClick={() => void deleteUpload(file.name)}
+                              disabled={deletingUploadName === file.name}
+                            >
+                              {deletingUploadName === file.name ? "Deleting..." : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  </>
+                )}
               </div>
             </div>
           </section>

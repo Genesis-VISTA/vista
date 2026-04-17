@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
-import { readFile, stat, unlink } from "node:fs/promises";
+import { readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "@/app/config";
 
 export const runtime = "nodejs";
+const UPLOAD_MANIFEST_NAME = ".upload-manifest.json";
+
+type UploadManifest = {
+  uploaded: string[];
+};
 
 function getSafeName(rawName: string): string | null {
   if (!rawName) return null;
@@ -24,6 +29,26 @@ function contentTypeForFile(filePath: string): string {
   if (ext === ".json") return "application/json; charset=utf-8";
   if (ext === ".txt") return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+async function readUploadManifest(): Promise<Set<string>> {
+  const manifestPath = path.join(config.uploadsDir, UPLOAD_MANIFEST_NAME);
+  try {
+    const raw = await readFile(manifestPath, "utf-8");
+    const parsed = JSON.parse(raw) as UploadManifest;
+    if (!Array.isArray(parsed.uploaded)) return new Set();
+    return new Set(parsed.uploaded.filter((name): name is string => typeof name === "string" && name.length > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+async function writeUploadManifest(uploaded: Set<string>) {
+  const manifestPath = path.join(config.uploadsDir, UPLOAD_MANIFEST_NAME);
+  const payload: UploadManifest = {
+    uploaded: Array.from(uploaded).sort()
+  };
+  await writeFile(manifestPath, JSON.stringify(payload, null, 2), "utf-8");
 }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ name: string }> }) {
@@ -60,6 +85,10 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const filePath = path.join(config.uploadsDir, safeName);
   try {
     await unlink(filePath);
+    const manifest = await readUploadManifest();
+    if (manifest.delete(safeName)) {
+      await writeUploadManifest(manifest);
+    }
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: 404 });
