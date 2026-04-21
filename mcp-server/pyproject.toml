@@ -13,6 +13,7 @@ dependencies = [
     "sentence-transformers>=3.0",
     "tenacity>=9.1.4",
     "cachetools>=7.0.5",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -31,4 +32,5 @@ build-backend = "hatchling.build"
 artifacts = [
   "*.html",
   "docker/*",
+  "agenthpc/*.yaml",
 ]
