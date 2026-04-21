@@ -37,6 +37,7 @@ class AppSettings(BaseSettings):
         (Path("../skills"), Path("/mnt/skills"), 'r'),
         (Path("../data/output"), Path("/mnt/data/output"), 'w'),
         (Path("../data/uploads"), Path("/mnt/data/uploads"), 'w'),
+        (Path("../external/tritium-splash-orchestrator"), Path("/mnt/tritium-splash-orchestrator"), 'w'),
     ]
     """
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples

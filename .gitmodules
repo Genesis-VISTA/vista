@@ -1,0 +1,3 @@
+[submodule "external/tritium-splash-orchestrator"]
+	path = external/tritium-splash-orchestrator
+	url = git@github.com:jqyin/tritium-splash-orchestrator
