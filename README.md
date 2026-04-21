@@ -13,10 +13,17 @@
 
 ## Prerequisites
 
-- Python 3.12+
 - Node.js 20+
 - [uv](https://docs.astral.sh/uv/)
-- Docker (for sandboxed code execution)
+- Docker
+- [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
+    - VISTA will automatically download the model, but you need to sign up for access to it on [hugging face](https://huggingface.co/google/embeddinggemma-300m)
+    - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login`
+
+On MacOS, you may need to install `libmagic` first as well:
+```bash
+brew install libmagic
+```
 
 ## Environment Setup
 
@@ -26,10 +33,13 @@ cp .env.sample .env
 ```
 and fill out your env keys and settings.
 
-At least set:
-- `OPENAI_API_KEY` with your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)
-- `VISTA_MCP_OMD_API_KEY` this also uses the AmSC inference API key
-- `VISTA_MCP_REMOTE_HPC_JOBS_DIR` where to upload HPC jobs, e.g. `/ccs/home/<username>/vista`
+Important env vars:
+| Variable                      | Description                                                                                      | Default                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                         |
+| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None                                    |
+| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs, e.g. /ccs/home/<username>/vista                                        | /lustre/orion/stf218/proj-shared/vista/ |
+| VISTA_MCP_HPC_HOST            | SSH host for launching remote HPC jobs. To use a jump host, pass a comma-separated list of hosts | frontier.olcf.ornl.gov                  |
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
