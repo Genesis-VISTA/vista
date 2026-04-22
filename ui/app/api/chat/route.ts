@@ -479,6 +479,13 @@ async function executeTool(
     result.stdout = content.text;
     result.ok = !sdkResult.isError;
 
+    if (toolName === "display_file") {
+      const direct = content.html || content.text;
+      if (direct && direct.includes("<img")) {
+        result.displayHtml = direct;
+      }
+    }
+
     const elapsed = Date.now() - t0;
     log("INFO", `Tool:${toolName}`, `Completed in ${elapsed}ms`, {
       ok: result.ok,
