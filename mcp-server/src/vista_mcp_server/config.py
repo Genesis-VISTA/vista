@@ -1,11 +1,21 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
+import textwrap
 from typing import Literal, Annotated as A
 import getpass
 import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath
+
+FRONTIER_SETUP_SCRIPT = textwrap.dedent(r"""
+    export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
+    mkdir -p "$VISTA_OUT"
+
+    export https_proxy="http://proxy.ccs.ornl.gov:3128";
+    export http_proxy="http://proxy.ccs.ornl.gov:3128";
+    export no_proxy="localhost,127.0.0.1,0.0.0.0";
+""").strip()
 
 
 class AppSettings(BaseSettings):
@@ -45,9 +55,18 @@ class AppSettings(BaseSettings):
     hpc_host: str = "frontier.olcf.ornl.gov"
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
     remote_hpc_jobs_dir: Path = Path("/lustre/orion/stf218/proj-shared/vista/")
+    """ Folder on the HPC cluster where the hpc_jobs will be copied. """
+    hpc_setup_script_template: str = FRONTIER_SETUP_SCRIPT
     """
-    Folder on the HPC cluster where the hpc_jobs will be copied.
+    Script to run before the setup of every job.
+
+    This is a format string that will be can reference other config options like
+    `remote_hpc_jobs_dir` and `session_id`.
     """
+
+    def get_hpc_setup_script(self):
+        """ The populated hpc_setup_script_template template """
+        return self.hpc_setup_script_template.format(**self.model_dump())
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

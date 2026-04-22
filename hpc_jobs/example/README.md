@@ -1,6 +1,6 @@
 # example
 
-A simple "Hello World" test job.
+A simple test job that outputs an example chart.
 
 Default nodes: 1
 Default time: 0:02:00
