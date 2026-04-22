@@ -94,5 +94,20 @@ async def read_log(
     return await remote_bash(ssh_conn, f"cat {shlex.quote(log_path)}")
 
 
+async def scancel_job(
+    ssh_conn: asyncssh.SSHClientConnection,
+    job_id: str,
+) -> str:
+    """
+    Cancel a Slurm job by id. Returns scancel's stdout/stderr (usually empty
+    on success). Callers should treat a non-fatal response as "OK, moved on"
+    — scancel is idempotent; jobs already gone simply produce no output.
+    """
+    return await remote_bash(
+        ssh_conn,
+        f"scancel {shlex.quote(job_id)} 2>&1 || true",
+    )
+
+
 def monbtaw_log_path(app_config: dict, trial_number: int) -> str:
     return f"{app_config['work_dir']}/run_{trial_number}/{app_config['log_file_name']}"

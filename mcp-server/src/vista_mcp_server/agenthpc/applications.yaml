@@ -8,7 +8,10 @@
 monbtaw:
   host: andes.olcf.ornl.gov
   goal: "Find a composition of Mo-Nb-Ta-W refractory high entropy alloy with the highest critical transition temperature."
-  work_dir: "/lustre/orion/scratch/junqi/stf218/agentic/andes/MoNbTaW"
+  # work_dir is REQUIRED but intentionally unset here — set VISTA_AGENTHPC_ALLOY_DIR
+  # in the environment to point at the simulation code directory on the HPC.
+  work_dir: null
+  work_dir_env: VISTA_AGENTHPC_ALLOY_DIR
   sbatch_script: "rhea.sb"
   composition_file: "composition.input"
   file_patterns: ["*.input", "*.sb"]
