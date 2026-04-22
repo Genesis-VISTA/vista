@@ -7,6 +7,8 @@ description: >-
   salt CSV data. This skill is portable and self-contained (scripts and dataset
   are bundled under this skill folder) and can optionally submit the existing
   `forge-tune` Slurm job through MCP tools.
+metadata:
+  tab: molten-salt
 ---
 
 # Model Fine-Tuning

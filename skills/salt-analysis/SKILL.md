@@ -3,6 +3,7 @@ name: salt-analysis
 description: Analyze molten salt thermophysical properties from the MSTDB-TP database. Two scripts are available — analyze_salt.py for property statistics and raw data plots, and plot_phase_diagram.py for proper liquidus phase diagrams with spline-fitted curves, eutectic identification, and labeled phase regions.
 metadata:
   version: "0.3.0"
+  tab: molten-salt
 license: Proprietary
 ---
 

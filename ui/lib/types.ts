@@ -21,6 +21,7 @@ export type SkillSummary = {
   name: string;
   description: string;
   path: string;
+  metadata?: Record<string, string>;
 };
 
 export type SkillDetail = {
@@ -34,4 +35,10 @@ export type ChatMessage = {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   result?: ExecutionResult;
+  /**
+   * Streamed mid-campaign agent update (e.g. a per-trial Trial Report
+   * during an alloy-design optimization). Rendered collapsed by default;
+   * only the latest one in the conversation expands automatically.
+   */
+  intermediate?: boolean;
 };

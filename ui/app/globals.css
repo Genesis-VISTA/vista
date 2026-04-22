@@ -147,6 +147,145 @@ main {
   flex-shrink: 0;
 }
 
+/* ---------- Domain tabs + banner (skills panel) ----------------------- */
+
+.skills-panel {
+  /* Each panel instance sets --domain-accent / --domain-accent-soft
+     inline based on the active tab. Fallbacks here protect against missing
+     values. */
+  --domain-accent: #004573;
+  --domain-accent-soft: #f2f2f2;
+}
+
+.skills-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  padding-left: 4px;
+}
+
+.skills-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  /* Match border-top-width across active/inactive so there's no height
+     jump when selection changes — the accent appears via color alone. */
+  border-top-width: 2px;
+  border-top-color: transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 5px 10px 8px;
+  margin-bottom: -1px; /* overlap the container's bottom border */
+  font-family: "Figtree", sans-serif;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-top-color 0.15s;
+  position: relative;
+}
+
+.skills-tab-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.55;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.skills-tab-label {
+  min-width: 0;
+}
+
+.skills-tab:hover:not(.active) {
+  background: #ececec;
+  color: var(--ink);
+}
+
+.skills-tab:hover:not(.active) .skills-tab-icon {
+  opacity: 0.8;
+}
+
+.skills-tab.active {
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  border-top-color: var(--tab-accent, var(--domain-accent));
+  /* Cover the container's bottom line so the active tab visually
+     connects with the panel body, giving the file-folder/bookmark look. */
+  box-shadow: 0 1px 0 0 var(--panel);
+  z-index: 1;
+}
+
+.skills-tab.active .skills-tab-icon {
+  color: var(--tab-accent, var(--domain-accent));
+  opacity: 1;
+}
+
+/* Domain banner — short identity strip below the tabs. */
+.domain-banner {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px 11px 11px;
+  margin: 12px 0 12px;
+  background: var(--domain-accent-soft);
+  border-left: 3px solid var(--domain-accent);
+  border-radius: 2px 8px 8px 2px;
+  position: relative;
+}
+
+/* Subtle horizontal rule from the accent color along the bottom — adds
+   a specimen-label feel without shouting. */
+.domain-banner::after {
+  content: "";
+  position: absolute;
+  left: 11px;
+  right: 12px;
+  bottom: 0;
+  height: 1px;
+  background: var(--domain-accent);
+  opacity: 0.15;
+}
+
+.domain-banner-icon {
+  color: var(--domain-accent);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.domain-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.domain-banner-label {
+  font-family: "Figtree", sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--domain-accent);
+  line-height: 1.1;
+}
+
+.domain-banner-tagline {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 @media (max-width: 1100px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -408,16 +547,37 @@ main {
 }
 
 .skill-item {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 10px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  position: relative;
+}
+
+/* Thin accent stripe on the left edge — ties each card to the active
+   domain's color. Uses the domain accent CSS var so it automatically
+   adapts when the user switches tabs. */
+.skill-item::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: var(--domain-accent, var(--line));
+  border-radius: 999px;
+  opacity: 0.55;
+  transition: opacity 0.15s;
 }
 
 .skill-item:hover {
   border-color: var(--line);
   background: var(--panel-2);
+}
+
+.skill-item:hover::before {
+  opacity: 0.95;
 }
 
 .skill-name {
@@ -638,6 +798,105 @@ main {
   justify-content: center;
   font-size: 15px;
   font-weight: 600;
+}
+
+/* ---------- Intermediate "agent thinking" messages -------------------- */
+
+/* Collapsed chip — a low-weight trace that past thinking happened, without
+   cluttering the chat. Click toggles expansion. */
+button.chat-bubble.intermediate.collapsed {
+  appearance: none;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 11px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  font-family: inherit;
+}
+
+button.chat-bubble.intermediate.collapsed:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+  border-color: var(--muted);
+  border-style: solid;
+}
+
+.intermediate-chevron {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.intermediate-label {
+  font-family: "Figtree", sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.intermediate-preview {
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Expanded intermediate — latest one is highlighted subtly so users can
+   tell "this is the current thinking" at a glance. */
+.chat-bubble.intermediate.current {
+  background: var(--panel-2);
+  border-left: 3px solid var(--brand);
+  padding-left: 12px;
+}
+
+.chat-bubble.intermediate.expanded {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.intermediate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.intermediate-toggle {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: "Figtree", sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.intermediate-toggle:hover {
+  color: var(--ink);
 }
 
 .thinking-loader {
