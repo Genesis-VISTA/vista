@@ -63,6 +63,93 @@ const MODEL_SERVICES = ["AmSC model services"];
 const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
 const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
 
+type TabDef = {
+  id: string;
+  label: string;
+  /** One-sentence summary shown in the domain banner under the tabs. */
+  tagline: string;
+  /** Accent color tied to the material each domain studies. */
+  accent: string;
+  /** Very light tint of the accent, used for banner backgrounds. */
+  accentSoft: string;
+};
+
+const TABS: TabDef[] = [
+  {
+    id: "molten-salt",
+    label: "Molten Salt Tritium Breeding",
+    tagline:
+      "MSTDB database analysis, Phase diagram generation, Thermophysical property prediction, FORGE fine-tuning on Frontier, and Launch SPLASH campaign.",
+    accent: "#c86611",
+    accentSoft: "#fbeadb",
+  },
+  {
+    id: "alloy-design",
+    label: "High Entropy Alloy Design",
+    tagline:
+      "Agentic composition search for refractory high-entropy alloys on Andes/Slurm.",
+    accent: "#2d5f82",
+    accentSoft: "#e2ecf3",
+  },
+];
+const DEFAULT_TAB = TABS[0].id;
+
+function DomainIcon({ tab, size = 18 }: { tab: string; size?: number }) {
+  const sw = "currentColor";
+  if (tab === "molten-salt") {
+    // Liquidus phase diagram — two curves meeting at a eutectic point,
+    // referencing the actual science of molten-salt analysis.
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path
+          d="M3 7 Q7 7 12 16 T21 7"
+          stroke={sw}
+          strokeWidth="1.6"
+          strokeLinecap="round"
+        />
+        <circle cx="12" cy="16" r="1.9" fill={sw} />
+        <path d="M3 20 H21" stroke={sw} strokeWidth="1" opacity="0.3" />
+      </svg>
+    );
+  }
+  if (tab === "alloy-design") {
+    // Four-element tetrahedron — MoNbTaW HEA, projected to 2D.
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <g stroke={sw} strokeWidth="1.1" opacity="0.55">
+          <line x1="5" y1="7" x2="19" y2="7" />
+          <line x1="5" y1="7" x2="12" y2="20" />
+          <line x1="19" y1="7" x2="12" y2="20" />
+          <line x1="5" y1="7" x2="12" y2="13" />
+          <line x1="19" y1="7" x2="12" y2="13" />
+          <line x1="12" y1="13" x2="12" y2="20" />
+        </g>
+        <g fill={sw}>
+          <circle cx="5" cy="7" r="2" />
+          <circle cx="19" cy="7" r="2" />
+          <circle cx="12" cy="13" r="1.7" />
+          <circle cx="12" cy="20" r="2" />
+        </g>
+      </svg>
+    );
+  }
+  return null;
+}
+
 const PLACEHOLDER_DATASETS = [
   "allenai/scientific_papers",
   "OpenDFM/ScienceQA",
@@ -153,6 +240,25 @@ function extractPredictionSummary(result: ExecutionResult | null): Record<string
   }
 }
 
+/**
+ * One-line preview of an intermediate agent report, used when the bubble is
+ * collapsed. Pulls the first markdown heading/meaningful line and strips
+ * bullet/heading punctuation so it reads like a chip label.
+ */
+function intermediatePreview(content: string): string {
+  const firstLine = content
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("```"));
+  if (!firstLine) return "Agent update";
+  const cleaned = firstLine
+    .replace(/^#+\s*/, "")
+    .replace(/^[-*>]\s*/, "")
+    .replace(/^\*+|\*+$/g, "")
+    .trim();
+  return cleaned || "Agent update";
+}
+
 function formatTimestampUtc(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
@@ -173,6 +279,7 @@ export default function HomePage() {
   const [leftTopHeight, setLeftTopHeight] = useState(500);
   const [rightTopHeight, setRightTopHeight] = useState(430);
 
+  const [activeTab, setActiveTab] = useState<string>(DEFAULT_TAB);
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
@@ -180,6 +287,26 @@ export default function HomePage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  /**
+   * Id of the most recently streamed intermediate agent turn.
+   * Rendered expanded while it is the latest; demoted (collapsed) when a
+   * newer intermediate arrives or when the final agent_response lands.
+   */
+  const [latestIntermediateId, setLatestIntermediateId] = useState<string | null>(null);
+  /**
+   * Ids of older intermediate messages the user has manually expanded.
+   * Overrides the collapsed-by-default state for non-latest intermediates.
+   */
+  const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
+
+  function toggleIntermediate(id: string) {
+    setExpandedIntermediates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
@@ -328,11 +455,20 @@ export default function HomePage() {
   }, [activeRowResizer]);
 
   useEffect(() => {
-    fetch("/api/skills")
+    fetch(`/api/skills?tab=${encodeURIComponent(activeTab)}`)
       .then((res) => res.json())
       .then((data) => setSkills(Array.isArray(data) ? data : []))
       .catch(() => setSkills([]));
-  }, []);
+  }, [activeTab]);
+
+  function switchTab(nextTab: string) {
+    if (nextTab === activeTab) return;
+    setActiveTab(nextTab);
+    // Reset skills-panel search only — chat history, agent logs, and
+    // the last-rendered figure persist across tab switches so the user
+    // can keep cross-domain context.
+    setFilter("");
+  }
 
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -358,6 +494,11 @@ export default function HomePage() {
       );
     });
   }, [skills, filter]);
+
+  const activeDomain = useMemo(
+    () => TABS.find((t) => t.id === activeTab) ?? TABS[0],
+    [activeTab]
+  );
 
   async function openSkill(slug: string) {
     try {
@@ -390,6 +531,9 @@ export default function HomePage() {
 
   function processAgentResponse(data: { response: string; toolCalls: ToolCallInfo[] }) {
     const content = data.response || "(no response)";
+    // Terminal message closes the streaming phase — demote whatever was the
+    // latest intermediate so it collapses with the rest of the thinking log.
+    setLatestIntermediateId(null);
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "assistant", content }
@@ -445,6 +589,7 @@ export default function HomePage() {
     setShowJumpToLatest(false);
     requestAnimationFrame(() => scrollChatToLatest("auto"));
     setAgentLogs([]);
+    setLatestIntermediateId(null);
 
     if (!useLlm) return;
 
@@ -457,7 +602,7 @@ export default function HomePage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, history })
+        body: JSON.stringify({ message: text, history, tab: activeTab })
       });
 
       const reader = response.body!.getReader();
@@ -499,6 +644,41 @@ export default function HomePage() {
                 toolCalls: event.toolCalls as ToolCallInfo[]
               });
               break;
+
+            case "agent_turn": {
+              // Intermediate update streamed mid-loop. Two shapes:
+              //   { text: "..." }        → append as an intermediate chat
+              //                             message (collapsed on arrival of
+              //                             the next one)
+              //   { toolCall: { ... } }  → refresh the output panel if the
+              //                             tool produced a figure
+              const text = typeof event.text === "string" ? event.text.trim() : "";
+              if (text) {
+                const newId = crypto.randomUUID();
+                setMessages((prev) => [
+                  ...prev,
+                  { id: newId, role: "assistant", content: text, intermediate: true }
+                ]);
+                setLatestIntermediateId(newId);
+                requestAnimationFrame(() => scrollChatToLatest("smooth"));
+              }
+              const tc = event.toolCall as ToolCallInfo | undefined;
+              if (tc && tc.displayHtml) {
+                setLatestResult({
+                  ok: true,
+                  stdout: tc.stdout || "",
+                  stderr: tc.stderr || "",
+                  artifacts: [],
+                  meta: {
+                    tool: tc.tool,
+                    analysisSummary: tc.plotPath ? { plotPath: tc.plotPath } : undefined,
+                    references: parseReferencesFromStdout(tc.stdout || "")
+                  },
+                  ui: { kind: "html", html: tc.displayHtml }
+                });
+              }
+              break;
+            }
 
             case "error":
               setMessages((prev) => [
@@ -1016,12 +1196,50 @@ export default function HomePage() {
             onPointerDown={() => setActiveRowResizer("left")}
           />
 
-          <section className="panel">
+          <section
+            className="panel skills-panel"
+            style={{
+              "--domain-accent": activeDomain.accent,
+              "--domain-accent-soft": activeDomain.accentSoft,
+            } as CSSProperties}
+          >
             <div className="panel-header">
               <div className="panel-title">Skills</div>
               <span className="tag">{skills.length} loaded</span>
             </div>
             <div className="panel-body">
+              <nav className="skills-tabs" role="tablist" aria-label="Application area">
+                {TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    role="tab"
+                    aria-selected={activeTab === tab.id}
+                    className={`skills-tab ${activeTab === tab.id ? "active" : ""}`}
+                    style={activeTab === tab.id ? {
+                      "--tab-accent": tab.accent,
+                    } as CSSProperties : undefined}
+                    onClick={() => switchTab(tab.id)}
+                  >
+                    <span className="skills-tab-icon" aria-hidden="true">
+                      <DomainIcon tab={tab.id} size={15} />
+                    </span>
+                    <span className="skills-tab-label">{tab.label}</span>
+                  </button>
+                ))}
+              </nav>
+              <div
+                className="domain-banner"
+                role="region"
+                aria-label={`About ${activeDomain.label}`}
+              >
+                <div className="domain-banner-icon" aria-hidden="true">
+                  <DomainIcon tab={activeDomain.id} size={26} />
+                </div>
+                <div className="domain-banner-text">
+                  <div className="domain-banner-label">{activeDomain.label}</div>
+                  <div className="domain-banner-tagline">{activeDomain.tagline}</div>
+                </div>
+              </div>
               <input
                 className="input"
                 placeholder="Search skills"
@@ -1159,20 +1377,63 @@ export default function HomePage() {
                 Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
               </div>
             )}
-            {messages.map((msg) => (
-              <div key={msg.id} className={`chat-bubble ${msg.role}`}>
-                {msg.role === "assistant" ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                ) : (
-                  msg.content
-                )}
-                {msg.result && !msg.result.ok && (
-                  <div className="error" style={{ marginTop: 6 }}>
-                    {msg.result.stderr}
-                  </div>
-                )}
-              </div>
-            ))}
+            {messages.map((msg) => {
+              const isIntermediate = !!msg.intermediate;
+              const isLatestIntermediate = isIntermediate && msg.id === latestIntermediateId;
+              const isManuallyExpanded = expandedIntermediates.has(msg.id);
+              const collapsed = isIntermediate && !isLatestIntermediate && !isManuallyExpanded;
+
+              if (collapsed) {
+                return (
+                  <button
+                    key={msg.id}
+                    type="button"
+                    className="chat-bubble intermediate collapsed"
+                    onClick={() => toggleIntermediate(msg.id)}
+                    aria-expanded="false"
+                  >
+                    <span className="intermediate-chevron" aria-hidden="true">▸</span>
+                    <span className="intermediate-label">agent thinking</span>
+                    <span className="intermediate-preview">{intermediatePreview(msg.content)}</span>
+                  </button>
+                );
+              }
+
+              return (
+                <div
+                  key={msg.id}
+                  className={`chat-bubble ${msg.role}${isIntermediate ? ` intermediate${isLatestIntermediate ? " current" : " expanded"}` : ""}`}
+                >
+                  {isIntermediate && (
+                    <div className="intermediate-header">
+                      <span className="intermediate-label">
+                        {isLatestIntermediate ? "agent thinking · latest" : "agent thinking"}
+                      </span>
+                      {!isLatestIntermediate && (
+                        <button
+                          type="button"
+                          className="intermediate-toggle"
+                          onClick={() => toggleIntermediate(msg.id)}
+                          aria-expanded="true"
+                        >
+                          collapse
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {msg.role === "assistant" ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )}
+                  {msg.result && !msg.result.ok && (
+                    <div className="error" style={{ marginTop: 6 }}>
+                      {msg.result.stderr}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {isChatLoading && (
               <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
                 <span className="thinking-loader" aria-hidden="true">

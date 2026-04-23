@@ -7,20 +7,15 @@ import json
 import re
 import os
 import itertools
-import asyncssh
 import textwrap
 import time
-import json
 import dataclasses
-from typing import Annotated as A
-from pydantic import BaseModel, Field
 import logging
 from pathlib import Path
 import shlex
-from cachetools import TTLCache
 from fastmcp import FastMCP, Context
 from .config import settings
-from .lib.ssh import MCPElicitationSSHClient, ssh_bash_retry, scp_retry
+from .lib.ssh import ssh_bash_retry, scp_retry, get_ssh_conn
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 @dataclasses.dataclass
@@ -58,72 +53,6 @@ def build_job_descriptions() -> str:
 
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
-
-
-class SSHLoginInfo(BaseModel):
-    username: str
-    password: str = ""
-
-class Confirmation(BaseModel):
-    confirm: bool = False
-
-
-# FastMCP has a `ctx.set_stat` function but it can only store serializable types, so we'll keep our
-# own map of MCP session id to SSHClientConnection. This may cause problems if we scale the MCP up
-# to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
-_ssh_connections: TTLCache[str, asyncssh.SSHClientConnection] = TTLCache(maxsize=128, ttl=3600)
-
-
-async def get_ssh_conn(
-    ctx: Context, message: str, force_confirmation = False,
-) -> asyncssh.SSHClientConnection:
-    """
-    Elicit for SSH credentials, or use the cached SSH connection.
-    Pass force_confirmation if you want to always have a confirmation checkbox even if the ssh
-    connection is cached.
-    """
-    final_host = settings.hpc_host[-1]
-
-    if ctx.session_id not in _ssh_connections:
-        logging.info(f"User login to {final_host}")
-
-        conn = None
-        for i, host in enumerate(settings.hpc_host):
-            is_final_host = (i == len(settings.hpc_host) - 1)
-            if is_final_host:
-                prompt_message = f"Log in to {host} to run:\n{message}"
-            else:
-                prompt_message = f"Log in to {host} (jump host to {final_host})"
-            result = await ctx.elicit(message=prompt_message, response_type=SSHLoginInfo)
-
-            if result.action != "accept":
-                raise Exception("Unable to launch job, user cancelled login")
-            username = result.data.username
-            password = result.data.password
-
-            conn = await asyncssh.connect(host,
-                username = username,
-                login_timeout = 60,
-                connect_timeout = 60,
-                tunnel = conn,
-                client_factory = lambda: MCPElicitationSSHClient(ctx,
-                    login_message = f"Log in to {username}@{host}",
-                    password = password,
-                ),
-            )
-        _ssh_connections[ctx.session_id] = conn
-    elif force_confirmation:
-        logging.info(f"Using cached ssh connection to {final_host}, with forced confirmation")
-        result = await ctx.elicit(
-            message=f"Confirm running on {final_host}:\n{message}",
-            response_type=Confirmation,
-        )
-        if result.action != "accept" or not result.data.confirm:
-            raise Exception("Job submission cancelled by user")
-    else:
-        logging.info(f"Using cached ssh connection to {final_host}")
-
-    return _ssh_connections[ctx.session_id]
 
 
 mcp = FastMCP("Submit Job")

@@ -1,0 +1,29 @@
+# Per-application configuration for the agenthpc sub-MCP.
+#
+# Each top-level key is an application name (used as `app_type` in tool calls).
+# These are deployed once per physical setup: the `work_dir` + input files
+# already live on the remote HPC under the listed `host`, and Vista only
+# submits / monitors / reads results via SSH.
+
+monbtaw:
+  host: andes.olcf.ornl.gov
+  goal: "Find a composition of Mo-Nb-Ta-W refractory high entropy alloy with the highest critical transition temperature."
+  # work_dir is REQUIRED but intentionally unset here — set VISTA_AGENTHPC_ALLOY_DIR
+  # in the environment to point at the simulation code directory on the HPC.
+  work_dir: null
+  work_dir_env: VISTA_AGENTHPC_ALLOY_DIR
+  sbatch_script: "rhea.sb"
+  composition_file: "composition.input"
+  file_patterns: ["*.input", "*.sb"]
+  log_file_name: "stat0.dat"
+  score_threshold: 1200
+  max_trials: 200
+  search_space:
+    Mo_range: [0.1, 0.9]
+    Mo_steps: 10
+    Nb_range: [0.1, 0.9]
+    Nb_steps: 10
+    Ta_range: [0.1, 0.9]
+    Ta_steps: 10
+    W_range: [0.1, 0.9]
+    W_steps: 10

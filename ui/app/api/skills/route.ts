@@ -3,8 +3,13 @@ import path from "path";
 import { findSkills, readProperties } from "@/lib/skills";
 import { config } from "@/app/config";
 
-export async function GET() {
+const DEFAULT_TAB = "molten-salt";
+
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const tab = url.searchParams.get("tab");
+
     const skillDirs = findSkills([config.skillsDir]);
 
     const skills = skillDirs.flatMap((skillDir) => {
@@ -15,6 +20,7 @@ export async function GET() {
           name: props.name,
           description: props.description,
           path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
+          metadata: props.metadata,
         }];
       } catch (error) {
         console.warn(`[skills] Skipping invalid skill '${skillDir}':`, error);
@@ -22,9 +28,13 @@ export async function GET() {
       }
     });
 
-    skills.sort((a, b) => a.slug.localeCompare(b.slug));
+    const filtered = tab
+      ? skills.filter((s) => (s.metadata?.tab ?? DEFAULT_TAB) === tab)
+      : skills;
 
-    return NextResponse.json(skills);
+    filtered.sort((a, b) => a.slug.localeCompare(b.slug));
+
+    return NextResponse.json(filtered);
   } catch {
     return NextResponse.json([], { status: 200 });
   }

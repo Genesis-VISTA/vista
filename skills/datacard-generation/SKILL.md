@@ -7,6 +7,8 @@ description: >-
   metadata, document a dataset, or prepare a dataset for sharing. Supports
   three readiness levels: Level 1 (Discoverable), Level 2 (Interoperable &
   Reusable), Level 3 (Understandable & Trustworthy).
+metadata:
+  tab: molten-salt
 ---
 
 # Generating Datacards

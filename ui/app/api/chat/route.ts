@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { getMcpClient } from "@/lib/mcp-client";
 import { ElicitRequestSchema, type ElicitRequestFormParams, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 import { registerElicitation } from "@/lib/elicitation-bridge";
-import { toPrompt, findSkills } from "@/lib/skills";
+import { toPrompt, findSkills, readProperties } from "@/lib/skills";
 import { config } from "@/app/config";
 import { readFileSync } from "fs";
 import { join } from "path";
+
+const DEFAULT_TAB = "molten-salt";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -14,6 +16,7 @@ import { join } from "path";
 type ChatRequest = {
   message: string;
   history?: Array<{ role: string; content: string }>;
+  tab?: string;
 };
 
 type ToolCallResult = {
@@ -40,6 +43,12 @@ type OpenAiTool = {
 type SseEvent =
   | { type: "elicitation"; id: string; message: string; schema: Record<string, unknown> }
   | { type: "agent_response"; response: string; toolCalls: ToolCallResult[] }
+  // Intermediate updates streamed during a multi-iteration agent loop.
+  // `text` is the LLM's message-level content for an iteration that is NOT
+  // the terminal iteration (the terminal one arrives via `agent_response`).
+  // `toolCall` carries a just-executed tool result that produced a figure —
+  // the UI uses it to refresh the output panel before the loop finishes.
+  | { type: "agent_turn"; text?: string; toolCall?: ToolCallResult }
   | { type: "error"; error: string }
   | { type: "log"; level: string; area: string; message: string; extra?: Record<string, unknown> }
   | { type: "done" };
@@ -165,9 +174,6 @@ async function discoverTools(): Promise<OpenAiTool[]> {
 
     cachedTools = openaiTools;
     cachedToolsTime = now;
-    log("INFO", "ToolDiscovery", `Exposing ${cachedTools.length} tools to LLM`, {
-      names: cachedTools.map((t) => t.function.name),
-    });
     return cachedTools;
   } catch (err) {
     log("ERROR", "ToolDiscovery", `tools/list failed: ${err instanceof Error ? err.message : "Unknown"}`);
@@ -175,12 +181,145 @@ async function discoverTools(): Promise<OpenAiTool[]> {
   }
 }
 
+/**
+ * Filter the discovered tool list down to what is appropriate for the active tab.
+ *
+ * - molten-salt: exclude every `agenthpc_*` tool (they belong to the Alloy Design tab).
+ * - alloy-design: exclude `submit_hpc_job` / `get_hpc_job_status` / `list_hpc_jobs`
+ *   (those target Frontier for the molten-salt workflow; MoNbTaW uses `agenthpc_*`
+ *   on Andes instead). Keep sandbox (`run_bash`/`create_file`/`view`) and
+ *   `display_file` available for post-hoc analysis.
+ */
+/**
+ * Per-tab cap on how many LLM rounds we'll run in a single chat turn.
+ *
+ * - molten-salt: 10 is plenty for the existing query-and-plot workflows.
+ * - alloy-design: each optimization trial uses ~5 tool-call rounds
+ *   (get_all_results → submit → wait → get_job_result → optional
+ *   display), so we budget 600 by default to comfortably cover ~100 trials.
+ *   Override with VISTA_MAX_AGENT_ITERATIONS_ALLOY if you need to run longer
+ *   optimizations (e.g. 1200 for 200 trials).
+ */
+function maxIterationsForTab(tab: string): number {
+  if (tab === "alloy-design") {
+    const envOverride = parseInt(process.env.VISTA_MAX_AGENT_ITERATIONS_ALLOY ?? "", 10);
+    return Number.isFinite(envOverride) && envOverride > 0 ? envOverride : 600;
+  }
+  return 10;
+}
+
+/**
+ * Client-side timeout for a single MCP tool invocation.
+ *
+ * Default: 60s (or 5min when an elicitation is possible).
+ * Overrides:
+ * - agenthpc_wait_for_job blocks on the server up to `timeout_s` (default
+ *   1800s) polling squeue — the client must outlast that with a small buffer
+ *   or it will trip a harmless but misleading "-32001 Request timed out".
+ * - agenthpc_submit_parameter_set runs remote `mkdir`/`cp`/`sbatch` over SSH
+ *   (which on first call also elicits credentials) — 10 min covers normal
+ *   latency plus user reaction time on the credential prompt.
+ * - agenthpc_plot_progress renders matplotlib locally — rare to hit 60s but
+ *   occasional cold imports can come close, so give it 180s headroom.
+ */
+function toolTimeoutMs(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  onElicitation: boolean,
+): number {
+  if (toolName === "agenthpc_wait_for_job") {
+    const raw = Number(toolInput.timeout_s);
+    const serverTimeoutS = Number.isFinite(raw) && raw > 0 ? raw : 1800;
+    return (serverTimeoutS + 60) * 1000;
+  }
+  if (toolName === "agenthpc_submit_parameter_set") {
+    return 600_000;
+  }
+  if (toolName === "agenthpc_plot_progress") {
+    return 180_000;
+  }
+  return onElicitation ? 300_000 : 60_000;
+}
+
+function filterToolsForTab(tools: OpenAiTool[], tab: string): OpenAiTool[] {
+  const saltFrontierTools = new Set([
+    "submit_hpc_job",
+    "get_hpc_job_status",
+    "list_hpc_jobs",
+  ]);
+
+  return tools.filter((t) => {
+    const name = t.function.name;
+    if (tab === "alloy-design") {
+      return !saltFrontierTools.has(name);
+    }
+    // molten-salt (default)
+    return !name.startsWith("agenthpc_");
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /*  System prompt                                                      */
 /* ------------------------------------------------------------------ */
 
-function buildSystemPrompt(): string {
-  const skillsPrompt = toPrompt(findSkills([config.skillsDir]));
+/**
+ * Return the subset of SKILL.md directories whose `metadata.tab` matches `tab`
+ * (skills without a tab field default to the molten-salt tab).
+ */
+function skillDirsForTab(tab: string): string[] {
+  return findSkills([config.skillsDir]).filter((dir) => {
+    try {
+      const props = readProperties(dir);
+      const skillTab = props.metadata?.tab ?? DEFAULT_TAB;
+      return skillTab === tab;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function buildSystemPrompt(tab: string): string {
+  if (tab === "alloy-design") {
+    return buildAlloyDesignPrompt();
+  }
+  return buildMoltenSaltPrompt();
+}
+
+function buildAlloyDesignPrompt(): string {
+  const skillsPrompt = toPrompt(skillDirsForTab("alloy-design"));
+  return [
+    `You are VISTA, operating in **High Entropy Alloy Design** mode.`,
+    `Your job is to run an agentic optimization loop on the Andes HPC cluster to find refractory high-entropy alloy compositions that meet the user's targeted critical transition temperature (Tc). Currently supports MoNbTaW (4-element).`,
+    ``,
+    skillsPrompt,
+    ``,
+    `## Before you start — gather inputs`,
+    `On the FIRST user message of an optimization request, ask ONE short question to collect:`,
+    `  1) target_score: targeted Tc in K (stopping criterion; e.g. 1250)`,
+    `  2) max_trials: maximum number of HPC jobs to submit (e.g. 50)`,
+    `  3) any composition constraints the user wants (optional, e.g. "keep Mo ≥ 0.2")`,
+    `If the user omits target_score or max_trials, proceed without them and the YAML defaults will be used — but ALWAYS ask for both on the first turn.`,
+    ``,
+    `## Critical workflow rules`,
+    `- Follow the optimization loop in the \`alloy-design\` SKILL.md exactly.`,
+    `- Pass the user's \`target_score\` and \`max_trials\` to EVERY tool call that accepts them — \`agenthpc_get_search_space\`, \`agenthpc_get_all_results\`, and \`agenthpc_get_job_result\`. The server is stateless.`,
+    `- Use ONLY the \`agenthpc_*\` tools. Do not call \`run_bash\`, \`submit_hpc_job\`, \`get_hpc_job_status\`, or \`list_hpc_jobs\` for MoNbTaW submissions.`,
+    `- The first \`agenthpc_submit_parameter_set\` call elicits Andes SSH credentials; subsequent calls reuse the cached connection.`,
+    `- After every successful \`agenthpc_get_job_result\`, do TWO things in order: (1) call \`agenthpc_plot_progress("monbtaw")\` to refresh the cumulative specific-heat curves in the output panel, (2) write a structured **Trial Report** in chat following the exact format in the alloy-design SKILL.md (Ran / Why this point / Trajectory table / Best so far / Next proposed + Reason). Never skip either step — the user is relying on the chat report and the figure together to track the campaign.`,
+    `- Stop when \`agenthpc_get_all_results\` returns \`should_stop: true\` (i.e. threshold_reached OR budget_exhausted). Then summarize best composition, best score vs target, trial count, and the search trajectory.`,
+    `- When the user asks for a single trial, skip the loop and just submit once.`,
+    `- If the user asks to stop / cancel / abort / kill the optimization, follow the "Cancellation" section of the SKILL.md: \`agenthpc_list_pending_jobs\` → \`agenthpc_cancel_all_pending\` → one final \`agenthpc_get_all_results\` summary, and do NOT submit any further jobs.`,
+    ``,
+    `## Search strategy guidance`,
+    `- **sum = 1.0 is non-negotiable.** The four numbers are atom fractions. Before you call \`agenthpc_submit_parameter_set\`, add Mo + Nb + Ta + W explicitly and confirm the total equals 1.0 (tolerance 1e-3). If your draft sums to e.g. 0.95, rescale: divide each value by the sum and round to two decimals, then nudge one coordinate to absorb rounding error so the total is exactly 1.00. The server will reject malformed sums, but every rejected submission wastes a round-trip.`,
+    `- Early trials (first ~5): spread across the space — include the equiatomic point (0.25, 0.25, 0.25, 0.25) and a few corner-biased compositions.`,
+    `- Later trials: exploit near \`best_parameters\` returned by \`agenthpc_get_all_results\`, perturbing one or two elements at a time while preserving sum=1.0.`,
+    `- Never resubmit a composition that already appears in the trials list — check \`agenthpc_get_all_results\` at the top of every iteration.`,
+  ].join("\n");
+}
+
+function buildMoltenSaltPrompt(): string {
+  const skillsPrompt = toPrompt(skillDirsForTab("molten-salt"));
 
   const dbPath = join(config.skillsDir, "salt-analysis", "assets", "Molten_Salt_Thermophysical_Properties.json");
   let saltListSummary = "";
@@ -456,7 +595,7 @@ async function executeTool(
 
   try {
     const client = await getMcpClient();
-    const timeoutMs = onElicitation ? 300_000 : 60_000; // 5 min for elicitation, 60s otherwise
+    const timeoutMs = toolTimeoutMs(toolName, toolInput, !!onElicitation);
 
     // Register elicitation handler directly on the client for this call
     if (onElicitation) {
@@ -551,6 +690,7 @@ async function executeTool(
 async function runAgentLoop(
   userMessage: string,
   history: Array<{ role: string; content: string }>,
+  tab: string,
   sendEvent: (event: SseEvent) => void
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
   const azureConfig = getAzureConfig();
@@ -571,10 +711,14 @@ async function runAgentLoop(
     };
   }
 
-  // Discover tools from MCP server
-  const tools = await discoverTools();
+  // Discover tools from MCP server and filter for the active tab.
+  const allTools = await discoverTools();
+  const tools = filterToolsForTab(allTools, tab);
+  log("INFO", "ToolDiscovery", `Exposing ${tools.length}/${allTools.length} tools to LLM for tab "${tab}"`, {
+    names: tools.map((t) => t.function.name),
+  });
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(tab);
   const toolCalls: ToolCallResult[] = [];
 
   const messages: Array<Record<string, unknown>> = [
@@ -618,7 +762,8 @@ async function runAgentLoop(
     return resp;
   };
 
-  const maxIterations = 10;
+  const maxIterations = maxIterationsForTab(tab);
+  log("INFO", "Agent", `Agent iteration budget for tab "${tab}": ${maxIterations}`);
   for (let i = 0; i < maxIterations; i++) {
     const iterStart = Date.now();
     log("INFO", "Agent:LLM", `Iteration ${i + 1}/${maxIterations} — sending request to LLM`);
@@ -688,6 +833,14 @@ async function runAgentLoop(
       return { response: textContent, toolCalls };
     }
 
+    // Mid-loop iteration: the LLM wrote message content alongside its next
+    // tool calls (e.g. a Trial Report for alloy-design). Stream it now —
+    // waiting for `agent_response` would bury it until the whole campaign
+    // ends, and only the final iteration's content survives in that path.
+    if (textContent.trim()) {
+      sendEvent({ type: "agent_turn", text: textContent });
+    }
+
     for (const tc of msgToolCalls) {
       const fnObj = tc.function as Record<string, unknown> | undefined;
       const toolName = typeof fnObj?.name === "string" ? fnObj.name : "";
@@ -700,6 +853,13 @@ async function runAgentLoop(
 
       const tcResult = await executeTool(toolName, toolInput, onElicitation);
       toolCalls.push(tcResult);
+
+      // If this tool produced a figure (displayHtml from display_file, or a
+      // plotPath detected in stdout), stream it so the output panel updates
+      // immediately rather than waiting for the end of the agent loop.
+      if (tcResult.displayHtml || tcResult.plotPath) {
+        sendEvent({ type: "agent_turn", toolCall: tcResult });
+      }
 
       let resultContent = tcResult.stdout || tcResult.stderr || "(no output)";
       if (tcResult.plotPath) {
@@ -744,6 +904,7 @@ export async function POST(request: Request) {
   }
 
   const history = Array.isArray(body.history) ? body.history : [];
+  const tab = typeof body.tab === "string" && body.tab ? body.tab : DEFAULT_TAB;
 
   const encoder = new TextEncoder();
   const stream = new TransformStream();
@@ -757,7 +918,7 @@ export async function POST(request: Request) {
   // Run agent loop in background, writing SSE events as it goes
   (async () => {
     try {
-      const { response, toolCalls } = await runAgentLoop(message, history, sendEvent);
+      const { response, toolCalls } = await runAgentLoop(message, history, tab, sendEvent);
       const elapsed = Date.now() - requestStart;
       log("INFO", "POST", `Request completed in ${elapsed}ms`, {
         toolCallCount: toolCalls.length,
