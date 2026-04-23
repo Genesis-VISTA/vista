@@ -7,20 +7,21 @@ import json
 import re
 import os
 import itertools
-import subprocess
 import asyncssh
 import textwrap
 import time
 import json
 import dataclasses
-from datetime import timedelta
+from typing import Annotated as A
+from pydantic import BaseModel, Field
 import logging
 from pathlib import Path
 import shlex
-import tenacity
 from cachetools import TTLCache
 from fastmcp import FastMCP, Context
 from .config import settings
+from .lib.ssh import MCPElicitationSSHClient, ssh_bash_retry, scp_retry
+from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 @dataclasses.dataclass
 class JobInfo:
@@ -59,86 +60,19 @@ MAX_NODES = 64
 MAX_TIME = "4:00:00"
 
 
-def parse_time_limit(s: str):
-    """Parse a time delta string in 'h:mm:ss' format."""
-    try:
-        hours, minutes, seconds = s.split(":")
-        return timedelta(hours=int(hours), minutes=int(minutes), seconds=int(seconds))
-    except:
-        raise ValueError(f"Invalid time limit: {s}")
+class SSHLoginInfo(BaseModel):
+    username: str
+    password: str = ""
 
-
-def validate_job_id(job_id: str):
-    job_id = job_id.strip().lstrip("0")
-    if not re.fullmatch(r"\d+", job_id):
-        raise ValueError(f"Invalid job id {job_id}")
-    return job_id
-
-
-@tenacity.retry(
-    stop = tenacity.stop_after_attempt(4),
-    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
-    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
-    reraise = True,
-)
-async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str, **kwargs) -> str:
-    """
-    Run a bash command on the remote HPC system
-    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
-    if you run a command too soon after the previous, so retry with delay when that happens.
-    """
-    kwargs = {
-        "check": False,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.STDOUT,
-        **kwargs,
-    }
-    result = await ssh_conn.run(f"bash -c {shlex.quote(command)}", **kwargs)
-    return result.stdout
-
-
-@tenacity.retry(
-    stop = tenacity.stop_after_attempt(4),
-    wait = tenacity.wait_random_exponential(multiplier=0.5, max = 10),
-    retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
-    reraise = True,
-)
-async def scp_retry(*args):
-    """
-    Transfer files via scp.
-    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
-    if you run a command too soon after the previous, so retry with delay when that happens.
-    """
-    await asyncssh.scp(*args, recurse=True)
-
-
-def get_tool_call_string(tool: str, /, **kwargs):
-    kwargs = {k: v for k, v in kwargs.items() if v != None}
-    if kwargs:
-        return (
-            f"{tool}(\n" +
-            ',\n'.join(f"  {k}={json.dumps(v)}" for k, v in kwargs.items()) +
-            "\n)"
-        )
-    else:
-        return f"{tool}()"
-
-
-@dataclasses.dataclass
-class SSHLoginInfo:
-    user: str
-    password: str
-
-
-@dataclasses.dataclass
-class Confirmation:
-    confrim: bool = False
+class Confirmation(BaseModel):
+    confirm: bool = False
 
 
 # FastMCP has a `ctx.set_stat` function but it can only store serializable types, so we'll keep our
 # own map of MCP session id to SSHClientConnection. This may cause problems if we scale the MCP up
-#to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
+# to multiple workers. Time out sessions after 1-hour (regardless of if they've been used recently)
 _ssh_connections: TTLCache[str, asyncssh.SSHClientConnection] = TTLCache(maxsize=128, ttl=3600)
+
 
 async def get_ssh_conn(
     ctx: Context, message: str, force_confirmation = False,
@@ -148,46 +82,46 @@ async def get_ssh_conn(
     Pass force_confirmation if you want to always have a confirmation checkbox even if the ssh
     connection is cached.
     """
+    final_host = settings.hpc_host[-1]
+
     if ctx.session_id not in _ssh_connections:
-        logging.info(f"Requesting user login to {settings.hpc_host}")
-        max_attempts = 3
-        attempt = 1
+        logging.info(f"User login to {final_host}")
+
         conn = None
-        while attempt <= max_attempts and not conn:
-            retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
-            result = await ctx.elicit(
-                message=f"Log in to {settings.hpc_host}{retry_note} to run:\n{message}",
-                response_type=SSHLoginInfo
-            )
+        for i, host in enumerate(settings.hpc_host):
+            is_final_host = (i == len(settings.hpc_host) - 1)
+            if is_final_host:
+                prompt_message = f"Log in to {host} to run:\n{message}"
+            else:
+                prompt_message = f"Log in to {host} (jump host to {final_host})"
+            result = await ctx.elicit(message=prompt_message, response_type=SSHLoginInfo)
 
             if result.action != "accept":
                 raise Exception("Unable to launch job, user cancelled login")
+            username = result.data.username
+            password = result.data.password
 
-            try:
-                conn = await asyncssh.connect(settings.hpc_host,
-                    username = result.data.user,
-                    password = result.data.password,
-                    login_timeout = 60,
-                    connect_timeout = 60,
-                )
-            except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
-                if attempt >= max_attempts:
-                    raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
-                else:
-                    logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
-
-            attempt += 1
+            conn = await asyncssh.connect(host,
+                username = username,
+                login_timeout = 60,
+                connect_timeout = 60,
+                tunnel = conn,
+                client_factory = lambda: MCPElicitationSSHClient(ctx,
+                    login_message = f"Log in to {username}@{host}",
+                    password = password,
+                ),
+            )
         _ssh_connections[ctx.session_id] = conn
     elif force_confirmation:
-        logging.info(f"Using cached ssh connection to {settings.hpc_host}, with forced confirmation")
+        logging.info(f"Using cached ssh connection to {final_host}, with forced confirmation")
         result = await ctx.elicit(
-            message=f"Confirm running on {settings.hpc_host}:\n{message}",
+            message=f"Confirm running on {final_host}:\n{message}",
             response_type=Confirmation,
         )
-        if result.action != "accept" or not result.data.confrim:
+        if result.action != "accept" or not result.data.confirm:
             raise Exception("Job submission cancelled by user")
     else:
-        logging.info(f"Using cached ssh connection to {settings.hpc_host}")
+        logging.info(f"Using cached ssh connection to {final_host}")
 
     return _ssh_connections[ctx.session_id]
 
@@ -239,11 +173,11 @@ async def submit_hpc_job(
 
     setup_script_path = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await remote_bash(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
+    check_result = await ssh_bash_retry(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
     if check_result.strip() != "true":
-        await remote_bash(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
+        await ssh_bash_retry(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
         setup_script = settings.get_hpc_setup_script()
-        await remote_bash(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
+        await ssh_bash_retry(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
         await scp_retry(str(settings.local_hpc_jobs_dir / job), (ssh_conn, str(remote_job_dir)))
         logging.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
@@ -264,12 +198,12 @@ async def submit_hpc_job(
     if script_args:
         args.extend(shlex.split(script_args))
 
-    result = await remote_bash(ssh_conn, shlex.join(args))
+    result = await ssh_bash_retry(ssh_conn, args)
 
     match = re.search(r"submitted batch job (\d+)", result.lower())
     if match:
         result = match[1]
-        logging.info(f"Submitted job {result} to {settings.hpc_host}")
+        logging.info(f"Submitted job {result} to {settings.hpc_host[-1]}")
     else:
         raise ValueError("Job failed to launch: " + result)
 
@@ -291,7 +225,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
         message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
     )
 
-    sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
+    sacct_out = await ssh_bash_retry(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except:
@@ -307,10 +241,10 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
     output_dir = settings.remote_hpc_jobs_dir / "out" / job_id
 
     log_path = output_dir / "log.out"
-    logs = await remote_bash(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
+    logs = await ssh_bash_retry(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
 
     excludes = ['**/.venv*/*', '**/__pycache__/*']
-    find_result = await remote_bash(ssh_conn, shlex.join([
+    find_result = await ssh_bash_retry(ssh_conn, shlex.join([
         "find", str(output_dir),
         "-maxdepth", "3",
         "-type", "f",
@@ -376,7 +310,7 @@ async def list_hpc_jobs(ctx: Context) -> str:
     ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("list_hpc_jobs"),
     )
-    sacct_out = await remote_bash(ssh_conn, "sacct --json --allocations --user $USER")
+    sacct_out = await ssh_bash_retry(ssh_conn, "sacct --json --allocations --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except Exception:

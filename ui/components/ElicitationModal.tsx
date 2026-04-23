@@ -22,7 +22,7 @@ function buildUiSchema(schema: Record<string, unknown>): UiSchema {
   if (!props) return ui;
 
   for (const key of Object.keys(props)) {
-    if (/password/i.test(key)) {
+    if (/password|passcode|pin/i.test(key.toLocaleLowerCase())) {
       ui[key] = { "ui:widget": "password" };
     }
   }
