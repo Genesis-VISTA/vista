@@ -15,7 +15,7 @@ import shlex
 
 import asyncssh
 
-from ..lib.ssh import remote_bash
+from ..lib.ssh import ssh_bash_retry
 
 
 async def submit_monbtaw(
@@ -48,7 +48,7 @@ async def submit_monbtaw(
         f"{shlex.quote(f'{e3}')} {shlex.quote(f'{e4}')} "
         f"> {shlex.quote(f'{run_subdir}/{composition_file}')}"
     )
-    prep_out = await remote_bash(ssh_conn, prep_cmd)
+    prep_out = await ssh_bash_retry(ssh_conn, prep_cmd)
     # `set -e` means non-zero exit would come back as non-empty stderr captured on stdout.
     if prep_out.strip():
         raise RuntimeError(f"Failed to prepare MoNbTaW run dir: {prep_out.strip()}")
@@ -57,7 +57,7 @@ async def submit_monbtaw(
         f"sbatch --chdir={shlex.quote(run_dir)} "
         f"{shlex.quote(f'{run_dir}/{sbatch_script}')}"
     )
-    sbatch_out = await remote_bash(ssh_conn, sbatch_cmd)
+    sbatch_out = await ssh_bash_retry(ssh_conn, sbatch_cmd)
     match = re.search(r"Submitted batch job (\d+)", sbatch_out)
     if not match:
         raise RuntimeError(f"sbatch did not return a job id: {sbatch_out.strip()}")
@@ -69,7 +69,7 @@ async def job_in_queue(
     job_id: str,
 ) -> bool:
     """True iff the job is still present in squeue."""
-    out = await remote_bash(
+    out = await ssh_bash_retry(
         ssh_conn,
         f"squeue --noheader --job {shlex.quote(job_id)} 2>/dev/null || true",
     )
@@ -80,7 +80,7 @@ async def log_exists(
     ssh_conn: asyncssh.SSHClientConnection,
     log_path: str,
 ) -> bool:
-    out = await remote_bash(
+    out = await ssh_bash_retry(
         ssh_conn,
         f"test -f {shlex.quote(log_path)} && echo yes || echo no",
     )
@@ -91,7 +91,7 @@ async def read_log(
     ssh_conn: asyncssh.SSHClientConnection,
     log_path: str,
 ) -> str:
-    return await remote_bash(ssh_conn, f"cat {shlex.quote(log_path)}")
+    return await ssh_bash_retry(ssh_conn, f"cat {shlex.quote(log_path)}")
 
 
 async def scancel_job(
@@ -103,7 +103,7 @@ async def scancel_job(
     on success). Callers should treat a non-fatal response as "OK, moved on"
     — scancel is idempotent; jobs already gone simply produce no output.
     """
-    return await remote_bash(
+    return await ssh_bash_retry(
         ssh_conn,
         f"scancel {shlex.quote(job_id)} 2>&1 || true",
     )

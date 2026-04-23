@@ -23,7 +23,8 @@ from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 
 from ..config import settings
-from ..lib.ssh import get_ssh_conn, get_tool_call_string
+from ..lib.ssh import get_ssh_conn
+from ..lib.misc import get_tool_call_string
 from . import hpc as hpc_ops
 from .application import BaseApplication, create_application, key_from_params
 from .config import available_apps, get_app_config

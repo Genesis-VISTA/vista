@@ -7,18 +7,16 @@ import json
 import re
 import os
 import itertools
-import asyncssh
 import textwrap
 import time
-import json
 import dataclasses
-from datetime import timedelta
 import logging
 from pathlib import Path
 import shlex
 from fastmcp import FastMCP, Context
 from .config import settings
-from .lib.ssh import get_ssh_conn, remote_bash, scp_retry, get_tool_call_string
+from .lib.ssh import ssh_bash_retry, scp_retry, get_ssh_conn
+from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 @dataclasses.dataclass
 class JobInfo:
@@ -55,22 +53,6 @@ def build_job_descriptions() -> str:
 
 MAX_NODES = 64
 MAX_TIME = "4:00:00"
-
-
-def parse_time_limit(s: str):
-    """Parse a time delta string in 'h:mm:ss' format."""
-    try:
-        hours, minutes, seconds = s.split(":")
-        return timedelta(hours=int(hours), minutes=int(minutes), seconds=int(seconds))
-    except:
-        raise ValueError(f"Invalid time limit: {s}")
-
-
-def validate_job_id(job_id: str):
-    job_id = job_id.strip().lstrip("0")
-    if not re.fullmatch(r"\d+", job_id):
-        raise ValueError(f"Invalid job id {job_id}")
-    return job_id
 
 
 mcp = FastMCP("Submit Job")
@@ -115,17 +97,16 @@ async def submit_hpc_job(
             time_limit = time_limit,
             script_args = script_args,
         ),
-        host = settings.hpc_host,
         force_confirmation = True,
     )
 
     setup_script_path = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await remote_bash(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
+    check_result = await ssh_bash_retry(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
     if check_result.strip() != "true":
-        await remote_bash(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
+        await ssh_bash_retry(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
         setup_script = settings.get_hpc_setup_script()
-        await remote_bash(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
+        await ssh_bash_retry(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
         await scp_retry(str(settings.local_hpc_jobs_dir / job), (ssh_conn, str(remote_job_dir)))
         logging.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
@@ -146,12 +127,12 @@ async def submit_hpc_job(
     if script_args:
         args.extend(shlex.split(script_args))
 
-    result = await remote_bash(ssh_conn, shlex.join(args))
+    result = await ssh_bash_retry(ssh_conn, args)
 
     match = re.search(r"submitted batch job (\d+)", result.lower())
     if match:
         result = match[1]
-        logging.info(f"Submitted job {result} to {settings.hpc_host}")
+        logging.info(f"Submitted job {result} to {settings.hpc_host[-1]}")
     else:
         raise ValueError("Job failed to launch: " + result)
 
@@ -171,10 +152,9 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
 
     ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
-        host = settings.hpc_host,
     )
 
-    sacct_out = await remote_bash(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
+    sacct_out = await ssh_bash_retry(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except:
@@ -190,10 +170,10 @@ async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
     output_dir = settings.remote_hpc_jobs_dir / "out" / job_id
 
     log_path = output_dir / "log.out"
-    logs = await remote_bash(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
+    logs = await ssh_bash_retry(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
 
     excludes = ['**/.venv*/*', '**/__pycache__/*']
-    find_result = await remote_bash(ssh_conn, shlex.join([
+    find_result = await ssh_bash_retry(ssh_conn, shlex.join([
         "find", str(output_dir),
         "-maxdepth", "3",
         "-type", "f",
@@ -230,7 +210,6 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
 
     ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("get_hpc_job_outputs", job_id = job_id, files = files),
-        host = settings.hpc_host,
     )
 
     remote_out_dir = settings.remote_hpc_jobs_dir / "out" / job_id
@@ -244,7 +223,7 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
             raise ValueError(f'Invalid path "{file}", must be under job output dir')
         local_path = local_out_dir / remote_path.relative_to(remote_out_dir)
         sandbox_path = sandbox_out_dir / remote_path.relative_to(remote_out_dir)
-
+        
         local_path.parent.mkdir(parents=True, exist_ok=True)
         await scp_retry((ssh_conn, remote_path), str(local_path))
         downloaded.append(str(sandbox_path))
@@ -259,9 +238,8 @@ async def list_hpc_jobs(ctx: Context) -> str:
     """
     ssh_conn = await get_ssh_conn(ctx,
         message = get_tool_call_string("list_hpc_jobs"),
-        host = settings.hpc_host,
     )
-    sacct_out = await remote_bash(ssh_conn, "sacct --json --allocations --user $USER")
+    sacct_out = await ssh_bash_retry(ssh_conn, "sacct --json --allocations --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except Exception:

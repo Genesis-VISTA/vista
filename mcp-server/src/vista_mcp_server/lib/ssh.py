@@ -1,15 +1,13 @@
-import sys
-import getpass
-import json
 import logging
-import shlex
-import subprocess
-import dataclasses
-
+import sys, getpass, subprocess, shlex
 import asyncssh
-import tenacity
+from collections import OrderedDict
 from cachetools import TTLCache
 from fastmcp import Context
+import tenacity
+from pydantic import BaseModel, Field, create_model
+
+from ..config import settings
 
 
 class TTYSSHClient(asyncssh.SSHClient):
@@ -40,15 +38,55 @@ class TTYSSHClient(asyncssh.SSHClient):
             tty.close()
 
 
-@dataclasses.dataclass
-class SSHLoginInfo:
-    user: str
-    password: str
+class MCPElicitationSSHClient(asyncssh.SSHClient):
+    """
+    SSHClient that prompts via MCP elicitation.
+    """
 
+    def __init__(self, ctx: Context, *,
+        login_message: str | None = None, password: str | None = None,
+    ):
+        super().__init__()
+        self._ctx = ctx
+        self._login_message = login_message or "Login:"
+        self._password = password
 
-@dataclasses.dataclass
-class Confirmation:
-    confrim: bool = False
+    def kbdint_auth_requested(self) -> str:
+        return ""
+
+    async def kbdint_challenge_received(
+        self, name: str, instructions: str, lang: str, prompts: list[tuple[str, bool]],
+    ) -> list[str] | None:
+        if not prompts:
+            return []
+        # Use the pre-provided password if given
+        elif self._password and len(prompts) == 1 and not prompts[0][1]:
+            password = self._password
+            self._password = None
+            return [password]
+
+        fields = OrderedDict()
+        for i, (prompt_text, echo) in enumerate(prompts):
+            # This is kinda hacky, but the Frontend elicitation modal will hide inputs on password_*
+            # fields. I can't pass `format: password` as MCP doesn't support it, and
+            # json_schema_extra fields get stripped off as well.
+            fields[f"{'field' if echo else 'password'}_{i}"] = (str, Field(title=prompt_text))
+        ChallengeResponse = create_model("ChallengeResponse", **fields)
+
+        message = self._login_message
+        if instructions:
+            message = f"{message}\n{instructions}"
+
+        result = await self._ctx.elicit(
+            message=message,
+            response_type=ChallengeResponse,
+        )
+
+        if result.action != "accept":
+            return None
+
+        return [getattr(result.data, f) for f in fields.keys()]
+
 
 
 @tenacity.retry(
@@ -57,12 +95,16 @@ class Confirmation:
     retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
     reraise = True,
 )
-async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str, **kwargs) -> str:
+async def ssh_bash_retry(ssh_conn: asyncssh.SSHClientConnection, command: str|list[str], **kwargs) -> str:
     """
-    Run a bash command on the remote HPC system.
-    Retries on ChannelOpenError. Frontier has MaxSessions set to 1 and sometimes fails
+    Run a bash command on the remote HPC system
+
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
     if you run a command too soon after the previous, so retry with delay when that happens.
     """
+    if not isinstance(command, str):
+        command = shlex.join(command)
+
     kwargs = {
         "check": False,
         "stdout": subprocess.PIPE,
@@ -79,87 +121,89 @@ async def remote_bash(ssh_conn: asyncssh.SSHClientConnection, command: str, **kw
     retry = tenacity.retry_if_exception_type(asyncssh.ChannelOpenError),
     reraise = True,
 )
-async def scp_retry(*args) -> None:
+async def scp_retry(*args):
     """
-    Transfer files via scp with the same retry behavior as remote_bash.
-    Frontier's MaxSessions=1 sometimes rejects back-to-back channel opens.
+    Transfer files via scp.
+
+    Retries on ChannelOpenError. Frontier seems to have MaxSessions set to 1, and sometimes fails
+    if you run a command too soon after the previous, so retry with delay when that happens.
     """
     await asyncssh.scp(*args, recurse=True)
 
 
-def get_tool_call_string(tool: str, /, **kwargs):
-    kwargs = {k: v for k, v in kwargs.items() if v != None}
-    if kwargs:
-        return (
-            f"{tool}(\n" +
-            ',\n'.join(f"  {k}={json.dumps(v)}" for k, v in kwargs.items()) +
-            "\n)"
-        )
-    else:
-        return f"{tool}()"
+class SSHLoginInfo(BaseModel):
+    username: str
+    password: str = ""
 
 
-# Per-(session, host) cache of live SSH connections. Credentials are elicited once per
-# session+host and reused across every HPC tool call in that session. Entries time out
-# after 1 hour regardless of recent use.
-_ssh_connections: TTLCache[tuple[str, str], asyncssh.SSHClientConnection] = TTLCache(maxsize=256, ttl=3600)
+class Confirmation(BaseModel):
+    confirm: bool = False
 
+
+# Cache of live SSH connections keyed by (session_id, host chain) so multiple hosts
+# can coexist in a single session. Entries time out after 1 hour.
+_ssh_connections: TTLCache[tuple[str, tuple[str, ...]], asyncssh.SSHClientConnection] = TTLCache(
+    maxsize=128, ttl=3600,
+)
 
 async def get_ssh_conn(
     ctx: Context,
     message: str,
-    host: str,
+    host: str | list[str] | None = None,
     force_confirmation: bool = False,
 ) -> asyncssh.SSHClientConnection:
     """
-    Return a live SSH connection to ``host`` for the current MCP session.
-
-    On first use per (session, host) this elicits credentials via MCP elicitation
-    and connects. Subsequent calls return the cached connection. Pass
-    ``force_confirmation=True`` to require the user to confirm the tool call even
-    when the connection is cached.
+    Elicit for SSH credentials, or use the cached SSH connection.
+    ``host`` may be a single host or a list of jump hosts ending at the target; when omitted
+    it defaults to ``settings.hpc_host``. Pass force_confirmation to always show a confirmation
+    prompt even if the connection is cached.
     """
-    cache_key = (ctx.session_id, host)
+    if host is None:
+        hosts = list(settings.hpc_host)
+    elif isinstance(host, str):
+        hosts = [host]
+    else:
+        hosts = list(host)
+    final_host = hosts[-1]
+    cache_key = (ctx.session_id, tuple(hosts))
 
     if cache_key not in _ssh_connections:
-        logging.info(f"Requesting user login to {host}")
-        max_attempts = 3
-        attempt = 1
+        logging.info(f"User login to {final_host}")
+
         conn = None
-        while attempt <= max_attempts and not conn:
-            retry_note = f" (attempt {attempt}/{max_attempts})" if attempt > 1 else ""
-            result = await ctx.elicit(
-                message=f"Log in to {host}{retry_note} to run:\n{message}",
-                response_type=SSHLoginInfo
-            )
+        for i, h in enumerate(hosts):
+            is_final_host = (i == len(hosts) - 1)
+            if is_final_host:
+                prompt_message = f"Log in to {h} to run:\n{message}"
+            else:
+                prompt_message = f"Log in to {h} (jump host to {final_host})"
+            result = await ctx.elicit(message=prompt_message, response_type=SSHLoginInfo)
 
             if result.action != "accept":
                 raise Exception("Unable to launch job, user cancelled login")
+            username = result.data.username
+            password = result.data.password
 
-            try:
-                conn = await asyncssh.connect(host,
-                    username = result.data.user,
-                    password = result.data.password,
-                    login_timeout = 60,
-                    connect_timeout = 60,
-                )
-            except (asyncssh.DisconnectError, asyncssh.PermissionDenied, OSError) as e:
-                if attempt >= max_attempts:
-                    raise Exception(f"SSH login failed after {max_attempts} attempts: {e}")
-                else:
-                    logging.warning(f"SSH login attempt {attempt}/{max_attempts} failed: {e}")
-
-            attempt += 1
+            conn = await asyncssh.connect(h,
+                username = username,
+                login_timeout = 60,
+                connect_timeout = 60,
+                tunnel = conn,
+                client_factory = lambda u=username, host=h, pw=password: MCPElicitationSSHClient(ctx,
+                    login_message = f"Log in to {u}@{host}",
+                    password = pw,
+                ),
+            )
         _ssh_connections[cache_key] = conn
     elif force_confirmation:
-        logging.info(f"Using cached ssh connection to {host}, with forced confirmation")
+        logging.info(f"Using cached ssh connection to {final_host}, with forced confirmation")
         result = await ctx.elicit(
-            message=f"Confirm running on {host}:\n{message}",
+            message=f"Confirm running on {final_host}:\n{message}",
             response_type=Confirmation,
         )
-        if result.action != "accept" or not result.data.confrim:
+        if result.action != "accept" or not result.data.confirm:
             raise Exception("Job submission cancelled by user")
     else:
-        logging.info(f"Using cached ssh connection to {host}")
+        logging.info(f"Using cached ssh connection to {final_host}")
 
     return _ssh_connections[cache_key]

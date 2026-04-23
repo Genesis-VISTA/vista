@@ -6,7 +6,7 @@ from typing import Literal, Annotated as A
 import getpass
 import uuid
 from datetime import datetime
-from .lib.types import ResolvedPath
+from .lib.types import ResolvedPath, CommaSeparatedList
 
 FRONTIER_SETUP_SCRIPT = textwrap.dedent(r"""
     export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
@@ -52,7 +52,11 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
-    hpc_host: str = "frontier.olcf.ornl.gov"
+    hpc_host: CommaSeparatedList[str] = ["frontier.olcf.ornl.gov"]
+    """
+    SSH host for launching remote HPC jobs.
+    To use a jump host, pass an array or comma separated list of hosts.
+    """
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
     remote_hpc_jobs_dir: Path = Path("/lustre/orion/stf218/proj-shared/vista/")
     """ Folder on the HPC cluster where the hpc_jobs will be copied. """
