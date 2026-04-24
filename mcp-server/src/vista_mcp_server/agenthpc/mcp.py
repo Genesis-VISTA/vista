@@ -23,7 +23,7 @@ from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 
 from ..config import settings
-from ..lib.ssh import get_ssh_conn
+from ..lib.ssh import get_ssh_conn_mcp_elicitation
 from ..lib.misc import get_tool_call_string
 from . import hpc as hpc_ops
 from .application import BaseApplication, create_application, key_from_params
@@ -168,7 +168,7 @@ async def agenthpc_submit_parameter_set(
         trial_number = sum(1 for _ in results)  # completed so far; collisions
         # are tolerated since trial_number only names the remote run dir.
 
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_submit_parameter_set",
@@ -177,9 +177,7 @@ async def agenthpc_submit_parameter_set(
             trial_number=trial_number,
         ),
         host=app.host,
-        force_confirmation=True,
     )
-
     if app_type == "monbtaw":
         job_id = await hpc_ops.submit_monbtaw(ssh_conn, app.app_config, params, trial_number)
         log_params = {"trial_number": trial_number}
@@ -226,14 +224,13 @@ async def agenthpc_check_job_status(
     Pass ``log_params`` exactly as returned by ``agenthpc_submit_parameter_set``.
     """
     app = _get_app(app_type)
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_check_job_status", app_type=app_type, job_id=job_id,
         ),
         host=app.host,
     )
-
     if await hpc_ops.job_in_queue(ssh_conn, job_id):
         return {"status": "running", "job_id": job_id}
 
@@ -261,7 +258,7 @@ async def agenthpc_wait_for_job(
     burning LLM tokens on repeated polling.
     """
     app = _get_app(app_type)
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_wait_for_job",
@@ -271,7 +268,6 @@ async def agenthpc_wait_for_job(
         ),
         host=app.host,
     )
-
     log_path = _log_path(app, log_params)
     deadline = asyncio.get_event_loop().time() + max(1, timeout_s)
     while True:
@@ -306,14 +302,13 @@ async def agenthpc_get_job_result(
     Returns ``{score, metrics, parameters, threshold_reached}``.
     """
     app = _get_app(app_type)
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_get_job_result", app_type=app_type, job_id=job_id,
         ),
         host=app.host,
     )
-
     log_path = _log_path(app, log_params)
     pending = _session_pending(ctx.session_id, app_type)
     if not await hpc_ops.log_exists(ssh_conn, log_path):
@@ -444,7 +439,7 @@ async def agenthpc_cancel_job(
     is a no-op. Drops the job from the pending-jobs registry.
     """
     app = _get_app(app_type)
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_cancel_job", app_type=app_type, job_id=job_id,
@@ -489,14 +484,13 @@ async def agenthpc_cancel_all_pending(
             "message": "No in-flight jobs for this session.",
         }
 
-    ssh_conn = await get_ssh_conn(
+    ssh_conn = await get_ssh_conn_mcp_elicitation(
         ctx,
         message=get_tool_call_string(
             "agenthpc_cancel_all_pending", app_type=app_type,
         ),
         host=app.host,
     )
-
     cancelled: list[dict[str, Any]] = []
     # Snapshot keys so we can mutate the dict while iterating.
     for job_id in list(pending.keys()):

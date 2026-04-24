@@ -1,4 +1,4 @@
-import sys, getpass, subprocess, shlex
+import logging, sys, getpass, subprocess, shlex
 import asyncssh
 from collections import OrderedDict
 from fastmcp import Context
@@ -151,6 +151,46 @@ async def get_ssh_conn(host: list[str], username: str) -> asyncssh.SSHClientConn
             connect_timeout=60,
             tunnel=conn,
             client_factory=TTYSSHClient,
+            known_hosts=None,
+        )
+    return conn
+
+
+async def get_ssh_conn_mcp_elicitation(
+    ctx: Context, message: str, host: str | list[str],
+) -> asyncssh.SSHClientConnection:
+    """
+    Open a fresh SSH connection, prompting for credentials via MCP elicitation. Not cached —
+    each call re-prompts. ``host`` may be a single host or a list of jump hosts ending at the
+    target. ``message`` is included in the final-host login prompt so the user can see which
+    tool call is about to run before supplying credentials.
+    """
+    hosts = [host] if isinstance(host, str) else list(host)
+    final_host = hosts[-1]
+
+    logging.info(f"User login to {final_host}")
+    conn = None
+    for i, h in enumerate(hosts):
+        is_final_host = (i == len(hosts) - 1)
+        if is_final_host:
+            prompt_message = f"Log in to {h} to run:\n{message}"
+        else:
+            prompt_message = f"Log in to {h} (jump host to {final_host})"
+        result = await ctx.elicit(message=prompt_message, response_type=SSHLoginInfo)
+        if result.action != "accept":
+            raise Exception("Unable to launch job, user cancelled login")
+        username = result.data.username
+        password = result.data.password
+
+        conn = await asyncssh.connect(
+            h,
+            username=username,
+            login_timeout=60,
+            connect_timeout=60,
+            tunnel=conn,
+            client_factory=lambda u=username, host=h, pw=password: MCPElicitationSSHClient(
+                ctx, login_message=f"Log in to {u}@{host}", password=pw,
+            ),
             known_hosts=None,
         )
     return conn
