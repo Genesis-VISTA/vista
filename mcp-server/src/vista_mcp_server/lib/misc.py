@@ -12,9 +12,10 @@ def parse_time_limit(s: str):
 
 
 def validate_job_id(job_id: str):
-    job_id = job_id.strip().lstrip("0")
-    if not re.fullmatch(r"\d+", job_id):
-        raise ValueError(f"Invalid job id {job_id}")
+    """Validate and normalise an S3M job ID (string, e.g. "job-12345" or "12345")."""
+    job_id = job_id.strip()
+    if not re.fullmatch(r"[\w-]+", job_id):
+        raise ValueError(f"Invalid job id {job_id!r}")
     return job_id
 
 

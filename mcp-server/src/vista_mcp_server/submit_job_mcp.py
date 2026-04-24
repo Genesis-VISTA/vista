@@ -1,45 +1,66 @@
 """
-MCP for remote HPC job submission.
+MCP for remote HPC job submission via S3M API.
 """
 
 from __future__ import annotations
-import json
-import re
-import os
 import itertools
+import json
+import logging
+import os
+import shlex
 import textwrap
 import time
 import dataclasses
-import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
-import shlex
+
 from fastmcp import FastMCP, Context
+from pydantic import BaseModel
+
 from .config import settings
-from .lib.ssh import ssh_bash_retry, scp_retry, get_ssh_conn
+from .lib.ssh import Confirmation, get_ssh_conn
+from .lib.s3m import S3mClient, S3mResourceSpec
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
+
+
+class S3mDefaults(BaseModel):
+    """
+    Per-job S3M resource and attribute defaults, loaded from s3m_defaults.json.
+    """
+    duration: int = 120
+    """ Seconds """
+    resources: S3mResourceSpec = S3mResourceSpec()
+
 
 @dataclasses.dataclass
 class JobInfo:
-    slurm_script: Path
+    name: str
     description: str
+    s3m_defaults: S3mDefaults
+
 
 def get_available_jobs() -> dict[str, JobInfo]:
     jobs = {}
     for file in settings.local_hpc_jobs_dir.iterdir():
         if file.is_dir():
-            slurm_scripts = list(file.glob("*.slurm"))
-            if len(slurm_scripts) != 1:
-                raise ValueError(f"Expected to find one .slurm script in {file}, found {len(slurm_scripts)}")
-            slurm_script = slurm_scripts[0]
+            job_script = file / "job.slurm"
+            if not job_script.exists():
+                raise ValueError(f"Job {file} missing job.slurm")
             readme = file / "README.md"
             if not readme.exists():
                 raise ValueError(f"No README.md in {file}")
             description = readme.read_text().strip()
             if not description.startswith(f"# {file.name}"):
                 raise ValueError(f'Job README.md should start with "# {file.name}" header')
+            s3m_defaults_file = file / "s3m_defaults.json"
+            if s3m_defaults_file.exists():
+                s3m_defaults = S3mDefaults.model_validate_json(s3m_defaults_file.read_text())
+            else:
+                s3m_defaults = S3mDefaults()
             jobs[file.name] = JobInfo(
-                slurm_script=slurm_script.relative_to(file),
+                name=file.name,
                 description=description,
+                s3m_defaults=s3m_defaults,
             )
     return jobs
 
@@ -52,24 +73,41 @@ def build_job_descriptions() -> str:
 
 
 MAX_NODES = 64
-MAX_TIME = "4:00:00"
+MAX_TIME = int(parse_time_limit("4:00:00").total_seconds())
 
 
-mcp = FastMCP("Submit Job")
+_s3m: S3mClient = None
+
+@asynccontextmanager
+async def lifespan(server):
+    global _s3m
+    logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
+    ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
+    logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
+    _s3m = S3mClient(
+        s3m_api=settings.s3m_url,
+        s3m_token=settings.s3m_token,
+        resource_id=settings.s3m_resource,
+        ssh_conn=ssh_conn,
+    )
+    yield
+    _s3m.ssh_conn.close()
+
+mcp = FastMCP("Submit Job", lifespan=lifespan)
 
 
 @mcp.tool(
     description=textwrap.dedent(f"""
-        Submit a Slurm job to the HPC system.
+        Submit a job to the HPC system.
 
         Args:
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
-            nodes: Number of nodes for the job (max: {MAX_NODES})
-            time_limit: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
+            node_count: Number of nodes for the job (max: {MAX_NODES})
+            duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
 
         Returns:
-            The slurm job id.
+            The job id.
 
         Available Jobs:
 
@@ -79,101 +117,105 @@ mcp = FastMCP("Submit Job")
 async def submit_hpc_job(
     ctx: Context,
     job: str,
-    nodes: int | None = None,
-    time_limit: str | None = None,
+    node_count: int | None = None,
+    duration: str | None = None,
     script_args: str | None = None,
 ) -> str:
     if job not in AVAILABLE_JOBS:
         raise ValueError(f"{job} is not recognized, should be one of: {' '.join(AVAILABLE_JOBS)}")
-    if nodes and nodes > MAX_NODES:
-        raise ValueError(f"To many nodes specified (max {MAX_NODES})")
-    if time_limit and parse_time_limit(time_limit) > parse_time_limit(MAX_TIME):
-        raise ValueError(f"Time limit to large (max: {MAX_TIME})")
+    if node_count and (node_count > MAX_NODES or node_count <= 0):
+        raise ValueError(f"node_count out of range (max {MAX_NODES})")
+    duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
+    if duration_int and (duration_int > MAX_TIME or duration_int < 1):
+        raise ValueError(f"Time limit too large (max: {MAX_TIME})")
 
-    ssh_conn = await get_ssh_conn(ctx,
-        message = get_tool_call_string("submit_hpc_job",
-            job = job,
-            nodes = nodes,
-            time_limit = time_limit,
-            script_args = script_args,
-        ),
-        force_confirmation = True,
+    # TODO: Move confirm logic to the client side. MCP elicitation is not the right place for this,
+    # but we're using it here for ease of migration.
+    confirm_result = await ctx.elicit(
+        message=f"Confirm running on {settings.hpc_ssh_host[-1]}:\n" +
+            get_tool_call_string('submit_hpc_job', job=job, node_count=node_count, duration=duration, script_args=script_args),
+        response_type=Confirmation,
     )
+    if confirm_result.action != "accept" or not confirm_result.data.confirm:
+        raise Exception("Job submission cancelled by user")
 
-    setup_script_path = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
+    job_info = AVAILABLE_JOBS[job]
+
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await ssh_bash_retry(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
+    check_result = await _s3m.bash(f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
     if check_result.strip() != "true":
-        await ssh_bash_retry(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
-        setup_script = settings.get_hpc_setup_script()
-        await ssh_bash_retry(ssh_conn, f'echo {shlex.quote(setup_script)} > {shlex.quote(str(setup_script_path))}')
-        await scp_retry(str(settings.local_hpc_jobs_dir / job), (ssh_conn, str(remote_job_dir)))
+        await _s3m.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
+        await _s3m.upload(settings.local_hpc_jobs_dir / job, remote_job_dir)
+        await _s3m.bash(f'chmod -R g+rwX {shlex.quote(str(remote_job_dir))}')
         logging.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
-        # want to leave jobs running between sessions. Probably best would be to periodically delete
-        # completed jobs from old sessions in the dir.
+        # want to leave jobs running between sessions.
 
-    remote_job_script =  remote_job_dir / AVAILABLE_JOBS[job].slurm_script
-    args = ["sbatch"]
-    args.extend(["--chdir", str(remote_job_script.parent)])
-    if nodes:
-        args.extend(['-N', str(nodes)])
-    if time_limit:
-        args.extend(["-t", time_limit])
-    args.extend(["--export", f"ALL,VISTA_SETUP_SCRIPT={setup_script_path}"])
-    args.extend(["-o", f"{settings.remote_hpc_jobs_dir}/out/%j/log.out"])
-    args.extend(["-J", f"vista-{job}"])
-    args.append(str(remote_job_script))
-    if script_args:
-        args.extend(shlex.split(script_args))
+    remote_job_script = remote_job_dir / "job.slurm"
+    job_cmd = "\n".join([
+        f"{settings.get_hpc_setup_script()}",
+        f"source {shlex.quote(str(remote_job_script))} {shlex.join(shlex.split(script_args or ''))}",
+    ])
 
-    result = await ssh_bash_retry(ssh_conn, args)
-
-    match = re.search(r"submitted batch job (\d+)", result.lower())
-    if match:
-        result = match[1]
-        logging.info(f"Submitted job {result} to {settings.hpc_host[-1]}")
-    else:
-        raise ValueError("Job failed to launch: " + result)
-
-    return result
+    resources_overrides = {
+        "node_count": node_count,
+    }
+    spec = {
+        "executable": "/bin/bash",
+        "arguments": ["-c", job_cmd],
+        "name": f"vista-{job}",
+        "directory": str(remote_job_dir),
+        "stdout_path": f"{settings.remote_hpc_jobs_dir}/out/%j/log.out",
+        "stderr_path": f"{settings.remote_hpc_jobs_dir}/out/%j/log.out",
+        "environment": {},
+        "resources": {
+            **job_info.s3m_defaults.resources.model_dump(mode="json", exclude_none=True),
+            **{k: v for k, v in resources_overrides.items() if v is not None},
+        },
+        "attributes": {
+            "account": settings.hpc_account,
+            "queue_name": "batch",
+            "duration": job_info.s3m_defaults.duration if duration_int is None else duration_int,
+        },
+    }
+    response = await _s3m.submit_job(spec)
+    job_id = str(response.get("id") or "")
+    if not job_id:
+        raise ValueError(f"Failed to get job ID from S3M response: {response}")
+    logging.info(f"Submitted job {job_id} via S3M to odo")
+    return job_id
 
 
 @mcp.tool()
-async def get_hpc_job_status(ctx: Context, job_id: str) -> str:
+async def get_hpc_job_status(job_id: str) -> str:
     """
-    Get the status and logs of a submitted Slurm job.
+    Get the status and logs of a submitted HPC job.
 
     Args:
-        job_id: The slurm job id
-
+        job_id: The job id returned by submit_hpc_job
     """
     job_id = validate_job_id(job_id)
 
-    ssh_conn = await get_ssh_conn(ctx,
-        message = get_tool_call_string("get_hpc_job_status", job_id = job_id),
-    )
+    job_data = await _s3m.get_job_status(job_id)
+    job_spec = job_data.get("job_spec") or {}
+    job_name = job_spec.get("name", "")
+    if not job_name.startswith("vista-"):
+        raise ValueError(f"No vista job {job_id!r} found")
 
-    sacct_out = await ssh_bash_retry(ssh_conn, f"sacct --json -j {shlex.quote(job_id)} --user $USER")
-    try:
-        sacct_jobs = json.loads(sacct_out)["jobs"]
-    except:
-        raise ValueError("Malformed sacct output")
-    if len(sacct_jobs) <= 0 or not sacct_jobs[0]['name'].startswith("vista-"):
-        raise ValueError(f"No job {job_id} found")
-
+    job_status = job_data.get("status") or {}
+    state = str(job_status.get("state", "UNKNOWN"))
     metadata = {
         "JOB_ID": job_id,
-        "STATE": sacct_jobs[0]['state']['current'][0],
+        "STATE": state,
     }
 
+    # Fetch logs and output file listing
     output_dir = settings.remote_hpc_jobs_dir / "out" / job_id
-
     log_path = output_dir / "log.out"
-    logs = await ssh_bash_retry(ssh_conn, f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
+    logs = await _s3m.bash(f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
 
     excludes = ['**/.venv*/*', '**/__pycache__/*']
-    find_result = await ssh_bash_retry(ssh_conn, shlex.join([
+    find_result = await _s3m.bash(shlex.join([
         "find", str(output_dir),
         "-maxdepth", "3",
         "-type", "f",
@@ -200,17 +242,13 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
     Download output files from an HPC job.
 
     Args:
-        job_id: The slurm job id
+        job_id: The job id returned by submit_hpc_job
         files: List of file paths to download. Relative to the jobs output directory (as shown by get_hpc_job_status).
 
     Returns:
         The downloaded file paths.
     """
     job_id = validate_job_id(job_id)
-
-    ssh_conn = await get_ssh_conn(ctx,
-        message = get_tool_call_string("get_hpc_job_outputs", job_id = job_id, files = files),
-    )
 
     remote_out_dir = settings.remote_hpc_jobs_dir / "out" / job_id
     local_out_dir = settings.output_dir / job_id
@@ -225,7 +263,7 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
         sandbox_path = sandbox_out_dir / remote_path.relative_to(remote_out_dir)
         
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        await scp_retry((ssh_conn, remote_path), str(local_path))
+        await _s3m.download(remote_path, local_path)
         downloaded.append(str(sandbox_path))
 
     return "Downloaded files:\n" + "\n".join(downloaded)
@@ -234,12 +272,10 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
 @mcp.tool()
 async def list_hpc_jobs(ctx: Context) -> str:
     """
-    List all submitted HPC jobs.
+    List all recently submitted HPC jobs and their states.
     """
-    ssh_conn = await get_ssh_conn(ctx,
-        message = get_tool_call_string("list_hpc_jobs"),
-    )
-    sacct_out = await ssh_bash_retry(ssh_conn, "sacct --json --allocations --user $USER")
+    # S3M does not expose a job-list endpoint, so we query sacct via SSH.
+    sacct_out = await _s3m.bash("sacct --json --allocations --user $USER")
     try:
         sacct_jobs = json.loads(sacct_out)["jobs"]
     except Exception:
@@ -252,12 +288,10 @@ async def list_hpc_jobs(ctx: Context) -> str:
         if not job["name"].startswith("vista-"):
             continue
         job_id = str(job["job_id"])
-
         state = job["state"]["current"][0]
         end_time = job.get("time", {}).get("end", 0)
         if end_time and end_time < cutoff:
             continue
-
         lines.append(f"{job_id} {state}")
 
     return "\n".join(lines) if lines else "No jobs found."

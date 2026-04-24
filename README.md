@@ -36,12 +36,13 @@ cp .env.sample .env
 and fill out your env keys and settings.
 
 Important env vars:
-| Variable                      | Description                                                                                      | Default                                 |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                         |
-| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None                                    |
-| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs, e.g. /ccs/home/<username>/vista                                        | /lustre/orion/stf218/proj-shared/vista/ |
-| VISTA_MCP_HPC_HOST            | SSH host for launching remote HPC jobs. To use a jump host, pass a comma-separated list of hosts | frontier.olcf.ornl.gov                  |
+| Variable                      | Description                                                                                      | Default                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                           |
+| VISTA_MCP_S3M_TOKEN           | See [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token). Use open enclave and the gen150-vista project. Token expires in 24 hours. | None (required) |
+| VISTA_MCP_HPC_SSH_USER        | SSH username to log into Odo (ucams id)                                                          | None (required)                           |
+| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs                                                                         | /gpfs/wolf2/olcf/gen150/proj-shared/vista |
+| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None (optional)                           |
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
