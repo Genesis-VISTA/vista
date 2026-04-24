@@ -3,14 +3,8 @@ MCP for remote HPC job submission via S3M API.
 """
 
 from __future__ import annotations
-import itertools
-import json
-import logging
-import os
-import shlex
-import textwrap
-import time
-import dataclasses
+import itertools, json, logging, os, shlex, textwrap, dataclasses
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -274,14 +268,14 @@ async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all recently submitted HPC jobs and their states.
     """
-    # S3M does not expose a job-list endpoint, so we query sacct via SSH.
-    sacct_out = await _s3m.bash("sacct --json --allocations --user $USER")
-    try:
-        sacct_jobs = json.loads(sacct_out)["jobs"]
-    except Exception:
-        raise ValueError("Malformed sacct output")
-
-    cutoff = time.time() - 24 * 60 * 60
+    # /api/v1/compute/status/{resource_id} should work but only returns "" currently
+    td = timedelta(hours=1)
+    sacct_out = await _s3m.bash("TZ=UTC " + shlex.join([
+        "sacct", "--json", "--allocations",
+        "--starttime", (datetime.now(timezone.utc) - td).strftime("%Y-%m-%dT%H:%M:%S"),
+        "--user", f"{settings.hpc_account}_auser",
+    ]))
+    sacct_jobs = json.loads(sacct_out)["jobs"]
 
     lines = []
     for job in sacct_jobs:
@@ -289,9 +283,6 @@ async def list_hpc_jobs(ctx: Context) -> str:
             continue
         job_id = str(job["job_id"])
         state = job["state"]["current"][0]
-        end_time = job.get("time", {}).get("end", 0)
-        if end_time and end_time < cutoff:
-            continue
         lines.append(f"{job_id} {state}")
 
     return "\n".join(lines) if lines else "No jobs found."
