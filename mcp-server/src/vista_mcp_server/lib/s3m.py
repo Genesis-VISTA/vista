@@ -49,7 +49,8 @@ class S3mClient:
         """ Get job status. """
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{self.s3m_api}/api/v1/compute/status/{self.resource_id}/{job_id}",
+                # TODO: Odo seems to be ignoring include_spec=true
+                f"{self.s3m_api}/api/v1/compute/status/{self.resource_id}/{job_id}?historical=true&include_spec=true",
                 headers=self._headers(),
                 timeout=30,
             )

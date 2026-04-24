@@ -191,16 +191,13 @@ async def get_hpc_job_status(job_id: str) -> str:
     job_id = validate_job_id(job_id)
 
     job_data = await _s3m.get_job_status(job_id)
-    job_spec = job_data.get("job_spec") or {}
-    job_name = job_spec.get("name", "")
+    job_name = job_data.get("status", {}).get("meta_data", {}).get("s3m", {}).get("name", "")
     if not job_name.startswith("vista-"):
         raise ValueError(f"No vista job {job_id!r} found")
 
-    job_status = job_data.get("status") or {}
-    state = str(job_status.get("state", "UNKNOWN"))
     metadata = {
         "JOB_ID": job_id,
-        "STATE": state,
+        "STATE": job_data.get("status", {}).get("state", "UNKNOWN").upper(),
     }
 
     # Fetch logs and output file listing
@@ -268,7 +265,8 @@ async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all recently submitted HPC jobs and their states.
     """
-    # /api/v1/compute/status/{resource_id} should work but only returns "" currently
+    # /api/v1/compute/status/{resource_id} should work but has some odd behavior around "historical" currently
+    # I think it only looks up very recent jobs. We may need to rethink how handle the job list
     td = timedelta(hours=1)
     sacct_out = await _s3m.bash("TZ=UTC " + shlex.join([
         "sacct", "--json", "--allocations",
