@@ -132,7 +132,7 @@ class SSHLoginInfo(BaseModel):
 
 
 class Confirmation(BaseModel):
-    confirm: bool = False
+    confirm: bool = True
 
 
 async def get_ssh_conn(host: list[str], username: str) -> asyncssh.SSHClientConnection:
