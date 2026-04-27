@@ -19,6 +19,8 @@
 - [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
     - VISTA will automatically download the model, but you need to sign up for access to it on [hugging face](https://huggingface.co/google/embeddinggemma-300m)
     - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login`
+- [git lfs](https://git-lfs.com/) (for the rag db)
+    - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
 
 On MacOS, you may need to install `libmagic` first as well:
 ```bash
