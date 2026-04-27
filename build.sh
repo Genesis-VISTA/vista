@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO_ROOT=$(dirname $(realpath "${BASH_SOURCE[0]}"))
+REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 cd "$REPO_ROOT/mcp-server/mcp-apps"
 npm install
