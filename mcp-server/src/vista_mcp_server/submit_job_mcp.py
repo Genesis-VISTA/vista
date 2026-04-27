@@ -102,7 +102,7 @@ async def submit_hpc_job(
 
     setup_script_path = settings.remote_hpc_jobs_dir / settings.session_id / 'setup.sh'
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await ssh_bash_retry(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false"')
+    check_result = await ssh_bash_retry(ssh_conn, f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
     if check_result.strip() != "true":
         await ssh_bash_retry(ssh_conn, f'mkdir -p {shlex.quote(str(remote_job_dir.parent))}')
         setup_script = settings.get_hpc_setup_script()
