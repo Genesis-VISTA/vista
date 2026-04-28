@@ -9,21 +9,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastmcp import FastMCP, Context
-from pydantic import BaseModel
 
 from .config import settings
-from .lib.ssh import Confirmation, get_ssh_conn
-from .lib.s3m import S3mClient, S3mResourceSpec
+from .lib.ssh import Confirmation
+from .lib import s3m
+from .lib.s3m import S3mDefaults, create_s3m_client, get_s3m_client
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
-
-
-class S3mDefaults(BaseModel):
-    """
-    Per-job S3M resource and attribute defaults, loaded from s3m_defaults.json.
-    """
-    duration: int = 120
-    """ Seconds """
-    resources: S3mResourceSpec = S3mResourceSpec()
 
 
 @dataclasses.dataclass
@@ -70,22 +61,14 @@ MAX_NODES = 64
 MAX_TIME = int(parse_time_limit("4:00:00").total_seconds())
 
 
-_s3m: S3mClient = None
-
 @asynccontextmanager
 async def lifespan(server):
-    global _s3m
-    logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
-    ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
-    logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
-    _s3m = S3mClient(
-        s3m_api=settings.s3m_url,
-        s3m_token=settings.s3m_token,
-        resource_id=settings.s3m_resource,
-        ssh_conn=ssh_conn,
-    )
-    yield
-    _s3m.ssh_conn.close()
+    s3m._s3m_client = await create_s3m_client()
+    try:
+        yield
+    finally:
+        s3m._s3m_client.ssh_conn.close()
+        s3m._s3m_client = None
 
 mcp = FastMCP("Submit Job", lifespan=lifespan)
 
@@ -136,11 +119,12 @@ async def submit_hpc_job(
     job_info = AVAILABLE_JOBS[job]
 
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
-    check_result = await _s3m.bash(f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
+    s3m_client = get_s3m_client()
+    check_result = await s3m_client.bash(f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
     if check_result.strip() != "true":
-        await _s3m.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
-        await _s3m.upload(settings.local_hpc_jobs_dir / job, remote_job_dir)
-        await _s3m.bash(f'chmod -R g+rwX {shlex.quote(str(remote_job_dir))}')
+        await s3m_client.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
+        await s3m_client.upload(settings.local_hpc_jobs_dir / job, remote_job_dir)
+        await s3m_client.bash(f'chmod -R g+rwX {shlex.quote(str(remote_job_dir))}')
         logging.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
         # want to leave jobs running between sessions.
@@ -172,7 +156,7 @@ async def submit_hpc_job(
             "duration": job_info.s3m_defaults.duration if duration_int is None else duration_int,
         },
     }
-    response = await _s3m.submit_job(spec)
+    response = await s3m_client.submit_job(spec)
     job_id = str(response.get("id") or "")
     if not job_id:
         raise ValueError(f"Failed to get job ID from S3M response: {response}")
@@ -190,7 +174,8 @@ async def get_hpc_job_status(job_id: str) -> str:
     """
     job_id = validate_job_id(job_id)
 
-    job_data = await _s3m.get_job_status(job_id)
+    s3m_client = get_s3m_client()
+    job_data = await s3m_client.get_job_status(job_id)
     job_name = job_data.get("status", {}).get("meta_data", {}).get("s3m", {}).get("name", "")
     if not job_name.startswith("vista-"):
         raise ValueError(f"No vista job {job_id!r} found")
@@ -203,10 +188,10 @@ async def get_hpc_job_status(job_id: str) -> str:
     # Fetch logs and output file listing
     output_dir = settings.remote_hpc_jobs_dir / "out" / job_id
     log_path = output_dir / "log.out"
-    logs = await _s3m.bash(f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
+    logs = await s3m_client.bash(f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
 
     excludes = ['**/.venv*/*', '**/__pycache__/*']
-    find_result = await _s3m.bash(shlex.join([
+    find_result = await s3m_client.bash(shlex.join([
         "find", str(output_dir),
         "-maxdepth", "3",
         "-type", "f",
@@ -254,7 +239,7 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
         sandbox_path = sandbox_out_dir / remote_path.relative_to(remote_out_dir)
         
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        await _s3m.download(remote_path, local_path)
+        await get_s3m_client().download(remote_path, local_path)
         downloaded.append(str(sandbox_path))
 
     return "Downloaded files:\n" + "\n".join(downloaded)
@@ -268,7 +253,7 @@ async def list_hpc_jobs(ctx: Context) -> str:
     # /api/v1/compute/status/{resource_id} should work but has some odd behavior around "historical" currently
     # I think it only looks up very recent jobs. We may need to rethink how handle the job list
     td = timedelta(hours=1)
-    sacct_out = await _s3m.bash("TZ=UTC " + shlex.join([
+    sacct_out = await get_s3m_client().bash("TZ=UTC " + shlex.join([
         "sacct", "--json", "--allocations",
         "--starttime", (datetime.now(timezone.utc) - td).strftime("%Y-%m-%dT%H:%M:%S"),
         "--user", f"{settings.hpc_account}_auser",

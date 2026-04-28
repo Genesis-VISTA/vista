@@ -6,8 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 import asyncssh
 import httpx
+import logging
 from pydantic import BaseModel
-from .ssh import ssh_bash_retry, scp_retry
+from .ssh import ssh_bash_retry, scp_retry, get_ssh_conn
+from ..config import settings
 
 
 class S3mClient:
@@ -85,3 +87,33 @@ class S3mResourceSpec(BaseModel):
     memory: int | None = None
     """ Bytes """
 
+
+class S3mDefaults(BaseModel):
+    """
+    Per-job S3M resource and attribute defaults, loaded from s3m_defaults.json.
+    """
+    duration: int = 120
+    """ Seconds """
+    resources: S3mResourceSpec = S3mResourceSpec()
+
+
+_s3m_client: S3mClient | None = None
+""" The shared S3M client. Set by submit_job_mcp's lifespan. """
+
+
+def get_s3m_client() -> S3mClient:
+    if _s3m_client is None:
+        raise RuntimeError("S3M client not initialized")
+    return _s3m_client
+
+
+async def create_s3m_client() -> S3mClient:
+    logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
+    ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
+    logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
+    return S3mClient(
+        s3m_api=settings.s3m_url,
+        s3m_token=settings.s3m_token,
+        resource_id=settings.s3m_resource,
+        ssh_conn=ssh_conn,
+    )
