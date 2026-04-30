@@ -72,3 +72,37 @@ cd ./ui && npm run dev
 ```bash
 cd ./mcp-server && uv run --env-file ../.env vista-mcp-server --transport=http
 ```
+
+## Jobs
+The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires at minimum a `job.slurm` script. An optional `s3m_defaults.json` file sets resource defaults for the S3M scheduler.
+
+### Directory layout
+```
+hpc_jobs/
+└── my-job/
+    ├── job.slurm          # required — Slurm batch script, run via S3M
+    ├── s3m_defaults.json  # optional — resource/duration defaults
+    └── README.md          # optional — shown to agent as job description
+    └── ...                # Other supporting files. All files will be uploaded to the HPC cluster
+```
+
+### job.slurm
+A standard Slurm batch script. The agent can pass argument to the job, which you can use in the script.
+
+### s3m_defaults.json
+Overrides default S3M submission parameters. All fields are optional:
+```json
+{
+  "duration": 120,
+  "resources": {
+    "node_count": 1,
+    "process_count": null,
+    "processes_per_node": null,
+    "cpu_cores_per_process": null,
+    "gpu_cores_per_process": null,
+    "exclusive_node_use": true,
+    "memory": null
+  }
+}
+```
+`duration` is in **seconds**. `memory` is in **bytes**. If `s3m_defaults.json` is absent, the defaults are 120 s and 1 node.
