@@ -140,7 +140,7 @@ async def submit_hpc_job(
     }
     spec = {
         "executable": "/bin/bash",
-        "arguments": ["-c", job_cmd],
+        "arguments": ["-l", "-c", job_cmd],
         "name": f"vista-{job}",
         "directory": str(remote_job_dir),
         "stdout_path": f"{settings.remote_hpc_jobs_dir}/out/%j/log.out",
