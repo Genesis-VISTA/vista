@@ -53,7 +53,7 @@ export default function ElicitationModal({ id, message, schema, onSubmit }: Prop
     <div className="modal-backdrop" onClick={handleCancel}>
       <div className="modal elicitation-modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-header">
-          <div className="panel-title">Credentials Required</div>
+          <div className="panel-title">Confirm</div>
         </div>
         <div className="modal-body">
           {message && <p className="elicitation-message" style={{ whiteSpace: "pre-wrap" }}>{message}</p>}
