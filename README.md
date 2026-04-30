@@ -106,3 +106,7 @@ Overrides default S3M submission parameters. All fields are optional:
 }
 ```
 `duration` is in **seconds**. `memory` is in **bytes**. If `s3m_defaults.json` is absent, the defaults are 120 s and 1 node.
+
+### Job Output
+Inside the job, the `VISTA_OUT` environment variable will be set to the path of an output directory. Any output files and logs should be saved
+under that directory so that Vista can pull the results.
