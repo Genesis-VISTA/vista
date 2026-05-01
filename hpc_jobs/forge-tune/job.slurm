@@ -1,7 +1,6 @@
 #!/bin/bash -l
 
-module use /sw/aaims/crusher/modulefiles
-module load xforge
+source /gpfs/wolf2/olcf/gen150/proj-shared/xforge/xforge-env.sh
 export NCCL_SOCKET_IFNAME=hsn
 export MIOPEN_DISABLE_CACHE=1
 export OMP_NUM_THREADS=7
