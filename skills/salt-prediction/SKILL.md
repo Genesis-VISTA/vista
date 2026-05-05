@@ -4,6 +4,7 @@ description: Train a Gaussian-process molten salt model and generate a predictio
 metadata:
   version: "0.1.0"
   tab: molten-salt
+  tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
 ---
 

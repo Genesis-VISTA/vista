@@ -9,6 +9,7 @@ description: >-
   Reusable), Level 3 (Understandable & Trustworthy).
 metadata:
   tab: molten-salt
+  tags: ["Data"]
 ---
 
 # Generating Datacards

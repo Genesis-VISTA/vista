@@ -4,6 +4,7 @@ description: Agentic optimization of refractory high-entropy alloy composition o
 metadata:
   version: "0.2.0"
   tab: alloy-design
+  tags: ["OLCF", "Frontier", "Materials Design", "High Entropy Alloy Design"]
 license: Proprietary
 ---
 

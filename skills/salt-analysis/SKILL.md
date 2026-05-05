@@ -4,6 +4,7 @@ description: Analyze molten salt thermophysical properties from the MSTDB-TP dat
 metadata:
   version: "0.3.0"
   tab: molten-salt
+  tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
 ---
 
