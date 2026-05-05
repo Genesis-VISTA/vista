@@ -17,6 +17,12 @@ type ChatRequest = {
   message: string;
   history?: Array<{ role: string; content: string }>;
   tab?: string;
+  /**
+   * Slugs of skills the user has loaded for the current session via the
+   * Skill Hub. Only these skills are injected into the system prompt.
+   * When omitted or empty, no SKILL.md context is sent to the LLM.
+   */
+  loadedSlugs?: string[];
 };
 
 type ToolCallResult = {
@@ -263,29 +269,39 @@ function filterToolsForTab(tools: OpenAiTool[], tab: string): OpenAiTool[] {
 
 /**
  * Return the subset of SKILL.md directories whose `metadata.tab` matches `tab`
- * (skills without a tab field default to the molten-salt tab).
+ * (skills without a tab field default to the molten-salt tab) AND whose slug
+ * (directory basename) is present in `loadedSlugs`.
+ *
+ * When `loadedSlugs` is undefined, no slug filter is applied (legacy callers).
+ * When it is an empty array, no skills are returned.
  */
-function skillDirsForTab(tab: string): string[] {
+function skillDirsForTab(tab: string, loadedSlugs?: Set<string>): string[] {
   return findSkills([config.skillsDir]).filter((dir) => {
     try {
       const props = readProperties(dir);
-      const skillTab = props.metadata?.tab ?? DEFAULT_TAB;
-      return skillTab === tab;
+      const metaTab = props.metadata?.tab;
+      const skillTab = typeof metaTab === "string" ? metaTab : DEFAULT_TAB;
+      if (skillTab !== tab) return false;
+      if (loadedSlugs) {
+        const slug = dir.split("/").pop() ?? "";
+        if (!loadedSlugs.has(slug)) return false;
+      }
+      return true;
     } catch {
       return false;
     }
   });
 }
 
-function buildSystemPrompt(tab: string): string {
+function buildSystemPrompt(tab: string, loadedSlugs: Set<string>): string {
   if (tab === "alloy-design") {
-    return buildAlloyDesignPrompt();
+    return buildAlloyDesignPrompt(loadedSlugs);
   }
-  return buildMoltenSaltPrompt();
+  return buildMoltenSaltPrompt(loadedSlugs);
 }
 
-function buildAlloyDesignPrompt(): string {
-  const skillsPrompt = toPrompt(skillDirsForTab("alloy-design"));
+function buildAlloyDesignPrompt(loadedSlugs: Set<string>): string {
+  const skillsPrompt = toPrompt(skillDirsForTab("alloy-design", loadedSlugs));
   return [
     `You are VISTA, operating in **High Entropy Alloy Design** mode.`,
     `Your job is to run an agentic optimization loop on the Andes HPC cluster to find refractory high-entropy alloy compositions that meet the user's targeted critical transition temperature (Tc). Currently supports MoNbTaW (4-element).`,
@@ -317,8 +333,8 @@ function buildAlloyDesignPrompt(): string {
   ].join("\n");
 }
 
-function buildMoltenSaltPrompt(): string {
-  const skillsPrompt = toPrompt(skillDirsForTab("molten-salt"));
+function buildMoltenSaltPrompt(loadedSlugs: Set<string>): string {
+  const skillsPrompt = toPrompt(skillDirsForTab("molten-salt", loadedSlugs));
 
   const dbPath = join(config.skillsDir, "salt-analysis", "assets", "Molten_Salt_Thermophysical_Properties.json");
   let saltListSummary = "";
@@ -690,6 +706,7 @@ async function runAgentLoop(
   userMessage: string,
   history: Array<{ role: string; content: string }>,
   tab: string,
+  loadedSlugs: Set<string>,
   sendEvent: (event: SseEvent) => void
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
   const azureConfig = getAzureConfig();
@@ -717,7 +734,11 @@ async function runAgentLoop(
     names: tools.map((t) => t.function.name),
   });
 
-  const systemPrompt = buildSystemPrompt(tab);
+  const systemPrompt = buildSystemPrompt(tab, loadedSlugs);
+  log("INFO", "Agent", `Loaded skills for this turn`, {
+    count: loadedSlugs.size,
+    slugs: Array.from(loadedSlugs),
+  });
   const toolCalls: ToolCallResult[] = [];
 
   const messages: Array<Record<string, unknown>> = [
@@ -904,6 +925,11 @@ export async function POST(request: Request) {
 
   const history = Array.isArray(body.history) ? body.history : [];
   const tab = typeof body.tab === "string" && body.tab ? body.tab : DEFAULT_TAB;
+  const loadedSlugs = new Set(
+    Array.isArray(body.loadedSlugs)
+      ? body.loadedSlugs.filter((s): s is string => typeof s === "string" && s.length > 0)
+      : []
+  );
 
   const encoder = new TextEncoder();
   const stream = new TransformStream();
@@ -917,7 +943,7 @@ export async function POST(request: Request) {
   // Run agent loop in background, writing SSE events as it goes
   (async () => {
     try {
-      const { response, toolCalls } = await runAgentLoop(message, history, tab, sendEvent);
+      const { response, toolCalls } = await runAgentLoop(message, history, tab, loadedSlugs, sendEvent);
       const elapsed = Date.now() - requestStart;
       log("INFO", "POST", `Request completed in ${elapsed}ms`, {
         toolCallCount: toolCalls.length,

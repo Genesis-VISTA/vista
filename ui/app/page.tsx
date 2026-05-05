@@ -94,6 +94,9 @@ const TABS: TabDef[] = [
 ];
 const DEFAULT_TAB = TABS[0].id;
 
+/** localStorage key for the user's per-browser loaded-skill set (PR 2). */
+const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
+
 function DomainIcon({ tab, size = 18 }: { tab: string; size?: number }) {
   const sw = "currentColor";
   if (tab === "molten-salt") {
@@ -284,6 +287,48 @@ export default function HomePage() {
   const [filter, setFilter] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
   const [showSkillModal, setShowSkillModal] = useState(false);
+  /**
+   * Slugs of skills the user has loaded for the current chat session via the
+   * Skill Hub. Persisted across reloads in localStorage. Empty by default —
+   * a fresh session starts with zero loaded skills, and the chat agent only
+   * sees SKILL.md context for slugs in this set.
+   */
+  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(new Set());
+
+  // Hydrate loadedSlugs from localStorage on mount.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setLoadedSlugs(new Set(parsed.filter((s): s is string => typeof s === "string")));
+      }
+    } catch {
+      // ignore corrupt localStorage entries
+    }
+  }, []);
+
+  // Persist loadedSlugs back to localStorage on every change.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LOADED_SKILLS_STORAGE_KEY,
+        JSON.stringify(Array.from(loadedSlugs))
+      );
+    } catch {
+      // localStorage may be unavailable (private mode, quota); chat still works.
+    }
+  }, [loadedSlugs]);
+
+  function toggleSkillLoaded(slug: string) {
+    setLoadedSlugs((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -495,6 +540,15 @@ export default function HomePage() {
     });
   }, [skills, filter]);
 
+  const loadedSkillsForTab = useMemo(
+    () => filteredSkills.filter((s) => loadedSlugs.has(s.slug)),
+    [filteredSkills, loadedSlugs]
+  );
+  const availableSkillsForTab = useMemo(
+    () => filteredSkills.filter((s) => !loadedSlugs.has(s.slug)),
+    [filteredSkills, loadedSlugs]
+  );
+
   const activeDomain = useMemo(
     () => TABS.find((t) => t.id === activeTab) ?? TABS[0],
     [activeTab]
@@ -602,7 +656,12 @@ export default function HomePage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, history, tab: activeTab })
+        body: JSON.stringify({
+          message: text,
+          history,
+          tab: activeTab,
+          loadedSlugs: Array.from(loadedSlugs),
+        })
       });
 
       const reader = response.body!.getReader();
@@ -1205,7 +1264,9 @@ export default function HomePage() {
           >
             <div className="panel-header">
               <div className="panel-title">Skills</div>
-              <span className="tag">{skills.length} loaded</span>
+              <span className="tag">
+                {loadedSkillsForTab.length} loaded · {skills.length} available
+              </span>
             </div>
             <div className="panel-body">
               <nav className="skills-tabs" role="tablist" aria-label="Application area">
@@ -1246,17 +1307,112 @@ export default function HomePage() {
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
               />
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                {filteredSkills.map((skill) => (
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
                   <div
-                    key={skill.slug}
-                    className="skill-item"
-                    onClick={() => openSkill(skill.slug)}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: 0.5,
+                      opacity: 0.65,
+                      marginBottom: 6,
+                    }}
                   >
-                    <div className="skill-name">{skill.name}</div>
-                    <div className="skill-desc">{skill.description || "No description"}</div>
+                    Loaded for this session
                   </div>
-                ))}
+                  {loadedSkillsForTab.length === 0 ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        opacity: 0.6,
+                        padding: "10px 12px",
+                        border: "1px dashed var(--border, rgba(0,0,0,0.15))",
+                        borderRadius: 6,
+                      }}
+                    >
+                      No skills loaded yet. Use the Load buttons below to add skills for this chat.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {loadedSkillsForTab.map((skill) => (
+                        <div
+                          key={skill.slug}
+                          className="skill-item"
+                          onClick={() => openSkill(skill.slug)}
+                          style={{ position: "relative" }}
+                        >
+                          <div className="skill-name">{skill.name}</div>
+                          <div className="skill-desc">{skill.description || "No description"}</div>
+                          <button
+                            type="button"
+                            className="input"
+                            style={{
+                              marginTop: 8,
+                              fontSize: 11,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              alignSelf: "flex-start",
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSkillLoaded(skill.slug);
+                            }}
+                          >
+                            Unload
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {availableSkillsForTab.length > 0 && (
+                  <div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.5,
+                        opacity: 0.65,
+                        marginBottom: 6,
+                      }}
+                    >
+                      Available
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {availableSkillsForTab.map((skill) => (
+                        <div
+                          key={skill.slug}
+                          className="skill-item"
+                          onClick={() => openSkill(skill.slug)}
+                          style={{ opacity: 0.85 }}
+                        >
+                          <div className="skill-name">{skill.name}</div>
+                          <div className="skill-desc">{skill.description || "No description"}</div>
+                          <button
+                            type="button"
+                            className="input"
+                            style={{
+                              marginTop: 8,
+                              fontSize: 11,
+                              padding: "4px 10px",
+                              cursor: "pointer",
+                              alignSelf: "flex-start",
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSkillLoaded(skill.slug);
+                            }}
+                          >
+                            Load
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </section>
