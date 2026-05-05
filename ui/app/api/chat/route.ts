@@ -7,8 +7,6 @@ import { config } from "@/app/config";
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const DEFAULT_TAB = "molten-salt";
-
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -16,14 +14,30 @@ const DEFAULT_TAB = "molten-salt";
 type ChatRequest = {
   message: string;
   history?: Array<{ role: string; content: string }>;
-  tab?: string;
   /**
    * Slugs of skills the user has loaded for the current session via the
-   * Skill Hub. Only these skills are injected into the system prompt.
-   * When omitted or empty, no SKILL.md context is sent to the LLM.
+   * Skill Hub. Only these skills are injected into the system prompt, and
+   * the chat mode (toolset, iteration budget, prompt) is derived from this
+   * set. When omitted or empty, no SKILL.md context is sent and the chat
+   * runs in molten-salt mode by default.
    */
   loadedSlugs?: string[];
 };
+
+/**
+ * Operating mode the chat route runs in. Derived from the user's loaded
+ * skill set since the front-end no longer ships tabs.
+ *
+ * - "alloy-design": tools/prompt/iterations tuned for the agentic HEA
+ *   optimization loop. Wins when the alloy-design skill is loaded.
+ * - "molten-salt": default for everything else, including the empty set.
+ */
+type ChatMode = "alloy-design" | "molten-salt";
+
+function deriveMode(loadedSlugs: Set<string>): ChatMode {
+  if (loadedSlugs.has("alloy-design")) return "alloy-design";
+  return "molten-salt";
+}
 
 type ToolCallResult = {
   tool: string;
@@ -188,16 +202,7 @@ async function discoverTools(): Promise<OpenAiTool[]> {
 }
 
 /**
- * Filter the discovered tool list down to what is appropriate for the active tab.
- *
- * - molten-salt: exclude every `agenthpc_*` tool (they belong to the Alloy Design tab).
- * - alloy-design: exclude `submit_hpc_job` / `get_hpc_job_status` / `list_hpc_jobs`
- *   (those target Frontier for the molten-salt workflow; MoNbTaW uses `agenthpc_*`
- *   on Andes instead). Keep sandbox (`run_bash`/`create_file`/`view`) and
- *   `display_file` available for post-hoc analysis.
- */
-/**
- * Per-tab cap on how many LLM rounds we'll run in a single chat turn.
+ * Per-mode cap on how many LLM rounds we'll run in a single chat turn.
  *
  * - molten-salt: 10 is plenty for the existing query-and-plot workflows.
  * - alloy-design: each optimization trial uses ~5 tool-call rounds
@@ -206,8 +211,8 @@ async function discoverTools(): Promise<OpenAiTool[]> {
  *   Override with VISTA_MAX_AGENT_ITERATIONS_ALLOY if you need to run longer
  *   optimizations (e.g. 1200 for 200 trials).
  */
-function maxIterationsForTab(tab: string): number {
-  if (tab === "alloy-design") {
+function maxIterationsForMode(mode: ChatMode): number {
+  if (mode === "alloy-design") {
     const envOverride = parseInt(process.env.VISTA_MAX_AGENT_ITERATIONS_ALLOY ?? "", 10);
     return Number.isFinite(envOverride) && envOverride > 0 ? envOverride : 600;
   }
@@ -246,7 +251,18 @@ function toolTimeoutMs(
   return onElicitation ? 300_000 : 60_000;
 }
 
-function filterToolsForTab(tools: OpenAiTool[], tab: string): OpenAiTool[] {
+/**
+ * Filter the discovered tool list down to what is appropriate for the
+ * active mode.
+ *
+ * - molten-salt: exclude every `agenthpc_*` tool (they belong to alloy-design).
+ * - alloy-design: exclude `submit_hpc_job` / `get_hpc_job_status` /
+ *   `list_hpc_jobs` (those target Frontier for the molten-salt workflow;
+ *   MoNbTaW uses `agenthpc_*` on Andes instead). Keep sandbox
+ *   (`run_bash`/`create_file`/`view`) and `display_file` available for
+ *   post-hoc analysis.
+ */
+function filterToolsForMode(tools: OpenAiTool[], mode: ChatMode): OpenAiTool[] {
   const saltFrontierTools = new Set([
     "submit_hpc_job",
     "get_hpc_job_status",
@@ -255,10 +271,9 @@ function filterToolsForTab(tools: OpenAiTool[], tab: string): OpenAiTool[] {
 
   return tools.filter((t) => {
     const name = t.function.name;
-    if (tab === "alloy-design") {
+    if (mode === "alloy-design") {
       return !saltFrontierTools.has(name);
     }
-    // molten-salt (default)
     return !name.startsWith("agenthpc_");
   });
 }
@@ -268,40 +283,26 @@ function filterToolsForTab(tools: OpenAiTool[], tab: string): OpenAiTool[] {
 /* ------------------------------------------------------------------ */
 
 /**
- * Return the subset of SKILL.md directories whose `metadata.tab` matches `tab`
- * (skills without a tab field default to the molten-salt tab) AND whose slug
- * (directory basename) is present in `loadedSlugs`.
- *
- * When `loadedSlugs` is undefined, no slug filter is applied (legacy callers).
- * When it is an empty array, no skills are returned.
+ * Return the subset of SKILL.md directories whose slug (directory basename)
+ * is present in `loadedSlugs`. The legacy `metadata.tab` field is ignored —
+ * skill scoping is now driven entirely by tags + the user's loaded set.
  */
-function skillDirsForTab(tab: string, loadedSlugs?: Set<string>): string[] {
+function skillDirsForLoaded(loadedSlugs: Set<string>): string[] {
   return findSkills([config.skillsDir]).filter((dir) => {
-    try {
-      const props = readProperties(dir);
-      const metaTab = props.metadata?.tab;
-      const skillTab = typeof metaTab === "string" ? metaTab : DEFAULT_TAB;
-      if (skillTab !== tab) return false;
-      if (loadedSlugs) {
-        const slug = dir.split("/").pop() ?? "";
-        if (!loadedSlugs.has(slug)) return false;
-      }
-      return true;
-    } catch {
-      return false;
-    }
+    const slug = dir.split("/").pop() ?? "";
+    return loadedSlugs.has(slug);
   });
 }
 
-function buildSystemPrompt(tab: string, loadedSlugs: Set<string>): string {
-  if (tab === "alloy-design") {
+function buildSystemPrompt(mode: ChatMode, loadedSlugs: Set<string>): string {
+  if (mode === "alloy-design") {
     return buildAlloyDesignPrompt(loadedSlugs);
   }
   return buildMoltenSaltPrompt(loadedSlugs);
 }
 
 function buildAlloyDesignPrompt(loadedSlugs: Set<string>): string {
-  const skillsPrompt = toPrompt(skillDirsForTab("alloy-design", loadedSlugs));
+  const skillsPrompt = toPrompt(skillDirsForLoaded(loadedSlugs));
   return [
     `You are VISTA, operating in **High Entropy Alloy Design** mode.`,
     `Your job is to run an agentic optimization loop on the Andes HPC cluster to find refractory high-entropy alloy compositions that meet the user's targeted critical transition temperature (Tc). Currently supports MoNbTaW (4-element).`,
@@ -334,7 +335,7 @@ function buildAlloyDesignPrompt(loadedSlugs: Set<string>): string {
 }
 
 function buildMoltenSaltPrompt(loadedSlugs: Set<string>): string {
-  const skillsPrompt = toPrompt(skillDirsForTab("molten-salt", loadedSlugs));
+  const skillsPrompt = toPrompt(skillDirsForLoaded(loadedSlugs));
 
   const dbPath = join(config.skillsDir, "salt-analysis", "assets", "Molten_Salt_Thermophysical_Properties.json");
   let saltListSummary = "";
@@ -705,10 +706,10 @@ async function executeTool(
 async function runAgentLoop(
   userMessage: string,
   history: Array<{ role: string; content: string }>,
-  tab: string,
   loadedSlugs: Set<string>,
   sendEvent: (event: SseEvent) => void
 ): Promise<{ response: string; toolCalls: ToolCallResult[] }> {
+  const mode = deriveMode(loadedSlugs);
   const azureConfig = getAzureConfig();
 
   const hasAzure = !!process.env.AZURE_OPENAI_ENDPOINT && !!process.env.AZURE_OPENAI_API_KEY;
@@ -727,15 +728,16 @@ async function runAgentLoop(
     };
   }
 
-  // Discover tools from MCP server and filter for the active tab.
+  // Discover tools from MCP server and filter for the derived mode.
   const allTools = await discoverTools();
-  const tools = filterToolsForTab(allTools, tab);
-  log("INFO", "ToolDiscovery", `Exposing ${tools.length}/${allTools.length} tools to LLM for tab "${tab}"`, {
+  const tools = filterToolsForMode(allTools, mode);
+  log("INFO", "ToolDiscovery", `Exposing ${tools.length}/${allTools.length} tools to LLM for mode "${mode}"`, {
     names: tools.map((t) => t.function.name),
   });
 
-  const systemPrompt = buildSystemPrompt(tab, loadedSlugs);
+  const systemPrompt = buildSystemPrompt(mode, loadedSlugs);
   log("INFO", "Agent", `Loaded skills for this turn`, {
+    mode,
     count: loadedSlugs.size,
     slugs: Array.from(loadedSlugs),
   });
@@ -782,8 +784,8 @@ async function runAgentLoop(
     return resp;
   };
 
-  const maxIterations = maxIterationsForTab(tab);
-  log("INFO", "Agent", `Agent iteration budget for tab "${tab}": ${maxIterations}`);
+  const maxIterations = maxIterationsForMode(mode);
+  log("INFO", "Agent", `Agent iteration budget for mode "${mode}": ${maxIterations}`);
   for (let i = 0; i < maxIterations; i++) {
     const iterStart = Date.now();
     log("INFO", "Agent:LLM", `Iteration ${i + 1}/${maxIterations} — sending request to LLM`);
@@ -924,7 +926,6 @@ export async function POST(request: Request) {
   }
 
   const history = Array.isArray(body.history) ? body.history : [];
-  const tab = typeof body.tab === "string" && body.tab ? body.tab : DEFAULT_TAB;
   const loadedSlugs = new Set(
     Array.isArray(body.loadedSlugs)
       ? body.loadedSlugs.filter((s): s is string => typeof s === "string" && s.length > 0)
@@ -943,7 +944,7 @@ export async function POST(request: Request) {
   // Run agent loop in background, writing SSE events as it goes
   (async () => {
     try {
-      const { response, toolCalls } = await runAgentLoop(message, history, tab, loadedSlugs, sendEvent);
+      const { response, toolCalls } = await runAgentLoop(message, history, loadedSlugs, sendEvent);
       const elapsed = Date.now() - requestStart;
       log("INFO", "POST", `Request completed in ${elapsed}ms`, {
         toolCallCount: toolCalls.length,

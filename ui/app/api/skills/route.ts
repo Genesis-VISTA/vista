@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import path from "path";
-import { findSkills, readProperties } from "@/lib/skills";
+import fs from "fs";
+import { findSkills, findSkillMd, readProperties } from "@/lib/skills";
 import { config } from "@/app/config";
 
-const DEFAULT_TAB = "molten-salt";
-
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const url = new URL(request.url);
-    const tab = url.searchParams.get("tab");
-
     const skillDirs = findSkills([config.skillsDir]);
 
     const skills = skillDirs.flatMap((skillDir) => {
       try {
         const props = readProperties(skillDir);
+        const skillMd = findSkillMd(skillDir);
+        let addedAt: number | null = null;
+        if (skillMd) {
+          try {
+            // Use the SKILL.md mtime as a "recently added" proxy. We don't
+            // shell out to git here so the response stays fast and works in
+            // trees without git history.
+            addedAt = fs.statSync(skillMd).mtimeMs;
+          } catch {
+            addedAt = null;
+          }
+        }
         return [{
           slug: path.basename(skillDir),
           name: props.name,
@@ -22,6 +30,7 @@ export async function GET(request: Request) {
           path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
           metadata: props.metadata,
           tags: props.tags ?? [],
+          addedAt,
         }];
       } catch (error) {
         console.warn(`[skills] Skipping invalid skill '${skillDir}':`, error);
@@ -29,13 +38,9 @@ export async function GET(request: Request) {
       }
     });
 
-    const filtered = tab
-      ? skills.filter((s) => (s.metadata?.tab ?? DEFAULT_TAB) === tab)
-      : skills;
+    skills.sort((a, b) => a.slug.localeCompare(b.slug));
 
-    filtered.sort((a, b) => a.slug.localeCompare(b.slug));
-
-    return NextResponse.json(filtered);
+    return NextResponse.json(skills);
   } catch {
     return NextResponse.json([], { status: 200 });
   }
