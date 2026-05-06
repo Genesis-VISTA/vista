@@ -77,7 +77,7 @@ class AppSettings(BaseSettings):
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
 
-    hpc_ssh_host: CommaSeparatedList[str] = ["odo.olcf.ornl.gov"]
+    hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
     SSH host for file access (SCP/sacct) on the HPC cluster.
     To use a jump host, pass an array or comma separated list of hosts.
