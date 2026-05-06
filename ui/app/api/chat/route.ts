@@ -216,9 +216,8 @@ function maxIterationsForTab(tab: string): number {
  * - agenthpc_wait_for_job blocks on the server up to `timeout_s` (default
  *   1800s) polling squeue — the client must outlast that with a small buffer
  *   or it will trip a harmless but misleading "-32001 Request timed out".
- * - agenthpc_submit_parameter_set runs remote `mkdir`/`cp`/`sbatch` over SSH
- *   (which on first call also elicits credentials) — 10 min covers normal
- *   latency plus user reaction time on the credential prompt.
+ * - agenthpc_submit_parameter_set runs remote `mkdir`/`cp`/`sbatch` over SSH — 10 min covers
+ *   normal latency plus user reaction time on any interactive prompts.
  * - agenthpc_plot_progress renders matplotlib locally — rare to hit 60s but
  *   occasional cold imports can come close, so give it 180s headroom.
  */
@@ -304,7 +303,7 @@ function buildAlloyDesignPrompt(): string {
     `- Follow the optimization loop in the \`alloy-design\` SKILL.md exactly.`,
     `- Pass the user's \`target_score\` and \`max_trials\` to EVERY tool call that accepts them — \`agenthpc_get_search_space\`, \`agenthpc_get_all_results\`, and \`agenthpc_get_job_result\`. The server is stateless.`,
     `- Use ONLY the \`agenthpc_*\` tools. Do not call \`run_bash\`, \`submit_hpc_job\`, \`get_hpc_job_status\`, or \`list_hpc_jobs\` for MoNbTaW submissions.`,
-    `- The first \`agenthpc_submit_parameter_set\` call elicits Andes SSH credentials; subsequent calls reuse the cached connection.`,
+    `- The first \`agenthpc_submit_parameter_set\` call connects to Andes via SSH; subsequent calls reuse the cached connection.`,
     `- After every successful \`agenthpc_get_job_result\`, do TWO things in order: (1) call \`agenthpc_plot_progress("monbtaw")\` to refresh the cumulative specific-heat curves in the output panel, (2) write a structured **Trial Report** in chat following the exact format in the alloy-design SKILL.md (Ran / Why this point / Trajectory table / Best so far / Next proposed + Reason). Never skip either step — the user is relying on the chat report and the figure together to track the campaign.`,
     `- Stop when \`agenthpc_get_all_results\` returns \`should_stop: true\` (i.e. threshold_reached OR budget_exhausted). Then summarize best composition, best score vs target, trial count, and the search trajectory.`,
     `- When the user asks for a single trial, skip the loop and just submit once.`,
@@ -340,13 +339,13 @@ function buildMoltenSaltPrompt(): string {
     ``,
     skillsPrompt,
     ``,
-    `## HPC Job Submission (Frontier)`,
-    `To run jobs on the Frontier HPC cluster, use these tools directly — do NOT use run_bash:`,
-    `- submit_hpc_job(job, nodes?, time_limit?, script_args?): Submit a Slurm job. Available jobs: example, forge-tune.`,
+    `## HPC Job Submission (Odo)`,
+    `To run jobs on the Odo HPC cluster, use these tools directly — do NOT use run_bash:`,
+    `- submit_hpc_job(job, nodes?, time_limit?, script_args?): Submit a Slurm job via S3M. Available jobs: example, forge-tune.`,
     `- get_hpc_job_status(job_id): Check the status and logs of a submitted job.`,
     `- list_hpc_jobs(): List all recently submitted jobs.`,
-    `Use submit_hpc_job whenever the user asks to run, launch, or execute anything on Frontier or the HPC cluster.`,
-    `For model fine-tuning requests, do this iteratively: first ask exactly one gating question: "Do you want me to submit this as a Frontier job now?"`,
+    `Use submit_hpc_job whenever the user asks to run, launch, or execute anything on Odo or the HPC cluster.`,
+    `For model fine-tuning requests, do this iteratively: first ask exactly one gating question: "Do you want me to submit this as an Odo job now?"`,
     `In that first fine-tuning response, do NOT ask for model path, hyperparameters, dataset path, checkpoint path, or any other setup details.`,
     `Wait for the user's yes/no answer before asking any additional fine-tuning questions.`,
     `Only call submit_hpc_job for fine-tuning after the user explicitly says yes.`,

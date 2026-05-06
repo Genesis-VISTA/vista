@@ -1,0 +1,7 @@
+{
+  "duration": 1200,
+  "resources": {
+    "node_count": 16,
+    "exclusive_node_use": true
+  }
+}

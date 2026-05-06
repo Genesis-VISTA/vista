@@ -8,9 +8,10 @@ import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
 
-FRONTIER_SETUP_SCRIPT = textwrap.dedent(r"""
+ODO_SETUP_SCRIPT = textwrap.dedent(r"""
     export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
-    mkdir -p "$VISTA_OUT"
+    mkdir -p -m 2775 "$VISTA_OUT"
+    chmod 2775 "{remote_hpc_jobs_dir}" "{remote_hpc_jobs_dir}/out"
 
     export https_proxy="http://proxy.ccs.ornl.gov:3128";
     export http_proxy="http://proxy.ccs.ornl.gov:3128";
@@ -52,25 +53,37 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
-    hpc_host: CommaSeparatedList[str] = ["frontier.olcf.ornl.gov"]
-    """
-    SSH host for launching remote HPC jobs.
-    To use a jump host, pass an array or comma separated list of hosts.
-    """
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
-    remote_hpc_jobs_dir: Path = Path("/lustre/orion/stf218/proj-shared/vista/")
+    remote_hpc_jobs_dir: Path = Path("/gpfs/wolf2/olcf/gen150/proj-shared/vista")
     """ Folder on the HPC cluster where the hpc_jobs will be copied. """
-    hpc_setup_script_template: str = FRONTIER_SETUP_SCRIPT
+    hpc_account: str = "gen150-vista"
+    """ Slurm account name for HPC job submission. """
+    hpc_setup_script_template: str = ODO_SETUP_SCRIPT
     """
-    Script to run before the setup of every job.
+    Script sourced before every job script.
 
-    This is a format string that will be can reference other config options like
+    This is a format string that can reference other config options like
     `remote_hpc_jobs_dir` and `session_id`.
     """
 
     def get_hpc_setup_script(self):
         """ The populated hpc_setup_script_template template """
         return self.hpc_setup_script_template.format(**self.model_dump())
+
+    s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
+    """ Base URL for the S3M API. """
+    s3m_token: str | None = None
+    """ Bearer token for S3M API authentication (VISTA_MCP_S3M_TOKEN env var). """
+    s3m_resource: str = "odo"
+    """ S3M compute resource id to submit jobs against. """
+
+    hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
+    """
+    SSH host for file access (SCP/sacct) on the HPC cluster.
+    To use a jump host, pass an array or comma separated list of hosts.
+    """
+    hpc_ssh_user: str
+    """ SSH user to log in as """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

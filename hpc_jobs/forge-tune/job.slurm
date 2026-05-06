@@ -1,14 +1,6 @@
 #!/bin/bash -l
-#SBATCH -J forge-tune
-#SBATCH -t 0:20:00
-#SBATCH -A stf218
-#SBATCH -N 16
-##SBATCH -q debug 
-#SBATCH --exclusive
-##SBATCH --ntasks-per-node=8
 
-module use /sw/aaims/crusher/modulefiles
-module load xforge 
+source /gpfs/wolf2/olcf/gen150/proj-shared/xforge/xforge-env.sh
 export NCCL_SOCKET_IFNAME=hsn
 export MIOPEN_DISABLE_CACHE=1
 export OMP_NUM_THREADS=7

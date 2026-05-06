@@ -36,12 +36,13 @@ cp .env.sample .env
 and fill out your env keys and settings.
 
 Important env vars:
-| Variable                      | Description                                                                                      | Default                                 |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                         |
-| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None                                    |
-| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs, e.g. /ccs/home/<username>/vista                                        | /lustre/orion/stf218/proj-shared/vista/ |
-| VISTA_MCP_HPC_HOST            | SSH host for launching remote HPC jobs. To use a jump host, pass a comma-separated list of hosts | frontier.olcf.ornl.gov                  |
+| Variable                      | Description                                                                                      | Default                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                           |
+| VISTA_MCP_S3M_TOKEN           | See [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token). Use open enclave and the gen150-vista project. Token expires in 24 hours. | None (required) |
+| VISTA_MCP_HPC_SSH_USER        | SSH username to log into Odo (ucams id)                                                          | None (required)                           |
+| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs                                                                         | /gpfs/wolf2/olcf/gen150/proj-shared/vista |
+| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None (optional)                           |
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
@@ -71,3 +72,41 @@ cd ./ui && npm run dev
 ```bash
 cd ./mcp-server && uv run --env-file ../.env vista-mcp-server --transport=http
 ```
+
+## Jobs
+The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires at minimum a `job.slurm` script. An optional `s3m_defaults.json` file sets resource defaults for the S3M scheduler.
+
+### Directory layout
+```
+hpc_jobs/
+└── my-job/
+    ├── job.slurm          # required — Slurm batch script, run via S3M
+    ├── s3m_defaults.json  # optional — resource/duration defaults
+    └── README.md          # optional — shown to agent as job description
+    └── ...                # Other supporting files. All files will be uploaded to the HPC cluster
+```
+
+### job.slurm
+A standard Slurm batch script. The agent can pass argument to the job, which you can use in the script.
+
+### s3m_defaults.json
+Overrides default S3M submission parameters. All fields are optional:
+```json
+{
+  "duration": 120,
+  "resources": {
+    "node_count": 1,
+    "process_count": null,
+    "processes_per_node": null,
+    "cpu_cores_per_process": null,
+    "gpu_cores_per_process": null,
+    "exclusive_node_use": true,
+    "memory": null
+  }
+}
+```
+`duration` is in **seconds**. `memory` is in **bytes**. If `s3m_defaults.json` is absent, the defaults are 120 s and 1 node.
+
+### Job Output
+Inside the job, the `VISTA_OUT` environment variable will be set to the path of an output directory. Any output files and logs should be saved
+under that directory so that Vista can pull the results.
