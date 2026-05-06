@@ -20,6 +20,12 @@ ODO_SETUP_SCRIPT = textwrap.dedent(r"""
 
 
 class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="VISTA_MCP_",
+        env_file=[p / '.env' for p in reversed([Path.cwd(), *Path.cwd().parents])],
+        extra='ignore',
+    )
+
     # TODO: these are currently unused
     # allowed_uris: list[str] = [".*"]
     # """
@@ -41,9 +47,9 @@ class AppSettings(BaseSettings):
     dockerfile: ResolvedPath = Path(__file__).parent / "docker/Dockerfile"
     image: str = "vista-sandbox"
 
-    skills_dir: ResolvedPath = Path("../skills")
-    output_dir: ResolvedPath = Path("../data/output")
-    uploads_dir: ResolvedPath = Path("../data/uploads")
+    skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
+    output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
+    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/uploads")
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = [
         (Path("../skills"), Path("/mnt/skills"), 'r'),
         (Path("../data/output"), Path("/mnt/data/output"), 'w'),
@@ -97,12 +103,6 @@ class AppSettings(BaseSettings):
 
     rag_db_path: ResolvedPath = Path("../rag_db")
     rag_model: str = "google/embeddinggemma-300m"
-
-    model_config = SettingsConfigDict(
-        env_prefix="VISTA_MCP_",
-        env_file=["./.env", "../.env"],
-        extra='ignore',
-    )
 
 
 settings = AppSettings()
