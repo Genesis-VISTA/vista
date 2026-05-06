@@ -8,7 +8,7 @@ description: >-
   are bundled under this skill folder) and can optionally submit the existing
   `forge-tune` Slurm job through MCP tools.
 metadata:
-  tab: molten-salt
+  tags: ["OLCF", "Frontier", "Materials Design", "Molten Salt Tritium Breeding"]
 ---
 
 # Model Fine-Tuning

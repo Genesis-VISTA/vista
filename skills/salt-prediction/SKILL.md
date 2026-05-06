@@ -3,7 +3,7 @@ name: salt-prediction
 description: Train a Gaussian-process molten salt model and generate a prediction plot plus training summary for a requested formula/composition.
 metadata:
   version: "0.1.0"
-  tab: molten-salt
+  tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
 ---
 

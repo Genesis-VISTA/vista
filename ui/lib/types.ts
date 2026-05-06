@@ -21,7 +21,8 @@ export type SkillSummary = {
   name: string;
   description: string;
   path: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, string | string[]>;
+  tags?: string[];
 };
 
 export type SkillDetail = {

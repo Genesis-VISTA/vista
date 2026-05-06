@@ -3,7 +3,7 @@ name: alloy-design
 description: Agentic optimization of refractory high-entropy alloy composition on HPC. Start with MoNbTaW (4-element). Propose a composition, submit it to the Andes Slurm cluster via the agenthpc_* MCP tools, wait for the job, read the score, and iterate until the user's targeted transition temperature or the trial budget is reached.
 metadata:
   version: "0.2.0"
-  tab: alloy-design
+  tags: ["OLCF", "Frontier", "Materials Design", "High Entropy Alloy Design"]
 license: Proprietary
 ---
 

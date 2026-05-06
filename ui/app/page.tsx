@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
-import type { ChatMessage, ExecutionResult, SkillDetail, SkillSummary } from "@/lib/types";
+import type { ChatMessage, ExecutionResult } from "@/lib/types";
+import { useActiveProject } from "@/lib/projects";
 
 type LogEntry = {
   id: string;
@@ -46,115 +47,12 @@ type ChatApiResponse = {
   error?: string;
 };
 
-type UploadFileInfo = {
-  name: string;
-  size: number;
-  modifiedAt: string;
-  source?: "upload" | "generated";
-};
-
-type UploadResponse = {
-  ok: boolean;
-  saved?: string[];
-  error?: string;
-};
-
 const MODEL_SERVICES = ["AmSC model services"];
 const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
 const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
 
-type TabDef = {
-  id: string;
-  label: string;
-  /** One-sentence summary shown in the domain banner under the tabs. */
-  tagline: string;
-  /** Accent color tied to the material each domain studies. */
-  accent: string;
-  /** Very light tint of the accent, used for banner backgrounds. */
-  accentSoft: string;
-};
-
-const TABS: TabDef[] = [
-  {
-    id: "molten-salt",
-    label: "Molten Salt Tritium Breeding",
-    tagline:
-      "MSTDB database analysis, Phase diagram generation, Thermophysical property prediction, FORGE fine-tuning on Frontier, and Launch SPLASH campaign.",
-    accent: "#c86611",
-    accentSoft: "#fbeadb",
-  },
-  {
-    id: "alloy-design",
-    label: "High Entropy Alloy Design",
-    tagline:
-      "Agentic composition search for refractory high-entropy alloys on Andes/Slurm.",
-    accent: "#2d5f82",
-    accentSoft: "#e2ecf3",
-  },
-];
-const DEFAULT_TAB = TABS[0].id;
-
-function DomainIcon({ tab, size = 18 }: { tab: string; size?: number }) {
-  const sw = "currentColor";
-  if (tab === "molten-salt") {
-    // Liquidus phase diagram — two curves meeting at a eutectic point,
-    // referencing the actual science of molten-salt analysis.
-    return (
-      <svg
-        viewBox="0 0 24 24"
-        width={size}
-        height={size}
-        fill="none"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path
-          d="M3 7 Q7 7 12 16 T21 7"
-          stroke={sw}
-          strokeWidth="1.6"
-          strokeLinecap="round"
-        />
-        <circle cx="12" cy="16" r="1.9" fill={sw} />
-        <path d="M3 20 H21" stroke={sw} strokeWidth="1" opacity="0.3" />
-      </svg>
-    );
-  }
-  if (tab === "alloy-design") {
-    // Four-element tetrahedron — MoNbTaW HEA, projected to 2D.
-    return (
-      <svg
-        viewBox="0 0 24 24"
-        width={size}
-        height={size}
-        fill="none"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <g stroke={sw} strokeWidth="1.1" opacity="0.55">
-          <line x1="5" y1="7" x2="19" y2="7" />
-          <line x1="5" y1="7" x2="12" y2="20" />
-          <line x1="19" y1="7" x2="12" y2="20" />
-          <line x1="5" y1="7" x2="12" y2="13" />
-          <line x1="19" y1="7" x2="12" y2="13" />
-          <line x1="12" y1="13" x2="12" y2="20" />
-        </g>
-        <g fill={sw}>
-          <circle cx="5" cy="7" r="2" />
-          <circle cx="19" cy="7" r="2" />
-          <circle cx="12" cy="13" r="1.7" />
-          <circle cx="12" cy="20" r="2" />
-        </g>
-      </svg>
-    );
-  }
-  return null;
-}
-
-const PLACEHOLDER_DATASETS = [
-  "allenai/scientific_papers",
-  "OpenDFM/ScienceQA",
-  "bigbio/pubmed_qa"
-];
+/** localStorage key for the user's per-browser loaded-skill set. */
+const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
 
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
@@ -259,31 +157,90 @@ function intermediatePreview(content: string): string {
   return cleaned || "Agent update";
 }
 
-function formatTimestampUtc(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toISOString().replace("T", " ").replace(".000Z", " UTC");
-}
-
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
-  const leftSplitRef = useRef<HTMLDivElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
-  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
-  const [activeColumnResizer, setActiveColumnResizer] = useState<"left" | "right" | null>(null);
-  const [activeRowResizer, setActiveRowResizer] = useState<"left" | "right" | null>(null);
-  const [skillsWidth, setSkillsWidth] = useState(300);
+  const [activeColumnResizer, setActiveColumnResizer] = useState<"right" | null>(null);
+  const [activeRowResizer, setActiveRowResizer] = useState<"right" | null>(null);
   const [vizWidth, setVizWidth] = useState(460);
-  const [leftTopHeight, setLeftTopHeight] = useState(500);
   const [rightTopHeight, setRightTopHeight] = useState(430);
+  /**
+   * Slugs of skills the user has loaded for the current chat session via the
+   * Skill Hub. Persisted across reloads in localStorage and shared with the
+   * /skill-hub page via the same storage key. The lazy initializer reads the
+   * stored value at mount — using a `useEffect` here is unsafe because the
+   * persist effect would race with the hydrate effect and overwrite the hub's
+   * writes with an empty Set on every navigation back to this page.
+   */
+  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((s): s is string => typeof s === "string"));
+      }
+    } catch {
+      // ignore corrupt entries
+    }
+    return new Set();
+  });
 
-  const [activeTab, setActiveTab] = useState<string>(DEFAULT_TAB);
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [filter, setFilter] = useState("");
-  const [selectedSkill, setSelectedSkill] = useState<SkillDetail | null>(null);
-  const [showSkillModal, setShowSkillModal] = useState(false);
+  // Persist loadedSlugs back to localStorage on every change.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LOADED_SKILLS_STORAGE_KEY,
+        JSON.stringify(Array.from(loadedSlugs))
+      );
+    } catch {
+      // localStorage may be unavailable (private mode, quota); chat still works.
+    }
+  }, [loadedSlugs]);
+
+  // Sync from other tabs / the Skill Hub when it writes the same key, and
+  // re-read on window focus so navigation from /skill-hub back here picks up
+  // changes even if Next.js's router cache kept this page mounted.
+  useEffect(() => {
+    function reread() {
+      try {
+        const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+        const next = new Set(parsed.filter((s): s is string => typeof s === "string"));
+        setLoadedSlugs((prev) => {
+          if (prev.size === next.size && Array.from(prev).every((s) => next.has(s))) {
+            return prev;
+          }
+          return next;
+        });
+      } catch {
+        // ignore
+      }
+    }
+    function onStorage(event: StorageEvent) {
+      if (event.key === LOADED_SKILLS_STORAGE_KEY) reread();
+    }
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", reread);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", reread);
+    };
+  }, []);
+
+  /**
+   * Active project for the topbar badge. The hook uses
+   * `useSyncExternalStore` so SSR and the first client paint both read
+   * `null`, then React updates with the real value after hydration. Other
+   * tabs / pages that write the active-project slug are picked up via the
+   * hook's storage subscription.
+   */
+  const activeProject = useActiveProject();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -327,13 +284,6 @@ export default function HomePage() {
     message: string;
     schema: Record<string, unknown>;
   } | null>(null);
-  const [uploads, setUploads] = useState<UploadFileInfo[]>([]);
-  const [isLoadingUploads, setIsLoadingUploads] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [uploadMessage, setUploadMessage] = useState("");
-  const [isDragOverUploads, setIsDragOverUploads] = useState(false);
-  const [deletingUploadName, setDeletingUploadName] = useState("");
   const [chatService] = useState(MODEL_SERVICES[0]);
   const [chatFamily, setChatFamily] = useState(MODEL_FAMILIES[0]);
   const [chatOpenModel, setChatOpenModel] = useState(OPEN_MODELS[0]);
@@ -341,19 +291,10 @@ export default function HomePage() {
   const [isServiceExpanded, setIsServiceExpanded] = useState(false);
   const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-  const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
   const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
   const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
-  const uploadedFiles = useMemo(
-    () => uploads.filter((file) => file.source !== "generated"),
-    [uploads]
-  );
-  const tritiumResultFiles = useMemo(
-    () => uploads.filter((file) => file.source === "generated"),
-    [uploads]
-  );
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
     const node = chatListRef.current;
@@ -369,30 +310,21 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    if (!activeColumnResizer) return;
+    if (activeColumnResizer !== "right") return;
 
-    const minSkills = 180;
     const minViz = 320;
     const minConsole = 420;
-    const splitterTotal = 20;
+    const splitterTotal = 10;
 
     const onPointerMove = (event: PointerEvent) => {
       const container = mainRef.current;
       if (!container || window.innerWidth <= 1100) return;
 
       const rect = container.getBoundingClientRect();
-      const maxSkills = rect.width - vizWidth - minConsole - splitterTotal;
-      const maxViz = rect.width - skillsWidth - minConsole - splitterTotal;
-
-      if (activeColumnResizer === "left") {
-        const raw = event.clientX - rect.left;
-        const next = Math.max(minSkills, Math.min(raw, maxSkills));
-        setSkillsWidth(next);
-      } else if (activeColumnResizer === "right") {
-        const raw = rect.right - event.clientX;
-        const next = Math.max(minViz, Math.min(raw, maxViz));
-        setVizWidth(next);
-      }
+      const maxViz = rect.width - minConsole - splitterTotal;
+      const raw = rect.right - event.clientX;
+      const next = Math.max(minViz, Math.min(raw, maxViz));
+      setVizWidth(next);
     };
 
     const onPointerUp = () => {
@@ -410,10 +342,10 @@ export default function HomePage() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [activeColumnResizer, skillsWidth, vizWidth]);
+  }, [activeColumnResizer, vizWidth]);
 
   useEffect(() => {
-    if (!activeRowResizer) return;
+    if (activeRowResizer !== "right") return;
 
     const splitterSize = 10;
     const minTop = 170;
@@ -422,19 +354,14 @@ export default function HomePage() {
     const onPointerMove = (event: PointerEvent) => {
       if (window.innerWidth <= 1100) return;
 
-      const container = activeRowResizer === "left" ? leftSplitRef.current : outputSplitRef.current;
+      const container = outputSplitRef.current;
       if (!container) return;
 
       const rect = container.getBoundingClientRect();
       const raw = event.clientY - rect.top;
       const maxTop = rect.height - minBottom - splitterSize;
       const next = Math.max(minTop, Math.min(raw, maxTop));
-
-      if (activeRowResizer === "left") {
-        setLeftTopHeight(next);
-      } else {
-        setRightTopHeight(next);
-      }
+      setRightTopHeight(next);
     };
 
     const onPointerUp = () => {
@@ -455,22 +382,6 @@ export default function HomePage() {
   }, [activeRowResizer]);
 
   useEffect(() => {
-    fetch(`/api/skills?tab=${encodeURIComponent(activeTab)}`)
-      .then((res) => res.json())
-      .then((data) => setSkills(Array.isArray(data) ? data : []))
-      .catch(() => setSkills([]));
-  }, [activeTab]);
-
-  function switchTab(nextTab: string) {
-    if (nextTab === activeTab) return;
-    setActiveTab(nextTab);
-    // Reset skills-panel search only — chat history, agent logs, and
-    // the last-rendered figure persist across tab switches so the user
-    // can keep cross-domain context.
-    setFilter("");
-  }
-
-  useEffect(() => {
     if (!isModelMenuOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       const node = modelMenuRef.current;
@@ -482,35 +393,6 @@ export default function HomePage() {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [isModelMenuOpen]);
-
-  const filteredSkills = useMemo(() => {
-    const term = filter.trim().toLowerCase();
-    if (!term) return skills;
-    return skills.filter((skill) => {
-      return (
-        skill.slug.toLowerCase().includes(term) ||
-        skill.name.toLowerCase().includes(term) ||
-        skill.description.toLowerCase().includes(term)
-      );
-    });
-  }, [skills, filter]);
-
-  const activeDomain = useMemo(
-    () => TABS.find((t) => t.id === activeTab) ?? TABS[0],
-    [activeTab]
-  );
-
-  async function openSkill(slug: string) {
-    try {
-      const response = await fetch(`/api/skills/${slug}`);
-      if (!response.ok) return;
-      const detail = (await response.json()) as SkillDetail;
-      setSelectedSkill(detail);
-      setShowSkillModal(true);
-    } catch {
-      setSelectedSkill(null);
-    }
-  }
 
   async function handleElicitationSubmit(
     id: string,
@@ -602,7 +484,11 @@ export default function HomePage() {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, history, tab: activeTab })
+        body: JSON.stringify({
+          message: text,
+          history,
+          loadedSlugs: Array.from(loadedSlugs),
+        })
       });
 
       const reader = response.body!.getReader();
@@ -912,28 +798,6 @@ export default function HomePage() {
     }
   }
 
-  const loadUploads = useCallback(async () => {
-    setIsLoadingUploads(true);
-    try {
-      const response = await fetch("/api/uploads");
-      const data = (await response.json()) as UploadFileInfo[];
-      setUploads(Array.isArray(data) ? data : []);
-    } catch {
-      setUploads([]);
-    } finally {
-      setIsLoadingUploads(false);
-    }
-  }, []);
-
-  async function refreshUploads() {
-    await loadUploads();
-    setUploadMessage((prev) => (prev.startsWith("Deleted ") ? "" : prev));
-  }
-
-  useEffect(() => {
-    void loadUploads();
-  }, [loadUploads]);
-
   useEffect(() => {
     if (showJumpToLatest) return;
     scrollChatToLatest("auto");
@@ -943,71 +807,12 @@ export default function HomePage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [agentLogs]);
 
-
-  async function uploadFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-
-    setIsUploading(true);
-    setUploadError("");
-    setUploadMessage("");
-
-    try {
-      const form = new FormData();
-      for (const file of Array.from(files)) {
-        form.append("files", file);
-      }
-
-      const response = await fetch("/api/uploads", {
-        method: "POST",
-        body: form
-      });
-      const data = (await response.json()) as UploadResponse;
-
-      if (!response.ok || !data.ok) {
-        setUploadError(data.error || "Upload failed.");
-        return;
-      }
-
-      const savedCount = Array.isArray(data.saved) ? data.saved.length : 0;
-      setUploadMessage(savedCount > 0 ? `${savedCount} file(s) uploaded.` : "Upload complete.");
-      await loadUploads();
-    } catch {
-      setUploadError("Upload failed.");
-    } finally {
-      setIsUploading(false);
-    }
-  }
-
-  async function deleteUpload(name: string) {
-    setDeletingUploadName(name);
-    setUploadError("");
-    setUploadMessage("");
-    try {
-      const response = await fetch(`/api/uploads/${encodeURIComponent(name)}`, {
-        method: "DELETE"
-      });
-      const data = (await response.json()) as UploadResponse;
-      if (!response.ok || !data.ok) {
-        setUploadError(data.error || "Delete failed.");
-        return;
-      }
-      setUploadMessage(`Deleted ${name}.`);
-      await loadUploads();
-    } catch {
-      setUploadError("Delete failed.");
-    } finally {
-      setDeletingUploadName("");
-    }
-  }
-
   return (
     <main
       ref={mainRef}
       style={
         {
-          "--skills-width": `${skillsWidth}px`,
           "--viz-width": `${vizWidth}px`,
-          "--left-top-height": `${leftTopHeight}px`,
           "--right-top-height": `${rightTopHeight}px`
         } as CSSProperties
       }
@@ -1021,255 +826,15 @@ export default function HomePage() {
           />
           <div className="app-title">VISTA</div>
         </div>
+        {activeProject && (
+          <div className="app-active-project" title="Active project">
+            <span className="app-active-project-label">Project</span>
+            <span className="app-active-project-name">{activeProject.title}</span>
+          </div>
+        )}
       </header>
 
       <div className="workspace">
-        <section className="left-stack">
-        <div className="left-split" ref={leftSplitRef}>
-          <section className="panel">
-            <div className="panel-header">
-              <div className="panel-title">Data</div>
-              <span className="tag">/mnt/data/uploads</span>
-            </div>
-            <div className="panel-body">
-              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-                <button
-                  className="button button-sm"
-                  onClick={() => uploadInputRef.current?.click()}
-                  disabled={isUploading}
-                >
-                  {isUploading ? "Uploading..." : "Upload +"}
-                </button>
-                <button className="button ghost button-sm" onClick={() => void refreshUploads()} disabled={isLoadingUploads}>
-                  {isLoadingUploads ? "Refreshing..." : "Refresh"}
-                </button>
-              </div>
-              <div className="catalog-row">
-                <label className="model-label catalog-label" htmlFor="data-model-select">AmSC Data Catalog</label>
-                <select
-                  id="data-model-select"
-                  className="input model-select model-select-full"
-                  value={dataModel}
-                  onChange={(event) => setDataModel(event.target.value)}
-                >
-                  {PLACEHOLDER_DATASETS.map((dataset) => (
-                    <option key={dataset} value={dataset}>
-                      {dataset}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div
-                className={`dropzone ${isDragOverUploads ? "active" : ""}`}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setIsDragOverUploads(true);
-                }}
-                onDragEnter={(event) => {
-                  event.preventDefault();
-                  setIsDragOverUploads(true);
-                }}
-                onDragLeave={(event) => {
-                  event.preventDefault();
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                    setIsDragOverUploads(false);
-                  }
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  setIsDragOverUploads(false);
-                  void uploadFiles(event.dataTransfer.files);
-                }}
-                onClick={() => uploadInputRef.current?.click()}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    uploadInputRef.current?.click();
-                  }
-                }}
-              >
-                Drag and drop files here, or click to browse.
-              </div>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                multiple
-                style={{ display: "none" }}
-                onChange={(event) => {
-                  void uploadFiles(event.target.files);
-                  event.currentTarget.value = "";
-                }}
-              />
-
-              {uploadMessage && (
-                <div className="chat-bubble tool" style={{ marginBottom: 8 }}>
-                  {uploadMessage}
-                </div>
-              )}
-              {uploadError && (
-                <div className="chat-bubble" style={{ marginBottom: 8 }}>
-                  <div className="error">{uploadError}</div>
-                </div>
-              )}
-
-              <div className="upload-list">
-                {uploads.length === 0 && (
-                  <div className="chat-bubble">
-                    {isLoadingUploads ? "Loading uploads..." : "No uploaded files yet."}
-                  </div>
-                )}
-                {uploads.length > 0 && (
-                  <>
-                    <div className="upload-section">
-                      <div className="upload-section-title">Uploads</div>
-                      {uploadedFiles.length === 0 && (
-                        <div className="chat-bubble">No uploaded files yet.</div>
-                      )}
-                      {uploadedFiles.map((file) => (
-                        <div key={file.name} className="upload-item">
-                          <div className="upload-name">{file.name}</div>
-                          <div className="upload-meta">
-                            {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
-                          </div>
-                          <div className="upload-actions">
-                            <a
-                              className="button ghost button-xs upload-action-btn"
-                              href={`/api/uploads/${encodeURIComponent(file.name)}`}
-                              download={file.name}
-                            >
-                              Download
-                            </a>
-                            <button
-                              className="button ghost button-xs upload-action-btn"
-                              onClick={() => void deleteUpload(file.name)}
-                              disabled={deletingUploadName === file.name}
-                            >
-                              {deletingUploadName === file.name ? "Deleting..." : "Delete"}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="upload-section">
-                      <div className="upload-section-title">Tritium Breeding Results</div>
-                      {tritiumResultFiles.length === 0 && (
-                        <div className="chat-bubble">No tritium breeding results yet.</div>
-                      )}
-                      {tritiumResultFiles.map((file) => (
-                        <div key={file.name} className="upload-item">
-                          <div className="upload-name">{file.name}</div>
-                          <div className="upload-meta">
-                            {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
-                          </div>
-                          <div className="upload-actions">
-                            <a
-                              className="button ghost button-xs upload-action-btn"
-                              href={`/api/uploads/${encodeURIComponent(file.name)}`}
-                              download={file.name}
-                            >
-                              Download
-                            </a>
-                            <button
-                              className="button ghost button-xs upload-action-btn"
-                              onClick={() => void deleteUpload(file.name)}
-                              disabled={deletingUploadName === file.name}
-                            >
-                              {deletingUploadName === file.name ? "Deleting..." : "Delete"}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </section>
-          <div
-            className="stack-resizer"
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize left stack"
-            onPointerDown={() => setActiveRowResizer("left")}
-          />
-
-          <section
-            className="panel skills-panel"
-            style={{
-              "--domain-accent": activeDomain.accent,
-              "--domain-accent-soft": activeDomain.accentSoft,
-            } as CSSProperties}
-          >
-            <div className="panel-header">
-              <div className="panel-title">Skills</div>
-              <span className="tag">{skills.length} loaded</span>
-            </div>
-            <div className="panel-body">
-              <nav className="skills-tabs" role="tablist" aria-label="Application area">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    role="tab"
-                    aria-selected={activeTab === tab.id}
-                    className={`skills-tab ${activeTab === tab.id ? "active" : ""}`}
-                    style={activeTab === tab.id ? {
-                      "--tab-accent": tab.accent,
-                    } as CSSProperties : undefined}
-                    onClick={() => switchTab(tab.id)}
-                  >
-                    <span className="skills-tab-icon" aria-hidden="true">
-                      <DomainIcon tab={tab.id} size={15} />
-                    </span>
-                    <span className="skills-tab-label">{tab.label}</span>
-                  </button>
-                ))}
-              </nav>
-              <div
-                className="domain-banner"
-                role="region"
-                aria-label={`About ${activeDomain.label}`}
-              >
-                <div className="domain-banner-icon" aria-hidden="true">
-                  <DomainIcon tab={activeDomain.id} size={26} />
-                </div>
-                <div className="domain-banner-text">
-                  <div className="domain-banner-label">{activeDomain.label}</div>
-                  <div className="domain-banner-tagline">{activeDomain.tagline}</div>
-                </div>
-              </div>
-              <input
-                className="input"
-                placeholder="Search skills"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-              />
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-                {filteredSkills.map((skill) => (
-                  <div
-                    key={skill.slug}
-                    className="skill-item"
-                    onClick={() => openSkill(skill.slug)}
-                  >
-                    <div className="skill-name">{skill.name}</div>
-                    <div className="skill-desc">{skill.description || "No description"}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <div
-        className="panel-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize skills panel"
-        onPointerDown={() => setActiveColumnResizer("left")}
-      />
 
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
@@ -1597,24 +1162,6 @@ export default function HomePage() {
         </div>
         </section>
       </div>
-
-      {showSkillModal && selectedSkill && (
-        <div className="modal-backdrop" onClick={() => setShowSkillModal(false)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div className="panel-title">
-                {typeof selectedSkill.frontmatter?.name === "string" ? selectedSkill.frontmatter.name : selectedSkill.slug}
-              </div>
-              <button className="button ghost" onClick={() => setShowSkillModal(false)}>
-                Close
-              </button>
-            </div>
-            <div className="modal-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedSkill.markdown}</ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showAnalyzeModal && (
         <div className="modal-backdrop" onClick={() => setShowAnalyzeModal(false)}>

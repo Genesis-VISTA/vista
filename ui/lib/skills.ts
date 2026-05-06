@@ -42,7 +42,8 @@ export interface SkillProperties {
   license?: string;
   compatibility?: string;
   allowedTools?: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, string | string[]>;
+  tags?: string[];
 }
 
 /**
@@ -107,14 +108,17 @@ function parseFrontmatter(filePath: string): Frontmatter {
     throw new ParseError("SKILL.md frontmatter must be a YAML mapping");
   }
 
-  // Coerce metadata sub-object values to strings (mirrors Python behaviour)
+  // Coerce metadata sub-object values to strings, but preserve string arrays
+  // (e.g. `tags`) as-is so callers can read them without re-parsing.
   const data = parsed.data as Record<string, unknown>;
   if (data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)) {
     data.metadata = Object.fromEntries(
-      Object.entries(data.metadata as Record<string, unknown>).map(([k, v]) => [
-        String(k),
-        String(v),
-      ])
+      Object.entries(data.metadata as Record<string, unknown>).map(([k, v]) => {
+        if (Array.isArray(v)) {
+          return [String(k), v.map((item) => String(item))];
+        }
+        return [String(k), String(v)];
+      })
     );
   }
 
@@ -154,16 +158,24 @@ export function readProperties(skillDir: string): SkillProperties {
     throw new ValidationError("Field 'description' must be a non-empty string");
   }
 
+  const metadata =
+    data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+      ? (data.metadata as Record<string, string | string[]>)
+      : undefined;
+
+  const rawTags = metadata?.tags;
+  const tags = Array.isArray(rawTags)
+    ? rawTags.map((t) => String(t).trim()).filter((t) => t.length > 0)
+    : undefined;
+
   return {
     name: name.trim(),
     description: description.trim(),
     license: typeof data.license === "string" ? data.license : undefined,
     compatibility: typeof data.compatibility === "string" ? data.compatibility : undefined,
     allowedTools: typeof data["allowed-tools"] === "string" ? data["allowed-tools"] : undefined,
-    metadata:
-      data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
-        ? (data.metadata as Record<string, string>)
-        : undefined,
+    metadata,
+    tags,
   };
 }
 
