@@ -72,7 +72,7 @@ class AppSettings(BaseSettings):
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the S3M API. """
-    s3m_token: str
+    s3m_token: str | None = None
     """ Bearer token for S3M API authentication (VISTA_MCP_S3M_TOKEN env var). """
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
