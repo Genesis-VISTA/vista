@@ -2010,3 +2010,279 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ---------- Knowledge Base Explorer ----------------------------------- */
+
+.kb-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-list-panel,
+.kb-detail-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-list-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.kb-list-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.kb-list-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.kb-list-item:hover {
+  border-color: var(--muted);
+}
+
+.kb-list-item[data-selected="true"] {
+  border-color: var(--muted);
+  box-shadow: 0 0 0 1px var(--muted) inset;
+  background: var(--panel);
+}
+
+.kb-list-item-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kb-list-item-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.kb-list-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.kb-list-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kb-status-ready,
+.kb-detail-status-ready {
+  color: #2f7a3a;
+}
+
+.kb-status-warn,
+.kb-detail-status-warn {
+  color: #a06a00;
+}
+
+.kb-status-error,
+.kb-detail-status-error {
+  color: #b3261e;
+}
+
+.kb-status-muted {
+  color: var(--muted);
+}
+
+.kb-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.kb-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.kb-detail-desc {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kb-detail-meta-row {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kb-detail-meta-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-pubs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kb-pubs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.pub-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.pub-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.pub-item-head:hover {
+  background: var(--panel);
+}
+
+.pub-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pub-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pub-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.pub-item-chev {
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.pub-item-body {
+  padding: 0 12px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.pub-fields {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  margin: 8px 0 0 0;
+  font-size: 12px;
+}
+
+.pub-fields dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pub-fields dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.pub-fields dd.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kb-create-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel-2);
+}
+
+.kb-create-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.kb-create-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-create-file-size {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.kb-empty-block {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .kb-layout {
+    grid-template-columns: 1fr;
+  }
+}

@@ -116,8 +116,8 @@ const ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Knowledge Base",
-    disabled: true,
+    label: "Knowledge Base Explorer",
+    href: "/knowledge-bases",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
