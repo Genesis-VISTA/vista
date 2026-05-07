@@ -68,10 +68,19 @@ export type Publication = {
   doi?: string | null;
   keywords?: string[] | null;
   publisher?: string | null;
-  /** Bytes on disk for the PDF. */
+  /** Bytes on disk for the PDF; 0 when the PDF isn't on disk (indexed-only). */
   size: number;
-  /** When the PDF was added to this KB (ISO timestamp). */
+  /** When the publication was added to this KB (ISO timestamp). */
   addedAt: string;
+  /**
+   * Whether the source PDF for this publication is currently on disk.
+   * False for entries reconstructed from a built ChromaDB whose source
+   * PDF is no longer in the KB's pdfs/ directory — those are still
+   * searchable via rag_search but cannot be opened or re-extracted.
+   * Defaults to true for any record without the field set, since older
+   * records were always disk-backed.
+   */
+  hasPdf?: boolean;
 };
 
 /**
@@ -92,8 +101,32 @@ export type KnowledgeBase = {
   buildStatus: KnowledgeBaseBuildStatus;
   /** ISO timestamp of last successful build, or null. */
   lastBuiltAt?: string | null;
+  /**
+   * ISO timestamp of the chroma.sqlite3 file at the time we last
+   * imported citation metadata into the publications array. Used to
+   * decide whether to re-run the enrichment helper. Null means
+   * citations have never been imported (or the DB has been rebuilt
+   * since).
+   */
+  lastCitationSyncAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Filesystem locations this KB is backed by. Surfaced so the UI can
+   * show "this KB shares a corpus with the MCP server's rag_search tool"
+   * for built-in KBs that point at a non-default path.
+   */
+  linkedPaths?: {
+    pdfs: string;
+    ragDb: string;
+  };
+  /**
+   * True when the KB's `pdfs/` and `rag_db/` directories are the same
+   * shared location consumed by the Python MCP server's rag_search tool.
+   * Implies that uploads here will appear in tool calls after the next
+   * `build_rag.py` rebuild.
+   */
+  sharedWithMcp?: boolean;
 };
 
 /** Trimmed shape returned by GET /api/knowledge-bases (list view). */

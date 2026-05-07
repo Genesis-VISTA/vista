@@ -2031,6 +2031,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Same reasoning as .kb-detail-body: override .panel-body's
+   * `overflow: auto` so the inner .kb-list scrolls in its own region. */
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 .kb-list-toolbar {
@@ -2045,6 +2049,11 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 6px;
   overflow-y: auto;
   padding-right: 2px;
+  /* Claim the remaining vertical space inside .kb-list-body so this
+   * list scrolls inside its own region (toolbar + search input stay
+   * pinned above). */
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .kb-list-item {
@@ -2122,6 +2131,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex-direction: column;
   gap: 14px;
   min-height: 0;
+  /* Override .panel-body's `overflow: auto` so the publications list
+   * inside scrolls in its own region. With `auto`, .kb-detail-body
+   * would expand to fit all children and scroll as a whole, which
+   * means `flex: 1 1 0` on .kb-pubs-list never claims a constrained
+   * height. With `hidden`, the flex children are constrained to the
+   * panel-body's actual height and .kb-pubs-list becomes the scroll
+   * region. */
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 .kb-detail-meta {
@@ -2163,6 +2181,12 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Claim the remaining vertical space inside .kb-detail-body so the
+   * publication list scrolls inside its own region rather than pushing
+   * the whole panel down. min-height: 0 unlocks flex's ability to
+   * shrink below content size; the list itself scrolls when overflowed. */
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -2171,14 +2195,21 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: 8px;
   background: var(--panel-2);
   overflow: hidden;
+  /* Don't let flex column shrink rows below their natural height. */
+  flex: 0 0 auto;
 }
 
+/* Collapsed (head-only) rows are locked to a fixed two-line height so
+ * the list scrolls predictably regardless of how long any single
+ * citation's title or author list is. */
 .pub-item-head {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
   cursor: pointer;
+  height: 56px;
+  box-sizing: border-box;
 }
 
 .pub-item-head:hover {
@@ -2198,12 +2229,26 @@ button.chat-bubble.intermediate.collapsed:hover {
   white-space: nowrap;
 }
 
+/* Meta row inside the collapsed head: single-line ellipsis so a paper
+ * with lots of authors/keywords doesn't expand its row. The full info
+ * is still visible after expanding. */
 .pub-item-meta {
   font-size: 11px;
   color: var(--muted);
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pub-item-meta > span {
+  /* Inline so the line ellipses correctly. */
+  display: inline;
+}
+
+.pub-item-meta > span + span::before {
+  /* Visual separator that's part of the inline flow. */
+  content: " ";
 }
 
 .pub-item-chev {
@@ -2285,4 +2330,57 @@ button.chat-bubble.intermediate.collapsed:hover {
   .kb-layout {
     grid-template-columns: 1fr;
   }
+}
+
+.kb-pubs-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.kb-pubs-hint {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+.kb-pubs-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-pubs-count {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 2px 4px 2px;
+}
+
+.pub-item-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.pub-item-note {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.pub-item-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
 }
