@@ -36,7 +36,7 @@ export const BUILTIN_PROJECTS: Project[] = [
       "Molten salt tritium breeding agent: thermophysical analysis, phase diagrams, GP property prediction, FORGE fine-tuning on Frontier, and dataset documentation.",
     skills: ["salt-analysis", "salt-prediction", "model-fine-tuning", "datacard-generation"],
     datasets: ["MSTDB"],
-    knowledgeBases: [],
+    knowledgeBases: ["Molten Salt Papers"],
     builtin: true,
   },
   {
