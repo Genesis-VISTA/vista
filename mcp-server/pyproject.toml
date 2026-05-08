@@ -15,6 +15,19 @@ dependencies = [
     "cachetools>=7.0.5",
     "httpx>=0.27",
     "pyyaml>=6.0",
+    # Required by `build_rag.py` (which lives at the repo root and is
+    # imported by `scripts/index_publications.py`). The Knowledge Bases
+    # page spawns the indexer via `uv run --directory mcp-server`, which
+    # uses this project's environment to resolve imports — so the deps
+    # `build_rag.py` needs must be declared here too.
+    #
+    # PyMuPDF is the package; `import fitz` is its (still-supported)
+    # legacy module name. Do NOT install the unrelated `fitz` package
+    # from PyPI (it's an abandoned 2017 release that shadows PyMuPDF's
+    # legacy name — see https://pymupdf.readthedocs.io/en/latest/installation.html).
+    "pymupdf>=1.26",
+    # Azure OpenAI client for citation extraction.
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]

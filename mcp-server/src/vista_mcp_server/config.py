@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pathlib import Path
 import textwrap
 from typing import Literal, Annotated as A
@@ -95,13 +95,36 @@ class AppSettings(BaseSettings):
     Same key as the AmSC inference API, get it from https://api.i2-core.american-science-cloud.org
     """
 
-    rag_db_path: ResolvedPath = Path("../rag_db")
+    rag_db_path: A[
+        ResolvedPath,
+        Field(
+            default=Path("../knowledge_bases/molten_salts_db"),
+            # Honor both the canonical name and the legacy one. Pydantic's
+            # AliasChoices is order-sensitive: the first match wins, so
+            # the new name takes precedence when both are set.
+            # The env_prefix ("VISTA_MCP_") still applies, so users set
+            # VISTA_MCP_MOLTEN_SALTS_DB_PATH=... in their .env.
+            validation_alias=AliasChoices(
+                "VISTA_MCP_MOLTEN_SALTS_DB_PATH",
+                "VISTA_MCP_RAG_DB_PATH",
+                # Without the prefix, pydantic-settings still tries the
+                # field name against env vars. Keep the bare lowercase
+                # form as a third choice for any code that sets it
+                # programmatically (e.g. in tests).
+                "rag_db_path",
+            ),
+        ),
+    ]
     rag_model: str = "google/embeddinggemma-300m"
 
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
         env_file=["./.env", "../.env"],
         extra='ignore',
+        # With validation_alias set on rag_db_path, pydantic stops
+        # accepting the bare field name as a kwarg unless this is true.
+        # Keeps `AppSettings(rag_db_path=...)` working in tests.
+        populate_by_name=True,
     )
 
 

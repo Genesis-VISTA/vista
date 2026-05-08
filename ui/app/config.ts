@@ -4,10 +4,11 @@ import fs from "node:fs";
 /**
  * Load environment variables from the repo-root `.env` file (one
  * directory above `ui/`) into `process.env`, but only for variables
- * not already set. This lets the Knowledge Base Explorer honor the
- * same `VISTA_MCP_RAG_DB_PATH` / `VISTA_MCP_RAG_PDFS_PATH` settings
- * that the Python MCP server's pydantic-settings loader reads from
- * `<repo>/.env` — without those vars also being in `ui/.env.local`.
+ * not already set. This lets the Knowledge Bases page honor the same
+ * `VISTA_MCP_MOLTEN_SALTS_DB_PATH` / `VISTA_MCP_RAG_PDFS_PATH` settings
+ * (and the legacy `VISTA_MCP_RAG_DB_PATH` alias) that the Python MCP
+ * server's pydantic-settings loader reads from `<repo>/.env` — without
+ * those vars also being in `ui/.env.local`.
  *
  * Best-effort and silent: if the file is missing, malformed, or
  * unreadable, we just skip. We don't bring in a dependency like
@@ -59,9 +60,10 @@ export const config = {
    * Directory where Knowledge Base metadata + their PDF corpora are stored.
    * Each user-created KB gets a subdirectory:
    *   <knowledgeBasesDir>/<slug>/{kb.json, pdfs/, rag_db/}
-   * Built-in KBs (e.g. Molten Salt Papers) may instead point at a shared
-   * pdfs/ and rag_db/ pair via the seed configuration in
-   * `lib/knowledge-bases-server.ts`.
+   * Built-in KBs (e.g. Molten Salt Papers) may instead point at shared
+   * paths via the seed configuration in `lib/knowledge-bases-server.ts`
+   * — for the molten-salt seed, those paths are `<repo>/pdfs` and
+   * `<repo>/knowledge_bases/molten_salts_db`.
    * Override with the KNOWLEDGE_BASES_DIR environment variable.
    */
   knowledgeBasesDir: path.resolve(
@@ -74,13 +76,19 @@ export const config = {
    * pinned to this location so adding a PDF in the UI lands in the same
    * corpus the MCP server queries.
    *
-   * Mirrors the MCP server's `VISTA_MCP_RAG_DB_PATH` setting so a single
-   * env var in `.env` configures both sides. Default `../rag_db` — i.e.
-   * `<repo>/rag_db`, which is what `mcp-server/.../rag_mcp.py` resolves
-   * to when launched from `mcp-server/` (cwd `<repo>/mcp-server`).
+   * Configured by `VISTA_MCP_MOLTEN_SALTS_DB_PATH` in the repo-root .env
+   * (also auto-loaded above). The legacy name `VISTA_MCP_RAG_DB_PATH` is
+   * still honored as a fallback so older .env files keep working.
+   *
+   * Default `../knowledge_bases/molten_salts_db` — i.e.
+   * `<repo>/knowledge_bases/molten_salts_db`, which is what
+   * `mcp-server/.../rag_mcp.py` resolves to when launched from
+   * `mcp-server/` (cwd `<repo>/mcp-server`).
    */
   ragDbPath: path.resolve(
-    process.env.VISTA_MCP_RAG_DB_PATH ?? path.join(process.cwd(), "../rag_db")
+    process.env.VISTA_MCP_MOLTEN_SALTS_DB_PATH
+      ?? process.env.VISTA_MCP_RAG_DB_PATH
+      ?? path.join(process.cwd(), "../knowledge_bases/molten_salts_db")
   ),
 
   /**

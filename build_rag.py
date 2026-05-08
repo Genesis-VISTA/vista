@@ -327,6 +327,113 @@ class TextRAG:
     # ------------------------------------------------------------------
     # Indexing
     # ------------------------------------------------------------------
+    def index_single_pdf(self, pdf_path: Path) -> Dict[str, Any]:
+        """
+        Index a single PDF: chunk its text into the text_chunks collection
+        and (if extract_citations is True) extract citation metadata into
+        the citations collection.
+
+        Returns a status dict with the citation fields if extraction
+        succeeded — useful for callers that want to surface the metadata
+        immediately rather than having to query the DB back. The dict has
+        the shape:
+
+            {
+                "filename": "<basename>",
+                "status": "indexed" | "skipped" | "failed",
+                "error": "..." | None,
+                "chunk_count": <int>,
+                "citation": { ...citation fields or None... },
+            }
+
+        `skipped` means the PDF was already in the text_chunks collection
+        and `force_reindex` was False. The caller can treat skipped as a
+        success — the data is there, we just didn't redo the work.
+
+        This method is independent of `index_pdfs()` so the same per-PDF
+        logic can be invoked from a server-side incremental indexer
+        (e.g. when a user uploads a single paper through the UI).
+        """
+        result: Dict[str, Any] = {
+            "filename": pdf_path.name,
+            "status": "failed",
+            "error": None,
+            "chunk_count": 0,
+            "citation": None,
+        }
+
+        # Idempotency: if any text chunks for this source already exist
+        # in the DB, skip unless we're force-reindexing. We use the
+        # citation collection's deterministic id (`<stem>_citation`) as
+        # the cheap check. The text collection is harder to probe by
+        # source without a query, but if the citation row exists then
+        # the upstream indexing run for this paper completed.
+        cite_id = f"{pdf_path.stem}_citation"
+        if not self.force_reindex:
+            try:
+                existing = self.citation_collection.get(ids=[cite_id])
+                if existing and existing.get("ids"):
+                    result["status"] = "skipped"
+                    metas = existing.get("metadatas") or []
+                    if metas:
+                        result["citation"] = metas[0]
+                    return result
+            except Exception:
+                # Any error here means "not present"; fall through to
+                # actual indexing.
+                pass
+
+        try:
+            # --- Text chunks ---
+            text_chunks = self.extract_text_from_pdf(pdf_path)
+            if text_chunks:
+                texts = [c["text"] for c in text_chunks]
+                embeddings = self.embed_text(texts)
+                ids = [f"{pdf_path.stem}_text_{j}" for j in range(len(text_chunks))]
+                metadatas = [c["metadata"] for c in text_chunks]
+                # `upsert` so re-indexing the same file replaces rather
+                # than errors. Force-reindex callers will hit this path
+                # too.
+                self.text_collection.upsert(
+                    embeddings=embeddings,
+                    documents=texts,
+                    metadatas=metadatas,
+                    ids=ids,
+                )
+                result["chunk_count"] = len(text_chunks)
+                log.info("  ✓ Indexed %d text chunks for %s", len(text_chunks), pdf_path.name)
+
+            # --- Citation metadata ---
+            if self.extract_citations:
+                citation = self._extract_citation(pdf_path)
+                if citation:
+                    doc_text = self._citation_to_document(citation)
+                    doc_embedding = self.embed_text([doc_text])[0]
+                    meta = self._citation_to_metadata(citation, pdf_path.name)
+
+                    self.citation_collection.upsert(
+                        embeddings=[doc_embedding],
+                        documents=[doc_text],
+                        metadatas=[meta],
+                        ids=[cite_id],
+                    )
+                    result["citation"] = meta
+                    log.info(
+                        "  ✓ Stored citation for %s: %s",
+                        pdf_path.name,
+                        citation.get("title", "(no title)"),
+                    )
+                else:
+                    log.warning("  ✗ Citation extraction failed for %s", pdf_path.name)
+
+            result["status"] = "indexed"
+        except Exception as e:
+            log.error("  ✗ Error processing %s: %s", pdf_path.name, e)
+            result["error"] = str(e)
+            result["status"] = "failed"
+
+        return result
+
     def index_pdfs(self):
         """Process all PDFs: index text chunks + extract citation metadata."""
         if self.db_exists and not self.force_reindex:
@@ -355,42 +462,7 @@ class TextRAG:
 
         for i, pdf_path in enumerate(pdf_files, 1):
             log.info("[%d/%d] %s", i, len(pdf_files), pdf_path.name)
-
-            try:
-                # --- Text chunks ---
-                text_chunks = self.extract_text_from_pdf(pdf_path)
-                if text_chunks:
-                    texts = [c["text"] for c in text_chunks]
-                    embeddings = self.embed_text(texts)
-                    self.text_collection.add(
-                        embeddings=embeddings,
-                        documents=texts,
-                        metadatas=[c["metadata"] for c in text_chunks],
-                        ids=[f"{pdf_path.stem}_text_{j}" for j in range(len(text_chunks))],
-                    )
-                    log.info("  ✓ Indexed %d text chunks", len(text_chunks))
-
-                # --- Citation metadata ---
-                if self.extract_citations:
-                    citation = self._extract_citation(pdf_path)
-                    if citation:
-                        doc_text = self._citation_to_document(citation)
-                        doc_embedding = self.embed_text([doc_text])[0]
-                        meta = self._citation_to_metadata(citation, pdf_path.name)
-
-                        self.citation_collection.add(
-                            embeddings=[doc_embedding],
-                            documents=[doc_text],
-                            metadatas=[meta],
-                            ids=[f"{pdf_path.stem}_citation"],
-                        )
-                        log.info("  ✓ Stored citation: %s", citation.get("title", "(no title)"))
-                    else:
-                        log.warning("  ✗ Citation extraction failed")
-
-            except Exception as e:
-                log.error("  ✗ Error processing %s: %s", pdf_path.name, e)
-                continue
+            self.index_single_pdf(pdf_path)
 
         log.info("=" * 50)
         log.info("Indexing complete!")
@@ -467,7 +539,7 @@ class TextRAG:
 if __name__ == "__main__":
     rag = TextRAG(
         pdf_folder="./pdfs",
-        db_path="./rag_db",
+        db_path="./knowledge_bases/molten_salts_db",
         extract_citations=True,   # flip to False to skip LLM calls
         force_reindex=False,      # flip to True to rebuild
     )

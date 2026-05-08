@@ -81,6 +81,32 @@ export type Publication = {
    * records were always disk-backed.
    */
   hasPdf?: boolean;
+  /**
+   * Status of this publication in the underlying ChromaDB.
+   *
+   *   unindexed - On disk but not yet chunked/embedded into chroma.
+   *   queued    - Indexing job has been registered but the indexer
+   *               subprocess hasn't started touching this row yet.
+   *   indexing  - Indexer subprocess is actively working on this row
+   *               (or queued behind another row in the same job).
+   *   indexed   - Text chunks (and possibly citation row) are in chroma.
+   *   failed    - Indexing was attempted and raised; see indexError.
+   *
+   * The field is optional for backwards compatibility; readers should
+   * treat its absence as "indexed" for entries on shared-path KBs
+   * (since those PDFs were almost certainly already in the chroma DB
+   * the molten-salt corpus was built from) and "unindexed" otherwise.
+   */
+  indexStatus?:
+    | "unindexed"
+    | "queued"
+    | "indexing"
+    | "indexed"
+    | "failed";
+  /** Last error message from a failed indexing attempt. */
+  indexError?: string | null;
+  /** ISO timestamp of the last successful indexing. */
+  indexedAt?: string | null;
 };
 
 /**
@@ -121,8 +147,8 @@ export type KnowledgeBase = {
     ragDb: string;
   };
   /**
-   * True when the KB's `pdfs/` and `rag_db/` directories are the same
-   * shared location consumed by the Python MCP server's rag_search tool.
+   * True when the KB's source PDF folder and ChromaDB are the shared
+   * locations consumed by the Python MCP server's rag_search tool.
    * Implies that uploads here will appear in tool calls after the next
    * `build_rag.py` rebuild.
    */

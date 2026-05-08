@@ -10,8 +10,13 @@ pipeline in `text_rag.py`).  It loads the embedding model once at startup and
 keeps the ChromaDB client open for the lifetime of the MCP server.
 
 Environment variables:
-    VISTA_MCP_RAG_DB_PATH    Path to the ChromaDB database directory.
-                              Default: ../rag_db  (relative to cwd)
+    VISTA_MCP_MOLTEN_SALTS_DB_PATH
+                              Path to the ChromaDB database directory.
+                              Default: ../knowledge_bases/molten_salts_db
+                              (relative to cwd; the MCP server's cwd is
+                              the `mcp-server/` directory).
+                              The legacy name VISTA_MCP_RAG_DB_PATH is
+                              also honored for backwards compatibility.
     VISTA_MCP_RAG_MODEL      SentenceTransformers model for query embeddings.
                               Default: google/embeddinggemma-300m
 """

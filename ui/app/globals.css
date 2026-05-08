@@ -2384,3 +2384,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
 }
+
+.pub-item-tag-indexing {
+  background: var(--panel-2);
+  color: #a06a00;
+  border-color: #d8b04a;
+}
+
+.pub-item-tag-failed {
+  background: var(--panel-2);
+  color: #b3261e;
+  border-color: #e8a4a0;
+}

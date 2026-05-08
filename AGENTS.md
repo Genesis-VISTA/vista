@@ -81,7 +81,7 @@ Key files:
 
 ### Key Data
 - **Salt DB**: `skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json` — evaluated thermophysical properties for 100+ salts
-- **RAG DB**: `rag_db/chroma.sqlite3` — ChromaDB vector store of indexed research papers (embedding model: `google/embedding-gemma-300m`)
+- **RAG DB**: `knowledge_bases/molten_salts_db/chroma.sqlite3` — ChromaDB vector store of indexed research papers (embedding model: `google/embedding-gemma-300m`)
 - **Skills**: `skills/salt-analysis/` and `skills/salt-prediction/` — domain scripts mounted into Docker sandbox at `/mnt/skills`
 
 ## Environment Variables
