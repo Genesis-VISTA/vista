@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  IndexProgress,
   KnowledgeBase,
   KnowledgeBaseSummary,
   Publication,
@@ -721,6 +722,8 @@ function KbDetailView({
           </div>
         )}
 
+        {kb.indexProgress && <IndexingProgressBar progress={kb.indexProgress} />}
+
         <div
           className={`dropzone ${isDragOver ? "active" : ""}`}
           onDragOver={(e) => {
@@ -804,6 +807,106 @@ function KbDetailView({
         </div>
       </div>
     </>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Live indexer progress bar                                             */
+/* ---------------------------------------------------------------------- */
+
+function IndexingProgressBar({ progress }: { progress: IndexProgress }) {
+  // Elapsed seconds since the run started. We update this from a
+  // 1Hz interval rather than reading Date.now() during render —
+  // React 19's react-hooks/purity rule (correctly) flags Date.now()
+  // in render as impure. Reading it in setState is fine because
+  // setState callbacks aren't part of render.
+  const computeElapsed = (): number =>
+    Math.max(0, Math.floor(Date.now() / 1000 - progress.startedAt));
+  const [elapsed, setElapsed] = useState(computeElapsed);
+  useEffect(() => {
+    setElapsed(computeElapsed());
+    const id = window.setInterval(() => setElapsed(computeElapsed()), 1000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress.startedAt]);
+
+  // Percentage shown in the bar. For the per-paper "indexing" phase
+  // we use processed/total. For the model-loading phase we show a
+  // small slice (5%) so the bar is visibly *something* without
+  // implying actual progress through the papers.
+  let pct: number;
+  let label: string;
+  let detail: string | null;
+  if (progress.phase === "loading_model") {
+    pct = 5;
+    label = "Loading embedding model…";
+    detail = `0 of ${progress.total} ${progress.total === 1 ? "paper" : "papers"}`;
+  } else if (progress.phase === "done") {
+    pct = 100;
+    label = "Finishing up…";
+    detail = `${progress.total} of ${progress.total}`;
+  } else {
+    // "indexing"
+    pct = progress.total > 0
+      ? Math.min(100, Math.round((progress.processed / progress.total) * 100))
+      : 0;
+    if (progress.current) {
+      // Show what step we're on for this paper. The citation step is
+      // the slow one — when it sticks for >30s users tend to think the
+      // run is hung, so making it visible reduces support pings.
+      switch (progress.subPhase) {
+        case "citation":
+          label = `Extracting citation metadata: ${progress.current}`;
+          break;
+        case "chunks":
+          label = `Embedding chunks: ${progress.current}`;
+          break;
+        case "done":
+          label = `Finished ${progress.current}`;
+          break;
+        case "starting":
+        default:
+          label = `Indexing ${progress.current}`;
+          break;
+      }
+    } else {
+      label = "Indexing…";
+    }
+    detail = `${progress.processed} of ${progress.total} ${
+      progress.total === 1 ? "paper" : "papers"
+    }`;
+  }
+
+  const elapsedLabel =
+    elapsed < 60
+      ? `${elapsed}s elapsed`
+      : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed`;
+
+  return (
+    <div
+      className="kb-indexing-progress"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      aria-label={label}
+    >
+      <div className="kb-indexing-progress-row">
+        <div className="kb-indexing-progress-label">{label}</div>
+        <div className="kb-indexing-progress-counts">
+          {detail && <span>{detail}</span>}
+          <span className="kb-indexing-progress-elapsed">{elapsedLabel}</span>
+        </div>
+      </div>
+      <div className="kb-indexing-progress-track">
+        <div
+          className={`kb-indexing-progress-fill ${
+            progress.phase === "loading_model" ? "indeterminate" : ""
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

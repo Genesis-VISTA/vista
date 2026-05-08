@@ -60,14 +60,20 @@ export const config = {
    * Directory where Knowledge Base metadata + their PDF corpora are stored.
    * Each user-created KB gets a subdirectory:
    *   <knowledgeBasesDir>/<slug>/{kb.json, pdfs/, rag_db/}
+   *
+   * Default `<repo>/knowledge_bases` — the same root as the seeded
+   * `molten_salts_db` corpus. Each user-created KB sits as a sibling
+   * directory next to it (e.g. `<repo>/knowledge_bases/my-papers/`).
+   *
    * Built-in KBs (e.g. Molten Salt Papers) may instead point at shared
    * paths via the seed configuration in `lib/knowledge-bases-server.ts`
-   * — for the molten-salt seed, those paths are `<repo>/pdfs` and
-   * `<repo>/knowledge_bases/molten_salts_db`.
+   * — for the molten-salt seed, those paths are `<repo>/pdfs` (source
+   * PDFs) and `<repo>/knowledge_bases/molten_salts_db` (chroma).
+   *
    * Override with the KNOWLEDGE_BASES_DIR environment variable.
    */
   knowledgeBasesDir: path.resolve(
-    process.env.KNOWLEDGE_BASES_DIR ?? path.join(process.cwd(), "../data/knowledge-bases")
+    process.env.KNOWLEDGE_BASES_DIR ?? path.join(process.cwd(), "../knowledge_bases")
   ),
 
   /**

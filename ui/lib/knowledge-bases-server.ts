@@ -35,6 +35,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "@/app/config";
 import type {
+  IndexProgress,
   KnowledgeBase,
   KnowledgeBaseSummary,
   Publication,
@@ -197,6 +198,70 @@ async function detectBuildArtifacts(
     return { exists: true, lastBuiltAt: s.mtime.toISOString() };
   } catch {
     return { exists: false, lastBuiltAt: null };
+  }
+}
+
+/**
+ * Read the indexer's progress file if one exists. The Python indexer
+ * writes `<ragDbDir>/.indexing.progress.json` after every phase
+ * boundary (loading model → per paper → done) and clears it on exit.
+ *
+ * Returns null when no file is present, when it's malformed, or when
+ * its `started_at` looks suspiciously stale (older than 2 hours — the
+ * lock would normally clear, but a SIGKILL or kernel panic could
+ * leave a phantom file). The shape this returns matches the
+ * IndexProgress type the UI expects.
+ */
+const STALE_PROGRESS_SECONDS = 2 * 60 * 60;
+
+async function readIndexProgress(
+  ragDbDir: string
+): Promise<IndexProgress | null> {
+  try {
+    const raw = await readFile(
+      path.join(ragDbDir, ".indexing.progress.json"),
+      "utf-8"
+    );
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const phase = parsed.phase;
+    const subPhaseRaw = parsed.sub_phase ?? parsed.subPhase;
+    const processed = parsed.processed;
+    const total = parsed.total;
+    const current = parsed.current;
+    const startedAt = parsed.started_at ?? parsed.startedAt;
+    if (
+      (phase !== "loading_model" && phase !== "indexing" && phase !== "done")
+      || typeof processed !== "number"
+      || typeof total !== "number"
+      || (current !== null && typeof current !== "string")
+      || typeof startedAt !== "number"
+    ) {
+      return null;
+    }
+    if (Date.now() / 1000 - startedAt > STALE_PROGRESS_SECONDS) {
+      return null;
+    }
+    // Validate sub_phase loosely — if the script emits a value we
+    // don't recognize, fall through to undefined rather than failing.
+    let subPhase: IndexProgress["subPhase"];
+    if (
+      subPhaseRaw === "starting"
+      || subPhaseRaw === "citation"
+      || subPhaseRaw === "chunks"
+      || subPhaseRaw === "done"
+    ) {
+      subPhase = subPhaseRaw;
+    }
+    return {
+      phase,
+      subPhase,
+      processed,
+      total,
+      current,
+      startedAt,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -541,6 +606,9 @@ async function spawnIndexer(
 
     let stdout = "";
     let stderr = "";
+    // Buffer for line-by-line stderr forwarding — we tag each line so
+    // it's distinguishable from Next.js's own log output in the terminal.
+    let stderrLineBuffer = "";
     let settled = false;
 
     let child;
@@ -575,7 +643,21 @@ async function spawnIndexer(
       stdout += chunk.toString();
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      // Forward complete lines to the parent's stderr so the user can
+      // watch the indexer's progress in their terminal in real time.
+      // Buffer the trailing partial line until the next chunk so we
+      // don't split log messages mid-line.
+      stderrLineBuffer += text;
+      let nl: number;
+      while ((nl = stderrLineBuffer.indexOf("\n")) !== -1) {
+        const line = stderrLineBuffer.slice(0, nl);
+        stderrLineBuffer = stderrLineBuffer.slice(nl + 1);
+        if (line.length > 0) {
+          process.stderr.write(`[indexer] ${line}\n`);
+        }
+      }
     });
     child.on("error", (err) => {
       if (settled) return;
@@ -592,6 +674,11 @@ async function spawnIndexer(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // Flush any trailing partial stderr line that didn't end in \n.
+      if (stderrLineBuffer.length > 0) {
+        process.stderr.write(`[indexer] ${stderrLineBuffer}\n`);
+        stderrLineBuffer = "";
+      }
       if (code !== 0) {
         // Surface the script's stderr to the user. The script writes
         // actionable messages there (e.g. "Missing Python dependency...
@@ -1086,7 +1173,18 @@ async function readKbJson(slug: string): Promise<KnowledgeBase | null> {
     // Persist the reconciled state so subsequent reads are cheaper and
     // so a `kb.json`-only consumer (e.g. the chat route, eventually)
     // sees an up-to-date publication list.
+    // NOTE: we persist BEFORE attaching indexProgress below, since
+    // progress is transient run state that doesn't belong in kb.json.
     await writeKbJson(kb);
+  }
+
+  // Attach live indexer progress (read fresh from disk every time;
+  // never persisted into kb.json). Done after the optional persist so
+  // the in-memory return value carries it but the on-disk file does
+  // not.
+  const progress = await readIndexProgress(ragDbDir);
+  if (progress) {
+    kb.indexProgress = progress;
   }
 
   return kb;
@@ -1120,7 +1218,11 @@ async function writeKbJson(kb: KnowledgeBase): Promise<void> {
   // Make sure the (possibly shared) PDF dir exists so subsequent uploads
   // don't trip over a missing parent.
   await mkdir(kbPdfDir(kb.slug), { recursive: true });
-  const next: KnowledgeBase = { ...kb, updatedAt: new Date().toISOString() };
+  // Strip transient run state before serializing. `indexProgress` is
+  // re-read from disk on every fetch and must not be persisted.
+  const { indexProgress: _omit, ...rest } = kb;
+  void _omit;
+  const next: KnowledgeBase = { ...rest, updatedAt: new Date().toISOString() };
   await writeFile(kbJsonPath(kb.slug), JSON.stringify(next, null, 2), "utf-8");
 }
 
@@ -1367,11 +1469,27 @@ export async function addPublications(
   // Spawn the indexer in the background. It will: (a) flip queued ->
   // indexing on these rows, (b) chunk + embed each PDF into the KB's
   // chroma DB, (c) flip indexing -> indexed (or failed) and persist.
-  // The UI's poll loop picks up status changes within ~5s. The Azure
-  // OpenAI key is only needed for citation extraction; if it's not set
-  // we still index text chunks (the user just won't see titles auto-
-  // populate).
-  const extractCitations = !!process.env.AZURE_OPENAI_API_KEY;
+  // The UI's poll loop picks up status changes within ~5s.
+  //
+  // Citation extraction needs LLM credentials. Enable it if EITHER
+  // schema is set: Azure-style (AZURE_OPENAI_*) or generic OpenAI-
+  // compatible (OPENAI_API_KEY). The Python side's _resolve_llm_config
+  // mirrors the same logic — keep these in sync. If neither is set we
+  // still index text chunks (semantic search still works; titles just
+  // won't auto-populate).
+  const hasAzureCreds =
+    !!process.env.AZURE_OPENAI_ENDPOINT
+    && !!process.env.AZURE_OPENAI_API_KEY
+    && !!process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+  const hasOpenAICreds = !!process.env.OPENAI_API_KEY;
+  // Legacy fallback: ENDPOINT_URL + DEPLOYMENT_NAME + AZURE_OPENAI_API_KEY
+  // also worked in older setups; honor it here so we don't surprise
+  // anyone who hasn't migrated their .env yet.
+  const hasLegacyAzureCreds =
+    !!process.env.ENDPOINT_URL
+    && !!process.env.DEPLOYMENT_NAME
+    && !!process.env.AZURE_OPENAI_API_KEY;
+  const extractCitations = hasAzureCreds || hasOpenAICreds || hasLegacyAzureCreds;
   kickOffIndexing(
     slug,
     added.map((p) => p.filename),

@@ -27,7 +27,11 @@ dependencies = [
     # legacy name — see https://pymupdf.readthedocs.io/en/latest/installation.html).
     "pymupdf>=1.26",
     # Azure OpenAI client for citation extraction.
-    "openai>=1.0",
+    # Need >=1.69 for the `reasoning_effort` kwarg (used to bound
+    # internal chain-of-thought on GPT-5 family + o-series models —
+    # otherwise the model can burn the entire token budget on hidden
+    # reasoning and return an empty string).
+    "openai>=1.69",
 ]
 
 [project.optional-dependencies]

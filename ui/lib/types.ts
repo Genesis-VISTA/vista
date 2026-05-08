@@ -117,6 +117,41 @@ export type Publication = {
  */
 export type KnowledgeBaseBuildStatus = "pending" | "ready" | "stale" | "building" | "failed";
 
+/**
+ * Live indexer progress, populated when an indexing job is currently
+ * running on the KB's chroma DB. Read from a `.indexing.progress.json`
+ * file the Python indexer writes after each phase boundary.
+ *
+ * Absent (undefined) when no indexer is running. The `phase` field
+ * distinguishes the slow startup (`loading_model`) from per-paper work
+ * (`indexing`) and end-of-run (`done`) so the UI can render an
+ * appropriately worded message.
+ */
+export type IndexProgress = {
+  phase: "loading_model" | "indexing" | "done";
+  /**
+   * Finer-grained phase for the current paper, surfaced so the UI can
+   * tell the user whether the indexer is on the slow LLM step or the
+   * fast chunking step.
+   *
+   *   starting   - About to begin work on `current` (between papers).
+   *   citation   - Calling Azure OpenAI for citation metadata. This is
+   *                the slowest single step (~5-30s normal, can stretch
+   *                to 60s+ under load).
+   *   chunks     - Extracting text + embedding chunks + writing to chroma.
+   *   done       - This paper is finished.
+   */
+  subPhase?: "starting" | "citation" | "chunks" | "done";
+  /** Number of papers fully processed so far. */
+  processed: number;
+  /** Total papers this run will process. */
+  total: number;
+  /** Filename currently being indexed, or null between papers. */
+  current: string | null;
+  /** Unix epoch seconds when the indexer started this run. */
+  startedAt: number;
+};
+
 export type KnowledgeBase = {
   slug: string;
   name: string;
@@ -153,6 +188,12 @@ export type KnowledgeBase = {
    * `build_rag.py` rebuild.
    */
   sharedWithMcp?: boolean;
+  /**
+   * Live progress of the currently-running indexer subprocess, if any.
+   * Read fresh from disk on every kb.json fetch — never persisted into
+   * kb.json itself, since it represents transient run state.
+   */
+  indexProgress?: IndexProgress | null;
 };
 
 /** Trimmed shape returned by GET /api/knowledge-bases (list view). */

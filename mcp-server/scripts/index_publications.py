@@ -75,6 +75,37 @@ from typing import Any
 LOCK_TIMEOUT_SECONDS = 600  # 10 minutes
 
 
+# File the script writes after each paper so the Node side can render
+# a progress bar without waiting for the run to complete. Lives next to
+# the indexer lock under <db-path>/.
+PROGRESS_FILENAME = ".indexing.progress.json"
+
+
+def _write_progress(db_path: Path, payload: dict[str, Any]) -> None:
+    """
+    Atomic-ish progress file write: serialize to a tmp file in the same
+    directory, then rename over the target. Avoids a reader catching us
+    mid-write and getting truncated JSON. Errors are swallowed — a
+    failed progress write should never block indexing.
+    """
+    try:
+        target = db_path / PROGRESS_FILENAME
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, target)
+    except OSError:
+        pass
+
+
+def _clear_progress(db_path: Path) -> None:
+    try:
+        (db_path / PROGRESS_FILENAME).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
 
@@ -243,6 +274,34 @@ def main() -> int:
         return 2
 
     try:
+        started_at = time.time()
+
+        # Startup banner — visible in the parent's terminal so the user
+        # can confirm the indexer was actually invoked, with what args.
+        print(
+            f"=== indexer starting ===\n"
+            f"  db_path:    {db_path}\n"
+            f"  pdfs_dir:   {pdfs_dir}\n"
+            f"  filenames:  {filenames}\n"
+            f"  citations:  {'disabled' if args.no_citations else 'enabled'}\n"
+            f"  force:      {args.force_reindex}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        # Phase 1: loading the embedding model. Sentence-transformers
+        # cold-start is the slowest single step (~3-5s), so we publish
+        # progress before initializing TextRAG to avoid the appearance
+        # of being stuck at 0/N.
+        _write_progress(db_path, {
+            "phase": "loading_model",
+            "processed": 0,
+            "total": len(filenames),
+            "current": None,
+            "started_at": started_at,
+        })
+        print("Loading embedding model...", file=sys.stderr, flush=True)
+
         # Initialize TextRAG. This loads the sentence-transformer model
         # (~2-5s cold) and opens the Chroma collections.
         try:
@@ -254,13 +313,36 @@ def main() -> int:
             )
         except Exception as e:  # noqa: BLE001
             _err(f"Failed to initialize TextRAG: {e}")
+            _clear_progress(db_path)
             return 1
 
         # Override force_reindex flag for the per-PDF call.
         rag.force_reindex = args.force_reindex
+        print(
+            f"Embedding model loaded; processing {len(filenames)} file(s)",
+            file=sys.stderr,
+            flush=True,
+        )
 
         results: list[dict[str, Any]] = []
-        for filename in filenames:
+        for i, filename in enumerate(filenames):
+            print(
+                f"--- [{i + 1}/{len(filenames)}] {filename} ---",
+                file=sys.stderr,
+                flush=True,
+            )
+
+            # Update progress to "indexing this file" before doing the
+            # work. The UI will show "indexing N/total: filename".
+            _write_progress(db_path, {
+                "phase": "indexing",
+                "sub_phase": "starting",
+                "processed": i,
+                "total": len(filenames),
+                "current": filename,
+                "started_at": started_at,
+            })
+
             pdf_path = pdfs_dir / filename
             if not pdf_path.is_file():
                 results.append({
@@ -271,12 +353,47 @@ def main() -> int:
                     "citation": None,
                 })
                 continue
-            res = rag.index_single_pdf(pdf_path)
+
+            # Per-paper phase progress: TextRAG.index_single_pdf calls
+            # this callback at "citation" (start of LLM call), "chunks"
+            # (start of chunk + embed), and "done". Forward each phase
+            # into the progress file so the UI can show "extracting
+            # citation metadata for paper X" vs "embedding chunks for
+            # paper X" — the most useful distinction since the citation
+            # phase is the slow, network-bound one.
+            def make_progress_cb(idx: int, fname: str):  # noqa: ANN001
+                def cb(payload: dict[str, Any]) -> None:
+                    sub_phase = payload.get("phase", "indexing")
+                    _write_progress(db_path, {
+                        "phase": "indexing",
+                        "sub_phase": sub_phase,
+                        "processed": idx,
+                        "total": len(filenames),
+                        "current": fname,
+                        "started_at": started_at,
+                    })
+                return cb
+
+            res = rag.index_single_pdf(pdf_path, progress_cb=make_progress_cb(i, filename))
             results.append(res)
+
+        # Final progress write: phase=done, processed=total. The Node
+        # side reads this once to confirm completion before clearing
+        # its in-memory progress state, then deletes the file.
+        _write_progress(db_path, {
+            "phase": "done",
+            "processed": len(filenames),
+            "total": len(filenames),
+            "current": None,
+            "started_at": started_at,
+        })
 
         _emit_json({"ok": True, "results": results})
         return 0
     finally:
+        # Always clear the progress file on exit — successful or not —
+        # so the UI doesn't show stale state on the next page load.
+        _clear_progress(db_path)
         try:
             os.close(lock_fd)
         except OSError:
