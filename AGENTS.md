@@ -96,5 +96,5 @@ Backend env vars use `VISTA_MCP_` prefix. Key backend config fields include `hpc
 - Frontend uses Tailwind CSS v4 and Next.js 16 App Router (file-based routing under `ui/app/`)
 - HPC job submission uses the S3M API (`s3m_url`, `s3m_token`); file access (log/output download) uses SSH/SCP to `hpc_host`
 - A single persistent SSH connection (using `TTYSSHClient`) is created at server startup; it prompts on `/dev/tty` if key auth is unavailable
-- Job directories under `hpc_jobs/` must contain `job.slurm` (the script) and optionally `s3m_defaults.json` (resource/attribute defaults parsed as `S3mDefaults`)
+- Job directories under `hpc_jobs/` must contain `job.slurm` (the script) and optionally `cluster_defaults.json`. `cluster_defaults.json` is keyed by cluster name (`odo`, `perlmutter`); a job opts in to a cluster by including the corresponding section. The Perlmutter section additionally requires `job.perlmutter.slurm` (and optionally `setup_perlmutter.sh` for `pre_launch`).
 - `submit_hpc_job` elicits a confirmation checkbox before submitting; all other HPC tools operate silently

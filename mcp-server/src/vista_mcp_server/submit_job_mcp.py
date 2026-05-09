@@ -12,39 +12,38 @@ from pathlib import Path
 from typing import Literal
 
 from fastmcp import FastMCP, Context
+from pydantic import BaseModel
 
 from .config import settings
 from .lib.ssh import Confirmation
 from .lib import s3m, iri
 from .lib.s3m import S3mDefaults, create_s3m_client, get_s3m_client
-from .lib.iri import create_iri_client, get_iri_client
+from .lib.iri import IriDefaults, create_iri_client, get_iri_client
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 
 Cluster = Literal["odo", "perlmutter"]
 """ Supported HPC clusters. """
 
-# TODO(step 4): move these into per-job cluster_defaults.json so each job can override them.
-PERLMUTTER_DEFAULTS = {
-    "queue_name": "regular",
-    "constraint": "gpu",
-    "image": "nersc/pytorch:25.06.01",
-    "module": "gpu,nccl-plugin",
-    "workers_per_node": 4,
-    "cpu_cores_per_process": 32,
-    "node_count": 1,
-    "duration": 1800,  # 30 min
-}
 PERLMUTTER_JOB_SCRIPT = "job.perlmutter.slurm"
 PERLMUTTER_SETUP_SCRIPT = "setup_perlmutter.sh"
 """ Optional pre_launch setup script in each job dir; inlined into JobSpec.attributes.pre_launch. """
+
+
+class ClusterDefaults(BaseModel):
+    """
+    Per-job defaults loaded from `<job>/cluster_defaults.json`. A job opts in to a cluster
+    by including the corresponding section.
+    """
+    odo: S3mDefaults | None = None
+    perlmutter: IriDefaults | None = None
 
 
 @dataclasses.dataclass
 class JobInfo:
     name: str
     description: str
-    s3m_defaults: S3mDefaults
+    cluster_defaults: ClusterDefaults
 
 
 def get_available_jobs() -> dict[str, JobInfo]:
@@ -60,15 +59,15 @@ def get_available_jobs() -> dict[str, JobInfo]:
             description = readme.read_text().strip()
             if not description.startswith(f"# {file.name}"):
                 raise ValueError(f'Job README.md should start with "# {file.name}" header')
-            s3m_defaults_file = file / "s3m_defaults.json"
-            if s3m_defaults_file.exists():
-                s3m_defaults = S3mDefaults.model_validate_json(s3m_defaults_file.read_text())
+            cluster_defaults_file = file / "cluster_defaults.json"
+            if cluster_defaults_file.exists():
+                cluster_defaults = ClusterDefaults.model_validate_json(cluster_defaults_file.read_text())
             else:
-                s3m_defaults = S3mDefaults()
+                cluster_defaults = ClusterDefaults()
             jobs[file.name] = JobInfo(
                 name=file.name,
                 description=description,
-                s3m_defaults=s3m_defaults,
+                cluster_defaults=cluster_defaults,
             )
     return jobs
 
@@ -194,6 +193,9 @@ async def _submit_odo_job(
     job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
 ) -> str:
     job_info = AVAILABLE_JOBS[job]
+    odo_defaults = job_info.cluster_defaults.odo
+    if odo_defaults is None:
+        raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
     remote_job_dir = settings.remote_hpc_jobs_dir / settings.session_id / job
     s3m_client = get_s3m_client()
@@ -224,13 +226,13 @@ async def _submit_odo_job(
         "stderr_path": f"{settings.remote_hpc_jobs_dir}/out/%j/log.out",
         "environment": {},
         "resources": {
-            **job_info.s3m_defaults.resources.model_dump(mode="json", exclude_none=True),
+            **odo_defaults.resources.model_dump(mode="json", exclude_none=True),
             **{k: v for k, v in resources_overrides.items() if v is not None},
         },
         "attributes": {
             "account": settings.hpc_account,
             "queue_name": "batch",
-            "duration": job_info.s3m_defaults.duration if duration_int is None else duration_int,
+            "duration": odo_defaults.duration if duration_int is None else duration_int,
         },
     }
     response = await s3m_client.submit_job(spec)
@@ -247,6 +249,11 @@ async def _submit_perlmutter_job(
     if not settings.nersc_account:
         raise ValueError("VISTA_MCP_NERSC_ACCOUNT not set; required for Perlmutter submission")
 
+    job_info = AVAILABLE_JOBS[job]
+    defaults = job_info.cluster_defaults.perlmutter
+    if defaults is None:
+        raise ValueError(f"Job '{job}' has no \"perlmutter\" section in cluster_defaults.json")
+
     local_job_dir = settings.local_hpc_jobs_dir / job
     job_script_path = local_job_dir / PERLMUTTER_JOB_SCRIPT
     if not job_script_path.exists():
@@ -262,12 +269,21 @@ async def _submit_perlmutter_job(
         if setup_script_path.exists() else None
     )
 
-    nodes = node_count or PERLMUTTER_DEFAULTS["node_count"]
-    workers_per_node = PERLMUTTER_DEFAULTS["workers_per_node"]
-    duration = duration_int or PERLMUTTER_DEFAULTS["duration"]
+    nodes = node_count or defaults.resources.node_count or 1
+    workers_per_node = defaults.resources.processes_per_node or 1
+    duration = duration_int or defaults.duration
 
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     job_cmd = f"{job_script_text}\n" if not job_cmd_args else f"set -- {job_cmd_args}\n{job_script_text}\n"
+
+    # IRI image/module are surfaced as env vars so the user's job.perlmutter.slurm can
+    # reference them in `srun shifter --image=$VISTA_PM_IMAGE` style invocations.
+    iri_env = dict(defaults.iri.environment)
+    if defaults.iri.image is not None:
+        iri_env["VISTA_PM_IMAGE"] = defaults.iri.image
+    if defaults.iri.module is not None:
+        iri_env["VISTA_PM_MODULE"] = defaults.iri.module
+    iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
 
     spec = {
         "executable": "bash",
@@ -276,21 +292,19 @@ async def _submit_perlmutter_job(
             "node_count": nodes,
             "process_count": nodes * workers_per_node,
             "processes_per_node": workers_per_node,
-            "cpu_cores_per_process": PERLMUTTER_DEFAULTS["cpu_cores_per_process"],
-            "exclusive_node_use": True,
+            "cpu_cores_per_process": defaults.resources.cpu_cores_per_process,
+            "exclusive_node_use": defaults.resources.exclusive_node_use,
         },
         "attributes": {
             "resource_id": get_iri_client().compute_resource_id,
-            "queue_name": PERLMUTTER_DEFAULTS["queue_name"],
+            "queue_name": defaults.iri.queue_name,
             "account": settings.nersc_account,
             "duration": duration,
-            "custom_attributes": {"constraint": PERLMUTTER_DEFAULTS["constraint"]},
+            "custom_attributes": {"constraint": defaults.iri.constraint},
             **({"pre_launch": pre_launch} if pre_launch else {}),
             "stdout_path": f"vista-{job}-%j.out",
             "stderr_path": f"vista-{job}-%j.err",
-            "environment": {
-                "SLURM_GPUS_PER_NODE": str(workers_per_node),
-            },
+            "environment": iri_env,
         },
     }
     job_id = await get_iri_client().submit_job(spec, name=f"vista-{job}")
