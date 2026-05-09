@@ -21,6 +21,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+nersc = [
+    "amscrot-py @ git+ssh://git@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
+]
 
 [project.scripts]
 vista-mcp-server = "vista_mcp_server.app:main"
@@ -28,6 +31,9 @@ vista-mcp-server = "vista_mcp_server.app:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 artifacts = [
