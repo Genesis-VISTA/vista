@@ -12,6 +12,5 @@ cd backend
 uv run --env-file ../.env vista-backend
 ```
 
-By default it listens on `127.0.0.1:8001` and connects to the MCP server at
-`http://127.0.0.1:8000/mcp`. Override via `VISTA_BACKEND_HOST`,
-`VISTA_BACKEND_PORT`, `MCP_BASE_URL` (or the existing `VISTA_MCP_*` vars).
+## Development
+This is in early development, see [new_backend_plan.md](./docs/new_backend_plan.md) for more info.
