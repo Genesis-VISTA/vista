@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     """
 
     # TODO: Generalize this to allow multiple MCP servers
-    mcp_url: str = Field(default="http://127.0.0.1:8000/mcp", validation_alias="VISTA_MCP_URL")
+    mcp_url: str = Field(default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL")
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
     output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
