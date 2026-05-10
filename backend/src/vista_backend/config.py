@@ -13,8 +13,8 @@ class Settings(BaseSettings):
         env_prefix="VISTA_BACKEND_",
     )
 
-    host: A[str, Field(validation_alias="VISTA_BACKEND_HOST")] = "127.0.0.1"
-    port: A[int, Field(validation_alias="VISTA_BACKEND_PORT")] = 8001
+    host: str = "127.0.0.1"
+    port: int = 8001
 
     log_level: LogLevel = "INFO"
 
