@@ -9,7 +9,7 @@ The Next.js UI is a thin "Backend-for-Frontend" that proxies to this backend ser
 
 ```bash
 cd backend
-uv run --env-file ../.env vista-backend
+uv run vista-backend
 ```
 
 ## Development

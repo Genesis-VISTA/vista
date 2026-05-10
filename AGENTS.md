@@ -18,7 +18,7 @@ Starts both backend and frontend in tmux
 Launches MCP server on :8000/mcp
 ```bash
 cd mcp-server
-uv run --env-file ../.env vista-mcp-server --transport=http
+uv run vista-mcp-server --transport=http
 ```
 
 ### Frontend (UI)
