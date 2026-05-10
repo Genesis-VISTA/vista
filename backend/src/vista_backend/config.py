@@ -31,17 +31,20 @@ class Settings(BaseSettings):
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
     output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
-    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/uploads")
+    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_UPLOADS_DIR")] = Path("../data/uploads")
 
-    database_url: str = "sqlite:///../vista.db"
-    """ SQLAlchemy database URL. Defaults to a local SQLite db. """
+    database_url: A[
+        str,
+        Field(default_factory=lambda: f"sqlite+aiosqlite:///{(Path.cwd() / '../vista.db').resolve()}"),
+    ]
+    """ SQLAlchemy async database URL. Defaults to a local SQLite db via aiosqlite. """
 
-    max_upload_size: ByteSize = ByteSize("20Mb")
+    max_upload_size: ByteSize = ByteSize(20 * 1024 * 1024)
     """ Size in bytes """
 
 
 # Also load .env into the actual environ Pydantic AI will pick them up when making the model
-for env_file in Settings.model_config['env_file']:
-    load_dotenv("../.env", interpolate=False)
+for env_file in reversed(Settings.model_config['env_file']):
+    load_dotenv(env_file, interpolate=False)
 
 settings = Settings()

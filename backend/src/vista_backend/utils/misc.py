@@ -1,18 +1,18 @@
 from pathlib import Path
 
-def write_file_unique(path: Path|str, bytes: bytes) -> Path:
-    """
-    Writes a file. If `path` already exists, renames it with -{i} suffix to ensure a unique file
-    """
+def write_file_unique(path: Path | str, data: bytes) -> Path:
     path = Path(path)
-    stem = path.stem
-    i = 1
-    while path.exists():
-        path = path.with_stem(f"{stem}-{i}")
-        i += 1
-    path.write_bytes(bytes)
-    return path
-
+    suffixes = "".join(path.suffixes)
+    stem = path.name.removesuffix(suffixes)
+    i = 0
+    while True:
+        candidate = path if i == 0 else path.with_name(f"{stem}-{i}{suffixes}")
+        try:
+            with open(candidate, "xb") as f:
+                f.write(data)
+            return candidate
+        except FileExistsError:
+            i += 1
 
 def path_is_under(base: Path | str, target: Path | str) -> bool:
     base = Path(base).resolve()

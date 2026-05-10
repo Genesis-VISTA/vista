@@ -49,7 +49,7 @@ class AppSettings(BaseSettings):
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
     output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
-    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/uploads")
+    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_UPLOADS_DIR")] = Path("../data/uploads")
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = [
         (Path("../skills"), Path("/mnt/skills"), 'r'),
         (Path("../data/output"), Path("/mnt/data/output"), 'w'),

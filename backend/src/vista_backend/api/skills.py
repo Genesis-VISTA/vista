@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..agents.skills import find_skill_md, find_skills, read_skill, Skill, SkillMetadata
 from ..config import settings
+from ..utils.misc import path_is_under
 
 
 router = APIRouter()
@@ -16,14 +17,16 @@ async def list_skills() -> list[SkillMetadata]:
     skills_root = settings.skills_dir
     response: list[SkillMetadata] = []
     for skill_dir in find_skills([skills_root]):
-        response.append(read_skill(skill_dir))
-    # FastAPI will strip the body param from result, since return type is SkillMetadata
+        skill = read_skill(skill_dir)
+        response.append(SkillMetadata.model_validate(skill, from_attributes=True))
     return response
 
 
 @router.get("/skills/{name}")
 async def get_skill(name: str) -> Skill:
-    skill_md = find_skill_md(settings.skills_dir / name)
-    if skill_md is None:
+    skill_dir = settings.skills_dir / name
+    if not path_is_under(settings.skills_dir, skill_dir):
         raise HTTPException(status_code=404, detail="Skill not found")
-    return read_skill(skill_md)
+    if find_skill_md(skill_dir) is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return read_skill(skill_dir)

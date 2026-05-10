@@ -13,11 +13,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import mcp.types
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import build_project_agent, get_mcp_server, run_project_agent_stream
 from ..db.db import get_engine
-from ..db.schemas import ProjectPublic
+from ..db.schemas import ProjectPublic, ProjectTable
 
 
 router = APIRouter()
@@ -287,13 +288,13 @@ async def _process_tool_call(
 _DEFAULT_PROJECT_NAME = "molten-salt"
 
 
-def _select_project(loaded_slugs: set[str]) -> ProjectPublic:
+async def _select_project(loaded_slugs: set[str]) -> ProjectPublic:
     """Pick a Project whose `skills` overlap with the loaded slug set.
 
     Falls back to a default project (`molten-salt`) when nothing matches.
     """
-    with Session(get_engine()) as session:
-        all_projects = list(session.exec(select(ProjectPublic)).all())
+    async with AsyncSession(get_engine()) as session:
+        all_projects = list((await session.exec(select(ProjectTable))).all())
 
     if not all_projects:
         raise HTTPException(
@@ -303,11 +304,11 @@ def _select_project(loaded_slugs: set[str]) -> ProjectPublic:
     if loaded_slugs:
         for project in all_projects:
             if loaded_slugs & set(project.skills or []):
-                return project
+                return ProjectPublic.model_validate(project)
 
     for project in all_projects:
         if project.name == _DEFAULT_PROJECT_NAME:
-            return project
+            return ProjectPublic.model_validate(project)
 
     return ProjectPublic.model_validate(all_projects[0])
 
@@ -323,7 +324,7 @@ def _build_message_history(history: list[HistoryMessage]):
     )
 
     messages = []
-    for msg in history[-10:]:
+    for msg in history:
         if msg.role == "user":
             messages.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif msg.role == "assistant":
@@ -337,7 +338,7 @@ async def _run_agent(
     request: Request, chat_req: ChatRequest, active: ActiveRequest
 ) -> tuple[str, list[ToolCallRecord]]:
     loaded_slugs = {s for s in chat_req.loadedSlugs if isinstance(s, str) and s}
-    project = _select_project(loaded_slugs)
+    project = await _select_project(loaded_slugs)
     history = _build_message_history(chat_req.history)
 
     _log(

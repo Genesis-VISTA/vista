@@ -1,31 +1,34 @@
 """
 Database engine, session factory, and FastAPI session dependency.
 """
-from typing import Annotated as A, Iterator
-from fastapi import Depends
 import functools
-import sqlalchemy
-from sqlmodel import Session, SQLModel, create_engine, select
+from typing import Annotated as A, AsyncIterator
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlmodel import SQLModel, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 from . import schemas
 from ..config import settings
 
 
 @functools.cache
-def get_engine() -> sqlalchemy.Engine:
-    engine = create_engine(settings.database_url)
-    SQLModel.metadata.create_all(engine)  # only creates tables if needed
-    _seed_defaults(engine)
-    return engine
+def get_engine() -> AsyncEngine:
+    return create_async_engine(settings.database_url)
 
 
-def _seed_defaults(engine: sqlalchemy.Engine) -> None:
+async def init_db() -> None:
+    """Create tables and seed defaults. Call once at app startup."""
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
     from .defaults import DEFAULT_PROJECTS
 
-    with Session(engine) as session:
+    async with AsyncSession(engine) as session:
         for project in DEFAULT_PROJECTS:
-            existing = session.exec(
+            existing = (await session.exec(
                 select(schemas.ProjectTable).where(schemas.ProjectTable.name == project.name)
-            ).first()
+            )).first()
             fields = project.model_dump(exclude={"id"})
             if existing is None:
                 session.add(schemas.ProjectTable(**fields))
@@ -33,22 +36,21 @@ def _seed_defaults(engine: sqlalchemy.Engine) -> None:
                 for key, value in fields.items():
                     setattr(existing, key, value)
                 session.add(existing)
-        session.commit()
+        await session.commit()
 
 
-EngineDep = A[sqlalchemy.Engine, Depends(get_engine)]
+EngineDep = A[AsyncEngine, Depends(get_engine)]
 
-
-def _get_session(engine: A[sqlalchemy.Engine, Depends(get_engine)]) -> Iterator[Session]:
-    with Session(engine) as session:
+async def _get_session(engine: A[AsyncEngine, Depends(get_engine)]) -> AsyncIterator[AsyncSession]:
+    async with AsyncSession(engine) as session:
         try:
             yield session
-            session.commit()
+            await session.commit()
         except Exception:
-            session.rollback()
+            await session.rollback()
             raise
 
-SessionDep = A[Session, Depends(_get_session)]
+SessionDep = A[AsyncSession, Depends(_get_session)]
 """
-FastAPI Dependency for a database session. Automatically commits on success, rolls back on error
+FastAPI Dependency for an async database session. Automatically commits on success, rolls back on error
 """

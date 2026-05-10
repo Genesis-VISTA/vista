@@ -15,7 +15,8 @@ router = APIRouter()
 
 
 def _sanitize_filename(name: str | None) -> str:
-    name = name or "upload.bin"
+    if not name or name in [".", ".."]:
+        name = "upload.bin"
     return re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name)
 
 def _get_upload(name: str):
@@ -37,7 +38,7 @@ class UploadInfo(BaseModel):
 @router.get("/uploads")
 async def list_uploads() -> list[UploadInfo]:
     uploads_dir = settings.uploads_dir
-    uploads_dir.mkdir(parents=True, exist_ok=True)
+    if not uploads_dir.exists(): return []
 
     files: list[UploadInfo] = []
     for file in uploads_dir.iterdir():
@@ -65,11 +66,11 @@ async def upload_files(files: list[UploadFile]) -> list[str]:
         contents = await file.read()
         if len(contents) > settings.max_upload_size:
             raise HTTPException(status_code=400,
-                detail=f"File '{file.filename}' exceeds the 20MB upload limit.",
+                detail=f"File '{file.filename}' exceeds the {settings.max_upload_size.human_readable()} upload limit.",
             )
         file_path = settings.uploads_dir / _sanitize_filename(file.filename)
         file_path = write_file_unique(file_path, contents)
-        saved.append(str(file_path))
+        saved.append(file_path.name)
 
     return saved
 
@@ -80,6 +81,7 @@ async def download_upload(name: str) -> Response:
     return FileResponse(
         path,
         filename=path.name,
+        content_disposition_type="attachment",
     )
 
 
@@ -88,4 +90,3 @@ async def delete_upload(name: str):
     path = _get_upload(name)
     path.unlink()
     return {"ok": True}
-

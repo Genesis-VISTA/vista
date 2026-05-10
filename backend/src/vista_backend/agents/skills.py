@@ -33,7 +33,6 @@ class SkillMetadata(BaseModel):
         metadata: Key-value pairs for client-specific properties (defaults to
             empty dict; omitted from to_dict() output when empty)
     """
-    path: Path
     name: StrippedStr
     description: StrippedStr
     license: str | None = None
@@ -46,7 +45,7 @@ class Skill(SkillMetadata):
     body: str
 
 
-def find_skill_md(skill_dir: Path) -> Path | None:
+def find_skill_md(skill_dir: Path|str) -> Path | None:
     """
     Find the SKILL.md file in a skill directory.
 
@@ -59,7 +58,7 @@ def find_skill_md(skill_dir: Path) -> Path | None:
         Path to the SKILL.md file, or None if not found
     """
     for name in ("SKILL.md", "skill.md"):
-        path = skill_dir / name
+        path = Path(skill_dir) / name
         if path.exists():
             return path
     return None
@@ -169,7 +168,7 @@ def to_prompt(skill_dirs: list[Path|str]) -> str:
             "<skill>",
             "<name>", html.escape(skill.name), "</name>",
             "<description>", html.escape(skill.description), "</description>",
-            "<location>", html.escape(str(skill.path)), "</location>", # TODO path inside container?
+            "<location>", html.escape(str(find_skill_md(skill_dir))), "</location>", # TODO path inside container?
             "</skill>",
         ])
     lines.append("</available_skills>")

@@ -13,11 +13,11 @@ class ProjectBase(SQLModel):
     name: str
     description: str | None = None
     system_prompt: str | None = None
-    skills: A[list[str], Field(sa_column=Column(JSON))] = []
+    skills: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     """ List of skills available to this project """
-    tools: A[list[str], Field(sa_column=Column(JSON))] = []
+    tools: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     """ List of tools available to this project """
-    usage_limits: A[dict, Field(sa_column=Column(JSON))] = {}
+    usage_limits: A[dict, Field(default_factory=dict, sa_column=Column(JSON))]
     """
     Limits on the agent such as tool call depth
     Stored as a dict so we can store it as JSON in the DB, SQLModel won't parse the JSON into a
