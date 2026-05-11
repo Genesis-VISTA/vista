@@ -386,7 +386,7 @@ def _build_message_history(history: list[HistoryMessage]):
     )
 
     messages = []
-    for msg in history:
+    for msg in history[-10:]: # TODO do we really want to crop the history like this? Probably should add compaction instead.
         if msg.role == "user":
             messages.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif msg.role == "assistant":
