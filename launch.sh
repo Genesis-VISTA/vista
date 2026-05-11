@@ -74,9 +74,9 @@ case "$MODE" in
       attach
     ;;
   terminal)
-    launch_terminal "MCP Server" "$MCP_CMD"
     launch_terminal "Backend" "$BACKEND_CMD"
     launch_terminal "UI Dev Server" "$UI_CMD"
+    launch_terminal "MCP Server" "$MCP_CMD"
     ;;
   *)
     echo "Usage: $0 [tmux|terminal]"

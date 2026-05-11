@@ -13,10 +13,18 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 import mcp.types
 from pydantic import BaseModel, Field
+from pydantic_ai import UsageLimits
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..agents.agents import build_project_agent, get_mcp_server, run_project_agent_stream
+from ..agents.agents import build_project_agent, get_mcp_server
 from ..db.db import get_engine
 from ..db.schemas import ProjectPublic, ProjectTable
 
@@ -132,10 +140,11 @@ class ElicitationEntry:
     timer: asyncio.TimerHandle
 
 
-def make_elicitation_callback(app) -> Callable[[mcp.types.ElicitRequestParams], Any]:
+def make_elicitation_callback(app) -> Callable:
     """Build the callback PydanticAI's MCP toolset hands MCP elicitation requests to."""
 
     async def callback(
+        _context: Any,
         params: mcp.types.ElicitRequestParams,
     ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
         active = _active_request.get()
@@ -210,6 +219,43 @@ def _stringify_tool_result(result: Any) -> tuple[str, str | None]:
     return text, html
 
 
+def _extract_html_from_call_tool_result(result: mcp.types.CallToolResult) -> str | None:
+    """Pull an HTML payload out of a raw MCP CallToolResult."""
+    for item in result.content:
+        if isinstance(item, mcp.types.EmbeddedResource):
+            resource = item.resource
+            mime = getattr(resource, "mimeType", None) or ""
+            text = getattr(resource, "text", None)
+            if text and ("text/html" in mime or "<img" in text):
+                return text
+        elif isinstance(item, mcp.types.TextContent):
+            if "<img" in item.text:
+                return item.text
+        elif isinstance(item, mcp.types.ImageContent):
+            return (
+                f'<img src="data:{item.mimeType};base64,{item.data}" '
+                'alt="image" style="max-width:100%;height:auto;display:block;margin:0 auto;" />'
+            )
+    return None
+
+
+async def _auto_display_file(plot_path: str) -> str | None:
+    """Invoke the MCP `display_file` tool to render a plot as HTML.
+
+    Mirrors the legacy Next.js behavior: the system prompt instructs the LLM
+    not to call display_file directly, so the framework calls it whenever a
+    tool's stdout advertises a saved plot.
+    """
+    try:
+        server = get_mcp_server()
+        async with server:
+            result = await server._client.call_tool("display_file", {"uri": plot_path})
+        return _extract_html_from_call_tool_result(result)
+    except Exception as exc:  # pragma: no cover — best-effort fallback
+        _log("Tool:display_file", logging.WARNING, f"auto-display failed: {exc}")
+        return None
+
+
 async def _process_tool_call(
     ctx,
     call_tool,
@@ -248,6 +294,9 @@ async def _process_tool_call(
         match = _PLOT_PATH_RE.search(text)
         if match:
             record.plotPath = match.group(1)
+            display_html = await _auto_display_file(record.plotPath)
+            if display_html:
+                record.displayHtml = display_html
 
     elapsed = int((time.monotonic() - started) * 1000)
     _log(
@@ -292,6 +341,14 @@ async def _select_project(loaded_slugs: set[str]) -> ProjectPublic:
     """Pick a Project whose `skills` overlap with the loaded slug set.
 
     Falls back to a default project (`molten-salt`) when nothing matches.
+
+    When multiple projects' skills intersect with the loaded set,
+    `alloy-design` wins. The legacy Next.js route hard-coded this
+    preference (loadedSlugs.has("alloy-design") ? "alloy-design" :
+    "molten-salt"), and the loop ↔ chat budget tuning here is built around
+    that — alloy-design users almost always also have salt-analysis
+    loaded, so first-row-wins would silently steer them into the
+    10-request molten-salt mode.
     """
     async with AsyncSession(get_engine()) as session:
         all_projects = list((await session.exec(select(ProjectTable))).all())
@@ -301,16 +358,21 @@ async def _select_project(loaded_slugs: set[str]) -> ProjectPublic:
             status_code=500, detail="No projects configured; database seed missing."
         )
 
+    def _priority(project: ProjectTable) -> tuple[int, str]:
+        return (0 if project.name == "alloy-design" else 1, project.name)
+
+    ordered = sorted(all_projects, key=_priority)
+
     if loaded_slugs:
-        for project in all_projects:
+        for project in ordered:
             if loaded_slugs & set(project.skills or []):
                 return ProjectPublic.model_validate(project)
 
-    for project in all_projects:
+    for project in ordered:
         if project.name == _DEFAULT_PROJECT_NAME:
             return ProjectPublic.model_validate(project)
 
-    return ProjectPublic.model_validate(all_projects[0])
+    return ProjectPublic.model_validate(ordered[0])
 
 
 
@@ -357,23 +419,41 @@ async def _run_agent(
         process_tool_call=_process_tool_call,
     )
 
-    final_text = ""
-    async with run_project_agent_stream(
-        project,
-        agent,
+    usage_limits = UsageLimits(**(project.usage_limits or {}))
+
+    # Buffer text deltas per iteration. When the first tool call of an
+    # iteration fires, flush whatever text the model produced before the
+    # call as an `agent_turn { text }` SSE event so the UI can render it as
+    # a Trial Report. Whatever's left in the buffer after the run finishes
+    # is the terminal response and goes out in `agent_response`.
+    text_buffer = ""
+    iter_has_tool_call = False
+
+    async for event in agent.run_stream_events(
         chat_req.message,
-        history,
-    ) as stream:
-        async for delta in stream.stream_text(delta=True):
-            if delta:
-                final_text += delta
+        message_history=history,
+        usage_limits=usage_limits,
+    ):
+        if isinstance(event, PartStartEvent):
+            # A new part means a new iteration begins after a tool call.
+            iter_has_tool_call = False
+            if isinstance(event.part, TextPart):
+                text_buffer += event.part.content
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+            text_buffer += event.delta.content_delta
+        elif isinstance(event, FunctionToolCallEvent) and not iter_has_tool_call:
+            iter_has_tool_call = True
+            stripped = text_buffer.strip()
+            text_buffer = ""
+            if stripped:
+                active.emit({"type": "agent_turn", "text": stripped})
 
     _log(
         "Agent",
         logging.INFO,
         f"Completed with {len(active.tool_calls)} tool call(s)",
     )
-    return final_text, list(active.tool_calls)
+    return text_buffer, list(active.tool_calls)
 
 
 

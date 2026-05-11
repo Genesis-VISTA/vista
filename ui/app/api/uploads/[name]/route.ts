@@ -1,67 +1,65 @@
 import { NextResponse } from "next/server";
-import { readFile, stat, unlink } from "node:fs/promises";
-import path from "node:path";
-import { config } from "@/app/config";
+import { backendUrl } from "../../_backend";
 
 export const runtime = "nodejs";
 
-function getSafeName(rawName: string): string | null {
+function sanitizeName(rawName: string): string | null {
   if (!rawName) return null;
-  const decoded = decodeURIComponent(rawName);
-  const base = path.basename(decoded);
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawName);
+  } catch {
+    return null;
+  }
+  const base = decoded.split("/").pop() ?? "";
   if (!base || base !== decoded) return null;
   return base;
 }
 
-function contentTypeForFile(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".gif") return "image/gif";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".svg") return "image/svg+xml";
-  if (ext === ".csv") return "text/csv; charset=utf-8";
-  if (ext === ".json") return "application/json; charset=utf-8";
-  if (ext === ".txt") return "text/plain; charset=utf-8";
-  return "application/octet-stream";
-}
-
 export async function GET(_request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const safeName = getSafeName((await params).name);
+  const safeName = sanitizeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
   }
 
-  const filePath = path.join(config.uploadsDir, safeName);
+  let upstream: Response;
   try {
-    const stats = await stat(filePath);
-    if (!stats.isFile()) {
-      return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
-    }
-    const bytes = await readFile(filePath);
-    return new NextResponse(bytes, {
-      status: 200,
-      headers: {
-        "content-type": contentTypeForFile(filePath),
-        "content-disposition": `attachment; filename="${safeName}"`
-      }
-    });
+    upstream = await fetch(backendUrl(`/uploads/${encodeURIComponent(safeName)}`));
   } catch {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
   }
+
+  if (!upstream.ok || !upstream.body) {
+    return NextResponse.json({ ok: false, error: "Not found." }, { status: upstream.status || 404 });
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "application/octet-stream",
+      "content-disposition":
+        upstream.headers.get("content-disposition") ?? `attachment; filename="${safeName}"`,
+    },
+  });
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ name: string }> }) {
-  const safeName = getSafeName((await params).name);
+  const safeName = sanitizeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
   }
 
-  const filePath = path.join(config.uploadsDir, safeName);
+  let upstream: Response;
   try {
-    await unlink(filePath);
-    return NextResponse.json({ ok: true });
+    upstream = await fetch(backendUrl(`/uploads/${encodeURIComponent(safeName)}`), {
+      method: "DELETE",
+    });
   } catch {
-    return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: 404 });
+    return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: 502 });
   }
+
+  if (!upstream.ok) {
+    return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: upstream.status });
+  }
+  return NextResponse.json({ ok: true });
 }

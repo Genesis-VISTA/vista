@@ -1,33 +1,43 @@
 import { NextResponse } from "next/server";
-import { resolveElicitation } from "@/lib/elicitation-bridge";
-import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import { backendUrl } from "../../_backend";
 
-type ElicitationSubmit = {
-  id: string;
-  action: ElicitResult["action"];
-  content?: ElicitResult["content"];
-};
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  let body: ElicitationSubmit;
+  let body: unknown;
   try {
-    body = (await request.json()) as ElicitationSubmit;
+    body = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { id, action, content } = body;
-  if (!id || !action) {
-    return NextResponse.json({ ok: false, error: "Missing id or action" }, { status: 400 });
-  }
-
-  const found = resolveElicitation(id, { action, content });
-  if (!found) {
+  let upstream: Response;
+  try {
+    upstream = await fetch(backendUrl("/chat/elicitation"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { ok: false, error: "Unknown or expired elicitation" },
-      { status: 404 }
+      { ok: false, error: `Backend unreachable: ${message}` },
+      { status: 502 }
     );
   }
 
-  return NextResponse.json({ ok: true });
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    return NextResponse.json(
+      { ok: false, error: text || `Backend returned ${upstream.status}` },
+      { status: upstream.status }
+    );
+  }
+
+  // Backend already returns `{ok: true}` on success; pass it through.
+  try {
+    return NextResponse.json(JSON.parse(text));
+  } catch {
+    return NextResponse.json({ ok: true });
+  }
 }
