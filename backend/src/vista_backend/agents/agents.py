@@ -1,6 +1,7 @@
 """
 Logic to build the actual PydanticAI Agent
 """
+import fnmatch
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -14,6 +15,25 @@ from mcp.client.session import ElicitationFnT
 from ..config import settings
 from ..db.schemas import ProjectPublic
 from .skills import to_prompt
+
+
+def _tool_allowed(name: str, patterns: list[str]) -> bool:
+    """
+    Match `name` against a list of fnmatch-style patterns.
+    
+    Entries beginning with `!` are deny patterns; everything else is an
+    allow pattern. A tool is allowed iff at least one allow pattern matches
+    and no deny pattern matches. If there are no allow_patterns, assume allow "*".
+    """
+    allow_patterns = [p for p in patterns if not p.startswith("!")]
+    if not allow_patterns:
+        allow_patterns = ['*']
+    deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
+    if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
+        return False
+    if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
+        return False
+    return True
 
 # TODO: Cache MCP connection?
 def get_mcp_server(
@@ -44,7 +64,7 @@ def build_project_agent(
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
     )
-    toolset = mcp.filtered(lambda ctx, tool: tool.name in project.tools)
+    toolset = mcp.filtered(lambda ctx, tool: _tool_allowed(tool.name, project.tools))
 
     agent = Agent(
         model=infer_model(settings.model),

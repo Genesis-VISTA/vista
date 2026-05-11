@@ -16,7 +16,13 @@ class ProjectBase(SQLModel):
     skills: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     """ List of skills available to this project """
     tools: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
-    """ List of tools available to this project """
+    """
+    List of tools available to this project
+    
+    These are wildcard matches, fnmatch style. Entries beginning with `!` are deny patterns;
+    everything else is an allow pattern. A tool is allowed iff at least one allow pattern matches
+    and no deny pattern matches. If there are no allow_patterns, assume allow "*".
+    """
     usage_limits: A[dict, Field(default_factory=dict, sa_column=Column(JSON))]
     """
     Limits on the agent such as tool call depth
