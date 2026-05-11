@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSyncExternalStore, type ReactNode } from "react";
+import { useActiveProject } from "@/lib/projects";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
 
@@ -65,7 +66,7 @@ type NavEntry = {
   icon: ReactNode;
 };
 
-const ENTRIES: NavEntry[] = [
+const GLOBAL_ENTRIES: NavEntry[] = [
   {
     label: "Projects",
     href: "/projects",
@@ -82,6 +83,49 @@ const ENTRIES: NavEntry[] = [
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="9" />
         <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+      </svg>
+    ),
+  },
+  {
+    label: "Models",
+    disabled: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+      </svg>
+    ),
+  },
+  {
+    label: "Knowledge Bases",
+    disabled: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
+        <path d="M4 17a3 3 0 0 1 3-3h12" />
+      </svg>
+    ),
+  },
+  {
+    label: "More",
+    disabled: true,
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="6" cy="12" r="1.5" />
+        <circle cx="12" cy="12" r="1.5" />
+        <circle cx="18" cy="12" r="1.5" />
+      </svg>
+    ),
+  },
+];
+
+const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
+  {
+    label: "Chat",
+    href: "/",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 12a8.5 8.5 0 0 1-8.5 8.5H7l-4 3v-6A8.5 8.5 0 1 1 21 12Z" />
       </svg>
     ),
   },
@@ -106,16 +150,6 @@ const ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Models",
-    disabled: true,
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
-      </svg>
-    ),
-  },
-  {
     label: "Knowledge Base",
     disabled: true,
     icon: (
@@ -125,21 +159,11 @@ const ENTRIES: NavEntry[] = [
       </svg>
     ),
   },
-  {
-    label: "More",
-    disabled: true,
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="6" cy="12" r="1.5" />
-        <circle cx="12" cy="12" r="1.5" />
-        <circle cx="18" cy="12" r="1.5" />
-      </svg>
-    ),
-  },
 ];
 
 export function NavRail() {
   const pathname = usePathname();
+  const activeProject = useActiveProject();
   const collapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
@@ -148,6 +172,51 @@ export function NavRail() {
 
   function toggle() {
     setRailCollapsed(!collapsed);
+  }
+
+  function isEntryActive(href?: string): boolean {
+    if (!href) return false;
+    return href === "/"
+      ? pathname === "/"
+      : pathname === href || pathname?.startsWith(href);
+  }
+
+  function renderEntry(entry: NavEntry, className = "") {
+    const isActive = isEntryActive(entry.href);
+    const inner = (
+      <>
+        <span className="nav-rail-icon" aria-hidden="true">
+          {entry.icon}
+        </span>
+        {!collapsed && <span className="nav-rail-label">{entry.label}</span>}
+      </>
+    );
+
+    if (entry.disabled) {
+      return (
+        <button
+          key={entry.label}
+          type="button"
+          className={`nav-rail-entry disabled ${className}`.trim()}
+          aria-disabled="true"
+          title={`${entry.label} (coming soon)`}
+          disabled
+        >
+          {inner}
+        </button>
+      );
+    }
+
+    return (
+      <Link
+        key={entry.label}
+        href={entry.href!}
+        className={`nav-rail-entry${isActive ? " active" : ""} ${className}`.trim()}
+        title={entry.label}
+      >
+        {inner}
+      </Link>
+    );
   }
 
   return (
@@ -194,47 +263,24 @@ export function NavRail() {
       </Link>
 
       <nav className="nav-rail-list">
-        {ENTRIES.map((entry) => {
-          const isActive =
-            !!entry.href &&
-            (pathname === entry.href ||
-              (entry.href !== "/" && pathname?.startsWith(entry.href)));
+        {!collapsed && <div className="nav-rail-section-label">Global</div>}
+        {GLOBAL_ENTRIES.map((entry) => renderEntry(entry))}
 
-          const inner = (
-            <>
-              <span className="nav-rail-icon" aria-hidden="true">
-                {entry.icon}
-              </span>
-              {!collapsed && <span className="nav-rail-label">{entry.label}</span>}
-            </>
-          );
-
-          if (entry.disabled) {
-            return (
-              <button
-                key={entry.label}
-                type="button"
-                className="nav-rail-entry disabled"
-                aria-disabled="true"
-                title={`${entry.label} (coming soon)`}
-                disabled
-              >
-                {inner}
-              </button>
-            );
-          }
-
-          return (
-            <Link
-              key={entry.label}
-              href={entry.href!}
-              className={`nav-rail-entry${isActive ? " active" : ""}`}
-              title={entry.label}
-            >
-              {inner}
-            </Link>
-          );
-        })}
+        {!collapsed && <div className="nav-rail-section-label">Opened Project</div>}
+        {!collapsed && (
+          <div className="nav-rail-project-card" title={activeProject?.title ?? "No project selected"}>
+            <div className="nav-rail-project-dot" aria-hidden="true" />
+            <div className="nav-rail-project-name">
+              {activeProject?.title ?? "No project selected"}
+            </div>
+          </div>
+        )}
+        {PROJECT_LOCAL_ENTRIES.map((entry) =>
+          renderEntry(
+            activeProject ? entry : { ...entry, disabled: true },
+            "project-child"
+          )
+        )}
       </nav>
 
       <div className="nav-rail-user" title={PLACEHOLDER_USER.name}>
