@@ -107,25 +107,27 @@ function ProjectsPageContent() {
         </p>
       </header>
 
-      <div className="projects-grid">
-        {allProjects.map((project) => (
-          <ProjectCard
-            key={project.slug}
-            project={project}
-            active={activeSlug === project.slug}
-            onOpen={() => open(project)}
-            onEdit={!project.builtin ? () => setModal({ mode: "edit", project }) : undefined}
-            onDelete={!project.builtin ? () => deleteProject(project) : undefined}
-          />
-        ))}
-        <button
-          type="button"
-          className="project-new"
-          onClick={() => setModal({ mode: "create" })}
-        >
-          <div className="project-new-plus" aria-hidden="true">+</div>
-          <div className="project-new-label">New project</div>
-        </button>
+      <div className="projects-panel">
+        <div className="projects-grid">
+          {allProjects.map((project) => (
+            <ProjectCard
+              key={project.slug}
+              project={project}
+              active={activeSlug === project.slug}
+              onOpen={() => open(project)}
+              onEdit={!project.builtin ? () => setModal({ mode: "edit", project }) : undefined}
+              onDelete={!project.builtin ? () => deleteProject(project) : undefined}
+            />
+          ))}
+          <button
+            type="button"
+            className="project-new"
+            onClick={() => setModal({ mode: "create" })}
+          >
+            <div className="project-new-plus" aria-hidden="true">+</div>
+            <div className="project-new-label">New project</div>
+          </button>
+        </div>
       </div>
 
       {modal.mode !== "closed" && (

@@ -1601,6 +1601,48 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-overflow: ellipsis;
 }
 
+.nav-rail-section-label {
+  margin: 8px 10px 4px;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.nav-rail-project-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 8px 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--line);
+}
+
+.nav-rail-project-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--brand);
+  flex: 0 0 auto;
+}
+
+.nav-rail-project-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-rail-entry.project-child {
+  margin-left: 16px;
+  width: calc(100% - 16px);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Active project badge in the chat topbar                            */
 /* ------------------------------------------------------------------ */
@@ -1639,6 +1681,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 14px;
   padding-right: 4px;
+}
+
+.projects-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
 }
 
 .project-card {
