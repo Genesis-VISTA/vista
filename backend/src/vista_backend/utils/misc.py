@@ -1,6 +1,10 @@
 from pathlib import Path
 
 def write_file_unique(path: Path | str, data: bytes) -> Path:
+    """
+    Write a new file, making sure the filename is unique. If it already exists, suffix it with -1,
+    -2, etc.
+    """
     path = Path(path)
     suffixes = "".join(path.suffixes)
     stem = path.name.removesuffix(suffixes)
