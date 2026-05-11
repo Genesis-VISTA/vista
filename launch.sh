@@ -4,21 +4,32 @@ set -euo pipefail
 REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$REPO_ROOT"
 
-MODE="${1:-tmux}"
+MODE="${1:-terminal}"
 
 ./build.sh
 
-BACKEND_URL="http://localhost:8000/mcp"
-UI_CMD="
-  cd '$REPO_ROOT/ui' &&
-  echo 'Waiting for MCP backend...' &&
-  until curl -s -o /dev/null -w '' '$BACKEND_URL'; do sleep 1; done &&
-  npm run dev;
+export VISTA_MCP_URL="http://localhost:8000/mcp"
+export VISTA_BACKEND_URL="http://localhost:8001"
+
+MCP_CMD="
+  cd '$REPO_ROOT/mcp-server' &&
+  uv run vista-mcp-server --transport=http;
   exec bash
 "
-SERVER_CMD="
-  cd '$REPO_ROOT/mcp-server' &&
-  uv run --env-file ../.env vista-mcp-server --transport=http;
+
+BACKEND_CMD="
+  cd '$REPO_ROOT/backend' &&
+  echo 'Waiting for MCP server...' &&
+  until curl -s -o /dev/null '$VISTA_MCP_URL'; do sleep 1; done &&
+  uv run vista-backend;
+  exec bash
+"
+
+UI_CMD="
+  cd '$REPO_ROOT/ui' &&
+  echo 'Waiting for backend...' &&
+  until curl -fs -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
+  npm run dev;
   exec bash
 "
 
@@ -55,14 +66,17 @@ case "$MODE" in
   tmux)
     tmux new-session \
       -d -s vista-dev \
-      "$UI_CMD" \; \
+      "$MCP_CMD" \; \
       split-window -h \
-      "$SERVER_CMD" \; \
+      "$BACKEND_CMD" \; \
+      split-window -v \
+      "$UI_CMD" \; \
       attach
     ;;
   terminal)
+    launch_terminal "Backend" "$BACKEND_CMD"
     launch_terminal "UI Dev Server" "$UI_CMD"
-    launch_terminal "MCP Server" "$SERVER_CMD"
+    launch_terminal "MCP Server" "$MCP_CMD"
     ;;
   *)
     echo "Usage: $0 [tmux|terminal]"

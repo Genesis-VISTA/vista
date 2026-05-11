@@ -2,7 +2,18 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ExecutionResult } from "@/lib/types";
-import { getMcpClient } from "@/lib/mcp-client";
+import { backendUrl } from "../../_backend";
+
+export const runtime = "nodejs";
+
+/**
+ * Proxy for `POST /mcp/call`.
+ *
+ * The Python backend returns the raw MCP `CallToolResult` (a `{content[],
+ * isError}` envelope). The frontend expects our richer `ExecutionResult`
+ * (stdout/stderr/ui/...), so we normalize the response on the way back —
+ * the same transformation the old Next.js route did against the MCP SDK.
+ */
 
 function createEnvelope(partial: Partial<ExecutionResult>): ExecutionResult {
   return {
@@ -13,8 +24,13 @@ function createEnvelope(partial: Partial<ExecutionResult>): ExecutionResult {
     artifacts: [],
     meta: {},
     ui: { kind: "none" },
-    ...partial
+    ...partial,
   };
+}
+
+function toImageUiHtml(mimeType: string, base64Data: string): string {
+  const src = `data:${mimeType};base64,${base64Data}`;
+  return `<img src="${src}" alt="MCP tool image output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
 }
 
 function extractUiHtml(payload: unknown): string | null {
@@ -38,19 +54,11 @@ function extractUiHtml(payload: unknown): string | null {
     const mimeType = typeof resource.mimeType === "string" ? resource.mimeType : "";
     if (mimeType.includes("text/html")) {
       if (typeof resource.text === "string") return resource.text;
-      if (typeof resource.rawHtml === "string") return resource.rawHtml;
-      if (typeof resource.htmlString === "string") return resource.htmlString;
-      if (typeof resource.html === "string") return resource.html;
     }
   }
   if (Array.isArray(obj.contents)) return extractUiHtml(obj.contents);
   if (Array.isArray(obj.content)) return extractUiHtml(obj.content);
   return null;
-}
-
-function toImageUiHtml(mimeType: string, base64Data: string): string {
-  const src = `data:${mimeType};base64,${base64Data}`;
-  return `<img src="${src}" alt="MCP tool image output" style="max-width:100%;height:auto;display:block;margin:0 auto;" />`;
 }
 
 function getMimeTypeFromPath(filePath: string): string {
@@ -104,7 +112,15 @@ function findUriDeep(payload: unknown, depth = 0): string | null {
   return null;
 }
 
-async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string): Promise<ExecutionResult> {
+/**
+ * Fallback for `display_file` results that come back as a URI-only payload
+ * with no rendered HTML / inline image. Reads the file off disk and inlines
+ * it as a base64 <img>, mirroring the legacy Next.js direct-call route.
+ */
+async function addDisplayFileFallbackUi(
+  envelope: ExecutionResult,
+  tool: string
+): Promise<ExecutionResult> {
   if (tool !== "display_file") return envelope;
   if (envelope.ui?.kind === "html") return envelope;
 
@@ -129,20 +145,17 @@ async function addDisplayFileFallbackUi(envelope: ExecutionResult, tool: string)
     const base64Data = bytes.toString("base64");
     return {
       ...envelope,
-      ui: { kind: "html", html: toImageUiHtml(mimeType, base64Data) }
+      ui: { kind: "html", html: toImageUiHtml(mimeType, base64Data) },
     };
   } catch {
     return envelope;
   }
 }
 
-/**
- * Normalize an SDK CallToolResult into our ExecutionResult envelope.
- */
-function normalizeSdkResult(sdkResult: Record<string, unknown>, tool: string): ExecutionResult {
-  const envelope = createEnvelope({ ok: !sdkResult.isError, meta: { tool } });
+function normalizeCallToolResult(raw: Record<string, unknown>, tool: string): ExecutionResult {
+  const envelope = createEnvelope({ ok: !raw.isError, meta: { tool } });
+  const content = Array.isArray(raw.content) ? raw.content : [];
 
-  const content = Array.isArray(sdkResult.content) ? sdkResult.content : [];
   for (const item of content) {
     if (!item || typeof item !== "object") continue;
     const ci = item as Record<string, unknown>;
@@ -168,22 +181,20 @@ function normalizeSdkResult(sdkResult: Record<string, unknown>, tool: string): E
     ) {
       envelope.ui = {
         kind: "html",
-        html: toImageUiHtml(ci.mimeType as string, ci.data as string)
+        html: toImageUiHtml(ci.mimeType as string, ci.data as string),
       };
     }
   }
 
-  // Check for UI html in the full result structure
-  const uiFromResult = extractUiHtml(sdkResult);
+  const uiFromResult = extractUiHtml(raw);
   if (uiFromResult && envelope.ui?.kind !== "html") {
     envelope.ui = { kind: "html", html: uiFromResult };
   }
 
-  if (Object.keys(sdkResult).length > 0) {
-    envelope.data = sdkResult;
+  if (Object.keys(raw).length > 0) {
+    envelope.data = raw;
   }
 
-  // If stdout contains an <img> tag (e.g. from display_file), promote to ui.html
   if (envelope.ui?.kind !== "html" && envelope.stdout.includes("<img")) {
     envelope.ui = { kind: "html", html: envelope.stdout };
   }
@@ -207,29 +218,43 @@ export async function POST(request: Request) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing tool name." }), { status: 400 });
   }
 
+  let upstream: Response;
   try {
-    const client = await getMcpClient();
-    const sdkResult = await client.callTool(
-      { name: tool, arguments: args },
-      undefined,
-      { signal: AbortSignal.timeout(60000) }
-    );
-
-    const normalized = await addDisplayFileFallbackUi(
-      normalizeSdkResult(sdkResult as Record<string, unknown>, tool),
-      tool
-    );
-    return NextResponse.json(normalized);
+    upstream = await fetch(backendUrl("/mcp/call"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: tool, arguments: args }),
+      signal: AbortSignal.timeout(60000),
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
     const isAbort = error instanceof Error && error.name === "AbortError";
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
       createEnvelope({
         ok: false,
-        stderr: isAbort ? "MCP unreachable: request timed out after 60000ms." : `MCP unreachable: ${message}`,
-        meta: { tool, timeoutMs: 60000 }
+        stderr: isAbort
+          ? "MCP unreachable: request timed out after 60000ms."
+          : `MCP unreachable: ${message}`,
+        meta: { tool, timeoutMs: 60000 },
       }),
       { status: 502 }
     );
   }
+
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => "");
+    return NextResponse.json(
+      createEnvelope({
+        ok: false,
+        stderr: detail || `Backend returned ${upstream.status}`,
+        meta: { tool },
+      }),
+      { status: upstream.status }
+    );
+  }
+
+  const raw = (await upstream.json()) as Record<string, unknown>;
+  const envelope = normalizeCallToolResult(raw, tool);
+  const withFallback = await addDisplayFileFallbackUi(envelope, tool);
+  return NextResponse.json(withFallback);
 }

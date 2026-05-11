@@ -70,7 +70,7 @@ cd ./ui && npm run dev
 ```
 
 ```bash
-cd ./mcp-server && uv run --env-file ../.env vista-mcp-server --transport=http
+cd ./mcp-server && uv run vista-mcp-server --transport=http
 ```
 
 ## Jobs

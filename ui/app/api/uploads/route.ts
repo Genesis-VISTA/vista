@@ -1,90 +1,104 @@
 import { NextResponse } from "next/server";
-import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { config } from "@/app/config";
+import { backendUrl } from "../_backend";
 
 export const runtime = "nodejs";
 
-const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+type BackendUpload = {
+  name: string;
+  size: number;
+  created: string;
+  modified: string;
+};
 
-function sanitizeFilename(name: string): string {
-  const base = path.basename(name).replace(/[^a-zA-Z0-9._-]/g, "_");
-  return base || "upload.bin";
-}
-
-function ensureUniqueName(existing: Set<string>, name: string): string {
-  if (!existing.has(name)) return name;
-
-  const ext = path.extname(name);
-  const stem = path.basename(name, ext);
-  let i = 1;
-  while (existing.has(`${stem}-${i}${ext}`)) i += 1;
-  return `${stem}-${i}${ext}`;
-}
-
+/**
+ * GET /api/uploads — list uploaded files.
+ *
+ * Backend returns `{name, size, created, modified}`. The frontend reads
+ * `modifiedAt`, so we rename `modified` on the way out.
+ */
 export async function GET() {
   try {
-    await mkdir(config.uploadsDir, { recursive: true });
-    const names = await readdir(config.uploadsDir);
-
-    const files = await Promise.all(
-      names.map(async (name) => {
-        const filePath = path.join(config.uploadsDir, name);
-        const stats = await stat(filePath);
-        if (!stats.isFile()) return null;
-        return {
-          name,
-          size: stats.size,
-          modifiedAt: stats.mtime.toISOString()
-        };
-      })
-    );
-
-    return NextResponse.json(
-      files
-        .filter((f): f is { name: string; size: number; modifiedAt: string } => Boolean(f))
-        .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))
-    );
+    const upstream = await fetch(backendUrl("/uploads"), {
+      headers: { accept: "application/json" },
+    });
+    if (!upstream.ok) {
+      return NextResponse.json([], { status: 200 });
+    }
+    const files = (await upstream.json()) as BackendUpload[];
+    const summaries = files.map((file) => ({
+      name: file.name,
+      size: file.size,
+      modifiedAt: file.modified,
+    }));
+    return NextResponse.json(summaries);
   } catch {
     return NextResponse.json([], { status: 200 });
   }
 }
 
+/**
+ * POST /api/uploads — forward the multipart body to the backend.
+ *
+ * The backend's response is `list[str]` (saved filenames). The frontend
+ * expects `{ok, saved}` with a 4xx body of `{ok: false, error}` on failure.
+ */
 export async function POST(request: Request) {
+  let formData: FormData;
   try {
-    const formData = await request.formData();
-    const incoming = formData.getAll("files").filter((entry): entry is File => entry instanceof File);
-
-    if (incoming.length === 0) {
-      return NextResponse.json({ ok: false, error: "No files were provided." }, { status: 400 });
-    }
-
-    await mkdir(config.uploadsDir, { recursive: true });
-    const existingNames = new Set(await readdir(config.uploadsDir));
-    const saved: string[] = [];
-
-    for (const file of incoming) {
-      if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `File '${file.name}' exceeds the 20MB upload limit.`
-          },
-          { status: 400 }
-        );
-      }
-
-      const safeName = ensureUniqueName(existingNames, sanitizeFilename(file.name));
-      const targetPath = path.join(config.uploadsDir, safeName);
-      const buffer = Buffer.from(await file.arrayBuffer());
-      await writeFile(targetPath, buffer);
-      existingNames.add(safeName);
-      saved.push(safeName);
-    }
-
-    return NextResponse.json({ ok: true, saved });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown upload error.";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid form data." }, { status: 400 });
   }
+
+  const incoming = formData.getAll("files").filter((entry): entry is File => entry instanceof File);
+  if (incoming.length === 0) {
+    return NextResponse.json({ ok: false, error: "No files were provided." }, { status: 400 });
+  }
+
+  const outgoing = new FormData();
+  for (const file of incoming) {
+    outgoing.append("files", file, file.name);
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(backendUrl("/uploads"), {
+      method: "POST",
+      body: outgoing,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json(
+      { ok: false, error: `Backend unreachable: ${message}` },
+      { status: 502 }
+    );
+  }
+
+  const text = await upstream.text();
+  if (!upstream.ok) {
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && "detail" in parsed) {
+        detail = String((parsed as { detail: unknown }).detail);
+      }
+    } catch {
+      // not JSON; keep the raw text
+    }
+    return NextResponse.json(
+      { ok: false, error: detail || `Upload failed (${upstream.status}).` },
+      { status: upstream.status }
+    );
+  }
+
+  let saved: string[] = [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      saved = parsed.filter((entry): entry is string => typeof entry === "string");
+    }
+  } catch {
+    // fall through with empty list
+  }
+  return NextResponse.json({ ok: true, saved });
 }

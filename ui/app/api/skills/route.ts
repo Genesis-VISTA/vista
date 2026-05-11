@@ -1,46 +1,47 @@
 import { NextResponse } from "next/server";
-import path from "path";
-import fs from "fs";
-import { findSkills, findSkillMd, readProperties } from "@/lib/skills";
-import { config } from "@/app/config";
+import { backendUrl } from "../_backend";
 
+export const runtime = "nodejs";
+
+type BackendSkill = {
+  name: string;
+  description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  allowed_tools?: string | null;
+  metadata?: Record<string, string | string[]> | null;
+  tags?: string[];
+};
+
+/**
+ * Proxy + reshape for the backend's `GET /skills`.
+ *
+ * Backend returns AgentSkills spec metadata (name, description, metadata, tags).
+ * The frontend additionally expects `slug`, `path`, and an `addedAt` mtime hint;
+ * `slug` is the kebab-case skill name (the spec requires the directory name to
+ * match the skill name), `path` is synthesised, and `addedAt` is not available
+ * over the wire so we send null.
+ */
 export async function GET() {
   try {
-    const skillDirs = findSkills([config.skillsDir]);
-
-    const skills = skillDirs.flatMap((skillDir) => {
-      try {
-        const props = readProperties(skillDir);
-        const skillMd = findSkillMd(skillDir);
-        let addedAt: number | null = null;
-        if (skillMd) {
-          try {
-            // Use the SKILL.md mtime as a "recently added" proxy. We don't
-            // shell out to git here so the response stays fast and works in
-            // trees without git history.
-            addedAt = fs.statSync(skillMd).mtimeMs;
-          } catch {
-            addedAt = null;
-          }
-        }
-        return [{
-          slug: path.basename(skillDir),
-          name: props.name,
-          description: props.description,
-          path: path.relative(path.dirname(config.skillsDir), skillDir).split(path.sep).join("/"),
-          metadata: props.metadata,
-          tags: props.tags ?? [],
-          addedAt,
-        }];
-      } catch (error) {
-        console.warn(`[skills] Skipping invalid skill '${skillDir}':`, error);
-        return [];
-      }
+    const upstream = await fetch(backendUrl("/skills"), {
+      headers: { accept: "application/json" },
     });
-
-    skills.sort((a, b) => a.slug.localeCompare(b.slug));
-
-    return NextResponse.json(skills);
+    if (!upstream.ok) {
+      return NextResponse.json([], { status: 200 });
+    }
+    const skills = (await upstream.json()) as BackendSkill[];
+    const summaries = skills.map((skill) => ({
+      slug: skill.name,
+      name: skill.name,
+      description: skill.description,
+      path: `skills/${skill.name}/SKILL.md`,
+      metadata: skill.metadata ?? undefined,
+      tags: skill.tags ?? [],
+      addedAt: null,
+    }));
+    summaries.sort((a, b) => a.slug.localeCompare(b.slug));
+    return NextResponse.json(summaries);
   } catch {
     return NextResponse.json([], { status: 200 });
   }

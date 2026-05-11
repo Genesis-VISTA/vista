@@ -20,12 +20,12 @@ cd ..
 
 Run in stdio transport
 ```bash
-uv run --env-file ../.env vista-mcp-server --transport=stdio
+uv run vista-mcp-server --transport=stdio
 ```
 
 To run in http transport mode
 ```bash
-uv run --env-file ../.env vista-mcp-server --transport=http
+uv run vista-mcp-server --transport=http
 ```
 
 ## Configuration

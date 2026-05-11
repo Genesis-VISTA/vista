@@ -14,6 +14,9 @@ uv sync
 cd "$REPO_ROOT/mcp-server/src/vista_mcp_server/docker"
 docker build -t vista-sandbox .
 
+cd "$REPO_ROOT/backend"
+uv sync
+
 cd "$REPO_ROOT/ui"
 npm install
 
