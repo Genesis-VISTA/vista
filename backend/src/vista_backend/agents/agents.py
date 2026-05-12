@@ -5,7 +5,7 @@ import fnmatch
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from pydantic_ai import Agent, RunContext, UsageLimits
+from pydantic_ai import Agent, RunContext, UsageLimits, AgentRunResult
 from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import infer_model
@@ -86,24 +86,24 @@ def build_project_agent(
 async def run_project_agent(
     project: ProjectPublic,
     agent: Agent,
-    message: str,
+    user_prompt: str,
     message_history: list[ModelMessage],
-) -> list[ModelMessage]:
+) -> AgentRunResult:
     """Run the agent, returns new messages to append to history."""
     usage_limits = UsageLimits(**(project.usage_limits or {}))
     result = await agent.run(
-        message,
+        user_prompt,
         message_history=message_history,
         usage_limits=usage_limits,
     )
-    return result.new_messages()
+    return result
 
 
 @asynccontextmanager
 async def run_project_agent_stream(
     project: ProjectPublic,
     agent: Agent,
-    message: str,
+    user_prompt: str,
     message_history: list[ModelMessage],
 ) -> AsyncIterator[StreamedRunResult]:
     """
@@ -117,7 +117,7 @@ async def run_project_agent_stream(
     """
     usage_limits = UsageLimits(**(project.usage_limits or {}))
     async with agent.run_stream(
-        message,
+        user_prompt,
         message_history=message_history,
         usage_limits=usage_limits,
     ) as stream:
