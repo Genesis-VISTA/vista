@@ -9,7 +9,6 @@ import uvicorn
 from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_mcp_server
-from .ui_chat import SseLogHandler, make_elicitation_callback, router as ui_chat_router
 from .agent import router as agent_router
 from .mcp import router as mcp_router
 from .projects import router as projects_router
@@ -23,10 +22,6 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    handler = SseLogHandler()
-    handler.setLevel(settings.log_level)
-    logging.getLogger("vista").addHandler(handler)
-    logging.getLogger("vista").setLevel(settings.log_level)
 
     await init_db()
 
@@ -34,21 +29,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with get_mcp_server() as mcp_server:
         await mcp_server.list_tools()
 
-    app.state.ui_elicitations = {}
-    app.state.ui_elicitation_callback = make_elicitation_callback(app)
-
     # TODO: not this only works for single uvicorn worker, if we need to scale it move this to the DB
     app.state.elicitations = {}
 
     try:
         yield
     finally:
-        for entry in list(app.state.ui_elicitations.values()):
-            entry.timer.cancel()
-            if not entry.future.done():
-                entry.future.set_result(mcp_types.ElicitResult(action="cancel"))
-        app.state.ui_elicitations.clear()
-
         for future in list(app.state.elicitations.values()):
             if not future.done():
                 future.set_result(mcp_types.ElicitResult(action="cancel"))
@@ -56,7 +42,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="vista-backend", lifespan=lifespan)
-app.include_router(ui_chat_router)
 app.include_router(agent_router)
 app.include_router(mcp_router)
 app.include_router(projects_router)
