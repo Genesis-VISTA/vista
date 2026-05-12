@@ -31,7 +31,7 @@ class AgentRunResponse(BaseModel):
     """
     usage: RunUsage
 
-@router.post("/projects/{project_id}/agent/run")
+@router.post("/projects/{project_id}/agent/run", response_model=AgentRunResponse)
 async def agent_run(
     project_id: uuid.UUID, body: AgentRunRequest, session: SessionDep,
 ) -> AgentRunResponse | Response:

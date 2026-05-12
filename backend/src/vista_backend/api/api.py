@@ -4,6 +4,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from mcp import types as mcp_types
+import uvicorn
 
 from ..config import settings
 from ..db.db import init_db
@@ -56,8 +57,6 @@ app.include_router(uploads_router)
 
 
 def main() -> None:
-    import uvicorn
-
     uvicorn.run(
         "vista_backend.api.api:app",
         host=settings.host,
@@ -67,5 +66,5 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
