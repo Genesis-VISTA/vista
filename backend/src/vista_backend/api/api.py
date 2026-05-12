@@ -34,16 +34,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with get_mcp_server() as mcp_server:
         await mcp_server.list_tools()
 
+    app.state.ui_elicitations = {}
+    app.state.ui_elicitation_callback = make_elicitation_callback(app)
+
+    # TODO: not this only works for single uvicorn worker, if we need to scale it move this to the DB
     app.state.elicitations = {}
-    app.state.elicitation_callback = make_elicitation_callback(app)
 
     try:
         yield
     finally:
-        for entry in list(app.state.elicitations.values()):
+        for entry in list(app.state.ui_elicitations.values()):
             entry.timer.cancel()
             if not entry.future.done():
                 entry.future.set_result(mcp_types.ElicitResult(action="cancel"))
+        app.state.ui_elicitations.clear()
+
+        for future in list(app.state.elicitations.values()):
+            if not future.done():
+                future.set_result(mcp_types.ElicitResult(action="cancel"))
         app.state.elicitations.clear()
 
 

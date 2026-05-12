@@ -159,12 +159,12 @@ def make_elicitation_callback(app) -> Callable:
         future: asyncio.Future[mcp.types.ElicitResult] = loop.create_future()
 
         def expire() -> None:
-            entry = app.state.elicitations.pop(bridge_id, None)
+            entry = app.state.ui_elicitations.pop(bridge_id, None)
             if entry is not None and not entry.future.done():
                 entry.future.set_result(mcp.types.ElicitResult(action="cancel"))
 
         timer = loop.call_later(ELICITATION_TIMEOUT_S, expire)
-        app.state.elicitations[bridge_id] = ElicitationEntry(future=future, timer=timer)
+        app.state.ui_elicitations[bridge_id] = ElicitationEntry(future=future, timer=timer)
 
         active.emit(
             {
@@ -179,7 +179,7 @@ def make_elicitation_callback(app) -> Callable:
         try:
             result = await future
         finally:
-            entry = app.state.elicitations.pop(bridge_id, None)
+            entry = app.state.ui_elicitations.pop(bridge_id, None)
             if entry is not None:
                 entry.timer.cancel()
         return result
@@ -544,7 +544,7 @@ async def chat(request: Request) -> StreamingResponse:
 
 @router.post("/ui/chat/elicitation")
 async def chat_elicitation(submit: ElicitationSubmit, request: Request) -> dict[str, bool]:
-    entry = request.app.state.elicitations.pop(submit.id, None)
+    entry = request.app.state.ui_elicitations.pop(submit.id, None)
     if entry is None:
         raise HTTPException(status_code=404, detail="Unknown or expired elicitation")
     entry.timer.cancel()
