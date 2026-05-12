@@ -13,7 +13,7 @@ export async function POST(request: Request) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl("/chat/elicitation"), {
+    upstream = await fetch(backendUrl("/ui/chat/elicitation"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl("/chat"), {
+    upstream = await fetch(backendUrl("/ui/chat"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),

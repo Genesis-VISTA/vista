@@ -461,7 +461,7 @@ def _sse_encode(event: dict[str, Any]) -> bytes:
     return f"data: {json.dumps(event, default=str)}\n\n".encode("utf-8")
 
 
-@router.post("/chat")
+@router.post("/ui/chat")
 async def chat(request: Request) -> StreamingResponse:
     body = await request.json()
     chat_req = ChatRequest.model_validate(body)
@@ -542,7 +542,7 @@ async def chat(request: Request) -> StreamingResponse:
     return StreamingResponse(stream(), headers=headers, media_type="text/event-stream")
 
 
-@router.post("/chat/elicitation")
+@router.post("/ui/chat/elicitation")
 async def chat_elicitation(submit: ElicitationSubmit, request: Request) -> dict[str, bool]:
     entry = request.app.state.elicitations.pop(submit.id, None)
     if entry is None:
