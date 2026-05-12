@@ -89,7 +89,7 @@ async def run_project_agent(
     message: str,
     message_history: list[ModelMessage],
 ) -> list[ModelMessage]:
-    """Run the agent non-streaming; returns new messages to append to history."""
+    """Run the agent, returns new messages to append to history."""
     usage_limits = UsageLimits(**(project.usage_limits or {}))
     result = await agent.run(
         message,
