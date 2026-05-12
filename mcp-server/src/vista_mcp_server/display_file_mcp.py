@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Annotated as A
 
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def _resolve_path(uri: str) -> Path | None:
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 def display_file(
     uri: A[str, "Absolute path to an image file, or a file:// URI"],
 ) -> str:

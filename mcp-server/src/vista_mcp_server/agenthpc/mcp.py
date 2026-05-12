@@ -21,6 +21,7 @@ from typing import Any
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 from ..config import settings
 from ..lib.ssh import get_ssh_conn_mcp_elicitation
@@ -77,13 +78,13 @@ def _session_pending(session_id: str, app_type: str) -> dict[str, dict]:
 
 # --------------------------------------------------------------------------- tools
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def agenthpc_list_applications() -> dict[str, Any]:
     """List every application available for agentic HPC optimization."""
     return {"applications": available_apps()}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def agenthpc_get_search_space(
     app_type: str,
     target_score: float | None = None,
@@ -109,7 +110,7 @@ async def agenthpc_get_search_space(
     return info
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
 async def agenthpc_submit_parameter_set(
     ctx: Context,
     app_type: str,
@@ -207,7 +208,7 @@ def _log_path(app: BaseApplication, log_params: dict) -> str:
     raise ValueError(f"Unsupported application: {app.app_type}")
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def agenthpc_check_job_status(
     ctx: Context,
     app_type: str,
@@ -240,7 +241,7 @@ async def agenthpc_check_job_status(
     return {"status": "no_log", "job_id": job_id}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def agenthpc_wait_for_job(
     ctx: Context,
     app_type: str,
@@ -283,7 +284,7 @@ async def agenthpc_wait_for_job(
         await asyncio.sleep(min(poll_interval_s, deadline - now))
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def agenthpc_get_job_result(
     ctx: Context,
     app_type: str,
@@ -353,7 +354,7 @@ async def agenthpc_get_job_result(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def agenthpc_get_all_results(
     ctx: Context,
     app_type: str,
@@ -402,7 +403,7 @@ async def agenthpc_get_all_results(
 
 # --------------------------------------------------------------------------- cancellation
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def agenthpc_list_pending_jobs(
     ctx: Context,
     app_type: str,
@@ -427,7 +428,7 @@ async def agenthpc_list_pending_jobs(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
 async def agenthpc_cancel_job(
     ctx: Context,
     app_type: str,
@@ -461,7 +462,7 @@ async def agenthpc_cancel_job(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
 async def agenthpc_cancel_all_pending(
     ctx: Context,
     app_type: str,
@@ -535,7 +536,7 @@ def _parse_stat0(contents: str) -> tuple[list[float], list[float]]:
     return temps, cvs
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
 async def agenthpc_plot_progress(
     ctx: Context,
     app_type: str,

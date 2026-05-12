@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastmcp import FastMCP, Context
+from mcp.types import ToolAnnotations
 
 from .config import settings
 from .lib.ssh import Confirmation
@@ -74,6 +75,7 @@ mcp = FastMCP("Submit Job", lifespan=lifespan)
 
 
 @mcp.tool(
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
         Submit a job to the HPC system.
 
@@ -164,7 +166,7 @@ async def submit_hpc_job(
     return job_id
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def get_hpc_job_status(job_id: str) -> str:
     """
     Get the status and logs of a submitted HPC job.
@@ -212,7 +214,7 @@ async def get_hpc_job_status(job_id: str) -> str:
     ])
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> str:
     """
     Download output files from an HPC job.
@@ -245,7 +247,7 @@ async def get_hpc_job_outputs(ctx: Context, job_id: str, files: list[str]) -> st
     return "Downloaded files:\n" + "\n".join(downloaded)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def list_hpc_jobs(ctx: Context) -> str:
     """
     List all recently submitted HPC jobs and their states.
