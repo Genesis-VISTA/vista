@@ -8,7 +8,7 @@ from mcp import types as mcp_types
 from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_mcp_server
-from .chat import SseLogHandler, make_elicitation_callback, router as chat_router
+from .ui_chat import SseLogHandler, make_elicitation_callback, router as chat_router
 from .mcp import router as mcp_router
 from .projects import router as projects_router
 from .skills import router as skills_router
