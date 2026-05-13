@@ -52,7 +52,7 @@ The browser never calls MCP directly. All calls go through `ui/app/api/*` route 
 
 ### Backend: Modular MCP Tool Composition
 The main server (`mcp-server/src/vista_mcp_server/server.py`) mounts independent sub-servers:
-- **submit_job_mcp** — `submit_hpc_job`, `get_hpc_job_status`, `get_hpc_job_outputs`, `list_hpc_jobs` (HPC job submission to Odo via S3M API; file access via SSH/SCP; confirmation via MCP elicitation)
+- **submit_job_mcp** — `submit_hpc_job`, `get_hpc_job_status`, `get_hpc_job_outputs`, `list_hpc_jobs`, `cancel_hpc_job`. Dispatches by `cluster=` arg to either Odo (OLCF, via S3M API + SSH/SCP for file access) or Perlmutter (NERSC, via IRI API through the amscrot SDK — no SSH). Confirmation via MCP elicitation.
 - **display_file_mcp** — Image/file rendering as base64 HTML
 - **sandbox_mcp** — `run_bash`, `create_file`, `view` (Docker sandboxed execution)
 - **rag_mcp** — Semantic search over research papers (ChromaDB + sentence-transformers)
@@ -86,7 +86,7 @@ Key files:
 
 ## Environment Variables
 
-Backend env vars use `VISTA_MCP_` prefix. Key backend config fields include `hpc_host`, `hpc_account`, `local_hpc_jobs_dir`, `remote_hpc_jobs_dir`, `s3m_url`, `s3m_token`, `rag_db_path`, `rag_model`, `omd_url`, `omd_api_key`, and `mcp_apps_dir`. Frontend uses `ui/.env.local` for `MCP_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, etc. See `ui/README.md` for full list.
+Backend env vars use `VISTA_MCP_` prefix. Odo-side: `hpc_host`, `hpc_account`, `local_hpc_jobs_dir`, `remote_hpc_jobs_dir`, `s3m_url`, `s3m_token`. NERSC-side: `nersc_iri_url`, `nersc_iri_token`, `nersc_account`, `nersc_machine`, `nersc_remote_dir`. Other: `rag_db_path`, `rag_model`, `omd_url`, `omd_api_key`, `mcp_apps_dir`. Frontend uses `ui/.env.local` for `MCP_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, etc. See `ui/README.md` for full list.
 
 ## Key Patterns
 
@@ -94,7 +94,7 @@ Backend env vars use `VISTA_MCP_` prefix. Key backend config fields include `hpc
 - Docker sandbox mounts `skills/` as read-only and `data/output/` as writable
 - The RAG pipeline (`build_rag.py`) indexes PDFs with citation extraction
 - Frontend uses Tailwind CSS v4 and Next.js 16 App Router (file-based routing under `ui/app/`)
-- HPC job submission uses the S3M API (`s3m_url`, `s3m_token`); file access (log/output download) uses SSH/SCP to `hpc_host`
-- A single persistent SSH connection (using `TTYSSHClient`) is created at server startup; it prompts on `/dev/tty` if key auth is unavailable
+- HPC job submission has two backends: **Odo** uses the S3M API (`s3m_url`, `s3m_token`) for submit, and SSH/SCP to `hpc_host` for log/output download. **Perlmutter** uses the NERSC IRI API (`nersc_iri_url`, `nersc_iri_token`) for submit *and* file access via the amscrot SDK — no SSH session is opened to NERSC.
+- A single persistent SSH connection (using `TTYSSHClient`) is created at server startup *for Odo only*; it prompts on `/dev/tty` if key auth is unavailable. Skipped entirely when only NERSC is configured.
 - Job directories under `hpc_jobs/` must contain `job.slurm` (the script) and optionally `cluster_defaults.json`. `cluster_defaults.json` is keyed by cluster name (`odo`, `perlmutter`); a job opts in to a cluster by including the corresponding section. The Perlmutter section additionally requires `job.perlmutter.slurm` (and optionally `setup_perlmutter.sh` for `pre_launch`).
 - `submit_hpc_job` elicits a confirmation checkbox before submitting; all other HPC tools operate silently
