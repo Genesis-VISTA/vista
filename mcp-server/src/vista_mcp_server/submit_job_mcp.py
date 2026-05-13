@@ -100,10 +100,18 @@ async def lifespan(server):
 mcp = FastMCP("Submit Job", lifespan=lifespan)
 
 
-# In-memory cache of job_id -> cluster for jobs submitted in this session. Used by
+@dataclasses.dataclass
+class SubmittedJob:
+    cluster: Cluster
+    # Perlmutter-only: rendered absolute paths after %j substitution.
+    log_path: str | None = None
+    output_dir: str | None = None
+
+
+# In-memory cache of job_id -> SubmittedJob for jobs submitted in this session. Used by
 # get_hpc_job_status / get_hpc_job_outputs / list_hpc_jobs to dispatch when the caller
-# doesn't pass an explicit `cluster` arg. Falls back to "odo" for unknown ids.
-_submitted_jobs: dict[str, Cluster] = {}
+# doesn't pass an explicit `cluster` arg, and to resolve Perlmutter log/output paths.
+_submitted_jobs: dict[str, SubmittedJob] = {}
 
 
 def _default_cluster() -> Cluster:
@@ -128,7 +136,7 @@ def _resolve_cluster(cluster: Cluster | None, job_id: str | None = None) -> Clus
     if cluster is not None:
         return cluster
     if job_id is not None and job_id in _submitted_jobs:
-        return _submitted_jobs[job_id]
+        return _submitted_jobs[job_id].cluster
     return _default_cluster()
 
 
@@ -145,7 +153,10 @@ def _resolve_cluster(cluster: Cluster | None, job_id: str | None = None) -> Clus
             script_args: Extra arguments to pass to the script
 
         Returns:
-            The job id.
+            A multi-line ground-truth summary of the submitted job (job_id, cluster,
+            nodes, duration). Pass the job_id verbatim to get_hpc_job_status and
+            other follow-up tools; report the rest as-is to the user without
+            inventing default values.
 
         Available Jobs:
 
@@ -182,16 +193,31 @@ async def submit_hpc_job(
         raise Exception("Job submission cancelled by user")
 
     if cluster == "odo":
-        job_id = await _submit_odo_job(job, node_count, duration_int, script_args)
+        job_id, eff_nodes, eff_duration = await _submit_odo_job(job, node_count, duration_int, script_args)
+        _submitted_jobs[job_id] = SubmittedJob(cluster="odo")
     else:
-        job_id = await _submit_perlmutter_job(job, node_count, duration_int, script_args)
-    _submitted_jobs[job_id] = cluster
-    return job_id
+        job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
+            job, node_count, duration_int, script_args,
+        )
+        _submitted_jobs[job_id] = SubmittedJob(
+            cluster="perlmutter", log_path=log_path, output_dir=output_dir,
+        )
+
+    # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
+    h, rem = divmod(eff_duration, 3600)
+    m, s = divmod(rem, 60)
+    return "\n".join([
+        f"job_id: {job_id}",
+        f"cluster: {cluster}",
+        f"nodes: {eff_nodes}",
+        f"duration: {h}:{m:02d}:{s:02d} ({eff_duration}s)",
+    ])
 
 
 async def _submit_odo_job(
     job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-) -> str:
+) -> tuple[str, int, int]:
+    """ Returns (job_id, effective_node_count, effective_duration_seconds). """
     job_info = AVAILABLE_JOBS[job]
     odo_defaults = job_info.cluster_defaults.odo
     if odo_defaults is None:
@@ -240,14 +266,19 @@ async def _submit_odo_job(
     if not job_id:
         raise ValueError(f"Failed to get job ID from S3M response: {response}")
     logging.info(f"Submitted job {job_id} via S3M to odo")
-    return job_id
+    eff_nodes = node_count or odo_defaults.resources.node_count or 1
+    eff_duration = odo_defaults.duration if duration_int is None else duration_int
+    return job_id, eff_nodes, eff_duration
 
 
 async def _submit_perlmutter_job(
     job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-) -> str:
+) -> tuple[str, str, str, int, int]:
+    """ Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
     if not settings.nersc_account:
         raise ValueError("VISTA_MCP_NERSC_ACCOUNT not set; required for Perlmutter submission")
+    if not settings.nersc_remote_dir:
+        raise ValueError("VISTA_MCP_NERSC_REMOTE_DIR not set; required for Perlmutter submission")
 
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.perlmutter
@@ -262,6 +293,11 @@ async def _submit_perlmutter_job(
             f"Add a {PERLMUTTER_JOB_SCRIPT} alongside job.slurm to enable Perlmutter submission."
         )
 
+    iri_client = get_iri_client()
+    session_dir = f"{settings.nersc_remote_dir.rstrip('/')}/{settings.session_id}"
+    out_dir = f"{session_dir}/out"
+    await iri_client.mkdir(out_dir)
+
     job_script_text = job_script_path.read_text()
     setup_script_path = local_job_dir / PERLMUTTER_SETUP_SCRIPT
     pre_launch = (
@@ -273,17 +309,40 @@ async def _submit_perlmutter_job(
     workers_per_node = defaults.resources.processes_per_node or 1
     duration = duration_int or defaults.duration
 
+    # Mirror Odo's hpc_setup_script_template UX: the user's job.perlmutter.slurm runs with
+    # $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
+    setup_snippet = textwrap.dedent(f"""
+        export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
+        mkdir -p "$VISTA_OUT"
+    """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
-    job_cmd = f"{job_script_text}\n" if not job_cmd_args else f"set -- {job_cmd_args}\n{job_script_text}\n"
+    body_lines = [setup_snippet]
+    if job_cmd_args:
+        body_lines.append(f"set -- {job_cmd_args}")
+    body_lines.append(job_script_text)
+    job_cmd = "\n".join(body_lines) + "\n"
+
+    # Convention-driven layout under VISTA_MCP_NERSC_REMOTE_DIR: each job gets a flat
+    # <remote_dir>/<job>/{src,model} tree. The user's job.perlmutter.slurm reads
+    # RUN_DIR_Perlmutter and FORGE_MODEL_Perlmutter from the job environment.
+    # Advanced users can override either by setting iri.environment in cluster_defaults.json.
+    base = settings.nersc_remote_dir.rstrip('/')
+    iri_env = {
+        "RUN_DIR_Perlmutter": f"{base}/{job}/src",
+        "FORGE_MODEL_Perlmutter": f"{base}/{job}/model",
+    }
+    iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
 
     # IRI image/module are surfaced as env vars so the user's job.perlmutter.slurm can
     # reference them in `srun shifter --image=$VISTA_PM_IMAGE` style invocations.
-    iri_env = dict(defaults.iri.environment)
     if defaults.iri.image is not None:
         iri_env["VISTA_PM_IMAGE"] = defaults.iri.image
     if defaults.iri.module is not None:
         iri_env["VISTA_PM_MODULE"] = defaults.iri.module
     iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
+
+    stdout_template = f"{out_dir}/log-%j.out"
+    stderr_template = f"{out_dir}/log-%j.err"
 
     spec = {
         "executable": "bash",
@@ -296,20 +355,21 @@ async def _submit_perlmutter_job(
             "exclusive_node_use": defaults.resources.exclusive_node_use,
         },
         "attributes": {
-            "resource_id": get_iri_client().compute_resource_id,
+            "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
             "account": settings.nersc_account,
             "duration": duration,
             "custom_attributes": {"constraint": defaults.iri.constraint},
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "stdout_path": f"vista-{job}-%j.out",
-            "stderr_path": f"vista-{job}-%j.err",
+            "directory": session_dir,
+            "stdout_path": stdout_template,
+            "stderr_path": stderr_template,
             "environment": iri_env,
         },
     }
-    job_id = await get_iri_client().submit_job(spec, name=f"vista-{job}")
+    job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to {settings.nersc_machine}")
-    return job_id
+    return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
 
 
 @mcp.tool()
@@ -385,19 +445,65 @@ async def _get_perlmutter_job_status(job_id: str) -> str:
     if status.get("message"):
         metadata["MESSAGE"] = status["message"]
 
-    # IRI doesn't expose stdout/stderr through the status response — fetch via the
-    # filesystem API using the same path we set in the submit spec.
-    log_path = f"vista-job-{job_id}.out"  # TODO(step 5): record the actual stdout_path
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.log_path is None:
+        return "\n\n".join([
+            "\n".join(f"{k}={v}" for k, v in metadata.items()),
+            "(no log path cached for this job; logs and outputs only available "
+            "for jobs submitted in the current session)",
+        ])
+
     try:
-        logs = await iri_client.head(log_path, lines=200)
+        logs = await iri_client.head(submitted.log_path, lines=200)
     except Exception as e:
         logs = f"(unable to fetch logs: {e})"
+
+    files: list[str] = []
+    if submitted.output_dir:
+        try:
+            ls_result = await iri_client.ls(submitted.output_dir, recursive=True)
+            files = _flatten_ls_paths(ls_result, root=submitted.output_dir)[:20]
+        except Exception as e:
+            logging.info(f"output dir not readable yet ({submitted.output_dir}): {e}")
 
     return "\n\n".join([
         "\n".join(f"{k}={v}" for k, v in metadata.items()),
         "--- LOGS ---",
         logs.strip() if logs.strip() else "(no logs yet)",
+        "--- OUTPUT FILES ---",
+        "\n".join(files) if files else "(no output files yet)",
     ])
+
+
+def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
+    """
+    Walk an amscrot ls() result and return file paths relative to *root*.
+
+    The IRI ls response shape isn't strictly typed; this is forgiving — it accepts
+    either a list of entries or a dict with a "files"/"entries"/"results" key.
+    """
+    entries: list[dict] = []
+    if isinstance(ls_result, list):
+        entries = ls_result
+    elif isinstance(ls_result, dict):
+        for key in ("files", "entries", "results", "items"):
+            v = ls_result.get(key)
+            if isinstance(v, list):
+                entries = v
+                break
+    out: list[str] = []
+    root_norm = root.rstrip("/")
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        path = e.get("path") or e.get("name") or ""
+        if not path:
+            continue
+        if path.startswith(root_norm + "/"):
+            out.append(path[len(root_norm) + 1:])
+        else:
+            out.append(path)
+    return out
 
 
 @mcp.tool()
@@ -446,6 +552,13 @@ async def _get_odo_job_outputs(job_id: str, files: list[str]) -> str:
 
 async def _get_perlmutter_job_outputs(job_id: str, files: list[str]) -> str:
     # IRI filesystem download is currently text-only; binary checkpoints are not supported here.
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.output_dir is None:
+        raise ValueError(
+            f"No output directory cached for job {job_id!r}. Output retrieval is only "
+            f"available for Perlmutter jobs submitted in the current session."
+        )
+
     iri_client = get_iri_client()
     local_out_dir = settings.output_dir / job_id
     sandbox_out_dir = Path("/mnt/data/output") / job_id
@@ -454,10 +567,11 @@ async def _get_perlmutter_job_outputs(job_id: str, files: list[str]) -> str:
     for file in files:
         if ".." in Path(file).parts or Path(file).is_absolute():
             raise ValueError(f'Invalid path "{file}"')
+        remote_path = f"{submitted.output_dir.rstrip('/')}/{file}"
         local_path = local_out_dir / file
         sandbox_path = sandbox_out_dir / file
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        await iri_client.download(file, local_path)
+        await iri_client.download(remote_path, local_path)
         downloaded.append(str(sandbox_path))
 
     return "Downloaded files:\n" + "\n".join(downloaded)

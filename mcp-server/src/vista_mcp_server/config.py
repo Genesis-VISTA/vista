@@ -95,6 +95,11 @@ class AppSettings(BaseSettings):
     """ NERSC project account for Slurm submission (VISTA_MCP_NERSC_ACCOUNT env var). """
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
+    nersc_remote_dir: str | None = None
+    """
+    Absolute remote dir on the NERSC machine where vista writes session output
+    (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter submission.
+    """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
