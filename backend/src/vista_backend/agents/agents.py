@@ -3,6 +3,7 @@ Logic to build the actual PydanticAI Agent
 """
 import fnmatch
 from typing import AsyncIterator
+from pathlib import Path
 
 from pydantic_ai import Agent, RunContext, UsageLimits, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
@@ -13,6 +14,9 @@ from mcp.client.session import ElicitationFnT
 from ..config import settings
 from ..db.schemas import ProjectPublic
 from .skills import to_prompt
+
+
+BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
 
 
 def _tool_allowed(name: str, patterns: list[str]) -> bool:
@@ -73,10 +77,12 @@ def build_project_agent(
 
     @agent.system_prompt
     def system_prompt(ctx: RunContext[str]) -> str:
-        # The prompt currently isn't dynamic, but we may change that later
-        DEFAULT_PROMPT = "You are VISTA, a scientific assistant."
-        base = project.system_prompt or DEFAULT_PROMPT
-        return f"{base}\n\n{skills_block}\n"
+        parts = [
+            BASE_SYSTEM_PROMPT,
+            project.system_prompt or "",
+            skills_block,
+        ]
+        return "\n\n".join([p for p in parts if p])
 
     return agent
 
