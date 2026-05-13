@@ -25,12 +25,14 @@ FORGE_MODEL_URL="${FORGE_MODEL_URL:-https://www.dropbox.com/sh/byr1ydik5n1ucod/A
 echo "[setup_perlmutter] RUN_DIR_Perlmutter=${RUN_DIR_Perlmutter}"
 echo "[setup_perlmutter] FORGE_MODEL_Perlmutter=${FORGE_MODEL_Perlmutter}"
 
-# 1. Validate the forge-tune source files. (User pre-populates $RUN_DIR_Perlmutter via scp.)
+# 1. Validate the forge-tune source files. Vista auto-uploads these via the IRI
+#    Filesystem API on the first submit per job dir; the validation below is a
+#    defensive check in case the upload was partial or skipped.
 required=(forge-tune.py hybrid_split.py setup_dist_vars.sh Molten_Salt_Thermophysical_Properties.csv)
 for f in "${required[@]}"; do
     if [ ! -f "${RUN_DIR_Perlmutter}/${f}" ]; then
         echo "[setup_perlmutter] ERROR: missing ${RUN_DIR_Perlmutter}/${f}" >&2
-        echo "[setup_perlmutter] populate ${RUN_DIR_Perlmutter} with hpc_jobs/forge-tune/ contents (scp from your laptop)" >&2
+        echo "[setup_perlmutter] vista should have uploaded these; check VISTA_MCP_NERSC_REMOTE_DIR + IRI token validity, or scp manually as a fallback" >&2
         exit 1
     fi
 done
