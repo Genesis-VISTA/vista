@@ -49,9 +49,11 @@ async def agent_run(
       - event: text-delta  data: "<incremental text chunk>"
       - event: done        data: {"new_messages": [...], "usage": {...}}
 
-    Supports MCP elicitation in streaming mode, elicitation requests look like:
-    - event: mcp-elicitation  data: {"elicitationId": "<uuid>", "mode": "form", "message": "...", ...}
-    The client must POST the response to /mcp/elicitation.
+    Supports MCP elicitation in streaming mode. Elicitation requests look like:
+    - event: mcp-elicitation  data: {"elicitationId": "<id>", "mode": "form", "message": "...", "requestedSchema": {...}}
+    - event: mcp-elicitation  data: {"elicitationId": "<id>", "mode": "url", "message": "...", "url": "https://..."}
+    The client must POST the response to /mcp/elicitation. For URL mode, "accept" means the
+    user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
     project = await session.get(ProjectTable, project_id)
     if project is None:
@@ -67,17 +69,28 @@ async def agent_run(
             context: RequestContext[ClientSession, Any, Any],
             params: mcp.types.ElicitRequestParams,
         ) -> mcp.types.ElicitResult:
-            elicitation_id = str(uuid.uuid4())
-
-            if not isinstance(params, mcp.types.ElicitRequestFormParams):
+            if isinstance(params, mcp.types.ElicitRequestFormParams):
+                elicitation_id = str(uuid.uuid4())
+                event_data: dict[str, Any] = {
+                    "elicitationId": elicitation_id,
+                    "mode": params.mode,
+                    "message": params.message,
+                    "requestedSchema": params.requestedSchema,
+                }
+            elif isinstance(params, mcp.types.ElicitRequestURLParams):
+                elicitation_id = params.elicitationId
+                event_data = {
+                    "elicitationId": elicitation_id,
+                    "mode": params.mode,
+                    "message": params.message,
+                    "url": params.url,
+                }
+            else:
                 return mcp.types.ElicitResult(action="cancel")
 
-            event_data = {
-                "elicitationId": elicitation_id,
-                "mode": params.mode,
-                "message": params.message,
-                "requestedSchema": params.requestedSchema,
-            }
+            # URL-mode ids come from the upstream server; refuse a duplicate sent by the MCP server
+            if elicitation_id in request.app.state.elicitations:
+                return mcp.types.ElicitResult(action="cancel")
 
             future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
             request.app.state.elicitations[elicitation_id] = future
