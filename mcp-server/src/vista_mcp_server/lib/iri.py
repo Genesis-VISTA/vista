@@ -187,6 +187,13 @@ class IriClient:
         job.resource_id = self.compute_resource_id
         self._service_client.destroy(job)
 
+    async def mkdir(self, path: str | Path, *, parents: bool = True) -> dict:
+        return await asyncio.to_thread(
+            lambda: self._service_client.filesystem.mkdir(
+                self.storage_resource_id, str(path), p=parents,
+            )
+        )
+
     async def ls(self, path: str | Path, *, recursive: bool = False) -> dict:
         return await asyncio.to_thread(
             lambda: self._service_client.filesystem.ls(

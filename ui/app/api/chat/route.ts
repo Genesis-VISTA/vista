@@ -205,6 +205,10 @@ async function discoverTools(): Promise<OpenAiTool[]> {
  * Per-mode cap on how many LLM rounds we'll run in a single chat turn.
  *
  * - molten-salt: 10 is plenty for the existing query-and-plot workflows.
+ *   Override with VISTA_MAX_AGENT_ITERATIONS_MOLTEN_SALT for long-running
+ *   tasks such as the model-fine-tuning "watch mode" that polls
+ *   get_hpc_job_status until the job exits (~3 tool calls per poll, so
+ *   100 covers a 30-epoch run polled every 45s).
  * - alloy-design: each optimization trial uses ~5 tool-call rounds
  *   (get_all_results → submit → wait → get_job_result → optional
  *   display), so we budget 600 by default to comfortably cover ~100 trials.
@@ -216,7 +220,8 @@ function maxIterationsForMode(mode: ChatMode): number {
     const envOverride = parseInt(process.env.VISTA_MAX_AGENT_ITERATIONS_ALLOY ?? "", 10);
     return Number.isFinite(envOverride) && envOverride > 0 ? envOverride : 600;
   }
-  return 10;
+  const envOverride = parseInt(process.env.VISTA_MAX_AGENT_ITERATIONS_MOLTEN_SALT ?? "", 10);
+  return Number.isFinite(envOverride) && envOverride > 0 ? envOverride : 10;
 }
 
 /**
