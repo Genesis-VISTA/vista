@@ -13,7 +13,7 @@ import mcp.types
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import build_project_agent, run_project_agent, run_project_agent_stream
+from ..agents.agents import ProjectAgent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
 
@@ -90,6 +90,7 @@ async def agent_run(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     project = ProjectPublic.model_validate(project)
+    agent = ProjectAgent(project)
 
     if body.stream:
         # We have to do some custom async queue to handle interleaving the MCP Elicitation events
@@ -137,14 +138,12 @@ async def agent_run(
             finally:
                 request.app.state.elicitations.pop(elicitation_id, None)
 
-        agent = build_project_agent(project, elicitation_callback=handle_elicitation)
-
         async def agent_stream():
             try:
-                async for event in run_project_agent_stream(
-                    project, agent,
+                async for event in agent.run_stream(
                     user_prompt=body.user_prompt,
                     message_history=body.message_history,
+                    elicitation_callback=handle_elicitation,
                 ):
                     if isinstance(event, AgentRunResultEvent):
                         # Return the final result in the same format as non streaming
@@ -177,8 +176,7 @@ async def agent_run(
 
         return EventSourceResponse(event_generator())
     else:
-        agent = build_project_agent(project)
-        result = await run_project_agent(project, agent,
+        result = await agent.run(
             user_prompt=body.user_prompt,
             message_history=body.message_history,
         )

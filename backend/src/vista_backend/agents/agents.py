@@ -9,7 +9,7 @@ from pydantic_ai import Agent, RunContext, UsageLimits, AgentRunResult, AgentRun
 from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage
 from pydantic_ai.models import infer_model
-from mcp.client.session import ElicitationFnT
+import mcp.client.session
 
 from ..config import settings
 from ..db.schemas import ProjectPublic
@@ -37,9 +37,10 @@ def _tool_allowed(name: str, patterns: list[str]) -> bool:
         return False
     return True
 
+
 # TODO: Cache MCP connection?
 def get_mcp_server(
-    elicitation_callback: ElicitationFnT | None = None,
+    elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
 ) -> MCPServerStreamableHTTP:
     """
@@ -54,78 +55,88 @@ def get_mcp_server(
     )
 
 
-def build_project_agent(
-    project: ProjectPublic,
-    elicitation_callback: ElicitationFnT | None = None,
-    process_tool_call: ProcessToolCallback | None = None,
-) -> Agent:
-    """
-    Construct a PydanticAI Agent for a project.
-    """
-    mcp = get_mcp_server(
-        elicitation_callback=elicitation_callback,
-        process_tool_call=process_tool_call,
-    )
-    toolset = mcp.filtered(lambda ctx, tool: _tool_allowed(tool.name, project.tools))
+class ProjectAgent:
+    def __init__(self, project: ProjectPublic):
+        self.project = project
+    
+    def _build_agent(self,
+        elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
+        process_tool_call: ProcessToolCallback | None = None,
+    ) -> Agent:
+        """
+        Construct a PydanticAI Agent for a project.
+        """
+        mcp = get_mcp_server(
+            elicitation_callback=elicitation_callback,
+            process_tool_call=process_tool_call,
+        )
+        toolset = mcp.filtered(lambda ctx, tool: _tool_allowed(tool.name, self.project.tools))
 
-    agent = Agent(
-        model=infer_model(settings.model),
-        toolsets=[toolset],
-    )
+        agent = Agent(
+            model=infer_model(settings.model),
+            toolsets=[toolset],
+        )
 
-    skills_block = to_prompt([settings.skills_dir / skill for skill in project.skills])
+        skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills])
 
-    @agent.system_prompt
-    def system_prompt(ctx: RunContext[str]) -> str:
-        parts = [
-            BASE_SYSTEM_PROMPT,
-            project.system_prompt or "",
-            skills_block,
-        ]
-        return "\n\n".join([p for p in parts if p])
+        @agent.system_prompt
+        def system_prompt(ctx: RunContext[str]) -> str:
+            parts = [
+                BASE_SYSTEM_PROMPT,
+                self.project.system_prompt or "",
+                skills_block,
+            ]
+            return "\n\n".join([p for p in parts if p])
 
-    return agent
+        return agent
 
+    async def run(self,
+        user_prompt: str,
+        message_history: list[ModelMessage]|None = None,
+        elicitation_callback: mcp.client.session.ElicitationFnT|None = None,
+        process_tool_call: ProcessToolCallback | None = None,
+    ) -> AgentRunResult:
+        """
+        Run the agent for a single agent "turn"
 
-async def run_project_agent(
-    project: ProjectPublic,
-    agent: Agent,
-    user_prompt: str,
-    message_history: list[ModelMessage],
-) -> AgentRunResult:
-    """Run the agent, returns new messages to append to history."""
-    usage_limits = UsageLimits(**(project.usage_limits or {}))
-    result = await agent.run(
-        user_prompt,
-        message_history=message_history,
-        usage_limits=usage_limits,
-    )
-    return result
+        See run_stream for more info.
+        """
 
+        async for event in self.run_stream(
+            user_prompt = user_prompt,
+            message_history = message_history,
+            elicitation_callback=elicitation_callback,
+            process_tool_call=process_tool_call,
+        ):
+            if isinstance(event, AgentRunResultEvent):
+                return event.result
+        raise RuntimeError("Pydantic AI didn't emit AgentRunResultEvent") # Should be unreachable
 
-async def run_project_agent_stream(
-    project: ProjectPublic,
-    agent: Agent,
-    user_prompt: str,
-    message_history: list[ModelMessage],
-) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent]:
-    """
-    Stream the agent run as PydanticAI events.
+    async def run_stream(self,
+        user_prompt: str,
+        message_history: list[ModelMessage]|None = None,
+        elicitation_callback: mcp.client.session.ElicitationFnT|None = None,
+        process_tool_call: ProcessToolCallback | None = None,
+    ) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent]:
+        """
+        Run the agent and return a stream of PydanticAI events.
 
-    Yields every event PydanticAI produces during the run -- model response part starts /
-    deltas / ends, function tool call invocations, tool returns -- and finally a single
-    `AgentRunResultEvent` carrying the run's new messages and usage.
+        See `pydantic_ai.messages.AgentStreamEvent` and `pydantic_ai.AgentRunResultEvent` and
+        https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents
 
-    Schema reference: see `pydantic_ai.messages.AgentStreamEvent` and
-    `pydantic_ai.AgentRunResultEvent`. The PydanticAI docs at
-    https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents describe the event
-    semantics.
-    """
-    usage_limits = UsageLimits(**(project.usage_limits or {}))
-    async for event in agent.run_stream_events(
-        user_prompt,
-        message_history=message_history,
-        usage_limits=usage_limits,
-    ):
-        yield event
+        Pass elicitation_callback to support MCP elicitation. The function should return an awaitable
+        that completes with the elicitation result.
+        """
+        usage_limits = UsageLimits(**(self.project.usage_limits or {}))
+        agent = self._build_agent(
+            elicitation_callback=elicitation_callback,
+            process_tool_call=process_tool_call,
+        )
+
+        async for event in agent.run_stream_events(
+            user_prompt,
+            message_history=message_history,
+            usage_limits=usage_limits,
+        ):
+            yield event
 
