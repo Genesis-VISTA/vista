@@ -2,14 +2,12 @@
 Logic to build the actual PydanticAI Agent
 """
 import fnmatch
-from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from pydantic_ai import Agent, RunContext, UsageLimits, AgentRunResult
+from pydantic_ai import Agent, RunContext, UsageLimits, AgentRunResult, AgentRunResultEvent
 from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage
 from pydantic_ai.models import infer_model
-from pydantic_ai.result import StreamedRunResult
 from mcp.client.session import ElicitationFnT
 
 from ..config import settings
@@ -99,27 +97,29 @@ async def run_project_agent(
     return result
 
 
-@asynccontextmanager
 async def run_project_agent_stream(
     project: ProjectPublic,
     agent: Agent,
     user_prompt: str,
     message_history: list[ModelMessage],
-) -> AsyncIterator[StreamedRunResult]:
+) -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent]:
     """
-    Async context manager that streams the agent response.
+    Stream the agent run as PydanticAI events.
 
-    Usage:
-        async with run_project_agent_stream(project, agent, msg, history) as stream:
-            async for delta in stream.stream_text(delta=True):
-                ...
-            new_msgs = stream.new_messages()
+    Yields every event PydanticAI produces during the run -- model response part starts /
+    deltas / ends, function tool call invocations, tool returns -- and finally a single
+    `AgentRunResultEvent` carrying the run's new messages and usage.
+
+    Schema reference: see `pydantic_ai.messages.AgentStreamEvent` and
+    `pydantic_ai.AgentRunResultEvent`. The PydanticAI docs at
+    https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents describe the event
+    semantics.
     """
     usage_limits = UsageLimits(**(project.usage_limits or {}))
-    async with agent.run_stream(
+    async for event in agent.run_stream_events(
         user_prompt,
         message_history=message_history,
         usage_limits=usage_limits,
-    ) as stream:
-        yield stream
+    ):
+        yield event
 
