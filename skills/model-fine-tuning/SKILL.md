@@ -22,7 +22,9 @@ Upstream/source copies currently also exist in `hpc_jobs/forge-tune/`.
 
 Progress:
 - [ ] 1. Confirm run goal (train, resume, or eval-only)
-- [ ] 2. Ask where to run: local, Odo (OLCF), or Perlmutter (NERSC). If HPC, use
+- [ ] 2. Decide where to run. **First check whether the user already named one** —
+       "Perlmutter" / "NERSC" → cluster="perlmutter"; "Odo" / "Frontier" / "OLCF" →
+       cluster="odo". Only ask if neither was mentioned. If HPC, use
        `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`.
 - [ ] 3. Confirm model path and dataset path
 - [ ] 4. Build command or job submission args
@@ -106,8 +108,9 @@ change much," do not — re-run them anyway. The user is watching the chat for
 periodic plot updates; missing cycles look like the agent stopped working.
 
 Notes:
-- Iteration budget is governed by `VISTA_MAX_AGENT_ITERATIONS_MOLTEN_SALT`. Tell
-  the user to increase it (e.g. `=100`) in `.env` if the loop is terminating early.
+- Iteration budget is governed by the project's `usage_limits` (Pydantic AI
+  `UsageLimits`, stored in the project DB row). For long watch loops, ensure
+  `request_limit` is at least ~100 (≈3 tool calls per poll × 30 polls).
 - The user can interrupt the loop at any time by sending another message.
 
 Artifacts:
@@ -126,11 +129,21 @@ Artifacts:
 - Treat this as regression by default unless user explicitly requests classification.
 - For `--eval-only`, require `--resume-from <checkpoint_path>`.
 - Keep commands explicit and reproducible; include all non-default args in the final command.
-- For fine-tuning requests, ask a confirmation question before any HPC submission.
-  If the user hasn't said which cluster yet, ask both at once:
-  "Do you want me to submit this as an HPC job? If so, on Odo (OLCF) or Perlmutter (NERSC)?"
-- In the first response for fine-tuning, ask only those questions and defer all
-  other configuration questions until the user answers.
-- Only call `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)` after explicit user confirmation.
-- The MCP elicitation modal will pop up a final "Confirm running on <cluster>" check —
-  the user can still cancel there.
+- For fine-tuning HPC submissions, resolve the target cluster **before** asking
+  for confirmation. Two cases, mutually exclusive:
+  - **The user named a cluster** in this or a recent message ("Perlmutter",
+    "NERSC", "Odo", "Frontier", "OLCF") → use it directly. Do NOT ask again,
+    do NOT mention the other cluster as an option, do NOT use the word "Odo"
+    in your reply if the user said "Perlmutter" (and vice versa).
+  - **The user has not named a cluster** → ask exactly: *"Submit on Odo (OLCF)
+    or Perlmutter (NERSC)?"*
+- Once the cluster is known, ask the final confirmation, substituting the
+  resolved cluster name: *"Submit this as a {Odo|Perlmutter} job now?"* — never
+  template the other cluster name into this question.
+- In the first response for fine-tuning, ask only the cluster question (if
+  needed) plus the confirmation, and defer all other configuration questions
+  until the user answers.
+- Only call `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`
+  after explicit user confirmation.
+- The MCP elicitation modal will pop up a final "Confirm running on <cluster>"
+  check — the user can still cancel there.
