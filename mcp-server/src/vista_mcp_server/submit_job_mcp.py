@@ -29,6 +29,16 @@ PERLMUTTER_JOB_SCRIPT = "job.perlmutter.slurm"
 PERLMUTTER_SETUP_SCRIPT = "setup_perlmutter.sh"
 """ Optional pre_launch setup script in each job dir; inlined into JobSpec.attributes.pre_launch. """
 
+PERLMUTTER_UPLOAD_SKIP = {
+    "README.md",
+    "cluster_defaults.json",
+    "s3m_defaults.json",      # legacy from before the rename
+    "job.slurm",              # Odo-specific
+    PERLMUTTER_JOB_SCRIPT,    # inlined into the IRI JobSpec
+    PERLMUTTER_SETUP_SCRIPT,  # inlined as pre_launch
+}
+""" Files in `hpc_jobs/<job>/` that the Perlmutter dispatcher does NOT upload to RUN_DIR_Perlmutter. """
+
 
 class ClusterDefaults(BaseModel):
     """
@@ -294,9 +304,12 @@ async def _submit_perlmutter_job(
         )
 
     iri_client = get_iri_client()
-    session_dir = f"{settings.nersc_remote_dir.rstrip('/')}/{settings.session_id}"
+    base = settings.nersc_remote_dir.rstrip('/')
+    session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
+    src_dir = f"{base}/{job}/src"
     await iri_client.mkdir(out_dir)
+    await _sync_perlmutter_sources(iri_client, job, src_dir)
 
     job_script_text = job_script_path.read_text()
     setup_script_path = local_job_dir / PERLMUTTER_SETUP_SCRIPT
@@ -326,9 +339,8 @@ async def _submit_perlmutter_job(
     # <remote_dir>/<job>/{src,model} tree. The user's job.perlmutter.slurm reads
     # RUN_DIR_Perlmutter and FORGE_MODEL_Perlmutter from the job environment.
     # Advanced users can override either by setting iri.environment in cluster_defaults.json.
-    base = settings.nersc_remote_dir.rstrip('/')
     iri_env = {
-        "RUN_DIR_Perlmutter": f"{base}/{job}/src",
+        "RUN_DIR_Perlmutter": src_dir,
         "FORGE_MODEL_Perlmutter": f"{base}/{job}/model",
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
@@ -370,6 +382,32 @@ async def _submit_perlmutter_job(
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to {settings.nersc_machine}")
     return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+
+
+async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
+    """
+    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir` via the IRI
+    Filesystem API, mirroring Odo's SCP-on-first-submit pattern. Idempotent: if
+    `src_dir` already has entries we skip the upload entirely.
+    """
+    try:
+        ls_result = await iri_client.ls(src_dir)
+        existing = _flatten_ls_paths(ls_result, root=src_dir)
+        if existing:
+            logging.debug(f"forge-tune src dir {src_dir} already populated ({len(existing)} entries); skipping upload")
+            return
+    except Exception as e:
+        logging.debug(f"src dir {src_dir} not yet readable ({e}); creating and uploading")
+
+    await iri_client.mkdir(src_dir)
+    local_job_dir = settings.local_hpc_jobs_dir / job
+    uploaded: list[str] = []
+    for f in sorted(local_job_dir.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.name in PERLMUTTER_UPLOAD_SKIP:
+            continue
+        await iri_client.upload(f, f"{src_dir}/{f.name}")
+        uploaded.append(f.name)
+    logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
 
 
 @mcp.tool()
@@ -589,6 +627,30 @@ async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     if cluster == "odo":
         return await _list_odo_jobs()
     return _list_perlmutter_jobs()
+
+
+@mcp.tool()
+async def cancel_hpc_job(job_id: str, cluster: Cluster | None = None) -> str:
+    """
+    Cancel a queued or running HPC job.
+
+    Args:
+        job_id: The job id returned by submit_hpc_job.
+        cluster: Which cluster the job was submitted to. If omitted, looked up from
+            the in-session cache.
+
+    Returns:
+        Confirmation of the cancellation request.
+    """
+    job_id = validate_job_id(job_id)
+    cluster = _resolve_cluster(cluster, job_id)
+    if cluster == "odo":
+        # S3M doesn't expose cancel directly; scancel over the existing SSH session works.
+        await get_s3m_client().bash(f"scancel {shlex.quote(job_id)}")
+    else:
+        await get_iri_client().cancel_job(job_id)
+    logging.info(f"Cancelled job {job_id} on {cluster}")
+    return f"Cancellation requested for job {job_id} on {cluster}."
 
 
 async def _list_odo_jobs() -> str:
