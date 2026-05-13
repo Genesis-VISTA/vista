@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelMessage
 from mcp.client.session import ClientSession
 from mcp.shared.context import RequestContext
 import mcp.types
+from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
 from ..agents.agents import build_project_agent, run_project_agent, run_project_agent_stream
@@ -35,9 +36,9 @@ class AgentRunResponse(BaseModel):
     """
     usage: RunUsage
 
-@router.post("/projects/{project_id}/agent/run", response_model=AgentRunResponse)
+@router.post("/projects/{project_name}/agent/run", response_model=AgentRunResponse)
 async def agent_run(
-    project_id: uuid.UUID, body: AgentRunRequest, session: SessionDep, request: Request,
+    project_name: str, body: AgentRunRequest, session: SessionDep, request: Request,
 ) -> AgentRunResponse | Response:
     """
     Stateless chat completion that runs the full agent loop for one turn.
@@ -55,7 +56,9 @@ async def agent_run(
     The client must POST the response to /mcp/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
-    project = await session.get(ProjectTable, project_id)
+    project = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     project = ProjectPublic.model_validate(project)

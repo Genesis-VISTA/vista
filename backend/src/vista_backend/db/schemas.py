@@ -66,3 +66,4 @@ class ProjectPublic(ProjectBase):
 class ProjectTable(ProjectBase, table=True):
     """ Project SQL model """
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str = Field(unique=True)
