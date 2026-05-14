@@ -96,5 +96,5 @@ async def display_file(
         f'alt="{resolved.name}" '
         f'style="max-width:100%;height:auto;display:block;margin:0 auto;" />'
     )
-    await ctx.info("display_file: returning %d-char HTML for %s", len(html), resolved.name)
+    await ctx.info(f"display_file: returning {len(html)}-char HTML for {resolved.name}")
     return html
