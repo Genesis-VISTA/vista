@@ -83,6 +83,24 @@ class AppSettings(BaseSettings):
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
 
+    nersc_iri_url: str = "https://api.iri.nersc.gov"
+    """ Base URL for the NERSC IRI API. """
+    nersc_iri_token: str | None = None
+    """
+    Globus access token for the NERSC IRI resource server (VISTA_MCP_NERSC_IRI_TOKEN env var).
+    Get one with: python iri-api-get-globus-token-main/get_globus_token.py --print-token --facilities nersc
+    Tokens expire ~48h; refresh with --refresh-only.
+    """
+    nersc_account: str | None = None
+    """ NERSC project account for Slurm submission (VISTA_MCP_NERSC_ACCOUNT env var). """
+    nersc_machine: str = "perlmutter"
+    """ NERSC compute resource group name (used to match the IRI discovery result). """
+    nersc_remote_dir: str | None = None
+    """
+    Absolute remote dir on the NERSC machine where vista writes session output
+    (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter submission.
+    """
+
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
     SSH host for file access (SCP/sacct) on the HPC cluster.

@@ -1,0 +1,27 @@
+{
+  "odo": {
+    "duration": 1200,
+    "resources": {
+      "node_count": 16,
+      "exclusive_node_use": true
+    }
+  },
+  "perlmutter": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 1,
+      "processes_per_node": 4,
+      "cpu_cores_per_process": 32,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "regular",
+      "constraint": "gpu",
+      "image": "nersc/pytorch:25.06.01",
+      "module": "gpu,nccl-plugin",
+      "environment": {
+        "FORGE_MODEL_URL": "https://www.dropbox.com/sh/byr1ydik5n1ucod/AADOu_9C6AwVPTThTUFQ7yQba?dl=1"
+      }
+    }
+  }
+}
