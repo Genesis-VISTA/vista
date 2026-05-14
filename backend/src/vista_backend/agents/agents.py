@@ -142,11 +142,11 @@ class ProjectAgent:
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
-            parts = [
-                BASE_SYSTEM_PROMPT,
-                self.project.system_prompt or "",
-                skills_block,
-            ]
+            parts = [BASE_SYSTEM_PROMPT]
+            if self.project.system_prompt:
+                parts.append("## Project Information")
+                parts.append(self.project.system_prompt)
+            parts.append(skills_block)
             return "\n\n".join([p for p in parts if p])
 
         return agent
