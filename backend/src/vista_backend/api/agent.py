@@ -16,6 +16,7 @@ from sse_starlette.event import ServerSentEvent
 from ..agents.agents import ProjectAgent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
+from ..utils.streams import StreamMerger
 
 router = APIRouter()
 
@@ -93,9 +94,8 @@ async def agent_run(
     agent = ProjectAgent(project)
 
     if body.stream:
-        # We have to do some custom async queue to handle interleaving the MCP Elicitation events
-        # and the primary agent stream events.
-        queue: asyncio.Queue[ServerSentEvent | None] = asyncio.Queue()
+        # StreamMerger lets handle_elicitation inject SSE events alongside the agent stream.
+        merger = StreamMerger[ServerSentEvent]()
 
         async def handle_elicitation(
             context: RequestContext[ClientSession, Any, Any],
@@ -126,7 +126,7 @@ async def agent_run(
 
             future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
             request.app.state.elicitations[elicitation_id] = future
-            await queue.put(ServerSentEvent(
+            merger.send(ServerSentEvent(
                 event="mcp_elicitation",
                 data=TypeAdapter(Any).dump_json(event_data),
             ))
@@ -138,41 +138,28 @@ async def agent_run(
             finally:
                 request.app.state.elicitations.pop(elicitation_id, None)
 
-        async def agent_stream():
-            try:
-                async for event in agent.run_stream(
-                    user_prompt=body.user_prompt,
-                    message_history=body.message_history,
-                    elicitation_callback=handle_elicitation,
-                ):
-                    if isinstance(event, AgentRunResultEvent):
-                        # Return the final result in the same format as non streaming
-                        data = AgentRunResponse(
-                            new_messages=event.result.new_messages(),
-                            usage=event.result.usage(),
-                        ).model_dump_json()
-                    else:
-                        data = TypeAdapter(Any).dump_json(event).decode()
-                    await queue.put(ServerSentEvent(event=event.event_kind, data=data))
-            finally:
-                await queue.put(None) # End stream sentinel value
+        async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
+            async for event in agent.run_stream(
+                user_prompt=body.user_prompt,
+                message_history=body.message_history,
+                elicitation_callback=handle_elicitation,
+            ):
+                if isinstance(event, AgentRunResultEvent):
+                    # Return the final result in the same format as non streaming
+                    data = AgentRunResponse(
+                        new_messages=event.result.new_messages(),
+                        usage=event.result.usage(),
+                    ).model_dump_json()
+                else:
+                    data = TypeAdapter(Any).dump_json(event).decode()
+                yield ServerSentEvent(event=event.event_kind, data=data)
+
+        merger.add_stream(agent_events())
 
         async def event_generator() -> AsyncGenerator[ServerSentEvent, None]:
-            driver_task = asyncio.create_task(agent_stream())
-            try:
-                while True:
-                    event = await queue.get()
-                    if event is None:
-                        break
+            async with merger:
+                async for event in merger:
                     yield event
-            finally:
-                # driver_task will already be complete unless the response got cancelled, then we
-                # need to clean it up explicitly here.
-                driver_task.cancel()
-                try:
-                    await driver_task
-                except asyncio.CancelledError:
-                    pass
 
         return EventSourceResponse(event_generator())
     else:
