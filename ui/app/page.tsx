@@ -6,7 +6,19 @@ import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
-import { useActiveProject } from "@/lib/projects";
+import { readActiveProjectName, useActiveProject } from "@/lib/projects";
+import {
+  htmlFromToolReturnContent,
+  type AgentRunResultEvent,
+  type FunctionToolCallEvent,
+  type FunctionToolResultEvent,
+  type LogEvent,
+  type McpElicitationEvent,
+  type ModelMessage,
+  type PartDeltaEvent,
+  type PartEndEvent,
+  type PartStartEvent,
+} from "@/lib/agent-events";
 
 type LogEntry = {
   id: string;
@@ -26,24 +38,6 @@ type McpHealth = {
 type McpToolsResponse = {
   ok: boolean;
   tools: Array<{ name: string; description?: string; inputSchema?: any }>;
-  error?: string;
-};
-
-type ToolCallInfo = {
-  tool: string;
-  args: Record<string, unknown>;
-  stdout: string;
-  stderr: string;
-  ok: boolean;
-  plotPath?: string | null;
-  displayHtml?: string | null;
-};
-
-type ChatApiResponse = {
-  ok: boolean;
-  response: string;
-  tools?: Array<{ name: string; description?: string; inputSchema?: any }>;
-  toolCalls?: ToolCallInfo[];
   error?: string;
 };
 
@@ -243,6 +237,13 @@ export default function HomePage() {
   const activeProject = useActiveProject();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  /**
+   * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
+   * `agent_run_result.new_messages` and sent back as `message_history` on the
+   * next turn so the agent has full conversational context. Separate from the
+   * display `messages` state; we never construct or mutate these payloads.
+   */
+  const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
   /**
    * Id of the most recently streamed intermediate agent turn.
@@ -264,6 +265,24 @@ export default function HomePage() {
       return next;
     });
   }
+
+  /**
+   * Reset the conversation when the active project changes. `messageHistory`
+   * is tied to a specific project's system prompt and tool set; replaying it
+   * under a different project would leak context across projects. The sentinel
+   * `undefined` lets us skip the initial `null → resolved` hydration step.
+   */
+  const prevProjectIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const currentId = activeProject?.id ?? null;
+    const prev = prevProjectIdRef.current;
+    prevProjectIdRef.current = currentId;
+    if (prev === undefined || prev === currentId) return;
+    setMessages([]);
+    setMessageHistory([]);
+    setLatestIntermediateId(null);
+    setExpandedIntermediates(new Set());
+  }, [activeProject?.id]);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
@@ -411,50 +430,6 @@ export default function HomePage() {
     }
   }
 
-  function processAgentResponse(data: { response: string; toolCalls: ToolCallInfo[] }) {
-    const content = data.response || "(no response)";
-    // Terminal message closes the streaming phase — demote whatever was the
-    // latest intermediate so it collapses with the rest of the thinking log.
-    setLatestIntermediateId(null);
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: "assistant", content }
-    ]);
-
-    if (Array.isArray(data.toolCalls)) {
-      for (const tc of data.toolCalls) {
-        if (tc.displayHtml) {
-          setLatestResult({
-            ok: true,
-            stdout: tc.stdout || "",
-            stderr: tc.stderr || "",
-            artifacts: [],
-            meta: {
-              tool: tc.tool,
-              analysisSummary: tc.plotPath ? { plotPath: tc.plotPath } : undefined,
-              references: parseReferencesFromStdout(tc.stdout || "")
-            },
-            ui: { kind: "html", html: tc.displayHtml }
-          });
-        }
-      }
-
-      const toolSummaries = data.toolCalls
-        .filter((tc) => tc.tool === "run_bash" || tc.tool === "web_search")
-        .map((tc) => {
-          const label = tc.tool === "run_bash" ? "Code execution" : "Web search";
-          const status = tc.ok ? "completed" : "failed";
-          return `${label} ${status}`;
-        });
-      if (toolSummaries.length > 0) {
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "tool", content: `Agent actions: ${toolSummaries.join(", ")}` }
-        ]);
-      }
-    }
-  }
-
   async function sendUserMessage() {
     const text = input.trim();
     if (!text) return;
@@ -475,23 +450,280 @@ export default function HomePage() {
 
     if (!useLlm) return;
 
-    setIsChatLoading(true);
-    try {
-      const history = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role, content: m.content }));
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Select a project first — open the Projects page from the sidebar."
+        }
+      ]);
+      return;
+    }
 
+    setIsChatLoading(true);
+    // Per-turn streaming-part accumulator, keyed by PartStartEvent.index.
+    // Text parts also track the id of the live assistant bubble they update.
+    type PartAcc =
+      | { kind: "text"; bubbleId: string; text: string }
+      | { kind: "thinking"; text: string }
+      | { kind: "tool-call"; toolName: string; argsText: string };
+    const parts = new Map<number, PartAcc>();
+    let finalSignaled = false;
+    let liveAssistantBubbleId: string | null = null;
+    let sawAgentRunResult = false;
+
+    function pushLog(level: string, area: string, message: string) {
+      setAgentLogs((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), ts: new Date().toISOString(), level, area, message }
+      ]);
+    }
+
+    function updateBubbleContent(bubbleId: string, content: string) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === bubbleId ? { ...m, content } : m))
+      );
+    }
+
+    function promoteBubbleToFinal(bubbleId: string) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === bubbleId ? { ...m, intermediate: false } : m))
+      );
+    }
+
+    function dispatchEvent(eventName: string | null, data: unknown) {
+      const kind =
+        eventName ??
+        (data && typeof data === "object"
+          ? ((data as { event_kind?: string }).event_kind ?? null)
+          : null);
+
+      switch (kind) {
+        case "log": {
+          const ev = data as LogEvent;
+          pushLog(ev.level, ev.area, ev.message);
+          break;
+        }
+
+        case "part_start": {
+          const ev = data as PartStartEvent;
+          const part = ev.part;
+          if (!part || typeof part !== "object") break;
+          const pkind = (part as { part_kind?: string }).part_kind;
+          if (pkind === "text") {
+            const initial = ((part as { content?: unknown }).content as string) ?? "";
+            const bubbleId = crypto.randomUUID();
+            const intermediate = !finalSignaled;
+            setMessages((prev) => [
+              ...prev,
+              { id: bubbleId, role: "assistant", content: initial, intermediate }
+            ]);
+            if (intermediate) {
+              setLatestIntermediateId(bubbleId);
+              requestAnimationFrame(() => scrollChatToLatest("smooth"));
+            }
+            liveAssistantBubbleId = bubbleId;
+            parts.set(ev.index, { kind: "text", bubbleId, text: initial });
+          } else if (pkind === "thinking") {
+            const initial = ((part as { content?: unknown }).content as string) ?? "";
+            parts.set(ev.index, { kind: "thinking", text: initial });
+            if (initial) pushLog("INFO", "Agent", `thinking: ${initial}`);
+          } else if (pkind === "tool-call" || pkind === "builtin-tool-call") {
+            const toolName = ((part as { tool_name?: unknown }).tool_name as string) ?? "";
+            parts.set(ev.index, { kind: "tool-call", toolName, argsText: "" });
+          }
+          break;
+        }
+
+        case "part_delta": {
+          const ev = data as PartDeltaEvent;
+          const acc = parts.get(ev.index);
+          if (!acc) break;
+          const delta = ev.delta;
+          if (!delta || typeof delta !== "object") break;
+          const dkind = (delta as { part_delta_kind?: string }).part_delta_kind;
+          if (dkind === "text" && acc.kind === "text") {
+            const chunk = ((delta as { content_delta?: unknown }).content_delta as string) ?? "";
+            if (chunk) {
+              acc.text += chunk;
+              updateBubbleContent(acc.bubbleId, acc.text);
+            }
+          } else if (dkind === "thinking" && acc.kind === "thinking") {
+            const chunk = ((delta as { content_delta?: unknown }).content_delta as string) ?? "";
+            if (chunk) acc.text += chunk;
+          } else if (dkind === "tool_call" && acc.kind === "tool-call") {
+            const nameChunk =
+              ((delta as { tool_name_delta?: unknown }).tool_name_delta as string) ?? "";
+            const argsChunk = (delta as { args_delta?: unknown }).args_delta;
+            if (nameChunk) acc.toolName += nameChunk;
+            if (typeof argsChunk === "string") acc.argsText += argsChunk;
+          }
+          break;
+        }
+
+        case "part_end": {
+          const ev = data as PartEndEvent;
+          const acc = parts.get(ev.index);
+          const part = ev.part;
+          if (acc?.kind === "text" && part && typeof part === "object") {
+            const final = ((part as { content?: unknown }).content as string) ?? acc.text;
+            updateBubbleContent(acc.bubbleId, final);
+          } else if (acc?.kind === "thinking" && acc.text) {
+            pushLog("INFO", "Agent", `thinking: ${acc.text}`);
+          }
+          parts.delete(ev.index);
+          break;
+        }
+
+        case "final_result": {
+          finalSignaled = true;
+          // If a text bubble is already streaming, this turn's text part IS
+          // the final answer — promote it now so it doesn't get collapsed.
+          if (liveAssistantBubbleId) {
+            promoteBubbleToFinal(liveAssistantBubbleId);
+            setLatestIntermediateId((prev) => (prev === liveAssistantBubbleId ? null : prev));
+          }
+          break;
+        }
+
+        case "function_tool_call": {
+          const ev = data as FunctionToolCallEvent;
+          const toolName = ev.part?.tool_name ?? "tool";
+          const newId = crypto.randomUUID();
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: newId,
+              role: "assistant",
+              content: `Calling \`${toolName}\`…`,
+              intermediate: true
+            }
+          ]);
+          setLatestIntermediateId(newId);
+          requestAnimationFrame(() => scrollChatToLatest("smooth"));
+          break;
+        }
+
+        case "function_tool_result": {
+          const ev = data as FunctionToolResultEvent;
+          const result = ev.result;
+          if (!result) break;
+          if (result.part_kind === "retry-prompt") {
+            pushLog(
+              "WARNING",
+              `Tool:${result.tool_name ?? "unknown"}`,
+              `Tool failed`
+            );
+            break;
+          }
+          if (result.part_kind === "tool-return" || result.part_kind === "builtin-tool-return") {
+            const html = htmlFromToolReturnContent(result.content);
+            if (html) {
+              setLatestResult({
+                ok: true,
+                stdout: "",
+                stderr: "",
+                artifacts: [],
+                meta: { tool: result.tool_name },
+                ui: { kind: "html", html }
+              });
+            }
+          }
+          break;
+        }
+
+        case "agent_run_result": {
+          const ev = data as AgentRunResultEvent;
+          sawAgentRunResult = true;
+          if (ev.result?.new_messages?.length) {
+            setMessageHistory((prev) => [...prev, ...ev.result.new_messages]);
+          }
+          if (liveAssistantBubbleId) {
+            promoteBubbleToFinal(liveAssistantBubbleId);
+          }
+          setLatestIntermediateId(null);
+          break;
+        }
+
+        default: {
+          // mcp_elicitation has no event_kind in its data; key off the SSE
+          // event name only.
+          if (eventName === "mcp_elicitation") {
+            const ev = data as McpElicitationEvent;
+            if (ev.mode === "form") {
+              setPendingElicitation({
+                id: ev.elicitationId,
+                message: ev.message,
+                schema: ev.requestedSchema
+              });
+            } else if (ev.mode === "url") {
+              // v1: synchronous confirm. The backend is blocked waiting for a
+              // POST to /api/chat/elicitation, so briefly blocking the UI is
+              // acceptable. Refine to a proper modal when the URL flow gets
+              // first-class UX.
+              const allow = window.confirm(
+                `${ev.message}\n\nAllow the agent to open:\n${ev.url}`
+              );
+              void handleElicitationSubmit(
+                ev.elicitationId,
+                allow ? "accept" : "cancel"
+              );
+              if (allow) window.open(ev.url, "_blank", "noopener,noreferrer");
+            }
+          }
+        }
+      }
+    }
+
+    let currentEvent: string | null = null;
+    let dataLines: string[] = [];
+
+    function dispatchBlock() {
+      if (dataLines.length === 0) {
+        currentEvent = null;
+        return;
+      }
+      const raw = dataLines.join("\n");
+      dataLines = [];
+      const eventName = currentEvent;
+      currentEvent = null;
+      try {
+        dispatchEvent(eventName, JSON.parse(raw));
+      } catch {
+        // Drop malformed event blocks rather than aborting the stream.
+      }
+    }
+
+    try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          message: text,
-          history,
-          loadedSlugs: Array.from(loadedSlugs),
+          project_name: projectName,
+          user_prompt: text,
+          message_history: messageHistory,
         })
       });
 
-      const reader = response.body!.getReader();
+      if (!response.ok || !response.body) {
+        let detail = `Backend returned ${response.status}`;
+        try {
+          const errData = await response.json();
+          detail = errData?.error || errData?.detail || detail;
+        } catch {
+          // ignore
+        }
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: `Agent error: ${detail}` }
+        ]);
+        return;
+      }
+
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
@@ -500,98 +732,41 @@ export default function HomePage() {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
+        const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
 
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
-
-          let event: { type: string; [key: string]: unknown };
-          try {
-            event = JSON.parse(data);
-          } catch {
+        for (const rawLine of lines) {
+          const line = rawLine.replace(/\r$/, "");
+          if (line === "") {
+            dispatchBlock();
             continue;
           }
-
-          switch (event.type) {
-            case "elicitation":
-              setPendingElicitation({
-                id: event.id as string,
-                message: event.message as string,
-                schema: event.schema as Record<string, unknown>
-              });
-              break;
-
-            case "agent_response":
-              processAgentResponse({
-                response: event.response as string,
-                toolCalls: event.toolCalls as ToolCallInfo[]
-              });
-              break;
-
-            case "agent_turn": {
-              // Intermediate update streamed mid-loop. Two shapes:
-              //   { text: "..." }        → append as an intermediate chat
-              //                             message (collapsed on arrival of
-              //                             the next one)
-              //   { toolCall: { ... } }  → refresh the output panel if the
-              //                             tool produced a figure
-              const text = typeof event.text === "string" ? event.text.trim() : "";
-              if (text) {
-                const newId = crypto.randomUUID();
-                setMessages((prev) => [
-                  ...prev,
-                  { id: newId, role: "assistant", content: text, intermediate: true }
-                ]);
-                setLatestIntermediateId(newId);
-                requestAnimationFrame(() => scrollChatToLatest("smooth"));
-              }
-              const tc = event.toolCall as ToolCallInfo | undefined;
-              if (tc && tc.displayHtml) {
-                setLatestResult({
-                  ok: true,
-                  stdout: tc.stdout || "",
-                  stderr: tc.stderr || "",
-                  artifacts: [],
-                  meta: {
-                    tool: tc.tool,
-                    analysisSummary: tc.plotPath ? { plotPath: tc.plotPath } : undefined,
-                    references: parseReferencesFromStdout(tc.stdout || "")
-                  },
-                  ui: { kind: "html", html: tc.displayHtml }
-                });
-              }
-              break;
-            }
-
-            case "error":
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: "assistant",
-                  content: `Agent error: ${event.error || "Unknown error"}`
-                }
-              ]);
-              break;
-
-            case "log":
-              setAgentLogs((prev) => [...prev, {
-                id: crypto.randomUUID(),
-                ts: new Date().toISOString(),
-                level: event.level as string,
-                area: event.area as string,
-                message: event.message as string,
-                extra: event.extra as Record<string, unknown> | undefined,
-              }]);
-              break;
-
-            case "done":
-              break;
+          if (line.startsWith(":")) continue; // SSE comment
+          if (line.startsWith("event:")) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            // Strip the single leading space SSE permits after "data:".
+            dataLines.push(line.slice(5).replace(/^ /, ""));
           }
         }
+      }
+      // Flush any trailing block held in the buffer.
+      if (buffer) {
+        const line = buffer.replace(/\r$/, "");
+        if (line.startsWith("event:")) currentEvent = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+      dispatchBlock();
+
+      if (!sawAgentRunResult) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Agent run did not complete."
+          }
+        ]);
       }
     } catch {
       setMessages((prev) => [
@@ -829,7 +1004,7 @@ export default function HomePage() {
         {activeProject && (
           <div className="app-active-project" title="Active project">
             <span className="app-active-project-label">Project</span>
-            <span className="app-active-project-name">{activeProject.title}</span>
+            <span className="app-active-project-name">{activeProject.name}</span>
           </div>
         )}
       </header>

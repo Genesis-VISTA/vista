@@ -1,83 +1,63 @@
 /**
- * Project model — a Project is a saved bundle of context (skills, datasets,
- * knowledge bases) the user can activate to scope a chat session.
+ * Project model — a Project is a saved bundle of agent context (system prompt,
+ * skills, tools, usage limits) that scopes a chat session.
  *
- * Built-in seeds are defined in this module and treated as read-only.
- * User-created projects live in localStorage under PROJECTS_STORAGE_KEY.
- * The slug of the currently active project lives under ACTIVE_PROJECT_KEY.
- *
- * Activating a project writes its `skills` list to LOADED_SKILLS_STORAGE_KEY
- * (the same key the chat agent reads), so a project switch is just a write +
- * navigation; no extra wiring on the chat side.
+ * Projects live in the backend DB and are reached through the `/api/projects`
+ * proxy routes; this module is the frontend's data-access + React-hook layer
+ * over that API. The only thing kept in localStorage is a pointer to the
+ * currently active project's `name`.
  */
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useReducer, useSyncExternalStore } from "react";
+import type { ProjectCreate, ProjectPublic } from "./agent-events";
 
+export type { ProjectCreate, ProjectPublic };
+
+/** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
 export interface Project {
-  slug: string;
-  title: string;
+  /** Backend uuid — primary key for CRUD. */
+  id: string;
+  /** Backend `name` — used as `{project_name}` for agent/run, as the display
+   *  label, and as the active-project pointer value. */
+  name: string;
   description: string;
+  systemPrompt: string;
   skills: string[];
-  datasets: string[];
-  knowledgeBases: string[];
-  /** True for the seeded projects defined in this file. */
-  builtin?: boolean;
+  tools: string[];
+  usageLimits: Record<string, unknown>;
 }
 
-export const PROJECTS_STORAGE_KEY = "vista.projects.v1";
 export const ACTIVE_PROJECT_KEY = "vista.activeProject.v1";
-export const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
 
-export const BUILTIN_PROJECTS: Project[] = [
-  {
-    slug: "genesis-splash",
-    title: "Genesis Splash",
-    description:
-      "Molten salt tritium breeding agent: thermophysical analysis, phase diagrams, GP property prediction, FORGE fine-tuning on Frontier, and dataset documentation.",
-    skills: ["salt-analysis", "salt-prediction", "model-fine-tuning", "datacard-generation"],
-    datasets: ["MSTDB"],
-    knowledgeBases: [],
-    builtin: true,
-  },
-  {
-    slug: "high-entropy-alloy-design",
-    title: "High Entropy Alloy Design",
-    description:
-      "Agentic composition search for refractory high-entropy alloys (MoNbTaW) on the Andes Slurm cluster.",
-    skills: ["alloy-design"],
-    datasets: [],
-    knowledgeBases: [],
-    builtin: true,
-  },
-];
-
-export function readUserProjects(): Project[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidProject);
-  } catch {
-    return [];
-  }
+function fromPublic(p: ProjectPublic): Project {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description ?? "",
+    systemPrompt: p.system_prompt ?? "",
+    skills: Array.isArray(p.skills) ? p.skills : [],
+    tools: Array.isArray(p.tools) ? p.tools : [],
+    usageLimits: p.usage_limits ?? {},
+  };
 }
 
-export function writeUserProjects(projects: Project[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      PROJECTS_STORAGE_KEY,
-      JSON.stringify(projects.filter((p) => !p.builtin))
-    );
-    notifyUserProjectsChanged();
-  } catch {
-    // ignore quota / unavailable storage
-  }
+/** Build a `ProjectCreate` body from a frontend `Project` (full overwrite). */
+export function toCreate(project: Omit<Project, "id">): ProjectCreate {
+  return {
+    name: project.name,
+    description: project.description || null,
+    system_prompt: project.systemPrompt || null,
+    skills: project.skills,
+    tools: project.tools,
+    usage_limits: project.usageLimits ?? {},
+  };
 }
 
-export function readActiveProjectSlug(): string | null {
+/* ------------------------------------------------------------------ */
+/*  Active-project pointer (localStorage, stores the project NAME)     */
+/* ------------------------------------------------------------------ */
+
+export function readActiveProjectName(): string | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(ACTIVE_PROJECT_KEY);
@@ -87,177 +67,186 @@ export function readActiveProjectSlug(): string | null {
   }
 }
 
-export function writeActiveProjectSlug(slug: string | null): void {
+export function writeActiveProjectName(name: string | null): void {
   if (typeof window === "undefined") return;
   try {
-    if (slug) {
-      window.localStorage.setItem(ACTIVE_PROJECT_KEY, slug);
+    if (name) {
+      window.localStorage.setItem(ACTIVE_PROJECT_KEY, name);
     } else {
       window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
     }
   } catch {
-    // ignore
+    // ignore quota / unavailable storage
   }
 }
 
-export function getAllProjects(): Project[] {
-  return [...BUILTIN_PROJECTS, ...readUserProjects()];
-}
-
-export function findProject(slug: string): Project | undefined {
-  return getAllProjects().find((p) => p.slug === slug);
-}
-
-/**
- * Activate a project: replace loaded skills with this project's skill list
- * (a project is the user's context, so other skills get unloaded), and set
- * the active-project pointer. Does not navigate — call `router.push("/")`
- * after this.
- */
-export function activateProject(project: Project): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      LOADED_SKILLS_STORAGE_KEY,
-      JSON.stringify(project.skills)
-    );
-    writeActiveProjectSlug(project.slug);
-    notifyActiveProjectChanged();
-  } catch {
-    // ignore
-  }
-}
-
-/** Generate a slug from a title for new user-created projects. */
-export function slugify(title: string): string {
-  const base = title
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return base || `project-${Date.now()}`;
-}
-
-function isValidProject(value: unknown): value is Project {
-  if (!value || typeof value !== "object") return false;
-  const p = value as Record<string, unknown>;
-  return (
-    typeof p.slug === "string" &&
-    typeof p.title === "string" &&
-    typeof p.description === "string" &&
-    Array.isArray(p.skills) &&
-    Array.isArray(p.datasets) &&
-    Array.isArray(p.knowledgeBases)
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Active-project hook (SSR-safe)                                     */
-/* ------------------------------------------------------------------ */
-
-/**
- * Tiny external store + hook for reading the active project on the client
- * without triggering a hydration mismatch.
- *
- * Returns `null` on the server and during the first client render, then
- * re-renders with the real value after hydration. Subscribes to the
- * `storage` event so other tabs / pages writing the active-project slug
- * are picked up live.
- */
-const activeProjectListeners = new Set<() => void>();
-
-function activeProjectSubscribe(cb: () => void): () => void {
-  activeProjectListeners.add(cb);
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === ACTIVE_PROJECT_KEY || e.key === PROJECTS_STORAGE_KEY) cb();
-  };
-  window.addEventListener("storage", onStorage);
-  return () => {
-    activeProjectListeners.delete(cb);
-    window.removeEventListener("storage", onStorage);
-  };
-}
-
-function activeProjectGetSnapshot(): Project | null {
-  const slug = readActiveProjectSlug();
-  return slug ? findProject(slug) ?? null : null;
-}
-
-function activeProjectGetServerSnapshot(): Project | null {
-  return null;
-}
+const activeNameListeners = new Set<() => void>();
 
 export function notifyActiveProjectChanged(): void {
-  activeProjectListeners.forEach((cb) => cb());
+  activeNameListeners.forEach((cb) => cb());
 }
 
-export function useActiveProject(): Project | null {
-  return useSyncExternalStore(
-    activeProjectSubscribe,
-    activeProjectGetSnapshot,
-    activeProjectGetServerSnapshot
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  User-projects hook (SSR-safe)                                      */
-/* ------------------------------------------------------------------ */
-
-const userProjectsListeners = new Set<() => void>();
-
-function userProjectsSubscribe(cb: () => void): () => void {
-  userProjectsListeners.add(cb);
+function activeNameSubscribe(cb: () => void): () => void {
+  activeNameListeners.add(cb);
   const onStorage = (e: StorageEvent) => {
-    if (e.key === PROJECTS_STORAGE_KEY) cb();
+    if (e.key === ACTIVE_PROJECT_KEY) cb();
   };
   window.addEventListener("storage", onStorage);
   return () => {
-    userProjectsListeners.delete(cb);
+    activeNameListeners.delete(cb);
     window.removeEventListener("storage", onStorage);
   };
 }
 
-const EMPTY_PROJECTS: Project[] = [];
+/* ------------------------------------------------------------------ */
+/*  Project list — fetched from the backend, cached module-level       */
+/* ------------------------------------------------------------------ */
 
-// Cache the parsed snapshot so successive useSyncExternalStore reads return
-// the same reference until localStorage actually changes — this keeps React
-// from looping ("getSnapshot should be cached") when the same shape is read
-// twice within a render.
-let cachedUserProjectsRaw: string | null = null;
-let cachedUserProjects: Project[] = EMPTY_PROJECTS;
+let projectsCache: Project[] = [];
+let projectsLoaded = false;
+let projectsError: string | null = null;
+let inFlight: Promise<Project[]> | null = null;
+const projectsListeners = new Set<() => void>();
 
-function userProjectsGetSnapshot(): Project[] {
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
-  } catch {
-    return EMPTY_PROJECTS;
-  }
-  if (raw === cachedUserProjectsRaw) return cachedUserProjects;
-  cachedUserProjectsRaw = raw;
-  cachedUserProjects = readUserProjects();
-  return cachedUserProjects;
-}
-
-function userProjectsGetServerSnapshot(): Project[] {
-  return EMPTY_PROJECTS;
+function notifyProjects(): void {
+  projectsListeners.forEach((cb) => cb());
 }
 
 /**
- * Fire when the user-project list changes via the current tab so listeners
- * pick up the change without waiting for a `storage` event (which only fires
- * for *other* tabs).
+ * Fetch the project list from the backend, update the module cache, and notify
+ * subscribers. Concurrent calls share a single in-flight request.
  */
-export function notifyUserProjectsChanged(): void {
-  cachedUserProjectsRaw = null; // invalidate cache so next snapshot re-reads
-  userProjectsListeners.forEach((cb) => cb());
+export function refreshProjects(): Promise<Project[]> {
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
+    try {
+      const res = await fetch("/api/projects", {
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`Failed to load projects (${res.status})`);
+      const data = (await res.json()) as ProjectPublic[];
+      projectsCache = Array.isArray(data) ? data.map(fromPublic) : [];
+      projectsError = null;
+    } catch (e) {
+      projectsError = e instanceof Error ? e.message : "Failed to load projects";
+    } finally {
+      projectsLoaded = true;
+      inFlight = null;
+      notifyProjects();
+    }
+    return projectsCache;
+  })();
+  return inFlight;
 }
 
-export function useUserProjects(): Project[] {
-  return useSyncExternalStore(
-    userProjectsSubscribe,
-    userProjectsGetSnapshot,
-    userProjectsGetServerSnapshot
+export interface UseProjectsResult {
+  projects: Project[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<Project[]>;
+}
+
+/**
+ * Subscribe to the backend project list. Triggers an initial fetch on mount and
+ * re-renders whenever the cache changes (including after create/edit/delete).
+ */
+export function useProjects(): UseProjectsResult {
+  const [, forceRender] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    projectsListeners.add(forceRender);
+    if (!projectsLoaded && !inFlight) void refreshProjects();
+    return () => {
+      projectsListeners.delete(forceRender);
+    };
+  }, []);
+  return {
+    projects: projectsCache,
+    loading: !projectsLoaded,
+    error: projectsError,
+    refresh: refreshProjects,
+  };
+}
+
+/**
+ * The active project, resolved by name against the fetched list. Returns `null`
+ * on the server, before the list loads, or when no project is active.
+ */
+export function useActiveProject(): Project | null {
+  const { projects } = useProjects();
+  const activeName = useSyncExternalStore(
+    activeNameSubscribe,
+    readActiveProjectName,
+    () => null
   );
+  if (!activeName) return null;
+  return projects.find((p) => p.name === activeName) ?? null;
+}
+
+/**
+ * Activate a project: point the active-project pointer at its `name`. The
+ * backend project already owns its own skills/tools, so there is nothing else
+ * to wire. Does not navigate.
+ */
+export function activateProject(project: Project): void {
+  writeActiveProjectName(project.name);
+  notifyActiveProjectChanged();
+}
+
+/* ------------------------------------------------------------------ */
+/*  CRUD helpers (talk to the /api/projects proxy routes)              */
+/* ------------------------------------------------------------------ */
+
+async function extractError(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    const detail = (data as { detail?: unknown; error?: unknown }).detail ??
+      (data as { error?: unknown }).error;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((d) =>
+          typeof d === "object" && d && "msg" in d
+            ? String((d as { msg: unknown }).msg)
+            : JSON.stringify(d)
+        )
+        .join("; ");
+    }
+    if (detail != null) return JSON.stringify(detail);
+  } catch {
+    // fall through
+  }
+  return `Request failed (${res.status})`;
+}
+
+export async function createProject(input: ProjectCreate): Promise<Project> {
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  const created = (await res.json()) as ProjectPublic;
+  await refreshProjects();
+  return fromPublic(created);
+}
+
+export async function updateProject(
+  id: string,
+  input: ProjectCreate
+): Promise<Project> {
+  const res = await fetch(`/api/projects/${id}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  const updated = (await res.json()) as ProjectPublic;
+  await refreshProjects();
+  return fromPublic(updated);
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
+  await refreshProjects();
 }

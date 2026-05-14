@@ -4,16 +4,20 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { SkillSummary } from "@/lib/types";
 import {
-  ACTIVE_PROJECT_KEY,
-  BUILTIN_PROJECTS,
   type Project,
   activateProject,
+  createProject,
+  deleteProject,
   notifyActiveProjectChanged,
-  slugify,
+  toCreate,
+  updateProject,
   useActiveProject,
-  useUserProjects,
-  writeUserProjects,
+  useProjects,
+  writeActiveProjectName,
 } from "@/lib/projects";
+
+/** Project draft used by the create/edit modal (no `id` until persisted). */
+type ProjectDraft = Omit<Project, "id">;
 
 type ModalState =
   | { mode: "closed" }
@@ -33,9 +37,9 @@ export default function ProjectsPage() {
 function ProjectsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const userProjects = useUserProjects();
+  const { projects, loading, error, refresh } = useProjects();
   const activeProject = useActiveProject();
-  const activeSlug = activeProject?.slug ?? null;
+  const activeName = activeProject?.name ?? null;
   const [skillCatalog, setSkillCatalog] = useState<SkillSummary[]>([]);
   // The NavRail's "+ New project" link routes here with `?new=1` to auto-open
   // the create modal. Read it during initial state setup so we don't need a
@@ -60,38 +64,28 @@ function ProjectsPageContent() {
     }
   }, [shouldOpenNew, router]);
 
-  const allProjects = useMemo(
-    () => [...BUILTIN_PROJECTS, ...userProjects],
-    [userProjects]
-  );
-
   function open(project: Project) {
     activateProject(project);
     router.push("/");
   }
 
-  function saveProject(next: Project, originalSlug?: string) {
-    const current = userProjects;
-    const list = originalSlug
-      ? current.map((p) => (p.slug === originalSlug ? next : p))
-      : [...current, next];
-    writeUserProjects(list);
+  async function saveProject(draft: ProjectDraft, editing?: Project) {
+    if (editing) {
+      await updateProject(editing.id, toCreate(draft));
+    } else {
+      await createProject(toCreate(draft));
+    }
     setModal({ mode: "closed" });
   }
 
-  function deleteProject(project: Project) {
-    if (project.builtin) return;
-    const ok = window.confirm(`Delete project "${project.title}"? This cannot be undone.`);
+  async function removeProject(project: Project) {
+    const ok = window.confirm(
+      `Delete project "${project.name}"? This cannot be undone.`
+    );
     if (!ok) return;
-    writeUserProjects(userProjects.filter((p) => p.slug !== project.slug));
-    if (activeSlug === project.slug) {
-      // The active project just disappeared; clear the pointer (loadedSlugs
-      // is left alone so the user doesn't lose their working set silently).
-      try {
-        window.localStorage.removeItem(ACTIVE_PROJECT_KEY);
-      } catch {
-        // ignore
-      }
+    await deleteProject(project.id);
+    if (activeName === project.name) {
+      writeActiveProjectName(null);
       notifyActiveProjectChanged();
     }
   }
@@ -103,20 +97,32 @@ function ProjectsPageContent() {
           Projects
         </h1>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-          Pick a project to load its dataset, skills, and knowledge bases for the chat session.
+          Pick a project to scope the chat session with its system prompt, skills, and tools.
         </p>
       </header>
 
+      {error && (
+        <div className="error" style={{ marginBottom: 12, fontSize: 13 }}>
+          {error}{" "}
+          <button type="button" className="button ghost button-xs" onClick={() => void refresh()}>
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="projects-panel">
         <div className="projects-grid">
-          {allProjects.map((project) => (
+          {loading && projects.length === 0 && (
+            <div className="chat-bubble">Loading projects…</div>
+          )}
+          {projects.map((project) => (
             <ProjectCard
-              key={project.slug}
+              key={project.id}
               project={project}
-              active={activeSlug === project.slug}
+              active={activeName === project.name}
               onOpen={() => open(project)}
-              onEdit={!project.builtin ? () => setModal({ mode: "edit", project }) : undefined}
-              onDelete={!project.builtin ? () => deleteProject(project) : undefined}
+              onEdit={() => setModal({ mode: "edit", project })}
+              onDelete={() => void removeProject(project)}
             />
           ))}
           <button
@@ -135,10 +141,10 @@ function ProjectsPageContent() {
           mode={modal.mode}
           initial={modal.mode === "edit" ? modal.project : undefined}
           skillCatalog={skillCatalog}
-          existingSlugs={new Set(allProjects.map((p) => p.slug))}
+          existingNames={new Set(projects.map((p) => p.name))}
           onCancel={() => setModal({ mode: "closed" })}
-          onSave={(next) =>
-            saveProject(next, modal.mode === "edit" ? modal.project.slug : undefined)
+          onSave={(draft) =>
+            saveProject(draft, modal.mode === "edit" ? modal.project : undefined)
           }
         />
       )}
@@ -156,38 +162,32 @@ function ProjectCard({
   project: Project;
   active: boolean;
   onOpen: () => void;
-  onEdit?: () => void;
-  onDelete?: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
   return (
     <div className={`project-card${active ? " active" : ""}`}>
       <div className="project-card-head">
         <div>
-          <div className="project-card-title">{project.title}</div>
-          {project.builtin && <span className="project-card-badge">Built-in</span>}
+          <div className="project-card-title">{project.name}</div>
           {active && <span className="project-card-badge active">Active</span>}
         </div>
       </div>
-      <div className="project-card-desc">{project.description}</div>
+      <div className="project-card-desc">{project.description || "No description."}</div>
 
       <ChipRow label="Skills" items={project.skills} />
-      <ChipRow label="Datasets" items={project.datasets} />
-      <ChipRow label="Knowledge Bases" items={project.knowledgeBases} />
+      <ChipRow label="Tools" items={project.tools} />
 
       <div className="project-card-actions">
         <button type="button" className="button" onClick={onOpen}>
           {active ? "Reopen" : "Open"}
         </button>
-        {onEdit && (
-          <button type="button" className="button ghost button-sm" onClick={onEdit}>
-            Edit
-          </button>
-        )}
-        {onDelete && (
-          <button type="button" className="button ghost button-sm" onClick={onDelete}>
-            Delete
-          </button>
-        )}
+        <button type="button" className="button ghost button-sm" onClick={onEdit}>
+          Edit
+        </button>
+        <button type="button" className="button ghost button-sm" onClick={onDelete}>
+          Delete
+        </button>
       </div>
     </div>
   );
@@ -216,23 +216,24 @@ function ProjectModal({
   mode,
   initial,
   skillCatalog,
-  existingSlugs,
+  existingNames,
   onCancel,
   onSave,
 }: {
   mode: "create" | "edit";
   initial?: Project;
   skillCatalog: SkillSummary[];
-  existingSlugs: Set<string>;
+  existingNames: Set<string>;
   onCancel: () => void;
-  onSave: (next: Project) => void;
+  onSave: (draft: Omit<Project, "id">) => Promise<void>;
 }) {
-  const [title, setTitle] = useState(initial?.title ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
-  const [datasetsRaw, setDatasetsRaw] = useState((initial?.datasets ?? []).join(", "));
-  const [kbsRaw, setKbsRaw] = useState((initial?.knowledgeBases ?? []).join(", "));
+  const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   function toggleSkill(slug: string) {
     setSkills((prev) => {
@@ -243,20 +244,15 @@ function ProjectModal({
     });
   }
 
-  function commit() {
-    const trimmedTitle = title.trim();
+  async function commit() {
+    const trimmedName = name.trim();
     const trimmedDesc = description.trim();
-    if (!trimmedTitle) {
-      setError("Title is required.");
+    if (!trimmedName) {
+      setError("Name is required.");
       return;
     }
-    if (!trimmedDesc) {
-      setError("Description is required.");
-      return;
-    }
-    const slug = initial?.slug ?? slugify(trimmedTitle);
-    if (mode === "create" && existingSlugs.has(slug)) {
-      setError(`A project with slug "${slug}" already exists.`);
+    if (mode === "create" && existingNames.has(trimmedName)) {
+      setError(`A project named "${trimmedName}" already exists.`);
       return;
     }
     const splitTags = (raw: string) =>
@@ -264,14 +260,24 @@ function ProjectModal({
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-    onSave({
-      slug,
-      title: trimmedTitle,
-      description: trimmedDesc,
-      skills: Array.from(skills),
-      datasets: splitTags(datasetsRaw),
-      knowledgeBases: splitTags(kbsRaw),
-    });
+
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({
+        name: trimmedName,
+        description: trimmedDesc,
+        systemPrompt: systemPrompt.trim(),
+        skills: Array.from(skills),
+        tools: splitTags(toolsRaw),
+        // PUT is a full overwrite on the backend — echo the existing usage
+        // limits so they aren't reset on edit.
+        usageLimits: initial?.usageLimits ?? {},
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save project.");
+      setSaving(false);
+    }
   }
 
   return (
@@ -290,11 +296,11 @@ function ProjectModal({
         </div>
         <div className="modal-body">
           <label className="project-modal-label">
-            Title
+            Name
             <input
               className="input"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               autoFocus
               maxLength={80}
             />
@@ -304,10 +310,21 @@ function ProjectModal({
             Description
             <textarea
               className="input"
-              rows={3}
+              rows={2}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               maxLength={400}
+            />
+          </label>
+
+          <label className="project-modal-label">
+            System prompt
+            <textarea
+              className="input"
+              rows={4}
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="Extra instructions appended to the base agent prompt."
             />
           </label>
 
@@ -338,22 +355,15 @@ function ProjectModal({
           </div>
 
           <label className="project-modal-label">
-            Datasets <span style={{ color: "var(--muted)", fontWeight: 400 }}>(comma-separated)</span>
+            Tools{" "}
+            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+              (comma-separated fnmatch patterns; `!` prefix denies)
+            </span>
             <input
               className="input"
-              value={datasetsRaw}
-              onChange={(e) => setDatasetsRaw(e.target.value)}
-              placeholder="e.g. MSTDB, AlloyDB"
-            />
-          </label>
-
-          <label className="project-modal-label">
-            Knowledge Bases <span style={{ color: "var(--muted)", fontWeight: 400 }}>(comma-separated)</span>
-            <input
-              className="input"
-              value={kbsRaw}
-              onChange={(e) => setKbsRaw(e.target.value)}
-              placeholder="e.g. Molten Salt Papers"
+              value={toolsRaw}
+              onChange={(e) => setToolsRaw(e.target.value)}
+              placeholder="e.g. *, !agenthpc_*"
             />
           </label>
 
@@ -364,11 +374,11 @@ function ProjectModal({
           )}
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-            <button type="button" className="button ghost" onClick={onCancel}>
+            <button type="button" className="button ghost" onClick={onCancel} disabled={saving}>
               Cancel
             </button>
-            <button type="button" className="button" onClick={commit}>
-              {mode === "create" ? "Create" : "Save"}
+            <button type="button" className="button" onClick={() => void commit()} disabled={saving}>
+              {saving ? "Saving…" : mode === "create" ? "Create" : "Save"}
             </button>
           </div>
         </div>

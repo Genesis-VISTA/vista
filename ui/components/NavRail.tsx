@@ -268,10 +268,10 @@ export function NavRail() {
 
         {!collapsed && <div className="nav-rail-section-label">Opened Project</div>}
         {!collapsed && (
-          <div className="nav-rail-project-card" title={activeProject?.title ?? "No project selected"}>
+          <div className="nav-rail-project-card" title={activeProject?.name ?? "No project selected"}>
             <div className="nav-rail-project-dot" aria-hidden="true" />
             <div className="nav-rail-project-name">
-              {activeProject?.title ?? "No project selected"}
+              {activeProject?.name ?? "No project selected"}
             </div>
           </div>
         )}
