@@ -106,7 +106,7 @@ async def agent_run(
             request.app.state.elicitations[elicitation_id] = future
             merger.send(ServerSentEvent(
                 event="mcp_elicitation",
-                data=TypeAdapter(Any).dump_json(event_data),
+                data=TypeAdapter(Any).dump_json(event_data).decode(),
             ))
 
             try:
