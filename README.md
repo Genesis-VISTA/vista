@@ -27,6 +27,15 @@ On MacOS, you may need to install `libmagic` first as well:
 brew install libmagic
 ```
 
+To install the nersc dependencies, you need to be able to ssh to https://gitlab.com/amsc2.
+Log into gitlab with your AmSC account [here](https://apps.pingone.com/19636b99-842b-427d-b2f8-754de01a3756/myapps/#), and upload your ssh key.
+On ORNL Network, you'll need to set up .ssh/config like so:
+```
+Host gitlab.com
+    User git
+    ProxyJump bstn-wks-gate
+```
+
 ## Environment Setup
 
 Copy the sample env file:
