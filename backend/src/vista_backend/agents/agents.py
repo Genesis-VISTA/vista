@@ -125,12 +125,12 @@ class ProjectAgent:
         """
         Construct a PydanticAI Agent for a project.
         """
-        mcp = get_mcp_server(
+        mcp_server = get_mcp_server(
             elicitation_callback=elicitation_callback,
             process_tool_call=process_tool_call,
             log_handler=log_handler,
         )
-        toolset = mcp.filtered(lambda ctx, tool: _tool_allowed(tool.name, self.project.tools))
+        toolset = mcp_server.filtered(lambda ctx, tool: _tool_allowed(tool.name, self.project.tools))
 
         agent = Agent(
             model=infer_model(settings.model),
