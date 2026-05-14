@@ -156,7 +156,7 @@ async def agenthpc_submit_parameter_set(
     results = _session_results(ctx.session_id, app_type)
     if key in results:
         cached = results[key]
-        logging.info(f"agenthpc: returning cached score for {app_type} {key}")
+        await ctx.info(f"agenthpc: returning cached score for {app_type} {key}")
         return {
             "cached": True,
             "app_type": app_type,
@@ -192,7 +192,7 @@ async def agenthpc_submit_parameter_set(
         "log_params": log_params,
     }
 
-    logging.info(f"agenthpc: submitted {app_type} job {job_id} for params {params}")
+    await ctx.info(f"agenthpc: submitted {app_type} job {job_id} for params {params}")
     return {
         "cached": False,
         "app_type": app_type,
@@ -452,7 +452,7 @@ async def agenthpc_cancel_job(
     pending = _session_pending(ctx.session_id, app_type)
     removed = pending.pop(job_id, None)
 
-    logging.info(f"agenthpc: cancelled {app_type} job {job_id}")
+    await ctx.info(f"agenthpc: cancelled {app_type} job {job_id}")
     return {
         "status": "cancelled",
         "job_id": job_id,
@@ -504,7 +504,7 @@ async def agenthpc_cancel_all_pending(
             "scancel_output": output.strip() or None,
         })
 
-    logging.info(f"agenthpc: cancelled {len(cancelled)} pending {app_type} jobs")
+    await ctx.info(f"agenthpc: cancelled {len(cancelled)} pending {app_type} jobs")
     return {
         "app_type": app_type,
         "num_cancelled": len(cancelled),
@@ -631,5 +631,5 @@ async def agenthpc_plot_progress(
     # The chat route matches /Plot saved to\s+(\/\S+\.(?:png|jpg|jpeg|svg|gif))/
     # to auto-display the figure — keep this line verbatim.
     lines.append(f"Plot saved to {sandbox_path}")
-    logging.info(f"agenthpc: rendered progress plot → {host_path} (plotted={plotted})")
+    await ctx.info(f"agenthpc: rendered progress plot → {host_path} (plotted={plotted})")
     return "\n".join(lines)

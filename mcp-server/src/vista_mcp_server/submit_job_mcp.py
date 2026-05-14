@@ -127,7 +127,7 @@ async def submit_hpc_job(
         await s3m_client.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
         await s3m_client.upload(settings.local_hpc_jobs_dir / job, remote_job_dir)
         await s3m_client.bash(f'chmod -R g+rwX {shlex.quote(str(remote_job_dir))}')
-        logging.info(f"Synced job to {remote_job_dir}")
+        await ctx.info(f"Synced job to {remote_job_dir}")
         # TODO: should clean up the job script eventually, but don't want to do it on close as we may
         # want to leave jobs running between sessions.
 
@@ -162,7 +162,7 @@ async def submit_hpc_job(
     job_id = str(response.get("id") or "")
     if not job_id:
         raise ValueError(f"Failed to get job ID from S3M response: {response}")
-    logging.info(f"Submitted job {job_id} via S3M to odo")
+    await ctx.info(f"Submitted job {job_id} via S3M to odo")
     return job_id
 
 
