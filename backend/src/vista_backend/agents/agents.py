@@ -108,6 +108,7 @@ def get_mcp_server(
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
         log_handler=log_handler,
+        log_level="info" if log_handler else None,
         timeout=10,
         read_timeout=1800 + 60,
     )
@@ -201,7 +202,7 @@ class ProjectAgent:
 
         async def log_handler(params: mcp.types.LoggingMessageNotificationParams):
             try:
-                merger.send(log(str(params.level).upper(), params.logger or "MCP Server", json_dump_if(params.data)))
+                merger.send(log(str(params.level).upper(), "MCP Server", json_dump_if(params.data)))
             except RuntimeError:
                 pass # Merger already closed, the run finished before this notification.
 
