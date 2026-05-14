@@ -1,6 +1,6 @@
 """ Utilities for managing async streams. """
 import asyncio
-from collections.abc import AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import Literal, Self
 
 
@@ -35,6 +35,11 @@ class StreamMerger[T]:
 
     Intended for a single consumer; concurrent iteration is not supported.
 
+    Iterating the merger is enough -- cleanup (cancelling in-flight stream tasks) runs
+    automatically when iteration finishes or the consumer closes the generator. Using it as
+    an `async with` context manager is also supported, and guarantees cleanup even if
+    iteration never starts.
+
     Example:
     ```python
     async def ticks():
@@ -42,11 +47,11 @@ class StreamMerger[T]:
             await asyncio.sleep(0.1)
             yield f"tick-{i}"
 
-    async with StreamMerger[str](ticks()) as merger:
-        merger.send("hello")  # inject a value out-of-band
+    merger = StreamMerger[str](ticks())
+    merger.send("hello")  # inject a value out-of-band
 
-        async for item in merger:
-            print(item)
+    async for item in merger:
+        print(item)
     ```
     """
 
@@ -135,28 +140,29 @@ class StreamMerger[T]:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.aclose()
 
-    def __aiter__(self) -> Self:
-        if self._state == "pending":
-            self._state = "running"
-            pending = self._pending_streams
-            self._pending_streams = []
-            for stream in pending:
-                self._start_stream(stream)
-            self._check_auto_close()
-        return self
+    def __aiter__(self) -> AsyncIterator[T]:
+        if self._state != "pending":
+            raise RuntimeError("StreamMerger can't be iterated twice")
 
-    async def __anext__(self) -> T:
-        # State may flip to 'closed' before the queue is fully drained (auto-close, or
-        # aclose with items still queued). Only stop once both have caught up.
-        if self._state == "closed" and self._queue.empty():
-            await self.aclose()
-            raise StopAsyncIteration
-        item = await self._queue.get()
-        if isinstance(item, _Sentinel):
-            await self.aclose()
-            raise StopAsyncIteration
-        elif isinstance(item, _Error):
-            await self.aclose()
-            raise item.exc
-        else:
-            return item.value
+        self._state = "running"
+        pending = self._pending_streams
+        self._pending_streams = []
+        for stream in pending:
+            self._start_stream(stream)
+        self._check_auto_close()
+
+        async def drain() -> AsyncGenerator[T, None]:
+            try:
+                # State may flip to 'closed' before the queue is fully drained (auto-close, or
+                # aclose with items still queued). Only stop once both have caught up.
+                while not (self._state == "closed" and self._queue.empty()):
+                    item = await self._queue.get()
+                    if isinstance(item, _Sentinel):
+                        break
+                    if isinstance(item, _Error):
+                        raise item.exc
+                    yield item.value
+            finally:
+                await self.aclose()
+
+        return drain()

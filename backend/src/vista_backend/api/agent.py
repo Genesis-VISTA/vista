@@ -155,13 +155,7 @@ async def agent_run(
                 yield ServerSentEvent(event=event.event_kind, data=data)
 
         merger.add_stream(agent_events())
-
-        async def event_generator() -> AsyncGenerator[ServerSentEvent, None]:
-            async with merger:
-                async for event in merger:
-                    yield event
-
-        return EventSourceResponse(event_generator())
+        return EventSourceResponse(merger)
     else:
         result = await agent.run(
             user_prompt=body.user_prompt,
