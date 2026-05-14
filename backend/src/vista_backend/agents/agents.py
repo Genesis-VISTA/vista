@@ -138,7 +138,9 @@ class ProjectAgent:
             toolsets=[toolset],
         )
 
-        skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills])
+        skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills], {
+            settings.skills_dir: "/mnt/skills",
+        })
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
