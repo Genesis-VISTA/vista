@@ -1,7 +1,11 @@
 from __future__ import annotations
 import argparse
 import logging
+import os
 from fastmcp.utilities.logging import get_logger
+
+# Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
+os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
 
 logging.basicConfig(
     level=logging.INFO,
