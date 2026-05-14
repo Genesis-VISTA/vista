@@ -1,14 +1,12 @@
 ---
 name: model-fine-tuning
 description: >-
-  Fine-tune or evaluate the FORGE-based molten-salt regression model using the
-  local forge-tune workflow or Frontier HPC job submission workflow. Use when
-  the user asks to train, fine-tune, resume, or evaluate a model on the molten
-  salt CSV data. This skill is portable and self-contained (scripts and dataset
-  are bundled under this skill folder) and can optionally submit the existing
-  `forge-tune` Slurm job through MCP tools.
+  Fine-tune or evaluate the FORGE-based molten-salt regression model. Supports
+  the local forge-tune workflow and HPC submission on two clusters: Odo at OLCF
+  (via S3M) and Perlmutter at NERSC (via IRI). Use when the user asks to train,
+  fine-tune, resume, or evaluate a model on the molten salt CSV data.
 metadata:
-  tags: ["OLCF", "Frontier", "Materials Design", "Molten Salt Tritium Breeding"]
+  tags: ["OLCF", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
 ---
 
 # Model Fine-Tuning
@@ -24,7 +22,10 @@ Upstream/source copies currently also exist in `hpc_jobs/forge-tune/`.
 
 Progress:
 - [ ] 1. Confirm run goal (train, resume, or eval-only)
-- [ ] 2. Ask whether to submit on Frontier HPC (`submit_hpc_job`) or run locally
+- [ ] 2. Decide where to run. **First check whether the user already named one** —
+       "Perlmutter" / "NERSC" → cluster="perlmutter"; "Odo" / "Frontier" / "OLCF" →
+       cluster="odo". Only ask if neither was mentioned. If HPC, use
+       `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`.
 - [ ] 3. Confirm model path and dataset path
 - [ ] 4. Build command or job submission args
 - [ ] 5. Run and collect key metrics/artifacts
@@ -54,6 +55,64 @@ The script reports:
 - per-epoch losses/metric (RMSE for regression)
 - final validation metric
 
+## Visualizing training progress
+
+When the user asks for job status, progress, or a plot while training is running:
+1. Call `get_hpc_job_status` to fetch the latest logs.
+2. Render the per-epoch table (Epoch / LR / Train RMSE / Val RMSE).
+3. Plot Train RMSE and Val RMSE vs Epoch by calling `run_bash` in the sandbox
+   with a short matplotlib script. Save the PNG to
+   `/mnt/data/output/<job_id>/training_progress.png`, then call `display_file`
+   to embed it inline.
+
+The matplotlib script template (substitute the parsed arrays + job id):
+
+```python
+import matplotlib.pyplot as plt
+epochs = [...]; train = [...]; val = [...]
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.plot(epochs, train, marker='o', label='Train RMSE')
+ax.plot(epochs, val,   marker='s', label='Val RMSE')
+ax.set_xlabel('Epoch'); ax.set_ylabel('RMSE')
+ax.set_title(f'forge-tune progress (job_id)'); ax.legend(); ax.grid(True, alpha=0.3)
+fig.tight_layout(); fig.savefig('/mnt/data/output/<job_id>/training_progress.png', dpi=120)
+```
+
+### Live (auto-updating) watch mode
+
+When the user asks to *watch*, *monitor*, *auto-update*, or *keep refreshing* the
+job, enter a polling loop. **Each iteration of the loop MUST execute all four
+tool calls below in order, with no skipping or merging — even if the data
+looks unchanged from the previous cycle.** Token-savings shortcuts are NOT
+acceptable here; the visible plot is the whole point of watch mode.
+
+Per-cycle checklist (do all of these, every cycle):
+
+1. **Call `get_hpc_job_status(job_id)`** — fetch the latest logs.
+2. **Call `run_bash`** with a matplotlib script that parses the just-fetched
+   epoch / Train RMSE / Val RMSE values and writes a PNG to
+   `/mnt/data/output/<job_id>/training_progress.png` (overwrite each cycle).
+3. **Call `display_file`** with that PNG path to embed the image inline in
+   chat. This step is mandatory every cycle — `run_bash` alone does NOT
+   display the image; `display_file` is what shows it to the user.
+4. After all three of the above have completed, write a short text update
+   (state + latest epoch) and then either:
+   - If state is `ACTIVE`, `PENDING`, `QUEUED`, or `NEW`: call `run_bash`
+     with the single command `sleep 45` (stays under the 60s tool timeout),
+     then loop back to step 1.
+   - If state is `COMPLETED`, `FAILED`, or `CANCELED`: stop and summarize.
+   - Escape hatch: stop after 20 iterations regardless.
+
+If you find yourself tempted to skip step 2 or 3 because "the plot didn't
+change much," do not — re-run them anyway. The user is watching the chat for
+periodic plot updates; missing cycles look like the agent stopped working.
+
+Notes:
+- Iteration budget is governed by the project's `usage_limits` (Pydantic AI
+  `UsageLimits`, stored in the project DB row). For long watch loops, ensure
+  `request_limit` is at least ~100 (≈3 tool calls per poll × 30 polls).
+- The user can interrupt the loop at any time by sending another message.
+
 Artifacts:
 - checkpoint files in `--checkpoint-dir`:
   - `checkpoint_latest.pt`
@@ -70,9 +129,21 @@ Artifacts:
 - Treat this as regression by default unless user explicitly requests classification.
 - For `--eval-only`, require `--resume-from <checkpoint_path>`.
 - Keep commands explicit and reproducible; include all non-default args in the final command.
-- For fine-tuning requests, ask a confirmation question before any HPC submission:
-  "Do you want me to submit this as a Frontier job now?"
-- In the first response for fine-tuning, ask only that one question and defer all
-  other configuration questions until the user answers yes/no.
-- Only call `submit_hpc_job(job="forge-tune", ...)` after explicit user confirmation.
-- When HPC submission is chosen, rely on MCP elicitation for SSH login prompts (credential popup).
+- For fine-tuning HPC submissions, resolve the target cluster **before** asking
+  for confirmation. Two cases, mutually exclusive:
+  - **The user named a cluster** in this or a recent message ("Perlmutter",
+    "NERSC", "Odo", "Frontier", "OLCF") → use it directly. Do NOT ask again,
+    do NOT mention the other cluster as an option, do NOT use the word "Odo"
+    in your reply if the user said "Perlmutter" (and vice versa).
+  - **The user has not named a cluster** → ask exactly: *"Submit on Odo (OLCF)
+    or Perlmutter (NERSC)?"*
+- Once the cluster is known, ask the final confirmation, substituting the
+  resolved cluster name: *"Submit this as a {Odo|Perlmutter} job now?"* — never
+  template the other cluster name into this question.
+- In the first response for fine-tuning, ask only the cluster question (if
+  needed) plus the confirmation, and defer all other configuration questions
+  until the user answers.
+- Only call `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`
+  after explicit user confirmation.
+- The MCP elicitation modal will pop up a final "Confirm running on <cluster>"
+  check — the user can still cancel there.

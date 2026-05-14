@@ -90,7 +90,8 @@ class S3mResourceSpec(BaseModel):
 
 class S3mDefaults(BaseModel):
     """
-    Per-job S3M resource and attribute defaults, loaded from s3m_defaults.json.
+    Per-job S3M resource and attribute defaults, loaded from the "odo" section of
+    `<job>/cluster_defaults.json`.
     """
     duration: int = 120
     """ Seconds """

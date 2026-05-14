@@ -87,6 +87,27 @@ python3 ./scripts/forge-tune.py \
   - `val_composition_frac=0.15`
   - `min_train_compositions=2`
 
+## HPC submission (via vista MCP tools)
+
+The local commands above are for ad-hoc runs. For real training, submit via
+`submit_hpc_job` and let vista handle Slurm + file paths. Two clusters supported:
+
+```text
+# Odo (OLCF Frontier-class) — defaults from cluster_defaults.json's "odo" section
+submit_hpc_job(job="forge-tune", cluster="odo", duration="0:30:00")
+
+# Perlmutter (NERSC) — defaults from "perlmutter" section, runs under shifter
+submit_hpc_job(job="forge-tune", cluster="perlmutter", duration="0:30:00")
+```
+
+Per-cluster defaults (nodes, duration, image, queue, etc.) live in
+`hpc_jobs/forge-tune/cluster_defaults.json`. Override at the call site with
+`node_count=` and `duration=`; deeper overrides (env, image, queue) go in the JSON.
+
+After submitting, use `get_hpc_job_status(job_id)` to watch progress and
+`get_hpc_job_outputs(job_id, files=[...])` to pull artifacts back into the
+sandbox at `/mnt/data/output/<job_id>/`.
+
 ## Source-of-Truth Note
 
 - This skill is intentionally self-contained for portability.
