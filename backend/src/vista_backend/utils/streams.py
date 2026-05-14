@@ -144,14 +144,14 @@ class StreamMerger[T]:
         if self._state != "pending":
             raise RuntimeError("StreamMerger can't be iterated twice")
 
-        self._state = "running"
-        pending = self._pending_streams
-        self._pending_streams = []
-        for stream in pending:
-            self._start_stream(stream)
-        self._check_auto_close()
-
         async def drain() -> AsyncGenerator[T, None]:
+            self._state = "running"
+            pending = self._pending_streams
+            self._pending_streams = []
+            for stream in pending:
+                self._start_stream(stream)
+            self._check_auto_close()
+
             try:
                 # State may flip to 'closed' before the queue is fully drained (auto-close, or
                 # aclose with items still queued). Only stop once both have caught up.

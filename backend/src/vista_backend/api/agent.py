@@ -5,7 +5,6 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, TypeAdapter
-from pydantic_ai import AgentRunResultEvent, RunUsage
 from pydantic_ai.messages import ModelMessage
 from mcp.client.session import ClientSession
 from mcp.shared.context import RequestContext
@@ -13,7 +12,7 @@ import mcp.types
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import ProjectAgent
+from ..agents.agents import ProjectAgent, ProjectAgentResult
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
 from ..utils.streams import StreamMerger
@@ -36,27 +35,10 @@ class AgentRunRequest(BaseModel):
     message_history: list[ModelMessage] = []
     """ Prior `ModelMessage`s from earlier turns (as returned from a previous call). """
 
-class AgentRunResponse(BaseModel):
-    """
-    Response body for a non-streaming agent turn.
-
-    `new_messages` is a list of PydanticAI `ModelMessage` objects produced during this
-    run -- model requests, tool calls, tool returns, and the final text response. Append
-    them to your stored `message_history` to continue the conversation on the next call.
-
-    See https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents for the agent
-    run model and https://pydantic.dev/docs/ai/core-concepts/messages/ for the message
-    schema.
-    """
-    new_messages: list[ModelMessage]
-    """ Messages produced during this run; append to `message_history` for the next call. """
-    usage: RunUsage
-    """ Token / request usage for this run -- see `pydantic_ai.RunUsage`. """
-
-@router.post("/projects/{project_name}/agent/run", response_model=AgentRunResponse)
+@router.post("/projects/{project_name}/agent/run", response_model=ProjectAgentResult)
 async def agent_run(
     project_name: str, body: AgentRunRequest, session: SessionDep, request: Request,
-) -> AgentRunResponse | Response:
+) -> ProjectAgentResult | Response:
     """
     Stateless chat completion that runs the full agent loop for one turn.
 
@@ -65,18 +47,14 @@ async def agent_run(
 
     Both the streaming and non-streaming payloads are built directly on PydanticAI's data model:
 
-    - Non-streaming response: see `AgentRunResponse` -- `new_messages` is a list of
-      `pydantic_ai.messages.ModelMessage`, `usage` is `pydantic_ai.RunUsage`.
+    The `ProjectAgentResult` from non streaming and the final streaming event contains `new_messages`,
+    which is a list of `pydantic_ai.messages.ModelMessage`, and `usage` is `pydantic_ai.RunUsage`,
+    and `logs` is the list of `LogEvent`s emitted during the run.
 
-    - Streaming response: each SSE event corresponds to one PydanticAI `AgentStreamEvent` (e.g. 
-      `part_start`, `part_delta`, `part_end`, `function_tool_call`, `function_tool_result`, 
-      `final_result`) plus a terminal `agent_run_result` event. The SSE `event:` field is the 
-      event's `event_kind` discriminator, and the `data:` payload is the JSON-serialized event 
-      body. See `pydantic_ai.messages.AgentStreamEvent` and `pydantic_ai.AgentRunResultEvent`, 
-      and the PydanticAI run docs at https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents
-
-      The `agent_run_result` event carries `{new_messages, usage}` -- the same shape
-      `AgentRunResponse` returns in non-streaming mode.
+    In streaming, each event corresponds to PydanticAI's `pydantic_ai.messages.AgentStreamEvent` see
+    https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents
+    In addition to Pydantic's event's we also yield LogEvents from the server and mcp servers.
+    The final event in streaming contains a `ProjectAgentResult`, same as the result from non streaming.
 
     Supports MCP elicitation in streaming mode. Elicitation requests arrive as an extra SSE event
     interleaved with the agent events:
@@ -144,24 +122,13 @@ async def agent_run(
                 message_history=body.message_history,
                 elicitation_callback=handle_elicitation,
             ):
-                if isinstance(event, AgentRunResultEvent):
-                    # Return the final result in the same format as non streaming
-                    data = AgentRunResponse(
-                        new_messages=event.result.new_messages(),
-                        usage=event.result.usage(),
-                    ).model_dump_json()
-                else:
-                    data = TypeAdapter(Any).dump_json(event).decode()
+                data = TypeAdapter(Any).dump_json(event).decode()
                 yield ServerSentEvent(event=event.event_kind, data=data)
 
         merger.add_stream(agent_events())
         return EventSourceResponse(merger)
     else:
-        result = await agent.run(
+        return await agent.run(
             user_prompt=body.user_prompt,
             message_history=body.message_history,
-        )
-        return AgentRunResponse(
-            new_messages=result.new_messages(),
-            usage=result.usage(),
         )
