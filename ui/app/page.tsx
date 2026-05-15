@@ -15,6 +15,9 @@ import type { LogData, VistaUIMessage } from "@/lib/types";
 const SIDEBAR_MIN = 200;
 const SIDEBAR_MAX = 900;
 const SIDEBAR_DEFAULT = 480;
+const OUTPUT_MIN = 120;
+const OUTPUT_MAX = 4000;
+const OUTPUT_DEFAULT = 420;
 
 export default function HomePage() {
   const { activeProject } = useActiveProject();
@@ -24,6 +27,12 @@ export default function HomePage() {
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
+  const [outputHeight, setOutputHeight] = useState(OUTPUT_DEFAULT);
+  const isResizingV = useRef(false);
+  const dragStartY = useRef(0);
+  const dragStartHeight = useRef(0);
+  const sidebarRef = useRef<HTMLDivElement | null>(null);
+
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
     isResizing.current = true;
     dragStartX.current = e.clientX;
@@ -31,20 +40,42 @@ export default function HomePage() {
     e.preventDefault();
   }, [sidebarWidth]);
 
+  const onVResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    isResizingV.current = true;
+    dragStartY.current = e.clientY;
+    dragStartHeight.current = outputHeight;
+    e.preventDefault();
+  }, [outputHeight]);
+
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current) return;
-      const delta = dragStartX.current - e.clientX;
-      setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, dragStartWidth.current + delta)));
+      if (isResizing.current) {
+        const delta = dragStartX.current - e.clientX;
+        setSidebarWidth(
+          Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, dragStartWidth.current + delta)),
+        );
+      } else if (isResizingV.current) {
+        const delta = e.clientY - dragStartY.current;
+        const containerHeight = sidebarRef.current?.clientHeight ?? OUTPUT_MAX;
+        // Leave at least OUTPUT_MIN px for the logs panel below.
+        const maxH = Math.max(OUTPUT_MIN, containerHeight - OUTPUT_MIN);
+        setOutputHeight(
+          Math.max(OUTPUT_MIN, Math.min(maxH, dragStartHeight.current + delta)),
+        );
+      }
     };
     const onMouseUp = () => {
       isResizing.current = false;
+      isResizingV.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
     const onMouseMoveStart = (e: MouseEvent) => {
       if (isResizing.current) {
         document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      } else if (isResizingV.current) {
+        document.body.style.cursor = "row-resize";
         document.body.style.userSelect = "none";
       }
       onMouseMove(e);
@@ -125,11 +156,25 @@ export default function HomePage() {
       />
 
       <div
+        ref={sidebarRef}
         style={{ width: sidebarWidth }}
         className="flex-shrink-0 flex flex-col border-gray-200 bg-white overflow-hidden"
       >
-        <LatestOutput messages={chat.messages} />
-        <AgentLogs logs={logs} onClear={clearLogs} />
+        <div
+          style={{ height: outputHeight }}
+          className="flex-shrink-0 flex flex-col min-h-0"
+        >
+          <LatestOutput messages={chat.messages} />
+        </div>
+        <div
+          className="h-1 flex-shrink-0 cursor-row-resize bg-gray-200 hover:bg-blue-400 active:bg-blue-500 transition-colors"
+          onMouseDown={onVResizeMouseDown}
+          aria-label="Resize output panel"
+          role="separator"
+        />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <AgentLogs logs={logs} onClear={clearLogs} />
+        </div>
       </div>
     </div>
   );

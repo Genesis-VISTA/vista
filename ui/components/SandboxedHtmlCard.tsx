@@ -28,7 +28,7 @@ export default function SandboxedHtmlCard({ html, className }: SandboxedHtmlCard
       title="Tool HTML Output"
       sandbox=""
       srcDoc={srcDoc}
-      className={`w-full min-h-[320px] border border-gray-200 rounded-md bg-white ${className ?? ""}`}
+      className={`w-full h-full min-h-[320px] border border-gray-200 rounded-md bg-white ${className ?? ""}`}
     />
   );
 }
