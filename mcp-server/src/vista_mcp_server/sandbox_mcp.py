@@ -4,7 +4,7 @@ MCP Server to run basic shell commands
 
 from __future__ import annotations
 from typing import Annotated as A
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
 from .config import settings
@@ -35,6 +35,7 @@ mcp = FastMCP(name="Sandbox", lifespan=app_lifespan)
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
 async def run_bash(
     command: A[str, "Bash command to run"],
+    ctx: Context,
 ) -> str:
     """
     Run a bash command inside the sandbox.
@@ -54,9 +55,15 @@ async def run_bash(
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
     """
-    proc = await sandbox.exec("bash", args = ["-c", command], combine_streams=True)
-    stdout, _ = await proc.communicate()
-    return stdout.decode()
+    proc = await sandbox.exec("bash", args=["-c", command], combine_streams=True)
+    lines = []
+    while True:
+        line = (await proc.stdout.readline()).decode()
+        if not line: break
+        lines.append(line)
+        await ctx.info(line.rstrip("\n"))
+    await proc.wait()
+    return "".join(lines)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
