@@ -1,77 +1,50 @@
-import { NextResponse } from "next/server";
-import { backendUrl } from "../_backend";
+import { NextRequest } from "next/server";
+import { backendUrl } from "@/lib/backend";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+// Thin proxy: forwards useChat's POST to the backend Vercel endpoint and pipes
+// the response stream back unchanged.
+//
+// Elicitation is handled entirely in the backend, which emits a v5 DataChunk
+// (type "data-mcp-elicitation") inline with the message stream. This route does NOT
+// intercept or transform elicitation events — useChat surfaces them as
+// `data-mcp-elicitation` parts on the resulting UIMessage.
+//
+// Request body (from useChat / DefaultChatTransport):
+//   Vercel AI SDK RequestData (id, messages: UIMessage[], ...) + extra `project_name`
+//   added via the transport's `body` option.
 
-/**
- * Thin proxy to the Python backend's `POST /projects/{project_name}/agent/run`
- * SSE endpoint.
- *
- * The client sends `{ project_name, user_prompt, message_history }`; we add
- * `stream: true` and forward to the project-scoped agent route. The backend
- * emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
- * `agent_run_result`, `mcp_form_elicitation`, `mcp_url_elicitation`) as
- * Server-Sent Events with real `event:` lines — this route streams them
- * straight through; the parser lives in `app/page.tsx`.
- */
-export async function POST(request: Request) {
-  let body: { project_name?: unknown; user_prompt?: unknown; message_history?: unknown };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      { ok: false, error: "Invalid JSON body." },
-      { status: 400 }
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const projectName: string | undefined = body?.project_name;
+  if (!projectName) {
+    return new Response(
+      JSON.stringify({ error: "project_name is required" }),
+      { status: 400, headers: { "content-type": "application/json" } },
     );
   }
 
-  const projectName = body.project_name;
-  if (typeof projectName !== "string" || projectName.length === 0) {
-    return NextResponse.json(
-      { ok: false, error: "Missing project_name." },
-      { status: 400 }
-    );
-  }
-
-  let upstream: Response;
-  try {
-    upstream = await fetch(
-      backendUrl(`/projects/${encodeURIComponent(projectName)}/agent/run`),
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          stream: true,
-          user_prompt: body.user_prompt,
-          message_history: body.message_history ?? [],
-        }),
-        signal: request.signal,
-      }
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json(
-      { ok: false, error: `Backend unreachable: ${message}` },
-      { status: 502 }
-    );
-  }
-
-  if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text().catch(() => "");
-    return NextResponse.json(
-      { ok: false, error: detail || `Backend returned ${upstream.status}` },
-      { status: upstream.status || 502 }
-    );
-  }
-
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers: {
-      "content-type": upstream.headers.get("content-type") ?? "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
+  const upstream = await fetch(
+    `${backendUrl}/projects/${encodeURIComponent(projectName)}/agent/run/vercel`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: req.headers.get("accept") ?? "text/event-stream",
+      },
+      body: JSON.stringify(body),
     },
-  });
+  );
+
+  const headers = new Headers();
+  for (const name of [
+    "content-type",
+    "x-vercel-ai-ui-message-stream",
+    "cache-control",
+    "x-accel-buffering",
+  ]) {
+    const v = upstream.headers.get(name);
+    if (v) headers.set(name, v);
+  }
+
+  return new Response(upstream.body, { status: upstream.status, headers });
 }

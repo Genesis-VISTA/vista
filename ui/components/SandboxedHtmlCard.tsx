@@ -1,31 +1,34 @@
 "use client";
 
+// Renders agent-produced HTML inside a sandboxed iframe.
+// Same security constraints as old UI: no scripts, no external resources, inline styles only.
+
 import { useMemo } from "react";
 import DOMPurify from "dompurify";
 
-const CSP = [
-  "default-src 'none'",
-  "img-src data:",
-  "style-src 'unsafe-inline'"
-].join("; ");
+const CSP = ["default-src 'none'", "img-src data:", "style-src 'unsafe-inline'"].join("; ");
 
-export default function SandboxedHtmlCard({ html }: { html: string }) {
-  const sanitized = useMemo(() => {
-    return DOMPurify.sanitize(html, {
+interface SandboxedHtmlCardProps {
+  html: string;
+  className?: string;
+}
+
+export default function SandboxedHtmlCard({ html, className }: SandboxedHtmlCardProps) {
+  const srcDoc = useMemo(() => {
+    const sanitized = DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ["script", "object", "embed", "iframe", "form"],
-      FORBID_ATTR: ["onerror", "onload", "onclick", "onsubmit"]
+      FORBID_ATTR: ["onerror", "onload", "onclick", "onsubmit"],
     });
+    return `<!doctype html><html><head><meta charset="utf-8" /><meta http-equiv="Content-Security-Policy" content="${CSP}"></head><body>${sanitized}</body></html>`;
   }, [html]);
-
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8" /><meta http-equiv="Content-Security-Policy" content="${CSP}"></head><body>${sanitized}</body></html>`;
 
   return (
     <iframe
       title="Tool HTML Output"
       sandbox=""
       srcDoc={srcDoc}
-      style={{ width: "100%", minHeight: 360, border: "1px solid #e2d6c6", borderRadius: 12, background: "#fff" }}
+      className={`w-full min-h-[320px] border border-gray-200 rounded-md bg-white ${className ?? ""}`}
     />
   );
 }

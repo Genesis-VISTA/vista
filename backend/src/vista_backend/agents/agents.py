@@ -2,10 +2,10 @@
 Logic to build the actual PydanticAI Agent
 """
 import fnmatch, json, uuid, asyncio
-from typing import AsyncIterator, Literal, Annotated as A, Any
+from typing import AsyncIterator, Literal, Any
 from pathlib import Path
 
-from pydantic import BaseModel, Field, Discriminator
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
 from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
 from pydantic_ai.messages import (
@@ -85,11 +85,20 @@ class ProjectAgentResult(BaseModel):
     """ All log lines emitted during this run (also streamed live as `LogEvent`s). """
 
 class ProjectAgentResultEvent(BaseModel):
-    """ Terminal event of `ProjectAgent.run_stream`, carrying the `ProjectAgentResult`. """
-    event_kind: Literal["agent_run_result"] = "agent_run_result"
+    """
+    Terminal event of `ProjectAgent.run_stream`, carrying the bundled `ProjectAgentResult`
+    (new_messages + usage + logs).
+
+    Emitted *after* PydanticAI's own `AgentRunResultEvent` (which `run_stream` also yields,
+    so adapters that consume native events -- e.g. `VercelAIAdapter.transform_stream` --
+    can finalize their own stream). The two events use distinct `event_kind` discriminators.
+    """
+    event_kind: Literal["project_agent_run_result"] = "project_agent_run_result"
     result: ProjectAgentResult
 
-ProjectAgentStreamEvent = A[AgentStreamEvent | LogEvent | McpElicitationEvent | ProjectAgentResultEvent, Discriminator("event_kind")]
+# `AgentRunResultEvent` is a dataclass (not a pydantic model) so it can't participate in
+# a pydantic `Discriminator` union; keep this a plain `Union` for type hinting only.
+ProjectAgentStreamEvent = AgentStreamEvent | AgentRunResultEvent | LogEvent | McpElicitationEvent | ProjectAgentResultEvent
 
 
 def _tool_allowed(name: str, patterns: list[str]) -> bool:
@@ -172,7 +181,7 @@ class ProjectAgent:
         return agent
 
     async def run(self,
-        user_prompt: str,
+        user_prompt: str | None = None,
         message_history: list[ModelMessage]|None = None,
         process_tool_call: ProcessToolCallback | None = None,
     ) -> ProjectAgentResult:
@@ -193,7 +202,7 @@ class ProjectAgent:
         raise RuntimeError("Agent didn't emit a result") # Should be unreachable
 
     def run_stream(self,
-        user_prompt: str,
+        user_prompt: str | None = None,
         message_history: list[ModelMessage]|None = None,
         enable_elicitation: bool = False,
         process_tool_call: ProcessToolCallback | None = None,
@@ -204,7 +213,15 @@ class ProjectAgent:
         Yields all events from Pydantic, see `pydantic_ai.messages.AgentStreamEvent` and
         https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents for more info.
 
+        Includes PydanticAI's native `AgentRunResultEvent` (event_kind=`agent_run_result`),
+        followed by our `ProjectAgentResultEvent` (event_kind=`project_agent_run_result`) so that
+        adapters consuming native events (e.g. `VercelAIAdapter.transform_stream`) can finalize
+        their own stream while callers that just want the bundled result still get it.
+
         Also adds LogEvents of our own, that contains log lines from the agent and MCP server.
+
+        Pass `user_prompt=None` and put the latest user message at the end of `message_history`
+        when driving from a UI adapter that already represents the prompt as a `UserPromptPart`.
 
         Pass enable_elicitation to support MCP elicitation. When enabled, it will yield an McpElicitation
         event when elicitation is requested. You should call agent.resolve_elicitation with the result.
@@ -277,7 +294,7 @@ class ProjectAgent:
             yield log("INFO", "Agent", "\n".join([
                 f"New request:",
                 f"    project: {self.project.name}",
-                f"    userMessage: {json.dumps(user_prompt[:200])}",
+                f"    userMessage: {json.dumps((user_prompt or '')[:200])}",
                 f"    historyTurns: {len(message_history or [])}",
             ]))
 
@@ -288,6 +305,9 @@ class ProjectAgent:
             ):
                 if isinstance(event, AgentRunResultEvent):
                     yield log("INFO", "Agent", f"Turn completed")
+                    # Forward the native event first so adapters that consume native Pydantic streams
+                    # (e.g. `VercelAIAdapter.transform_stream`) can finalize their output.
+                    yield event
                     result = ProjectAgentResult(
                         new_messages=event.result.new_messages(),
                         usage=event.result.usage(),

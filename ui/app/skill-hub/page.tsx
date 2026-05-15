@@ -1,245 +1,106 @@
 "use client";
 
+// Skill hub — browse and load/unload skills for the current chat session.
+
 import { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { SkillDetail, SkillSummary } from "@/lib/types";
-
-const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
-
-const TAG_FILTERS = [
-  "All",
-  "OLCF",
-  "Frontier",
-  "Materials Design",
-  "Molten Salt Tritium Breeding",
-  "High Entropy Alloy Design",
-  "Data",
-] as const;
-
-type TagFilter = typeof TAG_FILTERS[number];
-type SortKey = "name" | "recent";
-
-type HubSkill = SkillSummary & { addedAt?: number | null };
-
-function readLoadedSlugs(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return new Set(parsed.filter((s): s is string => typeof s === "string"));
-    }
-  } catch {
-    // ignore corrupt entries
-  }
-  return new Set();
-}
+import { getSkills, getSkillDetail } from "@/app/actions/skills";
+import { useLoadedSkills } from "@/lib/skills";
+import type { SkillSummary, SkillDetail } from "@/lib/types";
 
 export default function SkillHubPage() {
-  const [skills, setSkills] = useState<HubSkill[]>([]);
-  // Lazy initializer reads localStorage once at mount (client-only); the
-  // shared key keeps the hub and the chat page in sync across reloads.
-  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(readLoadedSlugs);
-  const [search, setSearch] = useState("");
-  const [activeTag, setActiveTag] = useState<TagFilter>("All");
-  const [sort, setSort] = useState<SortKey>("name");
-  const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const { loadedSlugs, toggleSkill } = useLoadedSkills();
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [query, setQuery] = useState("");
+  const [detail, setDetail] = useState<SkillDetail | null>(null);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOADED_SKILLS_STORAGE_KEY,
-        JSON.stringify(Array.from(loadedSlugs))
-      );
-    } catch {
-      // ignore
-    }
-  }, [loadedSlugs]);
-
-  // Fetch the hub catalog.
-  useEffect(() => {
-    fetch("/api/skills")
-      .then((res) => res.json())
-      .then((data) => setSkills(Array.isArray(data) ? data : []))
-      .catch(() => setSkills([]));
+    getSkills().then(setSkills).catch(() => setSkills([]));
   }, []);
 
-  function toggleLoaded(slug: string) {
-    setLoadedSlugs((prev) => {
-      const next = new Set(prev);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
-      return next;
-    });
-  }
-
-  async function openDetail(slug: string) {
-    try {
-      const resp = await fetch(`/api/skills/${slug}`);
-      if (!resp.ok) return;
-      const detail = (await resp.json()) as SkillDetail;
-      setSelected(detail);
-    } catch {
-      // ignore
-    }
-  }
-
-  const visible = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    let list = skills.filter((skill) => {
-      if (activeTag !== "All") {
-        const tags = skill.tags ?? [];
-        if (!tags.includes(activeTag)) return false;
-      }
-      if (!term) return true;
-      return (
-        skill.slug.toLowerCase().includes(term) ||
-        skill.name.toLowerCase().includes(term) ||
-        skill.description.toLowerCase().includes(term) ||
-        (skill.tags ?? []).some((t) => t.toLowerCase().includes(term))
-      );
-    });
-
-    if (sort === "name") {
-      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
-    } else {
-      // Most recently added first; skills without timestamps go to the end.
-      list = [...list].sort((a, b) => {
-        const ta = a.addedAt ?? 0;
-        const tb = b.addedAt ?? 0;
-        return tb - ta;
-      });
-    }
-    return list;
-  }, [skills, search, activeTag, sort]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return skills;
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        (s.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+    );
+  }, [skills, query]);
 
   return (
-    <div className="hub-page">
-      <header className="hub-header">
-        <h1>Skill Hub</h1>
-        <p>Discover skills and load them into the current chat session.</p>
-      </header>
+    <div className="h-full overflow-auto p-6">
+      <h1 className="text-2xl font-semibold mb-1">Skill Hub</h1>
+      <p className="text-sm text-gray-600 mb-4">
+        Browse, load, and view skills available to the agent.
+      </p>
 
-      <div className="hub-controls">
-        <input
-          className="hub-search"
-          placeholder='Search skills... (press "/" to focus)'
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "/" && document.activeElement !== e.currentTarget) {
-              e.preventDefault();
-              e.currentTarget.focus();
-            }
-          }}
-        />
-        <select
-          className="hub-sort"
-          value={sort}
-          onChange={(e) => setSort(e.target.value as SortKey)}
+      <input
+        className="w-full border rounded px-3 py-2 text-sm mb-4"
+        placeholder="Search skills…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {filtered.map((s) => {
+          const loaded = loadedSlugs.includes(s.name);
+          return (
+            <div key={s.name} className="border rounded-md p-3">
+              <div className="flex items-start justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => getSkillDetail(s.name).then(setDetail)}
+                  className="text-left font-medium hover:underline"
+                >
+                  {s.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleSkill(s.name)}
+                  className={`text-xs rounded px-2 py-1 ${
+                    loaded
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "border border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  {loaded ? "Loaded" : "Load"}
+                </button>
+              </div>
+              <div className="text-xs text-gray-600 mt-1">{s.description}</div>
+              {s.tags && s.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {s.tags.map((t) => (
+                    <span key={t} className="text-[10px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {detail && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+          onClick={() => setDetail(null)}
         >
-          <option value="name">Name (A–Z)</option>
-          <option value="recent">Recently Added</option>
-        </select>
-      </div>
-
-      <div className="hub-tags" role="tablist" aria-label="Tag filters">
-        {TAG_FILTERS.map((tag) => (
-          <button
-            key={tag}
-            type="button"
-            role="tab"
-            aria-selected={activeTag === tag}
-            className={`hub-tag${activeTag === tag ? " active" : ""}`}
-            onClick={() => setActiveTag(tag)}
-          >
-            {tag}
-          </button>
-        ))}
-      </div>
-
-      <div className="hub-count">{visible.length} skills in the hub</div>
-
-      <div className="hub-grid">
-        {visible.length === 0 ? (
-          <div className="hub-empty">No skills match your filters.</div>
-        ) : (
-          visible.map((skill) => {
-            const isLoaded = loadedSlugs.has(skill.slug);
-            return (
-              <div
-                key={skill.slug}
-                className="hub-card"
-                onClick={() => openDetail(skill.slug)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    openDetail(skill.slug);
-                  }
-                }}
-              >
-                <div className="hub-card-head">
-                  <div className="hub-card-name">{skill.name}</div>
-                  <button
-                    type="button"
-                    className={`hub-card-action${isLoaded ? " loaded" : ""}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleLoaded(skill.slug);
-                    }}
-                    aria-pressed={isLoaded}
-                  >
-                    {isLoaded ? "Loaded ✓" : "Load"}
-                  </button>
-                </div>
-                <div className="hub-card-desc">
-                  {skill.description || "No description"}
-                </div>
-                {(skill.tags?.length ?? 0) > 0 && (
-                  <div className="hub-card-tags">
-                    {skill.tags!.map((tag) => (
-                      <span key={tag} className="hub-card-tag">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {selected && (
-        <div className="modal-backdrop" onClick={() => setSelected(null)}>
           <div
-            className="modal"
+            className="bg-white rounded-md p-5 max-w-3xl w-full max-h-[90vh] overflow-auto"
             onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label={`Skill details: ${selected.slug}`}
           >
-            <div className="panel-header">
-              <div className="panel-title">
-                {typeof selected.frontmatter?.name === "string"
-                  ? selected.frontmatter.name
-                  : selected.slug}
-              </div>
+            <h2 className="text-lg font-semibold mb-3">{detail.name}</h2>
+            <pre className="whitespace-pre-wrap text-sm font-mono text-gray-800">{detail.body}</pre>
+            <div className="mt-4 flex justify-end">
               <button
                 type="button"
-                className="button ghost"
-                onClick={() => setSelected(null)}
+                className="px-3 py-1.5 text-sm rounded border hover:bg-gray-50"
+                onClick={() => setDetail(null)}
               >
                 Close
               </button>
-            </div>
-            <div className="modal-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {selected.markdown}
-              </ReactMarkdown>
             </div>
           </div>
         </div>

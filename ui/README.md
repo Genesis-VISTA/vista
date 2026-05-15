@@ -1,85 +1,61 @@
 # Vista UI
 
-Next.js App Router tool console and orchestrator for the VISTA MCP backend.
+Next.js App Router BFF (Backend-for-Frontend) for the VISTA backend service.
 
-The browser never calls MCP directly. All calls flow through `ui/app/api/*` route handlers.
+The browser never calls the backend or MCP directly. All calls flow through route
+handlers (`ui/app/api/*`) or Next.js server actions (`ui/app/actions/*`).
 
 ## What This UI Supports
 
-- Browse local skills from `project-root/skills/**/SKILL.md`
-- Run MCP tools through `/api/mcp/call`
-- Check MCP connectivity and discover tools
-- Optional advisory LLM chat (`/api/chat`) with manual tool execution only
-- Salt analysis quick action (`bash`) showing the generated command string
+- Chat with the VISTA agent via the Vercel AI SDK (`@ai-sdk/react`)
+- Browse and manage projects and skills backed by the Python backend
+- Upload and manage datasets
+- Check MCP connectivity and discover available tools
+- MCP elicitation: surfaced inline in the chat stream, answered via `/api/mcp/elicitation`
 
 ## Prerequisites
 
-- Python 3.12+
-- Node.js 18+ (or 20+ recommended)
-- `uv` installed
+- Node.js 18+ (20+ recommended)
+- Python backend running (see `backend/`)
 
 ## First-Time Setup (After Clone)
 
-1. Install Python dependencies (repo root):
-
-```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-uv pip install -e .[dev]
-```
-
-2. Install UI dependencies:
+1. Install UI dependencies:
 
 ```bash
 cd ui
 npm install
 ```
 
-3. Create local UI env file:
+2. Create local UI env file:
 
 ```bash
 cp .env.example .env.local
 ```
 
-4. Edit `ui/.env.local` as needed. Minimum:
+3. Edit `ui/.env.local`. Minimum:
 
 ```bash
-MCP_BASE_URL=http://127.0.0.1:8000/mcp
-```
-
-Optional LLM settings:
-
-```bash
-OPENAI_API_KEY=changeme
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_STYLE=responses
-OPENAI_CHAT_URL=
-OPENAI_AUTH_MODE=bearer
-OPENAI_TIMEOUT_MS=30000
-```
-
-Azure example:
-
-```bash
-OPENAI_API_KEY=<azure_key>
-OPENAI_API_STYLE=chat_completions
-OPENAI_AUTH_MODE=api_key
-OPENAI_CHAT_URL=https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2025-01-01-preview
-OPENAI_TIMEOUT_MS=30000
+VISTA_BACKEND_URL=http://127.0.0.1:8001
 ```
 
 ## Run Locally
 
-Terminal 1 (repo root): start MCP server over HTTP
+Terminal 1 — start the Python backend:
 
 ```bash
-python3 -m vista.app --transport http --host 127.0.0.1 --port 8000
-# or:
-# uv run vista --transport http --host 127.0.0.1 --port 8000
+cd backend
+uv run vista-backend
 ```
 
-Terminal 2:
+Terminal 2 — start the MCP server:
+
+```bash
+cd mcp-server
+uv run vista-mcp-server --transport=http
+```
+
+Terminal 3 — start the UI:
 
 ```bash
 cd ui
@@ -110,51 +86,58 @@ curl http://localhost:3000/api/mcp/tools
 ```
 
 Expected:
-- tool list including `display_file`, `bash`
+- tool list including `bash`
 
-3. Salt analysis command pass-through:
-
-```bash
-curl -X POST http://localhost:3000/api/mcp/call \
-  -H "content-type: application/json" \
-  -d '{"tool":"bash","args":{"command":"skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl"}}'
-```
-
-Expected:
-- response echoes the command string passed to `bash`
-
-4. LLM chat (if API key configured):
+3. Chat (requires backend running):
 
 ```bash
 curl -X POST http://localhost:3000/api/chat \
   -H "content-type: application/json" \
-  -d '{"message":"What MCP tools are available?"}'
+  -d '{"project_name":"<your-project>","messages":[{"role":"user","content":"hello"}]}'
 ```
+
+Expected:
+- Vercel AI SDK v5 streaming response
+
+## Route Inventory
+
+| Route | Purpose |
+|---|---|
+| `POST /api/chat` | Proxy to `VISTA_BACKEND_URL/projects/{name}/agent/run/vercel` |
+| `POST /api/mcp/elicitation` | Forward elicitation answer to backend |
+| `GET /api/mcp/health` | Proxy MCP reachability check to backend |
+| `GET /api/mcp/tools` | Proxy MCP tool list from backend |
+| `GET/POST /api/uploads/*` | Upload management proxied to backend |
+
+Projects, skills, and uploads also use **server actions** in `app/actions/`.
 
 ## Troubleshooting
 
-- `Address already in use` on port 8000:
+- `Address already in use` on port 8001:
+
 ```bash
-lsof -nP -iTCP:8000 -sTCP:LISTEN
+lsof -nP -iTCP:8001 -sTCP:LISTEN
 kill <PID>
 ```
 
-- MCP returns `Missing session ID` or `Not Acceptable`:
-  - use UI routes (`/api/mcp/*`) instead of calling raw MCP endpoint from browser
-  - UI orchestrator handles session + accept headers
+- `ok: false` from `/api/mcp/health`:
+  - verify `VISTA_BACKEND_URL` in `ui/.env.local` points to the running backend
+  - check that both the backend service and MCP server are running
 
-- `/api/chat` timeout:
-  - increase `OPENAI_TIMEOUT_MS` in `ui/.env.local` (for example `30000`)
+- Chat returns 400 `project_name is required`:
+  - the frontend must include `project_name` in the request body
 
 ## Repo Structure
 
 ```text
 project-root/
-├─ clients/
+├─ backend/          # FastAPI + PydanticAI agent service (port 8001)
+├─ mcp-server/       # FastMCP server (port 8000)
 ├─ skills/
-├─ src/
 └─ ui/
    ├─ app/
+   │  ├─ actions/    # Server actions (projects, skills, uploads)
+   │  └─ api/        # Route handlers (chat, mcp/*, uploads/*)
    ├─ components/
    ├─ lib/
    └─ README.md

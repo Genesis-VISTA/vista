@@ -1,17 +1,117 @@
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, AsyncIterator, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, TypeAdapter
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import AgentRunResultEvent
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+from pydantic_ai.ui.vercel_ai.response_types import BaseChunk, DataChunk
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import ProjectAgent, ProjectAgentResult, McpElicitationEvent
+from ..agents.agents import LogEvent, ProjectAgent, ProjectAgentResult, ProjectAgentResultEvent, McpElicitationEvent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
+from ..utils.streams import StreamMerger, StreamClosedError
 
 router = APIRouter()
+
+
+@router.post("/projects/{project_name}/agent/run/vercel")
+async def agent_run_vercel(
+    project_name: str, session: SessionDep, request: Request,
+):
+    """
+    Vercel AI SDK v5 / v6 compatible streaming endpoint.
+
+    The request body is the raw Vercel AI SDK `RequestData` (UIMessage list +
+    chat metadata) — we let `VercelAIAdapter` parse it; no custom Pydantic model.
+
+    The agent loop itself is driven by `ProjectAgent.run_stream` (shared with the
+    SSE endpoint), so all per-tool / per-turn logging lives in one place. Here we
+    just translate the resulting event stream into Vercel chunks:
+
+    - `LogEvent`s become `DataChunk(type="data-log", transient=True)` and are
+      surfaced in the frontend's AgentLogs panel via `useChat`'s `onData`.
+    - Native PydanticAI `AgentStreamEvent` / `AgentRunResultEvent`s are piped
+      into `adapter.transform_stream`, which produces the actual Vercel chunks
+      (text deltas, tool I/O, finish, etc).
+    - Our bundled `ProjectAgentResultEvent` is dropped — `transform_stream`
+      already finalized the wire from the native result event.
+
+    MCP elicitation events arrive as `DataChunk(type="data-mcp-form-elicitation")`
+    or `DataChunk(type="data-mcp-url-elicitation")` alongside the running stream;
+    on the frontend these surface as UIMessage parts that ChatInterface watches to
+    open ElicitationModal. The response is POSTed back to /mcp/elicitation.
+
+    See: https://ai-sdk.dev/docs/ai-sdk-ui/streaming-data and
+    pydantic_ai.ui.vercel_ai.{VercelAIAdapter, VercelAIEventStream, response_types.DataChunk}.
+    """
+    project_row = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
+    if project_row is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project = ProjectPublic.model_validate(project_row)
+    project_agent = ProjectAgent(project)
+
+    # Merges the adapter's Vercel chunk stream with injected DataChunks (logs +
+    # MCP elicitation events) so they interleave with the running agent stream.
+    merger = StreamMerger[BaseChunk]()
+
+    # The adapter is used only for request parsing (`adapter.messages`,
+    # `adapter.sanitize_messages`) and stream transformation
+    # (`adapter.transform_stream`). The `agent=` field is required by the
+    # dataclass but never invoked here — `ProjectAgent.run_stream` drives.
+    adapter = await VercelAIAdapter.from_request(
+        request, agent=project_agent._build_agent(), sdk_version=5,
+    )
+    message_history = adapter.sanitize_messages(adapter.messages)
+
+    async def native_stream() -> AsyncIterator[AgentStreamEvent | AgentRunResultEvent]:
+        async for event in project_agent.run_stream(
+            user_prompt=None,
+            message_history=message_history,
+            enable_elicitation=True,
+        ):
+            if isinstance(event, LogEvent):
+                try:
+                    merger.send(DataChunk(
+                        type="data-log",
+                        data={"level": event.level, "area": event.area, "message": event.message},
+                        transient=True,
+                    ))
+                except StreamClosedError:
+                    pass
+            elif isinstance(event, McpElicitationEvent):
+                request.app.state.elicitations[event.elicitation_id] = project_agent
+                chunk_type = "data-" + event.event_kind.replace("_", "-")
+                try:
+                    merger.send(DataChunk(
+                        type=chunk_type,
+                        data=TypeAdapter(Any).dump_python(event),
+                        transient=False,
+                    ))
+                except StreamClosedError:
+                    pass
+            elif isinstance(event, ProjectAgentResultEvent):
+                # The native AgentRunResultEvent was already yielded above,
+                # so transform_stream has finalized; the bundled result has no
+                # extra info the Vercel client needs.
+                pass
+            else:
+                yield event
+
+    merger.add_stream(adapter.transform_stream(native_stream()))
+
+    event_stream = adapter.build_event_stream()
+    return StreamingResponse(
+        event_stream.encode_stream(aiter(merger)),
+        headers=event_stream.response_headers,
+        media_type=event_stream.content_type,
+    )
+
 
 class AgentRunRequest(BaseModel):
     """
@@ -48,7 +148,8 @@ async def agent_run(
     In streaming, each event corresponds to PydanticAI's `pydantic_ai.messages.AgentStreamEvent` see
     https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents
     In addition to Pydantic's event's we also yield LogEvents from the server and mcp servers.
-    The final event in streaming contains a `ProjectAgentResult`, same as the result from non streaming.
+    The final event in streaming is `event: project_agent_run_result` whose `data` is a
+    `ProjectAgentResult` -- same as the body of the non-streaming response.
 
     Supports MCP elicitation in streaming mode. Elicitation requests arrive as an extra SSE event
     interleaved with the agent events:
@@ -72,6 +173,11 @@ async def agent_run(
                 message_history=body.message_history,
                 enable_elicitation=True,
             ):
+                # `run_stream` yields both PydanticAI's native `AgentRunResultEvent` and our
+                # ProjectAgentRunResult (for the benefit of the Vercel Adapter)
+                # We don't need to send the duplicate info here though.
+                if isinstance(event, AgentRunResultEvent):
+                    continue
                 if isinstance(event, McpElicitationEvent):
                     elicitation_id = event.elicitation_id
                     request.app.state.elicitations[elicitation_id] = agent

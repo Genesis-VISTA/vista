@@ -1,34 +1,36 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import type { SkillSummary } from "@/lib/types";
-import {
-  type Project,
-  activateProject,
-  createProject,
-  deleteProject,
-  notifyActiveProjectChanged,
-  toCreate,
-  updateProject,
-  useActiveProject,
-  useProjects,
-  writeActiveProjectName,
-} from "@/lib/projects";
+// Projects management page — create / edit / delete projects.
 
-/** Project draft used by the create/edit modal (no `id` until persisted). */
-type ProjectDraft = Omit<Project, "id">;
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  getProjects,
+  createProject,
+  updateProject,
+  deleteProject,
+} from "@/app/actions/projects";
+import { getSkills } from "@/app/actions/skills";
+import { useActiveProject } from "@/lib/projects";
+import type { Project, ProjectCreate, SkillSummary } from "@/lib/types";
 
 type ModalState =
   | { mode: "closed" }
   | { mode: "create" }
   | { mode: "edit"; project: Project };
 
+const emptyDraft: ProjectCreate = {
+  name: "",
+  description: null,
+  system_prompt: null,
+  skills: [],
+  tools: [],
+  usage_limits: {},
+};
+
 export default function ProjectsPage() {
-  // useSearchParams forces this page out of static prerender; wrap in
-  // Suspense so the rest of the tree can still stream in.
   return (
-    <Suspense fallback={<div className="standalone-page" />}>
+    <Suspense fallback={<div className="p-6 text-gray-500">Loading…</div>}>
       <ProjectsPageContent />
     </Suspense>
   );
@@ -37,366 +39,267 @@ export default function ProjectsPage() {
 function ProjectsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { projects, loading, error, refresh } = useProjects();
-  const activeProject = useActiveProject();
-  const activeName = activeProject?.name ?? null;
-  const [skillCatalog, setSkillCatalog] = useState<SkillSummary[]>([]);
-  // The NavRail's "+ New project" link routes here with `?new=1` to auto-open
-  // the create modal. Read it during initial state setup so we don't need a
-  // setState-in-effect to flip the modal open after mount.
-  const shouldOpenNew = searchParams?.get("new") === "1";
+  const { activeProject, setActiveProject } = useActiveProject();
+
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(
-    shouldOpenNew ? { mode: "create" } : { mode: "closed" }
+    searchParams?.get("new") === "1" ? { mode: "create" } : { mode: "closed" },
   );
 
+  async function refresh() {
+    try {
+      setProjects(await getProjects());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load projects");
+    }
+  }
+
   useEffect(() => {
-    fetch("/api/skills")
-      .then((res) => res.json())
-      .then((data) => setSkillCatalog(Array.isArray(data) ? data : []))
-      .catch(() => setSkillCatalog([]));
+    getProjects()
+      .then((data) => { setProjects(data); setError(null); })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load projects"));
+    getSkills().then(setSkills).catch(() => setSkills([]));
   }, []);
 
-  // Strip `?new=1` from the URL after we've used it so refreshes don't
-  // re-open the modal and the URL stays clean.
   useEffect(() => {
-    if (shouldOpenNew) {
-      router.replace("/projects");
-    }
-  }, [shouldOpenNew, router]);
+    if (searchParams?.get("new") === "1") router.replace("/projects");
+  }, [searchParams, router]);
 
-  function open(project: Project) {
-    activateProject(project);
+  function openProject(p: Project) {
+    setActiveProject(p);
     router.push("/");
   }
 
-  async function saveProject(draft: ProjectDraft, editing?: Project) {
-    if (editing) {
-      await updateProject(editing.name, toCreate(draft));
-      // The active-project pointer stores the name; if we just renamed the
-      // active project, repoint it so it doesn't dangle.
-      if (editing.name !== draft.name && activeName === editing.name) {
-        writeActiveProjectName(draft.name);
-        notifyActiveProjectChanged();
-      }
-    } else {
-      await createProject(toCreate(draft));
+  async function removeProject(p: Project) {
+    if (!window.confirm(`Delete project "${p.name}"? This cannot be undone.`)) return;
+    try {
+      await deleteProject(p.name);
+      if (activeProject?.name === p.name) setActiveProject(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete");
     }
-    setModal({ mode: "closed" });
   }
 
-  async function removeProject(project: Project) {
-    const ok = window.confirm(
-      `Delete project "${project.name}"? This cannot be undone.`
-    );
-    if (!ok) return;
-    await deleteProject(project.name);
-    if (activeName === project.name) {
-      writeActiveProjectName(null);
-      notifyActiveProjectChanged();
+  async function saveDraft(draft: ProjectCreate, editing?: Project) {
+    try {
+      if (editing) await updateProject(editing.name, draft);
+      else await createProject(draft);
+      setModal({ mode: "closed" });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
     }
   }
 
   return (
-    <div className="standalone-page" style={{ paddingBottom: 0 }}>
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ margin: "0 0 4px", fontSize: 22, fontFamily: "Figtree, sans-serif" }}>
-          Projects
-        </h1>
-        <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-          Pick a project to scope the chat session with its system prompt, skills, and tools.
-        </p>
-      </header>
-
-      {error && (
-        <div className="error" style={{ marginBottom: 12, fontSize: 13 }}>
-          {error}{" "}
-          <button type="button" className="button ghost button-xs" onClick={() => void refresh()}>
-            Retry
-          </button>
+    <div className="h-full overflow-auto p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Projects</h1>
+          <p className="text-sm text-gray-600">
+            Pick a project to scope the chat session with its system prompt, skills, and tools.
+          </p>
         </div>
-      )}
+        <button
+          type="button"
+          onClick={() => setModal({ mode: "create" })}
+          className="rounded-md bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700"
+        >
+          New project
+        </button>
+      </div>
 
-      <div className="projects-panel">
-        <div className="projects-grid">
-          {loading && projects.length === 0 && (
-            <div className="chat-bubble">Loading projects…</div>
-          )}
-          {projects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              active={activeName === project.name}
-              onOpen={() => open(project)}
-              onEdit={() => setModal({ mode: "edit", project })}
-              onDelete={() => void removeProject(project)}
-            />
-          ))}
-          <button
-            type="button"
-            className="project-new"
-            onClick={() => setModal({ mode: "create" })}
-          >
-            <div className="project-new-plus" aria-hidden="true">+</div>
-            <div className="project-new-label">New project</div>
-          </button>
-        </div>
+      {error && <div className="mb-4 rounded bg-rose-50 text-rose-700 p-3 text-sm">{error}</div>}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {projects.map((p) => {
+          const isActive = activeProject?.name === p.name;
+          return (
+            <div
+              key={p.id}
+              className={`border rounded-md p-3 ${isActive ? "border-blue-500 bg-blue-50/40" : "border-gray-200"}`}
+            >
+              <div className="flex items-center gap-2">
+                {isActive && <span className="w-2 h-2 rounded-full bg-blue-500" />}
+                <div className="font-medium">{p.name}</div>
+              </div>
+              {p.description && (
+                <div className="text-xs text-gray-600 mt-1">{p.description}</div>
+              )}
+              <div className="text-xs text-gray-500 mt-2">
+                {p.skills.length} skills · {p.tools.length} tool patterns
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  className="text-xs rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
+                  onClick={() => openProject(p)}
+                >
+                  Open
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded border border-gray-300 px-2 py-1 hover:bg-gray-50"
+                  onClick={() => setModal({ mode: "edit", project: p })}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="text-xs rounded border border-rose-300 text-rose-700 px-2 py-1 hover:bg-rose-50 ml-auto"
+                  onClick={() => removeProject(p)}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
+        {projects.length === 0 && (
+          <div className="text-gray-500 text-sm">No projects yet — create one above.</div>
+        )}
       </div>
 
       {modal.mode !== "closed" && (
-        <ProjectModal
-          mode={modal.mode}
-          initial={modal.mode === "edit" ? modal.project : undefined}
-          skillCatalog={skillCatalog}
-          existingNames={new Set(projects.map((p) => p.name))}
+        <ProjectEditor
+          skills={skills}
+          initial={modal.mode === "edit" ? modal.project : null}
           onCancel={() => setModal({ mode: "closed" })}
-          onSave={(draft) =>
-            saveProject(draft, modal.mode === "edit" ? modal.project : undefined)
-          }
+          onSave={(draft) => saveDraft(draft, modal.mode === "edit" ? modal.project : undefined)}
         />
       )}
     </div>
   );
 }
 
-function ProjectCard({
-  project,
-  active,
-  onOpen,
-  onEdit,
-  onDelete,
-}: {
-  project: Project;
-  active: boolean;
-  onOpen: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className={`project-card${active ? " active" : ""}`}>
-      <div className="project-card-head">
-        <div>
-          <div className="project-card-title">{project.name}</div>
-          {active && <span className="project-card-badge active">Active</span>}
-        </div>
-      </div>
-      <div className="project-card-desc">{project.description || "No description."}</div>
-
-      <ChipRow label="Skills" items={project.skills} />
-      <ChipRow label="Tools" items={project.tools} />
-
-      <div className="project-card-actions">
-        <button type="button" className="button" onClick={onOpen}>
-          {active ? "Reopen" : "Open"}
-        </button>
-        <button type="button" className="button ghost button-sm" onClick={onEdit}>
-          Edit
-        </button>
-        <button type="button" className="button ghost button-sm" onClick={onDelete}>
-          Delete
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ChipRow({ label, items }: { label: string; items: string[] }) {
-  return (
-    <div className="project-card-row">
-      <div className="project-card-row-label">{label}</div>
-      <div className="project-card-chips">
-        {items.length === 0 ? (
-          <span className="project-card-chip empty">none</span>
-        ) : (
-          items.map((item) => (
-            <span key={item} className="project-card-chip">
-              {item}
-            </span>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ProjectModal({
-  mode,
-  initial,
-  skillCatalog,
-  existingNames,
-  onCancel,
-  onSave,
-}: {
-  mode: "create" | "edit";
-  initial?: Project;
-  skillCatalog: SkillSummary[];
-  existingNames: Set<string>;
+interface EditorProps {
+  initial: Project | null;
+  skills: SkillSummary[];
   onCancel: () => void;
-  onSave: (draft: Omit<Project, "id">) => Promise<void>;
-}) {
-  const [name, setName] = useState(initial?.name ?? "");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
-  const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
-  const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  onSave: (draft: ProjectCreate) => void;
+}
+
+const NAME_PATTERN = /^[A-Za-z0-9_ .\-]+$/;
+
+function isNameValid(name: string) {
+  return name.length >= 2 && name.length <= 80 && NAME_PATTERN.test(name);
+}
+
+function ProjectEditor({ initial, skills, onCancel, onSave }: EditorProps) {
+  const [draft, setDraft] = useState<ProjectCreate>(
+    initial
+      ? {
+          name: initial.name,
+          description: initial.description,
+          system_prompt: initial.system_prompt,
+          skills: initial.skills,
+          tools: initial.tools,
+          usage_limits: initial.usage_limits,
+        }
+      : emptyDraft,
+  );
 
   function toggleSkill(slug: string) {
-    setSkills((prev) => {
-      const next = new Set(prev);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
-      return next;
-    });
-  }
-
-  async function commit() {
-    const trimmedName = name.trim();
-    const trimmedDesc = description.trim();
-    if (!trimmedName) {
-      setError("Name is required.");
-      return;
-    }
-    if (trimmedName.length < 2) {
-      setError("Name must be at least 2 characters.");
-      return;
-    }
-    // The name is used as the URL path segment for CRUD routes, so restrict it
-    // to characters that round-trip cleanly without percent-encoding surprises.
-    if (!/^[\w ._-]+$/.test(trimmedName)) {
-      setError("Name may only contain letters, numbers, spaces, '.', '_', and '-'.");
-      return;
-    }
-    if (mode === "create" && existingNames.has(trimmedName)) {
-      setError(`A project named "${trimmedName}" already exists.`);
-      return;
-    }
-    const splitTags = (raw: string) =>
-      raw
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-
-    setSaving(true);
-    setError("");
-    try {
-      await onSave({
-        name: trimmedName,
-        description: trimmedDesc,
-        systemPrompt: systemPrompt.trim(),
-        skills: Array.from(skills),
-        tools: splitTags(toolsRaw),
-        // PUT is a full overwrite on the backend — echo the existing usage
-        // limits so they aren't reset on edit.
-        usageLimits: initial?.usageLimits ?? {},
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save project.");
-      setSaving(false);
-    }
+    setDraft((d) => ({
+      ...d,
+      skills: d.skills.includes(slug)
+        ? d.skills.filter((s) => s !== slug)
+        : [...d.skills, slug],
+    }));
   }
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+      onClick={onCancel}
+    >
       <div
-        className="modal project-modal"
+        className="bg-white rounded-md p-5 max-w-2xl w-full max-h-[90vh] overflow-auto"
         onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label={mode === "create" ? "Create project" : "Edit project"}
       >
-        <div className="panel-header">
-          <div className="panel-title">{mode === "create" ? "New project" : "Edit project"}</div>
-          <button type="button" className="button ghost" onClick={onCancel}>
-            Close
-          </button>
+        <h2 className="text-lg font-semibold mb-3">
+          {initial ? `Edit ${initial.name}` : "New project"}
+        </h2>
+
+        <label className="block text-sm font-medium mt-2">Name</label>
+        <input
+          className="w-full border rounded px-2 py-1 text-sm"
+          value={draft.name}
+          maxLength={80}
+          onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+        />
+        {draft.name && !isNameValid(draft.name) && (
+          <p className="text-xs text-rose-600 mt-0.5">
+            2–80 characters; letters, digits, spaces, underscores, periods, hyphens only.
+          </p>
+        )}
+
+        <label className="block text-sm font-medium mt-3">Description</label>
+        <input
+          className="w-full border rounded px-2 py-1 text-sm"
+          value={draft.description ?? ""}
+          onChange={(e) => setDraft({ ...draft, description: e.target.value || null })}
+        />
+
+        <label className="block text-sm font-medium mt-3">System prompt</label>
+        <textarea
+          rows={4}
+          className="w-full border rounded px-2 py-1 text-sm font-mono"
+          value={draft.system_prompt ?? ""}
+          onChange={(e) => setDraft({ ...draft, system_prompt: e.target.value || null })}
+        />
+
+        <label className="block text-sm font-medium mt-3">
+          Tools (fnmatch patterns; prefix with ! to deny). One per line.
+        </label>
+        <textarea
+          rows={3}
+          className="w-full border rounded px-2 py-1 text-sm font-mono"
+          value={draft.tools.join("\n")}
+          onChange={(e) =>
+            setDraft({
+              ...draft,
+              tools: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
+            })
+          }
+        />
+
+        <label className="block text-sm font-medium mt-3">Skills</label>
+        <div className="max-h-40 overflow-auto border rounded p-2 text-sm">
+          {skills.length === 0 && <div className="text-gray-500">No skills available.</div>}
+          {skills.map((s) => (
+            <label key={s.name} className="flex items-center gap-2 py-0.5">
+              <input
+                type="checkbox"
+                checked={draft.skills.includes(s.name)}
+                onChange={() => toggleSkill(s.name)}
+              />
+              <span className="font-medium">{s.name}</span>
+              <span className="text-gray-500">{s.description}</span>
+            </label>
+          ))}
         </div>
-        <div className="modal-body">
-          <label className="project-modal-label">
-            Name
-            <input
-              className="input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              maxLength={80}
-            />
-          </label>
 
-          <label className="project-modal-label">
-            Description
-            <textarea
-              className="input"
-              rows={2}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              maxLength={400}
-            />
-          </label>
-
-          <label className="project-modal-label">
-            System prompt
-            <textarea
-              className="input"
-              rows={4}
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              placeholder="Extra instructions appended to the base agent prompt."
-            />
-          </label>
-
-          <div className="project-modal-label">
-            <div>Skills</div>
-            <div className="project-modal-skill-list">
-              {skillCatalog.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading skills...</div>
-              ) : (
-                skillCatalog.map((s) => (
-                  <label key={s.slug} className="project-modal-skill-item">
-                    <input
-                      type="checkbox"
-                      checked={skills.has(s.slug)}
-                      onChange={() => toggleSkill(s.slug)}
-                    />
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{s.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                        {s.description.slice(0, 120)}
-                        {s.description.length > 120 ? "..." : ""}
-                      </div>
-                    </div>
-                  </label>
-                ))
-              )}
-            </div>
-          </div>
-
-          <label className="project-modal-label">
-            Tools{" "}
-            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
-              (comma-separated fnmatch patterns; `!` prefix denies)
-            </span>
-            <input
-              className="input"
-              value={toolsRaw}
-              onChange={(e) => setToolsRaw(e.target.value)}
-              placeholder="e.g. *, !agenthpc_*"
-            />
-          </label>
-
-          {error && (
-            <div className="error" style={{ fontSize: 12 }}>
-              {error}
-            </div>
-          )}
-
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-            <button type="button" className="button ghost" onClick={onCancel} disabled={saving}>
-              Cancel
-            </button>
-            <button type="button" className="button" onClick={() => void commit()} disabled={saving}>
-              {saving ? "Saving…" : mode === "create" ? "Create" : "Save"}
-            </button>
-          </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            className="px-3 py-1.5 text-sm rounded border border-gray-300 hover:bg-gray-50"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!isNameValid(draft.name)}
+            className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300"
+            onClick={() => onSave(draft)}
+          >
+            Save
+          </button>
         </div>
       </div>
     </div>
