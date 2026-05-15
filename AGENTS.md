@@ -9,10 +9,12 @@ VISTA (Visual Intelligence for Scientific & Tooling Assistant) is a scientific a
 ## Common Commands
 
 ### Full Development Setup
-Starts both backend and frontend in tmux
+Starts the mcp server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively.
 ```bash
-./launch.sh tmux
+./launch.sh background
 ```
+
+Note that the `./launch.sh` script will not terminate until cancelled, and then on cancel will automatically clean up all 3 processes.
 
 ### Backend (MCP Server)
 Launches MCP server on :8000/mcp
@@ -42,7 +44,10 @@ cd ui && npm run lint                        # Frontend ESLint
 curl http://localhost:3000/api/mcp/health    # Smoke test
 ```
 
+Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
+
 ## NextJS
 ALWAYS read docs before coding
 
 Before any Next.js work, find and read the relevant doc in `ui/node_modules/next/dist/docs/`. Your training data is outdated — the docs are the source of truth.
+
