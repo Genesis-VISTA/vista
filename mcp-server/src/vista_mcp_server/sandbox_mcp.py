@@ -40,9 +40,6 @@ async def run_bash(
     """
     Run a bash command inside the sandbox.
 
-    ALWAYS use this tool for any question about the molten salt database.
-    Never answer data questions from memory — run code to get precise values.
-
     The sandbox has Python 3, numpy, matplotlib, and scipy.
     Skills are mounted at /mnt/skills/, output goes to /mnt/data/output/.
 
