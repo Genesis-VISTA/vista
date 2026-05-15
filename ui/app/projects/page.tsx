@@ -71,7 +71,13 @@ function ProjectsPageContent() {
 
   async function saveProject(draft: ProjectDraft, editing?: Project) {
     if (editing) {
-      await updateProject(editing.id, toCreate(draft));
+      await updateProject(editing.name, toCreate(draft));
+      // The active-project pointer stores the name; if we just renamed the
+      // active project, repoint it so it doesn't dangle.
+      if (editing.name !== draft.name && activeName === editing.name) {
+        writeActiveProjectName(draft.name);
+        notifyActiveProjectChanged();
+      }
     } else {
       await createProject(toCreate(draft));
     }
@@ -83,7 +89,7 @@ function ProjectsPageContent() {
       `Delete project "${project.name}"? This cannot be undone.`
     );
     if (!ok) return;
-    await deleteProject(project.id);
+    await deleteProject(project.name);
     if (activeName === project.name) {
       writeActiveProjectName(null);
       notifyActiveProjectChanged();
@@ -249,6 +255,16 @@ function ProjectModal({
     const trimmedDesc = description.trim();
     if (!trimmedName) {
       setError("Name is required.");
+      return;
+    }
+    if (trimmedName.length < 2) {
+      setError("Name must be at least 2 characters.");
+      return;
+    }
+    // The name is used as the URL path segment for CRUD routes, so restrict it
+    // to characters that round-trip cleanly without percent-encoding surprises.
+    if (!/^[\w ._-]+$/.test(trimmedName)) {
+      setError("Name may only contain letters, numbers, spaces, '.', '_', and '-'.");
       return;
     }
     if (mode === "create" && existingNames.has(trimmedName)) {

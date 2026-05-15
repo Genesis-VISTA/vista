@@ -15,10 +15,10 @@ export type { ProjectCreate, ProjectPublic };
 
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
 export interface Project {
-  /** Backend uuid — primary key for CRUD. */
+  /** Backend uuid — stable internal identity (not used as the CRUD key). */
   id: string;
-  /** Backend `name` — used as `{project_name}` for agent/run, as the display
-   *  label, and as the active-project pointer value. */
+  /** Backend `name` — the CRUD key (`{project_name}` on all project routes),
+   *  the display label, and the active-project pointer value. Must be unique. */
   name: string;
   description: string;
   systemPrompt: string;
@@ -231,10 +231,10 @@ export async function createProject(input: ProjectCreate): Promise<Project> {
 }
 
 export async function updateProject(
-  id: string,
+  name: string,
   input: ProjectCreate
 ): Promise<Project> {
-  const res = await fetch(`/api/projects/${id}`, {
+  const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -245,8 +245,8 @@ export async function updateProject(
   return fromPublic(updated);
 }
 
-export async function deleteProject(id: string): Promise<void> {
-  const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+export async function deleteProject(name: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
   await refreshProjects();
 }

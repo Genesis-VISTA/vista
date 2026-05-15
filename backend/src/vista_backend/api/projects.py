@@ -1,5 +1,5 @@
-import uuid
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from ..db.db import SessionDep
@@ -14,9 +14,9 @@ async def list_projects(session: SessionDep) -> list[ProjectPublic]:
     return [ProjectPublic.model_validate(p) for p in projects]
 
 
-@router.get("/{project_id}")
-async def get_project(project_id: uuid.UUID, session: SessionDep) -> ProjectPublic:
-    project = await session.get(ProjectTable, project_id)
+@router.get("/{project_name}")
+async def get_project(project_name: str, session: SessionDep) -> ProjectPublic:
+    project = (await session.exec(select(ProjectTable).where(ProjectTable.name == project_name))).first()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectPublic.model_validate(project)
@@ -26,27 +26,35 @@ async def get_project(project_id: uuid.UUID, session: SessionDep) -> ProjectPubl
 async def create_project(payload: ProjectCreate, session: SessionDep) -> ProjectPublic:
     new = ProjectTable.model_validate(payload)
     session.add(new)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=f"A project named {payload.name!r} already exists.")
     await session.refresh(new)
     return ProjectPublic.model_validate(new)
 
 
-@router.put("/{project_id}")
-async def update_project(project_id: uuid.UUID, updates: ProjectCreate, session: SessionDep) -> ProjectPublic:
-    project = await session.get(ProjectTable, project_id)
+@router.put("/{project_name}")
+async def update_project(project_name: str, updates: ProjectCreate, session: SessionDep) -> ProjectPublic:
+    project = (await session.exec(select(ProjectTable).where(ProjectTable.name == project_name))).first()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     for key, value in updates.model_dump().items():
         setattr(project, key, value)
     session.add(project)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=f"A project named {updates.name!r} already exists.")
     await session.refresh(project)
     return ProjectPublic.model_validate(project)
 
 
-@router.delete("/{project_id}", status_code=204)
-async def delete_project(project_id: uuid.UUID, session: SessionDep) -> None:
-    existing = await session.get(ProjectTable, project_id)
+@router.delete("/{project_name}", status_code=204)
+async def delete_project(project_name: str, session: SessionDep) -> None:
+    existing = (await session.exec(select(ProjectTable).where(ProjectTable.name == project_name))).first()
     if existing is None:
         raise HTTPException(status_code=404, detail="Project not found")
     await session.delete(existing)

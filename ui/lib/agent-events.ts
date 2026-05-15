@@ -155,7 +155,7 @@ export type ProjectPublic = {
   usage_limits: Record<string, unknown>;
 };
 
-/** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{id}`. */
+/** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */
 export type ProjectCreate = {
   name: string;
   description: string | null;

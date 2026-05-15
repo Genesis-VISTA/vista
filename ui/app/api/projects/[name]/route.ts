@@ -3,31 +3,21 @@ import { backendUrl } from "../../_backend";
 
 export const runtime = "nodejs";
 
-const UUID_RE = /^[0-9a-fA-F-]{36}$/;
-
 /**
- * Proxy for the backend's `GET/PUT/DELETE /projects/{id}`.
+ * Proxy for the backend's `GET/PUT/DELETE /projects/{name}`.
  *
  * `PUT` is a full overwrite on the backend, so callers must send a complete
  * `ProjectCreate` body; this route just forwards it.
  */
-async function resolveId(
-  params: Promise<{ id: string }>
-): Promise<string | null> {
-  const { id } = await params;
-  return UUID_RE.test(id) ? id : null;
-}
-
 export async function GET(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ name: string }> }
 ) {
-  const id = await resolveId(params);
-  if (!id) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const { name } = await params;
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/projects/${id}`), {
+    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), {
       headers: { accept: "application/json" },
     });
   } catch (error) {
@@ -45,10 +35,9 @@ export async function GET(
 
 export async function PUT(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ name: string }> }
 ) {
-  const id = await resolveId(params);
-  if (!id) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const { name } = await params;
 
   let body: unknown;
   try {
@@ -59,7 +48,7 @@ export async function PUT(
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/projects/${id}`), {
+    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -79,14 +68,13 @@ export async function PUT(
 
 export async function DELETE(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ name: string }> }
 ) {
-  const id = await resolveId(params);
-  if (!id) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const { name } = await params;
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/projects/${id}`), { method: "DELETE" });
+    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), { method: "DELETE" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
