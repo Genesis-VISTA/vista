@@ -11,9 +11,9 @@ export const dynamic = "force-dynamic";
  * The client sends `{ project_name, user_prompt, message_history }`; we add
  * `stream: true` and forward to the project-scoped agent route. The backend
  * emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
- * `agent_run_result`, `mcp_elicitation`) as Server-Sent Events with real
- * `event:` lines — this route streams them straight through; the parser lives
- * in `app/page.tsx`.
+ * `agent_run_result`, `mcp_form_elicitation`, `mcp_url_elicitation`) as
+ * Server-Sent Events with real `event:` lines — this route streams them
+ * straight through; the parser lives in `app/page.tsx`.
  */
 export async function POST(request: Request) {
   let body: { project_name?: unknown; user_prompt?: unknown; message_history?: unknown };

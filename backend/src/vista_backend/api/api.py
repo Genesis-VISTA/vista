@@ -30,14 +30,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await mcp_server.list_tools()
 
     # TODO: not this only works for single uvicorn worker, if we need to scale it move this to the DB
+    # TODO: We need to clean up elicitations that "time out"
+    # TODO: Should also add better guards for duplicate elicitation ids
     app.state.elicitations = {}
 
     try:
         yield
     finally:
-        for future in list(app.state.elicitations.values()):
-            if not future.done():
-                future.set_result(mcp_types.ElicitResult(action="cancel"))
+        for agent in set(app.state.elicitations.values()):
+            await agent.cancel_elicitations()
         app.state.elicitations.clear()
 
 

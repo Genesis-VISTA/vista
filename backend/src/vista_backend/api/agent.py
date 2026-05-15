@@ -1,21 +1,15 @@
-import uuid
 from typing import AsyncGenerator, Any
-import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, TypeAdapter
 from pydantic_ai.messages import ModelMessage
-from mcp.client.session import ClientSession
-from mcp.shared.context import RequestContext
-import mcp.types
 from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import ProjectAgent, ProjectAgentResult
+from ..agents.agents import ProjectAgent, ProjectAgentResult, McpElicitationEvent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
-from ..utils.streams import StreamMerger
 
 router = APIRouter()
 
@@ -58,8 +52,8 @@ async def agent_run(
 
     Supports MCP elicitation in streaming mode. Elicitation requests arrive as an extra SSE event
     interleaved with the agent events:
-    - event: mcp_elicitation  data: {"elicitationId": "<id>", "mode": "form", "message": "...", "requestedSchema": {...}}
-    - event: mcp_elicitation  data: {"elicitationId": "<id>", "mode": "url", "message": "...", "url": "https://..."}
+    - event: mcp_form_elicitation  data: {"elicitation_id": "<id>", "mode": "form", "message": "...", "requested_schema": {...}}
+    - event: mcp_url_elicitation   data: {"elicitation_id": "<id>", "mode": "url", "message": "...", "url": "https://..."}
     The client must POST the response to /mcp/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
@@ -72,61 +66,20 @@ async def agent_run(
     agent = ProjectAgent(project)
 
     if body.stream:
-        # StreamMerger lets handle_elicitation inject SSE events alongside the agent stream.
-        merger = StreamMerger[ServerSentEvent]()
-
-        async def handle_elicitation(
-            context: RequestContext[ClientSession, Any, Any],
-            params: mcp.types.ElicitRequestParams,
-        ) -> mcp.types.ElicitResult:
-            if isinstance(params, mcp.types.ElicitRequestFormParams):
-                elicitation_id = str(uuid.uuid4())
-                event_data: dict[str, Any] = {
-                    "elicitationId": elicitation_id,
-                    "mode": params.mode,
-                    "message": params.message,
-                    "requestedSchema": params.requestedSchema,
-                }
-            elif isinstance(params, mcp.types.ElicitRequestURLParams):
-                elicitation_id = params.elicitationId
-                event_data = {
-                    "elicitationId": elicitation_id,
-                    "mode": params.mode,
-                    "message": params.message,
-                    "url": params.url,
-                }
-            else:
-                return mcp.types.ElicitResult(action="cancel")
-
-            # URL-mode ids come from the upstream server; refuse a duplicate sent by the MCP server
-            if elicitation_id in request.app.state.elicitations:
-                return mcp.types.ElicitResult(action="cancel")
-
-            future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
-            request.app.state.elicitations[elicitation_id] = future
-            merger.send(ServerSentEvent(
-                event="mcp_elicitation",
-                data=TypeAdapter(Any).dump_json(event_data).decode(),
-            ))
-
-            try:
-                return await asyncio.wait_for(future, timeout=5 * 60)
-            except asyncio.TimeoutError:
-                return mcp.types.ElicitResult(action="cancel")
-            finally:
-                request.app.state.elicitations.pop(elicitation_id, None)
-
         async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
             async for event in agent.run_stream(
                 user_prompt=body.user_prompt,
                 message_history=body.message_history,
-                elicitation_callback=handle_elicitation,
+                enable_elicitation=True,
             ):
+                if isinstance(event, McpElicitationEvent):
+                    elicitation_id = event.elicitation_id
+                    request.app.state.elicitations[elicitation_id] = agent
+                    # calling /mcp/elicitation will resolve the elicitation request
                 data = TypeAdapter(Any).dump_json(event).decode()
                 yield ServerSentEvent(event=event.event_kind, data=data)
 
-        merger.add_stream(agent_events())
-        return EventSourceResponse(merger)
+        return EventSourceResponse(agent_events())
     else:
         return await agent.run(
             user_prompt=body.user_prompt,

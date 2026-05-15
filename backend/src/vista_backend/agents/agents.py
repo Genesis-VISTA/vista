@@ -1,9 +1,8 @@
 """
 Logic to build the actual PydanticAI Agent
 """
-import fnmatch
-import json
-from typing import AsyncIterator, Literal, Annotated as A
+import fnmatch, json, uuid, asyncio
+from typing import AsyncIterator, Literal, Annotated as A, Any
 from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
@@ -18,11 +17,12 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import infer_model
 import mcp.client.session
+import mcp.shared.context
 import mcp.types
 
 from ..config import settings
 from ..db.schemas import ProjectPublic
-from ..utils.streams import StreamMerger
+from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from .skills import to_prompt
 
@@ -46,6 +46,23 @@ class LogEntry(BaseModel):
 
 class LogEvent(LogEntry):
     event_kind: Literal["log"] = "log"
+
+class McpFormElicitationEvent(BaseModel):
+    event_kind: Literal["mcp_form_elicitation"] = "mcp_form_elicitation"
+    mode: Literal["form"] = "form"
+    elicitation_id: str
+    message: str
+    requested_schema: mcp.types.ElicitRequestedSchema
+
+class McpUrlElicitationEvent(BaseModel):
+    event_kind: Literal["mcp_url_elicitation"] = "mcp_url_elicitation"
+    mode: Literal["url"] = "url"
+    elicitation_id: str
+    message: str
+    url: str
+
+McpElicitationEvent = McpFormElicitationEvent | McpUrlElicitationEvent
+
 
 class ProjectAgentResult(BaseModel):
     """
@@ -72,7 +89,7 @@ class ProjectAgentResultEvent(BaseModel):
     event_kind: Literal["agent_run_result"] = "agent_run_result"
     result: ProjectAgentResult
 
-ProjectAgentStreamEvent = A[AgentStreamEvent | LogEvent | ProjectAgentResultEvent, Discriminator("event_kind")]
+ProjectAgentStreamEvent = A[AgentStreamEvent | LogEvent | McpElicitationEvent | ProjectAgentResultEvent, Discriminator("event_kind")]
 
 
 def _tool_allowed(name: str, patterns: list[str]) -> bool:
@@ -117,6 +134,7 @@ def get_mcp_server(
 class ProjectAgent:
     def __init__(self, project: ProjectPublic):
         self.project = project
+        self._elicitations: dict[str, asyncio.Future] = {}
 
     def _build_agent(self,
         elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
@@ -156,7 +174,6 @@ class ProjectAgent:
     async def run(self,
         user_prompt: str,
         message_history: list[ModelMessage]|None = None,
-        elicitation_callback: mcp.client.session.ElicitationFnT|None = None,
         process_tool_call: ProcessToolCallback | None = None,
     ) -> ProjectAgentResult:
         """
@@ -168,7 +185,7 @@ class ProjectAgent:
         async for event in self.run_stream(
             user_prompt = user_prompt,
             message_history = message_history,
-            elicitation_callback=elicitation_callback,
+            enable_elicitation=False,
             process_tool_call=process_tool_call,
         ):
             if isinstance(event, ProjectAgentResultEvent):
@@ -178,7 +195,7 @@ class ProjectAgent:
     def run_stream(self,
         user_prompt: str,
         message_history: list[ModelMessage]|None = None,
-        elicitation_callback: mcp.client.session.ElicitationFnT|None = None,
+        enable_elicitation: bool = False,
         process_tool_call: ProcessToolCallback | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
@@ -189,8 +206,8 @@ class ProjectAgent:
 
         Also adds LogEvents of our own, that contains log lines from the agent and MCP server.
 
-        Pass elicitation_callback to support MCP elicitation. The function should return an awaitable
-        that completes with the elicitation result.
+        Pass enable_elicitation to support MCP elicitation. When enabled, it will yield an McpElicitation
+        event when elicitation is requested. You should call agent.resolve_elicitation with the result.
         """
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
@@ -205,8 +222,50 @@ class ProjectAgent:
         async def log_handler(params: mcp.types.LoggingMessageNotificationParams):
             try:
                 merger.send(log(str(params.level).upper(), "MCP Server", json_dump_if(params.data)))
-            except RuntimeError:
+            except StreamClosedError:
                 pass # Merger already closed, the run finished before this notification.
+
+        if enable_elicitation:
+            async def elicitation_callback(
+                context: mcp.shared.context.RequestContext[mcp.client.session.ClientSession, Any, Any],
+                params: mcp.types.ElicitRequestParams,
+            ) -> mcp.types.ElicitResult:
+                if isinstance(params, mcp.types.ElicitRequestFormParams):
+                    event = McpFormElicitationEvent(
+                        elicitation_id=str(uuid.uuid4()),
+                        message=params.message,
+                        requested_schema=params.requestedSchema,
+                    )
+                elif isinstance(params, mcp.types.ElicitRequestURLParams):
+                    event = McpUrlElicitationEvent(
+                        # TODO probably shouldn't assume the sent elicitationId is globally unique
+                        elicitation_id=params.elicitationId,
+                        url=params.url,
+                        message=params.message,
+                    )
+                else:
+                    return mcp.types.ElicitResult(action="cancel")
+
+                # URL-mode ids come from the upstream server; refuse a duplicate sent by the MCP server
+                if event.elicitation_id in self._elicitations:
+                    return mcp.types.ElicitResult(action="cancel")
+
+                future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
+                self._elicitations[event.elicitation_id] = future
+                try:
+                    merger.send(event)
+                except StreamClosedError:
+                    # Merger already closed, the run finished before this notification.
+                    return mcp.types.ElicitResult(action="cancel")
+
+                try:
+                    return await asyncio.wait_for(future, timeout=5 * 60)
+                except asyncio.TimeoutError:
+                    return mcp.types.ElicitResult(action="cancel")
+                finally:
+                    self._elicitations.pop(event.elicitation_id, None)
+        else:
+            elicitation_callback = None
 
         agent = self._build_agent(
             elicitation_callback=elicitation_callback,
@@ -250,3 +309,24 @@ class ProjectAgent:
 
         merger.add_stream(agent_stream())
         return aiter(merger)
+
+    async def resolve_elicitation(self,
+        elicitation_id: str,
+        action: Literal["accept", "decline", "cancel"],
+        content: dict[str, Any] | None = None
+    ):
+        """ Resolve the elicitation request with a value """
+        future: asyncio.Future | None = self._elicitations.pop(elicitation_id, None)
+        if future is None or future.done():
+            raise KeyError(f"Elicitation {elicitation_id} not found or already resolved")
+        future.set_result(mcp.types.ElicitResult(
+            action=action,
+            content=content if action == "accept" else None,
+        ))
+
+    async def cancel_elicitations(self):
+        """ Cancel all outstanding elicitation requests """
+        for future in self._elicitations.values():
+            if not future.done():
+                future.set_result(mcp.types.ElicitResult(action="cancel"))
+        self._elicitations.clear()

@@ -13,7 +13,8 @@ import {
   type FunctionToolCallEvent,
   type FunctionToolResultEvent,
   type LogEvent,
-  type McpElicitationEvent,
+  type McpFormElicitationEvent,
+  type McpUrlElicitationEvent,
   type ModelMessage,
   type PartDeltaEvent,
   type PartEndEvent,
@@ -648,32 +649,31 @@ export default function HomePage() {
           break;
         }
 
-        default: {
-          // mcp_elicitation has no event_kind in its data; key off the SSE
-          // event name only.
-          if (eventName === "mcp_elicitation") {
-            const ev = data as McpElicitationEvent;
-            if (ev.mode === "form") {
-              setPendingElicitation({
-                id: ev.elicitationId,
-                message: ev.message,
-                schema: ev.requestedSchema
-              });
-            } else if (ev.mode === "url") {
-              // v1: synchronous confirm. The backend is blocked waiting for a
-              // POST to /api/chat/elicitation, so briefly blocking the UI is
-              // acceptable. Refine to a proper modal when the URL flow gets
-              // first-class UX.
-              const allow = window.confirm(
-                `${ev.message}\n\nAllow the agent to open:\n${ev.url}`
-              );
-              void handleElicitationSubmit(
-                ev.elicitationId,
-                allow ? "accept" : "cancel"
-              );
-              if (allow) window.open(ev.url, "_blank", "noopener,noreferrer");
-            }
-          }
+        case "mcp_form_elicitation": {
+          const ev = data as McpFormElicitationEvent;
+          setPendingElicitation({
+            id: ev.elicitation_id,
+            message: ev.message,
+            schema: ev.requested_schema
+          });
+          break;
+        }
+
+        case "mcp_url_elicitation": {
+          const ev = data as McpUrlElicitationEvent;
+          // v1: synchronous confirm. The backend is blocked waiting for a
+          // POST to /api/chat/elicitation, so briefly blocking the UI is
+          // acceptable. Refine to a proper modal when the URL flow gets
+          // first-class UX.
+          const allow = window.confirm(
+            `${ev.message}\n\nAllow the agent to open:\n${ev.url}`
+          );
+          void handleElicitationSubmit(
+            ev.elicitation_id,
+            allow ? "accept" : "cancel"
+          );
+          if (allow) window.open(ev.url, "_blank", "noopener,noreferrer");
+          break;
         }
       }
     }

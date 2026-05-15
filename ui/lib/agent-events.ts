@@ -4,9 +4,9 @@
  *
  * These mirror PydanticAI's `AgentStreamEvent` / message model plus the
  * app-specific events the backend layers on top (`log`, `agent_run_result`,
- * `mcp_elicitation`). They are intentionally loose — most fields are optional —
- * because the frontend only reads a subset; the backend remains the source of
- * truth for the full schema.
+ * `mcp_form_elicitation`, `mcp_url_elicitation`). They are intentionally loose —
+ * most fields are optional — because the frontend only reads a subset; the
+ * backend remains the source of truth for the full schema.
  */
 
 /* ------------------------------------------------------------------ */
@@ -124,15 +124,23 @@ export type AgentRunResultEvent = {
   result: ProjectAgentResult;
 };
 
-/** SSE-only event — its `data:` JSON has no `event_kind`. */
+export type McpFormElicitationEvent = {
+  event_kind: "mcp_form_elicitation";
+  mode: "form";
+  elicitation_id: string;
+  message: string;
+  requested_schema: Record<string, unknown>;
+};
+export type McpUrlElicitationEvent = {
+  event_kind: "mcp_url_elicitation";
+  mode: "url";
+  elicitation_id: string;
+  message: string;
+  url: string;
+};
 export type McpElicitationEvent =
-  | {
-      mode: "form";
-      elicitationId: string;
-      message: string;
-      requestedSchema: Record<string, unknown>;
-    }
-  | { mode: "url"; elicitationId: string; message: string; url: string };
+  | McpFormElicitationEvent
+  | McpUrlElicitationEvent;
 
 export type ProjectAgentResult = {
   new_messages: ModelMessage[];

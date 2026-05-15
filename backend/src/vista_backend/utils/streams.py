@@ -17,6 +17,8 @@ class _Value[T]:
     def __init__(self, value: T) -> None:
         self.value = value
 
+class StreamClosedError(Exception):
+    pass
 
 class StreamMerger[T]:
     """
@@ -109,12 +111,12 @@ class StreamMerger[T]:
             for stream in streams:
                 self._start_stream(stream)
         else: # self._state == "closed"
-            raise RuntimeError("StreamMerger is closed")
+            raise StreamClosedError("StreamMerger is closed")
 
     def send(self, item: T) -> None:
         """ Push an item into the merged stream directly. """
         if self._state == "closed":
-            raise RuntimeError("StreamMerger is closed")
+            raise StreamClosedError("StreamMerger is closed")
         self._queue.put_nowait(_Value(item))
 
     async def aclose(self) -> None:
