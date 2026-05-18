@@ -1,6 +1,14 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from ..agents.skills import find_skill_md, find_skills, read_skill, Skill, SkillMetadata
+from ..agents.skills import (
+    find_skill_md,
+    find_skills,
+    read_skill,
+    update_skill_frontmatter,
+    Skill,
+    SkillMetadata,
+)
 from ..config import settings
 from ..utils.misc import path_is_under
 
@@ -30,3 +38,22 @@ async def get_skill(name: str) -> Skill:
     if find_skill_md(skill_dir) is None:
         raise HTTPException(status_code=404, detail="Skill not found")
     return read_skill(skill_dir)
+
+
+class SkillPatch(BaseModel):
+    is_public: bool | None = None
+    author: str | None = None
+    repo_url: str | None = None
+
+
+@router.patch("/skills/{name}")
+async def patch_skill(name: str, body: SkillPatch) -> Skill:
+    skill_dir = settings.skills_dir / name
+    if not path_is_under(settings.skills_dir, skill_dir):
+        raise HTTPException(status_code=404, detail="Skill not found")
+    if find_skill_md(skill_dir) is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        return read_skill(skill_dir)
+    return update_skill_frontmatter(skill_dir, updates)

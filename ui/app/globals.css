@@ -2034,6 +2034,51 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-weight: 600;
   font-size: 14px;
   color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hub-card-private {
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.hub-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.hub-card-publish {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hub-card-publish:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.hub-card-publish:disabled {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 .hub-card-action {

@@ -19,6 +19,7 @@ const TAG_FILTERS = [
 
 type TagFilter = typeof TAG_FILTERS[number];
 type SortKey = "name" | "recent";
+type VisibilityFilter = "public" | "all";
 
 type HubSkill = SkillSummary & { addedAt?: number | null };
 
@@ -45,7 +46,9 @@ export default function SkillHubPage() {
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<TagFilter>("All");
   const [sort, setSort] = useState<SortKey>("name");
+  const [visibility, setVisibility] = useState<VisibilityFilter>("public");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const [busySlug, setBusySlug] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -75,6 +78,23 @@ export default function SkillHubPage() {
     });
   }
 
+  async function togglePublish(slug: string, nextValue: boolean) {
+    setBusySlug(slug);
+    try {
+      const resp = await fetch(`/api/skills/${slug}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ is_public: nextValue }),
+      });
+      if (!resp.ok) return;
+      setSkills((prev) =>
+        prev.map((s) => (s.slug === slug ? { ...s, isPublic: nextValue } : s))
+      );
+    } finally {
+      setBusySlug(null);
+    }
+  }
+
   async function openDetail(slug: string) {
     try {
       const resp = await fetch(`/api/skills/${slug}`);
@@ -89,6 +109,7 @@ export default function SkillHubPage() {
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     let list = skills.filter((skill) => {
+      if (visibility === "public" && skill.isPublic === false) return false;
       if (activeTag !== "All") {
         const tags = skill.tags ?? [];
         if (!tags.includes(activeTag)) return false;
@@ -113,7 +134,7 @@ export default function SkillHubPage() {
       });
     }
     return list;
-  }, [skills, search, activeTag, sort]);
+  }, [skills, search, activeTag, sort, visibility]);
 
   return (
     <div className="hub-page">
@@ -142,6 +163,15 @@ export default function SkillHubPage() {
         >
           <option value="name">Name (A–Z)</option>
           <option value="recent">Recently Added</option>
+        </select>
+        <select
+          className="hub-sort"
+          value={visibility}
+          onChange={(e) => setVisibility(e.target.value as VisibilityFilter)}
+          aria-label="Visibility filter"
+        >
+          <option value="public">Public only</option>
+          <option value="all">All (incl. private)</option>
         </select>
       </div>
 
@@ -183,18 +213,39 @@ export default function SkillHubPage() {
                 }}
               >
                 <div className="hub-card-head">
-                  <div className="hub-card-name">{skill.name}</div>
-                  <button
-                    type="button"
-                    className={`hub-card-action${isLoaded ? " loaded" : ""}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleLoaded(skill.slug);
-                    }}
-                    aria-pressed={isLoaded}
-                  >
-                    {isLoaded ? "Loaded ✓" : "Load"}
-                  </button>
+                  <div className="hub-card-name">
+                    {skill.name}
+                    {skill.isPublic === false && (
+                      <span className="hub-card-private" title="Private (not listed publicly)">
+                        private
+                      </span>
+                    )}
+                  </div>
+                  <div className="hub-card-actions">
+                    <button
+                      type="button"
+                      className="hub-card-publish"
+                      disabled={busySlug === skill.slug}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePublish(skill.slug, !(skill.isPublic ?? false));
+                      }}
+                      aria-pressed={skill.isPublic ?? false}
+                    >
+                      {skill.isPublic ? "Unpublish" : "Publish"}
+                    </button>
+                    <button
+                      type="button"
+                      className={`hub-card-action${isLoaded ? " loaded" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleLoaded(skill.slug);
+                      }}
+                      aria-pressed={isLoaded}
+                    >
+                      {isLoaded ? "Loaded ✓" : "Load"}
+                    </button>
+                  </div>
                 </div>
                 <div className="hub-card-desc">
                   {skill.description || "No description"}

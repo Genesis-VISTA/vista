@@ -4,6 +4,7 @@ AgentSkills spec implementation
 Basically a port of https://github.com/agentskills/agentskills/blob/main/skills-ref
 """
 import html
+import re
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Iterable
@@ -127,6 +128,63 @@ def read_skill(skill_dir: Path|str) -> Skill:
     frontmatter_dict['body'] = body
     skill_parsed = Skill.model_validate(frontmatter_dict)
     return skill_parsed
+
+
+_FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n?(.*)\Z", re.DOTALL)
+
+
+def update_skill_frontmatter(skill_dir: Path | str, updates: dict[str, object]) -> Skill:
+    """
+    Patch top-level keys in an existing SKILL.md's frontmatter, preserving the
+    body and the formatting of unrelated frontmatter keys.
+
+    For each key in `updates`: if a top-level `key: ...` line already exists in
+    the frontmatter, its value is rewritten; otherwise the key is appended just
+    before the closing `---`. Values are YAML-emitted in flow style so booleans
+    serialize as `true`/`false` and strings get quoted as needed.
+
+    Args:
+        skill_dir: Path to the skill directory.
+        updates: Mapping of frontmatter key -> new value.
+
+    Returns:
+        The freshly parsed `Skill` after the rewrite.
+
+    Raises:
+        ParseError: If SKILL.md is missing or its frontmatter can't be located.
+    """
+    skill_dir = Path(skill_dir).resolve()
+    skill_md = find_skill_md(skill_dir)
+    if skill_md is None:
+        raise ParseError(f"SKILL.md not found in {skill_dir}")
+
+    content = skill_md.read_text()
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        raise ParseError("SKILL.md frontmatter not properly delimited with ---")
+    frontmatter_text = match.group(1)
+    rest = match.group(2)
+
+    for key, value in updates.items():
+        serialized = yaml.safe_dump({key: value}, default_flow_style=True).strip()
+        # safe_dump emits e.g. "{is_public: true}" in flow style; strip the braces.
+        if serialized.startswith("{") and serialized.endswith("}"):
+            serialized = serialized[1:-1].strip()
+        key_line_re = re.compile(rf"(?m)^{re.escape(key)}\s*:.*\n?")
+        if key_line_re.search(frontmatter_text):
+            frontmatter_text = key_line_re.sub(serialized + "\n", frontmatter_text, count=1)
+        else:
+            if not frontmatter_text.endswith("\n"):
+                frontmatter_text += "\n"
+            frontmatter_text += serialized + "\n"
+
+    # The regex consumed the newline directly after the closing `---`; put it
+    # back so the body's leading whitespace is preserved verbatim.
+    new_content = f"---\n{frontmatter_text}---\n{rest}"
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    skill_md.write_text(new_content)
+    return read_skill(skill_dir)
 
 
 def to_prompt(skill_dirs: list[Path|str], path_mapping: dict[Path|str, Path|str]|None = None) -> str:
