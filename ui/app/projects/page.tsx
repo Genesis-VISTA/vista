@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { SkillSummary } from "@/lib/types";
+import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import {
   type Project,
   activateProject,
@@ -41,6 +41,7 @@ function ProjectsPageContent() {
   const activeProject = useActiveProject();
   const activeName = activeProject?.name ?? null;
   const [skillCatalog, setSkillCatalog] = useState<SkillSummary[]>([]);
+  const [kbCatalog, setKbCatalog] = useState<KnowledgeBaseSummary[]>([]);
   // The NavRail's "+ New project" link routes here with `?new=1` to auto-open
   // the create modal. Read it during initial state setup so we don't need a
   // setState-in-effect to flip the modal open after mount.
@@ -54,6 +55,10 @@ function ProjectsPageContent() {
       .then((res) => res.json())
       .then((data) => setSkillCatalog(Array.isArray(data) ? data : []))
       .catch(() => setSkillCatalog([]));
+    fetch("/api/knowledge-bases")
+      .then((res) => res.json())
+      .then((data) => setKbCatalog(Array.isArray(data) ? data : []))
+      .catch(() => setKbCatalog([]));
   }, []);
 
   // Strip `?new=1` from the URL after we've used it so refreshes don't
@@ -147,6 +152,7 @@ function ProjectsPageContent() {
           mode={modal.mode}
           initial={modal.mode === "edit" ? modal.project : undefined}
           skillCatalog={skillCatalog}
+          kbCatalog={kbCatalog}
           existingNames={new Set(projects.map((p) => p.name))}
           onCancel={() => setModal({ mode: "closed" })}
           onSave={(draft) =>
@@ -182,6 +188,7 @@ function ProjectCard({
       <div className="project-card-desc">{project.description || "No description."}</div>
 
       <ChipRow label="Skills" items={project.skills} />
+      <ChipRow label="Knowledge Bases" items={project.knowledgeBases} />
       <ChipRow label="Tools" items={project.tools} />
 
       <div className="project-card-actions">
@@ -222,6 +229,7 @@ function ProjectModal({
   mode,
   initial,
   skillCatalog,
+  kbCatalog,
   existingNames,
   onCancel,
   onSave,
@@ -229,6 +237,7 @@ function ProjectModal({
   mode: "create" | "edit";
   initial?: Project;
   skillCatalog: SkillSummary[];
+  kbCatalog: KnowledgeBaseSummary[];
   existingNames: Set<string>;
   onCancel: () => void;
   onSave: (draft: Omit<Project, "id">) => Promise<void>;
@@ -237,12 +246,22 @@ function ProjectModal({
   const [description, setDescription] = useState(initial?.description ?? "");
   const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
+  const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   function toggleSkill(slug: string) {
     setSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }
+
+  function toggleKb(slug: string) {
+    setKbs((prev) => {
       const next = new Set(prev);
       if (next.has(slug)) next.delete(slug);
       else next.add(slug);
@@ -285,6 +304,7 @@ function ProjectModal({
         description: trimmedDesc,
         systemPrompt: systemPrompt.trim(),
         skills: Array.from(skills),
+        knowledgeBases: Array.from(kbs),
         tools: splitTags(toolsRaw),
         // PUT is a full overwrite on the backend — echo the existing usage
         // limits so they aren't reset on edit.
@@ -362,6 +382,34 @@ function ProjectModal({
                       <div style={{ fontSize: 11, color: "var(--muted)" }}>
                         {s.description.slice(0, 120)}
                         {s.description.length > 120 ? "..." : ""}
+                      </div>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="project-modal-label">
+            <div>Knowledge Bases</div>
+            <div className="project-modal-skill-list">
+              {kbCatalog.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  No knowledge bases yet. Create one from the Knowledge Bases page.
+                </div>
+              ) : (
+                kbCatalog.map((kb) => (
+                  <label key={kb.slug} className="project-modal-skill-item">
+                    <input
+                      type="checkbox"
+                      checked={kbs.has(kb.slug)}
+                      onChange={() => toggleKb(kb.slug)}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{kb.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                        {(kb.description ?? "").slice(0, 120)}
+                        {(kb.description ?? "").length > 120 ? "..." : ""}
                       </div>
                     </div>
                   </label>
