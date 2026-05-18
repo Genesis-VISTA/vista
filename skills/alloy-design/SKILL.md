@@ -5,6 +5,7 @@ metadata:
   version: "0.2.0"
   tags: ["OLCF", "Frontier", "Materials Design", "High Entropy Alloy Design"]
 license: Proprietary
+author: VISTA Team
 is_public: true
 ---
 

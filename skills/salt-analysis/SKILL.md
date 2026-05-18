@@ -5,6 +5,7 @@ metadata:
   version: "0.3.0"
   tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
+author: VISTA Team
 is_public: true
 ---
 
