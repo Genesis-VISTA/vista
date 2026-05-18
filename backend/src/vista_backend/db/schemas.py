@@ -5,12 +5,12 @@ import uuid
 from typing import Annotated as A
 from sqlalchemy import JSON, Column
 from pydantic_ai import UsageLimits
-from pydantic import TypeAdapter, field_validator
+from pydantic import TypeAdapter, field_validator, StringConstraints
 from sqlmodel import Field, SQLModel
 
 
 class ProjectBase(SQLModel):
-    name: str
+    name: A[str, StringConstraints(min_length=2, max_length=80, pattern=r"^[A-Za-z0-9_ .\-]+$"), Field(unique=True)]
     description: str | None = None
     system_prompt: str | None = None
     skills: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]

@@ -14,7 +14,6 @@ export VISTA_BACKEND_URL="http://localhost:8001"
 MCP_CMD="
   cd '$REPO_ROOT/mcp-server' &&
   uv run vista-mcp-server --transport=http;
-  exec bash
 "
 
 BACKEND_CMD="
@@ -22,7 +21,6 @@ BACKEND_CMD="
   echo 'Waiting for MCP server...' &&
   until curl -s -o /dev/null '$VISTA_MCP_URL'; do sleep 1; done &&
   uv run vista-backend;
-  exec bash
 "
 
 UI_CMD="
@@ -30,7 +28,6 @@ UI_CMD="
   echo 'Waiting for backend...' &&
   until curl -fs -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
   npm run dev;
-  exec bash
 "
 
 # Launches a command in a new terminal window
@@ -66,20 +63,47 @@ case "$MODE" in
   tmux)
     tmux new-session \
       -d -s vista-dev \
-      "$MCP_CMD" \; \
+      "$MCP_CMD; exec bash" \; \
       split-window -h \
-      "$BACKEND_CMD" \; \
+      "$BACKEND_CMD; exec bash" \; \
       split-window -v \
-      "$UI_CMD" \; \
+      "$UI_CMD; exec bash" \; \
       attach
     ;;
   terminal)
-    launch_terminal "Backend" "$BACKEND_CMD"
-    launch_terminal "UI Dev Server" "$UI_CMD"
-    launch_terminal "MCP Server" "$MCP_CMD"
+    launch_terminal "Backend" "$BACKEND_CMD; exec bash"
+    launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
+    launch_terminal "MCP Server" "$MCP_CMD; exec bash"
+    ;;
+  background)
+    LOG_DIR="$REPO_ROOT/logs"
+    mkdir -p "$LOG_DIR"
+
+    pids=()
+    cleanup() {
+      echo "Shutting down..."
+      kill "${pids[@]}" 2>/dev/null || true
+      wait "${pids[@]}" 2>/dev/null || true
+    }
+    trap cleanup INT TERM
+
+    bash -c "$MCP_CMD" >> "$LOG_DIR/mcp.log" 2>&1 &
+    pids+=($!)
+    bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
+    pids+=($!)
+    bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &
+    pids+=($!)
+
+    echo "All services started. Logs:"
+    echo "  MCP server: $LOG_DIR/mcp.log"
+    echo "  Backend:    $LOG_DIR/backend.log"
+    echo "  UI:         $LOG_DIR/ui.log"
+    echo "Press Ctrl-C to stop all services."
+
+    wait
     ;;
   *)
-    echo "Usage: $0 [tmux|terminal]"
+    echo "Usage: $0 [tmux|terminal|background]"
     exit 1
     ;;
 esac

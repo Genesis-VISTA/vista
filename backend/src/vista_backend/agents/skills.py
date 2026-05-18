@@ -122,7 +122,7 @@ def read_skill(skill_dir: Path|str) -> Skill:
     return skill_parsed
 
 
-def to_prompt(skill_dirs: list[Path|str]) -> str:
+def to_prompt(skill_dirs: list[Path|str], path_mapping: dict[Path|str, Path|str]|None = None) -> str:
     """
     Generate the <available_skills> XML block for inclusion in agent prompts.
 
@@ -132,6 +132,7 @@ def to_prompt(skill_dirs: list[Path|str]) -> str:
 
     Args:
         skill_dirs: List of paths to skill directories
+        path_mapping: Show a different path in the prompt than the skill_dirs passed in (so the prompt so the path in the container)
 
     Returns:
         XML string with <available_skills> block containing each skill's
@@ -148,6 +149,7 @@ def to_prompt(skill_dirs: list[Path|str]) -> str:
     """
     if not skill_dirs:
         return ""
+    path_mapping = {Path(k).resolve(): Path(v).resolve() for k, v in (path_mapping or {}).items()}
 
     # instructions for how to use skills for models not pretrained with them
     SKILL_INSTRUCTIONS = textwrap.dedent("""
@@ -164,11 +166,20 @@ def to_prompt(skill_dirs: list[Path|str]) -> str:
         except SkillError as e:
             logging.warning(f"Failed to parse skill {skill_dir}: {e}")
             continue
+        skill_md = find_skill_md(skill_dir)
+        if not skill_md:
+            logging.warning(f"No skill {skill_dir} found")
+            continue
+        skill_md = skill_md.resolve()
+        for prefix, replacement in (path_mapping or {}).items():
+            if skill_md.is_relative_to(prefix):
+                skill_md = replacement / skill_md.relative_to(prefix)
+                break
         lines.extend([
             "<skill>",
             "<name>", html.escape(skill.name), "</name>",
             "<description>", html.escape(skill.description), "</description>",
-            "<location>", html.escape(str(find_skill_md(skill_dir))), "</location>", # TODO path inside container?
+            "<location>", html.escape(str(skill_md)), "</location>",
             "</skill>",
         ])
     lines.append("</available_skills>")

@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastmcp import FastMCP, Context
 from pydantic import BaseModel
+from mcp.types import ToolAnnotations
 
 from .config import settings
 from .lib.ssh import Confirmation
@@ -151,6 +152,7 @@ def _resolve_cluster(cluster: Cluster | None, job_id: str | None = None) -> Clus
 
 
 @mcp.tool(
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
         Submit a job to the HPC system.
 
@@ -410,7 +412,7 @@ async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
     logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def get_hpc_job_status(job_id: str, cluster: Cluster | None = None) -> str:
     """
     Get the status and logs of a submitted HPC job.
@@ -544,7 +546,7 @@ def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
     return out
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def get_hpc_job_outputs(
     ctx: Context, job_id: str, files: list[str], cluster: Cluster | None = None,
 ) -> str:
@@ -615,7 +617,7 @@ async def _get_perlmutter_job_outputs(job_id: str, files: list[str]) -> str:
     return "Downloaded files:\n" + "\n".join(downloaded)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     """
     List recently submitted HPC jobs and their states.
@@ -629,7 +631,7 @@ async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     return _list_perlmutter_jobs()
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
 async def cancel_hpc_job(job_id: str, cluster: Cluster | None = None) -> str:
     """
     Cancel a queued or running HPC job.

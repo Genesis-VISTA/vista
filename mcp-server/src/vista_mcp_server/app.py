@@ -1,11 +1,19 @@
 from __future__ import annotations
 import argparse
 import logging
+import os
+from fastmcp.utilities.logging import get_logger
+
+# Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
+os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
+# Show log messages sent via ctx.log (so they show up both as MCP logs and stderr logs)
+to_client_logger = get_logger(name="fastmcp.server.context.to_client")
+to_client_logger.setLevel(level=logging.DEBUG)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()

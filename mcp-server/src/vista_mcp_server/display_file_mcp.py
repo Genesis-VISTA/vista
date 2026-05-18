@@ -11,7 +11,8 @@ import mimetypes
 from pathlib import Path
 from typing import Annotated as A
 
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
+from mcp.types import ToolAnnotations
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,9 @@ def _resolve_path(uri: str) -> Path | None:
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 
 
-@mcp.tool()
-def display_file(
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+async def display_file(
+    ctx: Context,
     uri: A[str, "Absolute path to an image file, or a file:// URI"],
 ) -> str:
     """
@@ -62,12 +64,12 @@ def display_file(
 
     if resolved is None:
         msg = f"Could not resolve path: {uri}"
-        logger.warning(msg)
+        await ctx.warning(msg)
         return msg
 
     if not resolved.exists():
         msg = f"File not found: {resolved}"
-        logger.warning(msg)
+        await ctx.warning(msg)
         return msg
 
     ext = resolved.suffix.lower()
@@ -85,7 +87,7 @@ def display_file(
         data = resolved.read_bytes()
     except Exception as exc:
         msg = f"Cannot read image {resolved}: {exc}"
-        logger.error(msg)
+        await ctx.error(msg)
         return msg
 
     b64 = base64.b64encode(data).decode("ascii")
@@ -94,5 +96,5 @@ def display_file(
         f'alt="{resolved.name}" '
         f'style="max-width:100%;height:auto;display:block;margin:0 auto;" />'
     )
-    logger.info("display_file: returning %d-char HTML for %s", len(html), resolved.name)
+    await ctx.info(f"display_file: returning {len(html)}-char HTML for {resolved.name}")
     return html

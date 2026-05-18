@@ -1,3 +1,5 @@
+from typing import Any
+from pydantic import TypeAdapter
 from pathlib import Path
 
 def write_file_unique(path: Path | str, data: bytes) -> Path:
@@ -22,3 +24,11 @@ def path_is_under(base: Path | str, target: Path | str) -> bool:
     base = Path(base).resolve()
     target = Path(target).resolve()
     return target.is_relative_to(base) and target != base
+
+
+def json_dump_if(data: Any) -> str:
+    """ If data is a string, just return it. Otherwise jsonize it """
+    if isinstance(data, str):
+        return data
+    else:
+        return TypeAdapter(Any).dump_json(data).decode()

@@ -41,18 +41,18 @@ A rough plan of what the final API should look like
     - Make sure to avoid SSRF issues for arbitrary remote MCP servers, and run MCP stdio servers in secure sandboxes.
 - `/projects/{project}/mcp/elicitation`
     - For handling MCP elicitation requests
-- `/projects/{project}/chat/completions`
+- `/projects/{project}/agent/run`
     - Completion. Format should be similar to standard OpenAI completion, however it will handle calling tool calls etc, and not finish returning until the agent loop for the turn has completed.
     - Does not store the chat, you have to pass the full history. This is for one off chats that you want to manage in your client.
     - Should accept option "streaming" option (probably part of the POST body similar to openai, that switches between regular REST requests and streaming) (or maybe use a separate /streaming endpoint to make the return types cleaner)
-- `/projects/{project}/chat/...`
+- `/projects/{project}/chats/...`
     - List/Get/Delete chat histories for the project.
-- `/projects/{project}/chat/{chat_id}/message`
+- `/projects/{project}/chats/{chat_id}/message`
     - Add message to the chat. Returns the new chat history with message appended.
     - Should accept a streaming option like chat/completions
-- `/projects/{project}/chat/vercel`
+    - Basically same format as agent/run, accept it takes one message at a time and updates the chat history
+- `/projects/{project}/chats/{chat_id}/vercel`
     - This is meant for the web UI. Uses PydanticAI Vecel Adapter. Would require updating the frontend to use the Vercel AI SDK
-- `/projects/{project}/chat/?`
 - `/users/...`
     - User settings, etc.
 

@@ -4,8 +4,9 @@ MCP Server to run basic shell commands
 
 from __future__ import annotations
 from typing import Annotated as A
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
+from mcp.types import ToolAnnotations
 from .config import settings
 from .lib.sandbox import Sandbox, DockerSandbox
 from .lib.view import view_path
@@ -31,15 +32,13 @@ async def app_lifespan(server):
 
 mcp = FastMCP(name="Sandbox", lifespan=app_lifespan)
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
 async def run_bash(
     command: A[str, "Bash command to run"],
+    ctx: Context,
 ) -> str:
     """
     Run a bash command inside the sandbox.
-
-    ALWAYS use this tool for any question about the molten salt database.
-    Never answer data questions from memory — run code to get precise values.
 
     The sandbox has Python 3, numpy, matplotlib, and scipy.
     Skills are mounted at /mnt/skills/, output goes to /mnt/data/output/.
@@ -53,12 +52,18 @@ async def run_bash(
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
     """
-    proc = await sandbox.exec("bash", args = ["-c", command], combine_streams=True)
-    stdout, _ = await proc.communicate()
-    return stdout.decode()
+    proc = await sandbox.exec("bash", args=["-c", command], combine_streams=True)
+    lines = []
+    while True:
+        line = (await proc.stdout.readline()).decode()
+        if not line: break
+        lines.append(line)
+        await ctx.info(line.rstrip("\n"))
+    await proc.wait()
+    return "".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False))
 async def create_file(
     path: A[str, "Path to the file"],
     content: A[str, "Content to write"],
@@ -71,7 +76,7 @@ async def create_file(
     return f"Successfully created {path}"
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def view(
     path: A[str, "Path to the file or directory"],
     # Using tuple[int, int] creates a "prefixItems" schema that confuses openai.azure.com

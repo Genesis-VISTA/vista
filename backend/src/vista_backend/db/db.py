@@ -27,13 +27,12 @@ async def init_db() -> None:
     async with AsyncSession(engine) as session:
         for project in DEFAULT_PROJECTS:
             existing = (await session.exec(
-                select(schemas.ProjectTable).where(schemas.ProjectTable.name == project.name)
+                select(schemas.ProjectTable).where(schemas.ProjectTable.id == project.id)
             )).first()
-            fields = project.model_dump(exclude={"id"})
             if existing is None:
-                session.add(schemas.ProjectTable(**fields))
+                session.add(project)
             else:
-                for key, value in fields.items():
+                for key, value in project.model_dump(exclude={"id"}).items():
                     setattr(existing, key, value)
                 session.add(existing)
         await session.commit()

@@ -26,6 +26,7 @@ from typing import Annotated as A, Any, Optional
 import chromadb
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
+from mcp.types import ToolAnnotations
 from sentence_transformers import SentenceTransformer
 
 from .config import settings
@@ -155,7 +156,7 @@ def _format_citation(citation: dict | None) -> str:
 mcp = FastMCP(name="RAG Search", lifespan=app_lifespan)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def rag_search(
     query: A[str, "Natural-language search query over the molten salt literature corpus"],
     n_results: A[int, "Number of passages to return (1–20)"] = 5,
