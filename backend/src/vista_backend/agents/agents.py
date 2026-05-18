@@ -159,30 +159,32 @@ class ProjectAgent:
             toolsets=[toolset],
         )
 
-        skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills], {
-            settings.skills_dir: "/mnt/skills",
-        })
-
-        if self.project.knowledge_bases:
-            kb_lines = "\n".join(f"  - {slug}" for slug in self.project.knowledge_bases)
-            kb_block = (
-                "Knowledge Bases available to this project (pass one of these "
-                "slugs as the `kb_slug` argument to `rag_search`):\n" + kb_lines
-            )
-        else:
-            kb_block = (
-                "No Knowledge Bases are configured for this project; the "
-                "`rag_search` tool is not available."
-            )
-
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
             if self.project.system_prompt:
                 parts.append("## Project Information")
                 parts.append(self.project.system_prompt)
+
+            # TODO Should cache these, but do need them to update when the project is edited
+            if self.project.knowledge_bases:
+                kb_lines = "\n".join(f"  - {slug}" for slug in self.project.knowledge_bases)
+                kb_block = (
+                    "Knowledge Bases available to this project (pass one of these "
+                    "slugs as the `kb_slug` argument to `rag_search`):\n" + kb_lines
+                )
+            else:
+                kb_block = (
+                    "No Knowledge Bases are configured for this project; the "
+                    "`rag_search` tool is not available."
+                )
             parts.append(kb_block)
+
+            skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills], {
+                settings.skills_dir: "/mnt/skills",
+            })
             parts.append(skills_block)
+
             return "\n\n".join([p for p in parts if p])
 
         return agent
