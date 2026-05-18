@@ -1,7 +1,11 @@
 # Built MCP Apps
 /src/vista/mcp-apps/
-/data
 /vista.db*
+
+# Ignore Molten Salts DB
+/data/**
+!/data/**/
+!/data/knowledge-bases/molten-salt-papers/**
 
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,python,git,linux,macos,windows

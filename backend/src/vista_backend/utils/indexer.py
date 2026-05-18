@@ -38,7 +38,7 @@ logger = logging.getLogger("vista.indexer")
 # Marker so users can confirm the patched indexer.py is what's actually
 # loaded. Bump the date whenever this file changes in a way that affects
 # user-visible behavior. Search the startup log for this string to verify.
-_INDEXER_VERSION = "2026-05-16-textrag-instance-cache"
+_INDEXER_VERSION = "2026-05-18-vista-backend-model-fallback"
 logger.warning("indexer.py loaded (version: %s)", _INDEXER_VERSION)
 
 
@@ -230,11 +230,75 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kb-indexer")
 # the "do we have any credentials?" decision. Returns False when nothing
 # is configured, in which case we tell TextRAG to skip the LLM step.
 # ---------------------------------------------------------------------------
+
+def _parse_backend_model() -> tuple[str | None, str | None]:
+    """
+    Parse VISTA_BACKEND_MODEL (the canonical chat-agent config in
+    .env.sample) into (provider, model). Returns (None, None) when
+    unset or malformed.
+
+    Examples:
+        "azure:gpt-5"            -> ("azure", "gpt-5")
+        "openai:claude-sonnet"   -> ("openai", "claude-sonnet")
+        ""                       -> (None, None)
+        "gpt-4o-mini"            -> (None, None)  # no provider prefix
+
+    This exists because VISTA_BACKEND_MODEL is the documented source of
+    truth for which model the chat agent uses, but until now the
+    citation extractor had its own parallel config (AZURE_OPENAI_-
+    DEPLOYMENT_NAME / OPENAI_MODEL) that .env.sample never set. Users
+    following .env.sample to the letter ended up with citation
+    extraction silently disabled. Falling back to VISTA_BACKEND_MODEL
+    here keeps the two code paths in sync without forcing users to
+    duplicate config.
+    """
+    bm = (os.environ.get("VISTA_BACKEND_MODEL") or "").strip()
+    if ":" not in bm:
+        return (None, None)
+    provider, _, model = bm.partition(":")
+    provider = provider.strip().lower()
+    model = model.strip()
+    if not provider or not model:
+        return (None, None)
+    return (provider, model)
+
+
+def _resolved_azure_deployment() -> str:
+    """
+    Azure deployment name with VISTA_BACKEND_MODEL fallback. Explicit
+    AZURE_OPENAI_DEPLOYMENT_NAME wins (back-compat); otherwise pull
+    from VISTA_BACKEND_MODEL when it's of the form "azure:<dep>".
+    """
+    explicit = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+    if explicit:
+        return explicit
+    provider, model = _parse_backend_model()
+    if provider == "azure" and model:
+        return model
+    return ""
+
+
+def _resolved_openai_model() -> str:
+    """
+    OpenAI-compatible model name with VISTA_BACKEND_MODEL fallback.
+    Explicit OPENAI_MODEL wins; otherwise pull from VISTA_BACKEND_MODEL
+    when it's of the form "openai:<model>". Final fallback is the same
+    gpt-4o-mini default build_rag has always used.
+    """
+    explicit = os.environ.get("OPENAI_MODEL")
+    if explicit:
+        return explicit
+    provider, model = _parse_backend_model()
+    if provider == "openai" and model:
+        return model
+    return "gpt-4o-mini"
+
+
 def has_llm_credentials() -> bool:
     azure_ok = bool(
         os.environ.get("AZURE_OPENAI_ENDPOINT")
         and (os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-        and os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+        and _resolved_azure_deployment()
     )
     openai_ok = bool(os.environ.get("OPENAI_API_KEY"))
     legacy_ok = bool(
@@ -256,12 +320,13 @@ def _describe_llm_target() -> tuple[str, str]:
     diverges from build_rag, fix this helper to match — both reading
     the same env vars in the same order is the contract.
     """
+    azure_dep = _resolved_azure_deployment()
     if (
         os.environ.get("AZURE_OPENAI_ENDPOINT")
         and (os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
-        and os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+        and azure_dep
     ):
-        return ("azure", os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"])
+        return ("azure", azure_dep)
     if (
         os.environ.get("ENDPOINT_URL")
         and os.environ.get("DEPLOYMENT_NAME")
@@ -269,8 +334,7 @@ def _describe_llm_target() -> tuple[str, str]:
     ):
         return ("azure-legacy", os.environ["DEPLOYMENT_NAME"])
     base_url = os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
-    model = os.environ.get("OPENAI_MODEL") or "gpt-4o-mini"
-    return (f"openai @ {base_url}", model)
+    return (f"openai @ {base_url}", _resolved_openai_model())
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +392,7 @@ async def index_publications(
         return f"{name}=<set,len={len(v)}>"
 
     env_snapshot = ", ".join(_env_shape(n) for n in (
+        "VISTA_BACKEND_MODEL",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
         "OPENAI_MODEL",
@@ -367,7 +432,10 @@ async def index_publications(
             "and that the values are not empty strings): "
             "(AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY + "
             "AZURE_OPENAI_DEPLOYMENT_NAME), or OPENAI_API_KEY "
-            "(with optional OPENAI_BASE_URL and OPENAI_MODEL).",
+            "(with optional OPENAI_BASE_URL and OPENAI_MODEL). "
+            "VISTA_BACKEND_MODEL=\"azure:<deployment>\" or "
+            "\"openai:<model>\" is also accepted as a fallback for the "
+            "deployment/model name when the explicit env var is unset.",
         )
 
     # Defense-in-depth: filenames are basenames, no path traversal.

@@ -150,6 +150,34 @@ CITATION_FIELDS = [
 _warned_legacy_vars = False
 
 
+def _parse_backend_model() -> tuple[str | None, str | None]:
+    """
+    Parse VISTA_BACKEND_MODEL (the canonical chat-agent config in
+    .env.sample) into (provider, model). Returns (None, None) when
+    unset or malformed.
+
+    Examples:
+        "azure:gpt-5"            -> ("azure", "gpt-5")
+        "openai:claude-sonnet"   -> ("openai", "claude-sonnet")
+        ""                       -> (None, None)
+        "gpt-4o-mini"            -> (None, None)  # no provider prefix
+
+    Lets the citation extractor reuse the chat agent's model config
+    instead of requiring users to set a parallel set of env vars
+    (AZURE_OPENAI_DEPLOYMENT_NAME / OPENAI_MODEL) that .env.sample
+    never mentions.
+    """
+    bm = (os.getenv("VISTA_BACKEND_MODEL") or "").strip()
+    if ":" not in bm:
+        return (None, None)
+    provider, _, model = bm.partition(":")
+    provider = provider.strip().lower()
+    model = model.strip()
+    if not provider or not model:
+        return (None, None)
+    return (provider, model)
+
+
 class _LLMConfig:
     """Resolved LLM configuration for a single citation-extraction call."""
 
@@ -174,6 +202,14 @@ def _resolve_llm_config(timeout: float) -> _LLMConfig:
     azure_key = os.getenv("AZURE_OPENAI_API_KEY") or ""
     azure_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or ""
     azure_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
+
+    # Fall back to VISTA_BACKEND_MODEL="azure:<deployment>" if the
+    # explicit env var is unset. This is what .env.sample documents
+    # for the chat agent, and historically the citation extractor
+    # ignored it — keeping the two paths in sync removes a footgun.
+    bm_provider, bm_model = _parse_backend_model()
+    if not azure_deployment and bm_provider == "azure" and bm_model:
+        azure_deployment = bm_model
 
     # --- Azure path: all three required ---
     if azure_endpoint and azure_key and azure_deployment:
@@ -228,7 +264,14 @@ def _resolve_llm_config(timeout: float) -> _LLMConfig:
     # --- Generic OpenAI-compatible path ---
     base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip().strip("\"'")
-    model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    model = os.getenv("OPENAI_MODEL") or ""
+    # Same fallback as the azure path: if OPENAI_MODEL is unset, try
+    # VISTA_BACKEND_MODEL="openai:<model>". Falls through to the
+    # historical gpt-4o-mini default only when neither is set.
+    if not model and bm_provider == "openai" and bm_model:
+        model = bm_model
+    if not model:
+        model = "gpt-4o-mini"
     chat_url_override = (os.getenv("OPENAI_CHAT_URL") or "").strip().rstrip("/")
     auth_mode = (os.getenv("OPENAI_AUTH_MODE") or "bearer").lower()
 
@@ -237,8 +280,10 @@ def _resolve_llm_config(timeout: float) -> _LLMConfig:
             "No LLM credentials configured. Set either:\n"
             "  - AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY + AZURE_OPENAI_DEPLOYMENT_NAME, OR\n"
             "  - OPENAI_API_KEY (with optional OPENAI_BASE_URL / OPENAI_MODEL)\n"
-            "in your .env. The citation extractor uses the same provider as "
-            "the chat agent."
+            "in your .env. VISTA_BACKEND_MODEL=\"azure:<deployment>\" or "
+            "\"openai:<model>\" is also accepted as a fallback for the "
+            "deployment/model name. The citation extractor uses the "
+            "same provider as the chat agent."
         )
 
     # If the user's "OpenAI-compatible" endpoint is actually Azure
