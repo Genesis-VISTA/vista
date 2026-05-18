@@ -149,6 +149,9 @@ class ProjectAgent:
             process_tool_call=process_tool_call,
             log_handler=log_handler,
         )
+        tool_patterns = list(self.project.tools or [])
+        if not self.project.knowledge_bases and "!rag_search" not in tool_patterns:
+            tool_patterns.append("!rag_search")
         toolset = mcp_server.filtered(lambda ctx, tool: _tool_allowed(tool.name, self.project.tools))
 
         agent = Agent(
@@ -160,12 +163,25 @@ class ProjectAgent:
             settings.skills_dir: "/mnt/skills",
         })
 
+        if self.project.knowledge_bases:
+            kb_lines = "\n".join(f"  - {slug}" for slug in self.project.knowledge_bases)
+            kb_block = (
+                "Knowledge Bases available to this project (pass one of these "
+                "slugs as the `kb_slug` argument to `rag_search`):\n" + kb_lines
+            )
+        else:
+            kb_block = (
+                "No Knowledge Bases are configured for this project; the "
+                "`rag_search` tool is not available."
+            )
+
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
             if self.project.system_prompt:
                 parts.append("## Project Information")
                 parts.append(self.project.system_prompt)
+            parts.append(kb_block)
             parts.append(skills_block)
             return "\n\n".join([p for p in parts if p])
 

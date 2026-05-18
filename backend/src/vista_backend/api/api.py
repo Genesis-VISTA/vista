@@ -11,6 +11,7 @@ from ..db.db import init_db
 from ..agents.agents import get_mcp_server
 from .agent import router as agent_router
 from .mcp import router as mcp_router
+from .knowledge_bases import router as knowledge_bases_router
 from .projects import router as projects_router
 from .skills import router as skills_router
 from .uploads import router as uploads_router
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="vista-backend", lifespan=lifespan)
 app.include_router(agent_router)
 app.include_router(mcp_router)
+app.include_router(knowledge_bases_router)
 app.include_router(projects_router)
 app.include_router(skills_router)
 app.include_router(uploads_router)
