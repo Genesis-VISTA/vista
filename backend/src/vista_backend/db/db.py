@@ -94,10 +94,10 @@ async def init_db() -> None:
             )).first()
             if existing is None:
                 session.add(project)
-            else:
-                for key, value in project.model_dump(exclude={"id"}).items():
-                    setattr(existing, key, value)
-                session.add(existing)
+            # else:
+            #     for key, value in project.model_dump(exclude={"id"}).items():
+            #         setattr(existing, key, value)
+            #     session.add(existing)
 
         # Seed built-in Knowledge Bases. Re-running re-syncs the
         # description / paths / shared_with_mcp flag in case the user
@@ -124,11 +124,11 @@ async def init_db() -> None:
                     **seed_fields,
                 )
                 session.add(row)
-            else:
-                for key, value in seed_fields.items():
-                    setattr(existing_kb, key, value)
-                existing_kb.updated_at = now
-                session.add(existing_kb)
+            # else:
+            #     for key, value in seed_fields.items():
+            #         setattr(existing_kb, key, value)
+            #     existing_kb.updated_at = now
+            #     session.add(existing_kb)
 
         await session.commit()
 
