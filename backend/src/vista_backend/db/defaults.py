@@ -39,7 +39,7 @@ DEFAULT_PROJECTS: list[ProjectTable] = [
     ),
 ]
 
-
+# TODO Can we remove this and these config options
 # Built-in Knowledge Bases. Currently just the molten-salt corpus,
 # pinned to the same paths the MCP server's rag_search tool reads from
 # (`<repo>/pdfs` for source PDFs, `<repo>/rag_db` for the ChromaDB).

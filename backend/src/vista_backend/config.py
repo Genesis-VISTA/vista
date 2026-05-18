@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import Annotated as A
 from pydantic import Field, ByteSize, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
+import logging, os
 from .utils.types import ResolvedPath, LogLevel
 
 
@@ -66,122 +67,10 @@ class Settings(BaseSettings):
     """ Size in bytes """
 
 
-# Also load .env into the actual environ Pydantic AI will pick them up when making the model.
-#
-# Diagnostic logging is deliberate here. Several users have hit a config
-# where the chat path works (pydantic-ai falling back to a shell env
-# var) but the indexer's citation extraction can't find OPENAI_API_KEY
-# because the .env file in the cwd's chain didn't actually set it.
-# We log: which .env paths we tried, which existed, and a key-shape
-# summary of LLM-related env vars *after* loading. This is one of those
-# things you only need to debug once but want unmissable when you do.
-import logging as _logging
-import os as _os
-
-_dotenv_log = _logging.getLogger("vista.config")
-_env_files_tried = list(reversed(Settings.model_config['env_file']))
-_loaded_any = False
-for env_file in _env_files_tried:
-    exists = env_file.is_file()
-    if exists:
-        before = dict(_os.environ)
+for env_file in reversed(Settings.model_config['env_file']):
+    if Path(env_file).exists():
+        values = dotenv_values(env_file)
+        logging.info(f"Loaded from {Path(env_file).resolve()}: {', '.join(values.keys())}")
         load_dotenv(env_file, interpolate=False)
-        new_keys = set(_os.environ) - set(before)
-        # load_dotenv with override=False won't overwrite, so we only
-        # see *newly added* keys. That's the right signal — it tells
-        # us what this file actually contributed.
-        _dotenv_log.warning(
-            ".env loaded: path=%s added_keys=%s",
-            env_file, sorted(new_keys) if new_keys else "<none-or-already-set>",
-        )
-        _loaded_any = True
-    else:
-        _dotenv_log.debug(".env not found at %s", env_file)
 
-if not _loaded_any:
-    _dotenv_log.warning(
-        "No .env file was loaded from any of these locations: %s. "
-        "If your LLM credentials live in one of these files, your "
-        "indexer will not see them. Make sure backend/.env or the "
-        "repo-root .env exists with OPENAI_API_KEY (or the Azure trio).",
-        [str(p) for p in _env_files_tried],
-    )
-
-# Final summary of LLM-relevant env shape after loading. Same format
-# as the indexer's snapshot for consistency. If chat works but
-# indexing doesn't find credentials, this line vs. the indexer's
-# line will tell you whether the env was mutated between startup
-# and indexer time.
-def _env_shape(name: str) -> str:
-    v = _os.environ.get(name)
-    if v is None:
-        return f"{name}=<unset>"
-    if not v:
-        return f"{name}=<empty>"
-    return f"{name}=<set,len={len(v)}>"
-
-_dotenv_log.warning(
-    "Post-dotenv LLM env shape: %s",
-    ", ".join(_env_shape(n) for n in (
-        "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
-        "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_DEPLOYMENT_NAME",
-        "VISTA_BACKEND_MODEL",
-    )),
-)
-
-try:
-    settings = Settings()
-except ValidationError as exc:
-    # Turn the pydantic blob into something a human can act on without
-    # reading the source. The most common cause is a fresh checkout with
-    # no .env yet — point at `.env.sample` and list the missing fields
-    # by their actual env-var names.
-    import os, sys
-    missing: list[str] = []
-    other: list[str] = []
-    for err in exc.errors():
-        if not err.get("loc"):
-            other.append(err.get("msg", str(err)))
-            continue
-        field_name = str(err["loc"][0])
-        field_info = Settings.model_fields.get(field_name)
-        env_var: str | None = None
-        if field_info is not None:
-            alias = getattr(field_info, "validation_alias", None)
-            if isinstance(alias, str):
-                env_var = alias
-        if env_var is None:
-            env_var = f"VISTA_BACKEND_{field_name.upper()}"
-        if err.get("type") == "missing":
-            missing.append(f"{env_var} (field `{field_name}`)")
-        else:
-            other.append(f"{env_var}: {err.get('msg', '')}")
-
-    lines = ["vista-backend failed to start: configuration is incomplete."]
-    if missing:
-        lines.append("")
-        lines.append("Missing required environment variable(s):")
-        for m in missing:
-            lines.append(f"  - {m}")
-    if other:
-        lines.append("")
-        lines.append("Other validation errors:")
-        for o in other:
-            lines.append(f"  - {o}")
-
-    # Point at the sample, if we can find it.
-    sample_candidates = [Path.cwd() / "../.env.sample", *[p / ".env.sample" for p in Path.cwd().parents]]
-    sample_path = next((p for p in sample_candidates if p.is_file()), None)
-    if sample_path is not None:
-        lines.append("")
-        lines.append(
-            f"Copy {sample_path} to <repo>/.env and fill in the values."
-        )
-        lines.append(
-            "For the typical AmSC setup, the relevant entries are "
-            "VISTA_BACKEND_MODEL, OPENAI_BASE_URL, and OPENAI_API_KEY."
-        )
-
-    print("\n" + "\n".join(lines) + "\n", file=sys.stderr)
-    sys.exit(2)
+settings = Settings()

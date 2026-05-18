@@ -2,6 +2,7 @@
 Database engine, session factory, and FastAPI session dependency.
 """
 import functools
+from datetime import datetime, timezone
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
 from sqlalchemy import event
@@ -76,58 +77,12 @@ def get_engine() -> AsyncEngine:
     return engine
 
 
-async def _migrate_project_knowledge_bases(conn) -> None:
-    """
-    Idempotently add the `projecttable.knowledge_bases` JSON column on
-    existing SQLite databases.
-
-    Only runs against SQLite; on any other backend the schema is assumed to
-    be managed by a real migration tool. We probe `PRAGMA table_info` to
-    avoid the `OperationalError: duplicate column name` an unconditional
-    ALTER would raise on fresh DBs (where `create_all` already added the
-    column).
-
-    Note: SQLModel derives the table name from the class name lowercased
-    when `__tablename__` isn't set, so `ProjectTable` lands in `projecttable`
-    (not `project`). Keep this name in sync with `ProjectTable.__tablename__`
-    if it's ever set explicitly.
-    """
-    from sqlalchemy import text
-
-    if not settings.database_url.startswith("sqlite"):
-        return
-
-    result = await conn.execute(text("PRAGMA table_info(projecttable)"))
-    columns = {row[1] for row in result.fetchall()}
-    if not columns:
-        # Table didn't exist before create_all; nothing to migrate.
-        return
-    if "knowledge_bases" in columns:
-        return
-
-    # JSON columns in SQLite are stored as TEXT; default value must be a
-    # JSON literal so SQLAlchemy's JSON type adapter can decode existing
-    # rows on read.
-    await conn.execute(
-        text("ALTER TABLE projecttable ADD COLUMN knowledge_bases TEXT DEFAULT '[]'")
-    )
-
-
 async def init_db() -> None:
     """Create tables and seed defaults. Call once at app startup."""
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        # SQLModel/SQLAlchemy `create_all` is additive at the table level
-        # only — it won't add new columns to tables that already exist.
-        # We add the `project.knowledge_bases` column ourselves on existing
-        # databases (SQLite supports ADD COLUMN with a default), so users
-        # who already have a `vista.db` don't see "no such column" errors
-        # after upgrading. Idempotent: PRAGMA table_info tells us whether
-        # to alter, and adding a column with a JSON default is cheap.
-        await _migrate_project_knowledge_bases(conn)
 
-    from datetime import datetime, timezone
     from .defaults import DEFAULT_KNOWLEDGE_BASES, DEFAULT_PROJECTS
 
     now = datetime.now(timezone.utc).isoformat()
