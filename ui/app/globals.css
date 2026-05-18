@@ -591,6 +591,34 @@ main {
   margin-top: 4px;
 }
 
+.skill-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.skill-author {
+  font-weight: 500;
+}
+
+.skill-meta-sep {
+  opacity: 0.5;
+}
+
+.skill-repo {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.skill-repo:hover {
+  color: var(--text);
+}
+
 .upload-list {
   display: flex;
   flex-direction: column;
@@ -2037,6 +2065,34 @@ button.chat-bubble.intermediate.collapsed:hover {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.hub-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.hub-card-author {
+  font-weight: 500;
+}
+
+.hub-card-meta-sep {
+  opacity: 0.5;
+}
+
+.hub-card-repo {
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.hub-card-repo:hover {
+  color: var(--text);
 }
 
 .hub-card-tags {

@@ -5,6 +5,7 @@ metadata:
   version: "0.1.0"
   tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
+is_public: true
 ---
 
 # Salt Prediction

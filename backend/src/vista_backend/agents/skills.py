@@ -32,6 +32,10 @@ class SkillMetadata(BaseModel):
         allowed_tools: Tool patterns the skill requires (optional, experimental)
         metadata: Key-value pairs for client-specific properties (defaults to
             empty dict; omitted from to_dict() output when empty)
+        author: Display name (and optional contact) of the skill author.
+        repo_url: External URL where the skill's source lives (GitHub repo, etc.).
+        is_public: If true the skill is listed on the Skill Hub; private skills
+            are still installed locally but hidden from hub browsing.
     """
     name: StrippedStr
     description: StrippedStr
@@ -40,6 +44,9 @@ class SkillMetadata(BaseModel):
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
     tags: list[str] = []
+    author: str | None = None
+    repo_url: str | None = None
+    is_public: bool = False
 
 class Skill(SkillMetadata):
     body: str

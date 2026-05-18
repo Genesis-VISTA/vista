@@ -7,6 +7,7 @@ description: >-
   fine-tune, resume, or evaluate a model on the molten salt CSV data.
 metadata:
   tags: ["OLCF", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
+is_public: true
 ---
 
 # Model Fine-Tuning

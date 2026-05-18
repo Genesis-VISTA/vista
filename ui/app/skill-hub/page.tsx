@@ -199,6 +199,27 @@ export default function SkillHubPage() {
                 <div className="hub-card-desc">
                   {skill.description || "No description"}
                 </div>
+                {(skill.author || skill.repoUrl) && (
+                  <div className="hub-card-meta">
+                    {skill.author && (
+                      <span className="hub-card-author">by {skill.author}</span>
+                    )}
+                    {skill.author && skill.repoUrl && (
+                      <span className="hub-card-meta-sep">·</span>
+                    )}
+                    {skill.repoUrl && (
+                      <a
+                        href={skill.repoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hub-card-repo"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        repo ↗
+                      </a>
+                    )}
+                  </div>
+                )}
                 {(skill.tags?.length ?? 0) > 0 && (
                   <div className="hub-card-tags">
                     {skill.tags!.map((tag) => (

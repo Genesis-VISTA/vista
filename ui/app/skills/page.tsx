@@ -155,6 +155,27 @@ export default function SkillsPage() {
                 >
                   <div className="skill-name">{skill.name}</div>
                   <div className="skill-desc">{skill.description || "No description"}</div>
+                  {(skill.author || skill.repoUrl) && (
+                    <div className="skill-meta">
+                      {skill.author && (
+                        <span className="skill-author">by {skill.author}</span>
+                      )}
+                      {skill.author && skill.repoUrl && (
+                        <span className="skill-meta-sep">·</span>
+                      )}
+                      {skill.repoUrl && (
+                        <a
+                          href={skill.repoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="skill-repo"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          repo ↗
+                        </a>
+                      )}
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="button ghost button-sm"

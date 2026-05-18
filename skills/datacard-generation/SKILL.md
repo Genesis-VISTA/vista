@@ -9,6 +9,7 @@ description: >-
   Reusable), Level 3 (Understandable & Trustworthy).
 metadata:
   tags: ["Data"]
+is_public: true
 ---
 
 # Generating Datacards

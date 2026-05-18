@@ -11,6 +11,9 @@ type BackendSkill = {
   allowed_tools?: string | null;
   metadata?: Record<string, string | string[]> | null;
   tags?: string[];
+  author?: string | null;
+  repo_url?: string | null;
+  is_public?: boolean;
 };
 
 /**
@@ -38,6 +41,9 @@ export async function GET() {
       path: `skills/${skill.name}/SKILL.md`,
       metadata: skill.metadata ?? undefined,
       tags: skill.tags ?? [],
+      author: skill.author ?? null,
+      repoUrl: skill.repo_url ?? null,
+      isPublic: skill.is_public ?? false,
       addedAt: null,
     }));
     summaries.sort((a, b) => a.slug.localeCompare(b.slug));

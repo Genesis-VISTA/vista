@@ -11,6 +11,9 @@ type BackendSkillDetail = {
   allowed_tools?: string | null;
   metadata?: Record<string, string | string[]> | null;
   tags?: string[];
+  author?: string | null;
+  repo_url?: string | null;
+  is_public?: boolean;
   body: string;
 };
 
@@ -52,10 +55,16 @@ export async function GET(
   if (detail.allowed_tools != null) frontmatter["allowed-tools"] = detail.allowed_tools;
   if (detail.metadata != null) frontmatter.metadata = detail.metadata;
   if (detail.tags != null) frontmatter.tags = detail.tags;
+  if (detail.author != null) frontmatter.author = detail.author;
+  if (detail.repo_url != null) frontmatter.repo_url = detail.repo_url;
+  if (detail.is_public != null) frontmatter.is_public = detail.is_public;
 
   return NextResponse.json({
     slug,
     frontmatter,
     markdown: detail.body ?? "",
+    author: detail.author ?? null,
+    repoUrl: detail.repo_url ?? null,
+    isPublic: detail.is_public ?? false,
   });
 }

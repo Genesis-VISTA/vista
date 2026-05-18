@@ -5,6 +5,7 @@ metadata:
   version: "0.2.0"
   tags: ["OLCF", "Frontier", "Materials Design", "High Entropy Alloy Design"]
 license: Proprietary
+is_public: true
 ---
 
 # High Entropy Alloy Design (MoNbTaW) Skill
