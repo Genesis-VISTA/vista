@@ -56,4 +56,14 @@ async def patch_skill(name: str, body: SkillPatch) -> Skill:
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         return read_skill(skill_dir)
+    # Publish is one-way: once a skill is published to the hub, it cannot be
+    # made private again. Reject the request rather than silently no-op so the
+    # UI can show a clear error.
+    if "is_public" in updates and updates["is_public"] is False:
+        current = read_skill(skill_dir)
+        if current.is_public:
+            raise HTTPException(
+                status_code=409,
+                detail="Published skills cannot be unpublished.",
+            )
     return update_skill_frontmatter(skill_dir, updates)

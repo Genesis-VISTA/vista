@@ -4,30 +4,24 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useActiveProject } from "@/lib/projects";
+import {
+  LOADED_SKILLS_STORAGE_KEY,
+  computeLoaded,
+  isMandated,
+  readAdditions,
+  writeAdditions,
+} from "@/lib/loaded-skills";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
-const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
-
-function readLoadedSlugs(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return new Set(parsed.filter((s): s is string => typeof s === "string"));
-    }
-  } catch {
-    // ignore
-  }
-  return new Set();
-}
-
 export default function SkillsPage() {
+  const activeProject = useActiveProject();
+  const projectName = activeProject?.name ?? null;
   const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(readLoadedSlugs);
+  const [additions, setAdditions] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const [busySlug, setBusySlug] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -36,46 +30,63 @@ export default function SkillsPage() {
       .catch(() => setSkills([]));
   }, []);
 
-  // Persist + sync, same pattern as the chat and hub pages.
+  // Rehydrate the additions set when the active project changes.
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOADED_SKILLS_STORAGE_KEY,
-        JSON.stringify(Array.from(loadedSlugs))
-      );
-    } catch {
-      // ignore
-    }
-  }, [loadedSlugs]);
+    setAdditions(readAdditions(projectName));
+  }, [projectName]);
 
+  // Cross-tab sync: rewrite from another tab (e.g. the hub toggling Load).
   useEffect(() => {
-    function reread() {
-      const next = readLoadedSlugs();
-      setLoadedSlugs((prev) => {
-        if (prev.size === next.size && Array.from(prev).every((s) => next.has(s))) {
-          return prev;
-        }
-        return next;
-      });
-    }
     function onStorage(e: StorageEvent) {
-      if (e.key === LOADED_SKILLS_STORAGE_KEY) reread();
+      if (e.key === LOADED_SKILLS_STORAGE_KEY) {
+        setAdditions(readAdditions(projectName));
+      }
     }
     window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", reread);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", reread);
-    };
-  }, []);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [projectName]);
+
+  const loadedSlugs = useMemo(
+    () => computeLoaded(activeProject, additions),
+    [activeProject, additions]
+  );
 
   function unload(slug: string) {
-    setLoadedSlugs((prev) => {
+    // Project-mandated skills cannot be unloaded from the UI; their inclusion
+    // is controlled by the project's `skills` list in the backend.
+    if (isMandated(activeProject, slug)) return;
+    setAdditions((prev) => {
       if (!prev.has(slug)) return prev;
       const next = new Set(prev);
       next.delete(slug);
+      writeAdditions(projectName, next);
       return next;
     });
+  }
+
+  async function publish(slug: string) {
+    const ok = window.confirm(
+      `Publish "${slug}" to the Skill Hub?\n\n` +
+        "This action is permanent — once published, a skill cannot be made private again."
+    );
+    if (!ok) return;
+    setBusySlug(slug);
+    try {
+      const resp = await fetch(`/api/skills/${slug}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ is_public: true }),
+      });
+      if (!resp.ok) {
+        window.alert("Failed to publish. See server logs for details.");
+        return;
+      }
+      setSkills((prev) =>
+        prev.map((s) => (s.slug === slug ? { ...s, isPublic: true } : s))
+      );
+    } finally {
+      setBusySlug(null);
+    }
   }
 
   async function openDetail(slug: string) {
@@ -139,7 +150,9 @@ export default function SkillsPage() {
                 </div>
               </div>
             ) : (
-              loadedSkills.map((skill) => (
+              loadedSkills.map((skill) => {
+                const mandated = isMandated(activeProject, skill.slug);
+                return (
                 <div
                   key={skill.slug}
                   className="skill-item"
@@ -153,7 +166,14 @@ export default function SkillsPage() {
                     }
                   }}
                 >
-                  <div className="skill-name">{skill.name}</div>
+                  <div className="skill-name">
+                    {skill.name}
+                    {mandated && (
+                      <span className="skill-required" title={`Required by the ${activeProject?.name} project`}>
+                        required
+                      </span>
+                    )}
+                  </div>
                   <div className="skill-desc">{skill.description || "No description"}</div>
                   {(skill.author || skill.repoUrl) && (
                     <div className="skill-meta">
@@ -176,19 +196,41 @@ export default function SkillsPage() {
                       )}
                     </div>
                   )}
-                  <button
-                    type="button"
-                    className="button ghost button-sm"
-                    style={{ marginTop: 8, alignSelf: "flex-start" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      unload(skill.slug);
-                    }}
-                  >
-                    Unload
-                  </button>
+                  <div className="skill-actions">
+                    {skill.isPublic ? (
+                      <span className="skill-published" title="Listed on the Skill Hub">
+                        Published ✓
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button button-sm"
+                        disabled={busySlug === skill.slug}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void publish(skill.slug);
+                        }}
+                        title="Publish this skill to the Skill Hub (permanent)"
+                      >
+                        Publish
+                      </button>
+                    )}
+                    {!mandated && (
+                      <button
+                        type="button"
+                        className="button ghost button-sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          unload(skill.slug);
+                        }}
+                      >
+                        Unload
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ))
+              );
+            })
             )}
           </div>
         </div>

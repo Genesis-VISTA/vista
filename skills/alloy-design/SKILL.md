@@ -6,7 +6,7 @@ metadata:
   tags: ["OLCF", "Frontier", "Materials Design", "High Entropy Alloy Design"]
 license: Proprietary
 author: VISTA Team
-is_public: true
+is_public: false
 ---
 
 # High Entropy Alloy Design (MoNbTaW) Skill

@@ -46,9 +46,6 @@ const MODEL_SERVICES = ["AmSC model services"];
 const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
 const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
 
-/** localStorage key for the user's per-browser loaded-skill set. */
-const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
-
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
   const output = result.stdout ? result.stdout.slice(0, 240) : "";
@@ -161,73 +158,6 @@ export default function HomePage() {
   const [activeRowResizer, setActiveRowResizer] = useState<"right" | null>(null);
   const [vizWidth, setVizWidth] = useState(460);
   const [rightTopHeight, setRightTopHeight] = useState(430);
-  /**
-   * Slugs of skills the user has loaded for the current chat session via the
-   * Skill Hub. Persisted across reloads in localStorage and shared with the
-   * /skill-hub page via the same storage key. The lazy initializer reads the
-   * stored value at mount — using a `useEffect` here is unsafe because the
-   * persist effect would race with the hydrate effect and overwrite the hub's
-   * writes with an empty Set on every navigation back to this page.
-   */
-  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-      if (!raw) return new Set();
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return new Set(parsed.filter((s): s is string => typeof s === "string"));
-      }
-    } catch {
-      // ignore corrupt entries
-    }
-    return new Set();
-  });
-
-  // Persist loadedSlugs back to localStorage on every change.
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOADED_SKILLS_STORAGE_KEY,
-        JSON.stringify(Array.from(loadedSlugs))
-      );
-    } catch {
-      // localStorage may be unavailable (private mode, quota); chat still works.
-    }
-  }, [loadedSlugs]);
-
-  // Sync from other tabs / the Skill Hub when it writes the same key, and
-  // re-read on window focus so navigation from /skill-hub back here picks up
-  // changes even if Next.js's router cache kept this page mounted.
-  useEffect(() => {
-    function reread() {
-      try {
-        const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
-        const next = new Set(parsed.filter((s): s is string => typeof s === "string"));
-        setLoadedSlugs((prev) => {
-          if (prev.size === next.size && Array.from(prev).every((s) => next.has(s))) {
-            return prev;
-          }
-          return next;
-        });
-      } catch {
-        // ignore
-      }
-    }
-    function onStorage(event: StorageEvent) {
-      if (event.key === LOADED_SKILLS_STORAGE_KEY) reread();
-    }
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", reread);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", reread);
-    };
-  }, []);
-
   /**
    * Active project for the topbar badge. The hook uses
    * `useSyncExternalStore` so SSR and the first client paint both read
