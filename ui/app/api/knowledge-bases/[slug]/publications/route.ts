@@ -33,6 +33,9 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "Invalid slug." }, { status: 400 });
   }
 
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -48,10 +51,14 @@ export async function POST(
     outgoing.append("files", file, file.name);
   }
 
+  const upstreamPath = projectName
+    ? `/knowledge-bases/${encodeURIComponent(slug)}/publications?project_name=${encodeURIComponent(projectName)}`
+    : `/knowledge-bases/${encodeURIComponent(slug)}/publications`;
+
   let upstream: Response;
   try {
     upstream = await fetch(
-      backendUrl(`/knowledge-bases/${encodeURIComponent(slug)}/publications`),
+      backendUrl(upstreamPath),
       { method: "POST", body: outgoing }
     );
   } catch (error) {

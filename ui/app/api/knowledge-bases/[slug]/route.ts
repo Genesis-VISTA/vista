@@ -21,16 +21,21 @@ function sanitizeSlug(rawSlug: string): string | null {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const slug = sanitizeSlug((await params).slug);
   if (!slug) {
     return NextResponse.json({ ok: false, error: "Invalid slug." }, { status: 400 });
   }
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const upstreamPath = projectName
+    ? `/knowledge-bases/${encodeURIComponent(slug)}?project_name=${encodeURIComponent(projectName)}`
+    : `/knowledge-bases/${encodeURIComponent(slug)}`;
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/knowledge-bases/${encodeURIComponent(slug)}`), {
+    upstream = await fetch(backendUrl(upstreamPath), {
       headers: { accept: "application/json" },
       cache: "no-store",
     });
@@ -39,6 +44,9 @@ export async function GET(
   }
   if (upstream.status === 404) {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+  }
+  if (upstream.status === 403) {
+    return NextResponse.json({ ok: false, error: "Knowledge base not in project scope." }, { status: 403 });
   }
   if (!upstream.ok) {
     return NextResponse.json(

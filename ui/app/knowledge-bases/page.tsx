@@ -141,7 +141,17 @@ function KnowledgeBaseExplorerPageContent() {
   const loadList = useCallback(async () => {
     setIsLoadingList(true);
     try {
-      const res = await fetch("/api/knowledge-bases");
+      // When `scope=project` is active in the URL and a project is set,
+      // ask the backend to filter to that project's KBs. The same query
+      // is also re-applied client-side below; the server-side filter
+      // ensures network responses can't leak KBs outside the scope and
+      // also short-circuits the response when the project owns none.
+      const projectName =
+        scopedToProject && activeProject ? activeProject.name : null;
+      const path = projectName
+        ? `/api/knowledge-bases?project_name=${encodeURIComponent(projectName)}`
+        : "/api/knowledge-bases";
+      const res = await fetch(path);
       const data = (await res.json()) as KnowledgeBaseSummary[];
       setList(Array.isArray(data) ? data : []);
     } catch {
@@ -149,12 +159,17 @@ function KnowledgeBaseExplorerPageContent() {
     } finally {
       setIsLoadingList(false);
     }
-  }, []);
+  }, [scopedToProject, activeProject]);
 
   const loadDetail = useCallback(async (slug: string) => {
     setIsLoadingDetail(true);
     try {
-      const res = await fetch(`/api/knowledge-bases/${encodeURIComponent(slug)}`);
+      const projectName =
+        scopedToProject && activeProject ? activeProject.name : null;
+      const path = projectName
+        ? `/api/knowledge-bases/${encodeURIComponent(slug)}?project_name=${encodeURIComponent(projectName)}`
+        : `/api/knowledge-bases/${encodeURIComponent(slug)}`;
+      const res = await fetch(path);
       if (!res.ok) {
         setSelected(null);
         return;
@@ -166,7 +181,7 @@ function KnowledgeBaseExplorerPageContent() {
     } finally {
       setIsLoadingDetail(false);
     }
-  }, []);
+  }, [scopedToProject, activeProject]);
 
   useEffect(() => {
     void loadList();
@@ -251,44 +266,166 @@ function KnowledgeBaseExplorerPageContent() {
     await loadList();
   }
 
+  // Project-scoped layout: tabs across the top, single detail panel
+  // below. No left list column, no search box, no per-KB list-item
+  // cards. The set of KBs is small and known (the project's
+  // knowledge_bases array), so a tab row is faster to scan and frees
+  // ~320px of horizontal space for the detail view.
+  if (scopedToProject) {
+    return (
+      <div className="standalone-page">
+        <div className="kb-layout-scoped">
+          <div className="kb-project-toolbar">
+            <div className="kb-project-toolbar-title">
+              Knowledge Bases — {activeProject?.name}
+            </div>
+            <div className="kb-project-toolbar-actions">
+              {topMessage && (
+                <span className="tag" style={{ fontSize: 11 }}>
+                  {topMessage}
+                </span>
+              )}
+              {topError && (
+                <span className="error" style={{ fontSize: 11 }}>
+                  {topError}
+                </span>
+              )}
+              <button
+                type="button"
+                className="button ghost button-sm"
+                onClick={() => void loadList()}
+                disabled={isLoadingList}
+              >
+                {isLoadingList ? "…" : "Refresh"}
+              </button>
+              <button
+                type="button"
+                className="button button-sm"
+                onClick={() => setCreateOpen(true)}
+              >
+                + New
+              </button>
+              <Link
+                href="/knowledge-bases"
+                className="button ghost button-sm"
+                style={{ textDecoration: "none" }}
+              >
+                Show all
+              </Link>
+            </div>
+          </div>
+
+          {projectScopedList.length === 0 ? (
+            <section className="panel kb-scoped-detail-panel">
+              <div
+                className="panel-body"
+                style={{ color: "var(--muted)", padding: 20 }}
+              >
+                {isLoadingList
+                  ? "Loading…"
+                  : "No knowledge bases are loaded for this project. " +
+                    "Add one from the global Knowledge Bases page, " +
+                    "or attach an existing KB to this project from the " +
+                    "Projects page."}
+              </div>
+            </section>
+          ) : (
+            <>
+              <div className="kb-tabs-row" role="tablist">
+                {projectScopedList.map((kb) => {
+                  const tone = buildStatusLabel(kb.build_status).tone;
+                  const isActive = kb.slug === selectedSlug;
+                  return (
+                    <button
+                      key={kb.slug}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      className="kb-tab"
+                      data-active={isActive ? "true" : "false"}
+                      onClick={() => setSelectedSlug(kb.slug)}
+                      title={kb.description ?? kb.name}
+                    >
+                      <span
+                        className="kb-tab-status-dot"
+                        data-tone={tone}
+                        aria-hidden="true"
+                      />
+                      <span>{kb.name}</span>
+                      {kb.builtin && (
+                        <span
+                          className="project-card-badge"
+                          style={{ marginLeft: 4 }}
+                        >
+                          Built-in
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <section className="panel kb-scoped-detail-panel">
+                {!selectedSlug ? (
+                  <div
+                    className="panel-body"
+                    style={{ color: "var(--muted)", padding: 20 }}
+                  >
+                    Select a knowledge base above.
+                  </div>
+                ) : isLoadingDetail && !selected ? (
+                  <div
+                    className="panel-body"
+                    style={{ color: "var(--muted)", padding: 20 }}
+                  >
+                    Loading…
+                  </div>
+                ) : selected ? (
+                  <KbDetailView
+                    kb={selected}
+                    onUpdated={handleUpdated}
+                    onDeleted={() => void handleDeleted(selected.slug)}
+                    onError={flashError}
+                    onMessage={flashMessage}
+                  />
+                ) : (
+                  <div
+                    className="panel-body"
+                    style={{ color: "var(--muted)", padding: 20 }}
+                  >
+                    Could not load this knowledge base.
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+        </div>
+
+        {createOpen && (
+          <CreateKbModal
+            existingSlugs={new Set(list.map((kb) => kb.slug))}
+            onCancel={() => setCreateOpen(false)}
+            onCreated={handleCreated}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // Global view: keep the two-column list + detail layout. Users on
+  // this view manage every KB across the deployment and benefit from
+  // a scrollable left list with search. The project-scoped layout
+  // returned above; this branch is unconditional global UI.
   return (
     <div className="standalone-page">
       <div className="kb-layout">
         {/* ---- Left: list ---- */}
         <section className="panel kb-list-panel">
           <div className="panel-header">
-            <div className="panel-title">
-              {scopedToProject
-                ? `Knowledge Bases — ${activeProject?.name}`
-                : "Knowledge Bases"}
-            </div>
-            {!scopedToProject && (
-              <span className="tag">{list.length} total</span>
-            )}
+            <div className="panel-title">Knowledge Bases</div>
+            <span className="tag">{list.length} total</span>
           </div>
           <div className="panel-body kb-list-body">
-            {scopedToProject && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "var(--muted)",
-                  marginBottom: 8,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span>Scoped to active project</span>
-                <Link
-                  href="/knowledge-bases"
-                  className="button ghost button-sm"
-                  style={{ textDecoration: "none" }}
-                >
-                  Show all
-                </Link>
-              </div>
-            )}
             <div className="kb-list-toolbar">
               <button
                 type="button"
@@ -330,8 +467,6 @@ function KnowledgeBaseExplorerPageContent() {
                   ? "Loading…"
                   : list.length === 0
                   ? "No knowledge bases yet. Create one to get started."
-                  : scopedToProject && projectScopedList.length === 0
-                  ? "No knowledge bases are loaded for this project."
                   : "No matches."}
               </div>
             ) : (
@@ -1404,11 +1539,27 @@ function CreateKbModal({
       setError("Name must contain at least one letter or digit.");
       return;
     }
+    // If a KB with this slug already exists, ask the user whether to
+    // overwrite it. The backend supports overwrite=true on POST: it
+    // will delete the existing KB (DB row + on-disk PDFs + chromadb
+    // index + cached chromadb client) before creating the replacement.
+    // Built-in KBs are refused server-side, so we don't try to
+    // overwrite them from here either.
+    let overwrite = false;
     if (slugConflict) {
-      setError(
-        `A knowledge base with slug "${slugPreview}" already exists.`
+      const ok = window.confirm(
+        `A knowledge base named "${name.trim()}" already exists ` +
+        `(slug "${slugPreview}"). ` +
+        `Overwrite it? All PDFs and the existing index will be ` +
+        `permanently deleted before the new one is created.`
       );
-      return;
+      if (!ok) {
+        setError(
+          `A knowledge base with slug "${slugPreview}" already exists.`
+        );
+        return;
+      }
+      overwrite = true;
     }
     setBusy(true);
     setError("");
@@ -1424,6 +1575,7 @@ function CreateKbModal({
           slug: slugPreview,
           name: name.trim(),
           description: description.trim() || null,
+          overwrite,
         }),
       });
       const createData = await createRes.json();
@@ -1499,7 +1651,7 @@ function CreateKbModal({
               Slug: <code>{slugPreview}</code>
               {slugConflict && (
                 <span className="error" style={{ marginLeft: 8 }}>
-                  already in use
+                  already in use — submitting will overwrite it
                 </span>
               )}
             </div>
@@ -1607,9 +1759,9 @@ function CreateKbModal({
               type="button"
               className="button"
               onClick={() => void submit()}
-              disabled={busy || !name.trim() || slugConflict}
+              disabled={busy || !name.trim()}
             >
-              {busy ? "Creating…" : "Create"}
+              {busy ? "Creating…" : slugConflict ? "Overwrite" : "Create"}
             </button>
           </div>
         </div>
