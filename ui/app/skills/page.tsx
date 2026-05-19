@@ -12,6 +12,7 @@ import {
   readAdditions,
   writeAdditions,
 } from "@/lib/loaded-skills";
+import { SkillImportModal } from "@/components/SkillImportModal";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
@@ -22,6 +23,7 @@ export default function SkillsPage() {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -117,7 +119,18 @@ export default function SkillsPage() {
       <section className="panel" style={{ height: "100%" }}>
         <div className="panel-header">
           <div className="panel-title">Skills</div>
-          <span className="tag">{loadedSlugs.size} loaded</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className="tag">{loadedSlugs.size} loaded</span>
+            <button
+              type="button"
+              className="button button-sm"
+              onClick={() => setShowImport(true)}
+              title="Import a skill from a GitHub repository into this project"
+              disabled={!projectName}
+            >
+              Import…
+            </button>
+          </div>
         </div>
         <div className="panel-body">
           <input
@@ -261,6 +274,28 @@ export default function SkillsPage() {
           </div>
         </div>
       )}
+
+      <SkillImportModal
+        open={showImport}
+        onCancel={() => setShowImport(false)}
+        onImported={(skill) => {
+          // Append the new private skill to the local catalog (de-dupe in
+          // case a refetch crossed paths with the import) and auto-load it
+          // into the active project's additions so the user sees it on this
+          // page immediately.
+          setSkills((prev) => {
+            const without = prev.filter((s) => s.slug !== skill.slug);
+            return [skill, ...without];
+          });
+          if (projectName) {
+            const adds = readAdditions(projectName);
+            adds.add(skill.slug);
+            writeAdditions(projectName, adds);
+            setAdditions(adds);
+          }
+          setShowImport(false);
+        }}
+      />
     </div>
   );
 }
