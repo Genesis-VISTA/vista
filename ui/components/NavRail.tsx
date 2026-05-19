@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { useActiveProject } from "@/lib/projects";
 
@@ -98,7 +98,7 @@ const GLOBAL_ENTRIES: NavEntry[] = [
   },
   {
     label: "Knowledge Bases",
-    disabled: true,
+    href: "/knowledge-bases",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
@@ -150,8 +150,8 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Knowledge Base",
-    disabled: true,
+    label: "Knowledge Bases",
+    href: "/knowledge-bases?scope=project",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
@@ -163,6 +163,7 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
 
 export function NavRail() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const activeProject = useActiveProject();
   const collapsed = useSyncExternalStore(
     railSubscribe,
@@ -174,11 +175,33 @@ export function NavRail() {
     setRailCollapsed(!collapsed);
   }
 
+  /**
+   * An entry is active when its href matches the current location. We split
+   * the entry's href into path + query so that two entries pointing at the
+   * same page with different scope querystrings (e.g. global vs
+   * project-local "Knowledge Bases") highlight independently.
+   */
   function isEntryActive(href?: string): boolean {
     if (!href) return false;
-    return href === "/"
-      ? pathname === "/"
-      : pathname === href || pathname?.startsWith(href);
+    if (href === "/") return pathname === "/";
+
+    const [entryPath, entryQuery = ""] = href.split("?");
+    const pathMatches =
+      pathname === entryPath || pathname?.startsWith(`${entryPath}/`);
+    if (!pathMatches) return false;
+
+    // For entries with a query (e.g. "?scope=project"), every param in the
+    // entry's query must match the current URL. Entries without a query
+    // only match when the URL also has no `scope` — otherwise the global
+    // "Knowledge Bases" entry would light up on the scoped page too.
+    if (!entryQuery) {
+      return !searchParams?.get("scope");
+    }
+    const entryParams = new URLSearchParams(entryQuery);
+    for (const [key, value] of entryParams) {
+      if (searchParams?.get(key) !== value) return false;
+    }
+    return true;
   }
 
   function renderEntry(entry: NavEntry, className = "") {

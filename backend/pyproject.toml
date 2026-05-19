@@ -14,6 +14,20 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "anyio>=4.13.0",
     "aiosqlite>=0.20.0",
+    # Knowledge Bases indexing: build_rag.py at the repo root is
+    # imported lazily by utils/indexer.py and chunks/embeds/citation-
+    # extracts uploaded PDFs into per-KB ChromaDB stores.
+    # - pymupdf: PDF text extraction (imports as `fitz`; do NOT
+    #   install the unrelated `fitz` PyPI package).
+    # - openai >=1.69 for the `reasoning_effort` kwarg used to bound
+    #   GPT-5-family chain-of-thought.
+    # - chromadb + sentence-transformers for the vector store; the
+    #   same versions the MCP server pins so the rag corpus is
+    #   compatible across both.
+    "pymupdf>=1.26",
+    "openai>=1.69",
+    "chromadb>=0.5.0",
+    "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]

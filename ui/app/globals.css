@@ -2189,3 +2189,600 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* ---------- Knowledge Bases page ------------------------------------- */
+
+.kb-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Project-scoped layout: drop the left list column and stack the tab
+ * row above a single detail panel. The active-project view always
+ * knows the small fixed set of KBs in scope (project.knowledge_bases),
+ * so a list column is just wasted screen space — a tab row above
+ * the detail is faster to navigate and frees a couple hundred pixels
+ * of horizontal room for paper titles and citation rows. */
+.kb-layout-scoped {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-project-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.kb-project-toolbar-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.kb-project-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Horizontal tab row. Scrolls horizontally when a project has more
+ * KBs than the viewport can fit. The bottom border of the row joins
+ * the top of the detail panel so the active tab visually "owns" the
+ * panel below it. */
+.kb-tabs-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+  min-height: 38px;
+}
+
+.kb-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Pull the tab's bottom edge down 1px so the active tab's transparent
+   * bottom border covers the row's bottom border, producing the classic
+   * "tab connects to panel" effect. */
+  margin-bottom: -1px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.kb-tab:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.kb-tab[data-active="true"] {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--line);
+  border-bottom-color: var(--panel);
+  font-weight: 600;
+}
+
+.kb-tab-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.kb-tab-status-dot[data-tone="ready"] {
+  background: var(--accent, #4caf50);
+}
+
+.kb-tab-status-dot[data-tone="warn"] {
+  background: #d39e00;
+}
+
+.kb-tab-status-dot[data-tone="error"] {
+  background: #c44;
+}
+
+.kb-tab-empty {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.kb-scoped-detail-panel {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.kb-list-panel,
+.kb-detail-panel {
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-list-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Same reasoning as .kb-detail-body: override .panel-body's
+   * `overflow: auto` so the inner .kb-list scrolls in its own region. */
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.kb-list-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 2px;
+  /* Claim the remaining vertical space inside .kb-list-body so this
+   * list scrolls inside its own region (toolbar + search input stay
+   * pinned above). */
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.kb-list-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.kb-list-item:hover {
+  border-color: var(--muted);
+}
+
+.kb-list-item[data-selected="true"] {
+  border-color: var(--muted);
+  box-shadow: 0 0 0 1px var(--muted) inset;
+  background: var(--panel);
+}
+
+.kb-list-item-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.kb-list-item-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.kb-list-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.kb-list-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kb-status-ready,
+.kb-detail-status-ready {
+  color: #2f7a3a;
+}
+
+.kb-status-warn,
+.kb-detail-status-warn {
+  color: #a06a00;
+}
+
+.kb-status-error,
+.kb-detail-status-error {
+  color: #b3261e;
+}
+
+.kb-status-muted {
+  color: var(--muted);
+}
+
+.kb-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  /* Override .panel-body's `overflow: auto` so the publications list
+   * inside scrolls in its own region. With `auto`, .kb-detail-body
+   * would expand to fit all children and scroll as a whole, which
+   * means `flex: 1 1 0` on .kb-pubs-list never claims a constrained
+   * height. With `hidden`, the flex children are constrained to the
+   * panel-body's actual height and .kb-pubs-list becomes the scroll
+   * region. */
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.kb-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.kb-detail-desc {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kb-detail-meta-row {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kb-detail-meta-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-pubs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kb-pubs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Claim the remaining vertical space inside .kb-detail-body so the
+   * publication list scrolls inside its own region rather than pushing
+   * the whole panel down. min-height: 0 unlocks flex's ability to
+   * shrink below content size; the list itself scrolls when overflowed. */
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pub-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+  /* Don't let flex column shrink rows below their natural height. */
+  flex: 0 0 auto;
+}
+
+/* Collapsed (head-only) rows are locked to a fixed two-line height so
+ * the list scrolls predictably regardless of how long any single
+ * citation's title or author list is. */
+.pub-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  height: 56px;
+  box-sizing: border-box;
+}
+
+.pub-item-head:hover {
+  background: var(--panel);
+}
+
+.pub-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pub-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Meta row inside the collapsed head: single-line ellipsis so a paper
+ * with lots of authors/keywords doesn't expand its row. The full info
+ * is still visible after expanding. */
+.pub-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pub-item-meta > span {
+  /* Inline so the line ellipses correctly. */
+  display: inline;
+}
+
+.pub-item-meta > span + span::before {
+  /* Visual separator that's part of the inline flow. */
+  content: " ";
+}
+
+.pub-item-chev {
+  color: var(--muted);
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.pub-item-body {
+  padding: 0 12px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.pub-fields {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  margin: 8px 0 0 0;
+  font-size: 12px;
+}
+
+.pub-fields dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.pub-fields dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.pub-fields dd.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kb-create-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel-2);
+}
+
+.kb-create-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.kb-create-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-create-file-size {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.kb-empty-block {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .kb-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kb-pubs-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.kb-pubs-hint {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+.kb-pubs-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-pubs-count {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 2px 4px 2px;
+}
+
+.pub-item-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.pub-item-note {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.pub-item-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.pub-item-tag-indexing {
+  background: var(--panel-2);
+  color: #a06a00;
+  border-color: #d8b04a;
+}
+
+.pub-item-tag-failed {
+  background: var(--panel-2);
+  color: #b3261e;
+  border-color: #e8a4a0;
+}
+
+/* ---------- Indexer progress bar ------------------------------------- */
+
+.kb-indexing-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.kb-indexing-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.kb-indexing-progress-label {
+  font-weight: 500;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.kb-indexing-progress-counts {
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.kb-indexing-progress-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-indexing-progress-step {
+  /* Sub-label under the phase row: shows which document and which
+   * chunk is currently being processed. Single line, truncates with
+   * ellipsis (full text is available via the title= tooltip). The
+   * non-breaking-space fallback in the component keeps the line
+   * height even when there is no step detail to show, so the bar
+   * doesn't jump on phase transitions. */
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-height: 1em;
+}
+
+.kb-indexing-progress-track {
+  height: 6px;
+  background: var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.kb-indexing-progress-fill {
+  height: 100%;
+  background: #2f7a3a;
+  border-radius: inherit;
+  transition: width 400ms ease-out;
+}
+
+.kb-indexing-progress-fill.indeterminate {
+  /* Model-loading phase: we don't have a real percentage, so render
+   * a moving stripe across the full track. The element itself spans
+   * the track (width:100% set inline) and the animation slides a
+   * gradient mask within it. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    #2f7a3a 30%,
+    #4ca85a 50%,
+    #2f7a3a 70%,
+    transparent 100%
+  );
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: kb-indexing-slide 1.6s linear infinite;
+  transition: none;
+}
+
+@keyframes kb-indexing-slide {
+  0%   { background-position: -50% 0; }
+  100% { background-position: 150% 0; }
+}

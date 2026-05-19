@@ -205,11 +205,15 @@ function normalizeCallToolResult(raw: Record<string, unknown>, tool: string): Ex
 export async function POST(request: Request) {
   let tool = "";
   let args: Record<string, unknown> = {};
+  let projectName: string | null = null;
 
   try {
     const body = await request.json();
     tool = typeof body.tool === "string" ? body.tool : "";
     args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
+    if (typeof body.project_name === "string" && body.project_name.length > 0) {
+      projectName = body.project_name;
+    }
   } catch {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Invalid JSON body." }), { status: 400 });
   }
@@ -218,12 +222,18 @@ export async function POST(request: Request) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing tool name." }), { status: 400 });
   }
 
+  // The backend enforces project scope on KB-aware tools. Forward the
+  // active project name when the caller supplied one so e.g. rag_search
+  // is gated to the project's `knowledge_bases` set.
+  const upstreamBody: Record<string, unknown> = { name: tool, arguments: args };
+  if (projectName) upstreamBody.project_name = projectName;
+
   let upstream: Response;
   try {
     upstream = await fetch(backendUrl("/mcp/call"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: tool, arguments: args }),
+      body: JSON.stringify(upstreamBody),
       signal: AbortSignal.timeout(60000),
     });
   } catch (error) {

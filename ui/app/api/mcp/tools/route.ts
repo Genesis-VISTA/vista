@@ -20,10 +20,22 @@ type McpToolsDiscoveryResult = {
 /**
  * Proxy for `GET /mcp/tools`. Backend returns a bare `list[Tool]`;
  * the frontend expects an `{ok, tools, error?}` envelope.
+ *
+ * Forwards a `?project_name=<name>` query string when supplied so the
+ * backend filters the returned tools to those allowed for the project
+ * (project-level `tools` patterns plus the `!rag_search` hide when no
+ * Knowledge Bases are configured). Unscoped discovery is preserved for
+ * callers that don't have a project context (e.g. the smoke-test page).
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const upstream = await fetch(backendUrl("/mcp/tools"), {
+    const url = new URL(request.url);
+    const projectName = url.searchParams.get("project_name");
+    const upstreamPath = projectName
+      ? `/mcp/tools?project_name=${encodeURIComponent(projectName)}`
+      : "/mcp/tools";
+
+    const upstream = await fetch(backendUrl(upstreamPath), {
       headers: { accept: "application/json" },
       signal: AbortSignal.timeout(5000),
     });

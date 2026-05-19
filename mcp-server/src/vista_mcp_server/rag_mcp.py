@@ -5,23 +5,31 @@ Provides a `rag_search` tool that performs semantic search over indexed PDFs
 (text chunks) and returns passages with full citation metadata (title, authors,
 DOI, journal, year) extracted at index time.
 
-The tool expects a pre-built ChromaDB database (created by the TextRAG indexing
-pipeline in `text_rag.py`).  It loads the embedding model once at startup and
-keeps the ChromaDB client open for the lifetime of the MCP server.
+The MCP server discovers Knowledge Bases at startup by scanning
+`settings.knowledge_bases_dir` for subdirectories that look like a built
+ChromaDB store, plus an optional legacy single-KB path
+(`settings.rag_db_path`). Each KB is registered under its slug; the agent
+chooses which KB to query by passing `kb_slug` to `rag_search`.
 
 Environment variables:
-    VISTA_MCP_RAG_DB_PATH    Path to the ChromaDB database directory.
-                              Default: ../rag_db  (relative to cwd)
-    VISTA_MCP_RAG_MODEL      SentenceTransformers model for query embeddings.
-                              Default: google/embeddinggemma-300m
+    VISTA_MCP_KNOWLEDGE_BASES_DIR  Root directory of per-KB ChromaDB stores.
+                                    Default: ../data/knowledge-bases
+    VISTA_MCP_RAG_DB_PATH          Legacy single-KB path; registered under
+                                    the slug "molten-salt-papers" if its
+                                    layout looks like a ChromaDB store.
+                                    Default: ../data/knowledge-bases/molten-salt-papers/rag_db
+    VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
+                                    Default: google/embeddinggemma-300m
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated as A, Any, Optional
+from typing import Annotated as A, Optional
 
 import chromadb
 from fastmcp import FastMCP
@@ -33,50 +41,148 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+# Matches the slug format used by the backend's KnowledgeBaseTable.
+# Lowercase letters/digits/dashes, 1–80 chars, must start and end with
+# an alphanumeric character. Kept in lockstep with the regex in the
+# backend's schemas module — see comment there for the rationale.
+_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+
+
+@dataclass
+class _KbHandle:
+    """Per-KB ChromaDB handles, populated at lifespan startup."""
+
+    slug: str
+    db_path: Path
+    text_collection: chromadb.Collection | None
+    citation_collection: chromadb.Collection | None
+
+
 # ---------------------------------------------------------------------------
 # Module-level state (populated in lifespan)
 # ---------------------------------------------------------------------------
 _encoder: SentenceTransformer | None = None
-_text_collection: chromadb.Collection | None = None
-_citation_collection: chromadb.Collection | None = None
+_kbs: dict[str, _KbHandle] = {}
+
+
+def _looks_like_chroma_store(path: Path) -> bool:
+    """A directory is a ChromaDB persist dir iff it contains chroma.sqlite3."""
+    return path.is_dir() and (path / "chroma.sqlite3").is_file()
+
+
+def _discover_kb_paths() -> list[tuple[str, Path]]:
+    """
+    Return [(slug, chroma_path), ...] for every KB the MCP server can serve.
+
+    Discovery order:
+      1. `settings.knowledge_bases_dir/<slug>/rag_db/` — the canonical
+         per-KB layout shared with the backend.
+      2. `settings.knowledge_bases_dir/<slug>/` itself when that directory
+         is a ChromaDB store (the legacy layout used by the shipped
+         molten-salt seed).
+      3. `settings.rag_db_path` registered under the slug
+         "molten-salt-papers" when it points at a ChromaDB store outside
+         the discovery tree.
+
+    Duplicate slugs (e.g. legacy path resolves to the same place as the
+    canonical) are de-duplicated keeping the first hit.
+    """
+    discovered: dict[str, Path] = {}
+
+    root = settings.knowledge_bases_dir
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            slug = child.name
+            if not _SLUG_RE.match(slug):
+                continue
+            nested = child / "rag_db"
+            if _looks_like_chroma_store(nested):
+                discovered.setdefault(slug, nested.resolve())
+                continue
+            if _looks_like_chroma_store(child):
+                discovered.setdefault(slug, child.resolve())
+
+    legacy = settings.rag_db_path
+    if _looks_like_chroma_store(legacy):
+        resolved = legacy.resolve()
+        if resolved not in discovered.values():
+            discovered.setdefault("molten-salt-papers", resolved)
+
+    return [(slug, path) for slug, path in discovered.items()]
 
 
 @lifespan
 async def app_lifespan(server):
     """Load the embedding model and open ChromaDB collections at startup."""
-    global _encoder, _text_collection, _citation_collection
+    global _encoder
 
-    db_path = str(settings.rag_db_path)
     logger.info("RAG: loading embedding model %s", settings.rag_model)
     _encoder = SentenceTransformer(settings.rag_model, device="cpu")
 
-    logger.info("RAG: opening ChromaDB at %s", db_path)
-    client = chromadb.PersistentClient(path=db_path)
-
-    try:
-        _text_collection = client.get_collection("text_chunks")
-        logger.info(
-            "RAG: text_chunks collection has %d items", _text_collection.count()
+    discovered = _discover_kb_paths()
+    if not discovered:
+        logger.warning(
+            "RAG: no Knowledge Bases discovered under %s; rag_search will "
+            "return an error until at least one KB is indexed.",
+            settings.knowledge_bases_dir,
         )
-    except Exception as exc:
-        logger.error("RAG: could not open text_chunks collection: %s", exc)
-        _text_collection = None
 
-    try:
-        _citation_collection = client.get_collection("citations")
-        logger.info(
-            "RAG: citations collection has %d items", _citation_collection.count()
+    for slug, db_path in discovered:
+        logger.info("RAG: opening ChromaDB for %s at %s", slug, db_path)
+        try:
+            client = chromadb.PersistentClient(path=str(db_path))
+        except Exception as exc:
+            logger.error("RAG: could not open ChromaDB for %s: %s", slug, exc)
+            continue
+
+        # Use get_or_create for the same reason the single-KB version did:
+        # a fresh deployment with no PDFs indexed yet shouldn't log a
+        # scary ERROR on every boot. Matching `hnsw:space=cosine` to what
+        # build_rag.py uses so a later indexing run finds compatible
+        # collections rather than re-creating them.
+        try:
+            text_collection = client.get_or_create_collection(
+                name="text_chunks",
+                metadata={"hnsw:space": "cosine"},
+            )
+            logger.info(
+                "RAG: %s text_chunks has %d items", slug, text_collection.count()
+            )
+        except Exception as exc:
+            logger.error(
+                "RAG: could not open text_chunks for %s: %s", slug, exc
+            )
+            text_collection = None
+
+        try:
+            citation_collection = client.get_or_create_collection(
+                name="citations",
+                metadata={"hnsw:space": "cosine"},
+            )
+            logger.info(
+                "RAG: %s citations has %d items",
+                slug, citation_collection.count(),
+            )
+        except Exception as exc:
+            logger.warning(
+                "RAG: could not open citations for %s: %s", slug, exc
+            )
+            citation_collection = None
+
+        _kbs[slug] = _KbHandle(
+            slug=slug,
+            db_path=db_path,
+            text_collection=text_collection,
+            citation_collection=citation_collection,
         )
-    except Exception as exc:
-        logger.warning("RAG: could not open citations collection: %s", exc)
-        _citation_collection = None
 
     yield  # server runs
 
     # Cleanup (SentenceTransformer and ChromaDB don't need explicit close)
     _encoder = None
-    _text_collection = None
-    _citation_collection = None
+    _kbs.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -90,12 +196,50 @@ def _embed(text: str) -> list[float]:
     return vec[0].tolist()
 
 
-def _get_citation_for_source(filename: str) -> Optional[dict]:
+def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
+    """
+    Look up the KB handle for `kb_slug`. Returns (handle, error_message).
+
+    When kb_slug is omitted and exactly one KB is registered, return that
+    one — keeps the tool useful for single-KB deployments without forcing
+    the agent to know the slug. When multiple are registered and no slug
+    is given, return an error listing the choices so the model can
+    self-correct.
+    """
+    if not _kbs:
+        return None, (
+            "ERROR: no Knowledge Bases are available on this MCP server. "
+            f"The discovery scan under {settings.knowledge_bases_dir} "
+            "found nothing usable. Please check that the backend has "
+            "indexed at least one KB."
+        )
+
+    if not kb_slug:
+        if len(_kbs) == 1:
+            return next(iter(_kbs.values())), None
+        choices = ", ".join(sorted(_kbs))
+        return None, (
+            "ERROR: this MCP server hosts multiple Knowledge Bases; pass "
+            f"`kb_slug` as one of: {choices}."
+        )
+
+    handle = _kbs.get(kb_slug)
+    if handle is None:
+        choices = ", ".join(sorted(_kbs))
+        return None, (
+            f"ERROR: unknown kb_slug {kb_slug!r}. Available KBs: {choices}."
+        )
+    return handle, None
+
+
+def _get_citation_for_source(
+    handle: _KbHandle, filename: str
+) -> Optional[dict]:
     """Look up pre-extracted citation metadata for a PDF by filename."""
-    if _citation_collection is None:
+    if handle.citation_collection is None:
         return None
     try:
-        results = _citation_collection.get(
+        results = handle.citation_collection.get(
             where={"source": filename},
             include=["metadatas"],
         )
@@ -111,7 +255,10 @@ def _get_citation_for_source(filename: str) -> Optional[dict]:
                         pass
             return meta
     except Exception as exc:
-        logger.warning("RAG: citation lookup failed for %s: %s", filename, exc)
+        logger.warning(
+            "RAG: citation lookup failed for %s in %s: %s",
+            filename, handle.slug, exc,
+        )
     return None
 
 
@@ -158,42 +305,55 @@ mcp = FastMCP(name="RAG Search", lifespan=app_lifespan)
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def rag_search(
-    query: A[str, "Natural-language search query over the molten salt literature corpus"],
+    query: A[str, "Natural-language search query"],
+    kb_slug: A[
+        str | None,
+        "Slug of the Knowledge Base to search. Use one of the slugs listed "
+        "in this project's system prompt. Optional when exactly one KB is "
+        "registered server-side.",
+    ] = None,
     n_results: A[int, "Number of passages to return (1–20)"] = 5,
 ) -> str:
     """
-    Search the indexed literature corpus (papers, reports, technical notes)
-    for passages relevant to the query.
+    Search an indexed literature corpus (papers, reports, technical notes)
+    for passages relevant to the query, within a specific Knowledge Base.
 
-    Use this tool for qualitative, conceptual, or literature-review questions
-    such as:
+    Use this tool for qualitative, conceptual, or literature-review
+    questions such as:
       - "What corrosion challenges exist for FLiBe in reactor piping?"
       - "How is thermal conductivity of fluoride salts typically measured?"
       - "What do recent studies say about tritium management in FHRs?"
 
-    Do NOT use this for quantitative lookups (melting points, viscosity values)
-    — use run_bash with the structured JSON database for those.
+    Do NOT use this for quantitative lookups (melting points, viscosity
+    values) — use run_bash with the structured JSON database for those.
 
     Returns passages with source filename, page number, and full citation
     (title, authors, journal, year, DOI) when available.
     """
-    if _text_collection is None:
+    handle, err = _resolve_kb(kb_slug)
+    if err is not None or handle is None:
+        return err or "ERROR: unable to resolve a Knowledge Base."
+
+    if handle.text_collection is None:
         return (
-            "ERROR: RAG database is not available. "
-            "The text_chunks collection could not be loaded from "
-            f"{settings.rag_db_path}. Please check that the database has been built."
+            f"ERROR: Knowledge Base {handle.slug!r} has no text_chunks "
+            f"collection loaded ({handle.db_path}). The KB exists on disk "
+            "but its index may not have been built yet."
         )
 
     n_results = max(1, min(n_results, 20))
 
     query_embedding = _embed(query)
-    raw = _text_collection.query(
+    raw = handle.text_collection.query(
         query_embeddings=[query_embedding],
         n_results=n_results,
     )
 
     if not raw["documents"] or not raw["documents"][0]:
-        return "No relevant passages found for the query."
+        return (
+            f"No relevant passages found for the query in Knowledge Base "
+            f"{handle.slug!r}."
+        )
 
     # Build response with citations
     seen_sources: dict[str, Optional[dict]] = {}
@@ -207,7 +367,7 @@ async def rag_search(
 
         # Lazy-load citation for each unique source
         if source not in seen_sources:
-            seen_sources[source] = _get_citation_for_source(source)
+            seen_sources[source] = _get_citation_for_source(handle, source)
 
         citation = seen_sources[source]
         citation_str = _format_citation(citation)
@@ -220,3 +380,4 @@ async def rag_search(
 
     separator = "\n\n" + "—" * 60 + "\n\n"
     return separator.join(output_parts)
+

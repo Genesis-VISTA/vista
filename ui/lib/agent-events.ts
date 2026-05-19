@@ -159,6 +159,7 @@ export type ProjectPublic = {
   description: string | null;
   system_prompt: string | null;
   skills: string[];
+  knowledge_bases: string[];
   tools: string[];
   usage_limits: Record<string, unknown>;
 };
@@ -169,6 +170,7 @@ export type ProjectCreate = {
   description: string | null;
   system_prompt: string | null;
   skills: string[];
+  knowledge_bases: string[];
   tools: string[];
   usage_limits: Record<string, unknown>;
 };

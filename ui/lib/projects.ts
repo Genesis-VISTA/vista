@@ -1,11 +1,14 @@
 /**
  * Project model — a Project is a saved bundle of agent context (system prompt,
- * skills, tools, usage limits) that scopes a chat session.
+ * skills, knowledge bases, tools, usage limits) that scopes a chat session.
  *
  * Projects live in the backend DB and are reached through the `/api/projects`
  * proxy routes; this module is the frontend's data-access + React-hook layer
  * over that API. The only thing kept in localStorage is a pointer to the
  * currently active project's `name`.
+ *
+ * The set of knowledge bases in scope for a chat session comes from the
+ * project's own `knowledgeBases` field — there is no per-session override.
  */
 
 import { useEffect, useReducer, useSyncExternalStore } from "react";
@@ -23,6 +26,7 @@ export interface Project {
   description: string;
   systemPrompt: string;
   skills: string[];
+  knowledgeBases: string[];
   tools: string[];
   usageLimits: Record<string, unknown>;
 }
@@ -36,6 +40,7 @@ function fromPublic(p: ProjectPublic): Project {
     description: p.description ?? "",
     systemPrompt: p.system_prompt ?? "",
     skills: Array.isArray(p.skills) ? p.skills : [],
+    knowledgeBases: Array.isArray(p.knowledge_bases) ? p.knowledge_bases : [],
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
   };
@@ -48,6 +53,7 @@ export function toCreate(project: Omit<Project, "id">): ProjectCreate {
     description: project.description || null,
     system_prompt: project.systemPrompt || null,
     skills: project.skills,
+    knowledge_bases: project.knowledgeBases,
     tools: project.tools,
     usage_limits: project.usageLimits ?? {},
   };
