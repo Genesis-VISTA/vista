@@ -34,7 +34,7 @@ function sanitizeFilename(rawName: string): string | null {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string; filename: string }> }
 ) {
   const { slug: rawSlug, filename: rawFile } = await params;
@@ -44,15 +44,21 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Invalid path." }, { status: 400 });
   }
 
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const base = `/knowledge-bases/${encodeURIComponent(slug)}/publications/${encodeURIComponent(filename)}`;
+  const upstreamPath = projectName
+    ? `${base}?project_name=${encodeURIComponent(projectName)}`
+    : base;
+
   let upstream: Response;
   try {
-    upstream = await fetch(
-      backendUrl(
-        `/knowledge-bases/${encodeURIComponent(slug)}/publications/${encodeURIComponent(filename)}`
-      )
-    );
+    upstream = await fetch(backendUrl(upstreamPath));
   } catch {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+  }
+  if (upstream.status === 403) {
+    return NextResponse.json({ ok: false, error: "Knowledge base not in project scope." }, { status: 403 });
   }
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json(
@@ -71,7 +77,7 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string; filename: string }> }
 ) {
   const { slug: rawSlug, filename: rawFile } = await params;
@@ -81,16 +87,24 @@ export async function DELETE(
     return NextResponse.json({ ok: false, error: "Invalid path." }, { status: 400 });
   }
 
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const base = `/knowledge-bases/${encodeURIComponent(slug)}/publications/${encodeURIComponent(filename)}`;
+  const upstreamPath = projectName
+    ? `${base}?project_name=${encodeURIComponent(projectName)}`
+    : base;
+
   let upstream: Response;
   try {
     upstream = await fetch(
-      backendUrl(
-        `/knowledge-bases/${encodeURIComponent(slug)}/publications/${encodeURIComponent(filename)}`
-      ),
+      backendUrl(upstreamPath),
       { method: "DELETE" }
     );
   } catch {
     return NextResponse.json({ ok: false, error: "Backend unreachable." }, { status: 502 });
+  }
+  if (upstream.status === 403) {
+    return NextResponse.json({ ok: false, error: "Knowledge base not in project scope." }, { status: 403 });
   }
   if (!upstream.ok && upstream.status !== 204) {
     return NextResponse.json(

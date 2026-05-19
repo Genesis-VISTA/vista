@@ -381,25 +381,3 @@ async def rag_search(
     separator = "\n\n" + "—" * 60 + "\n\n"
     return separator.join(output_parts)
 
-
-@mcp.tool()
-async def list_knowledge_bases() -> str:
-    """
-    List the Knowledge Bases this MCP server has indexed and can search.
-
-    Use this if you're unsure which `kb_slug` to pass to `rag_search`
-    (though normally the available slugs are also listed in the agent's
-    system prompt). Returns one line per KB with its slug, on-disk path,
-    and the number of text chunks currently indexed.
-    """
-    if not _kbs:
-        return (
-            "No Knowledge Bases are registered. Discovery scanned "
-            f"{settings.knowledge_bases_dir}."
-        )
-    lines = []
-    for slug in sorted(_kbs):
-        handle = _kbs[slug]
-        n = handle.text_collection.count() if handle.text_collection else 0
-        lines.append(f"- {slug}  ({n} chunks, {handle.db_path})")
-    return "Available Knowledge Bases:\n" + "\n".join(lines)

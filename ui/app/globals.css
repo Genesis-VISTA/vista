@@ -2072,6 +2072,121 @@ button.chat-bubble.intermediate.collapsed:hover {
   min-height: 0;
 }
 
+/* Project-scoped layout: drop the left list column and stack the tab
+ * row above a single detail panel. The active-project view always
+ * knows the small fixed set of KBs in scope (project.knowledge_bases),
+ * so a list column is just wasted screen space — a tab row above
+ * the detail is faster to navigate and frees a couple hundred pixels
+ * of horizontal room for paper titles and citation rows. */
+.kb-layout-scoped {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+}
+
+.kb-project-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.kb-project-toolbar-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.kb-project-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Horizontal tab row. Scrolls horizontally when a project has more
+ * KBs than the viewport can fit. The bottom border of the row joins
+ * the top of the detail panel so the active tab visually "owns" the
+ * panel below it. */
+.kb-tabs-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  padding: 0 4px;
+  min-height: 38px;
+}
+
+.kb-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Pull the tab's bottom edge down 1px so the active tab's transparent
+   * bottom border covers the row's bottom border, producing the classic
+   * "tab connects to panel" effect. */
+  margin-bottom: -1px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.kb-tab:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.kb-tab[data-active="true"] {
+  color: var(--text);
+  background: var(--panel);
+  border-color: var(--line);
+  border-bottom-color: var(--panel);
+  font-weight: 600;
+}
+
+.kb-tab-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.kb-tab-status-dot[data-tone="ready"] {
+  background: var(--accent, #4caf50);
+}
+
+.kb-tab-status-dot[data-tone="warn"] {
+  background: #d39e00;
+}
+
+.kb-tab-status-dot[data-tone="error"] {
+  background: #c44;
+}
+
+.kb-tab-empty {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.kb-scoped-detail-panel {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 .kb-list-panel,
 .kb-detail-panel {
   height: 100%;

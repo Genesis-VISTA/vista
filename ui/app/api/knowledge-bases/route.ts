@@ -12,9 +12,14 @@ export const runtime = "nodejs";
  * for the unmodified frontend.
  */
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const upstream = await fetch(backendUrl("/knowledge-bases"), {
+    const url = new URL(request.url);
+    const projectName = url.searchParams.get("project_name");
+    const upstreamPath = projectName
+      ? `/knowledge-bases?project_name=${encodeURIComponent(projectName)}`
+      : "/knowledge-bases";
+    const upstream = await fetch(backendUrl(upstreamPath), {
       headers: { accept: "application/json" },
       // KBs include progress snapshots that change without the underlying
       // row being touched — skip Next.js's per-request cache.
