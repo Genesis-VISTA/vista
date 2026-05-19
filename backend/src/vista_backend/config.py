@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging, os
 from .utils.types import ResolvedPath, LogLevel
+from .vistaguard.config import VistaGuardSettings
 
 
 class Settings(BaseSettings):
