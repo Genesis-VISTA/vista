@@ -1139,6 +1139,41 @@ button.chat-bubble.intermediate.collapsed:hover {
   min-height: 0;
 }
 
+.skill-editor-modal {
+  width: min(720px, 95vw);
+}
+
+.skill-editor-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.skill-editor-label > span {
+  font-weight: 500;
+}
+
+.skill-editor-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.skill-editor-body {
+  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.skill-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 .modal-body {
   padding: 16px;
   display: flex;

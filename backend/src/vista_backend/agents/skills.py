@@ -131,6 +131,67 @@ def read_skill(skill_dir: Path|str) -> Skill:
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n?(.*)\Z", re.DOTALL)
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def write_skill(
+    skills_root: Path | str,
+    *,
+    name: str,
+    description: str,
+    body: str,
+    author: str | None = None,
+    repo_url: str | None = None,
+    is_public: bool = False,
+    tags: list[str] | None = None,
+    license: str | None = None,
+    metadata: dict[str, str | list[str]] | None = None,
+) -> Skill:
+    """
+    Create a new skill on disk under `skills_root/<name>/SKILL.md`.
+
+    The directory must not already exist. The slug `name` is validated as
+    kebab-case before any filesystem work.
+
+    Returns the parsed `Skill` after writing (round-trip validates the result).
+
+    Raises:
+        SkillError: If the slug is malformed.
+        FileExistsError: If a skill directory with the same name already exists.
+    """
+    if not _SLUG_RE.match(name):
+        raise SkillError(
+            f"Invalid skill name {name!r}; must be kebab-case "
+            "(lowercase letters/digits separated by single dashes)"
+        )
+    skills_root = Path(skills_root).resolve()
+    skill_dir = (skills_root / name).resolve()
+    if not skill_dir.is_relative_to(skills_root):
+        raise SkillError(f"Skill name {name!r} resolves outside skills root")
+    if skill_dir.exists():
+        raise FileExistsError(f"Skill directory already exists: {skill_dir}")
+
+    # Build the frontmatter dict, preserving a sensible key order. Only emit
+    # keys that have a non-default value so generated files stay tidy.
+    fm: dict[str, object] = {"name": name, "description": description}
+    if license is not None:
+        fm["license"] = license
+    if metadata:
+        fm["metadata"] = metadata
+    if tags:
+        fm["tags"] = tags
+    if author:
+        fm["author"] = author
+    if repo_url:
+        fm["repo_url"] = repo_url
+    fm["is_public"] = is_public
+
+    frontmatter_text = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=1000)
+    content = f"---\n{frontmatter_text}---\n\n{body.strip()}\n"
+
+    skill_dir.mkdir(parents=True, exist_ok=False)
+    (skill_dir / "SKILL.md").write_text(content)
+    return read_skill(skill_dir)
 
 
 def update_skill_frontmatter(skill_dir: Path | str, updates: dict[str, object]) -> Skill:

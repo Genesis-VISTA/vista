@@ -1,14 +1,18 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pydantic_ai.messages import ModelMessage
 
 from ..agents.skills import (
     find_skill_md,
     find_skills,
     read_skill,
     update_skill_frontmatter,
+    write_skill,
     Skill,
+    SkillError,
     SkillMetadata,
 )
+from ..agents.skill_authoring import SkillDraft, generate_skill_draft
 from ..config import settings
 from ..utils.misc import path_is_under
 
@@ -19,6 +23,26 @@ router = APIRouter()
 # Skills stored in the database as zip blobs?
 # Also need to work on how skills are mounted into the container now that you can filter available
 # skills (and when we separate project containers)
+
+class SkillCreate(BaseModel):
+    name: str
+    description: str
+    body: str
+    author: str | None = None
+    repo_url: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    is_public: bool = False
+
+
+class SkillGenerateRequest(BaseModel):
+    """
+    Body for `POST /skills/generate` — see `generate_skill_draft` for the
+    drafting logic. `message_history` uses PydanticAI's `ModelMessage` schema,
+    same as `/projects/.../agent/run`.
+    """
+    message_history: list[ModelMessage] = Field(default_factory=list)
+    hint: str | None = None
+
 
 @router.get("/skills")
 async def list_skills() -> list[SkillMetadata]:
@@ -44,6 +68,38 @@ class SkillPatch(BaseModel):
     is_public: bool | None = None
     author: str | None = None
     repo_url: str | None = None
+
+
+@router.post("/skills", status_code=201)
+async def create_skill(body: SkillCreate) -> Skill:
+    """Create a new skill on disk (private by default)."""
+    try:
+        return write_skill(
+            settings.skills_dir,
+            name=body.name,
+            description=body.description,
+            body=body.body,
+            author=body.author,
+            repo_url=body.repo_url,
+            tags=body.tags,
+            is_public=body.is_public,
+        )
+    except FileExistsError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A skill named {body.name!r} already exists.",
+        )
+    except SkillError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/skills/generate")
+async def generate_skill(body: SkillGenerateRequest) -> SkillDraft:
+    """
+    Draft a SKILL.md from a chat conversation. Does NOT persist anything — the
+    client edits the draft in a form and then submits `POST /skills` to save.
+    """
+    return await generate_skill_draft(body.message_history, body.hint)
 
 
 @router.patch("/skills/{name}")
