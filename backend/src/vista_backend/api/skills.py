@@ -13,6 +13,7 @@ from ..agents.skills import (
     SkillMetadata,
 )
 from ..agents.skill_authoring import SkillDraft, generate_skill_draft
+from ..agents.skill_import import SkillImportError, import_skill_from_github
 from ..config import settings
 from ..utils.misc import path_is_under
 
@@ -42,6 +43,15 @@ class SkillGenerateRequest(BaseModel):
     """
     message_history: list[ModelMessage] = Field(default_factory=list)
     hint: str | None = None
+
+
+class SkillImportRequest(BaseModel):
+    """
+    Body for `POST /skills/import`. `url` accepts either
+    `https://github.com/<owner>/<repo>` or
+    `https://github.com/<owner>/<repo>/tree/<ref>/<subpath>`.
+    """
+    url: str
 
 
 @router.get("/skills")
@@ -100,6 +110,22 @@ async def generate_skill(body: SkillGenerateRequest) -> SkillDraft:
     client edits the draft in a form and then submits `POST /skills` to save.
     """
     return await generate_skill_draft(body.message_history, body.hint)
+
+
+@router.post("/skills/import", status_code=201)
+async def import_skill(body: SkillImportRequest) -> Skill:
+    """
+    Import a skill from a public (or token-accessible) GitHub repository.
+    Imported skills are forced `is_public:false`; the user can publish later
+    via `PATCH /skills/{name}`.
+    """
+    try:
+        dest_dir = import_skill_from_github(body.url, settings.skills_dir)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except SkillImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return read_skill(dest_dir)
 
 
 @router.patch("/skills/{name}")

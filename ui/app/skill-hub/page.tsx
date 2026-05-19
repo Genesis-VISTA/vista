@@ -10,6 +10,7 @@ import {
   readAdditions,
   writeAdditions,
 } from "@/lib/loaded-skills";
+import { SkillImportModal } from "@/components/SkillImportModal";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 const TAG_FILTERS = [
@@ -36,6 +37,7 @@ export default function SkillHubPage() {
   const [activeTag, setActiveTag] = useState<TagFilter>("All");
   const [sort, setSort] = useState<SortKey>("name");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   // Rehydrate the additions set whenever the active project changes.
   useEffect(() => {
@@ -140,6 +142,14 @@ export default function SkillHubPage() {
           <option value="name">Name (A–Z)</option>
           <option value="recent">Recently Added</option>
         </select>
+        <button
+          type="button"
+          className="button"
+          onClick={() => setShowImport(true)}
+          title="Import a skill from a public GitHub repository"
+        >
+          Import
+        </button>
       </div>
 
       <div className="hub-tags" role="tablist" aria-label="Tag filters">
@@ -269,6 +279,27 @@ export default function SkillHubPage() {
           </div>
         </div>
       )}
+
+      <SkillImportModal
+        open={showImport}
+        onCancel={() => setShowImport(false)}
+        onImported={(skill) => {
+          // Append to the local catalog (de-dupe in case a refetch crossed
+          // paths with the import), and auto-load it into the active
+          // project's additions so the user sees it on /skills.
+          setSkills((prev) => {
+            const without = prev.filter((s) => s.slug !== skill.slug);
+            return [{ ...skill, addedAt: Date.now() }, ...without];
+          });
+          if (projectName) {
+            const adds = readAdditions(projectName);
+            adds.add(skill.slug);
+            writeAdditions(projectName, adds);
+            setAdditions(adds);
+          }
+          setShowImport(false);
+        }}
+      />
     </div>
   );
 }

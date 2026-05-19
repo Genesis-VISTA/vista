@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     max_upload_size: ByteSize = ByteSize(20 * 1024 * 1024)
     """ Size in bytes """
 
+    github_token: str | None = None
+    """
+    Optional GitHub personal access token used when importing skills from
+    private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
+    header on requests to api.github.com. If unset, only public repos work.
+    """
+
 
 # Also load .env into the actual environ Pydantic AI will pick them up when making the model
 for env_file in reversed(Settings.model_config['env_file']):
