@@ -7,7 +7,8 @@
 - `./hpc_jobs`
     - Predefined jobs that the agent can submit to the remote HPC system
 - `./skills`
-    - Agent Skill files
+    - Agent Skill files. See [docs/skill-onboarding.md](docs/skill-onboarding.md) for the
+      SKILL.md schema and how to generate / import / publish skills.
 - `./ui`
     - Frontend UI and agent loop that calls the tools in the mcp-server
 
