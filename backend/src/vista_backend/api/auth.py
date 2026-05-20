@@ -3,13 +3,16 @@ from typing import Annotated as A
 from fastapi import Depends, HTTPException, Request
 from sqlmodel import select
 
+from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import UserTable
 
 
 async def get_user(session: SessionDep, request: Request) -> UserTable:
-    """SSO placeholder — hard-coded to the dummy regular user."""
-    email = "vista-test-user@americansciencecloud.org"
+    """SSO placeholder — uses a hard-coded dev user in dev mode; raises 501 in prod."""
+    if settings.env == 'prod':
+        raise HTTPException(status_code=501, detail="SSO authentication is not yet implemented")
+    email = "vista-test-admin@americansciencecloud.org"
     user = (await session.exec(select(UserTable).where(UserTable.email == email))).first()
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")

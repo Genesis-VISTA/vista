@@ -1,6 +1,6 @@
 from pathlib import Path
-from typing import Annotated as A
-from pydantic import Field, ByteSize, ValidationError
+from typing import Annotated as A, Literal
+from pydantic import Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging, os
@@ -13,6 +13,8 @@ class Settings(BaseSettings):
         extra="ignore",
         env_prefix="VISTA_BACKEND_",
     )
+
+    env: A[Literal['dev', 'prod'], Field(validation_alias="VISTA_ENV")] = 'dev'
 
     host: str = "127.0.0.1"
     port: int = 8001
@@ -65,6 +67,14 @@ class Settings(BaseSettings):
 
     max_upload_size: ByteSize = ByteSize(20 * 1024 * 1024)
     """ Size in bytes """
+
+    encryption_key: A[SecretStr, Field(default_factory=lambda data: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' if data['env'] == 'dev' else None)]
+    """
+    Fernet key for encrypting sensitive user token fields (s3m_token, nersc_iri_token) in the database.
+
+    Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    Required in prod, defaults to a dummy key in dev.
+    """
 
 
 for env_file in reversed(Settings.model_config['env_file']):

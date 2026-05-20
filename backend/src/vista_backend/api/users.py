@@ -5,10 +5,35 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from ..db.db import SessionDep
-from ..db.schemas import UserCreate, UserPublic, UserTable, UserUpdate
-from .auth import AdminDep
+from ..db.schemas import UserCreate, UserUpdate, UserSelfUpdate, UserPublic, UserPublicWithConfig, UserTable
+from .auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+# TODO: Should handle secrets better
+
+@router.get("/me")
+async def get_me(user: UserDep, config: bool = False) -> UserPublicWithConfig | UserPublic:
+    """
+    Return the current user. Pass `?config=true` to include the per-user
+    config (HPC dir, NERSC account, decrypted tokens);
+    """
+    if config:
+        return UserPublicWithConfig.model_validate(user)
+    else:
+        return UserPublic.model_validate(user)
+
+
+@router.put("/me")
+async def update_me(
+    updates: UserSelfUpdate, session: SessionDep, user: UserDep
+) -> UserPublicWithConfig:
+    for key, value in updates.model_dump(exclude_unset=True).items():
+        setattr(user, key, value)
+    session.add(user)
+    await session.flush()
+    await session.refresh(user)
+    return UserPublicWithConfig.model_validate(user)
 
 
 @router.get("")
@@ -48,11 +73,7 @@ async def update_user(
     for key, value in updates.model_dump(exclude_unset=True).items():
         setattr(existing_user, key, value)
     session.add(existing_user)
-    try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail=f"A user with email {updates.email!r} already exists.")
+    await session.flush()
     await session.refresh(existing_user)
     return UserPublic.model_validate(existing_user)
 
