@@ -11,7 +11,7 @@ VISTA (Visual Intelligence for Scientific & Tooling Assistant) is a scientific a
 ### Full Development Setup
 Starts the mcp server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively.
 ```bash
-./launch.sh background
+./launch.sh logs
 ```
 
 Note that the `./launch.sh` script will not terminate until cancelled, and then on cancel will automatically clean up all 3 processes.
