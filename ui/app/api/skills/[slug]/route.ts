@@ -90,6 +90,38 @@ export async function PATCH(
   return NextResponse.json(reshape(slug, detail));
 }
 
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params;
+  if (!/^[a-zA-Z0-9._-]+$/.test(slug)) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
+      method: "DELETE",
+      headers: { accept: "application/json" },
+    });
+  } catch {
+    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
+  }
+
+  if (upstream.status === 404) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    return NextResponse.json(
+      { error: text || "Failed to delete skill" },
+      { status: upstream.status }
+    );
+  }
+  return new NextResponse(null, { status: 204 });
+}
+
 function reshape(slug: string, detail: BackendSkillDetail) {
   // Reshape into the {slug, frontmatter, markdown} envelope the frontend
   // expects. `body` becomes `markdown`; the rest of the AgentSkills metadata

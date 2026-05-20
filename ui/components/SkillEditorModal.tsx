@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 
 export type SkillDraftFields = {
   name: string;
@@ -52,6 +53,7 @@ export function SkillEditorModal({
 }: Props) {
   const [fields, setFields] = useState<SkillDraftFields>(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
   // Sync initial → fields whenever the modal opens or the draft arrives.
   useEffect(() => {
@@ -179,16 +181,7 @@ export function SkillEditorModal({
                   type="button"
                   className="button secondary"
                   disabled={disableSave}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Save & publish this skill to the Skill Hub?\n\n" +
-                          "Publishing is permanent — once published, a skill cannot be made private again."
-                      )
-                    ) {
-                      void submit(true);
-                    }
-                  }}
+                  onClick={() => setShowPublishConfirm(true)}
                   title="Save and publish to the Skill Hub (permanent)"
                 >
                   Save & publish
@@ -198,6 +191,18 @@ export function SkillEditorModal({
           )}
         </div>
       </div>
+      <PublishConfirmModal
+        open={showPublishConfirm}
+        title="Publish skill to Skill Hub"
+        message={"Save & publish this skill to the Skill Hub?\n\nPublishing is permanent - once published, a skill cannot be made private again."}
+        confirmLabel="Save & publish"
+        busy={saving}
+        onCancel={() => setShowPublishConfirm(false)}
+        onConfirm={() => {
+          setShowPublishConfirm(false);
+          void submit(true);
+        }}
+      />
     </div>
   );
 }

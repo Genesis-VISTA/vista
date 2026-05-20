@@ -1,3 +1,6 @@
+import logging
+import shutil
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
@@ -19,6 +22,7 @@ from ..utils.misc import path_is_under
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # TODO: should make this a full CRUD so you can create and update your own skills
 # Skills stored in the database as zip blobs?
@@ -149,3 +153,32 @@ async def patch_skill(name: str, body: SkillPatch) -> Skill:
                 detail="Published skills cannot be unpublished.",
             )
     return update_skill_frontmatter(skill_dir, updates)
+
+
+@router.delete("/skills/{name}", status_code=204)
+async def delete_skill(name: str) -> None:
+    """
+    Permanently delete an unpublished skill directory from local storage.
+    Published skills are protected because they are listed on the Skill Hub.
+    """
+    skill_dir = settings.skills_dir / name
+    if not path_is_under(settings.skills_dir, skill_dir):
+        raise HTTPException(status_code=404, detail="Skill not found")
+    skill_md = find_skill_md(skill_dir)
+    if skill_md is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    current = read_skill(skill_dir)
+    if current.is_public:
+        raise HTTPException(
+            status_code=409,
+            detail="Published skills cannot be deleted.",
+        )
+
+    try:
+        shutil.rmtree(skill_dir)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    except OSError as e:
+        logger.warning("Failed to delete skill directory %s: %s", skill_dir, e)
+        raise HTTPException(status_code=500, detail="Failed to delete skill directory.")

@@ -13,6 +13,7 @@ import {
   writeAdditions,
 } from "@/lib/loaded-skills";
 import { SkillImportModal } from "@/components/SkillImportModal";
+import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
@@ -24,6 +25,8 @@ export default function SkillsPage() {
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [pendingPublishSlug, setPendingPublishSlug] = useState<string | null>(null);
+  const [pendingUnloadSkill, setPendingUnloadSkill] = useState<SkillSummary | null>(null);
 
   useEffect(() => {
     fetch("/api/skills")
@@ -67,11 +70,6 @@ export default function SkillsPage() {
   }
 
   async function publish(slug: string) {
-    const ok = window.confirm(
-      `Publish "${slug}" to the Skill Hub?\n\n` +
-        "This action is permanent — once published, a skill cannot be made private again."
-    );
-    if (!ok) return;
     setBusySlug(slug);
     try {
       const resp = await fetch(`/api/skills/${slug}`, {
@@ -86,6 +84,23 @@ export default function SkillsPage() {
       setSkills((prev) =>
         prev.map((s) => (s.slug === slug ? { ...s, isPublic: true } : s))
       );
+    } finally {
+      setBusySlug(null);
+    }
+  }
+
+  async function deleteUnpublishedSkill(slug: string) {
+    setBusySlug(slug);
+    try {
+      const resp = await fetch(`/api/skills/${slug}`, {
+        method: "DELETE",
+      });
+      if (!resp.ok) {
+        window.alert("Failed to delete unpublished skill. See server logs for details.");
+        return;
+      }
+      unload(slug);
+      setSkills((prev) => prev.filter((s) => s.slug !== slug));
     } finally {
       setBusySlug(null);
     }
@@ -221,7 +236,7 @@ export default function SkillsPage() {
                         disabled={busySlug === skill.slug}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void publish(skill.slug);
+                          setPendingPublishSlug(skill.slug);
                         }}
                         title="Publish this skill to the Skill Hub (permanent)"
                       >
@@ -232,9 +247,14 @@ export default function SkillsPage() {
                       <button
                         type="button"
                         className="button ghost button-sm"
+                        disabled={busySlug === skill.slug}
                         onClick={(e) => {
                           e.stopPropagation();
-                          unload(skill.slug);
+                          if (skill.isPublic) {
+                            unload(skill.slug);
+                            return;
+                          }
+                          setPendingUnloadSkill(skill);
                         }}
                       >
                         Unload
@@ -274,6 +294,40 @@ export default function SkillsPage() {
           </div>
         </div>
       )}
+
+      <PublishConfirmModal
+        open={pendingPublishSlug !== null}
+        title="Publish skill to Skill Hub"
+        message={pendingPublishSlug
+          ? `Publish "${pendingPublishSlug}" to the Skill Hub?\n\nThis action is permanent - once published, a skill cannot be made private again.`
+          : ""}
+        confirmLabel="Publish"
+        cancelActionLabel="Keep private"
+        busy={pendingPublishSlug !== null && busySlug === pendingPublishSlug}
+        onCancel={() => setPendingPublishSlug(null)}
+        onConfirm={() => {
+          if (!pendingPublishSlug) return;
+          const slug = pendingPublishSlug;
+          setPendingPublishSlug(null);
+          void publish(slug);
+        }}
+      />
+      <PublishConfirmModal
+        open={pendingUnloadSkill !== null}
+        title="Unload unpublished skill?"
+        message={pendingUnloadSkill
+          ? `Unload "${pendingUnloadSkill.slug}" without publishing?\n\nThis skill is not published to the Skill Hub. If you unload it now, it will disappear completely and you may not be able to recover it.`
+          : ""}
+        confirmLabel="Unload permanently"
+        cancelActionLabel="Go back"
+        onCancel={() => setPendingUnloadSkill(null)}
+        onConfirm={() => {
+          if (!pendingUnloadSkill) return;
+          const slug = pendingUnloadSkill.slug;
+          setPendingUnloadSkill(null);
+          void deleteUnpublishedSkill(slug);
+        }}
+      />
 
       <SkillImportModal
         open={showImport}
