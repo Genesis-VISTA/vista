@@ -1,62 +1,6 @@
 """
 VistaGuardSidecar -- the per-session composite that `ProjectAgent`
 instantiates.
-
-The sidecar owns the four Phase-0 collaborators -- capability
-registry, trust scorer, incident manager, provenance emitter -- and
-exposes the hook surface that `ProjectAgent` composes into its
-PydanticAI tool-call chain. From the integration plan §1:
-
-> Quarantine logic is concentrated in
-> `backend/src/vista_backend/agents/agents.py:ProjectAgent` so it
-> composes once and is reused everywhere `ProjectAgent` is.
-
-In Phase 0 the sidecar is a *shell*: gates are not yet built (the
-`_build_gates()` factory returns an empty dict), so `is_active()` is
-False even with the master flag on, and `process_tool_call` is a
-strict pass-through. The shell exists so the next phase-0 issue
-(`Integrate VistaGuardSidecar into ProjectAgent`) can wire it into
-`agents.py` without behavioral change -- gates land in Phase 1+ and
-flip `is_active()` to True as their flags are enabled.
-
-## API contract
-
-- `VistaGuardSidecar(settings, project)` constructs without error
-  for any settings (including `enabled=False`). The Q-LLM is not
-  instantiated here; Phase 1 will call `attach_quarantine_agent` on
-  the constructed sidecar after the Agent is built.
-
-- `is_active()` returns True iff the master flag is on AND at least
-  one gate is in the active set. Phase-0 always returns False
-  because `_build_gates()` returns an empty dict.
-
-- `is_gate_enabled(name)` returns True iff the named gate (G1..G7)
-  is in the active set. Phase-0 always returns False for the same
-  reason. The argument is the short gate identifier (e.g., ``"G2"``)
-  matching `Gate.name`.
-
-- `process_tool_call(ctx, call_tool, tool_name, args)` is the
-  PydanticAI `ProcessToolCallback` surface. In Phase 0 it is a
-  strict pass-through: `return await call_tool(tool_name, args)`.
-  Phases 1+ replace the body with the fast/slow gate chain.
-
-- `attach_quarantine_agent(agent)` stores a PydanticAI Agent (the
-  Q-LLM) on the sidecar for gates to invoke via
-  `ctx.quarantine_agent`. Phase-0 just records it; Phase 1's G2
-  reads it.
-
-## What's *not* in Phase 0
-
-- Gate instantiation. `_build_gates()` is a stub that returns `{}`.
-- Contract library. The `contracts` attribute is None; Phase 5
-  populates it.
-- Hook composition with the kb-scope callback in `agents.py`. That
-  is the next phase-0 issue (`Integrate VistaGuardSidecar into
-  ProjectAgent`).
-
-The sidecar deliberately holds *references* to its collaborators
-rather than copies, so Phase-5 mutations to the trust scorer or
-contract library are visible to gates without a re-wire.
 """
 
 from collections.abc import Awaitable, Callable, Mapping

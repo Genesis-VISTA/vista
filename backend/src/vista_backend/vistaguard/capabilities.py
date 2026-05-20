@@ -8,8 +8,7 @@ trust. Tags live in a per-session `CapabilityRegistry` that gates
 consult to make policy decisions.
 
 The structural argument that VISTAGuard makes about adaptive attackers
-(see the main proposal §8.2 "Q-LLM trust assumption and structural
-bound") rests on this module: capabilities are stored in the
+rests on this module: capabilities are stored in the
 interpreter, not in the LLM's context window. A compromised Q-LLM can
 fail to *detect* that a chunk contains an instruction, but it cannot
 *remove* the chunk's `taint=True` tag from the registry, because

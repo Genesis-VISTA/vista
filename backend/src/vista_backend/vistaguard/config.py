@@ -14,7 +14,7 @@ flag. The sidecar's runtime hooks are written so that with `enabled=False`
 they are byte-identical no-ops; this is the contract that VISTAGuard is
 genuinely modular (see the flag-off regression test).
 
-The fields are grouped to match the phasing in the integration plan:
+The fields are grouped as follows:
 
 - `enabled` and `g{N}_enabled` are the per-gate toggles used everywhere.
 - `quarantine_*` configures the Q-LLM (Phase 1).

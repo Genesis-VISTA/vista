@@ -1,56 +1,6 @@
 """
 Trust scorer and tier policy for VISTAGuard.
 
-This module establishes the *public API* that gates will use to record
-security signals during Phases 1-4. It deliberately ships with
-intentionally-simple Phase-0 scoring logic that is enough to be useful
-(score moves in response to signals, gates can read the current state)
-but not yet correct. The real scoring logic -- per-capability Bayesian
-credit assignment, sticky high-stakes tier lock-in, SEV2-triggered
-forced re-authentication -- arrives in Phase 5 (see the integration
-plan §2 Phase 5 and the work-items doc).
-
-The reason for this split is API stability. Phase 5 will rewrite the
-internals of `TrustScorer.record_violation` and `record_clean_call`
-to do per-capability credit assignment. If those methods don't exist
-in Phase 0, every gate written between Phases 1 and 4 either has no
-trust feedback at all (so the gates are missing the most important
-signal-generation behavior) or has its own ad-hoc scoring that gets
-ripped out in Phase 5. Shipping the *API* in Phase 0 means gates
-written in Phases 1-4 just keep working when the scoring is
-upgraded.
-
-## Phase-0 scope
-
-What this module does in Phase 0:
-
-- Track a single global score in [0.0, 1.0].
-- Decrement on `record_violation(severity)` by an amount proportional
-  to severity; clamp to [0.0, 1.0].
-- Increment on `record_clean_call()` by a small fixed amount; clamp
-  to [0.0, 1.0].
-- Always report `TrustTier.NORMAL` regardless of score (no tier
-  transitions in Phase 0; that's Phase 5 work).
-- Accept and store -- but do nothing with -- a `capability_kind`
-  argument on `record_violation`. Phase 5's Bayesian per-capability
-  scorer will read this.
-- No-op when `settings.vistaguard.enabled` is False: violations and
-  clean calls are accepted but the score stays at `initial_trust`.
-
-What this module does *not* do in Phase 0:
-
-- Tier transitions (NORMAL -> ELEVATED -> RESTRICTED -> TERMINATED).
-- Sticky high-stakes capability lock-in (a denied G6-destructive
-  capability staying denied even after the score recovers).
-- Per-capability Bayesian credit assignment.
-- SEV2 triggering forced re-authentication.
-- Integration with the incident manager *body*. The Phase-0
-  `IncidentManager` calls `TrustScorer.notify_incident()` (a
-  no-op stub in this module); the body that drives tier
-  transitions is Phase 5.
-
-All five of those are Phase 5 issues with their own acceptance
-criteria.
 """
 
 from collections.abc import Sequence
@@ -68,17 +18,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------
 # Phase-0 scoring constants
 # -----------------------------------------------------------------
-#
-# These constants encode "any signal moves the score, but the
-# magnitudes are not yet tuned." Phase 5 replaces the entire
-# update rule with a per-capability Bayesian model, so the values
-# here only need to be (a) signed correctly (violations decrement,
-# clean calls increment), (b) small enough that a single signal
-# doesn't saturate the score, and (c) in a sensible ratio so that
-# tests can verify the score actually moves.
-#
-# Reviewers: do *not* spend time tuning these values. They will be
-# replaced wholesale in Phase 5.
+
 
 _VIOLATION_DECREMENT_BY_SEVERITY: dict[int, float] = {
     3: 0.05,   # SEV3: informational; small dent
@@ -317,10 +257,6 @@ class TrustScorer:
         Increments the score by a small fixed amount. No-op when
         the master flag is off, like `record_violation`.
 
-        Phase 5 will replace this with per-capability Bayesian
-        credit assignment (clean tool calls restore tool-call
-        capability, but not RAG capability, etc., per the main
-        proposal §4 C4).
         """
         if not self._settings.enabled:
             return
@@ -375,12 +311,6 @@ class TrustScorer:
         """
         Reset the scorer to `settings.initial_trust` and clear the
         violation history.
-
-        Mostly useful for tests; production code creates a new
-        `TrustScorer` per session rather than resetting an
-        existing one. Phase 5 will gain a re-authentication
-        mechanism that clears the sticky high-stakes lock-in;
-        `reset()` is not that mechanism.
         """
         self._score = self._clamp(self._settings.initial_trust)
         self._history.clear()
