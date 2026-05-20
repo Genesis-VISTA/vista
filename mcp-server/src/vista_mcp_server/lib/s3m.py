@@ -28,6 +28,7 @@ class S3mClient:
         self.s3m_token = s3m_token
         self.resource_id = resource_id
         self.ssh_conn = ssh_conn
+        self._token_validated = False
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -40,17 +41,20 @@ class S3mClient:
         # TODO This is a temporary check because of the current ssh/scp workarounds, we have to make
         # sure the token matches the group of our ssh session. We can remove this once that's fixed.
         # This is also hard coded to OLCF resources, each API can do tokens differently.
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect",
-                headers=self._headers(),
-                timeout=60,
-            )
-            resp.raise_for_status()
-            token_info = resp.json()
+        if not self._token_validated:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect",
+                    headers=self._headers(),
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                token_info = resp.json()
 
-            if token_info.get('project') != 'gen150-vista':
-                raise ValueError(f"S3M token must be part of gen150-vista group, current token is {token_info.get('project')}")
+                token_project = token_info.get("token", {}).get('project')
+                if token_project != 'gen150-vista':
+                    raise ValueError(f"S3M token must be part of gen150-vista group, current token is {token_project}")
+                self._token_validated = True
 
     async def submit_job(self, spec: dict) -> dict:
         """ Submit a job and return the Job response. """
