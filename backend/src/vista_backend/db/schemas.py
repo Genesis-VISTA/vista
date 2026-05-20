@@ -289,6 +289,14 @@ class UserBase(SQLModel):
     pass
 
 
+# Treat "" the same as None for the optional config fields so a cleared frontend
+# input doesn't end up as a non-null-but-empty token/account in the DB
+_USER_CONFIG_NULLABLE_FIELDS = (
+    "nersc_account", "nersc_remote_dir", "s3m_token", "nersc_iri_token",
+)
+def _empty_str_to_none(v): return None if v == "" else v
+
+
 class UserCreate(UserBase):
     email: str
     is_admin: bool = False
@@ -297,6 +305,11 @@ class UserCreate(UserBase):
     nersc_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+
+    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
+    @classmethod
+    def _empty_to_none(cls, v):
+        return _empty_str_to_none(v)
 
 
 class UserUpdate(UserBase):
@@ -307,6 +320,11 @@ class UserUpdate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
 
+    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
+    @classmethod
+    def _empty_to_none(cls, v):
+        return _empty_str_to_none(v)
+
 
 class UserSelfUpdate(UserBase):
     remote_hpc_jobs_dir: str | None = None
@@ -314,6 +332,11 @@ class UserSelfUpdate(UserBase):
     nersc_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+
+    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
+    @classmethod
+    def _empty_to_none(cls, v):
+        return _empty_str_to_none(v)
 
 
 class UserPublic(UserBase):

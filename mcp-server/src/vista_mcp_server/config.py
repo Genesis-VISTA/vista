@@ -43,6 +43,13 @@ class AppSettings(BaseSettings):
     # Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
     # """
 
+    disable_servers: CommaSeparatedList[str] = ["agenthpc"]
+    """
+    Names of MCP subservers to skip mounting in server.py. Valid entries:
+    "submit_job", "display_file", "sandbox", "rag", "agenthpc", "omd".
+    agenthpc is disabled by default — its SSH requirements don't work in the AWS deployment.
+    """
+
     mcp_apps_dir: ResolvedPath = Path(__file__).parent / 'mcp-apps'
 
     dockerfile: ResolvedPath = Path(__file__).parent / "docker/Dockerfile"
@@ -61,46 +68,25 @@ class AppSettings(BaseSettings):
     """
 
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
-    remote_hpc_jobs_dir: Path = Path("/gpfs/wolf2/olcf/gen150/proj-shared/vista")
-    """ Folder on the HPC cluster where the hpc_jobs will be copied. """
     hpc_account: str = "gen150-vista"
     """ Slurm account name for HPC job submission. """
     hpc_setup_script_template: str = ODO_SETUP_SCRIPT
     """
     Script sourced before every job script.
 
-    This is a format string that can reference other config options like
-    `remote_hpc_jobs_dir` and `session_id`.
+    This is a format string referencing `{remote_hpc_jobs_dir}` (supplied per
+    tool call via MCP metadata) and other settings.
     """
-
-    def get_hpc_setup_script(self):
-        """ The populated hpc_setup_script_template template """
-        return self.hpc_setup_script_template.format(**self.model_dump())
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the S3M API. """
-    s3m_token: str | None = None
-    """ Bearer token for S3M API authentication (VISTA_MCP_S3M_TOKEN env var). """
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
-    nersc_iri_token: str | None = None
-    """
-    Globus access token for the NERSC IRI resource server (VISTA_MCP_NERSC_IRI_TOKEN env var).
-    Get one with: python iri-api-get-globus-token-main/get_globus_token.py --print-token --facilities nersc
-    Tokens expire ~48h; refresh with --refresh-only.
-    """
-    nersc_account: str | None = None
-    """ NERSC project account for Slurm submission (VISTA_MCP_NERSC_ACCOUNT env var). """
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
-    nersc_remote_dir: str | None = None
-    """
-    Absolute remote dir on the NERSC machine where vista writes session output
-    (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter submission.
-    """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
@@ -146,7 +132,7 @@ class AppSettings(BaseSettings):
 
     rag_model: str = "google/embeddinggemma-300m"
 
-    hf_token: A[str, Field(validation_alias="HF_TOKEN")] | None = None
+    hf_token: A[str | None, Field(validation_alias="HF_TOKEN")] = None
 
 
 settings = AppSettings()

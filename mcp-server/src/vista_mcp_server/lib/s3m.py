@@ -85,14 +85,17 @@ class S3mClient:
 
     async def bash(self, command: str | list[str]) -> str:
         """ Run a bash command on the HPC host. """
+        await self._validate_token()
         return await ssh_bash_retry(self.ssh_conn, command)
 
     async def upload(self, local: str | Path, remote: str | Path) -> None:
         """ Upload a file or directory to the HPC host. """
+        await self._validate_token()
         await scp_retry(str(local), (self.ssh_conn, str(remote)))
 
     async def download(self, remote: str | Path, local: str | Path) -> None:
         """ Download a file or directory from the HPC host via SCP. """
+        await self._validate_token()
         await scp_retry((self.ssh_conn, str(remote)), str(local))
 
 
@@ -117,23 +120,30 @@ class S3mDefaults(BaseModel):
     resources: S3mResourceSpec = S3mResourceSpec()
 
 
-_s3m_client: S3mClient | None = None
-""" The shared S3M client. Set by submit_job_mcp's lifespan. """
+_ssh_conn: asyncssh.SSHClientConnection | None = None
+"""
+The shared SSH connection.
+
+Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the ODO s3m api's
+lack of file operation support. We should remove it as soon as file support is added and greatly
+simplify the MCP server launch sequence.
+"""
 
 
-def get_s3m_client() -> S3mClient:
-    if _s3m_client is None:
-        raise RuntimeError("S3M client not initialized")
-    return _s3m_client
+async def init_s3m_ssh_conn():
+    global _ssh_conn
+    if _ssh_conn is None:
+        logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
+        _ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
+        logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
 
 
-async def create_s3m_client() -> S3mClient:
-    logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
-    ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
-    logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
+def get_s3m_client(*, s3m_token: str) -> S3mClient:
+    if _ssh_conn is None:
+        raise RuntimeError("S3M SSH connection not initialized; call init_s3m_ssh_conn() first")
     return S3mClient(
         s3m_api=settings.s3m_url,
-        s3m_token=settings.s3m_token,
+        s3m_token=s3m_token,
         resource_id=settings.s3m_resource,
-        ssh_conn=ssh_conn,
+        ssh_conn=_ssh_conn,
     )

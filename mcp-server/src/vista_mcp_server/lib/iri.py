@@ -229,24 +229,11 @@ class IriClient:
         )
 
 
-_iri_client: IriClient | None = None
-""" The shared IRI client. Set by submit_job_mcp's lifespan when NERSC is configured. """
-
-
-def get_iri_client() -> IriClient:
-    if _iri_client is None:
-        raise RuntimeError(
-            "IRI client not initialized; check that VISTA_MCP_NERSC_IRI_TOKEN is set"
-        )
-    return _iri_client
-
-
-async def create_iri_client() -> IriClient:
-    if not settings.nersc_iri_token:
-        raise RuntimeError("VISTA_MCP_NERSC_IRI_TOKEN not set")
+# TODO maybe should cache this per session
+async def create_iri_client(*, iri_token: str) -> IriClient:
     client = IriClient(
         api_endpoint=settings.nersc_iri_url,
-        api_key=settings.nersc_iri_token,
+        api_key=iri_token,
         machine=settings.nersc_machine,
     )
     await client.init_resources()

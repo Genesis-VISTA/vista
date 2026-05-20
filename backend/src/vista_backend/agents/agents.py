@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
-from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback
+from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -21,7 +21,7 @@ import mcp.shared.context
 import mcp.types
 
 from ..config import settings
-from ..db.schemas import ProjectPublic
+from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from .skills import to_prompt
@@ -132,8 +132,9 @@ def get_mcp_server(
 
 
 class ProjectAgent:
-    def __init__(self, project: ProjectPublic):
+    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig):
         self.project = project
+        self.user = user
         self._elicitations: dict[str, asyncio.Future] = {}
 
     def _build_agent(self,
@@ -192,7 +193,6 @@ class ProjectAgent:
     async def run(self,
         user_prompt: str,
         message_history: list[ModelMessage]|None = None,
-        process_tool_call: ProcessToolCallback | None = None,
     ) -> ProjectAgentResult:
         """
         Run the agent for a single agent "turn".
@@ -204,7 +204,6 @@ class ProjectAgent:
             user_prompt = user_prompt,
             message_history = message_history,
             enable_elicitation=False,
-            process_tool_call=process_tool_call,
         ):
             if isinstance(event, ProjectAgentResultEvent):
                 return event.result
@@ -214,7 +213,6 @@ class ProjectAgent:
         user_prompt: str,
         message_history: list[ModelMessage]|None = None,
         enable_elicitation: bool = False,
-        process_tool_call: ProcessToolCallback | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
         Run the agent and return a stream of events.
@@ -284,6 +282,21 @@ class ProjectAgent:
                     self._elicitations.pop(event.elicitation_id, None)
         else:
             elicitation_callback = None
+
+        # TODO Temporary scaffolding for getting per-user HPC credentials to the MCP server.
+        # Later we'll set up more generic MCP server configuration that supports 3rd party MCP servers.
+        # It will launch isolated MCP server instances per project, and the user can configure any
+        # environment vars/headers necessary.
+        # But for now this lets us get the credentials to the current monolithic MCP server instance
+        async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]):
+            metadata = None
+            HPC_TOOLS = {
+                "submit_hpc_job", "get_hpc_job_status",
+                "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
+            }
+            if name in HPC_TOOLS:
+                metadata = {"vista_user_config": self.user.model_dump(mode='json')}
+            return await call_tool(name, tool_args, metadata)
 
         agent = self._build_agent(
             elicitation_callback=elicitation_callback,

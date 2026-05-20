@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="vista-backend",
     lifespan=lifespan,
-    dependencies=[Depends(get_user)],
+    dependencies=[Depends(get_user)], # Require login for all routes
 )
 app.include_router(agent_router)
 app.include_router(mcp_router)

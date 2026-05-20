@@ -28,12 +28,15 @@ async def get_me(user: UserDep, config: bool = False) -> UserPublicWithConfig | 
 async def update_me(
     updates: UserSelfUpdate, session: SessionDep, user: UserDep
 ) -> UserPublicWithConfig:
+    row = (await session.exec(select(UserTable).where(UserTable.id == user.id))).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="User not found")
     for key, value in updates.model_dump(exclude_unset=True).items():
-        setattr(user, key, value)
-    session.add(user)
+        setattr(row, key, value)
+    session.add(row)
     await session.flush()
-    await session.refresh(user)
-    return UserPublicWithConfig.model_validate(user)
+    await session.refresh(row)
+    return UserPublicWithConfig.model_validate(row)
 
 
 @router.get("")
