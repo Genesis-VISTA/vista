@@ -17,7 +17,7 @@ else:
 mcp.mount(display_file_mcp)
 mcp.mount(sandbox_mcp)
 mcp.mount(rag_mcp)
-mcp.mount(agenthpc_mcp)
+# mcp.mount(agenthpc_mcp) # Disabled for now, the SSH requirements won't work in the AWS deployment
 if settings.omd_api_key:
     mcp.mount(create_proxy(StreamableHttpTransport(
         url=settings.omd_url,
