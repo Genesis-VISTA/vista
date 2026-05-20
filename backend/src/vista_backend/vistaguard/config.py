@@ -161,6 +161,20 @@ class VistaGuardSettings(BaseModel):
     enabled without an endpoint (fail fast).
     """
 
+    provenance_log_path: str | None = None
+    """
+    Filesystem path for the JSONL provenance log used by
+    `ProvenanceEmitter` when `flowcept_enabled=False`. When None
+    (default), provenance events are emitted via the module logger
+    instead of a dedicated file -- ops can still capture them by
+    routing the `vista_backend.vistaguard.provenance` logger to the
+    desired sink. When set, the emitter appends one JSON line per
+    event to this path and flushes after each write so audit data
+    survives a SIGKILL. Phase 5-6 will layer AU-9 tamper-evidence
+    on top of this same path; Phase 7's Flowcept broker emission
+    is enabled via `flowcept_enabled`.
+    """
+
     # -----------------------------------------------------------------
     # G4 code scanning -- Phase 3
     # -----------------------------------------------------------------

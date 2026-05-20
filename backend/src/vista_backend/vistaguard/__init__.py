@@ -30,9 +30,13 @@ Public surface (re-exported here for convenience):
   later phases.
 - `IncidentManager`, `IncidentRecord` -- SEV1/SEV2/SEV3 routing
   to logging, trust scorer, and provenance.
-
-Future re-exports (added by later phases): `VistaGuardSidecar`,
-`ProvenanceEmitter`, etc.
+- `ProvenanceEmitter`, `ProvenanceEvent` -- the audit-substrate
+  adapter. Phase 0 writes JSONL; Phase 7 adds Flowcept-broker
+  emission.
+- `VistaGuardSidecar` -- the per-`ProjectAgent` composite that
+  owns the registry / scorer / incident manager / provenance
+  emitter and exposes the `process_tool_call` hook. Phase 0
+  ships a pass-through shell; gates land in Phase 1+.
 """
 
 from .capabilities import (
@@ -45,6 +49,8 @@ from .capabilities import (
 from .config import VistaGuardSettings
 from .gates import Gate, GateContext, GateDecision, PassThroughGate
 from .incidents import IncidentManager, IncidentRecord
+from .provenance import ProvenanceEmitter, ProvenanceEvent
+from .sidecar import VistaGuardSidecar
 from .trust import TierPolicy, TrustScorer
 
 __all__ = [
@@ -57,9 +63,12 @@ __all__ = [
     "IncidentManager",
     "IncidentRecord",
     "PassThroughGate",
+    "ProvenanceEmitter",
+    "ProvenanceEvent",
     "SensitivityTier",
     "TierPolicy",
     "TrustScorer",
     "TrustTier",
     "VistaGuardSettings",
+    "VistaGuardSidecar",
 ]
