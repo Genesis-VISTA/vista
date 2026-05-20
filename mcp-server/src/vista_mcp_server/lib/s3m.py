@@ -34,9 +34,27 @@ class S3mClient:
             "Authorization": f"Bearer {self.s3m_token}",
             "Content-Type": "application/json",
         }
+    
+    async def _validate_token(self):
+        """ Verify the token is valid and in the right group """
+        # TODO This is a temporary check because of the current ssh/scp workarounds, we have to make
+        # sure the token matches the group of our ssh session. We can remove this once that's fixed.
+        # This is also hard coded to OLCF resources, each API can do tokens differently.
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect",
+                headers=self._headers(),
+                timeout=60,
+            )
+            resp.raise_for_status()
+            token_info = resp.json()
+
+            if token_info.get('project') != 'gen150-vista':
+                raise ValueError(f"S3M token must be part of gen150-vista group, current token is {token_info.get('project')}")
 
     async def submit_job(self, spec: dict) -> dict:
         """ Submit a job and return the Job response. """
+        await self._validate_token()
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{self.s3m_api}/api/v1/compute/job/{self.resource_id}",
@@ -49,6 +67,7 @@ class S3mClient:
 
     async def get_job_status(self, job_id: str) -> dict:
         """ Get job status. """
+        await self._validate_token()
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 # TODO: Odo seems to be ignoring include_spec=true
