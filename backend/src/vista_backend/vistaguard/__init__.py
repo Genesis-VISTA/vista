@@ -28,9 +28,11 @@ Public surface (re-exported here for convenience):
 - `Gate`, `GateDecision`, `GateContext`, `PassThroughGate` -- gate
   ABC and supporting dataclasses. Concrete G1-G7 gates land in
   later phases.
+- `IncidentManager`, `IncidentRecord` -- SEV1/SEV2/SEV3 routing
+  to logging, trust scorer, and provenance.
 
 Future re-exports (added by later phases): `VistaGuardSidecar`,
-`IncidentManager`, `ProvenanceEmitter`, etc.
+`ProvenanceEmitter`, etc.
 """
 
 from .capabilities import (
@@ -42,6 +44,7 @@ from .capabilities import (
 )
 from .config import VistaGuardSettings
 from .gates import Gate, GateContext, GateDecision, PassThroughGate
+from .incidents import IncidentManager, IncidentRecord
 from .trust import TierPolicy, TrustScorer
 
 __all__ = [
@@ -51,6 +54,8 @@ __all__ = [
     "Gate",
     "GateContext",
     "GateDecision",
+    "IncidentManager",
+    "IncidentRecord",
     "PassThroughGate",
     "SensitivityTier",
     "TierPolicy",

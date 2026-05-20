@@ -44,9 +44,10 @@ What this module does *not* do in Phase 0:
   capability staying denied even after the score recovers).
 - Per-capability Bayesian credit assignment.
 - SEV2 triggering forced re-authentication.
-- Integration with the incident manager (the incident-emitted -> trust-
-  scorer-notified path is wired in Phase 5 once `IncidentManager`
-  exists).
+- Integration with the incident manager *body*. The Phase-0
+  `IncidentManager` calls `TrustScorer.notify_incident()` (a
+  no-op stub in this module); the body that drives tier
+  transitions is Phase 5.
 
 All five of those are Phase 5 issues with their own acceptance
 criteria.
@@ -331,6 +332,44 @@ class TrustScorer:
                 before,
                 self._score,
             )
+
+    def notify_incident(self, *, level: int, gate: str) -> None:
+        """
+        Receive an incident notification from `IncidentManager`.
+
+        Phase-0 stub: no-op (the master-flag check is performed
+        even so, so that the call site logs intent at DEBUG when
+        disabled). Phase 5 will fill in the body to drive tier
+        transitions:
+
+        - SEV1 (level=1): transition to TERMINATED.
+        - SEV2 (level=2): transition to ELEVATED and set a
+          re-auth-required flag.
+        - SEV3 (level=3): record for trend analysis only.
+
+        This method exists in Phase 0 so `IncidentManager.record(...)`
+        can call it unconditionally on the wired-in trust scorer.
+        Adding the stub here lets Phases 1-4 produce real incidents
+        and have them propagate to the scorer once Phase 5 fills in
+        the playbook.
+
+        `level` validation is done by `IncidentManager.record()`
+        upstream; we trust the caller to pass a valid value.
+        """
+        if not self._settings.enabled:
+            logger.debug(
+                "TrustScorer.notify_incident ignored (enabled=False): "
+                "level=%d gate=%s",
+                level,
+                gate,
+            )
+            return
+        logger.debug(
+            "TrustScorer.notify_incident received SEV%d from %s "
+            "(Phase-0 stub; tier transitions arrive in Phase 5)",
+            level,
+            gate,
+        )
 
     def reset(self) -> None:
         """
