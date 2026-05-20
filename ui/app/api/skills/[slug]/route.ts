@@ -11,6 +11,9 @@ type BackendSkillDetail = {
   allowed_tools?: string | null;
   metadata?: Record<string, string | string[]> | null;
   tags?: string[];
+  author?: string | null;
+  repo_url?: string | null;
+  is_public?: boolean;
   body: string;
 };
 
@@ -40,6 +43,86 @@ export async function GET(
   }
 
   const detail = (await upstream.json()) as BackendSkillDetail;
+  return NextResponse.json(reshape(slug, detail));
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params;
+  if (!/^[a-zA-Z0-9._-]+$/.test(slug)) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+    });
+  } catch {
+    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
+  }
+
+  if (upstream.status === 404) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    return NextResponse.json(
+      { error: text || "Failed to update skill" },
+      { status: upstream.status }
+    );
+  }
+
+  const detail = (await upstream.json()) as BackendSkillDetail;
+  return NextResponse.json(reshape(slug, detail));
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  const { slug } = await params;
+  if (!/^[a-zA-Z0-9._-]+$/.test(slug)) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
+      method: "DELETE",
+      headers: { accept: "application/json" },
+    });
+  } catch {
+    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
+  }
+
+  if (upstream.status === 404) {
+    return NextResponse.json({ error: "Skill not found" }, { status: 404 });
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    return NextResponse.json(
+      { error: text || "Failed to delete skill" },
+      { status: upstream.status }
+    );
+  }
+  return new NextResponse(null, { status: 204 });
+}
+
+function reshape(slug: string, detail: BackendSkillDetail) {
   // Reshape into the {slug, frontmatter, markdown} envelope the frontend
   // expects. `body` becomes `markdown`; the rest of the AgentSkills metadata
   // becomes `frontmatter` (matching the layout of SKILL.md's YAML header).
@@ -52,10 +135,16 @@ export async function GET(
   if (detail.allowed_tools != null) frontmatter["allowed-tools"] = detail.allowed_tools;
   if (detail.metadata != null) frontmatter.metadata = detail.metadata;
   if (detail.tags != null) frontmatter.tags = detail.tags;
+  if (detail.author != null) frontmatter.author = detail.author;
+  if (detail.repo_url != null) frontmatter.repo_url = detail.repo_url;
+  if (detail.is_public != null) frontmatter.is_public = detail.is_public;
 
-  return NextResponse.json({
+  return {
     slug,
     frontmatter,
     markdown: detail.body ?? "",
-  });
+    author: detail.author ?? null,
+    repoUrl: detail.repo_url ?? null,
+    isPublic: detail.is_public ?? false,
+  };
 }

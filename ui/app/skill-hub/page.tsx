@@ -3,9 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useActiveProject } from "@/lib/projects";
+import {
+  computeLoaded,
+  isMandated,
+  readAdditions,
+  writeAdditions,
+} from "@/lib/loaded-skills";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
-
-const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
 
 const TAG_FILTERS = [
   "All",
@@ -22,41 +27,25 @@ type SortKey = "name" | "recent";
 
 type HubSkill = SkillSummary & { addedAt?: number | null };
 
-function readLoadedSlugs(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return new Set(parsed.filter((s): s is string => typeof s === "string"));
-    }
-  } catch {
-    // ignore corrupt entries
-  }
-  return new Set();
-}
-
 export default function SkillHubPage() {
+  const activeProject = useActiveProject();
+  const projectName = activeProject?.name ?? null;
   const [skills, setSkills] = useState<HubSkill[]>([]);
-  // Lazy initializer reads localStorage once at mount (client-only); the
-  // shared key keeps the hub and the chat page in sync across reloads.
-  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(readLoadedSlugs);
+  const [additions, setAdditions] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<TagFilter>("All");
   const [sort, setSort] = useState<SortKey>("name");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
 
+  // Rehydrate the additions set whenever the active project changes.
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOADED_SKILLS_STORAGE_KEY,
-        JSON.stringify(Array.from(loadedSlugs))
-      );
-    } catch {
-      // ignore
-    }
-  }, [loadedSlugs]);
+    setAdditions(readAdditions(projectName));
+  }, [projectName]);
+
+  const loadedSlugs = useMemo(
+    () => computeLoaded(activeProject, additions),
+    [activeProject, additions]
+  );
 
   // Fetch the hub catalog.
   useEffect(() => {
@@ -67,10 +56,15 @@ export default function SkillHubPage() {
   }, []);
 
   function toggleLoaded(slug: string) {
-    setLoadedSlugs((prev) => {
+    // Project-mandated skills are always loaded — the Load button on them is
+    // a no-op (we don't store a mandated slug in the additions set since it'd
+    // be redundant and confusing if the project's skill list later changes).
+    if (isMandated(activeProject, slug)) return;
+    setAdditions((prev) => {
       const next = new Set(prev);
       if (next.has(slug)) next.delete(slug);
       else next.add(slug);
+      writeAdditions(projectName, next);
       return next;
     });
   }
@@ -89,6 +83,9 @@ export default function SkillHubPage() {
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     let list = skills.filter((skill) => {
+      // Skill Hub is a public listing only; private skills live on the
+      // user's /skills tab until the author publishes them.
+      if (skill.isPublic === false) return false;
       if (activeTag !== "All") {
         const tags = skill.tags ?? [];
         if (!tags.includes(activeTag)) return false;
@@ -168,6 +165,7 @@ export default function SkillHubPage() {
         ) : (
           visible.map((skill) => {
             const isLoaded = loadedSlugs.has(skill.slug);
+            const mandated = isMandated(activeProject, skill.slug);
             return (
               <div
                 key={skill.slug}
@@ -187,18 +185,45 @@ export default function SkillHubPage() {
                   <button
                     type="button"
                     className={`hub-card-action${isLoaded ? " loaded" : ""}`}
+                    disabled={mandated}
+                    title={
+                      mandated
+                        ? `Required by the ${activeProject?.name} project`
+                        : undefined
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleLoaded(skill.slug);
                     }}
                     aria-pressed={isLoaded}
                   >
-                    {isLoaded ? "Loaded ✓" : "Load"}
+                    {mandated ? "Required" : isLoaded ? "Loaded ✓" : "Load"}
                   </button>
                 </div>
                 <div className="hub-card-desc">
                   {skill.description || "No description"}
                 </div>
+                {(skill.author || skill.repoUrl) && (
+                  <div className="hub-card-meta">
+                    {skill.author && (
+                      <span className="hub-card-author">by {skill.author}</span>
+                    )}
+                    {skill.author && skill.repoUrl && (
+                      <span className="hub-card-meta-sep">·</span>
+                    )}
+                    {skill.repoUrl && (
+                      <a
+                        href={skill.repoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hub-card-repo"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        repo ↗
+                      </a>
+                    )}
+                  </div>
+                )}
                 {(skill.tags?.length ?? 0) > 0 && (
                   <div className="hub-card-tags">
                     {skill.tags!.map((tag) => (
