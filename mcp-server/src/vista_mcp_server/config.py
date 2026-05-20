@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
@@ -145,5 +146,9 @@ class AppSettings(BaseSettings):
 
     rag_model: str = "google/embeddinggemma-300m"
 
+    hf_token: A[str, Field(validation_alias="HF_TOKEN")] | None = None
+
 
 settings = AppSettings()
+if settings.hf_token:
+    os.environ['HF_TOKEN'] = settings.hf_token

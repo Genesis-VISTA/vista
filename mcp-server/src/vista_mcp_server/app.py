@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 from fastmcp.utilities.logging import get_logger
+from .config import settings # Import here so config is initialized before app boot
 
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
