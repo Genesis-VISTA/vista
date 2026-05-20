@@ -280,3 +280,27 @@ class IndexProgress(BaseModel):
     current: Optional[str] = None
     started_at: float
     """ Unix epoch seconds. """
+
+
+class UserBase(SQLModel):
+    email: str
+    is_admin: bool = False
+
+
+class UserCreate(UserBase):
+    pass
+
+
+class UserUpdate(SQLModel):
+    email: str | None = None
+    is_admin: bool | None = None
+
+
+class UserPublic(UserBase):
+    id: uuid.UUID
+
+
+class UserTable(UserBase, table=True):
+    __tablename__ = "app_user"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    email: str = Field(unique=True)
