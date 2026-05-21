@@ -24,6 +24,7 @@ from ..config import settings
 from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
+from ..vistaguard import VistaGuardSidecar
 from .skills import to_prompt
 
 
@@ -136,6 +137,83 @@ class ProjectAgent:
         self.project = project
         self.user = user
         self._elicitations: dict[str, asyncio.Future] = {}
+        # VISTAGuard sidecar: per-`ProjectAgent` composite that owns
+        # the security gates, capability registry, trust scorer,
+        # incident manager, and provenance emitter. The sidecar's
+        # `process_tool_call` is composed into the MCP hook chain in
+        # `_build_agent` (see `_compose_process_tool_call`). In Phase
+        # 0 the sidecar is inert (no gates built); enabling
+        # individual `VISTA_BACKEND_VISTAGUARD__G{N}_ENABLED` flags
+        # in later phases flips `self._sidecar.is_active()` to True
+        # and activates the composition automatically.
+        self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
+
+    def _compose_process_tool_call(
+        self,
+        caller_hook: ProcessToolCallback | None,
+    ) -> ProcessToolCallback | None:
+        """
+        Compose the VISTAGuard guardian hook with an optional caller hook.
+
+        Chain ordering (per [phase-0] Integrate VistaGuardSidecar
+        into ProjectAgent):
+
+            caller_hook  ->  guardian_callback  ->  upstream MCP tool
+
+        The caller-supplied `process_tool_call` (if any) wraps the
+        VISTAGuard guardian, which wraps the upstream MCP server's
+        tool invocation. A caller hook that decides not to forward
+        (e.g., to short-circuit a tool call) bypasses the guardian;
+        a guardian that decides not to forward bypasses the
+        upstream tool. This ordering matches integration-plan §3
+        with one deviation: the plan also describes a
+        `kb_scope_callback` stage between caller and guardian, but
+        in the current refactored codebase the kb-scope
+        responsibility lives in the system prompt (which names the
+        kb_slugs the agent may pass) and in the filtered toolset
+        (which removes `rag_search` when no KBs are configured)
+        rather than as a per-call hook. A future phase that
+        promotes kb-scoping to a hook would insert it between
+        `caller_hook` and `guardian_callback` without changing the
+        relative ordering.
+
+        When the sidecar is not active -- i.e., the master
+        `VISTA_BACKEND_VISTAGUARD__ENABLED` flag is False, or the
+        flag is on but no per-gate flag is enabled (Phase-0
+        default) -- the caller hook is returned unchanged so the
+        MCP server sees the exact same `process_tool_call`
+        argument it would have seen pre-integration. This is the
+        load-bearing byte-identity contract that lets us land the
+        sidecar without changing baseline VISTA behavior.
+
+        Phase 1+ gates flip `self._sidecar.is_active()` to True,
+        at which point this helper actually produces a composed
+        callback. The Phase-0 unit test exercises both the
+        inactive (unchanged) and active (composed) paths.
+        """
+        if not self._sidecar.is_active():
+            # Byte-identical: hand the caller's hook (or None)
+            # straight to PydanticAI's MCP layer.
+            return caller_hook
+
+        guardian_callback = self._sidecar.process_tool_call
+
+        if caller_hook is None:
+            async def composed(ctx, call_tool, tool_name, args):
+                # 2-stage chain: guardian -> upstream.
+                return await guardian_callback(ctx, call_tool, tool_name, args)
+            return composed
+
+        async def composed(ctx, call_tool, tool_name, args):
+            # 3-stage chain: caller -> guardian -> upstream. The
+            # caller is the outermost wrapper; its `call_tool`
+            # argument is a shim that routes to the guardian,
+            # which in turn routes to the real upstream tool via
+            # PydanticAI's `call_tool` callback.
+            async def after_caller(name, downstream_args):
+                return await guardian_callback(ctx, call_tool, name, downstream_args)
+            return await caller_hook(ctx, after_caller, tool_name, args)
+        return composed
 
     def _build_agent(self,
         elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
@@ -147,7 +225,13 @@ class ProjectAgent:
         """
         mcp_server = get_mcp_server(
             elicitation_callback=elicitation_callback,
-            process_tool_call=process_tool_call,
+            # Phase-0 wiring: when the VISTAGuard sidecar is inactive
+            # (no gates enabled, the Phase-0 default), the composed
+            # hook *is* the caller hook unchanged -- byte-identical
+            # to pre-integration VISTA. When at least one gate is
+            # enabled in Phase 1+, the composition activates and
+            # routes tool calls through the guardian.
+            process_tool_call=self._compose_process_tool_call(process_tool_call),
             log_handler=log_handler,
         )
         tool_patterns = list(self.project.tools or [])

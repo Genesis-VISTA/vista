@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging, os
 from .utils.types import ResolvedPath, LogLevel
+from .vistaguard.config import VistaGuardSettings
 
 
 class Settings(BaseSettings):
@@ -12,6 +13,12 @@ class Settings(BaseSettings):
         env_file=[p / '.env' for p in reversed([Path.cwd(), *Path.cwd().parents])],
         extra="ignore",
         env_prefix="VISTA_BACKEND_",
+        # Double underscore separates the parent field from the nested
+        # field name in env vars, so the VistaGuardSettings sub-model
+        # below is overridable as `VISTA_BACKEND_VISTAGUARD__ENABLED=...`.
+        # Sibling top-level fields (those that don't contain `__` in
+        # their env-var name) are unaffected by this setting.
+        env_nested_delimiter="__",
     )
 
     env: A[Literal['dev', 'prod'], Field(validation_alias="VISTA_ENV")] = 'dev'
@@ -81,6 +88,15 @@ class Settings(BaseSettings):
     Optional GitHub personal access token used when importing skills from
     private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
     header on requests to api.github.com. If unset, only public repos work.
+    """
+
+    vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)
+    """
+    VISTAGuard sidecar configuration. See `vista_backend.vistaguard.config`
+    for the full set of fields. Every field defaults to off / minimal so
+    that the default behavior of `Settings` is unchanged when VISTAGuard
+    is not configured. Override individual fields via
+    `VISTA_BACKEND_VISTAGUARD__<FIELD>=...` env vars.
     """
 
 
