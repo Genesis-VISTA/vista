@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     Required in prod, defaults to a dummy key in dev.
     """
 
+    github_token: str | None = None
+    """
+    Optional GitHub personal access token used when importing skills from
+    private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
+    header on requests to api.github.com. If unset, only public repos work.
+    """
+
 
 for env_file in reversed(Settings.model_config['env_file']):
     if Path(env_file).exists():

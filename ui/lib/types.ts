@@ -23,12 +23,18 @@ export type SkillSummary = {
   path: string;
   metadata?: Record<string, string | string[]>;
   tags?: string[];
+  author?: string | null;
+  repoUrl?: string | null;
+  isPublic?: boolean;
 };
 
 export type SkillDetail = {
   slug: string;
   frontmatter: Record<string, unknown>;
   markdown: string;
+  author?: string | null;
+  repoUrl?: string | null;
+  isPublic?: boolean;
 };
 
 export type ChatMessage = {

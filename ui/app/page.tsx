@@ -5,8 +5,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
+import {
+  SkillEditorModal,
+  type SkillDraftFields,
+  type SkillSavedPayload,
+} from "@/components/SkillEditorModal";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { readActiveProjectName, useActiveProject } from "@/lib/projects";
+import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
   htmlFromToolReturnContent,
   type AgentRunResultEvent,
@@ -45,9 +51,6 @@ type McpToolsResponse = {
 const MODEL_SERVICES = ["AmSC model services"];
 const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
 const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
-
-/** localStorage key for the user's per-browser loaded-skill set. */
-const LOADED_SKILLS_STORAGE_KEY = "vista.loadedSkills.v1";
 
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
@@ -162,73 +165,6 @@ export default function HomePage() {
   const [vizWidth, setVizWidth] = useState(460);
   const [rightTopHeight, setRightTopHeight] = useState(430);
   /**
-   * Slugs of skills the user has loaded for the current chat session via the
-   * Skill Hub. Persisted across reloads in localStorage and shared with the
-   * /skill-hub page via the same storage key. The lazy initializer reads the
-   * stored value at mount — using a `useEffect` here is unsafe because the
-   * persist effect would race with the hydrate effect and overwrite the hub's
-   * writes with an empty Set on every navigation back to this page.
-   */
-  const [loadedSlugs, setLoadedSlugs] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-      if (!raw) return new Set();
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return new Set(parsed.filter((s): s is string => typeof s === "string"));
-      }
-    } catch {
-      // ignore corrupt entries
-    }
-    return new Set();
-  });
-
-  // Persist loadedSlugs back to localStorage on every change.
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        LOADED_SKILLS_STORAGE_KEY,
-        JSON.stringify(Array.from(loadedSlugs))
-      );
-    } catch {
-      // localStorage may be unavailable (private mode, quota); chat still works.
-    }
-  }, [loadedSlugs]);
-
-  // Sync from other tabs / the Skill Hub when it writes the same key, and
-  // re-read on window focus so navigation from /skill-hub back here picks up
-  // changes even if Next.js's router cache kept this page mounted.
-  useEffect(() => {
-    function reread() {
-      try {
-        const raw = window.localStorage.getItem(LOADED_SKILLS_STORAGE_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
-        const next = new Set(parsed.filter((s): s is string => typeof s === "string"));
-        setLoadedSlugs((prev) => {
-          if (prev.size === next.size && Array.from(prev).every((s) => next.has(s))) {
-            return prev;
-          }
-          return next;
-        });
-      } catch {
-        // ignore
-      }
-    }
-    function onStorage(event: StorageEvent) {
-      if (event.key === LOADED_SKILLS_STORAGE_KEY) reread();
-    }
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", reread);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", reread);
-    };
-  }, []);
-
-  /**
    * Active project for the topbar badge. The hook uses
    * `useSyncExternalStore` so SSR and the first client paint both read
    * `null`, then React updates with the real value after hydration. Other
@@ -290,6 +226,14 @@ export default function HomePage() {
   const [showPredictModal, setShowPredictModal] = useState(false);
   const [predictFormulaInput, setPredictFormulaInput] = useState("NaCl");
   const [predictCompInput, setPredictCompInput] = useState("Pure Salt");
+
+  // Save-as-skill state. `initial: null` while the LLM is drafting; the
+  // modal swaps into edit mode once the draft arrives. We keep an error
+  // banner separately so we can show backend rejections (duplicate slug,
+  // malformed name) without dropping the user's in-flight edits.
+  const [showSkillEditor, setShowSkillEditor] = useState(false);
+  const [skillDraft, setSkillDraft] = useState<SkillDraftFields | null>(null);
+  const [skillSaveError, setSkillSaveError] = useState<string | null>(null);
 
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
   const [isCalling, setIsCalling] = useState(false);
@@ -429,6 +373,103 @@ export default function HomePage() {
     } catch {
       // bridge timeout will auto-cancel if POST fails
     }
+  }
+
+  /**
+   * Open the Save-as-Skill modal and kick off the LLM draft in parallel.
+   * The modal opens immediately in a "Drafting…" state and switches to the
+   * editable form once `/api/skills/generate` returns.
+   */
+  async function openSaveAsSkill() {
+    setSkillDraft(null);
+    setSkillSaveError(null);
+    setShowSkillEditor(true);
+    try {
+      const resp = await fetch("/api/skills/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message_history: messageHistory }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        setSkillSaveError(text || `Drafting failed (${resp.status}).`);
+        setSkillDraft({
+          name: "",
+          description: "",
+          body: "",
+          author: "",
+          repoUrl: "",
+          tags: "",
+        });
+        return;
+      }
+      const draft = (await resp.json()) as {
+        name_suggestion: string;
+        description_suggestion: string;
+        body: string;
+      };
+      setSkillDraft({
+        name: draft.name_suggestion ?? "",
+        description: draft.description_suggestion ?? "",
+        body: draft.body ?? "",
+        author: "",
+        repoUrl: "",
+        tags: "",
+      });
+    } catch (err) {
+      setSkillSaveError(err instanceof Error ? err.message : "Drafting failed.");
+      setSkillDraft({
+        name: "",
+        description: "",
+        body: "",
+        author: "",
+        repoUrl: "",
+        tags: "",
+      });
+    }
+  }
+
+  async function saveSkill(payload: SkillSavedPayload) {
+    setSkillSaveError(null);
+    const resp = await fetch("/api/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: payload.name,
+        description: payload.description,
+        body: payload.body,
+        author: payload.author,
+        repo_url: payload.repoUrl,
+        tags: payload.tags,
+        is_public: payload.isPublic,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      let detail = text;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === "object" && "detail" in parsed) {
+          detail = String((parsed as { detail: unknown }).detail);
+        } else if (parsed && typeof parsed === "object" && "error" in parsed) {
+          detail = String((parsed as { error: unknown }).error);
+        }
+      } catch {
+        // text wasn't JSON; use it as-is
+      }
+      setSkillSaveError(detail || `Save failed (${resp.status}).`);
+      return;
+    }
+    // Auto-load the new skill into the active project's additions set so the
+    // user sees it on /skills immediately.
+    const projectName = activeProject?.name ?? null;
+    if (projectName) {
+      const additions = readAdditions(projectName);
+      additions.add(payload.name);
+      writeAdditions(projectName, additions);
+    }
+    setShowSkillEditor(false);
+    setSkillDraft(null);
   }
 
   async function sendUserMessage() {
@@ -1098,6 +1139,18 @@ export default function HomePage() {
             <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
               Predict salt…
             </button>
+            <button
+              className="quick-chip"
+              disabled={messageHistory.length === 0}
+              title={
+                messageHistory.length === 0
+                  ? "Have a conversation first; the skill is drafted from it."
+                  : "Distill this conversation into a reusable SKILL.md"
+              }
+              onClick={() => void openSaveAsSkill()}
+            >
+              Save as skill…
+            </button>
             <label className="toggle-wrap">
               <span className="toggle-label">Agent</span>
               <input
@@ -1406,6 +1459,18 @@ export default function HomePage() {
           onSubmit={handleElicitationSubmit}
         />
       )}
+
+      <SkillEditorModal
+        open={showSkillEditor}
+        initial={skillDraft}
+        errorMessage={skillSaveError}
+        onSave={saveSkill}
+        onCancel={() => {
+          setShowSkillEditor(false);
+          setSkillDraft(null);
+          setSkillSaveError(null);
+        }}
+      />
     </main>
   );
 }

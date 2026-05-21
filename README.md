@@ -7,7 +7,12 @@
 - `./hpc_jobs`
     - Predefined jobs that the agent can submit to the remote HPC system
 - `./skills`
-    - Agent Skill files
+    - Agent Skill files. See [docs/skill-onboarding.md](docs/skill-onboarding.md) for the
+      SKILL.md schema and how to generate / import / publish skills.
+- `./backend`
+    - FastAPI backend with the project DB, agent loop, and skill CRUD. See
+      [docs/project-onboarding.md](docs/project-onboarding.md) for the project
+      schema, the `/projects` CRUD UI, and how a project drives the agent.
 - `./ui`
     - Frontend UI and agent loop that calls the tools in the mcp-server
 
