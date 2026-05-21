@@ -1,6 +1,6 @@
 from pathlib import Path
-from typing import Annotated as A
-from pydantic import Field, ByteSize, ValidationError
+from typing import Annotated as A, Literal
+from pydantic import Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging, os
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
         # their env-var name) are unaffected by this setting.
         env_nested_delimiter="__",
     )
+
+    env: A[Literal['dev', 'prod'], Field(validation_alias="VISTA_ENV")] = 'dev'
 
     host: str = "127.0.0.1"
     port: int = 8001
@@ -72,6 +74,21 @@ class Settings(BaseSettings):
 
     max_upload_size: ByteSize = ByteSize(20 * 1024 * 1024)
     """ Size in bytes """
+
+    encryption_key: A[SecretStr, Field(default_factory=lambda data: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' if data['env'] == 'dev' else None)]
+    """
+    Fernet key for encrypting sensitive user token fields (s3m_token, nersc_iri_token) in the database.
+
+    Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    Required in prod, defaults to a dummy key in dev.
+    """
+
+    github_token: str | None = None
+    """
+    Optional GitHub personal access token used when importing skills from
+    private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
+    header on requests to api.github.com. If unset, only public repos work.
+    """
 
     vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)
     """
