@@ -75,8 +75,9 @@ case "$MODE" in
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
     ;;
-  background)
+  logs)
     LOG_DIR="$REPO_ROOT/logs"
+    rm -rf "$LOG_DIR"
     mkdir -p "$LOG_DIR"
 
     pids=()
@@ -87,23 +88,24 @@ case "$MODE" in
     }
     trap cleanup INT TERM
 
-    bash -c "$MCP_CMD" >> "$LOG_DIR/mcp.log" 2>&1 &
-    pids+=($!)
-    bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
-    pids+=($!)
-    bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &
-    pids+=($!)
 
-    echo "All services started. Logs:"
+    echo "All services will be started, logging to:"
     echo "  MCP server: $LOG_DIR/mcp.log"
     echo "  Backend:    $LOG_DIR/backend.log"
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
+    bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
+    pids+=($!)
+    bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &
+    pids+=($!)
+    # Foreground the mcp server so you can input the ssh login prompt if needed.
+    bash -c "$MCP_CMD" 2>&1 | tee "$LOG_DIR/mcp.log"
+
     wait
     ;;
   *)
-    echo "Usage: $0 [tmux|terminal|background]"
+    echo "Usage: $0 [tmux|terminal|logs]"
     exit 1
     ;;
 esac

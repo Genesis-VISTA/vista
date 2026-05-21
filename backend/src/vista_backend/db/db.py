@@ -83,7 +83,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    from .defaults import DEFAULT_KNOWLEDGE_BASES, DEFAULT_PROJECTS
+    from .defaults import DEFAULT_KNOWLEDGE_BASES, DEFAULT_PROJECTS, DEFAULT_USERS
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -129,6 +129,13 @@ async def init_db() -> None:
             #         setattr(existing_kb, key, value)
             #     existing_kb.updated_at = now
             #     session.add(existing_kb)
+
+        for user in DEFAULT_USERS:
+            existing_user = (await session.exec(
+                select(schemas.UserTable).where(schemas.UserTable.id == user.id)
+            )).first()
+            if existing_user is None:
+                session.add(user)
 
         await session.commit()
 

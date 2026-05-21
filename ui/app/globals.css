@@ -1586,6 +1586,31 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 10px;
   padding: 10px 12px;
   margin-top: auto;
+  /* Render as a button without inheriting browser button chrome. */
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.nav-rail-user:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.nav-rail-user:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.nav-rail-user:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .nav-rail.collapsed .nav-rail-user {
@@ -1961,6 +1986,47 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .project-modal-skill-item:hover {
   background: var(--panel-2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  User settings modal                                                */
+/* ------------------------------------------------------------------ */
+
+.user-settings-modal {
+  width: min(560px, 96vw);
+  max-height: 92vh;
+}
+
+.user-settings-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.user-settings-identity-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.user-settings-identity-email {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.user-settings-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 /* ------------------------------------------------------------------ */

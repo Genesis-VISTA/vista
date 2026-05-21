@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import { useActiveProject } from "@/lib/projects";
+import { useCurrentUser, userDisplayName, userInitials } from "@/lib/user";
+import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
 
 const APP_VERSION = "v0.1.0";
-
-/** Placeholder until an auth/login module exists. */
-const PLACEHOLDER_USER = { name: "Guest", initials: "G" };
 
 /**
  * Tiny external store for the rail's collapsed flag.
@@ -165,6 +164,8 @@ export function NavRail() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeProject = useActiveProject();
+  const { user, loading: userLoading } = useCurrentUser();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const collapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
@@ -174,6 +175,20 @@ export function NavRail() {
   function toggle() {
     setRailCollapsed(!collapsed);
   }
+
+  const displayName = user
+    ? userDisplayName(user)
+    : userLoading
+      ? "Loading…"
+      : "Signed out";
+  const initials = user ? userInitials(user) : userLoading ? "…" : "?";
+  const userHint = user
+    ? user.is_admin
+      ? "Admin"
+      : ""
+    : userLoading
+      ? "Loading user…"
+      : "Not signed in";
 
   /**
    * An entry is active when its href matches the current location. We split
@@ -306,17 +321,26 @@ export function NavRail() {
         )}
       </nav>
 
-      <div className="nav-rail-user" title={PLACEHOLDER_USER.name}>
+      <button
+        type="button"
+        className="nav-rail-user"
+        onClick={() => setSettingsOpen(true)}
+        disabled={!user}
+        title={user ? `${displayName} — user settings` : userHint}
+        aria-label="Open user settings"
+      >
         <div className="nav-rail-user-avatar" aria-hidden="true">
-          {PLACEHOLDER_USER.initials}
+          {initials}
         </div>
         {!collapsed && (
           <div className="nav-rail-user-meta">
-            <div className="nav-rail-user-name">{PLACEHOLDER_USER.name}</div>
-            <div className="nav-rail-user-hint">Not signed in</div>
+            <div className="nav-rail-user-name">{displayName}</div>
+            <div className="nav-rail-user-hint">{userHint}</div>
           </div>
         )}
-      </div>
+      </button>
+
+      {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
     </aside>
   );
 }

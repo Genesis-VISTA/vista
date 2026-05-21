@@ -10,6 +10,7 @@ from sse_starlette.event import ServerSentEvent
 from ..agents.agents import ProjectAgent, ProjectAgentResult, McpElicitationEvent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic, ProjectTable
+from .auth import UserDep
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ class AgentRunRequest(BaseModel):
 
 @router.post("/projects/{project_name}/agent/run", response_model=ProjectAgentResult)
 async def agent_run(
-    project_name: str, body: AgentRunRequest, session: SessionDep, request: Request,
+    project_name: str, body: AgentRunRequest, session: SessionDep, request: Request, user: UserDep,
 ) -> ProjectAgentResult | Response:
     """
     Stateless chat completion that runs the full agent loop for one turn.
@@ -63,7 +64,7 @@ async def agent_run(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     project = ProjectPublic.model_validate(project)
-    agent = ProjectAgent(project)
+    agent = ProjectAgent(project, user)
 
     if body.stream:
         async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:

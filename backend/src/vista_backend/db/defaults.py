@@ -2,10 +2,9 @@
 Default data to seed the DB with
 """
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from ..config import settings
-from .schemas import KnowledgeBaseTable, ProjectTable
+from .schemas import KnowledgeBaseTable, ProjectTable, UserTable
 
 SYSTEM_PROMPTS = Path(__file__).parent / 'system_prompts'
 
@@ -50,6 +49,20 @@ DEFAULT_PROJECTS: list[ProjectTable] = [
 # `created_at` and `updated_at` are set at init_db time rather than
 # baked in here — keeping the defaults file pure data makes the seed
 # reproducible and lets `init_db` detect "first-run" cleanly.
+
+DEFAULT_USERS: list[UserTable] = [
+    UserTable(
+        id=uuid.UUID("2acb5d94-c542-42b5-a2fd-66f97cffd8d7"),
+        email="vista-test-admin@americansciencecloud.org",
+        is_admin=True,
+    ),
+    UserTable(
+        id=uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b"),
+        email="vista-test-user@americansciencecloud.org",
+        is_admin=False,
+    ),
+]
+
 DEFAULT_KNOWLEDGE_BASES: list[KnowledgeBaseTable] = [
     KnowledgeBaseTable(
         id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
