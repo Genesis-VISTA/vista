@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 import mcp.types
 from pydantic import BaseModel
 
-from ..agents.agents import get_mcp_server, ProjectAgent
+from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server, ProjectAgent
 
 
 router = APIRouter()
@@ -12,8 +12,8 @@ router = APIRouter()
 
 @router.get("/mcp/tools")
 async def mcp_tools() -> list[mcp.types.Tool]:
-    async with get_mcp_server() as server:
-        return await server.list_tools()
+    async with get_vista_mcp_server() as vista_mcp_server, get_dev_mcp_server() as dev_mcp_server:
+        return (await vista_mcp_server.list_tools()) + (await dev_mcp_server.list_tools())
 
 
 class McpCallRequest(BaseModel):
@@ -23,16 +23,22 @@ class McpCallRequest(BaseModel):
 
 @router.post("/mcp/call")
 async def mcp_call(req: McpCallRequest) -> mcp.types.CallToolResult:
-    server = get_mcp_server()
-    async with server:
-        try:
-            return await server._client.call_tool(req.name, req.arguments)
-        except Exception as exc:
-            return mcp.types.CallToolResult(
-                content=[mcp.types.TextContent(type="text", text=f"MCP error: {exc}")],
-                isError=True,
-            )
-
+    # TODO Should cache tool list
+    async with get_vista_mcp_server() as vista_mcp_server, get_dev_mcp_server() as dev_mcp_server:
+        for server in [vista_mcp_server, dev_mcp_server]:
+            tools = await server.list_tools()
+            if any(t.name == req.name for t in tools):
+                try:
+                    return await server._client.call_tool(req.name, req.arguments)
+                except Exception as exc:
+                    return mcp.types.CallToolResult(
+                        content=[mcp.types.TextContent(type="text", text=f"MCP error: {exc}")],
+                        isError=True,
+                    )
+    return mcp.types.CallToolResult(
+        content=[mcp.types.TextContent(type="text", text=f"MCP error: no tool {req.name} found")],
+        isError=True,
+    )
 
 class ElicitationSubmit(BaseModel):
     id: str

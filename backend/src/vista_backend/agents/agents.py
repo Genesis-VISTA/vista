@@ -111,18 +111,30 @@ def _tool_allowed(name: str, patterns: list[str]) -> bool:
         return False
     return True
 
-
-# TODO: Cache MCP connection?
-def get_mcp_server(
+def get_vista_mcp_server(
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
     log_handler: mcp.client.session.LoggingFnT | None = None,
 ) -> MCPServerStreamableHTTP:
-    """
-    Connect to the VISTA MCP Server
-    """
+    """ Connect to the VISTA MCP Server (HTTP) for HPC, RAG, and file display tools. """
     return MCPServerStreamableHTTP(
         url=settings.mcp_url,
+        elicitation_callback=elicitation_callback,
+        process_tool_call=process_tool_call,
+        log_handler=log_handler,
+        log_level="info" if log_handler else None,
+        timeout=10,
+        read_timeout=1800 + 60,
+    )
+
+def get_dev_mcp_server(
+    elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
+    process_tool_call: ProcessToolCallback | None = None,
+    log_handler: mcp.client.session.LoggingFnT | None = None,
+) -> MCPServerStreamableHTTP:
+    """ Connect to the dev_mcp_server (HTTP) for sandbox tools (run_bash, create_file, view). """
+    return MCPServerStreamableHTTP(
+        url=settings.dev_mcp_url,
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
         log_handler=log_handler,
@@ -175,7 +187,12 @@ class ProjectAgent:
             else:
                 return await call_tool(name, tool_args, metadata)
 
-        mcp_server = get_mcp_server(
+        vista_mcp = get_vista_mcp_server(
+            elicitation_callback=elicitation_callback,
+            process_tool_call=process_tool_call,
+            log_handler=log_handler,
+        )
+        dev_mcp = get_dev_mcp_server(
             elicitation_callback=elicitation_callback,
             process_tool_call=process_tool_call,
             log_handler=log_handler,
@@ -183,11 +200,13 @@ class ProjectAgent:
         tool_patterns = list(self.project.tools or [])
         if not self.project.knowledge_bases and "!rag_search" not in tool_patterns:
             tool_patterns.append("!rag_search")
-        toolset = mcp_server.filtered(lambda ctx, tool: _tool_allowed(tool.name, self.project.tools))
+        tool_filter = lambda ctx, tool: _tool_allowed(tool.name, tool_patterns)
+        vista_toolset = vista_mcp.filtered(tool_filter)
+        dev_toolset = dev_mcp.filtered(tool_filter)
 
         agent = Agent(
             model=infer_model(settings.model),
-            toolsets=[toolset],
+            toolsets=[vista_toolset, dev_toolset],
         )
 
         @agent.system_prompt

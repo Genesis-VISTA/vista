@@ -36,8 +36,11 @@ class Settings(BaseSettings):
     other env vars to set for specific providers
     """
 
-    # TODO: Generalize this to allow multiple MCP servers
     mcp_url: str = Field(default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL")
+    """ HTTP URL for the vista_mcp_server (HPC, RAG, display_file tools). """
+
+    dev_mcp_url: str = Field(default="http://localhost:8002/mcp", validation_alias="VISTA_DEV_MCP_URL")
+    """ HTTP URL for the dev_mcp_server (sandbox tools: run_bash, create_file, view). """
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
     output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")

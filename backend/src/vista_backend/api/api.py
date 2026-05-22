@@ -7,7 +7,7 @@ import uvicorn
 
 from ..config import settings
 from ..db.db import init_db
-from ..agents.agents import get_mcp_server
+from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server
 from .agent import router as agent_router
 from .auth import get_user
 from .mcp import router as mcp_router
@@ -28,7 +28,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
 
     # Just check that the MCP server is up so we fail early if there's an issue
-    async with get_mcp_server() as mcp_server:
+    async with get_vista_mcp_server() as mcp_server:
+        await mcp_server.list_tools()
+    async with get_dev_mcp_server() as mcp_server:
         await mcp_server.list_tools()
 
     # TODO: not this only works for single uvicorn worker, if we need to scale it move this to the DB
