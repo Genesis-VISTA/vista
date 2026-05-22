@@ -27,21 +27,21 @@ class AppSettings(BaseSettings):
         extra='ignore',
     )
 
-    # TODO: these are currently unused
-    # allowed_uris: list[str] = [".*"]
-    # """
-    # List of regex patterns. A URI must match at least one to be allowed.
-    # This is used to limit what files the display_file tool can render.
-    # """
-    #
-    # uri_map: dict[str, str] = {
-    #     "file:///mnt/data/output/": f"file://{Path('../data/output').resolve()}/",
-    #     "file:///mnt/data/uploads/": f"file://{Path('../data/uploads').resolve()}/",
-    # }
-    # """
-    # Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks.
-    # Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
-    # """
+    allowed_uris: list[str] = ["file://.*"]
+    """
+    List of regex patterns. A URI must match at least one to be allowed.
+    This is used to limit what files the display_file tool can render.
+    """
+    
+    uri_map: dict[str, str] = {
+        "file:///mnt/skills/": f"file://{Path('../skills').resolve()}/",
+        "file:///mnt/data/output/": f"file://{Path('../data/output').resolve()}/",
+        "file:///mnt/data/uploads/": f"file://{Path('../data/uploads').resolve()}/",
+    }
+    """
+    Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks.
+    Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
+    """
 
     disable_servers: CommaSeparatedList[str] = ["agenthpc"]
     """

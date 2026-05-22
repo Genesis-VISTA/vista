@@ -5,6 +5,7 @@ base64 <img> tag so that any JSON-RPC caller receives renderable HTML directly.
 
 from __future__ import annotations
 
+import re
 import base64
 import logging
 import mimetypes
@@ -20,32 +21,27 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(name="Display File")
 
 
-def _resolve_path(uri: str) -> Path | None:
+def resolve_uri(uri: str, allowed_uris: list[str], uri_map: dict[str, str]) -> str:
     """
-    Resolve a sandbox-style URI or absolute path to a real host path.
-
-    Handles:
-      /mnt/data/output/...  →  <project>/data/output/...
-      /mnt/data/uploads/... →  <project>/data/uploads/...
-      /mnt/skills/...       →  <project>/skills/...
-      file:///mnt/...       →  strips the file:// prefix then resolves as above
+    Resolve a uri from within the sandbox to an absolute path on the real host.
     """
-    raw = uri.strip()
-    if raw.startswith("file://"):
-        raw = raw[len("file://"):]
+    if uri.startswith("/"):
+        uri = Path(uri).as_uri()
 
-    # Map sandbox mount paths to host paths via configured volumes
-    for host_path, sandbox_path, _mode in settings.volumes:
-        prefix = str(sandbox_path)
-        if raw.startswith(prefix):
-            resolved = Path(str(host_path)) / raw[len(prefix):].lstrip("/")
-            return resolved
+    if uri.startswith("file://"):
+        path = Path.from_uri(uri)
+        if not path.is_absolute() or ".." in path.parts or "." in path.parts:
+            raise ValueError(f"URI is not absolute {uri}")
 
-    # If it's already an absolute host path, use as-is
-    if raw.startswith("/"):
-        return Path(raw)
+    if not any(re.fullmatch(pattern, uri) for pattern in allowed_uris):
+        raise ValueError(f"URI not allowed: {uri}")
 
-    return None
+    for prefix, replacement in uri_map.items():
+        if uri.startswith(prefix):
+            uri = replacement + uri[len(prefix):]
+            break
+    
+    return uri
 
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
@@ -60,10 +56,11 @@ async def display_file(
     Display an image file to the user. Reads the file, base64-encodes it,
     and returns an HTML <img> tag that the UI renders directly.
     """
-    resolved = _resolve_path(uri)
-
-    if resolved is None:
-        msg = f"Could not resolve path: {uri}"
+    try:
+        # Currently only file uris are allowed. We may adjust that if we switch back to using MCP Apps for more advanced rendering
+        resolved = Path.from_uri(resolve_uri(uri, settings.allowed_uris, settings.uri_map))
+    except ValueError as e:
+        msg = f"Could not resolve {uri}: {e}"
         await ctx.warning(msg)
         return msg
 
