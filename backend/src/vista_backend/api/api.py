@@ -9,6 +9,7 @@ from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server
 from .agent import router as agent_router
+from ..utils.project import project_agent_pool
 from .auth import get_user
 from .mcp import router as mcp_router
 from .knowledge_bases import router as knowledge_bases_router
@@ -33,17 +34,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with get_dev_mcp_server() as mcp_server:
         await mcp_server.list_tools()
 
-    # TODO: not this only works for single uvicorn worker, if we need to scale it move this to the DB
-    # TODO: We need to clean up elicitations that "time out"
-    # TODO: Should also add better guards for duplicate elicitation ids
-    app.state.elicitations = {}
-
     try:
         yield
     finally:
-        for agent in set(app.state.elicitations.values()):
-            await agent.cancel_elicitations()
-        app.state.elicitations.clear()
+        # `project_agent_pool.clear()` runs `_cleanup_project_agent` for every entry,
+        # which cancels pending elicitations and drops their tracker entries.
+        await project_agent_pool.clear()
 
 
 app = FastAPI(

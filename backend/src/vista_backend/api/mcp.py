@@ -1,10 +1,11 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 import mcp.types
 from pydantic import BaseModel
 
-from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server, ProjectAgent
+from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server
+from ..utils.project import resolve_elicitation
 
 
 router = APIRouter()
@@ -47,15 +48,10 @@ class ElicitationSubmit(BaseModel):
 
 
 @router.post("/mcp/elicitation")
-async def mcp_elicitation(submit: ElicitationSubmit, request: Request):
+async def mcp_elicitation(submit: ElicitationSubmit):
     """
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
-    agent: ProjectAgent | None = request.app.state.elicitations.pop(submit.id, None)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Elicitation not found or already resolved")
-    try:
-        await agent.resolve_elicitation(submit.id, submit.action, submit.content)
-    except KeyError:
+    if not resolve_elicitation(submit.id, submit.action, submit.content):
         raise HTTPException(status_code=404, detail="Elicitation not found or already resolved")
     return {"ok": True}

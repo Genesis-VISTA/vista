@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
-from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc
+from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -93,24 +93,6 @@ class ProjectAgentResultEvent(BaseModel):
 ProjectAgentStreamEvent = A[AgentStreamEvent | LogEvent | McpElicitationEvent | ProjectAgentResultEvent, Discriminator("event_kind")]
 
 
-def _tool_allowed(name: str, patterns: list[str]) -> bool:
-    """
-    Match `name` against a list of fnmatch-style patterns.
-
-    Entries beginning with `!` are deny patterns; everything else is an
-    allow pattern. A tool is allowed iff at least one allow pattern matches
-    and no deny pattern matches. If there are no allow_patterns, assume allow "*".
-    """
-    allow_patterns = [p for p in patterns if not p.startswith("!")]
-    if not allow_patterns:
-        allow_patterns = ['*']
-    deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
-    if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
-        return False
-    if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
-        return False
-    return True
-
 def get_vista_mcp_server(
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
@@ -149,43 +131,51 @@ class ProjectAgent:
         self.project = project
         self.user = user
         self._elicitations: dict[str, asyncio.Future] = {}
-        # VISTAGuard sidecar: per-`ProjectAgent` composite that owns
-        # the security gates, capability registry, trust scorer,
-        # incident manager, and provenance emitter. The sidecar's
-        # `process_tool_call` is composed into the MCP hook chain in
-        # `_build_agent`. In Phase 0 the sidecar is inert (no gates built);
-        # enabling individual `VISTA_BACKEND_VISTAGUARD__G{N}_ENABLED` flags
-        # in later phases flips `self._sidecar.is_active()` to True
-        # and activates the composition automatically.
+        # VISTAGuard sidecar: per-`ProjectAgent` composite that owns the security gates, capability
+        # registry, trust scorer, incident manager, and provenance emitter. The sidecar's
+        # `process_tool_call` is composed into the MCP hook chain in `_make_mcp_process_tool_call`.
+        # In Phase 0 the sidecar is inert (no gates built); enabling individual
+        # `VISTA_BACKEND_VISTAGUARD__G{N}_ENABLED` flags in later phases flips
+        # `self._sidecar.is_active()` to True and activates the composition automatically.
         self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
 
-    def _build_agent(self,
-        elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
-        log_handler: mcp.client.session.LoggingFnT | None = None,
-    ) -> Agent:
+        # We need to pass constant callbacks to the MCP server, so that we can reuse the same PydanticAI MCPServer
+        # instance between run_stream calls and not relaunch the MCP servers each call. However, we need to
+        # customize the callbacks in each run_stream call to hook up the streaming output and such. We set the callbacks
+        # to dispatch to these, which we will swap out in run_stream.
+        # TODO: Note, this means we have to lock to prevent parallel run_stream calls. We should look for a way to remove
+        # that restriction. Though, once we implement sessions, we can scope the agent to each session and then locking
+        # would be more reasonable.
+        self._run_lock = asyncio.Lock()
+        self._cur_mcp_elicitation_callback: mcp.client.session.ElicitationFnT | None = None
+        self._cur_mcp_process_tool_call: ProcessToolCallback | None = None
+        self._cur_mcp_log_handler: mcp.client.session.LoggingFnT | None = None
+        self.agent = self._build_agent()
+
+    def _build_agent(self) -> Agent:
         """
         Construct a PydanticAI Agent for a project.
         """
-        async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]):
-            # TODO Temporary scaffolding for getting per-user HPC credentials to the MCP server, we set up the s3m
-            # creds via MCP metadata. Later we'll set up more generic MCP server configuration that supports 3rd party
-            # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
-            # environment vars/headers necessary.
-            metadata = {}
-            HPC_TOOLS = {
-                "submit_hpc_job", "get_hpc_job_status",
-                "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
-            }
-            if name in HPC_TOOLS:
-                metadata["vista_user_config"] = self.user.model_dump(mode='json')
-
-            if self._sidecar.is_active():
-                async def call_tool_wrapper(inner_name, inner_args, inner_metadata = None):
-                    inner_metadata = {**(inner_metadata or {}), **metadata} # Merge in metadatas
-                    return await call_tool(inner_name, inner_args, inner_metadata)
-                return await self._sidecar.process_tool_call(ctx, call_tool_wrapper, name, tool_args)
+        async def elicitation_callback(
+            context: mcp.shared.context.RequestContext, params: mcp.types.ElicitRequestParams,
+        ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
+            cb = self._cur_mcp_elicitation_callback
+            if cb:
+                return await cb(context, params)
             else:
-                return await call_tool(name, tool_args, metadata)
+                return mcp.types.ElicitResult(action="cancel")
+
+        async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]):
+            cb = self._cur_mcp_process_tool_call
+            if cb:
+                return await cb(ctx, call_tool, name, tool_args)
+            else:
+                return await call_tool(name, tool_args, None)
+
+        async def log_handler(params: mcp.types.LoggingMessageNotificationParams) -> None:
+            cb = self._cur_mcp_log_handler
+            if cb:
+                return await cb(params)
 
         vista_mcp = get_vista_mcp_server(
             elicitation_callback=elicitation_callback,
@@ -197,16 +187,13 @@ class ProjectAgent:
             process_tool_call=process_tool_call,
             log_handler=log_handler,
         )
-        tool_patterns = list(self.project.tools or [])
-        if not self.project.knowledge_bases and "!rag_search" not in tool_patterns:
-            tool_patterns.append("!rag_search")
-        tool_filter = lambda ctx, tool: _tool_allowed(tool.name, tool_patterns)
-        vista_toolset = vista_mcp.filtered(tool_filter)
-        dev_toolset = dev_mcp.filtered(tool_filter)
+        vista_toolset = vista_mcp.filtered(lambda ctx, tool: self._tool_allowed(tool.name))
+        dev_toolset = dev_mcp.filtered(lambda ctx, tool: self._tool_allowed(tool.name))
 
         agent = Agent(
             model=infer_model(settings.model),
             toolsets=[vista_toolset, dev_toolset],
+            end_strategy='exhaustive',
         )
 
         @agent.system_prompt
@@ -238,6 +225,100 @@ class ProjectAgent:
             return "\n\n".join([p for p in parts if p])
 
         return agent
+
+    def _tool_allowed(self, name: str) -> bool:
+        """
+        Check if a tool should be included in the project or not
+
+        Match `name` against a list of fnmatch-style patterns in project.tools. Entries beginning
+        with `!` are deny patterns; everything else is an allow pattern. A tool is allowed iff at
+        least one allow pattern matches and no deny pattern matches. If there are no allow_patterns,
+        assume allow "*".
+        """
+        allow_patterns = [p for p in self.project.tools if not p.startswith("!")]
+        if not allow_patterns:
+            allow_patterns = ['*']
+        deny_patterns = [p[1:] for p in self.project.tools if p.startswith("!")]
+
+        if not self.project.knowledge_bases and "rag_search" not in deny_patterns:
+            deny_patterns.append("rag_search")
+
+        if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
+            return False
+        if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
+            return False
+        return True
+
+    async def __aenter__(self):
+        await self.agent.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.agent.__aexit__(*exc)
+
+    def _make_mcp_process_tool_call(self):
+        async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]) -> ToolResult:
+            # TODO Temporary scaffolding for getting per-user HPC credentials to the MCP server, we set up the s3m
+            # creds via MCP metadata. Later we'll set up more generic MCP server configuration that supports 3rd party
+            # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
+            # environment vars/headers necessary.
+            metadata = {}
+            HPC_TOOLS = {
+                "submit_hpc_job", "get_hpc_job_status",
+                "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
+            }
+            if name in HPC_TOOLS:
+                metadata["vista_user_config"] = self.user.model_dump(mode='json')
+
+            if self._sidecar.is_active():
+                async def call_tool_wrapper(inner_name, inner_args, inner_metadata = None):
+                    inner_metadata = {**(inner_metadata or {}), **metadata} # Merge in metadatas
+                    return await call_tool(inner_name, inner_args, inner_metadata)
+                return await self._sidecar.process_tool_call(ctx, call_tool_wrapper, name, tool_args)
+            else:
+                return await call_tool(name, tool_args, metadata)
+        return process_tool_call
+
+    def _make_mcp_elicitation_callback(self, stream_merger: StreamMerger[ProjectAgentStreamEvent]):
+        async def elicitation_callback(
+            context: mcp.shared.context.RequestContext[mcp.client.session.ClientSession, Any, Any],
+            params: mcp.types.ElicitRequestParams,
+        ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
+            if isinstance(params, mcp.types.ElicitRequestFormParams):
+                event = McpFormElicitationEvent(
+                    elicitation_id=str(uuid.uuid4()),
+                    message=params.message,
+                    requested_schema=params.requestedSchema,
+                )
+            elif isinstance(params, mcp.types.ElicitRequestURLParams):
+                event = McpUrlElicitationEvent(
+                    # TODO probably shouldn't assume the sent elicitationId is globally unique
+                    elicitation_id=params.elicitationId,
+                    url=params.url,
+                    message=params.message,
+                )
+            else:
+                return mcp.types.ElicitResult(action="cancel")
+
+            # URL-mode ids come from the upstream server; refuse a duplicate sent by the MCP server
+            if event.elicitation_id in self._elicitations:
+                return mcp.types.ElicitResult(action="cancel")
+
+            future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
+            self._elicitations[event.elicitation_id] = future
+            try:
+                stream_merger.send(event)
+            except StreamClosedError:
+                # Merger already closed, the run finished before this notification.
+                return mcp.types.ElicitResult(action="cancel")
+
+            try:
+                return await asyncio.wait_for(future, timeout=5 * 60)
+            except asyncio.TimeoutError:
+                return mcp.types.ElicitResult(action="cancel")
+            finally:
+                self._elicitations.pop(event.elicitation_id, None)
+        return elicitation_callback
 
     async def run(self,
         user_prompt: str,
@@ -290,91 +371,53 @@ class ProjectAgent:
             except StreamClosedError:
                 pass # Merger already closed, the run finished before this notification.
 
-        if enable_elicitation:
-            async def elicitation_callback(
-                context: mcp.shared.context.RequestContext[mcp.client.session.ClientSession, Any, Any],
-                params: mcp.types.ElicitRequestParams,
-            ) -> mcp.types.ElicitResult:
-                if isinstance(params, mcp.types.ElicitRequestFormParams):
-                    event = McpFormElicitationEvent(
-                        elicitation_id=str(uuid.uuid4()),
-                        message=params.message,
-                        requested_schema=params.requestedSchema,
-                    )
-                elif isinstance(params, mcp.types.ElicitRequestURLParams):
-                    event = McpUrlElicitationEvent(
-                        # TODO probably shouldn't assume the sent elicitationId is globally unique
-                        elicitation_id=params.elicitationId,
-                        url=params.url,
-                        message=params.message,
-                    )
-                else:
-                    return mcp.types.ElicitResult(action="cancel")
-
-                # URL-mode ids come from the upstream server; refuse a duplicate sent by the MCP server
-                if event.elicitation_id in self._elicitations:
-                    return mcp.types.ElicitResult(action="cancel")
-
-                future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
-                self._elicitations[event.elicitation_id] = future
-                try:
-                    merger.send(event)
-                except StreamClosedError:
-                    # Merger already closed, the run finished before this notification.
-                    return mcp.types.ElicitResult(action="cancel")
-
-                try:
-                    return await asyncio.wait_for(future, timeout=5 * 60)
-                except asyncio.TimeoutError:
-                    return mcp.types.ElicitResult(action="cancel")
-                finally:
-                    self._elicitations.pop(event.elicitation_id, None)
-        else:
-            elicitation_callback = None
-
-        agent = self._build_agent(
-            elicitation_callback=elicitation_callback,
-            log_handler=log_handler,
-        )
-
         async def agent_stream() -> AsyncIterator[ProjectAgentStreamEvent]:
-            yield log("INFO", "Agent", "\n".join([
-                f"New request:",
-                f"    project: {self.project.name}",
-                f"    userMessage: {json.dumps(user_prompt[:200])}",
-                f"    historyTurns: {len(message_history or [])}",
-            ]))
+            async with self._run_lock:
+                self._cur_mcp_elicitation_callback = self._make_mcp_elicitation_callback(merger) if enable_elicitation else None
+                self._cur_mcp_process_tool_call = self._make_mcp_process_tool_call()
+                self._cur_mcp_log_handler = log_handler
+                try:
+                    yield log("INFO", "Agent", "\n".join([
+                        f"New request:",
+                        f"    project: {self.project.name}",
+                        f"    userMessage: {json.dumps(user_prompt[:200])}",
+                        f"    historyTurns: {len(message_history or [])}",
+                    ]))
 
-            async for event in agent.run_stream_events(
-                user_prompt,
-                message_history=message_history,
-                usage_limits=usage_limits,
-            ):
-                if isinstance(event, AgentRunResultEvent):
-                    yield log("INFO", "Agent", f"Turn completed")
-                    result = ProjectAgentResult(
-                        new_messages=event.result.new_messages(),
-                        usage=event.result.usage(),
-                        logs=list(logs),
-                    )
-                    yield ProjectAgentResultEvent(result = result)
-                    break # Ignore any further log events
-                else:
-                    # Add some logging
-                    if isinstance(event, FunctionToolCallEvent):
-                        yield log("INFO", f"Tool:{event.part.tool_name}", message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}")
-                    elif isinstance(event, FunctionToolResultEvent):
-                        if isinstance(event.result, RetryPromptPart):
-                            yield log("WARNING", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} failed")
+                    async for event in self.agent.run_stream_events(
+                        user_prompt,
+                        message_history=message_history,
+                        usage_limits=usage_limits,
+                    ):
+                        if isinstance(event, AgentRunResultEvent):
+                            yield log("INFO", "Agent", f"Turn completed")
+                            result = ProjectAgentResult(
+                                new_messages=event.result.new_messages(),
+                                usage=event.result.usage(),
+                                logs=list(logs),
+                            )
+                            yield ProjectAgentResultEvent(result = result)
+                            break # Ignore any further log events
                         else:
-                            yield log("INFO", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} completed")
+                            # Add some logging
+                            if isinstance(event, FunctionToolCallEvent):
+                                yield log("INFO", f"Tool:{event.part.tool_name}", message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}")
+                            elif isinstance(event, FunctionToolResultEvent):
+                                if isinstance(event.result, RetryPromptPart):
+                                    yield log("WARNING", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} failed")
+                                else:
+                                    yield log("INFO", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} completed")
 
-                    yield event
+                            yield event
+                finally:
+                    self._cur_mcp_elicitation_callback = None
+                    self._cur_mcp_process_tool_call = None
+                    self._cur_mcp_log_handler = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)
 
-    async def resolve_elicitation(self,
+    def resolve_elicitation(self,
         elicitation_id: str,
         action: Literal["accept", "decline", "cancel"],
         content: dict[str, Any] | None = None
@@ -388,7 +431,7 @@ class ProjectAgent:
             content=content if action == "accept" else None,
         ))
 
-    async def cancel_elicitations(self):
+    def cancel_elicitations(self):
         """ Cancel all outstanding elicitation requests """
         for future in self._elicitations.values():
             if not future.done():
