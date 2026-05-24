@@ -12,16 +12,28 @@ type HealthResponse = {
 
 /**
  * Health check for the MCP server, exercised via the Python backend's
- * `GET /mcp/tools` (a successful tools/list call implies the backend can
- * talk to MCP).
+ * `GET /projects/{project_name}/mcp/tools` (a successful tools/list call
+ * implies the backend can talk to MCP). The endpoint is project-scoped
+ * post-refactor, so the active project name must be supplied as
+ * `?project_name=<name>`.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const mcpBaseUrl = getMcpBaseUrl();
+  const projectName = new URL(request.url).searchParams.get("project_name");
+  if (!projectName) {
+    return NextResponse.json(
+      { ok: false, mcpBaseUrl, detail: "Missing project_name." } satisfies HealthResponse,
+      { status: 400 }
+    );
+  }
   try {
-    const upstream = await fetch(backendUrl("/mcp/tools"), {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(5000),
-    });
+    const upstream = await fetch(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/mcp/tools`),
+      {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
       return NextResponse.json(
