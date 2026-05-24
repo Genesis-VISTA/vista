@@ -57,7 +57,7 @@ async def agent_run(
     interleaved with the agent events:
     - event: mcp_form_elicitation  data: {"elicitation_id": "<id>", "mode": "form", "message": "...", "requested_schema": {...}}
     - event: mcp_url_elicitation   data: {"elicitation_id": "<id>", "mode": "url", "message": "...", "url": "https://..."}
-    The client must POST the response to /mcp/elicitation. For URL mode, "accept" means the
+    The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
     project = (await session.exec(
@@ -77,7 +77,7 @@ async def agent_run(
                 ):
                     if isinstance(event, McpElicitationEvent):
                         register_elicitation(event.elicitation_id, agent)
-                        # calling /mcp/elicitation will resolve the elicitation request
+                        # calling /projects/{project_name}/elicitation will resolve the elicitation request
                     data = TypeAdapter(Any).dump_json(event).decode()
                     yield ServerSentEvent(event=event.event_kind, data=data)
 

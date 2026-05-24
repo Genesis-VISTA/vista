@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
-from pydantic_ai.mcp import MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
+from pydantic_ai.mcp import MCPServer, MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -177,22 +177,23 @@ class ProjectAgent:
             if cb:
                 return await cb(params)
 
-        vista_mcp = get_vista_mcp_server(
-            elicitation_callback=elicitation_callback,
-            process_tool_call=process_tool_call,
-            log_handler=log_handler,
-        )
-        dev_mcp = get_dev_mcp_server(
-            elicitation_callback=elicitation_callback,
-            process_tool_call=process_tool_call,
-            log_handler=log_handler,
-        )
-        vista_toolset = vista_mcp.filtered(lambda ctx, tool: self._tool_allowed(tool.name))
-        dev_toolset = dev_mcp.filtered(lambda ctx, tool: self._tool_allowed(tool.name))
+        self._mcp_servers: list[MCPServer] = [
+            get_vista_mcp_server(
+                elicitation_callback=elicitation_callback,
+                process_tool_call=process_tool_call,
+                log_handler=log_handler,
+            ),
+            get_dev_mcp_server(
+                elicitation_callback=elicitation_callback,
+                process_tool_call=process_tool_call,
+                log_handler=log_handler,
+            ),
+        ]
+        toolsets = [s.filtered(lambda ctx, tool: self._tool_allowed(tool.name)) for s in self._mcp_servers]
 
         agent = Agent(
             model=infer_model(settings.model),
-            toolsets=[vista_toolset, dev_toolset],
+            toolsets=toolsets,
             end_strategy='exhaustive',
         )
 
@@ -248,6 +249,39 @@ class ProjectAgent:
         if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
             return False
         return True
+
+    async def list_tools(self) -> list[mcp.types.Tool]:
+        """
+        List MCP tools available to this project across all attached MCP servers.
+
+        The list is filtered by the project's `tools` allow/deny patterns (the same
+        filter applied to the agent's toolsets), so callers see exactly the set the
+        agent itself can invoke.
+        """
+        tools: list[mcp.types.Tool] = []
+        for server in self._mcp_servers:
+            for tool in await server.list_tools():
+                if self._tool_allowed(tool.name):
+                    tools.append(tool)
+        return tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> mcp.types.CallToolResult:
+        """
+        Call an MCP tool by name, searching across all attached MCP servers.
+
+        Honors the project's `tools` filter. Returns the raw `CallToolResult`
+        envelope (does not unwrap or raise on `isError=True`).
+        """
+        if not self._tool_allowed(name):
+            raise KeyError(f"Tool {name!r} not found on any MCP server")
+        for server in self._mcp_servers:
+            tools = await server.list_tools()
+            if any(t.name == name for t in tools):
+                # TODO: This bypasses process_tool_call. That's probably fine for VistaGuard as these
+                # calls are user triggered. But will break job submission. Leaving for now as using
+                # metadata for job submission credentials is a temporary solution anyways
+                return await server._client.call_tool(name, arguments)
+        raise KeyError(f"Tool {name!r} not found on any MCP server")
 
     async def __aenter__(self):
         await self.agent.__aenter__()

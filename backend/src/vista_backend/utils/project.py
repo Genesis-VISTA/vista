@@ -36,7 +36,7 @@ async def _build_project_agent(project_id: uuid.UUID, user_id: uuid.UUID) -> Pro
 
 
 async def _cleanup_project_agent(agent: ProjectAgent) -> None:
-    # Drop any pending elicitations owned by this agent so /mcp/elicitation
+    # Drop any pending elicitations owned by this agent so /projects/{project_name}/elicitation
     # callers don't find a stale reference once the MCP session is torn down.
     for eid in [eid for eid, a in _active_elicitations.items() if a is agent]:
         _active_elicitations.pop(eid, None)
