@@ -31,7 +31,7 @@ from .lib.user_config import (
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 
-Cluster = Literal["odo", "perlmutter"]
+Cluster = Literal["odo", "perlmutter", "frontier"]
 """ Supported HPC clusters. """
 
 PERLMUTTER_JOB_SCRIPT = "job.perlmutter.slurm"
@@ -56,6 +56,7 @@ class ClusterDefaults(BaseModel):
     """
     odo: S3mDefaults | None = None
     perlmutter: IriDefaults | None = None
+    frontier: S3mDefaults | None = None
 
 
 @dataclasses.dataclass
