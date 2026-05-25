@@ -82,6 +82,8 @@ class AppSettings(BaseSettings):
     """ Base URL for the S3M API. """
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
+    s3m_frontier_resource: str = "frontier"
+    """ S3M compute resource id for Frontier (cluster="frontier" routing). """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
@@ -92,6 +94,11 @@ class AppSettings(BaseSettings):
     """
     SSH host for file access (SCP/sacct) on the HPC cluster.
     To use a jump host, pass an array or comma separated list of hosts.
+    """
+    frontier_ssh_host: CommaSeparatedList[str] = []
+    """
+    SSH host for file access (SCP/sacct) on Frontier. Empty disables cluster="frontier" routing.
+    Logs in as `hpc_ssh_user` (the same OLCF ucams id used for Odo).
     """
     hpc_ssh_user: str
     """ SSH user to log in as """
