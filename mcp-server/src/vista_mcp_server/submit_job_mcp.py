@@ -188,8 +188,9 @@ def _render_hpc_setup_script(cfg: UserConfig) -> str:
 
         Args:
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
-            cluster: Which cluster to submit to ("odo" or "perlmutter"). If only one cluster is
-                configured, this can be omitted.
+            cluster: Which cluster to submit to ("odo", "frontier", or "perlmutter"). If only
+                one cluster is configured, this can be omitted. "odo" and "frontier" share the
+                same S3M token but submit to different OLCF resources.
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script

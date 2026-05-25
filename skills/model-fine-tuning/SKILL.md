@@ -2,11 +2,12 @@
 name: model-fine-tuning
 description: >-
   Fine-tune or evaluate the FORGE-based molten-salt regression model. Supports
-  the local forge-tune workflow and HPC submission on two clusters: Odo at OLCF
-  (via S3M) and Perlmutter at NERSC (via IRI). Use when the user asks to train,
-  fine-tune, resume, or evaluate a model on the molten salt CSV data.
+  the local forge-tune workflow and HPC submission on three clusters: Odo and
+  Frontier at OLCF (both via S3M, different compute resources) and Perlmutter
+  at NERSC (via IRI). Use when the user asks to train, fine-tune, resume, or
+  evaluate a model on the molten salt CSV data.
 metadata:
-  tags: ["OLCF", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
+  tags: ["OLCF", "Odo", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
 author: VISTA Team
 is_public: true
 ---
@@ -25,9 +26,9 @@ Upstream/source copies currently also exist in `hpc_jobs/forge-tune/`.
 Progress:
 - [ ] 1. Confirm run goal (train, resume, or eval-only)
 - [ ] 2. Decide where to run. **First check whether the user already named one** —
-       "Perlmutter" / "NERSC" → cluster="perlmutter"; "Odo" / "Frontier" / "OLCF" →
-       cluster="odo". Only ask if neither was mentioned. If HPC, use
-       `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`.
+       "Perlmutter" / "NERSC" → cluster="perlmutter"; "Frontier" → cluster="frontier";
+       "Odo" / "OLCF" (unqualified) → cluster="odo". Only ask if none was mentioned.
+       If HPC, use `submit_hpc_job(job="forge-tune", cluster="odo" | "frontier" | "perlmutter", ...)`.
 - [ ] 3. Confirm model path and dataset path
 - [ ] 4. Build command or job submission args
 - [ ] 5. Run and collect key metrics/artifacts
@@ -133,19 +134,20 @@ Artifacts:
 - Keep commands explicit and reproducible; include all non-default args in the final command.
 - For fine-tuning HPC submissions, resolve the target cluster **before** asking
   for confirmation. Two cases, mutually exclusive:
-  - **The user named a cluster** in this or a recent message ("Perlmutter",
-    "NERSC", "Odo", "Frontier", "OLCF") → use it directly. Do NOT ask again,
-    do NOT mention the other cluster as an option, do NOT use the word "Odo"
-    in your reply if the user said "Perlmutter" (and vice versa).
-  - **The user has not named a cluster** → ask exactly: *"Submit on Odo (OLCF)
-    or Perlmutter (NERSC)?"*
+  - **The user named a cluster** in this or a recent message → use it directly.
+    Mapping: "Perlmutter" / "NERSC" → `cluster="perlmutter"`; "Frontier" →
+    `cluster="frontier"`; "Odo" / "OLCF" (unqualified) → `cluster="odo"`. Do
+    NOT ask again, do NOT mention other clusters as options, and do NOT use a
+    cluster name the user didn't say.
+  - **The user has not named a cluster** → ask exactly: *"Submit on Odo
+    (OLCF), Frontier (OLCF), or Perlmutter (NERSC)?"*
 - Once the cluster is known, ask the final confirmation, substituting the
-  resolved cluster name: *"Submit this as a {Odo|Perlmutter} job now?"* — never
-  template the other cluster name into this question.
+  resolved cluster name: *"Submit this as a {Odo|Frontier|Perlmutter} job
+  now?"* — never template a different cluster name into this question.
 - In the first response for fine-tuning, ask only the cluster question (if
   needed) plus the confirmation, and defer all other configuration questions
   until the user answers.
-- Only call `submit_hpc_job(job="forge-tune", cluster="odo" | "perlmutter", ...)`
+- Only call `submit_hpc_job(job="forge-tune", cluster="odo" | "frontier" | "perlmutter", ...)`
   after explicit user confirmation.
 - The MCP elicitation modal will pop up a final "Confirm running on <cluster>"
   check — the user can still cancel there.
