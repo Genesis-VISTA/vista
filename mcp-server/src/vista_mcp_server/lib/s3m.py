@@ -4,12 +4,17 @@ S3M API client plus SSH/SCP file transfer helpers.
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Literal
 import asyncssh
 import httpx
 import logging
 from pydantic import BaseModel
 from .ssh import ssh_bash_retry, scp_retry, get_ssh_conn
 from ..config import settings
+
+
+S3mCluster = Literal["odo", "frontier"]
+""" Clusters served by the S3M API. """
 
 
 class S3mClient:
@@ -124,30 +129,61 @@ class S3mDefaults(BaseModel):
     resources: S3mResourceSpec = S3mResourceSpec()
 
 
-_ssh_conn: asyncssh.SSHClientConnection | None = None
+_ssh_conns: dict[S3mCluster, asyncssh.SSHClientConnection] = {}
 """
-The shared SSH connection.
+Per-cluster SSH connections used by `get_s3m_client`.
 
-Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the ODO s3m api's
-lack of file operation support. We should remove it as soon as file support is added and greatly
-simplify the MCP server launch sequence.
+Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the S3M api's
+lack of file operation support. We should remove it as soon as file support is available and
+greatly simplify the MCP server launch sequence.
+
+Key "odo" is always opened. Key "frontier" is opened only when `settings.frontier_ssh_host` is set.
 """
+
+
+def _ssh_host_for(cluster: S3mCluster) -> list[str]:
+    if cluster == "odo":
+        return list(settings.hpc_ssh_host)
+    return list(settings.frontier_ssh_host)
 
 
 async def init_s3m_ssh_conn():
-    global _ssh_conn
-    if _ssh_conn is None:
-        logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
-        _ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
-        logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
+    """ Open the SSH conn for Odo, and (if configured) for Frontier. """
+    if "odo" not in _ssh_conns:
+        host = _ssh_host_for("odo")
+        logging.info(f"Connecting to {host[-1]} via SSH for Odo file access...")
+        _ssh_conns["odo"] = await get_ssh_conn(host, settings.hpc_ssh_user)
+        logging.info(f"SSH connection established to {host[-1]} (odo)")
+    if settings.frontier_ssh_host and "frontier" not in _ssh_conns:
+        host = _ssh_host_for("frontier")
+        logging.info(f"Connecting to {host[-1]} via SSH for Frontier file access...")
+        _ssh_conns["frontier"] = await get_ssh_conn(host, settings.hpc_ssh_user)
+        logging.info(f"SSH connection established to {host[-1]} (frontier)")
 
 
-def get_s3m_client(*, s3m_token: str) -> S3mClient:
-    if _ssh_conn is None:
+def close_s3m_ssh_conns():
+    """ Close any open per-cluster SSH conns. Safe to call when none are open. """
+    for cluster, conn in list(_ssh_conns.items()):
+        conn.close()
+        del _ssh_conns[cluster]
+
+
+def _resource_id_for(cluster: S3mCluster) -> str:
+    return settings.s3m_resource if cluster == "odo" else settings.s3m_frontier_resource
+
+
+def get_s3m_client(*, s3m_token: str, cluster: S3mCluster = "odo") -> S3mClient:
+    conn = _ssh_conns.get(cluster)
+    if conn is None:
+        if cluster == "frontier":
+            raise RuntimeError(
+                "Frontier SSH connection not initialized. Set VISTA_MCP_FRONTIER_SSH_HOST "
+                "and restart the MCP server to enable cluster=\"frontier\" routing."
+            )
         raise RuntimeError("S3M SSH connection not initialized; call init_s3m_ssh_conn() first")
     return S3mClient(
         s3m_api=settings.s3m_url,
         s3m_token=s3m_token,
-        resource_id=settings.s3m_resource,
-        ssh_conn=_ssh_conn,
+        resource_id=_resource_id_for(cluster),
+        ssh_conn=conn,
     )

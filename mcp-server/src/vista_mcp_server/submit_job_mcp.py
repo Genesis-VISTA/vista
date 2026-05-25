@@ -17,9 +17,8 @@ from pydantic import BaseModel
 from mcp.types import ToolAnnotations
 
 from .config import settings
-from .lib import s3m
 from .lib.ssh import Confirmation
-from .lib.s3m import S3mDefaults, get_s3m_client, init_s3m_ssh_conn
+from .lib.s3m import S3mDefaults, close_s3m_ssh_conns, get_s3m_client, init_s3m_ssh_conn
 from .lib.iri import IriClient, IriDefaults, create_iri_client
 from .lib.user_config import (
     UserConfig,
@@ -105,14 +104,13 @@ MAX_TIME = int(parse_time_limit("4:00:00").total_seconds())
 
 @asynccontextmanager
 async def lifespan(server):
-    # TODO Temporary workaround for Odo s3m API limitations, we use ssh for file operations.
+    # TODO Temporary workaround for S3M API limitations, we use ssh for file operations.
+    # Opens Odo unconditionally and Frontier when VISTA_MCP_FRONTIER_SSH_HOST is set.
     await init_s3m_ssh_conn()
     try:
         yield
     finally:
-        if s3m._ssh_conn:
-            s3m._ssh_conn.close()
-            s3m._ssh_conn = None
+        close_s3m_ssh_conns()
 
 
 mcp = FastMCP("Submit Job", lifespan=lifespan)
