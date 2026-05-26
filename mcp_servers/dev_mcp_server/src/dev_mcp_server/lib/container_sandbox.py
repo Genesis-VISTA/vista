@@ -39,6 +39,27 @@ class ContainerSandbox(Sandbox):
         self._proc = proc
 
     @classmethod
+    async def build(
+        cls,
+        dockerfile: Path | str | None = None,
+        image: str | None = None,
+        runtime: str | None = None,
+    ) -> None:
+        runtime = resolve_container_runtime(runtime)
+        if not image and not dockerfile:
+            raise ValueError("You must specify image or dockerfile")
+        if not image:
+            image = "vista-sandbox"
+        if dockerfile:
+            logging.info("Building sandbox image...")
+            await check_output(
+                runtime, "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
+            )
+        else:
+            logging.info("Pulling sandbox image...")
+            await check_output(runtime, "pull", image)
+
+    @classmethod
     async def spawn(
         cls,
         volumes: Sequence[Volume] | None = None,
@@ -55,14 +76,7 @@ class ContainerSandbox(Sandbox):
         if not image:
             image = "vista-sandbox"
 
-        if dockerfile:
-            logging.info("Building sandbox image...")
-            await check_output(
-                runtime, "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
-            )
-        else:
-            logging.info("Pulling sandbox image...")
-            await check_output(runtime, "pull", image)
+        await cls.build(dockerfile=dockerfile, image=image, runtime=runtime)
         logging.info("Launching sandbox container...")
 
         container_name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"

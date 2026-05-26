@@ -6,14 +6,22 @@ from pathlib import Path
 
 Volume = tuple[Path | str, Path | str, Literal['r', 'w']]
 
+# TODO: Maybe should simplify these awkward abstract classmethods with a abstract "SandboxSpawner"
+# class.
+
 class Sandbox(abc.ABC):
+    @classmethod
+    @abc.abstractmethod
+    async def build(cls) -> None:
+        """ Pre-build or pull the sandbox image without spawning a sandbox instance. """
+
     @classmethod
     @abc.abstractmethod
     async def spawn(
         cls,
         volumes: list[Volume] | None = None,
         env: dict[str, str] | None = None,
-    ) -> Sandbox: ...
+    ) -> "Sandbox": ...
 
     @abc.abstractmethod
     async def exec(
@@ -39,6 +47,10 @@ class UnSandbox(Sandbox):
     """
     "Sandbox" implementation that executes commands on the host directly. Only intended for tests.
     """
+
+    @classmethod
+    async def build(cls) -> None:
+        pass
 
     @classmethod
     async def spawn(cls, **kwargs) -> "UnSandbox":

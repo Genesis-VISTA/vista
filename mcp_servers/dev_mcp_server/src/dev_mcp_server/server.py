@@ -2,6 +2,7 @@
 MCP Server to run basic shell and file commands
 """
 import argparse
+import asyncio
 
 from .config import settings # import before fastmcp so fastmcp reads our env vars
 
@@ -14,7 +15,7 @@ from .lib.container_sandbox import ContainerSandbox
 from .lib.microsandbox_sandbox import MicrosandboxSandbox
 from .lib.view import view_path
 
-SANDBOX_CLASSES: dict[str, Callable[..., Awaitable[Sandbox]]] = {
+SANDBOX_SPAWN_FUNCS: dict[str, Callable[..., Awaitable[Sandbox]]] = {
     "microsandbox": lambda volumes=None, env=None: MicrosandboxSandbox.spawn(
         volumes=volumes, env=env,
         dockerfile=settings.dockerfile, image=settings.image,
@@ -35,6 +36,23 @@ SANDBOX_CLASSES: dict[str, Callable[..., Awaitable[Sandbox]]] = {
     ),
 }
 
+SANDBOX_BUILD_FUNCS: dict[str, Callable[[], Awaitable[None]]] = {
+    "microsandbox": lambda: MicrosandboxSandbox.build(
+        dockerfile=settings.dockerfile, image=settings.image,
+    ),
+    "container": lambda: ContainerSandbox.build(
+        dockerfile=settings.dockerfile, image=settings.image,
+    ),
+    "docker": lambda: ContainerSandbox.build(
+        dockerfile=settings.dockerfile, image=settings.image,
+        runtime="docker",
+    ),
+    "podman": lambda: ContainerSandbox.build(
+        dockerfile=settings.dockerfile, image=settings.image,
+        runtime="podman",
+    ),
+}
+
 sandbox: Sandbox
 """ I should be able to use ctx.lifespan_context for this, but it doesn't work when mounted. """
 
@@ -44,7 +62,7 @@ async def app_lifespan(server):
     # Create the volume directories first so they don't get created by docker and owned by the container user
     for host_path, container_path, mode in settings.volumes:
         host_path.mkdir(parents=True, exist_ok=True)
-    sandbox = await SANDBOX_CLASSES[settings.sandbox_mode](volumes=settings.volumes)
+    sandbox = await SANDBOX_SPAWN_FUNCS[settings.sandbox_mode](volumes=settings.volumes)
     try:
         yield
     finally:
@@ -124,7 +142,15 @@ def main():
     parser.add_argument("--transport", choices=["stdio", "http"], default="http")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8002)
+    parser.add_argument(
+        "--pre-build",
+        action="store_true",
+        help="Build/pull the sandbox image for the configured sandbox mode and exit without launching the MCP server."
+    )
     args = parser.parse_args()
+    if args.pre_build:
+        asyncio.run(SANDBOX_BUILD_FUNCS[settings.sandbox_mode]())
+        return
     if args.transport == "http":
         mcp.run(transport="http", host=args.host, port=args.port)
     else:

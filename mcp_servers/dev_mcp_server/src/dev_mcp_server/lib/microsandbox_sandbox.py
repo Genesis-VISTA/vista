@@ -106,18 +106,11 @@ class MicrosandboxSandbox(Sandbox):
         self._sandbox = sandbox
 
     @classmethod
-    async def spawn(
+    async def _build(
         cls,
-        volumes: list[Volume] | None = None,
-        env: dict[str, str] | None = None,
-        image: str | None = None,
         dockerfile: Path | str | None = None,
-        cpus: int = 1,
-        memory: int = 1024,
-    ) -> "MicrosandboxSandbox":
-
-        volumes = list(volumes or [])
-
+        image: str | None = None,
+    ):
         if dockerfile:
             image_ref = await _build_and_push_local_image(Path(dockerfile), image or "vista-sandbox")
         elif image:
@@ -127,24 +120,49 @@ class MicrosandboxSandbox(Sandbox):
 
         # For local (HTTP) registries pull the image explicitly with --insecure so the msb
         # runtime does not need any persistent config changes.
+        msb_args = [str(_msb_path()), "pull", image_ref]
         if image_ref.startswith("localhost:"):
-            logging.info(f"Pulling sandbox image {image_ref}...")
-            pull_proc = await asyncio.create_subprocess_exec(
-                str(_msb_path()), "pull", "--insecure", image_ref,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            msb_args.append("--insecure")
+        logging.info(f"Pulling sandbox image {image_ref}...")
+        pull_proc = await asyncio.create_subprocess_exec(
+            *msb_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await pull_proc.communicate()
+        if pull_proc.returncode != 0:
+            raise RuntimeError(
+                f"msb pull --insecure {image_ref!r} failed "
+                f"(exit {pull_proc.returncode}):\n{stderr.decode()}"
             )
-            _, stderr = await pull_proc.communicate()
-            if pull_proc.returncode != 0:
-                raise RuntimeError(
-                    f"msb pull --insecure {image_ref!r} failed "
-                    f"(exit {pull_proc.returncode}):\n{stderr.decode()}"
-                )
+        return image_ref
+
+    @classmethod
+    async def build(
+        cls,
+        dockerfile: Path | str | None = None,
+        image: str | None = None,
+    ) -> None:
+        await cls._build(dockerfile=dockerfile, image=image)
+
+    @classmethod
+    async def spawn(
+        cls,
+        volumes: list[Volume] | None = None,
+        env: dict[str, str] | None = None,
+        image: str | None = None,
+        dockerfile: Path | str | None = None,
+        cpus: int = 1,
+        memory: int = 1024,
+    ) -> "MicrosandboxSandbox":
+        volumes = list(volumes or [])
 
         msb_volumes = {
             str(dst): MsbVolume.bind(str(src), readonly=(mode == 'r'))
             for src, dst, mode in volumes
         }
+
+        image_ref = await cls._build(dockerfile=dockerfile, image=image)
 
         name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"
         logging.info(f"Launching microsandbox {name} from {image_ref}...")
@@ -157,7 +175,7 @@ class MicrosandboxSandbox(Sandbox):
             memory=memory,
             shell="/bin/bash",
             volumes=msb_volumes,
-            env=dict(env) if env else None,
+            env=dict(env) if env else {},
             network=Network.public_only(),
         )
         return cls(sandbox=sandbox)

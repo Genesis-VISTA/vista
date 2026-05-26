@@ -19,10 +19,8 @@ fi
 
 cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
 uv sync --frozen
-
-# This gets built automatically by the MCP server, but build it here so failures and logs are more clear
-cd "$REPO_ROOT/mcp_servers/dev_mcp_server/src/dev_mcp_server/docker"
-docker build -t vista-sandbox .
+# Pre-build the sandbox image so it's ready before the server starts.
+uv run dev-mcp-server --pre-build
 
 cd "$REPO_ROOT/backend"
 uv sync --frozen
