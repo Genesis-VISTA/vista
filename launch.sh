@@ -9,7 +9,6 @@ MODE="${1:-terminal}"
 ./build.sh
 
 export VISTA_MCP_URL="http://localhost:8000/mcp"
-export VISTA_DEV_MCP_URL="http://localhost:8002/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
 MCP_CMD="
@@ -17,16 +16,10 @@ MCP_CMD="
   uv run vista-mcp-server --transport=http;
 "
 
-DEV_MCP_CMD="
-  cd '$REPO_ROOT/mcp_servers/dev_mcp_server' &&
-  uv run dev-mcp-server --transport=http;
-"
-
 BACKEND_CMD="
   cd '$REPO_ROOT/backend' &&
-  echo 'Waiting for MCP servers...' &&
+  echo 'Waiting for MCP server...' &&
   until curl -s -o /dev/null '$VISTA_MCP_URL'; do sleep 1; done &&
-  until curl -s -o /dev/null '$VISTA_DEV_MCP_URL'; do sleep 1; done &&
   uv run vista-backend;
 "
 
@@ -72,8 +65,6 @@ case "$MODE" in
       -d -s vista-dev \
       "$MCP_CMD; exec bash" \; \
       split-window -h \
-      "$DEV_MCP_CMD; exec bash" \; \
-      split-window -v \
       "$BACKEND_CMD; exec bash" \; \
       split-window -v \
       "$UI_CMD; exec bash" \; \
@@ -83,7 +74,6 @@ case "$MODE" in
     launch_terminal "Backend" "$BACKEND_CMD; exec bash"
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
-    launch_terminal "Dev MCP Server" "$DEV_MCP_CMD; exec bash"
     ;;
   logs)
     LOG_DIR="$REPO_ROOT/logs"
@@ -100,14 +90,11 @@ case "$MODE" in
 
 
     echo "All services will be started, logging to:"
-    echo "  MCP server:     $LOG_DIR/mcp.log"
-    echo "  Dev MCP server: $LOG_DIR/dev_mcp.log"
-    echo "  Backend:        $LOG_DIR/backend.log"
-    echo "  UI:             $LOG_DIR/ui.log"
+    echo "  MCP server: $LOG_DIR/mcp.log"
+    echo "  Backend:    $LOG_DIR/backend.log"
+    echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
-    bash -c "$DEV_MCP_CMD" >> "$LOG_DIR/dev_mcp.log" 2>&1 &
-    pids+=($!)
     bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
     pids+=($!)
     bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &

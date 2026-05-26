@@ -1,13 +1,13 @@
 """
 Logic to build the actual PydanticAI Agent
 """
-import fnmatch, json, uuid, asyncio
+import fnmatch, json, os, uuid, asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
-from pydantic_ai.mcp import MCPServer, MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
+from pydantic_ai.mcp import MCPServer, MCPServerStdio, MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -113,15 +113,33 @@ def get_dev_mcp_server(
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
     log_handler: mcp.client.session.LoggingFnT | None = None,
-) -> MCPServerStreamableHTTP:
-    """ Connect to the dev_mcp_server (HTTP) for sandbox tools (run_bash, create_file, view). """
-    return MCPServerStreamableHTTP(
-        url=settings.dev_mcp_url,
+) -> MCPServerStdio:
+    """
+    Launch an dev_mcp_server instance via STDIO for sandbox tools (run_bash, create_file, view).
+
+    This is intended to be called once per `ProjectAgent` so that each (user, project) pair gets an
+    isolated sandbox.
+    """
+    dev_server_dir = settings.mcp_servers_path / "dev_mcp_server"
+    return MCPServerStdio(
+        command="uv",
+        args=["run", "dev-mcp-server", "--transport=stdio"],
+        cwd=str(dev_server_dir),
+        env={
+            # TODO: This is fine for dev server, but when we allow custom servers we'll need to rethink how env vars are set
+            # and how the MCP server itself is sandboxed.
+            **os.environ,
+            "VISTA_DEV_MCP_VOLUMES": json.dumps([
+                (str(settings.skills_dir), "/mnt/skills", 'r'),
+                (str(settings.output_dir), "/mnt/data/output", 'w'),
+                (str(settings.uploads_dir), "/mnt/data/uploads", 'w'),
+            ]),
+        },
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
         log_handler=log_handler,
         log_level="info" if log_handler else None,
-        timeout=10,
+        timeout=120,
         read_timeout=1800 + 60,
     )
 

@@ -7,7 +7,7 @@ import uvicorn
 
 from ..config import settings
 from ..db.db import init_db
-from ..agents.agents import get_vista_mcp_server, get_dev_mcp_server
+from ..agents.agents import get_vista_mcp_server
 from .agent import router as agent_router
 from ..utils.project import project_agent_pool
 from .auth import get_user
@@ -28,10 +28,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await init_db()
 
-    # Just check that the MCP server is up so we fail early if there's an issue
+    # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
-        await mcp_server.list_tools()
-    async with get_dev_mcp_server() as mcp_server:
         await mcp_server.list_tools()
 
     try:
