@@ -1,7 +1,7 @@
 """
 Logic to build the actual PydanticAI Agent
 """
-import fnmatch, json, os, uuid, asyncio
+import fnmatch, json, logging, os, shutil, uuid, asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from pathlib import Path
 
@@ -110,6 +110,7 @@ def get_vista_mcp_server(
     )
 
 def get_dev_mcp_server(
+    volumes: list[tuple[str, str, Literal['r', 'w']]],
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
     log_handler: mcp.client.session.LoggingFnT | None = None,
@@ -129,11 +130,7 @@ def get_dev_mcp_server(
             # TODO: This is fine for dev server, but when we allow custom servers we'll need to rethink how env vars are set
             # and how the MCP server itself is sandboxed.
             **os.environ,
-            "VISTA_DEV_MCP_VOLUMES": json.dumps([
-                (str(settings.skills_dir), "/mnt/skills", 'r'),
-                (str(settings.output_dir), "/mnt/data/output", 'w'),
-                (str(settings.uploads_dir), "/mnt/data/uploads", 'w'),
-            ]),
+            "VISTA_DEV_MCP_VOLUMES": json.dumps(volumes),
         },
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
@@ -148,6 +145,13 @@ class ProjectAgent:
     def __init__(self, project: ProjectPublic, user: UserPublicWithConfig):
         self.project = project
         self.user = user
+        # Id per project agent. A new ProjectAgent with the same input Project x User will have the
+        # same id
+        self.id = f"{project.id}-{user.id}"
+        self.volume_root = settings.data_dir / "volumes" / self.id
+        self.output_dir = self.volume_root / "data" / "output"
+        self.uploads_dir = self.volume_root / "data" / "uploads"
+        self.skills_volume_dir = self.volume_root / "skills"
         self._elicitations: dict[str, asyncio.Future] = {}
         # VISTAGuard sidecar: per-`ProjectAgent` composite that owns the security gates, capability
         # registry, trust scorer, incident manager, and provenance emitter. The sidecar's
@@ -202,6 +206,9 @@ class ProjectAgent:
                 log_handler=log_handler,
             ),
             get_dev_mcp_server(
+                volumes=[
+                    (str(self.volume_root), "/mnt", 'w'),
+                ],
                 elicitation_callback=elicitation_callback,
                 process_tool_call=process_tool_call,
                 log_handler=log_handler,
@@ -236,9 +243,10 @@ class ProjectAgent:
                 )
             parts.append(kb_block)
 
-            skills_block = to_prompt([settings.skills_dir / skill for skill in self.project.skills], {
-                settings.skills_dir: "/mnt/skills",
-            })
+            skills_block = to_prompt(
+                [self.skills_volume_dir / skill for skill in self.project.skills],
+                {self.skills_volume_dir: "/mnt/skills"},
+            )
             parts.append(skills_block)
 
             return "\n\n".join([p for p in parts if p])
@@ -302,11 +310,31 @@ class ProjectAgent:
         raise KeyError(f"Tool {name!r} not found on any MCP server")
 
     async def __aenter__(self):
+        await self._setup_volumes()
         await self.agent.__aenter__()
         return self
 
     async def __aexit__(self, *exc):
         await self.agent.__aexit__(*exc)
+
+    async def _setup_volumes(self) -> None:
+        """
+        Prepare the sandbox volumes. Note that volumes persist across reboots and ProjectAgent
+        evictions.
+        """
+        self.volume_root.mkdir(parents=True, exist_ok=True)
+
+        # Set up skill volume
+        shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
+        self.skills_volume_dir.mkdir()
+        for name in self.project.skills:
+            src = settings.skills_dir / name
+            if not src.is_dir():
+                logging.warning(f"Skill {name!r} not found at {src}; skipping")
+                continue
+            shutil.copytree(src, self.skills_volume_dir / name, symlinks=True)
+        proc = await asyncio.create_subprocess_exec("chmod", "-R", "o+rX", str(self.skills_volume_dir))
+        await proc.wait()
 
     def _make_mcp_process_tool_call(self):
         async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]) -> ToolResult:
@@ -314,13 +342,22 @@ class ProjectAgent:
             # creds via MCP metadata. Later we'll set up more generic MCP server configuration that supports 3rd party
             # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
             # environment vars/headers necessary.
-            metadata = {}
+            # The project_paths should also be changed to use env vars or some other mechanism.
+            metadata: dict[str, Any] = {
+                "vista": {
+                    "project_paths": {
+                        "skills_dir": str(self.skills_volume_dir),
+                        "output_dir": str(self.output_dir),
+                        "uploads_dir": str(self.uploads_dir),
+                    },
+                },
+            }
             HPC_TOOLS = {
                 "submit_hpc_job", "get_hpc_job_status",
                 "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
             }
             if name in HPC_TOOLS:
-                metadata["vista_user_config"] = self.user.model_dump(mode='json')
+                metadata["vista"]["user"] = self.user.model_dump(mode='json')
 
             if self._sidecar.is_active():
                 async def call_tool_wrapper(inner_name, inner_args, inner_metadata = None):

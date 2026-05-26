@@ -33,15 +33,15 @@ class AppSettings(BaseSettings):
     This is used to limit what files the display_file tool can render.
     """
     
-    uri_map: dict[str, str] = {
-        "file:///mnt/skills/": f"file://{Path('../../skills').resolve()}/",
-        "file:///mnt/data/output/": f"file://{Path('../../data/output').resolve()}/",
-        "file:///mnt/data/uploads/": f"file://{Path('../../data/uploads').resolve()}/",
-    }
-    """
-    Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks.
-    Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
-    """
+    # uri_map: dict[str, str] = {
+    #     "file:///mnt/skills/": f"file://{Path('../../skills').resolve()}/",
+    #     "file:///mnt/data/output/": f"file://{Path('../../data/output').resolve()}/",
+    #     "file:///mnt/data/uploads/": f"file://{Path('../../data/uploads').resolve()}/",
+    # }
+    # """
+    # Mapping of URI prefixes to replacement prefixes, applied after allowed_uris checks.
+    # Allows mapping paths inside the sandboxed container to paths outside for the display_file tool.
+    # """
 
     disable_servers: CommaSeparatedList[str] = ["agenthpc"]
     """
@@ -54,8 +54,6 @@ class AppSettings(BaseSettings):
 
     dockerfile: ResolvedPath = Path(__file__).parent / "docker/Dockerfile"
     image: str = "vista-sandbox"
-
-    output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../../data/output")
 
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
     hpc_account: str = "gen150-vista"

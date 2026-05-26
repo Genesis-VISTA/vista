@@ -23,6 +23,7 @@ from mcp.types import ToolAnnotations
 from ..config import settings
 from ..lib.ssh import get_ssh_conn_mcp_elicitation
 from ..lib.misc import get_tool_call_string
+from ..lib.user_config import get_vista_meta
 from . import hpc as hpc_ops
 from .application import BaseApplication, create_application, key_from_params
 from .config import available_apps, get_app_config
@@ -512,7 +513,7 @@ async def agenthpc_cancel_all_pending(
 # --------------------------------------------------------------------------- visualization
 
 # Sandbox-side prefix used when advertising the plot path to the chat UI.
-# display_file_mcp resolves this back to settings.output_dir via settings.volumes.
+# display_file_mcp resolves this back to the calling agent's host output dir
 _PLOT_SANDBOX_DIR = "/mnt/data/output/alloy-progress"
 
 
@@ -610,7 +611,7 @@ async def agenthpc_plot_progress(
     else:
         ax.legend(loc="best", **legend_kwargs)
 
-    host_dir: Path = settings.output_dir / "alloy-progress"
+    host_dir: Path = Path(get_vista_meta(ctx).project_paths.require_output_dir()) / "alloy-progress"
     host_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{app_type}_progress.png"
     host_path = host_dir / filename

@@ -5,13 +5,17 @@ from pathlib import Path
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
+from sqlmodel import select
 
 from ..config import settings
+from ..db.db import SessionDep
+from ..db.schemas import ProjectTable
 from ..utils.misc import write_file_unique, path_is_under
+from ..utils.project import project_agent_pool
+from .auth import UserDep
 
 
 router = APIRouter()
-
 
 
 def _sanitize_filename(name: str | None) -> str:
@@ -19,12 +23,13 @@ def _sanitize_filename(name: str | None) -> str:
         name = "upload.bin"
     return re.sub(r"[^A-Za-z0-9._-]", "_", Path(name).name)
 
-def _get_upload(name: str):
+
+def _get_upload(uploads_dir: Path, name: str) -> Path:
     """ Return upload path, checks for path traversal etc. and that it exists. """
     if _sanitize_filename(name) != name:
         raise HTTPException(status_code=404, detail="Not found")
-    path = settings.uploads_dir / name
-    if not path_is_under(settings.uploads_dir, path) or not path.is_file():
+    path = uploads_dir / name
+    if not path_is_under(uploads_dir, path) or not path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
     return path
 
@@ -35,58 +40,87 @@ class UploadInfo(BaseModel):
     created: datetime
     modified: datetime
 
-@router.get("/uploads")
-async def list_uploads() -> list[UploadInfo]:
-    uploads_dir = settings.uploads_dir
-    if not uploads_dir.exists(): return []
 
-    files: list[UploadInfo] = []
-    for file in uploads_dir.iterdir():
-        if not file.is_file():
-            continue
-        stat = file.stat()
-        files.append(UploadInfo(
-            name = file.name,
-            size = stat.st_size,
-            created = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
-            modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-        ))
-    files.sort(key=lambda f: f.modified, reverse=True)
-    return files
+@router.get("/projects/{project_name}/uploads")
+async def list_uploads(project_name: str, session: SessionDep, user: UserDep) -> list[UploadInfo]:
+    project = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    async with project_agent_pool.get((project.id, user.id)) as agent:
+        uploads_dir = agent.uploads_dir
+        if not uploads_dir.exists():
+            return []
+
+        files: list[UploadInfo] = []
+        for file in uploads_dir.iterdir():
+            if not file.is_file():
+                continue
+            stat = file.stat()
+            files.append(UploadInfo(
+                name = file.name,
+                size = stat.st_size,
+                created = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
+                modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+            ))
+        files.sort(key=lambda f: f.modified, reverse=True)
+        return files
 
 
-@router.post("/uploads")
-async def upload_files(files: list[UploadFile]) -> list[str]:
+@router.post("/projects/{project_name}/uploads")
+async def upload_files(
+    project_name: str, files: list[UploadFile], session: SessionDep, user: UserDep,
+) -> list[str]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
-    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    project = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    async with project_agent_pool.get((project.id, user.id)) as agent:
+        uploads_dir = agent.uploads_dir
+        uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    saved: list[str] = []
-    for file in files:
-        contents = await file.read()
-        if len(contents) > settings.max_upload_size:
-            raise HTTPException(status_code=400,
-                detail=f"File '{file.filename}' exceeds the {settings.max_upload_size.human_readable()} upload limit.",
-            )
-        file_path = settings.uploads_dir / _sanitize_filename(file.filename)
-        file_path = write_file_unique(file_path, contents)
-        saved.append(file_path.name)
+        saved: list[str] = []
+        for file in files:
+            contents = await file.read()
+            if len(contents) > settings.max_upload_size:
+                raise HTTPException(status_code=400,
+                    detail=f"File '{file.filename}' exceeds the {settings.max_upload_size.human_readable()} upload limit.",
+                )
+            file_path = uploads_dir / _sanitize_filename(file.filename)
+            file_path = write_file_unique(file_path, contents)
+            saved.append(file_path.name)
 
-    return saved
-
-
-@router.get("/uploads/{name}")
-async def download_upload(name: str) -> Response:
-    path = _get_upload(name)
-    return FileResponse(
-        path,
-        filename=path.name,
-        content_disposition_type="attachment",
-    )
+        return saved
 
 
-@router.delete("/uploads/{name}")
-async def delete_upload(name: str):
-    path = _get_upload(name)
+@router.get("/projects/{project_name}/uploads/{name}")
+async def download_upload(
+    project_name: str, name: str, session: SessionDep, user: UserDep,
+) -> Response:
+    project = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    async with project_agent_pool.get((project.id, user.id)) as agent:
+        path = _get_upload(agent.uploads_dir, name)
+    return FileResponse(path, filename=path.name, content_disposition_type="attachment")
+
+
+@router.delete("/projects/{project_name}/uploads/{name}")
+async def delete_upload(
+    project_name: str, name: str, session: SessionDep, user: UserDep,
+):
+    project = (await session.exec(
+        select(ProjectTable).where(ProjectTable.name == project_name)
+    )).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    async with project_agent_pool.get((project.id, user.id)) as agent:
+        path = _get_upload(agent.uploads_dir, name)
     path.unlink()
     return {"ok": True}

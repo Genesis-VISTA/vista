@@ -19,13 +19,7 @@ from .lib import s3m
 from .lib.ssh import Confirmation
 from .lib.s3m import S3mDefaults, get_s3m_client, init_s3m_ssh_conn
 from .lib.iri import IriClient, IriDefaults, create_iri_client
-from .lib.user_config import (
-    UserConfig,
-    get_user_config,
-    require_nersc_iri_token,
-    require_remote_hpc_jobs_dir,
-    require_s3m_token,
-)
+from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 
@@ -166,7 +160,7 @@ def _render_hpc_setup_script(cfg: UserConfig) -> str:
             "s3m_url", "s3m_resource",
             "nersc_iri_url", "nersc_machine",
         }),
-        remote_hpc_jobs_dir=require_remote_hpc_jobs_dir(cfg),
+        remote_hpc_jobs_dir=cfg.require_remote_hpc_jobs_dir(),
     )
 
 
@@ -210,7 +204,7 @@ async def submit_hpc_job(
     if duration_int and (duration_int > MAX_TIME or duration_int < 1):
         raise ValueError(f"Time limit too large (max: {MAX_TIME})")
 
-    cfg = get_user_config(ctx)
+    cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg)
     target = "odo" if cluster == "odo" else f"{settings.nersc_machine} (NERSC)"
 
@@ -255,9 +249,9 @@ async def _submit_odo_job(
     if odo_defaults is None:
         raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
-    remote_hpc_jobs_dir = Path(require_remote_hpc_jobs_dir(cfg))
+    remote_hpc_jobs_dir = Path(cfg.require_remote_hpc_jobs_dir())
     remote_job_dir = remote_hpc_jobs_dir / settings.session_id / job
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
+    s3m_client = get_s3m_client(s3m_token=cfg.require_s3m_token())
     check_result = await s3m_client.bash(f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
     if check_result.strip() != "true":
         await s3m_client.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
@@ -332,7 +326,7 @@ async def _submit_perlmutter_job(
             f"Add a {PERLMUTTER_JOB_SCRIPT} alongside job.slurm to enable Perlmutter submission."
         )
 
-    iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
+    iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     base = cfg.nersc_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
@@ -450,7 +444,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
             in-session cache; falls back to the only-configured cluster.
     """
     job_id = validate_job_id(job_id)
-    cfg = get_user_config(ctx)
+    cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg, job_id)
 
     if cluster == "odo":
@@ -459,7 +453,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
 
 
 async def _get_odo_job_status(cfg: UserConfig, job_id: str) -> str:
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
+    s3m_client = get_s3m_client(s3m_token=cfg.require_s3m_token())
     job_data = await s3m_client.get_job_status(job_id)
     job_name = job_data.get("status", {}).get("meta_data", {}).get("s3m", {}).get("name", "")
     if not job_name.startswith("vista-"):
@@ -472,7 +466,7 @@ async def _get_odo_job_status(cfg: UserConfig, job_id: str) -> str:
     }
 
     # Fetch logs and output file listing
-    remote_hpc_jobs_dir = Path(require_remote_hpc_jobs_dir(cfg))
+    remote_hpc_jobs_dir = Path(cfg.require_remote_hpc_jobs_dir())
     output_dir = remote_hpc_jobs_dir / "out" / job_id
     log_path = output_dir / "log.out"
     logs = await s3m_client.bash(f"cat {shlex.quote(str(log_path))} 2>/dev/null || true")
@@ -500,7 +494,7 @@ async def _get_odo_job_status(cfg: UserConfig, job_id: str) -> str:
 
 
 async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
-    iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
+    iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     status = await iri_client.get_job_status(job_id)
     state = status.get("state", "UNKNOWN").upper()
 
@@ -592,21 +586,23 @@ async def get_hpc_job_outputs(
         The downloaded file paths.
     """
     job_id = validate_job_id(job_id)
-    cfg = get_user_config(ctx)
+    meta = get_vista_meta(ctx)
+    cfg = meta.user
+    host_output_dir = Path(meta.project_paths.require_output_dir())
     cluster = _resolve_cluster(cluster, cfg, job_id)
 
     if cluster == "odo":
-        return await _get_odo_job_outputs(cfg, job_id, files)
-    return await _get_perlmutter_job_outputs(cfg, job_id, files)
+        return await _get_odo_job_outputs(cfg, host_output_dir, job_id, files)
+    return await _get_perlmutter_job_outputs(cfg, host_output_dir, job_id, files)
 
 
-async def _get_odo_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -> str:
-    remote_hpc_jobs_dir = Path(require_remote_hpc_jobs_dir(cfg))
+async def _get_odo_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
+    remote_hpc_jobs_dir = Path(cfg.require_remote_hpc_jobs_dir())
     remote_out_dir = remote_hpc_jobs_dir / "out" / job_id
-    local_out_dir = settings.output_dir / job_id
+    local_out_dir = host_output_dir / job_id
     sandbox_out_dir = Path("/mnt/data/output") / job_id
 
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
+    s3m_client = get_s3m_client(s3m_token=cfg.require_s3m_token())
     downloaded = []
     for file in files:
         remote_path = Path(os.path.normpath(remote_out_dir / file))
@@ -622,7 +618,7 @@ async def _get_odo_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -
     return "Downloaded files:\n" + "\n".join(downloaded)
 
 
-async def _get_perlmutter_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -> str:
+async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
     # IRI filesystem download is currently text-only; binary checkpoints are not supported here.
     submitted = _submitted_jobs.get(job_id)
     if submitted is None or submitted.output_dir is None:
@@ -631,8 +627,8 @@ async def _get_perlmutter_job_outputs(cfg: UserConfig, job_id: str, files: list[
             f"available for Perlmutter jobs submitted in the current session."
         )
 
-    iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
-    local_out_dir = settings.output_dir / job_id
+    iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
+    local_out_dir = host_output_dir / job_id
     sandbox_out_dir = Path("/mnt/data/output") / job_id
 
     downloaded = []
@@ -657,7 +653,7 @@ async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     Args:
         cluster: Which cluster to list jobs for. If omitted, lists from the only-configured cluster.
     """
-    cfg = get_user_config(ctx)
+    cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg)
     if cluster == "odo":
         return await _list_odo_jobs(cfg)
@@ -678,14 +674,14 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
         Confirmation of the cancellation request.
     """
     job_id = validate_job_id(job_id)
-    cfg = get_user_config(ctx)
+    cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg, job_id)
     if cluster == "odo":
         # S3M doesn't expose cancel directly; scancel over the existing SSH session works.
-        s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
+        s3m_client = get_s3m_client(s3m_token=cfg.require_s3m_token())
         await s3m_client.bash(f"scancel {shlex.quote(job_id)}")
     else:
-        iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
+        iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
         await iri_client.cancel_job(job_id)
     logging.info(f"Cancelled job {job_id} on {cluster}")
     return f"Cancellation requested for job {job_id} on {cluster}."
@@ -694,7 +690,7 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
 async def _list_odo_jobs(cfg: UserConfig) -> str:
     # /api/v1/compute/status/{resource_id} should work but has some odd behavior around "historical" currently
     # I think it only looks up very recent jobs. We may need to rethink how handle the job list
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
+    s3m_client = get_s3m_client(s3m_token=cfg.require_s3m_token())
     td = timedelta(hours=1)
     sacct_out = await s3m_client.bash("TZ=UTC " + shlex.join([
         "sacct", "--json", "--allocations",

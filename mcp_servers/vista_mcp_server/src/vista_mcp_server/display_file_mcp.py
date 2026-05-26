@@ -12,10 +12,31 @@ from typing import Annotated as A
 from fastmcp import FastMCP, Context
 from mcp.types import ToolAnnotations
 from .config import settings
+from .lib.user_config import ProjectPaths, get_vista_meta
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(name="Display File")
+
+
+def _build_uri_map(paths: ProjectPaths) -> dict[str, str]:
+    """
+    Build the per-call sandbox->host URI map from the calling agent's volume layout.
+    Mirrors the bind mounts set up in `ProjectAgent.__aenter__` /
+    `backend/.../agents.py::get_dev_mcp_server`.
+    """
+    sandbox_to_host = {
+        "/mnt/skills/": paths.skills_dir,
+        "/mnt/data/output/": paths.output_dir,
+        "/mnt/data/uploads/": paths.uploads_dir,
+    }
+    uri_map: dict[str, str] = {}
+    for sandbox_prefix, host_dir in sandbox_to_host.items():
+        if not host_dir:
+            continue
+        host_uri = Path(host_dir).resolve().as_uri()
+        uri_map[f"file://{sandbox_prefix}"] = host_uri + "/"
+    return uri_map
 
 
 def resolve_uri(uri: str, allowed_uris: list[str], uri_map: dict[str, str]) -> str:
@@ -55,7 +76,8 @@ async def display_file(
     """
     try:
         # Currently only file uris are allowed. We may adjust that if we switch back to using MCP Apps for more advanced rendering
-        resolved = Path.from_uri(resolve_uri(uri, settings.allowed_uris, settings.uri_map))
+        uri_map = _build_uri_map(get_vista_meta(ctx).project_paths)
+        resolved = Path.from_uri(resolve_uri(uri, settings.allowed_uris, uri_map))
     except ValueError as e:
         msg = f"Could not resolve {uri}: {e}"
         await ctx.warning(msg)

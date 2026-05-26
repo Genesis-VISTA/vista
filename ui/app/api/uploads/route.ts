@@ -10,17 +10,33 @@ type BackendUpload = {
   modified: string;
 };
 
+function requireProjectName(request: Request): { projectName: string } | NextResponse {
+  const projectName = new URL(request.url).searchParams.get("project_name");
+  if (!projectName) {
+    return NextResponse.json(
+      { ok: false, error: "Missing 'project_name' query parameter." },
+      { status: 400 }
+    );
+  }
+  return { projectName };
+}
+
 /**
- * GET /api/uploads — list uploaded files.
+ * GET /api/uploads?project_name=... — list uploaded files for a project agent.
  *
  * Backend returns `{name, size, created, modified}`. The frontend reads
  * `modifiedAt`, so we rename `modified` on the way out.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const resolved = requireProjectName(request);
+  if (resolved instanceof NextResponse) return resolved;
+  const { projectName } = resolved;
+
   try {
-    const upstream = await fetch(backendUrl("/uploads"), {
-      headers: { accept: "application/json" },
-    });
+    const upstream = await fetch(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/uploads`),
+      { headers: { accept: "application/json" } }
+    );
     if (!upstream.ok) {
       return NextResponse.json([], { status: 200 });
     }
@@ -37,12 +53,16 @@ export async function GET() {
 }
 
 /**
- * POST /api/uploads — forward the multipart body to the backend.
+ * POST /api/uploads?project_name=... — forward the multipart body to the backend.
  *
  * The backend's response is `list[str]` (saved filenames). The frontend
  * expects `{ok, saved}` with a 4xx body of `{ok: false, error}` on failure.
  */
 export async function POST(request: Request) {
+  const resolved = requireProjectName(request);
+  if (resolved instanceof NextResponse) return resolved;
+  const { projectName } = resolved;
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -62,10 +82,10 @@ export async function POST(request: Request) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl("/uploads"), {
-      method: "POST",
-      body: outgoing,
-    });
+    upstream = await fetch(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/uploads`),
+      { method: "POST", body: outgoing }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(

@@ -46,9 +46,11 @@ class Settings(BaseSettings):
     """
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
-    output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
-    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_UPLOADS_DIR")] = Path("../data/uploads")
 
+    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../data")
+    """ Directory for data such as sandbox volumes and other created files """
+
+    # TODO: combine this with data_dir
     knowledge_bases_dir: A[ResolvedPath, Field(validation_alias="VISTA_KNOWLEDGE_BASES_DIR")] = Path("../data/knowledge-bases")
     """
     Root directory for Knowledge Bases. Each KB gets a subdirectory:
