@@ -225,6 +225,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
+    { name = "microsandbox" },
     { name = "pydantic-settings" },
     { name = "python-magic" },
 ]
@@ -237,6 +238,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=3.1.1" },
+    { name = "microsandbox", specifier = ">=0.4.6" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-magic", specifier = ">=0.4.27" },
@@ -582,6 +584,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "microsandbox"
+version = "0.4.6"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/f9/8d0cf961d3f148369eec2cdf687cd327aef4bc59c9226d513d84790576c9/microsandbox-0.4.6-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:3e67c00882889a603603427f9b27229471977fe990fa9b6bc0b6cdbefb2739b1", size = 28995859, upload-time = "2026-05-13T22:17:43.875Z" },
+    { url = "https://files.pythonhosted.org/packages/91/f0/0655827438b4f858d1b9bbd4f8ea79a0d5dbd6c98a8b144e3534fc7a2998/microsandbox-0.4.6-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9a24ae7f7c338eca9e7b80bc5e1aa7acb46916ce43b1c0c61377f88ade8b2dfb", size = 30303200, upload-time = "2026-05-13T22:17:33.701Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/c7/6999cef522d849c6f98cd91d7f87692bbcd2ef055b20d2354e5fd1cb62cd/microsandbox-0.4.6-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:f1a88f03b795d82a61eb590b6c8f3b39335e80685ddc5aab4407efa5b998f1d5", size = 26605654, upload-time = "2026-05-13T22:17:38.415Z" },
 ]
 
 [[package]]

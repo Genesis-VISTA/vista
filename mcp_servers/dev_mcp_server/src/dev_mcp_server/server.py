@@ -11,9 +11,14 @@ from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
 from .lib.sandbox import Sandbox
 from .lib.container_sandbox import ContainerSandbox
+from .lib.microsandbox_sandbox import MicrosandboxSandbox
 from .lib.view import view_path
 
 SANDBOX_CLASSES: dict[str, Callable[..., Awaitable[Sandbox]]] = {
+    "microsandbox": lambda volumes=None, env=None: MicrosandboxSandbox.spawn(
+        volumes=volumes, env=env,
+        dockerfile=settings.dockerfile, image=settings.image,
+    ),
     "container": lambda volumes=None, env=None: ContainerSandbox.spawn(
         volumes=volumes, env=env,
         dockerfile=settings.dockerfile, image=settings.image,
@@ -68,9 +73,11 @@ async def run_bash(
     Avoid commands that produce a large amount of output — pipe to files instead.
     """
     proc = await sandbox.exec("bash", args=["-c", command], combine_streams=True)
+    # `msb exec` forwards its stdin to the guest and won't exit until that pipe closes.
+    if proc.stdin and not proc.stdin.is_closing(): proc.stdin.close()
     lines = []
     while True:
-        line = (await proc.stdout.readline()).decode()
+        line = (await proc.stdout.readline()).decode().replace("\r\n", "\n")
         if not line: break
         lines.append(line)
         await ctx.info(line.rstrip("\n"))

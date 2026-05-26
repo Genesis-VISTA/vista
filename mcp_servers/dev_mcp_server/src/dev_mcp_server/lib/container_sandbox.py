@@ -7,18 +7,7 @@ from pathlib import Path
 import logging
 
 from .sandbox import Sandbox, Volume
-
-
-async def check_output(*args, **kwargs):
-    proc = await asyncio.create_subprocess_exec(*args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        **kwargs,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"cmd '{' '.join(args)}' failed: {stderr.decode()}")
-    return stdout, stderr
+from .util import check_output
 
 
 def resolve_container_runtime(runtime: str | None = None) -> str:
@@ -126,7 +115,7 @@ class ContainerSandbox(Sandbox):
 
     async def exec(
         self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams = False,
+        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams: bool = False,
     ) -> asyncio.subprocess.Process:
         env = env or {}
         cmd = [self.runtime, "exec", "-i"]
