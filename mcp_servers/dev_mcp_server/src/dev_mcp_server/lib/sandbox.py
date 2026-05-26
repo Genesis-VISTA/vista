@@ -1,7 +1,7 @@
 import abc
 import asyncio
 import os
-import subprocess
+import uuid
 from typing import Literal, Sequence
 from pathlib import Path
 import logging
@@ -49,8 +49,11 @@ class Sandbox(abc.ABC):
 
 
 class DockerSandbox(Sandbox):
-    def __init__(self, container_id: str):
+    def __init__(self, container_id: str, proc: asyncio.subprocess.Process):
         self.container_id = container_id
+        # We keep the docker run as an attached process with `docker run --rm`. This makes sure that
+        # whenever the dev server dies, the container is removed.
+        self._proc = proc
 
     @classmethod
     async def spawn(
@@ -58,7 +61,7 @@ class DockerSandbox(Sandbox):
         volumes: Sequence[Volume] | None = None,
         env: dict[str, str] | None = None,
         image: str | None = None,
-        dockerfile: Path | str | None = None
+        dockerfile: Path | str | None = None,
     ) -> "DockerSandbox":
         volumes = list(volumes or [])
         env = env or {}
@@ -77,16 +80,53 @@ class DockerSandbox(Sandbox):
             await check_output("docker", "pull", image)
         logging.info("Launching sandbox docker image...")
 
-        # Run container
-        run_args = ["docker", "run", "-d"]
+        container_name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"
+        run_args = [
+            "docker", "run",
+            "--rm", "-i", "--init",
+            "--name", container_name,
+        ]
         for src, dst, mode in volumes:
             run_args += ["-v", f"{src}:{dst}" + (":ro" if mode == 'r' else '')]
-
         run_args += [f"--env={var}" for var in env.keys()]
-        run_args += [image, "sleep", "infinity"]
+        # `cat` with no args reads stdin forever and exits on EOF, making container
+        # lifetime a direct consequence of the host-side pipe staying open.
+        run_args += [image, "cat"]
 
-        stdout, stderr = await check_output(*run_args, env = {**os.environ, **env})
-        return cls(container_id=stdout.decode().strip())
+        proc = await asyncio.create_subprocess_exec(
+            *run_args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={**os.environ, **env},
+        )
+
+        # Poll until the container is running.
+        try:
+            while True:
+                if proc.returncode is not None:
+                    raise RuntimeError(f"docker run exited with code {proc.returncode} before container started")
+                try:
+                    out, _ = await check_output(
+                        "docker", "inspect", "--format={{.State.Running}}", container_name,
+                    )
+                except RuntimeError:
+                    out = b""  # container doesn't exist yet
+                if out.strip() == b"true":
+                    break
+                if out.strip() == b"false":
+                    raise RuntimeError(f"container {container_name} exited immediately")
+                await asyncio.sleep(0.1)
+        except BaseException:
+            if proc.stdin and not proc.stdin.is_closing():
+                proc.stdin.close()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            raise
+
+        return cls(container_id=container_name, proc=proc)
 
     async def exec(
         self, command: str, args: list[str] | None = None,
@@ -108,16 +148,12 @@ class DockerSandbox(Sandbox):
         )
 
     def close(self) -> None:
-        # proc = await asyncio.create_subprocess_exec("docker", "stop", self.container_id, "-t", "1")
-        # await proc.wait()
-        # proc = await asyncio.create_subprocess_exec("docker", "rm", "-f", self.container_id)
-        # await proc.wait()
-
-        # TODO: Running async processes in FastMCP lifespan function clean errors out because of
-        # some issues with how FastMCP handles the event loop. So I'm using sync here for now.
-        # Should change close back to async when I can
-        subprocess.run(["docker", "stop", self.container_id, "-t", "1"], capture_output=True)
-        subprocess.run(["docker", "rm", "-f", self.container_id], capture_output=True)
+        # Close the stdin pipe to the long-lived `docker run` client. PID 1 (`cat`) inside
+        # the container sees EOF, exits, and `--rm` reaps the container — no `docker stop` /
+        # `docker rm` calls required, so this method has nothing to await and can't get
+        # caught in the SIGKILL-mid-cleanup window the old implementation had.
+        if self._proc.stdin and not self._proc.stdin.is_closing():
+            self._proc.stdin.close()
 
 
 class UnSandbox(Sandbox):
