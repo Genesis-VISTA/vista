@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from dev_mcp_server.lib.sandbox import DockerSandbox
+from dev_mcp_server.lib.container_sandbox import ContainerSandbox
 from dev_mcp_server.lib.view import (
     DIRECTORY_LINE_LIMIT,
     LINE_LENGTH_LIMIT,
@@ -316,14 +316,14 @@ class TestViewPath:
 
     @pytest.fixture()
     async def sb(self, tmp_path):
-        sandbox = await DockerSandbox.spawn(
+        sandbox = await ContainerSandbox.spawn(
             volumes=[(tmp_path, "/test", "r")],
             dockerfile=settings.dockerfile, image=settings.image,
         )
         try:
             yield sandbox, tmp_path
         finally:
-            sandbox.close()
+            await sandbox.close()
 
     @pytest.mark.anyio
     async def test_text_file(self, sb):

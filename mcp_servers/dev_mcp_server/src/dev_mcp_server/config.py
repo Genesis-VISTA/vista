@@ -14,6 +14,14 @@ class AppSettings(BaseSettings):
         extra='ignore',
     )
 
+    sandbox_mode: Literal["container", "podman", "docker"] = "container"
+    """
+    Which sandbox backend to use.
+    - `container` runs commands inside a podman or docker container, whichever is available on the system.
+    - `docker` runs commands inside a docker container.
+    - `podman` runs commands inside a podman container.
+    """
+
     dockerfile: ResolvedPath = Path(__file__).parent / "docker" / "Dockerfile"
     image: str = "vista-sandbox"
 

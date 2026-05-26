@@ -5,12 +5,30 @@ import argparse
 
 from .config import settings # import before fastmcp so fastmcp reads our env vars
 
-from typing import Annotated as A
+from typing import Annotated as A, Callable, Awaitable
 from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
-from .lib.sandbox import Sandbox, DockerSandbox
+from .lib.sandbox import Sandbox
+from .lib.container_sandbox import ContainerSandbox
 from .lib.view import view_path
+
+SANDBOX_CLASSES: dict[str, Callable[..., Awaitable[Sandbox]]] = {
+    "container": lambda volumes=None, env=None: ContainerSandbox.spawn(
+        volumes=volumes, env=env,
+        dockerfile=settings.dockerfile, image=settings.image,
+    ),
+    "docker": lambda volumes=None, env=None: ContainerSandbox.spawn(
+        volumes=volumes, env=env,
+        dockerfile=settings.dockerfile, image=settings.image,
+        runtime="docker",
+    ),
+    "podman": lambda volumes=None, env=None: ContainerSandbox.spawn(
+        volumes=volumes, env=env,
+        dockerfile=settings.dockerfile, image=settings.image,
+        runtime="podman",
+    ),
+}
 
 sandbox: Sandbox
 """ I should be able to use ctx.lifespan_context for this, but it doesn't work when mounted. """
@@ -21,15 +39,11 @@ async def app_lifespan(server):
     # Create the volume directories first so they don't get created by docker and owned by the container user
     for host_path, container_path, mode in settings.volumes:
         host_path.mkdir(parents=True, exist_ok=True)
-    sandbox = await DockerSandbox.spawn(
-        volumes=settings.volumes,
-        dockerfile=settings.dockerfile,
-        image=settings.image,
-    )
+    sandbox = await SANDBOX_CLASSES[settings.sandbox_mode](volumes=settings.volumes)
     try:
         yield
     finally:
-        sandbox.close()
+        await sandbox.close()
 
 mcp = FastMCP(name="Dev MCP Server", lifespan=app_lifespan)
 
