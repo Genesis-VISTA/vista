@@ -25,6 +25,7 @@ from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from ..vistaguard import VistaGuardSidecar
+from ..vistaguard.quarantine import build_quarantine_agent
 from .skills import to_prompt
 
 
@@ -66,18 +67,7 @@ McpElicitationEvent = McpFormElicitationEvent | McpUrlElicitationEvent
 
 
 class ProjectAgentResult(BaseModel):
-    """
-    Result of a single agent turn (`ProjectAgent.run`, or the terminal event
-    of `ProjectAgent.run_stream`).
 
-    `new_messages` is a list of PydanticAI `ModelMessage` objects produced during this
-    run -- model requests, tool calls, tool returns, and the final text response. Append
-    them to your stored `message_history` to continue the conversation on the next call.
-
-    See https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents for the agent
-    run model and https://pydantic.dev/docs/ai/core-concepts/messages/ for the message
-    schema.
-    """
     new_messages: list[ModelMessage]
     """ Messages produced during this run; append to `message_history` for the next call. """
     usage: RunUsage
@@ -137,14 +127,6 @@ class ProjectAgent:
         self.project = project
         self.user = user
         self._elicitations: dict[str, asyncio.Future] = {}
-        # VISTAGuard sidecar: per-`ProjectAgent` composite that owns
-        # the security gates, capability registry, trust scorer,
-        # incident manager, and provenance emitter. The sidecar's
-        # `process_tool_call` is composed into the MCP hook chain in
-        # `_build_agent`. In Phase 0 the sidecar is inert (no gates built);
-        # enabling individual `VISTA_BACKEND_VISTAGUARD__G{N}_ENABLED` flags
-        # in later phases flips `self._sidecar.is_active()` to True
-        # and activates the composition automatically.
         self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
 
     def _build_agent(self,
@@ -189,6 +171,11 @@ class ProjectAgent:
             model=infer_model(settings.model),
             toolsets=[toolset],
         )
+
+        if settings.vistaguard.quarantine_enabled:
+            self._sidecar.attach_quarantine_agent(
+                build_quarantine_agent(settings.model)
+            )
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
@@ -244,17 +231,7 @@ class ProjectAgent:
         message_history: list[ModelMessage]|None = None,
         enable_elicitation: bool = False,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
-        """
-        Run the agent and return a stream of events.
-
-        Yields all events from Pydantic, see `pydantic_ai.messages.AgentStreamEvent` and
-        https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents for more info.
-
-        Also adds LogEvents of our own, that contains log lines from the agent and MCP server.
-
-        Pass enable_elicitation to support MCP elicitation. When enabled, it will yield an McpElicitation
-        event when elicitation is requested. You should call agent.resolve_elicitation with the result.
-        """
+        
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
         # Merge the agent's own event stream with our own MCP Server log notifications

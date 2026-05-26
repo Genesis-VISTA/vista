@@ -3,31 +3,47 @@ VistaGuardSidecar -- the per-session composite that `ProjectAgent`
 instantiates.
 """
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from ..db.schemas import ProjectPublic
 from .capabilities import CapabilityRegistry
 from .config import VistaGuardSettings
-from .gates.base import Gate
+from .gates.base import Gate, GateContext
+from .gates.g2_tool import (
+    HIGH_STAKES_FALLBACK,
+    G2ToolGate,
+    ToolMetadata,
+    discover_high_stakes_tools,
+    discover_tool_metadata,
+)
+from .gates.g3_hybrid import inject_hybrid_args, should_inject_hybrid
+from .gates.g3_rag import (
+    KB_POLICY_FILENAME,
+    G3RagGate,
+    KbPolicy,
+    load_kb_policy,
+    tag_rag_chunks,
+)
 from .incidents import IncidentManager
 from .provenance import ProvenanceEmitter
+from .tool_registry import (
+    MANIFEST_FILENAME,
+    ToolDescriptorRegistry,
+    load_manifest,
+)
 from .trust import TrustScorer
+
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------
 # Type aliases
 # -----------------------------------------------------------------
-#
-# `CallToolFn` matches the inner callback the PydanticAI MCP layer
-# hands to a `ProcessToolCallback`. We re-declare it here rather
-# than importing the full `ProcessToolCallback` type to keep the
-# sidecar testable without spinning up a real PydanticAI run
-# context. The signature -- (name, args, metadata=None) -> result
-# -- is the contract callers rely on; the result type is left as
-# Any because PydanticAI returns a union of every supported tool
-# return shape and pinning it here would only get in the way of
-# tests using fake callables.
+
 
 CallToolFn = Callable[..., Awaitable[Any]]
 
@@ -43,23 +59,7 @@ class VistaGuardSidecar:
     state.
 
     One sidecar is constructed per `ProjectAgent.run_stream`
-    invocation (i.e., per agent turn from VISTA's perspective). The
-    in-memory state -- capability registry, trust scorer, incident
-    manager's `last_incident`, provenance emitter's `last_event` --
-    is therefore session-scoped; durable audit lives in the
-    provenance JSONL (or, post-Phase 7, the Flowcept broker).
-
-    Phase-0 instances are inert: `is_active()` is False, the gate
-    set is empty, and `process_tool_call` passes through. The
-    structural acceptance criterion ("with `enabled=true` but all
-    gates disabled, `process_tool_call` is byte-identical to direct
-    `call_tool` invocation") is enforced by the construction order:
-    `is_active()` consults `self._gates`, which `_build_gates()`
-    leaves empty in Phase 0, so the disabled branch in
-    `process_tool_call` runs unconditionally.
-
-    Not thread-safe by design (see `CapabilityRegistry`'s docstring
-    for the rationale).
+    invocation (i.e., per agent turn from VISTA's perspective).
     """
 
     def __init__(
@@ -70,26 +70,6 @@ class VistaGuardSidecar:
         """
         Construct a sidecar for the given project.
 
-        Args:
-            settings: the VISTAGuard sub-model. Read for the
-                master/per-gate toggles, flowcept config, and
-                provenance log path. No env reads happen here --
-                the parent `Settings` class is responsible for
-                populating the sub-model.
-            project: the `ProjectPublic` whose agent turn this
-                sidecar is auditing. Stored for Phase-5 gates that
-                consult the project's knowledge-base list, tool
-                allow-list, or sensitivity settings. Phase-0 code
-                does not yet read project fields off the sidecar.
-
-        Raises:
-            ValueError: if `settings.flowcept_enabled is True` and
-                `flowcept_endpoint is None`. The exception
-                originates in `ProvenanceEmitter` and is allowed to
-                propagate -- the integration-plan §5 contract is
-                that mis-configured Flowcept settings fail at boot,
-                and the sidecar constructor is the earliest point
-                that catches it.
         """
         self._settings = settings
         self._project = project
@@ -111,6 +91,21 @@ class VistaGuardSidecar:
 
         # Phase-5 will populate from `settings.contracts_dir`.
         self._contracts: Any | None = None
+
+        # G2 cached MCP-tool metadata. 
+        self._high_stakes_tools: frozenset[str] = HIGH_STAKES_FALLBACK
+        self._tool_schemas: dict[str, dict[str, Any]] = {}
+        self._high_stakes_tools_populated: bool = False
+
+        # ETDI descriptor registry (Bhatt et al. arXiv 2506.01333).
+        self._tool_registry = ToolDescriptorRegistry(
+            manifest=self._load_manifest_if_present(),
+        )
+
+        # G3 corpus policy (sensitivity tiers + manifests).
+        # Loaded synchronously from
+        # `<contracts_dir>/<KB_POLICY_FILENAME>` if present
+        self._g3_kb_policy: KbPolicy = self._load_kb_policy_if_present()
 
         # `_build_gates()` is the single point where gate
         # construction lives. Phase 0 returns {}; Phase 1+ will
@@ -158,13 +153,50 @@ class VistaGuardSidecar:
         return self._contracts
 
     @property
+    def high_stakes_tools(self) -> frozenset[str]:
+        """
+        Tool names G2 treats as high-stakes for the current session.
+
+        """
+        return self._high_stakes_tools
+
+    @property
+    def tool_registry(self) -> ToolDescriptorRegistry:
+        """
+        ETDI descriptor registry holding startup-pinned hashes and
+        the operator-supplied manifest (if any). 
+        """
+        return self._tool_registry
+
+    @property
+    def g3_kb_policy(self) -> KbPolicy:
+        """
+        The corpus-policy snapshot G3 uses for sensitivity tier
+        and manifest checks.
+
+        """
+        return self._g3_kb_policy
+
+    @property
+    def tool_schemas(self) -> dict[str, dict[str, Any]]:
+        """
+        Per-tool `inputSchema` snapshots used by G2 for fast-tier
+        schema validation.
+        """
+        return dict(self._tool_schemas)
+
+    @property
+    def high_stakes_tools_populated(self) -> bool:
+        """
+        True iff `populate_high_stakes_tools` has been called and
+        succeeded against a live MCP server for this sidecar.
+        """
+        return self._high_stakes_tools_populated
+
+    @property
     def gates(self) -> Mapping[str, Gate]:
         """
         Read-only view of the active gate set.
-
-        Phase 0 is empty. Returned as a `Mapping` so callers can't
-        mutate the dict in-place; gate insertion is the sidecar's
-        responsibility via `_build_gates()`.
         """
         return self._gates
 
@@ -176,35 +208,12 @@ class VistaGuardSidecar:
         """
         True iff the master flag is on AND at least one gate is in
         the active set.
-
-        - `enabled=False` -> False (master flag off).
-        - `enabled=True`, no gates built (Phase 0) -> False.
-        - `enabled=True`, at least one gate built (Phase 1+) -> True.
-
-        The "no gates" branch is the load-bearing piece: a
-        deployment that flips the master flag on without enabling
-        any individual gate sees no behavioral change, because
-        `is_active()` is the predicate `ProjectAgent` will consult
-        before running any sidecar logic.
         """
         return self._settings.enabled and bool(self._gates)
 
     def is_gate_enabled(self, name: str) -> bool:
         """
         True iff the named gate is in the active set.
-
-        `name` is the short gate identifier (``"G1"`` .. ``"G7"``)
-        matching `Gate.name`. Returns False for unknown names
-        rather than raising, matching the contract that callers
-        (in particular Phase-3's `agents.py` G1 early-rejection
-        path) can ask "is G1 active?" unconditionally without
-        first checking whether the sidecar even has a G1
-        implementation.
-
-        Phase 0 returns False for every name because `_build_gates()`
-        produces an empty dict. The acceptance criterion explicitly
-        names G1-G7; we don't special-case those names because
-        absence from `self._gates` is already the right answer.
         """
         return name in self._gates
 
@@ -216,19 +225,6 @@ class VistaGuardSidecar:
         """
         Store the PydanticAI Q-LLM Agent for gates to invoke.
 
-        Phase 0 just records the reference; gates read it via
-        `GateContext.quarantine_agent` (the context is constructed
-        per-call by `process_tool_call` in Phase 1+).
-
-        Calling this twice replaces the previous agent. There is
-        no Phase-0 use case for multiple Q-LLMs and the simple
-        replace semantics make the Phase-1 wiring straightforward.
-
-        Typed `Any` because pinning the type to
-        `pydantic_ai.Agent` here would force every test and import
-        site to drag in PydanticAI even for the disabled-flag
-        path. Phase-1 will tighten this when the first real caller
-        passes a real `Agent`.
         """
         self._quarantine_agent = agent
 
@@ -246,23 +242,153 @@ class VistaGuardSidecar:
         """
         The PydanticAI tool-call hook.
 
-        In Phase 0 this is a strict pass-through: it forwards
-        directly to `call_tool(tool_name, args)`. The implementation
-        is *unconditional* (no `if self.is_active()` guard) because
-        Phase 0 does not yet have any gate logic to gate on -- the
-        guard arrives in Phase 1 alongside the first real gate body.
-
-        The signature matches PydanticAI's `ProcessToolCallback`
-        outer hook: `(ctx, call_tool, tool_name, args) -> result`.
-        The inner `call_tool` accepts a third `metadata` argument
-        that PydanticAI uses internally; the Phase-0 pass-through
-        omits it and relies on PydanticAI's default. Phase-1 gates
-        that need to forward metadata can extend the call site.
-
-        Returns:
-            The result of `call_tool(tool_name, args)` unmodified.
         """
+        if not self.is_active():
+            return await call_tool(tool_name, args)
+
+        if (
+            self._settings.g3_enabled
+            and tool_name == "rag_search"
+            and isinstance(args, dict)
+        ):
+            return await self._dispatch_rag_search(call_tool, args)
+
         return await call_tool(tool_name, args)
+
+    async def _dispatch_rag_search(
+        self,
+        call_tool: CallToolFn,
+        args: dict[str, Any],
+    ) -> Any:
+        """
+        G3 wiring around a single `rag_search` call.
+        """
+        # ----- Pre-call gate check (fast tier) ---------------------
+        g3 = self._gates.get("G3")
+        if isinstance(g3, G3RagGate):
+            kb_slug = args.get("kb_slug")
+            query = args.get("query")
+            if isinstance(kb_slug, str) and isinstance(query, str):
+                gate_ctx = GateContext(
+                    capability_registry=self._capability_registry,
+                    trust_scorer=self._trust_scorer,
+                )
+                fast = await g3.check_fast(
+                    {"kb_slug": kb_slug, "query": query},
+                    gate_ctx,
+                )
+                if not fast.allow:
+                    # Surface the denial through the same "ERROR:
+                    # ..." string shape rag_mcp uses for its own
+                    # error returns. The agent then sees a
+                    # structured failure it can react to.
+                    logger.warning(
+                        "VISTAGuard G3: rag_search denied (kb_slug=%r): %s",
+                        kb_slug, fast.reason,
+                    )
+                    return f"ERROR: {fast.reason}"
+
+        effective_args = args
+        if should_inject_hybrid(self._settings, "rag_search"):
+            effective_args = inject_hybrid_args(
+                args,
+                alpha=self._settings.g3_hybrid_alpha,
+            )
+
+        result = await call_tool("rag_search", effective_args)
+
+        # Post-call handling
+        if not isinstance(result, str):
+            return result
+
+        kb_slug_raw = args.get("kb_slug") if isinstance(args, dict) else None
+        kb_slug = str(kb_slug_raw) if kb_slug_raw else "unknown"
+
+        slow_tier_active = (
+            self._settings.quarantine_enabled
+            and self._quarantine_agent is not None
+        )
+        g3 = self._gates.get("G3")
+
+        if slow_tier_active and isinstance(g3, G3RagGate):
+            gate_ctx = GateContext(
+                capability_registry=self._capability_registry,
+                trust_scorer=self._trust_scorer,
+                quarantine_agent=self._quarantine_agent,
+            )
+            try:
+                slow_decision = await g3.sanitize_chunks(
+                    result, gate_ctx, kb_slug=kb_slug,
+                )
+            except Exception as exc:  
+                # Slow-tier failure must not crash the agent.
+                logger.warning(
+                    "VISTAGuard G3 slow-tier failed (%s: %s); "
+                    "falling back to fast-tier tag-only path",
+                    type(exc).__name__,
+                    exc,
+                )
+            else:
+                if slow_decision.rewritten_result is not None:
+                    # Slow tier rewrote the result; per-chunk tags
+                    # tagging.
+                    return slow_decision.rewritten_result
+                # Slow tier ran but didn't rewrite 
+
+        try:
+            tag_rag_chunks(
+                result,
+                kb_slug=kb_slug,
+                registry=self._capability_registry,
+            )
+        except Exception as exc:  
+            
+            logger.warning(
+                "VISTAGuard G3: chunk tagging failed (%s: %s); "
+                "downstream taint-propagation may be incomplete",
+                type(exc).__name__,
+                exc,
+            )
+
+        return result
+
+    # -----------------------------------------------------------------
+    # G2 high-stakes-tool discovery
+    # -----------------------------------------------------------------
+
+    async def populate_tool_metadata(self, mcp_url: str) -> ToolMetadata:
+        """
+        Refresh `high_stakes_tools` and `tool_schemas` from the MCP
+        """
+        metadata = await discover_tool_metadata(mcp_url)
+        self._high_stakes_tools = metadata.high_stakes
+        self._tool_schemas = dict(metadata.schemas)
+        # `discovered` flag drives the populated state directly 
+        self._high_stakes_tools_populated = metadata.discovered
+        # ETDI pinning: pin the startup descriptor hash for every
+        # discovered tool. 
+        for tool_name, descriptor in metadata.descriptors.items():
+            self._tool_registry.pin_startup(
+                tool_name,
+                description=descriptor.description,
+                input_schema=descriptor.input_schema,
+            )
+        # Rebind any already-built G2 gate to the fresh snapshot so
+        # the gate's view of the world matches the sidecar's. 
+        g2 = self._gates.get("G2")
+        if isinstance(g2, G2ToolGate):
+            g2.rebind_metadata(
+                high_stakes=metadata.high_stakes,
+                schemas=metadata.schemas,
+            )
+        return metadata
+
+    async def populate_high_stakes_tools(self, mcp_url: str) -> frozenset[str]:
+        """
+        Refresh `high_stakes_tools` only. 
+        """
+        metadata = await self.populate_tool_metadata(mcp_url)
+        return metadata.high_stakes
 
     # -----------------------------------------------------------------
     # Internals
@@ -271,24 +397,52 @@ class VistaGuardSidecar:
     def _build_gates(self) -> dict[str, Gate]:
         """
         Construct the active gate set from the per-gate flags.
-
-        Phase 0 returns `{}` because no concrete gate class exists
-        yet (`PassThroughGate` is a base-class test fixture, not a
-        production gate). Phase 1+ will populate this conditioned
-        on the `g{N}_enabled` flags:
-
-            gates: dict[str, Gate] = {}
-            if self._settings.g1_enabled:
-                gates["G1"] = PromptGate(...)
-            if self._settings.g2_enabled:
-                gates["G2"] = ToolGate(...)
-            ...
-            return gates
-
-        Keeping this as a separate method (rather than inlining in
-        `__init__`) means Phase 1+ can override the gate-build
-        policy in tests by subclassing `VistaGuardSidecar`. We do
-        not expect to use that hook in production -- the flag-based
-        construction is the supported configuration mechanism.
         """
-        return {}
+        gates: dict[str, Gate] = {}
+        if self._settings.g2_enabled:
+            gates["G2"] = G2ToolGate(
+                enabled=True,
+                allow_patterns=self._effective_tool_patterns(),
+                high_stakes=self._high_stakes_tools,
+                schemas=dict(self._tool_schemas),
+                # The gate stores a *reference* to the registry
+                tool_registry=self._tool_registry,
+            )
+        if self._settings.g3_enabled:
+            
+            gates["G3"] = G3RagGate(
+                enabled=True,
+                kb_sensitivity_tiers=self._g3_kb_policy.sensitivity_tiers,
+                corpus_manifests=self._g3_kb_policy.corpus_manifests,
+                query_injection_enabled=self._settings.g3_query_injection_enabled,
+            )
+        
+        return gates
+
+    def _load_manifest_if_present(self) -> dict[str, str]:
+        """
+        Read `<contracts_dir>/<MANIFEST_FILENAME>` and return the
+        pinned-hashes dict, or `{}` when no manifest exists.
+        """
+        contracts_dir = Path(self._settings.contracts_dir)
+        manifest_path = contracts_dir / MANIFEST_FILENAME
+        return load_manifest(manifest_path)
+
+    def _load_kb_policy_if_present(self) -> KbPolicy:
+        """
+        Read `<contracts_dir>/<KB_POLICY_FILENAME>` and return the
+        loaded `KbPolicy`, or an empty policy when the file is
+        absent or malformed. 
+        """
+        contracts_dir = Path(self._settings.contracts_dir)
+        policy_path = contracts_dir / KB_POLICY_FILENAME
+        return load_kb_policy(policy_path)
+
+    def _effective_tool_patterns(self) -> list[str]:
+        """
+        Compute the allow-list patterns G2 enforces.
+        """
+        patterns = list(self._project.tools or [])
+        if not self._project.knowledge_bases and "!rag_search" not in patterns:
+            patterns.append("!rag_search")
+        return patterns
