@@ -56,6 +56,9 @@ curl http://localhost:3000/api/mcp/health       # Smoke test
 
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
 
+The vista MCP server currently requires user ssh login on boot to support job submission. Set `VISTA_MCP_DISABLE_SERVERS=submit_job` to disable the job submission
+so you can run `./launch.sh logs` yourself.
+
 ## NextJS
 ALWAYS read docs before coding
 
