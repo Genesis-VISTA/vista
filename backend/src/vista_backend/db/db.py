@@ -71,6 +71,8 @@ def get_engine() -> AsyncEngine:
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA busy_timeout=30000")
                 cursor.execute("PRAGMA synchronous=NORMAL")
+                # Required for ON DELETE CASCADE; SQLite leaves FK enforcement off by default.
+                cursor.execute("PRAGMA foreign_keys=ON")
             finally:
                 cursor.close()
 
@@ -83,7 +85,12 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    from .defaults import DEFAULT_KNOWLEDGE_BASES, DEFAULT_PROJECTS, DEFAULT_USERS
+    from .defaults import (
+        DEFAULT_KNOWLEDGE_BASES,
+        DEFAULT_PROJECT_MEMBERS,
+        DEFAULT_PROJECTS,
+        DEFAULT_USERS,
+    )
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -136,6 +143,18 @@ async def init_db() -> None:
             )).first()
             if existing_user is None:
                 session.add(user)
+
+        for member in DEFAULT_PROJECT_MEMBERS:
+            existing_member = (await session.exec(
+                select(schemas.ProjectMemberTable).where(
+                    schemas.ProjectMemberTable.project_id == member.project_id,
+                    schemas.ProjectMemberTable.user_id == member.user_id,
+                )
+            )).first()
+            if existing_member is None:
+                session.add(schemas.ProjectMemberTable(
+                    project_id=member.project_id, user_id=member.user_id,
+                ))
 
         await session.commit()
 

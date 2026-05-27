@@ -13,7 +13,7 @@ async def get_user(session: SessionDep, request: Request) -> UserPublicWithConfi
     if settings.env == 'prod':
         raise HTTPException(status_code=501, detail="SSO authentication is not yet implemented")
     email = "vista-test-admin@americansciencecloud.org"
-    user = await user_service.get_user_by_email_optional(session, email)
+    user = await user_service.get_user_by_email_optional(session, email, user="system")
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return UserPublicWithConfig.model_validate(user)

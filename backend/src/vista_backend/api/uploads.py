@@ -42,7 +42,7 @@ class UploadInfo(BaseModel):
 
 @router.get("/projects/{project_name}/uploads")
 async def list_uploads(project_name: str, session: SessionDep, user: UserDep) -> list[UploadInfo]:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((project.id, user.id)) as agent:
         uploads_dir = agent.uploads_dir
         if not uploads_dir.exists():
@@ -69,7 +69,7 @@ async def upload_files(
 ) -> list[str]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((project.id, user.id)) as agent:
         uploads_dir = agent.uploads_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +92,7 @@ async def upload_files(
 async def download_upload(
     project_name: str, name: str, session: SessionDep, user: UserDep,
 ) -> Response:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((project.id, user.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     return FileResponse(path, filename=path.name, content_disposition_type="attachment")
@@ -102,7 +102,7 @@ async def download_upload(
 async def delete_upload(
     project_name: str, name: str, session: SessionDep, user: UserDep,
 ):
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((project.id, user.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     path.unlink()

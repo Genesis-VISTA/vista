@@ -60,7 +60,7 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
-    project_row = await project_service.get_project_by_name(session, project_name)
+    project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
 
     if body.stream:

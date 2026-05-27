@@ -27,25 +27,25 @@ async def get_me(user: UserDep, config: bool = False) -> UserPublicWithConfig | 
 async def update_me(
     updates: UserSelfUpdate, session: SessionDep, user: UserDep
 ) -> UserPublicWithConfig:
-    row = await user_service.update_user(session, user.id, updates)
+    row = await user_service.update_user(session, user.id, updates, user)
     return UserPublicWithConfig.model_validate(row)
 
 
 @router.get("")
 async def list_users(session: SessionDep, user: AdminDep) -> list[UserPublic]:
-    users = await user_service.list_users(session)
+    users = await user_service.list_users(session, user)
     return [UserPublic.model_validate(u) for u in users]
 
 
 @router.get("/{user_id}")
 async def get_user(user_id: uuid.UUID, session: SessionDep, user: AdminDep) -> UserPublic:
-    existing_user = await user_service.get_user_by_id(session, user_id)
+    existing_user = await user_service.get_user_by_id(session, user_id, user)
     return UserPublic.model_validate(existing_user)
 
 
 @router.post("", status_code=201)
 async def create_user(payload: UserCreate, session: SessionDep, user: AdminDep) -> UserPublic:
-    new = await user_service.create_user(session, payload)
+    new = await user_service.create_user(session, payload, user)
     return UserPublic.model_validate(new)
 
 
@@ -53,10 +53,10 @@ async def create_user(payload: UserCreate, session: SessionDep, user: AdminDep) 
 async def update_user(
     user_id: uuid.UUID, updates: UserUpdate, session: SessionDep, user: AdminDep
 ) -> UserPublic:
-    existing_user = await user_service.update_user(session, user_id, updates)
+    existing_user = await user_service.update_user(session, user_id, updates, user)
     return UserPublic.model_validate(existing_user)
 
 
 @router.delete("/{user_id}", status_code=204)
 async def delete_user(user_id: uuid.UUID, session: SessionDep, user: AdminDep) -> None:
-    await user_service.delete_user(session, user_id)
+    await user_service.delete_user(session, user_id, user)
