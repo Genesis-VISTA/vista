@@ -63,11 +63,9 @@ DEFAULT_USERS: list[UserTable] = [
     ),
 ]
 
-# Grant every default user access to every default project
 DEFAULT_PROJECT_MEMBERS: list[ProjectMemberTable] = [
-    ProjectMemberTable(project_id=project.id, user_id=user.id)
+    ProjectMemberTable(project_id=project.id, user_id=DEFAULT_USERS[1].id)
     for project in DEFAULT_PROJECTS
-    for user in DEFAULT_USERS
 ]
 
 DEFAULT_KNOWLEDGE_BASES: list[KnowledgeBaseTable] = [
