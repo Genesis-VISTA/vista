@@ -164,6 +164,13 @@ export type ProjectPublic = {
   usage_limits: Record<string, unknown>;
 };
 
+/** Backend `UserPublic` — returned by `GET /projects/{name}/members`. */
+export type UserPublic = {
+  id: string;
+  email: string;
+  is_admin: boolean;
+};
+
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */
 export type ProjectCreate = {
   name: string;

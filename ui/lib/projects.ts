@@ -12,9 +12,9 @@
  */
 
 import { useEffect, useReducer, useSyncExternalStore } from "react";
-import type { ProjectCreate, ProjectPublic } from "./agent-events";
+import type { ProjectCreate, ProjectPublic, UserPublic } from "./agent-events";
 
-export type { ProjectCreate, ProjectPublic };
+export type { ProjectCreate, ProjectPublic, UserPublic };
 
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
 export interface Project {
@@ -255,4 +255,27 @@ export async function deleteProject(name: string): Promise<void> {
   const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
   await refreshProjects();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Membership helpers                                                 */
+/* ------------------------------------------------------------------ */
+
+export async function listProjectMembers(name: string): Promise<UserPublic[]> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(name)}/members`,
+    { headers: { accept: "application/json" } }
+  );
+  if (!res.ok) throw new Error(await extractError(res));
+  const data = (await res.json()) as UserPublic[];
+  return Array.isArray(data) ? data : [];
+}
+
+export async function addProjectMember(name: string, email: string): Promise<void> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/members`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok && res.status !== 201) throw new Error(await extractError(res));
 }

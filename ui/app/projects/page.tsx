@@ -5,9 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import {
   type Project,
+  type UserPublic,
   activateProject,
+  addProjectMember,
   createProject,
   deleteProject,
+  listProjectMembers,
   notifyActiveProjectChanged,
   toCreate,
   updateProject,
@@ -22,7 +25,8 @@ type ProjectDraft = Omit<Project, "id">;
 type ModalState =
   | { mode: "closed" }
   | { mode: "create" }
-  | { mode: "edit"; project: Project };
+  | { mode: "edit"; project: Project }
+  | { mode: "members"; project: Project };
 
 export default function ProjectsPage() {
   // useSearchParams forces this page out of static prerender; wrap in
@@ -133,6 +137,7 @@ function ProjectsPageContent() {
               active={activeName === project.name}
               onOpen={() => open(project)}
               onEdit={() => setModal({ mode: "edit", project })}
+              onMembers={() => setModal({ mode: "members", project })}
               onDelete={() => void removeProject(project)}
             />
           ))}
@@ -147,7 +152,7 @@ function ProjectsPageContent() {
         </div>
       </div>
 
-      {modal.mode !== "closed" && (
+      {(modal.mode === "create" || modal.mode === "edit") && (
         <ProjectModal
           mode={modal.mode}
           initial={modal.mode === "edit" ? modal.project : undefined}
@@ -160,6 +165,13 @@ function ProjectsPageContent() {
           }
         />
       )}
+
+      {modal.mode === "members" && (
+        <MembersModal
+          project={modal.project}
+          onClose={() => setModal({ mode: "closed" })}
+        />
+      )}
     </div>
   );
 }
@@ -169,12 +181,14 @@ function ProjectCard({
   active,
   onOpen,
   onEdit,
+  onMembers,
   onDelete,
 }: {
   project: Project;
   active: boolean;
   onOpen: () => void;
   onEdit: () => void;
+  onMembers: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -198,6 +212,9 @@ function ProjectCard({
         <button type="button" className="button ghost button-sm" onClick={onEdit}>
           Edit
         </button>
+        <button type="button" className="button ghost button-sm" onClick={onMembers}>
+          Members
+        </button>
         <button type="button" className="button ghost button-sm" onClick={onDelete}>
           Delete
         </button>
@@ -220,6 +237,145 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
             </span>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+function MembersModal({
+  project,
+  onClose,
+}: {
+  project: Project;
+  onClose: () => void;
+}) {
+  const [members, setMembers] = useState<UserPublic[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [email, setEmail] = useState("");
+  const [addError, setAddError] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  async function loadMembers() {
+    setLoading(true);
+    setLoadError("");
+    try {
+      setMembers(await listProjectMembers(project.name));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load members.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.name]);
+
+  async function addMember() {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setAddError("Email is required.");
+      return;
+    }
+    setAdding(true);
+    setAddError("");
+    try {
+      await addProjectMember(project.name, trimmed);
+      setEmail("");
+      await loadMembers();
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : "Failed to add member.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal project-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label={`Members of ${project.name}`}
+      >
+        <div className="panel-header">
+          <div className="panel-title">Members — {project.name}</div>
+          <button type="button" className="button ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="project-modal-label">
+            <div>Add member</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                className="input"
+                type="email"
+                value={email}
+                placeholder="user@example.com"
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void addMember();
+                  }
+                }}
+                disabled={adding}
+                autoFocus
+                style={{ flex: 1 }}
+              />
+              <button
+                type="button"
+                className="button"
+                onClick={() => void addMember()}
+                disabled={adding}
+              >
+                {adding ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </div>
+
+          {addError && (
+            <div className="error" style={{ fontSize: 12 }}>
+              {addError}
+            </div>
+          )}
+
+          <div className="project-modal-label">
+            <div>Current members</div>
+            {loadError ? (
+              <div className="error" style={{ fontSize: 12 }}>
+                {loadError}{" "}
+                <button
+                  type="button"
+                  className="button ghost button-xs"
+                  onClick={() => void loadMembers()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : loading ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading members…</div>
+            ) : members.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>No members yet.</div>
+            ) : (
+              <div className="project-modal-skill-list">
+                {members.map((m) => (
+                  <div key={m.id} className="project-modal-skill-item">
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{m.email}</div>
+                      {m.is_admin && (
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>admin</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
