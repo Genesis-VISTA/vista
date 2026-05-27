@@ -26,7 +26,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated as A, Optional
+from typing import Annotated as A, Any, Optional
 
 import chromadb
 from fastmcp import FastMCP
@@ -34,7 +34,14 @@ from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
 from sentence_transformers import SentenceTransformer
 
+from .bm25 import BM25Okapi
 from .config import settings
+from .hybrid_search import RetrievalResult, merge_retrievals
+
+
+# Filename of the BM25 corpus that `build_rag.py` writes alongside
+# each KB's ChromaDB store. 
+_BM25_CORPUS_FILENAME = "bm25_corpus.json"
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +60,8 @@ class _KbHandle:
     db_path: Path
     text_collection: chromadb.Collection | None
     citation_collection: chromadb.Collection | None
+    bm25: BM25Okapi | None = None
+
 
 
 # ---------------------------------------------------------------------------
@@ -168,11 +177,16 @@ async def app_lifespan(server):
             )
             citation_collection = None
 
+        # VISTAGuard G3 hybrid-retrieval defense (Semantic Chameleon
+        # arXiv 2603.18034). 
+        bm25 = _load_bm25_corpus(slug, db_path)
+
         _kbs[slug] = _KbHandle(
             slug=slug,
             db_path=db_path,
             text_collection=text_collection,
             citation_collection=citation_collection,
+            bm25=bm25,
         )
 
     yield  # server runs
@@ -193,15 +207,44 @@ def _embed(text: str) -> list[float]:
     return vec[0].tolist()
 
 
+def _load_bm25_corpus(slug: str, db_path: Path) -> BM25Okapi | None:
+    """
+    Read `<db_path>/<_BM25_CORPUS_FILENAME>` and return the loaded
+    BM25 index. Every failure mode is non-fatal -- we log and
+    return None so the hybrid-retrieval path can degrade to
+    vector-only.
+    """
+    corpus_path = db_path / _BM25_CORPUS_FILENAME
+    if not corpus_path.exists():
+        logger.info(
+            "RAG: BM25 corpus %s not found for KB %r; hybrid retrieval "
+            "will degrade to vector-only for this KB until "
+            "`python build_rag.py` is re-run.",
+            corpus_path, slug,
+        )
+        return None
+    try:
+        raw = corpus_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        bm25 = BM25Okapi.from_dict(data)
+    except Exception as exc:  # noqa: BLE001 -- defensive
+        logger.warning(
+            "RAG: could not load BM25 corpus for KB %r from %s "
+            "(%s: %s); hybrid retrieval will degrade to vector-only.",
+            slug, corpus_path, type(exc).__name__, exc,
+        )
+        return None
+    logger.info(
+        "RAG: loaded BM25 corpus for KB %r (%d chunks) from %s",
+        slug, len(bm25), corpus_path,
+    )
+    return bm25
+
+
 def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
     """
     Look up the KB handle for `kb_slug`. Returns (handle, error_message).
 
-    When kb_slug is omitted and exactly one KB is registered, return that
-    one — keeps the tool useful for single-KB deployments without forcing
-    the agent to know the slug. When multiple are registered and no slug
-    is given, return an error listing the choices so the model can
-    self-correct.
     """
     if not _kbs:
         return None, (
@@ -310,6 +353,21 @@ async def rag_search(
         "registered server-side.",
     ] = None,
     n_results: A[int, "Number of passages to return (1–20)"] = 5,
+    hybrid: A[
+        bool,
+        "When True, fuse BM25 lexical retrieval with vector retrieval "
+        "(Semantic Chameleon hybrid-search defense). Default False keeps "
+        "the legacy vector-only behavior byte-identical to pre-VISTAGuard "
+        "deployments. The VISTAGuard backend sets this transparently when "
+        "the G3 hybrid retrieval setting is enabled.",
+    ] = False,
+    alpha: A[
+        float,
+        "When `hybrid=True`, the weight on the vector modality (0.0 = "
+        "BM25 only, 1.0 = vector only, 0.5 = equal weight). Ignored "
+        "when `hybrid=False`. Default 0.5 matches the Semantic "
+        "Chameleon paper's reported configuration.",
+    ] = 0.5,
 ) -> str:
     """
     Search an indexed literature corpus (papers, reports, technical notes)
@@ -326,6 +384,22 @@ async def rag_search(
 
     Returns passages with source filename, page number, and full citation
     (title, authors, journal, year, DOI) when available.
+
+    ## Hybrid retrieval
+
+    When `hybrid=True`, the tool fuses BM25 lexical retrieval with
+    the existing vector retrieval (Semantic Chameleon arXiv
+    2603.18034). The merged ranking demotes chunks that score
+    only on one modality, which is the signature of gradient-
+    guided embedding-poisoning attacks (PoisonedRAG, AgentPoison).
+    See `hybrid_search.merge_retrievals` for the merge formula.
+
+    Hybrid retrieval requires a `bm25_corpus.json` next to the
+    KB's ChromaDB store. `build_rag.py` writes this at indexing
+    time. When the file is missing for the queried KB, hybrid
+    degrades to vector-only with a log warning -- the caller's
+    `hybrid=True` is preserved as intent but the returned
+    results are unchanged from the legacy path.
     """
     handle, err = _resolve_kb(kb_slug)
     if err is not None or handle is None:
@@ -340,6 +414,13 @@ async def rag_search(
 
     n_results = max(1, min(n_results, 20))
 
+    if hybrid:
+        formatted = _hybrid_retrieve(handle, query, n_results, alpha)
+        if formatted is not None:
+            return formatted
+        # Fall through to vector-only on hybrid degradation. We
+        # log inside `_hybrid_retrieve` so the operator sees why.
+
     query_embedding = _embed(query)
     raw = handle.text_collection.query(
         query_embeddings=[query_embedding],
@@ -353,16 +434,168 @@ async def rag_search(
         )
 
     # Build response with citations
+    return _format_results(
+        handle,
+        documents=raw["documents"][0],
+        metadatas=raw["metadatas"][0],
+    )
+
+
+def _hybrid_retrieve(
+    handle: _KbHandle,
+    query: str,
+    n_results: int,
+    alpha: float,
+) -> str | None:
+    """
+    Run vector + BM25 retrieval, merge, format. 
+    """
+    if handle.bm25 is None:
+        logger.warning(
+            "RAG: hybrid=True requested for KB %r but no BM25 corpus is "
+            "loaded; degrading to vector-only retrieval.",
+            handle.slug,
+        )
+        return None
+
+    over_k = min(20, n_results * 4)
+
+    # Vector retrieval -- ask ChromaDB for over-K candidates.
+    query_embedding = _embed(query)
+    raw = handle.text_collection.query(
+        query_embeddings=[query_embedding],
+        n_results=over_k,
+        include=["documents", "metadatas", "distances"],
+    )
+    if not raw["documents"] or not raw["documents"][0]:
+        return (
+            f"No relevant passages found for the query in Knowledge Base "
+            f"{handle.slug!r}."
+        )
+
+    vector_results = _chromadb_to_retrieval_results(raw)
+
+    # BM25 retrieval over the same K.
+    bm25_hits = handle.bm25.query(query, top_k=over_k)
+    # Look up each BM25 hit's metadata from chromadb so the merged
+    # output's `metadata` matches what vector-only callers expect.
+    bm25_results: list[RetrievalResult] = []
+    if bm25_hits:
+        bm25_ids = [hit.chunk_id for hit in bm25_hits]
+        try:
+            bm25_meta_raw = handle.text_collection.get(
+                ids=bm25_ids,
+                include=["documents", "metadatas"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "RAG: BM25 metadata lookup failed for KB %r (%s); "
+                "BM25 results will carry empty metadata.",
+                handle.slug, exc,
+            )
+            bm25_meta_raw = None
+
+        if bm25_meta_raw is not None:
+            # Index the lookup by chunk_id so we don't depend on
+            # the order ChromaDB returned them in.
+            meta_by_id: dict[str, dict[str, Any]] = {}
+            doc_by_id: dict[str, str] = {}
+            for cid, doc, meta in zip(
+                bm25_meta_raw.get("ids") or [],
+                bm25_meta_raw.get("documents") or [],
+                bm25_meta_raw.get("metadatas") or [],
+            ):
+                meta_by_id[str(cid)] = dict(meta or {})
+                doc_by_id[str(cid)] = str(doc or "")
+            for hit in bm25_hits:
+                bm25_results.append(
+                    RetrievalResult(
+                        chunk_id=hit.chunk_id,
+                        document=doc_by_id.get(hit.chunk_id, hit.document),
+                        metadata=meta_by_id.get(hit.chunk_id, {}),
+                        score=hit.score,
+                    )
+                )
+        else:
+            # Best-effort: use BM25's own copy of the text and
+            # an empty metadata dict. 
+            bm25_results = [
+                RetrievalResult(
+                    chunk_id=hit.chunk_id,
+                    document=hit.document,
+                    metadata={},
+                    score=hit.score,
+                )
+                for hit in bm25_hits
+            ]
+
+    merged = merge_retrievals(
+        vector_results=vector_results,
+        bm25_results=bm25_results,
+        alpha=alpha,
+        top_k=n_results,
+    )
+
+    if not merged:
+        return (
+            f"No relevant passages found for the query in Knowledge Base "
+            f"{handle.slug!r}."
+        )
+
+    return _format_results(
+        handle,
+        documents=[r.document for r in merged],
+        metadatas=[r.metadata for r in merged],
+    )
+
+
+def _chromadb_to_retrieval_results(
+    raw: dict[str, Any],
+) -> list[RetrievalResult]:
+    """
+    Convert ChromaDB's `query()` response into a list of
+    `RetrievalResult` ranked by vector similarity (highest first).
+
+    """
+    ids = raw.get("ids", [[]])[0]
+    docs = raw.get("documents", [[]])[0]
+    metas = raw.get("metadatas", [[]])[0]
+    distances = raw.get("distances", [[]])[0]
+    results: list[RetrievalResult] = []
+    for i, (cid, doc, meta) in enumerate(zip(ids, docs, metas)):
+        dist = distances[i] if i < len(distances) else 0.0
+        # Cosine distance -> similarity. 
+        similarity = max(0.0, 1.0 - float(dist))
+        results.append(
+            RetrievalResult(
+                chunk_id=str(cid),
+                document=str(doc or ""),
+                metadata=dict(meta or {}),
+                score=similarity,
+            )
+        )
+    return results
+
+
+def _format_results(
+    handle: _KbHandle,
+    *,
+    documents: list[str],
+    metadatas: list[dict],
+) -> str:
+    """
+    Build the formatted-text response shared by the vector-only
+    and hybrid paths. Factored out so the two paths agree on
+    citation lookup, header formatting, and the separator.
+    """
     seen_sources: dict[str, Optional[dict]] = {}
     output_parts: list[str] = []
 
-    for idx, (doc, meta) in enumerate(
-        zip(raw["documents"][0], raw["metadatas"][0]), 1
-    ):
+    for idx, (doc, meta) in enumerate(zip(documents, metadatas), 1):
+        meta = meta or {}
         source = meta.get("source", "unknown")
         page = meta.get("page", "?")
 
-        # Lazy-load citation for each unique source
         if source not in seen_sources:
             seen_sources[source] = _get_citation_for_source(handle, source)
 

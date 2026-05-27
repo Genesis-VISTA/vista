@@ -25,6 +25,7 @@ from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from ..vistaguard import VistaGuardSidecar
+from ..vistaguard.quarantine import build_quarantine_agent
 from .skills import to_prompt
 
 
@@ -153,12 +154,6 @@ class ProjectAgent:
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
         self._elicitations: dict[str, asyncio.Future] = {}
-        # VISTAGuard sidecar: per-`ProjectAgent` composite that owns the security gates, capability
-        # registry, trust scorer, incident manager, and provenance emitter. The sidecar's
-        # `process_tool_call` is composed into the MCP hook chain in `_make_mcp_process_tool_call`.
-        # In Phase 0 the sidecar is inert (no gates built); enabling individual
-        # `VISTA_BACKEND_VISTAGUARD__G{N}_ENABLED` flags in later phases flips
-        # `self._sidecar.is_active()` to True and activates the composition automatically.
         self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
 
         # We need to pass constant callbacks to the MCP server, so that we can reuse the same PydanticAI MCPServer
@@ -221,6 +216,11 @@ class ProjectAgent:
             toolsets=toolsets,
             end_strategy='exhaustive',
         )
+
+        if settings.vistaguard.quarantine_enabled:
+            self._sidecar.attach_quarantine_agent(
+                build_quarantine_agent(settings.model)
+            )
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:

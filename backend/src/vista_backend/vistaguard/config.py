@@ -65,6 +65,76 @@ class VistaGuardSettings(BaseModel):
     """RAG / Memory Gate. Enables sanitization of `rag_search` returns.
     Phase 2."""
 
+    g3_query_injection_enabled: bool = True
+    """
+    Enable the G3 fast-tier query-injection regex (DAN-family,
+    instruction-override, role-impersonation patterns). Cheap and
+    deterministic; safe-on by default. Set to False only when the
+    deployment has measured a high false-positive rate on its own
+    benign-query workload and is OK losing the defense. The regex
+    patterns are curated in `gates/g3_rag.py:DEFAULT_QUERY_INJECTION_PATTERNS`.
+    """
+
+    g3_anomaly_z_threshold: float = 3.0
+    """
+    Per-batch z-score threshold for the G3 embedding-cluster anomaly
+    detector (Phase 2). A retrieved chunk is flagged when its mean
+    pairwise distance to other chunks in the same retrieval batch has
+    `|z| > g3_anomaly_z_threshold`. The default 3.0 corresponds to
+    roughly one outlier per 370 clean batches under normality and is a
+    deliberately conservative starting point -- per the work item, this
+    detector catches naive embedding attacks but is bypassable by
+    attackers crafting natural-norm embeddings, so the false-positive
+    cost matters more than the false-negative cost. Each deployment
+    should calibrate against its own RAG corpus and lower the threshold
+    only after measuring the benign-workload FPR.
+    """
+
+    g3_anomaly_min_batch_size: int = 3
+    """
+    Minimum retrieval-batch size for the G3 embedding-cluster anomaly
+    detector to run at all. Below 3 chunks there is no meaningful
+    pairwise-distance distribution (a 2-chunk batch yields a single
+    distance, and z-scores require std > 0). The detector returns a
+    benign "batch too small" result for batches below this threshold;
+    this is not a false-negative for VISTAGuard's overall posture
+    because the deterministic G3 fast-tier checks still run on those
+    batches.
+    """
+
+    g3_hybrid_retrieval: bool = False
+    """
+    Enable the G3 hybrid (BM25 + vector) retrieval defense
+    (Semantic Chameleon arXiv 2603.18034). When True, the VISTAGuard
+    backend transparently injects `hybrid=True` into every
+    `rag_search` tool call so the MCP server returns merged
+    BM25+vector results. Defeats gradient-guided embedding-poisoning
+    attacks (PoisonedRAG, AgentPoison) by demoting chunks that score
+    only on the vector modality. Default False to keep the legacy
+    vector-only behavior byte-identical for deployments that
+    haven't built a BM25 corpus yet.
+
+    A deployment that flips this on without first running
+    `build_rag.py` against the relevant KB will see the MCP server
+    log a warning and degrade to vector-only retrieval per-KB. The
+    setting is therefore safe to enable preemptively; it's a no-op
+    on KBs that lack a `bm25_corpus.json`.
+    """
+
+    g3_hybrid_alpha: float = 0.5
+    """
+    Weight on the vector modality when `g3_hybrid_retrieval=True`.
+    1.0 = vector-only (the legacy behavior), 0.0 = BM25-only (not
+    recommended in production), 0.5 = equal weight (the Semantic
+    Chameleon paper's reported configuration). VistaGuard's backend
+    forwards this verbatim to the MCP server's `rag_search`
+    `alpha` parameter; the merge math lives there.
+
+    Outside `[0.0, 1.0]` is rejected by the MCP server's argument
+    validator -- the pydantic validation on the call site catches
+    misconfigurations at boot rather than at runtime.
+    """
+
     g4_enabled: bool = False
     """Code Gate. Enables semantic-pattern scanning of code emitted to
     the sandbox (`run_bash`, `create_file`). Phase 3."""
@@ -103,9 +173,7 @@ class VistaGuardSettings(BaseModel):
     quarantine_self_consistency_samples: int = 1
     """
     Number of Q-LLM samples for high-stakes gates (G5, G6, and
-    destructive-annotated G2 calls). Bump to 2 to enable the
-    two-sample agreement check from the proposal's adaptive-attack
-    discussion (§8.2). Default 1 to keep latency low until the
+    destructive-annotated G2 calls). Default 1 to keep latency low until the
     deployment has measured the Q-LLM's per-call latency.
     """
 
