@@ -36,13 +36,21 @@ class Settings(BaseSettings):
     other env vars to set for specific providers
     """
 
-    # TODO: Generalize this to allow multiple MCP servers
     mcp_url: str = Field(default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL")
+    """ HTTP URL for the vista_mcp_server (HPC, RAG, display_file tools). """
+
+    mcp_servers_path: A[ResolvedPath, Field(validation_alias="VISTA_MCP_SERVERS_PATH")] = Path("../mcp_servers")
+    """
+    Path to the `mcp_servers/` directory in the repo. Used to locate per-agent STDIO
+    MCP servers (e.g. `dev_mcp_server`) that the backend launches directly via `uv run`.
+    """
 
     skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
-    output_dir: A[ResolvedPath, Field(validation_alias="VISTA_OUTPUT_DIR")] = Path("../data/output")
-    uploads_dir: A[ResolvedPath, Field(validation_alias="VISTA_UPLOADS_DIR")] = Path("../data/uploads")
 
+    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../data")
+    """ Directory for data such as sandbox volumes and other created files """
+
+    # TODO: combine this with data_dir
     knowledge_bases_dir: A[ResolvedPath, Field(validation_alias="VISTA_KNOWLEDGE_BASES_DIR")] = Path("../data/knowledge-bases")
     """
     Root directory for Knowledge Bases. Each KB gets a subdirectory:

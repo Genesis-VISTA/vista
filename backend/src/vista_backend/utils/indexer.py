@@ -53,7 +53,7 @@ def _get_text_rag_cls():
     Lazy-import TextRAG. Walks up from this file to find the repo root
     (where `build_rag.py` lives) and inserts it into sys.path. This
     avoids the user needing to install build_rag as a package — the
-    repo layout has it at the root next to `backend/` and `mcp-server/`.
+    repo layout has it at the root next to `backend/` and `mcp_servers/`.
     """
     global _TextRAG
     if _TextRAG is not None:

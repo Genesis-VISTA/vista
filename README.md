@@ -2,8 +2,11 @@
 
 ## Architecture
 
-- `./mcp-server`
-    - A MCP Server containing tools for sandboxed code execution, remote HPC job submission, and other tasks
+- `./mcp_servers`
+    - `vista_mcp_server`
+        - FastMCP server (HTTP) providing HPC job submission, RAG search, and file display tools. Shared across all agent sessions.
+    - `dev_mcp_server`
+        - Minimal FastMCP server (STDIO) providing sandbox tools: `run_bash`, `create_file`, `view`. Launched per-agent by the backend; each `ProjectAgent` gets its own instance.
 - `./hpc_jobs`
     - Predefined jobs that the agent can submit to the remote HPC system
 - `./skills`
@@ -14,7 +17,7 @@
       [docs/project-onboarding.md](docs/project-onboarding.md) for the project
       schema, the `/projects` CRUD UI, and how a project drives the agent.
 - `./ui`
-    - Frontend UI and agent loop that calls the tools in the mcp-server
+    - Frontend UI and agent loop that calls the tools in the MCP servers
 
 ## Prerequisites
 
@@ -84,7 +87,7 @@ cd ./ui && npm run dev
 ```
 
 ```bash
-cd ./mcp-server && uv run vista-mcp-server --transport=http
+cd ./mcp_servers/vista_mcp_server && uv run vista-mcp-server --transport=http
 ```
 
 ## Jobs

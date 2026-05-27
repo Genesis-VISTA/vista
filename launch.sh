@@ -12,7 +12,7 @@ export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
 MCP_CMD="
-  cd '$REPO_ROOT/mcp-server' &&
+  cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
   uv run vista-mcp-server --transport=http;
 "
 

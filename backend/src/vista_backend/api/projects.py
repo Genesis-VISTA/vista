@@ -4,6 +4,7 @@ from sqlmodel import select
 
 from ..db.db import SessionDep
 from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable
+from ..utils.project import invalidate_agents
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -49,6 +50,7 @@ async def update_project(project_name: str, updates: ProjectCreate, session: Ses
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"A project named {updates.name!r} already exists.")
     await session.refresh(project)
+    invalidate_agents(session, project_id=project.id)
     return ProjectPublic.model_validate(project)
 
 
@@ -57,4 +59,6 @@ async def delete_project(project_name: str, session: SessionDep) -> None:
     existing = (await session.exec(select(ProjectTable).where(ProjectTable.name == project_name))).first()
     if existing is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    project_id = existing.id
     await session.delete(existing)
+    invalidate_agents(session, project_id=project_id)

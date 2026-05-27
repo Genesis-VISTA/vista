@@ -364,11 +364,16 @@ export default function HomePage() {
     content?: Record<string, unknown>
   ) {
     setPendingElicitation(null);
+    // Resolve against the project that issued the elicitation. We only ever
+    // start an agent run with an active project, so falling back to the
+    // current selection is correct in practice.
+    const projectName = readActiveProjectName();
+    if (!projectName) return;
     try {
       await fetch("/api/chat/elicitation", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, action, content })
+        body: JSON.stringify({ project_name: projectName, id, action, content })
       });
     } catch {
       // bridge timeout will auto-cancel if POST fails
@@ -825,6 +830,19 @@ export default function HomePage() {
 
   async function runSaltAnalysis() {
     const tool = "run_bash";
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Select a project first — open the Projects page from the sidebar."
+        }
+      ]);
+      setShowAnalyzeModal(false);
+      return;
+    }
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
     const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
@@ -834,7 +852,7 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args: { command } })
+        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
       });
       const t1 = performance.now();
 
@@ -848,7 +866,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -902,6 +920,19 @@ export default function HomePage() {
 
   async function runSaltPrediction() {
     const tool = "run_bash";
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Select a project first — open the Projects page from the sidebar."
+        }
+      ]);
+      setShowPredictModal(false);
+      return;
+    }
     setIsCalling(true);
     const formula = predictFormulaInput.trim() || "NaCl";
     const comp = predictCompInput.trim() || "Pure Salt";
@@ -914,7 +945,7 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args: { command } })
+        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
       });
       const t1 = performance.now();
 
@@ -928,7 +959,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -981,9 +1012,20 @@ export default function HomePage() {
   }
 
   async function checkMcpHealth() {
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMcpHealth({
+        ok: false,
+        mcpBaseUrl: "unknown",
+        detail: "Select a project to probe the MCP connection."
+      });
+      return;
+    }
     setIsCheckingHealth(true);
     try {
-      const response = await fetch("/api/mcp/health");
+      const response = await fetch(
+        `/api/mcp/health?project_name=${encodeURIComponent(projectName)}`
+      );
       const data = (await response.json()) as McpHealth;
       setMcpHealth(data);
     } catch {
@@ -998,9 +1040,20 @@ export default function HomePage() {
   }
 
   async function listMcpTools() {
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMcpTools({
+        ok: false,
+        tools: [],
+        error: "Select a project to list MCP tools."
+      });
+      return;
+    }
     setIsLoadingTools(true);
     try {
-      const response = await fetch("/api/mcp/tools");
+      const response = await fetch(
+        `/api/mcp/tools?project_name=${encodeURIComponent(projectName)}`
+      );
       const data = (await response.json()) as McpToolsResponse;
       setMcpTools(data);
     } catch {
