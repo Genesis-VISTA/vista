@@ -2234,6 +2234,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pydantic-ai-shields"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "genai-prices" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/db/dbb444de1368eb6712553d0eb083edd56c851fead2d3f3be933b8dc8ba43/pydantic_ai_shields-0.3.2.tar.gz", hash = "sha256:1bddaca4a9f49aff22d3e0a433f2b0a77a67019427dabb150753c9f45f138dde", size = 388798, upload-time = "2026-05-05T11:24:48.079Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/90/225ff60043f94b3f40aac17163d6d5c3d11da3efee4e89d5834ecd8f6d25/pydantic_ai_shields-0.3.2-py3-none-any.whl", hash = "sha256:43e7a66cf82b3fb479332c282e39a052c87eb3a0f7e0b862fa18704df162fc38", size = 15662, upload-time = "2026-05-05T11:24:45.899Z" },
+]
+
+[[package]]
 name = "pydantic-ai-slim"
 version = "1.90.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3255,8 +3269,11 @@ dependencies = [
     { name = "chromadb" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "jsonschema" },
+    { name = "numpy" },
     { name = "openai" },
     { name = "pydantic-ai" },
+    { name = "pydantic-ai-shields" },
     { name = "pydantic-settings" },
     { name = "pymupdf" },
     { name = "python-dotenv" },
@@ -3273,6 +3290,11 @@ dev = [
     { name = "pytest" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
@@ -3280,8 +3302,11 @@ requires-dist = [
     { name = "chromadb", specifier = ">=0.5.0" },
     { name = "cryptography", specifier = ">=48.0.0" },
     { name = "fastapi", specifier = ">=0.136.1" },
+    { name = "jsonschema", specifier = ">=4.21,<5" },
+    { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openai", specifier = ">=1.69" },
     { name = "pydantic-ai", specifier = ">=1.90.0" },
+    { name = "pydantic-ai-shields", specifier = ">=0.3.2,<0.4" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "pymupdf", specifier = ">=1.26" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
@@ -3294,6 +3319,9 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.46.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.3" }]
 
 [[package]]
 name = "watchfiles"
