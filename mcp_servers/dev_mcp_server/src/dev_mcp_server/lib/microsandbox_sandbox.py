@@ -219,7 +219,7 @@ class MicrosandboxSandbox(Sandbox):
     async def close(self) -> None:
         name = await self._sandbox.name
         try:
-            await self._sandbox.stop()
+            await self._sandbox.stop_and_wait()
         except Exception:
             logging.exception(f"Failed to stop microsandbox {name}")
         try:
