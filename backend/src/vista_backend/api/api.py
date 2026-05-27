@@ -9,7 +9,7 @@ from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_vista_mcp_server
 from .agent import router as agent_router
-from ..utils.project import project_agent_pool
+from ..services.project_agent import project_agent_pool
 from .auth import get_user
 from .mcp import router as mcp_router
 from .knowledge_bases import router as knowledge_bases_router
