@@ -1,20 +1,25 @@
 """
 S3M API client plus SSH/SCP file transfer helpers.
+
+Used for Odo (OLCF) job submission. Frontier and Perlmutter both go through the
+IRI path in `lib/iri.py` instead — Frontier's S3M token is IRI-scoped and has no
+permission to hit the S3M /compute endpoints.
+
+Frontier still needs SSH/SCP for filesystem operations (storage discovery on its
+IRI token 401s, so we fall back to SCP — same workaround as Odo). The lifespan
+in submit_job_mcp.py calls `init_s3m_ssh_conn()` which opens the Odo conn
+unconditionally and the Frontier conn iff `settings.frontier_ssh_host` is set.
+The Frontier IRI dispatch reaches for `get_frontier_ssh_conn()` to do file ops.
 """
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Literal
 import asyncssh
 import httpx
 import logging
 from pydantic import BaseModel
 from .ssh import ssh_bash_retry, scp_retry, get_ssh_conn
 from ..config import settings
-
-
-S3mCluster = Literal["odo", "frontier"]
-""" Clusters served by the S3M API. """
 
 
 class S3mClient:
@@ -28,11 +33,13 @@ class S3mClient:
         s3m_token: str,
         resource_id: str,
         ssh_conn: asyncssh.SSHClientConnection,
+        expected_project: str,
     ):
         self.s3m_api = s3m_api.rstrip("/")
         self.s3m_token = s3m_token
         self.resource_id = resource_id
         self.ssh_conn = ssh_conn
+        self.expected_project = expected_project
         self._token_validated = False
 
     def _headers(self) -> dict[str, str]:
@@ -40,11 +47,12 @@ class S3mClient:
             "Authorization": f"Bearer {self.s3m_token}",
             "Content-Type": "application/json",
         }
-    
+
     async def _validate_token(self):
-        """ Verify the token is valid and in the right group """
-        # TODO This is a temporary check because of the current ssh/scp workarounds, we have to make
-        # sure the token matches the group of our ssh session. We can remove this once that's fixed.
+        """ Verify the token is valid and in the right OLCF project. """
+        # TODO This is a temporary check because of the current ssh/scp workarounds: we have to
+        # make sure the token's project matches the project of our ssh session so file uploads
+        # land in the right group dir. We can remove this once S3M /file endpoints land.
         # This is also hard coded to OLCF resources, each API can do tokens differently.
         if not self._token_validated:
             async with httpx.AsyncClient() as client:
@@ -57,8 +65,11 @@ class S3mClient:
                 token_info = resp.json()
 
                 token_project = token_info.get("token", {}).get('project')
-                if token_project != 'gen150-vista':
-                    raise ValueError(f"S3M token must be part of gen150-vista group, current token is {token_project}")
+                if token_project != self.expected_project:
+                    raise ValueError(
+                        f"S3M token must be part of {self.expected_project!r} project, "
+                        f"current token is in {token_project!r}"
+                    )
                 self._token_validated = True
 
     async def submit_job(self, spec: dict) -> dict:
@@ -129,61 +140,65 @@ class S3mDefaults(BaseModel):
     resources: S3mResourceSpec = S3mResourceSpec()
 
 
-_ssh_conns: dict[S3mCluster, asyncssh.SSHClientConnection] = {}
+_ssh_conns: dict[str, asyncssh.SSHClientConnection] = {}
 """
-Per-cluster SSH connections used by `get_s3m_client`.
+SSH connections for file ops, keyed by cluster slug ("odo" / "frontier").
 
-Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the S3M api's
-lack of file operation support. We should remove it as soon as file support is available and
-greatly simplify the MCP server launch sequence.
+Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the lack of
+filesystem APIs (Odo's S3M doesn't have /file endpoints; Frontier's IRI token 401s on storage
+discovery). Remove these once both backends gain filesystem support.
 
-Key "odo" is always opened. Key "frontier" is opened only when `settings.frontier_ssh_host` is set.
+"odo" is always opened. "frontier" is opened only when `settings.frontier_ssh_host` is set.
 """
-
-
-def _ssh_host_for(cluster: S3mCluster) -> list[str]:
-    if cluster == "odo":
-        return list(settings.hpc_ssh_host)
-    return list(settings.frontier_ssh_host)
 
 
 async def init_s3m_ssh_conn():
     """ Open the SSH conn for Odo, and (if configured) for Frontier. """
     if "odo" not in _ssh_conns:
-        host = _ssh_host_for("odo")
-        logging.info(f"Connecting to {host[-1]} via SSH for Odo file access...")
-        _ssh_conns["odo"] = await get_ssh_conn(host, settings.hpc_ssh_user)
+        host = settings.hpc_ssh_host
+        user = settings.hpc_ssh_user
+        logging.info(f"Connecting to {user}@{host[-1]} via SSH for Odo file access...")
+        _ssh_conns["odo"] = await get_ssh_conn(host, user)
         logging.info(f"SSH connection established to {host[-1]} (odo)")
     if settings.frontier_ssh_host and "frontier" not in _ssh_conns:
-        host = _ssh_host_for("frontier")
-        logging.info(f"Connecting to {host[-1]} via SSH for Frontier file access...")
-        _ssh_conns["frontier"] = await get_ssh_conn(host, settings.hpc_ssh_user)
+        host = list(settings.frontier_ssh_host)
+        user = settings.frontier_ssh_user or settings.hpc_ssh_user
+        logging.info(f"Connecting to {user}@{host[-1]} via SSH for Frontier file access...")
+        _ssh_conns["frontier"] = await get_ssh_conn(host, user)
         logging.info(f"SSH connection established to {host[-1]} (frontier)")
 
 
 def close_s3m_ssh_conns():
-    """ Close any open per-cluster SSH conns. Safe to call when none are open. """
-    for cluster, conn in list(_ssh_conns.items()):
+    """ Close all open SSH conns. Safe to call when none are open. """
+    for slug, conn in list(_ssh_conns.items()):
         conn.close()
-        del _ssh_conns[cluster]
+        del _ssh_conns[slug]
 
 
-def _resource_id_for(cluster: S3mCluster) -> str:
-    return settings.s3m_resource if cluster == "odo" else settings.s3m_frontier_resource
-
-
-def get_s3m_client(*, s3m_token: str, cluster: S3mCluster = "odo") -> S3mClient:
-    conn = _ssh_conns.get(cluster)
+def get_s3m_client(*, s3m_token: str) -> S3mClient:
+    """ Odo-only S3M client. Frontier uses the IRI path in `lib/iri.py` for compute. """
+    conn = _ssh_conns.get("odo")
     if conn is None:
-        if cluster == "frontier":
-            raise RuntimeError(
-                "Frontier SSH connection not initialized. Set VISTA_MCP_FRONTIER_SSH_HOST "
-                "and restart the MCP server to enable cluster=\"frontier\" routing."
-            )
         raise RuntimeError("S3M SSH connection not initialized; call init_s3m_ssh_conn() first")
     return S3mClient(
         s3m_api=settings.s3m_url,
         s3m_token=s3m_token,
-        resource_id=_resource_id_for(cluster),
+        resource_id=settings.s3m_resource,
         ssh_conn=conn,
+        expected_project=settings.hpc_account,
     )
+
+
+def get_frontier_ssh_conn() -> asyncssh.SSHClientConnection:
+    """
+    SSH connection for Frontier file ops, used by the Frontier IRI dispatch in
+    `submit_job_mcp.py`. Raises if the conn wasn't initialized (i.e. the deployment
+    didn't set VISTA_MCP_FRONTIER_SSH_HOST).
+    """
+    conn = _ssh_conns.get("frontier")
+    if conn is None:
+        raise RuntimeError(
+            "Frontier SSH connection not initialized. Set VISTA_MCP_FRONTIER_SSH_HOST "
+            "and restart the MCP server to enable cluster=\"frontier\" routing."
+        )
+    return conn

@@ -96,6 +96,7 @@ function UserSettingsForm({
   const [hpcDir, setHpcDir] = useState(user.remote_hpc_jobs_dir);
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
+  const [frontierRemoteDir, setFrontierRemoteDir] = useState(user.frontier_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
   const [saving, setSaving] = useState(false);
@@ -121,6 +122,7 @@ function UserSettingsForm({
     > = [
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
+      ["frontier_remote_dir", user.frontier_remote_dir ?? null, blankToNull(frontierRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
     ];
@@ -155,7 +157,7 @@ function UserSettingsForm({
       </div>
 
       <label className="project-modal-label">
-        Remote HPC jobs directory
+        Remote HPC jobs directory (Odo)
         <input
           className="input"
           value={hpcDir}
@@ -165,7 +167,21 @@ function UserSettingsForm({
           required
         />
         <span className="user-settings-hint">
-          Where hpc_jobs are copied to on the HPC cluster.
+          Where hpc_jobs are copied to on Odo.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Frontier remote directory
+        <input
+          className="input"
+          value={frontierRemoteDir}
+          onChange={(e) => setFrontierRemoteDir(e.target.value)}
+          placeholder="/lustre/orion/<project>/proj-shared/vista"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Where hpc_jobs are copied to on Frontier. Required for cluster=&quot;frontier&quot;.
         </span>
       </label>
 

@@ -69,7 +69,12 @@ class AppSettings(BaseSettings):
 
     local_hpc_jobs_dir: ResolvedPath = Path("../hpc_jobs")
     hpc_account: str = "gen150-vista"
-    """ Slurm account name for HPC job submission. """
+    """
+    OLCF project name used for Odo jobs. Doubles as (a) the expected `project`
+    on the user's S3M token (validated before submission) and (b) the Slurm
+    `account` attribute on the submitted job. Frontier uses the user's
+    per-record `nersc_account` instead (re-labeled "IRI project account" in UI).
+    """
     hpc_setup_script_template: str = ODO_SETUP_SCRIPT
     """
     Script sourced before every job script.
@@ -79,29 +84,38 @@ class AppSettings(BaseSettings):
     """
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
-    """ Base URL for the S3M API. """
+    """ Base URL for the S3M API (Odo only). """
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
-    s3m_frontier_resource: str = "frontier"
-    """ S3M compute resource id for Frontier (cluster="frontier" routing). """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
 
+    olcf_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    """
+    Base URL for the OLCF AmSC IRI API (moderate enclave — Frontier).
+    The open-enclave host (amsc-open.s3m.olcf.ornl.gov) serves Odo/Defiant/Wombat/Quokka.
+    """
+    olcf_machine: str = "frontier"
+    """ OLCF compute resource group name (used to match the IRI discovery result). """
+
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
-    SSH host for file access (SCP/sacct) on the HPC cluster.
-    To use a jump host, pass an array or comma separated list of hosts.
-    """
-    frontier_ssh_host: CommaSeparatedList[str] = []
-    """
-    SSH host for file access (SCP/sacct) on Frontier. Empty disables cluster="frontier" routing.
-    Logs in as `hpc_ssh_user` (the same OLCF ucams id used for Odo).
+    SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
+    or comma separated list of hosts.
     """
     hpc_ssh_user: str
-    """ SSH user to log in as """
+    """ SSH user to log in as for the Odo SSH connection. """
+    frontier_ssh_host: CommaSeparatedList[str] = []
+    """
+    SSH host(s) for file access (SCP) on Frontier. Empty disables cluster="frontier"
+    routing. IRI storage discovery 401s on the moderate-enclave token, so source
+    upload + log/output transfer falls back to SSH, mirroring the Odo workaround.
+    """
+    frontier_ssh_user: str | None = None
+    """ SSH user for the Frontier SSH connection. Falls back to `hpc_ssh_user` when unset. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

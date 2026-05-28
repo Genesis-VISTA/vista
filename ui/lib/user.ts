@@ -26,6 +26,7 @@ export type UserPublicWithConfig = UserPublic & {
   remote_hpc_jobs_dir: string;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
+  frontier_remote_dir: string | null;
   s3m_token: string | null;
   nersc_iri_token: string | null;
 };
@@ -40,6 +41,7 @@ export type UserSelfUpdate = {
   remote_hpc_jobs_dir?: string;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
+  frontier_remote_dir?: string | null;
   s3m_token?: string | null;
   nersc_iri_token?: string | null;
 };

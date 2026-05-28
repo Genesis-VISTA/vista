@@ -18,7 +18,9 @@ from mcp.types import ToolAnnotations
 
 from .config import settings
 from .lib.ssh import Confirmation
-from .lib.s3m import S3mCluster, S3mDefaults, close_s3m_ssh_conns, get_s3m_client, init_s3m_ssh_conn
+from .lib.s3m import (
+    S3mDefaults, close_s3m_ssh_conns, get_s3m_client, init_s3m_ssh_conn,
+)
 from .lib.iri import IriClient, IriDefaults, create_iri_client
 from .lib.user_config import (
     UserConfig,
@@ -134,16 +136,17 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
     """
     Return the only configured cluster. Raises if zero or multiple are configured.
 
-    The S3M token enables Odo unconditionally and Frontier when
-    `settings.frontier_ssh_host` is non-empty (deployment-wide config).
+    - `s3m_token` enables Odo.
+    - `nersc_iri_token` enables Perlmutter.
+    - `frontier_iri_token` enables Frontier (wired in P2 once the field lands).
     """
     configured: list[Cluster] = []
     if cfg.s3m_token:
         configured.append("odo")
-        if settings.frontier_ssh_host:
-            configured.append("frontier")
     if cfg.nersc_iri_token:
         configured.append("perlmutter")
+    if getattr(cfg, "frontier_iri_token", None):
+        configured.append("frontier")
 
     if len(configured) == 1:
         return configured[0]
@@ -153,8 +156,8 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
             f"Multiple HPC clusters configured ({', '.join(configured)}); please pass cluster={choices}"
         )
     raise ToolError(
-        "No HPC cluster configured for this user. Add an S3M token or NERSC IRI "
-        "token in the Vista user settings page."
+        "No HPC cluster configured for this user. Add an S3M token (Odo), NERSC "
+        "IRI token (Perlmutter), or Frontier IRI token in the user settings page."
     )
 
 
@@ -189,8 +192,8 @@ def _render_hpc_setup_script(cfg: UserConfig) -> str:
         Args:
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
             cluster: Which cluster to submit to ("odo", "frontier", or "perlmutter"). If only
-                one cluster is configured, this can be omitted. "odo" and "frontier" share the
-                same S3M token but submit to different OLCF resources.
+                one cluster is configured, this can be omitted. Odo uses S3M; Frontier and
+                Perlmutter both use IRI tokens via the amscrot SDK.
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
@@ -240,18 +243,20 @@ async def submit_hpc_job(
     if confirm_result.action != "accept" or not confirm_result.data.confirm:
         raise Exception("Job submission cancelled by user")
 
-    if cluster in ("odo", "frontier"):
-        job_id, eff_nodes, eff_duration = await _submit_s3m_job(
-            cfg, cluster, job, node_count, duration_int, script_args,
+    if cluster == "odo":
+        job_id, eff_nodes, eff_duration = await _submit_odo_job(
+            cfg, job, node_count, duration_int, script_args,
         )
-        _submitted_jobs[job_id] = SubmittedJob(cluster=cluster)
-    else:
+        _submitted_jobs[job_id] = SubmittedJob(cluster="odo")
+    elif cluster == "perlmutter":
         job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
             cfg, job, node_count, duration_int, script_args,
         )
         _submitted_jobs[job_id] = SubmittedJob(
             cluster="perlmutter", log_path=log_path, output_dir=output_dir,
         )
+    else:  # "frontier" — wired in P3
+        raise ToolError("Frontier IRI dispatch not yet implemented (in progress).")
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
     h, rem = divmod(eff_duration, 3600)
@@ -264,27 +269,18 @@ async def submit_hpc_job(
     ])
 
 
-async def _submit_s3m_job(
-    cfg: UserConfig, cluster: S3mCluster, job: str,
-    node_count: int | None, duration_int: int | None, script_args: str | None,
+async def _submit_odo_job(
+    cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
 ) -> tuple[str, int, int]:
-    """
-    Submit a job via the S3M API. Used for both Odo (`cluster="odo"`) and Frontier
-    (`cluster="frontier"`) — same API, different resource id + SSH host.
-
-    Returns (job_id, effective_node_count, effective_duration_seconds).
-    """
+    """ Returns (job_id, effective_node_count, effective_duration_seconds). """
     job_info = AVAILABLE_JOBS[job]
-    defaults = (
-        job_info.cluster_defaults.odo if cluster == "odo"
-        else job_info.cluster_defaults.frontier
-    )
-    if defaults is None:
-        raise ValueError(f"Job '{job}' has no \"{cluster}\" section in cluster_defaults.json")
+    odo_defaults = job_info.cluster_defaults.odo
+    if odo_defaults is None:
+        raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
     remote_hpc_jobs_dir = Path(require_remote_hpc_jobs_dir(cfg))
     remote_job_dir = remote_hpc_jobs_dir / settings.session_id / job
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg), cluster=cluster)
+    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
     check_result = await s3m_client.bash(f'[ -d {shlex.quote(str(remote_job_dir))} ] && echo true || echo false')
     if check_result.strip() != "true":
         await s3m_client.bash(f'mkdir -p -m 2775 {shlex.quote(str(remote_job_dir.parent))}')
@@ -312,22 +308,22 @@ async def _submit_s3m_job(
         "stderr_path": f"{remote_hpc_jobs_dir}/out/%j/log.out",
         "environment": {},
         "resources": {
-            **defaults.resources.model_dump(mode="json", exclude_none=True),
+            **odo_defaults.resources.model_dump(mode="json", exclude_none=True),
             **{k: v for k, v in resources_overrides.items() if v is not None},
         },
         "attributes": {
             "account": settings.hpc_account,
             "queue_name": "batch",
-            "duration": defaults.duration if duration_int is None else duration_int,
+            "duration": odo_defaults.duration if duration_int is None else duration_int,
         },
     }
     response = await s3m_client.submit_job(spec)
     job_id = str(response.get("id") or "")
     if not job_id:
         raise ValueError(f"Failed to get job ID from S3M response: {response}")
-    logging.info(f"Submitted job {job_id} via S3M to {cluster}")
-    eff_nodes = node_count or defaults.resources.node_count or 1
-    eff_duration = defaults.duration if duration_int is None else duration_int
+    logging.info(f"Submitted job {job_id} via S3M to odo")
+    eff_nodes = node_count or odo_defaults.resources.node_count or 1
+    eff_duration = odo_defaults.duration if duration_int is None else duration_int
     return job_id, eff_nodes, eff_duration
 
 
@@ -480,13 +476,15 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
     cfg = get_user_config(ctx)
     cluster = _resolve_cluster(cluster, cfg, job_id)
 
-    if cluster in ("odo", "frontier"):
-        return await _get_s3m_job_status(cfg, cluster, job_id)
-    return await _get_perlmutter_job_status(cfg, job_id)
+    if cluster == "odo":
+        return await _get_odo_job_status(cfg, job_id)
+    if cluster == "perlmutter":
+        return await _get_perlmutter_job_status(cfg, job_id)
+    raise ToolError("Frontier IRI job status not yet implemented (in progress).")
 
 
-async def _get_s3m_job_status(cfg: UserConfig, cluster: S3mCluster, job_id: str) -> str:
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg), cluster=cluster)
+async def _get_odo_job_status(cfg: UserConfig, job_id: str) -> str:
+    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
     job_data = await s3m_client.get_job_status(job_id)
     job_name = job_data.get("status", {}).get("meta_data", {}).get("s3m", {}).get("name", "")
     if not job_name.startswith("vista-"):
@@ -494,7 +492,7 @@ async def _get_s3m_job_status(cfg: UserConfig, cluster: S3mCluster, job_id: str)
 
     metadata = {
         "JOB_ID": job_id,
-        "CLUSTER": cluster,
+        "CLUSTER": "odo",
         "STATE": job_data.get("status", {}).get("state", "UNKNOWN").upper(),
     }
 
@@ -622,20 +620,20 @@ async def get_hpc_job_outputs(
     cfg = get_user_config(ctx)
     cluster = _resolve_cluster(cluster, cfg, job_id)
 
-    if cluster in ("odo", "frontier"):
-        return await _get_s3m_job_outputs(cfg, cluster, job_id, files)
-    return await _get_perlmutter_job_outputs(cfg, job_id, files)
+    if cluster == "odo":
+        return await _get_odo_job_outputs(cfg, job_id, files)
+    if cluster == "perlmutter":
+        return await _get_perlmutter_job_outputs(cfg, job_id, files)
+    raise ToolError("Frontier IRI job outputs not yet implemented (in progress).")
 
 
-async def _get_s3m_job_outputs(
-    cfg: UserConfig, cluster: S3mCluster, job_id: str, files: list[str],
-) -> str:
+async def _get_odo_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -> str:
     remote_hpc_jobs_dir = Path(require_remote_hpc_jobs_dir(cfg))
     remote_out_dir = remote_hpc_jobs_dir / "out" / job_id
     local_out_dir = settings.output_dir / job_id
     sandbox_out_dir = Path("/mnt/data/output") / job_id
 
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg), cluster=cluster)
+    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
     downloaded = []
     for file in files:
         remote_path = Path(os.path.normpath(remote_out_dir / file))
@@ -688,9 +686,11 @@ async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     """
     cfg = get_user_config(ctx)
     cluster = _resolve_cluster(cluster, cfg)
-    if cluster in ("odo", "frontier"):
-        return await _list_s3m_jobs(cfg, cluster)
-    return _list_perlmutter_jobs()
+    if cluster == "odo":
+        return await _list_odo_jobs(cfg)
+    if cluster == "perlmutter":
+        return _list_perlmutter_jobs()
+    raise ToolError("Frontier IRI job listing not yet implemented (in progress).")
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
@@ -709,21 +709,23 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
     job_id = validate_job_id(job_id)
     cfg = get_user_config(ctx)
     cluster = _resolve_cluster(cluster, cfg, job_id)
-    if cluster in ("odo", "frontier"):
+    if cluster == "odo":
         # S3M doesn't expose cancel directly; scancel over the existing SSH session works.
-        s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg), cluster=cluster)
+        s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
         await s3m_client.bash(f"scancel {shlex.quote(job_id)}")
-    else:
+    elif cluster == "perlmutter":
         iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
         await iri_client.cancel_job(job_id)
+    else:
+        raise ToolError("Frontier IRI job cancel not yet implemented (in progress).")
     logging.info(f"Cancelled job {job_id} on {cluster}")
     return f"Cancellation requested for job {job_id} on {cluster}."
 
 
-async def _list_s3m_jobs(cfg: UserConfig, cluster: S3mCluster) -> str:
+async def _list_odo_jobs(cfg: UserConfig) -> str:
     # /api/v1/compute/status/{resource_id} should work but has some odd behavior around "historical" currently
     # I think it only looks up very recent jobs. We may need to rethink how handle the job list
-    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg), cluster=cluster)
+    s3m_client = get_s3m_client(s3m_token=require_s3m_token(cfg))
     td = timedelta(hours=1)
     sacct_out = await s3m_client.bash("TZ=UTC " + shlex.join([
         "sacct", "--json", "--allocations",

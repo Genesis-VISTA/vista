@@ -92,7 +92,10 @@ class IriClient:
     def _resolve_resources(self) -> None:
         discovery = self._service_client.discover()
         if not discovery.compute:
-            raise RuntimeError("No NERSC IRI compute resources discovered (check token validity)")
+            raise RuntimeError(
+                f"No IRI compute resources discovered for profile {self.profile!r} "
+                f"(check token validity / endpoint)"
+            )
 
         # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
         # grouped under the facility (site); the entry with group=<machine> & name="compute"
@@ -231,10 +234,32 @@ class IriClient:
 
 # TODO maybe should cache this per session
 async def create_iri_client(*, iri_token: str) -> IriClient:
+    """ NERSC IRI client (Perlmutter). """
     client = IriClient(
         api_endpoint=settings.nersc_iri_url,
         api_key=iri_token,
         machine=settings.nersc_machine,
+        profile="nersc-iri",
+    )
+    await client.init_resources()
+    return client
+
+
+async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
+    """
+    OLCF AmSC IRI client (Frontier, moderate enclave).
+
+    Reuses the user's S3M token — the same bearer that authenticates against Odo's
+    S3M endpoint also works against the OLCF moderate-enclave IRI service. The
+    token's `iri-frontend-moderate` scope authorizes compute discovery/submit but
+    NOT storage; the caller must handle file ops out-of-band (SSH) since
+    `storage_resource_id` will raise on use.
+    """
+    client = IriClient(
+        api_endpoint=settings.olcf_iri_url,
+        api_key=iri_token,
+        machine=settings.olcf_machine,
+        profile="olcf-iri",
     )
     await client.init_resources()
     return client

@@ -292,7 +292,7 @@ class UserBase(SQLModel):
 # Treat "" the same as None for the optional config fields so a cleared frontend
 # input doesn't end up as a non-null-but-empty token/account in the DB
 _USER_CONFIG_NULLABLE_FIELDS = (
-    "nersc_account", "nersc_remote_dir", "s3m_token", "nersc_iri_token",
+    "nersc_account", "nersc_remote_dir", "frontier_remote_dir", "s3m_token", "nersc_iri_token",
 )
 def _empty_str_to_none(v): return None if v == "" else v
 
@@ -303,6 +303,7 @@ class UserCreate(UserBase):
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
 
@@ -317,6 +318,7 @@ class UserUpdate(UserBase):
     remote_hpc_jobs_dir: str | None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
 
@@ -330,6 +332,7 @@ class UserSelfUpdate(UserBase):
     remote_hpc_jobs_dir: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
 
@@ -353,6 +356,7 @@ class UserPublicWithConfig(UserBase):
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
 
@@ -363,11 +367,18 @@ class UserTable(SQLModel, table=True):
     email: str = Field(unique=True)
     is_admin: bool = False
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
-    """ Folder on the HPC cluster where hpc_jobs will be copied. """
+    """ Folder on the HPC cluster (Odo) where hpc_jobs will be copied. """
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None
     """ Absolute remote dir on the NERSC machine (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter. """
+    frontier_remote_dir: str | None = None
+    """
+    Folder on Frontier where hpc_jobs will be copied (e.g.
+    /lustre/orion/<project>/proj-shared/vista). Required for cluster="frontier";
+    must be writable by the user's Frontier project (typically different from
+    the Odo proj-shared dir).
+    """
     s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
     """ Bearer token for S3M API authentication. Encrypted at rest. """
     nersc_iri_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))

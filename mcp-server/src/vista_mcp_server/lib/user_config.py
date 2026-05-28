@@ -17,6 +17,7 @@ class UserConfig(BaseModel):
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     remote_hpc_jobs_dir: str | None = None
+    frontier_remote_dir: str | None = None
 
 
 def get_user_config(ctx: Context) -> UserConfig:
@@ -56,3 +57,13 @@ def require_remote_hpc_jobs_dir(cfg: UserConfig) -> str:
             "user settings page."
         )
     return cfg.remote_hpc_jobs_dir
+
+
+def require_frontier_remote_dir(cfg: UserConfig) -> str:
+    if not cfg.frontier_remote_dir:
+        raise ToolError(
+            "No Frontier remote dir configured for this user. Set 'Frontier remote "
+            "directory' in the Vista user settings page before submitting jobs to "
+            "Frontier (typically /lustre/orion/<project>/proj-shared/vista)."
+        )
+    return cfg.frontier_remote_dir
