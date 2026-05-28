@@ -16,7 +16,7 @@ def resolve_container_runtime(runtime: str | None = None) -> str:
         if not path:
             raise RuntimeError(f"{runtime} not found on PATH")
     else:
-        for candidate in ("podman", "docker"):
+        for candidate in ("docker", "podman"):
             path = shutil.which(candidate)
             if path:
                 break
