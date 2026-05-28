@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from ..db.db import SessionDep
 from ..db.schemas import UserCreate, UserUpdate, UserSelfUpdate, UserPublic, UserPublicWithConfig, UserTable
+from ..utils.project import invalidate_agents
 from .auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -36,6 +37,7 @@ async def update_me(
     session.add(row)
     await session.flush()
     await session.refresh(row)
+    invalidate_agents(session, user_id=row.id)
     return UserPublicWithConfig.model_validate(row)
 
 
@@ -78,6 +80,7 @@ async def update_user(
     session.add(existing_user)
     await session.flush()
     await session.refresh(existing_user)
+    invalidate_agents(session, user_id=user_id)
     return UserPublic.model_validate(existing_user)
 
 
@@ -87,4 +90,4 @@ async def delete_user(user_id: uuid.UUID, session: SessionDep, user: AdminDep) -
     if existing_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     await session.delete(existing_user)
-    await session.flush()
+    invalidate_agents(session, user_id=user_id)

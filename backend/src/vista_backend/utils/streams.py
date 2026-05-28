@@ -17,7 +17,7 @@ class _Value[T]:
     def __init__(self, value: T) -> None:
         self.value = value
 
-class StreamClosedError(Exception):
+class StreamClosedError(RuntimeError):
     pass
 
 class StreamMerger[T]:

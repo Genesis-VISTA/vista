@@ -7,12 +7,17 @@ import { backendUrl } from "../../_backend";
 export const runtime = "nodejs";
 
 /**
- * Proxy for `POST /mcp/call`.
+ * Proxy for `POST /projects/{project_name}/mcp/call`.
  *
  * The Python backend returns the raw MCP `CallToolResult` (a `{content[],
  * isError}` envelope). The frontend expects our richer `ExecutionResult`
  * (stdout/stderr/ui/...), so we normalize the response on the way back —
  * the same transformation the old Next.js route did against the MCP SDK.
+ *
+ * The project name is taken from the request body (`project_name`) and
+ * threaded into the upstream URL. The backend filters the tool against the
+ * project's allow/deny set, so calls are gated to whatever that project can
+ * actually invoke.
  */
 
 function createEnvelope(partial: Partial<ExecutionResult>): ExecutionResult {
@@ -221,16 +226,15 @@ export async function POST(request: Request) {
   if (!tool) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing tool name." }), { status: 400 });
   }
+  if (!projectName) {
+    return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing project_name." }), { status: 400 });
+  }
 
-  // The backend enforces project scope on KB-aware tools. Forward the
-  // active project name when the caller supplied one so e.g. rag_search
-  // is gated to the project's `knowledge_bases` set.
   const upstreamBody: Record<string, unknown> = { name: tool, arguments: args };
-  if (projectName) upstreamBody.project_name = projectName;
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl("/mcp/call"), {
+    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(projectName)}/mcp/call`), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(upstreamBody),

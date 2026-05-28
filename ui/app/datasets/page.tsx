@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useActiveProject } from "@/lib/projects";
 
 type UploadFileInfo = {
   name: string;
@@ -29,6 +30,8 @@ function formatTimestampUtc(value: string): string {
 
 export default function DatasetsPage() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const activeProject = useActiveProject();
+  const projectName = activeProject?.name ?? null;
   const [uploads, setUploads] = useState<UploadFileInfo[]>([]);
   const [isLoadingUploads, setIsLoadingUploads] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -37,6 +40,9 @@ export default function DatasetsPage() {
   const [isDragOverUploads, setIsDragOverUploads] = useState(false);
   const [deletingUploadName, setDeletingUploadName] = useState("");
   const [dataModel, setDataModel] = useState(PLACEHOLDER_DATASETS[0]);
+  const projectQuery = projectName
+    ? `?project_name=${encodeURIComponent(projectName)}`
+    : "";
 
   const uploadedFiles = useMemo(
     () => uploads.filter((file) => file.source !== "generated"),
@@ -48,9 +54,13 @@ export default function DatasetsPage() {
   );
 
   const loadUploads = useCallback(async () => {
+    if (!projectName) {
+      setUploads([]);
+      return;
+    }
     setIsLoadingUploads(true);
     try {
-      const response = await fetch("/api/uploads");
+      const response = await fetch(`/api/uploads${projectQuery}`);
       const data = (await response.json()) as UploadFileInfo[];
       setUploads(Array.isArray(data) ? data : []);
     } catch {
@@ -58,7 +68,7 @@ export default function DatasetsPage() {
     } finally {
       setIsLoadingUploads(false);
     }
-  }, []);
+  }, [projectName, projectQuery]);
 
   useEffect(() => {
     void loadUploads();
@@ -71,13 +81,17 @@ export default function DatasetsPage() {
 
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
+    if (!projectName) {
+      setUploadError("Select a project before uploading.");
+      return;
+    }
     setIsUploading(true);
     setUploadError("");
     setUploadMessage("");
     try {
       const form = new FormData();
       for (const file of Array.from(files)) form.append("files", file);
-      const response = await fetch("/api/uploads", { method: "POST", body: form });
+      const response = await fetch(`/api/uploads${projectQuery}`, { method: "POST", body: form });
       const data = (await response.json()) as UploadResponse;
       if (!response.ok || !data.ok) {
         setUploadError(data.error || "Upload failed.");
@@ -94,11 +108,15 @@ export default function DatasetsPage() {
   }
 
   async function deleteUpload(name: string) {
+    if (!projectName) {
+      setUploadError("Select a project before deleting uploads.");
+      return;
+    }
     setDeletingUploadName(name);
     setUploadError("");
     setUploadMessage("");
     try {
-      const response = await fetch(`/api/uploads/${encodeURIComponent(name)}`, {
+      const response = await fetch(`/api/uploads/${encodeURIComponent(name)}${projectQuery}`, {
         method: "DELETE",
       });
       const data = (await response.json()) as UploadResponse;
@@ -233,7 +251,7 @@ export default function DatasetsPage() {
                       <div className="upload-actions">
                         <a
                           className="button ghost button-xs upload-action-btn"
-                          href={`/api/uploads/${encodeURIComponent(file.name)}`}
+                          href={`/api/uploads/${encodeURIComponent(file.name)}${projectQuery}`}
                           download={file.name}
                         >
                           Download
@@ -264,7 +282,7 @@ export default function DatasetsPage() {
                       <div className="upload-actions">
                         <a
                           className="button ghost button-xs upload-action-btn"
-                          href={`/api/uploads/${encodeURIComponent(file.name)}`}
+                          href={`/api/uploads/${encodeURIComponent(file.name)}${projectQuery}`}
                           download={file.name}
                         >
                           Download
