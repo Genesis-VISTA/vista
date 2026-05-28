@@ -14,7 +14,7 @@ class AppSettings(BaseSettings):
         extra='ignore',
     )
 
-    sandbox_mode: Literal["microsandbox", "container", "podman", "docker"] = "container"
+    sandbox_mode: Literal["microsandbox", "container", "podman", "docker"] = "microsandbox"
     """
     Which sandbox backend to use.
     - `microsandbox` spins up a MicroVM via the microsandbox SDK

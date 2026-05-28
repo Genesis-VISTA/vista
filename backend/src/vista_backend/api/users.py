@@ -1,12 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from fastapi import APIRouter
 
 from ..db.db import SessionDep
-from ..db.schemas import UserCreate, UserUpdate, UserSelfUpdate, UserPublic, UserPublicWithConfig, UserTable
-from ..utils.project import invalidate_agents
+from ..db.schemas import UserCreate, UserUpdate, UserSelfUpdate, UserPublic, UserPublicWithConfig
+from ..services import user as user_service
 from .auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -29,42 +27,25 @@ async def get_me(user: UserDep, config: bool = False) -> UserPublicWithConfig | 
 async def update_me(
     updates: UserSelfUpdate, session: SessionDep, user: UserDep
 ) -> UserPublicWithConfig:
-    row = (await session.exec(select(UserTable).where(UserTable.id == user.id))).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    for key, value in updates.model_dump(exclude_unset=True).items():
-        setattr(row, key, value)
-    session.add(row)
-    await session.flush()
-    await session.refresh(row)
-    invalidate_agents(session, user_id=row.id)
+    row = await user_service.update_user(session, user.id, updates, user)
     return UserPublicWithConfig.model_validate(row)
 
 
 @router.get("")
 async def list_users(session: SessionDep, user: AdminDep) -> list[UserPublic]:
-    users = (await session.exec(select(UserTable))).all()
+    users = await user_service.list_users(session, user)
     return [UserPublic.model_validate(u) for u in users]
 
 
 @router.get("/{user_id}")
 async def get_user(user_id: uuid.UUID, session: SessionDep, user: AdminDep) -> UserPublic:
-    existing_user = (await session.exec(select(UserTable).where(UserTable.id == user_id))).first()
-    if existing_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+    existing_user = await user_service.get_user_by_id(session, user_id, user)
     return UserPublic.model_validate(existing_user)
 
 
 @router.post("", status_code=201)
 async def create_user(payload: UserCreate, session: SessionDep, user: AdminDep) -> UserPublic:
-    new = UserTable.model_validate(payload)
-    session.add(new)
-    try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(status_code=409, detail=f"A user with email {payload.email!r} already exists.")
-    await session.refresh(new)
+    new = await user_service.create_user(session, payload, user)
     return UserPublic.model_validate(new)
 
 
@@ -72,22 +53,10 @@ async def create_user(payload: UserCreate, session: SessionDep, user: AdminDep) 
 async def update_user(
     user_id: uuid.UUID, updates: UserUpdate, session: SessionDep, user: AdminDep
 ) -> UserPublic:
-    existing_user = (await session.exec(select(UserTable).where(UserTable.id == user_id))).first()
-    if existing_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    for key, value in updates.model_dump(exclude_unset=True).items():
-        setattr(existing_user, key, value)
-    session.add(existing_user)
-    await session.flush()
-    await session.refresh(existing_user)
-    invalidate_agents(session, user_id=user_id)
+    existing_user = await user_service.update_user(session, user_id, updates, user)
     return UserPublic.model_validate(existing_user)
 
 
 @router.delete("/{user_id}", status_code=204)
 async def delete_user(user_id: uuid.UUID, session: SessionDep, user: AdminDep) -> None:
-    existing_user = (await session.exec(select(UserTable).where(UserTable.id == user_id))).first()
-    if existing_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    await session.delete(existing_user)
-    invalidate_agents(session, user_id=user_id)
+    await user_service.delete_user(session, user_id, user)

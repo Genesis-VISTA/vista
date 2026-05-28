@@ -10,13 +10,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
 from ..db.schemas import ProjectPublic, ProjectTable, UserPublicWithConfig, UserTable
-from .ttl_pool import TTLPool
+from ..utils.ttl_pool import TTLPool
 
 
 ProjectAgentKey = tuple[uuid.UUID, uuid.UUID]
 """ (project_id, user_id) """
 
-# TODO: Should probably create a "services" folder and move this and other logic into it.
 
 async def _build_project_agent(project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectAgent:
     async with AsyncSession(get_engine()) as session:
@@ -43,7 +42,8 @@ async def _cleanup_project_agent(agent: ProjectAgent) -> None:
     agent.cancel_elicitations()
     await agent.__aexit__(None, None, None)
 
-# TODO: These process-local state. Multi-worker deployments would need to push this the db somehow
+
+# TODO: These are process-local state. Multi-worker deployments would need to push this to the db somehow
 project_agent_pool: TTLPool[ProjectAgentKey, ProjectAgent] = TTLPool(
     ttl=timedelta(minutes=30),
     max_size=50,

@@ -26,8 +26,6 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from sqlmodel import select
 
 from ..config import settings
 from ..db.db import SessionDep, commit_with_retry, get_engine
@@ -38,8 +36,8 @@ from ..db.schemas import (
     KnowledgeBaseTable,
     KnowledgeBaseUpdate,
     Publication,
-    is_valid_slug,
 )
+from ..services import knowledge_base as kb_service
 from ..utils import indexer
 from ..utils.misc import write_file_unique
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -72,16 +70,6 @@ def _sanitize_pdf_filename(name: str | None) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-async def _get_kb_or_404(session: AsyncSession, slug: str) -> KnowledgeBaseTable:
-    """Look up a KB by slug, 404 if missing."""
-    row = (await session.exec(
-        select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == slug)
-    )).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Knowledge base not found: {slug}")
-    return row
 
 
 def _publication_dict(p: Publication | dict) -> dict:
@@ -542,7 +530,7 @@ async def list_knowledge_bases(
     session: SessionDep,
     background_tasks: BackgroundTasks,
 ) -> list[dict[str, Any]]:
-    rows = (await session.exec(select(KnowledgeBaseTable))).all()
+    rows = await kb_service.list_kbs(session)
     out: list[dict[str, Any]] = []
     for row in rows:
         # Reconcile disk first (cheap walk of pdfs_dir), then chroma
@@ -583,7 +571,7 @@ async def get_knowledge_base(
     session: SessionDep,
     background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
-    kb = await _get_kb_or_404(session, slug)
+    kb = await kb_service.get_kb(session, slug)
     pubs_after_disk, changed_disk = _reconcile_with_disk(
         kb.pdfs_dir, kb.publications,
     )
@@ -606,44 +594,7 @@ async def get_knowledge_base(
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate, session: SessionDep,
 ) -> dict[str, Any]:
-    if not is_valid_slug(payload.slug):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid slug. Slugs must be lowercase letters / digits / dashes, "
-                "1-80 chars, must start and end with an alphanumeric character."
-            ),
-        )
-    existing = (await session.exec(
-        select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == payload.slug)
-    )).first()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail=f"Slug already in use: {payload.slug}")
-
-    kb_dir = settings.knowledge_bases_dir / payload.slug
-    pdfs_dir = kb_dir / "pdfs"
-    rag_db_path = kb_dir / "rag_db"
-    pdfs_dir.mkdir(parents=True, exist_ok=True)
-    rag_db_path.mkdir(parents=True, exist_ok=True)
-
-    now = _now_iso()
-    row = KnowledgeBaseTable(
-        slug=payload.slug,
-        name=payload.name,
-        description=payload.description,
-        builtin=False,
-        pdfs_dir=str(pdfs_dir),
-        rag_db_path=str(rag_db_path),
-        shared_with_mcp=False,
-        publications=[],
-        build_status="pending",
-        last_built_at=None,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(row)
-    await session.flush()
-    await session.refresh(row)
+    row = await kb_service.create_kb(session, payload)
     return _public_with_progress(row)
 
 
@@ -651,14 +602,7 @@ async def create_knowledge_base(
 async def update_knowledge_base(
     slug: str, updates: KnowledgeBaseUpdate, session: SessionDep,
 ) -> dict[str, Any]:
-    kb = await _get_kb_or_404(session, slug)
-    data = updates.model_dump(exclude_unset=True)
-    for key, value in data.items():
-        setattr(kb, key, value)
-    kb.updated_at = _now_iso()
-    session.add(kb)
-    await session.flush()
-    await session.refresh(kb)
+    kb = await kb_service.update_kb(session, slug, updates)
     return _public_with_progress(kb)
 
 
@@ -682,31 +626,9 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
     orphaned directories can be cleaned up manually — that's a strictly
     better failure mode than leaving the DB out of sync with disk.
     """
-    kb = await _get_kb_or_404(session, slug)
-    if kb.builtin:
-        raise HTTPException(
-            status_code=403,
-            detail="Built-in knowledge bases cannot be deleted.",
-        )
-
-    # Snapshot the paths before we drop the row.
-    pdfs_dir = Path(kb.pdfs_dir).resolve()
-    rag_db_path = Path(kb.rag_db_path).resolve()
-
-    # Drop the SQL row first. The dependency's commit-with-retry will
-    # handle any momentary lock contention; if the commit ultimately
-    # fails we never touched the filesystem, so the KB stays consistent.
-    await session.delete(kb)
-
-    # Clear in-memory indexer progress so the UI doesn't show a phantom
-    # progress bar for a now-deleted KB.
-    indexer._clear_progress(str(rag_db_path))
-
-    # Drop any cached TextRAG/chromadb client for this path BEFORE we
-    # rmtree the directory. Otherwise a re-created KB with the same slug
-    # would find a stale cached client pointing at a now-deleted dir
-    # and SQLITE_READONLY_DBMOVED would fire on its first write.
-    indexer.invalidate_rag_cache(str(rag_db_path))
+    pdfs_dir_str, rag_db_path_str = await kb_service.delete_kb(session, slug)
+    pdfs_dir = Path(pdfs_dir_str)
+    rag_db_path = Path(rag_db_path_str)
 
     # Filesystem cleanup. We do this after the DB row is gone, but
     # inside the same request so the user sees "deleted" only once
@@ -772,7 +694,7 @@ async def add_publications(
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
 
-    kb = await _get_kb_or_404(session, slug)
+    kb = await kb_service.get_kb(session, slug)
     pdfs_dir = Path(kb.pdfs_dir)
     pdfs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -858,7 +780,7 @@ async def add_publications(
 async def download_publication(
     slug: str, filename: str, session: SessionDep,
 ) -> FileResponse:
-    kb = await _get_kb_or_404(session, slug)
+    kb = await kb_service.get_kb(session, slug)
     # Reject anything with path-separator chars; we look up by basename only.
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
@@ -876,7 +798,7 @@ async def download_publication(
 async def delete_publication(
     slug: str, filename: str, session: SessionDep,
 ) -> None:
-    kb = await _get_kb_or_404(session, slug)
+    kb = await kb_service.get_kb(session, slug)
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
     pdf_path = Path(kb.pdfs_dir) / filename

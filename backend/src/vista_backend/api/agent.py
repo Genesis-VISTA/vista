@@ -1,16 +1,16 @@
 from typing import AsyncGenerator, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import Response
 from pydantic import BaseModel, TypeAdapter
 from pydantic_ai.messages import ModelMessage
-from sqlmodel import select
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
 from ..agents.agents import ProjectAgentResult, McpElicitationEvent
 from ..db.db import SessionDep
-from ..db.schemas import ProjectPublic, ProjectTable
-from ..utils.project import project_agent_pool, register_elicitation
+from ..db.schemas import ProjectPublic
+from ..services import project as project_service
+from ..services.project_agent import project_agent_pool, register_elicitation
 from .auth import UserDep
 
 router = APIRouter()
@@ -60,12 +60,8 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
-    project = (await session.exec(
-        select(ProjectTable).where(ProjectTable.name == project_name)
-    )).first()
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    project = ProjectPublic.model_validate(project)
+    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project = ProjectPublic.model_validate(project_row)
 
     if body.stream:
         async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
