@@ -3,6 +3,15 @@ VISTAGuard gate implementations.
 """
 
 from .base import Gate, GateContext, GateDecision, PassThroughGate
+from .g1_prompt import (
+    CUI_MARKER_PATTERNS,
+    DEFAULT_ALLOWED_MIME_TYPES,
+    DEFAULT_MAX_FILE_SIZE_BYTES,
+    G1PromptGate,
+    JAILBREAK_SIGNATURES_FILENAME,
+    PII_PATTERNS,
+    load_jailbreak_signatures,
+)
 from .g2_tool import (
     HIGH_STAKES_FALLBACK,
     G2ToolGate,
@@ -10,6 +19,14 @@ from .g2_tool import (
     ToolMetadata,
     discover_high_stakes_tools,
     discover_tool_metadata,
+)
+from .g4_code import (
+    DEFAULT_SEMGREP_CONFIG,
+    DEFAULT_SEMGREP_TIMEOUT_SECONDS,
+    ExtractedCode,
+    G4CodeGate,
+    SemgrepFinding,
+    bundled_rules_dir,
 )
 from .g3_anomaly import AnomalyResult, detect_embedding_anomalies
 from .g3_hybrid import (
@@ -35,27 +52,40 @@ from .g3_rag import (
 
 __all__ = [
     "AnomalyResult",
+    "CUI_MARKER_PATTERNS",
+    "DEFAULT_ALLOWED_MIME_TYPES",
+    "DEFAULT_MAX_FILE_SIZE_BYTES",
     "DEFAULT_QUERY_INJECTION_PATTERNS",
+    "DEFAULT_SEMGREP_CONFIG",
+    "DEFAULT_SEMGREP_TIMEOUT_SECONDS",
+    "ExtractedCode",
+    "G1PromptGate",
     "G2ToolGate",
     "G3RagGate",
+    "G4CodeGate",
     "Gate",
     "GateContext",
     "GateDecision",
     "HIGH_STAKES_FALLBACK",
+    "JAILBREAK_SIGNATURES_FILENAME",
     "KB_POLICY_FILENAME",
     "KB_POLICY_VERSION",
     "KbPolicy",
     "MirroredRetrievalResult",
+    "PII_PATTERNS",
     "ParsedChunk",
     "PassThroughGate",
     "SanitizedChunk",
+    "SemgrepFinding",
     "ToolDescriptor",
     "ToolMetadata",
+    "bundled_rules_dir",
     "detect_embedding_anomalies",
     "discover_high_stakes_tools",
     "discover_tool_metadata",
     "hash_chunk",
     "inject_hybrid_args",
+    "load_jailbreak_signatures",
     "load_kb_policy",
     "merge_retrievals",
     "parse_rag_search_result",

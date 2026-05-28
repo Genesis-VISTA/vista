@@ -11,7 +11,12 @@ from typing import Any
 from ..db.schemas import ProjectPublic
 from .capabilities import CapabilityRegistry
 from .config import VistaGuardSettings
-from .gates.base import Gate, GateContext
+from .gates.base import Gate, GateContext, GateDecision
+from .gates.g1_prompt import (
+    JAILBREAK_SIGNATURES_FILENAME,
+    G1PromptGate,
+    load_jailbreak_signatures,
+)
 from .gates.g2_tool import (
     HIGH_STAKES_FALLBACK,
     G2ToolGate,
@@ -228,6 +233,99 @@ class VistaGuardSidecar:
         """
         self._quarantine_agent = agent
 
+    def attach_intent_extraction_agent(self, agent: Any) -> None:
+        """
+        Forward the PydanticAI intent-extraction Agent to G1's
+        slow-tier.
+        """
+        g1 = self._gates.get("G1")
+        if isinstance(g1, G1PromptGate):
+            g1.attach_intent_extraction_agent(agent)
+
+    # -----------------------------------------------------------------
+    # G1 user-prompt evaluation (early-rejection path)
+    # -----------------------------------------------------------------
+
+    async def evaluate_user_prompt(
+        self,
+        user_prompt: str,
+        attached_files: list[dict[str, Any]] | None = None,
+    ) -> GateDecision | None:
+        """
+        Run G1 fast (and slow when wired) on a user prompt.
+
+        Recorded incidents:
+
+        - A fast-tier deny records the incident at the level the
+          gate decision carried (SEV2 jailbreak, SEV3 file policy).
+        - An allowed prompt with ``incident_level != None`` (CUI /
+          PII surfaced at SEV3) still records the incident; the
+          deny path is not taken.
+        - A slow-tier deny records at the level the intent-extraction
+          decision carried (SEV1 high-confidence dual-use, SEV2
+          low-confidence or moderate-confidence dual-use).
+
+        """
+        if not self.is_active() or "G1" not in self._gates:
+            return None
+
+        gate = self._gates["G1"]
+        gate_ctx = GateContext(
+            capability_registry=self._capability_registry,
+            trust_scorer=self._trust_scorer,
+            quarantine_agent=self._quarantine_agent,
+            provenance=self._provenance,
+        )
+        payload: dict[str, Any] = {
+            "user_prompt": user_prompt,
+            "attached_files": list(attached_files or []),
+        }
+
+        fast = await gate.check_fast(payload, gate_ctx)
+        if not fast.allow:
+            if fast.incident_level is not None:
+                self._incidents.record(
+                    level=fast.incident_level,
+                    gate="G1",
+                    reason=fast.reason,
+                    capability_tag=fast.capability_tag,
+                )
+            return fast
+
+        # Slow-tier intent extraction 
+        slow: GateDecision = fast
+        if isinstance(gate, G1PromptGate) and gate.intent_extraction_agent is not None:
+            try:
+                slow = await gate.extract_intent(payload, gate_ctx, fast)
+            except Exception as exc:  # noqa: BLE001 -- defensive
+                logger.warning(
+                    "VISTAGuard G1 slow-tier failed (%s: %s); "
+                    "falling back to fast-tier decision",
+                    type(exc).__name__, exc,
+                )
+                slow = fast
+
+        if not slow.allow:
+            if slow.incident_level is not None:
+                self._incidents.record(
+                    level=slow.incident_level,
+                    gate="G1",
+                    reason=slow.reason,
+                    capability_tag=slow.capability_tag,
+                )
+            return slow
+
+        # Allowed: surface any informational incident (CUI / PII /
+        # benign-intent annotations) without short-circuiting.
+        if slow.incident_level is not None:
+            self._incidents.record(
+                level=slow.incident_level,
+                gate="G1",
+                reason=slow.reason,
+                capability_tag=slow.capability_tag,
+            )
+        return None
+
     # -----------------------------------------------------------------
     # PydanticAI ProcessToolCallback surface
     # -----------------------------------------------------------------
@@ -399,6 +497,24 @@ class VistaGuardSidecar:
         Construct the active gate set from the per-gate flags.
         """
         gates: dict[str, Gate] = {}
+        if self._settings.g1_enabled:
+            # Operator-supplied signatures live at
+            # `<contracts_dir>/jailbreak_signatures.txt`. 
+            override_path = (
+                Path(self._settings.contracts_dir) / JAILBREAK_SIGNATURES_FILENAME
+            )
+            if override_path.exists():
+                patterns = load_jailbreak_signatures(override_path)
+            else:
+                # `None` -> the gate loads the bundled defaults.
+                patterns = None
+            gates["G1"] = G1PromptGate(
+                enabled=True,
+                jailbreak_patterns=patterns,
+                intent_self_consistency_samples=(
+                    self._settings.quarantine_self_consistency_samples
+                ),
+            )
         if self._settings.g2_enabled:
             gates["G2"] = G2ToolGate(
                 enabled=True,
@@ -409,14 +525,14 @@ class VistaGuardSidecar:
                 tool_registry=self._tool_registry,
             )
         if self._settings.g3_enabled:
-            
+
             gates["G3"] = G3RagGate(
                 enabled=True,
                 kb_sensitivity_tiers=self._g3_kb_policy.sensitivity_tiers,
                 corpus_manifests=self._g3_kb_policy.corpus_manifests,
                 query_injection_enabled=self._settings.g3_query_injection_enabled,
             )
-        
+
         return gates
 
     def _load_manifest_if_present(self) -> dict[str, str]:

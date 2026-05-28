@@ -1,0 +1,68 @@
+# VISTAGuard G1 jailbreak / instruction-override signature catalog.
+#
+# One Python `re` pattern per line. Blank lines and lines starting
+# with `#` are ignored. Each pattern is compiled with `re.IGNORECASE`
+# at load time -- write the body case-insensitively (lowercase) and
+# do NOT embed inline `(?i)` flags here.
+#
+# Operators who want to extend or override this list should drop a
+# file with the same name in their `contracts_dir` (default
+# `../vistaguard_contracts/jailbreak_signatures.txt`) and the sidecar
+# will prefer that file at construction time. The file format is the
+# same; operator-supplied patterns REPLACE the defaults rather than
+# augmenting them so a deployment can tighten or loosen the baseline
+# without surprise carryover.
+#
+# Patterns are drawn from the prompt-injection literature:
+# - Greshake et al. arXiv 2302.12173 (indirect injection)
+# - Liu et al. arXiv 2306.05499 (DAN-family taxonomy)
+# - Perez & Ribeiro arXiv 2211.09527 (jailbreaking attempts)
+# - Zou et al. arXiv 2307.15043 (GCG-style adversarial suffixes)
+#
+# Patterns must match a *prompt-shaped* injection (the attacker is
+# trying to override or impersonate). They MUST NOT match fluent
+# scientific prose -- the G3 fast-tier test suite's `_BENIGN_QUERIES`
+# is the calibration set. A new pattern that flags any of those is a
+# regression and must be re-scoped.
+
+# --- Instruction-override family (Greshake et al.) ---
+\bignore\s+(the\s+)?(all\s+)?(previous|prior|preceding|above)\s+(instructions?|prompts?|context|directives?|rules?|guidelines?)\b
+\bdisregard\s+(the\s+)?(all\s+)?(previous|prior|preceding|above|earlier)\s+(instructions?|prompts?|context|directives?|rules?)\b
+\bforget\s+(everything|all)\s+(you\s+(were|have\s+been)\s+told|above|previous)
+\boverride\s+(your|the)\s+(system\s+)?(prompt|instructions?|directives?|safety)
+
+# --- DAN-mode family (Liu et al.) ---
+\bfrom\s+now\s+on[,\s]+(you|assistant|the\s+(system|model))\s+
+\b(DAN|developer|jailbreak|root|admin|debug|unrestricted|god)\s+mode\b
+\bdo\s+anything\s+now\b
+\benable\s+(DAN|developer|jailbreak|god|admin|root)\s+mode
+
+# --- Role-impersonation classics ---
+\byou\s+are\s+(now\s+)?(an?\s+)?(unfiltered|uncensored|unrestricted|jailbroken|evil|malicious|amoral)\s+
+\bact\s+as\s+(if\s+you\s+(were|are)\s+)?an?\s+(unfiltered|uncensored|jailbroken|developer|admin|hacker|malicious)\b
+\bpretend\s+(to\s+be|you\s+are)\s+(an?\s+)?(unfiltered|uncensored|jailbroken|evil|malicious)
+\broleplay\s+as\s+(an?\s+)?(unfiltered|uncensored|jailbroken|evil|malicious)
+
+# --- Chat-template token injection (forge a turn boundary) ---
+<\|(im_start|im_end|endoftext|system|user|assistant|im_sep|tool|function)\|>
+\[/?(INST|SYS|/SYS)\]
+<\|(start|end)_header_id\|>
+
+# --- Markdown-pseudo-system-prompt structure injection ---
+(?m)^#{2,}\s*(system|instruction|prompt|directive|developer)\b[:\s]
+(?m)^\s*(system|user|assistant)\s*[:>]\s*(ignore|forget|disregard|override)
+
+# --- System-prompt exfiltration probes ---
+\b(print|reveal|show|output|display|leak|dump|repeat|recite)\s+(your|the)\s+(system\s+|initial\s+|original\s+)?(prompt|instructions?|directives?|guidelines?)
+\bwhat\s+(are|were)\s+(your|the)\s+(system\s+|initial\s+|original\s+)?(prompt|instructions?|directives?)\b
+\brepeat\s+(the\s+)?(text\s+)?above\s+(verbatim|exactly|word\s+for\s+word)
+
+# --- Safety-bypass / refusal-override framing ---
+\bbypass\s+(your|the)\s+(safety|content|moderation|filters?|restrictions?|guardrails?)
+\bturn\s+off\s+(your|the)\s+(safety|filters?|moderation|restrictions?|guardrails?)
+\bnever\s+refuse\s+(to|any\s+request)
+\bdo\s+not\s+(refuse|decline|reject)\s+(any|this|the)\s+(request|task|question)
+
+# --- Hypothetical-framing / fictional-cover preamble ---
+\bhypothetically[,\s]+if\s+you\s+had\s+no\s+(restrictions?|safety|filters?|guidelines?)
+\bin\s+a\s+(fictional|hypothetical|imaginary|alternate)\s+(world|scenario|universe)[,\s]+where\s+(you|the\s+AI)\s+(has?\s+no|is\s+not\s+bound\s+by)

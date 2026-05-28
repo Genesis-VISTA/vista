@@ -1,0 +1,59 @@
+# VISTAGuard G4 -- typo-squatted dependency imports.
+#
+# A small, curated list of known typo-squatted PyPI package names
+# that have shipped malicious payloads. Sources include PyPI's own
+# security advisories and the public Snyk / Sonatype reports.
+# The list is *not* exhaustive; the goal is to catch the obvious
+# ones an LLM might emit when "import requests" is the intended
+# name. Operators should extend this list in `contracts_dir` as
+# new typo-squats surface in the wild.
+
+rules:
+  - id: vista-typo-squat-import
+    languages: [python]
+    severity: ERROR
+    message: |
+      The agent is importing a known typo-squatted PyPI package. This
+      package name is documented (PyPI / Snyk security advisories)
+      as having shipped credential-exfiltration or RCE payloads.
+      The correct package name is almost certainly the one without
+      the typo. See VISTAGuard G4 / attack taxonomy §4.6.
+    metadata:
+      vista-threat-surface: supply-chain
+      vista-taxonomy: "4.6"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-1357: Reliance on Insufficiently Trustworthy Component"
+    pattern-either:
+      # PyPI-flagged credential stealers (intended -> typo)
+      - pattern: import urllib3_secure
+      - pattern: from urllib3_secure import ...
+      - pattern: import urllib4
+      - pattern: from urllib4 import ...
+      - pattern: import requests3
+      - pattern: from requests3 import ...
+      - pattern: import requestes
+      - pattern: from requestes import ...
+      - pattern: import python_dateutils
+      - pattern: from python_dateutils import ...
+      - pattern: import dateutils
+      - pattern: from dateutils import ...
+      - pattern: import jeIlyfish
+      - pattern: from jeIlyfish import ...
+      - pattern: import python3_dateutil
+      - pattern: from python3_dateutil import ...
+      - pattern: import colourama
+      - pattern: from colourama import ...
+      - pattern: import beautifulsup4
+      - pattern: from beautifulsup4 import ...
+      - pattern: import crypt
+      # `crypt` was deprecated/removed in stdlib; the PyPI replacement
+      # `crypt` package is a credential stealer.
+      - pattern: from crypt import ...
+      - pattern: import setup_tools
+      - pattern: from setup_tools import ...
+      - pattern: import pytorch
+      # `pytorch` (vs `torch`) is the well-known typo-squat.
+      - pattern: from pytorch import ...
+      - pattern: import tensorfllow
+      - pattern: from tensorfllow import ...
