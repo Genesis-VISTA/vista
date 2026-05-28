@@ -3,6 +3,7 @@ Database engine, session factory, and FastAPI session dependency.
 """
 import functools
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
 from sqlalchemy import event
@@ -81,6 +82,8 @@ def get_engine() -> AsyncEngine:
 
 async def init_db() -> None:
     """Create tables and seed defaults. Call once at app startup."""
+    if settings.database_url.startswith("sqlite"):
+        Path(settings.database_url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
