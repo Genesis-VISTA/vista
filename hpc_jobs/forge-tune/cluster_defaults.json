@@ -23,5 +23,19 @@
         "FORGE_MODEL_URL": "https://www.dropbox.com/sh/byr1ydik5n1ucod/AADOu_9C6AwVPTThTUFQ7yQba?dl=1"
       }
     }
+  },
+  "frontier": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 1,
+      "processes_per_node": 8,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "FORGE_MODEL_URL": "https://www.dropbox.com/sh/byr1ydik5n1ucod/AADOu_9C6AwVPTThTUFQ7yQba?dl=1"
+      }
+    }
   }
 }

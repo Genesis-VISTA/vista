@@ -39,7 +39,8 @@ class IriResourceSpec(BaseModel):
 class IriAttributes(BaseModel):
     """IRI-specific JobSpec attributes that vary per job (image, queue, constraint, ...)."""
     queue_name: str = "regular"
-    constraint: str = "gpu"
+    constraint: str | None = None
+    """ Slurm constraint, e.g. "gpu" on Perlmutter. Omitted on Frontier. """
     image: str | None = None
     module: str | None = None
     pre_launch: str | None = None

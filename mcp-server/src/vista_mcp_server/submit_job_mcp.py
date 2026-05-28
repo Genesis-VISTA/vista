@@ -17,14 +17,15 @@ from pydantic import BaseModel
 from mcp.types import ToolAnnotations
 
 from .config import settings
-from .lib.ssh import Confirmation
+from .lib.ssh import Confirmation, ssh_bash_retry, scp_retry
 from .lib.s3m import (
-    S3mDefaults, close_s3m_ssh_conns, get_s3m_client, init_s3m_ssh_conn,
+    S3mDefaults, close_s3m_ssh_conns, get_frontier_ssh_conn, get_s3m_client, init_s3m_ssh_conn,
 )
-from .lib.iri import IriClient, IriDefaults, create_iri_client
+from .lib.iri import IriClient, IriDefaults, create_iri_client, create_olcf_iri_client
 from .lib.user_config import (
     UserConfig,
     get_user_config,
+    require_frontier_remote_dir,
     require_nersc_iri_token,
     require_remote_hpc_jobs_dir,
     require_s3m_token,
@@ -39,15 +40,21 @@ PERLMUTTER_JOB_SCRIPT = "job.perlmutter.slurm"
 PERLMUTTER_SETUP_SCRIPT = "setup_perlmutter.sh"
 """ Optional pre_launch setup script in each job dir; inlined into JobSpec.attributes.pre_launch. """
 
-PERLMUTTER_UPLOAD_SKIP = {
+FRONTIER_JOB_SCRIPT = "job.frontier.slurm"
+FRONTIER_SETUP_SCRIPT = "setup_frontier.sh"
+
+# Orchestration metadata files Vista uses to drive submission — never uploaded to remote
+# RUN_DIR (each cluster-dispatcher inlines them differently into the JobSpec).
+_HPC_JOB_METADATA_FILES = {
     "README.md",
     "cluster_defaults.json",
     "s3m_defaults.json",      # legacy from before the rename
     "job.slurm",              # Odo-specific
-    PERLMUTTER_JOB_SCRIPT,    # inlined into the IRI JobSpec
-    PERLMUTTER_SETUP_SCRIPT,  # inlined as pre_launch
+    PERLMUTTER_JOB_SCRIPT,
+    PERLMUTTER_SETUP_SCRIPT,
+    FRONTIER_JOB_SCRIPT,
+    FRONTIER_SETUP_SCRIPT,
 }
-""" Files in `hpc_jobs/<job>/` that the Perlmutter dispatcher does NOT upload to RUN_DIR_Perlmutter. """
 
 
 class ClusterDefaults(BaseModel):
@@ -57,7 +64,7 @@ class ClusterDefaults(BaseModel):
     """
     odo: S3mDefaults | None = None
     perlmutter: IriDefaults | None = None
-    frontier: S3mDefaults | None = None
+    frontier: IriDefaults | None = None
 
 
 @dataclasses.dataclass
@@ -136,17 +143,19 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
     """
     Return the only configured cluster. Raises if zero or multiple are configured.
 
-    - `s3m_token` enables Odo.
+    - `s3m_token` enables Odo unconditionally.
+    - `s3m_token` + `settings.frontier_ssh_host` (deployment-wide) enables Frontier
+      (the same OLCF token works for both Odo S3M and Frontier IRI; the SSH host
+      is what gates Frontier file ops).
     - `nersc_iri_token` enables Perlmutter.
-    - `frontier_iri_token` enables Frontier (wired in P2 once the field lands).
     """
     configured: list[Cluster] = []
     if cfg.s3m_token:
         configured.append("odo")
+        if settings.frontier_ssh_host:
+            configured.append("frontier")
     if cfg.nersc_iri_token:
         configured.append("perlmutter")
-    if getattr(cfg, "frontier_iri_token", None):
-        configured.append("frontier")
 
     if len(configured) == 1:
         return configured[0]
@@ -156,8 +165,8 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
             f"Multiple HPC clusters configured ({', '.join(configured)}); please pass cluster={choices}"
         )
     raise ToolError(
-        "No HPC cluster configured for this user. Add an S3M token (Odo), NERSC "
-        "IRI token (Perlmutter), or Frontier IRI token in the user settings page."
+        "No HPC cluster configured for this user. Add an S3M token (Odo / Frontier) "
+        "or a NERSC IRI token (Perlmutter) in the user settings page."
     )
 
 
@@ -192,8 +201,9 @@ def _render_hpc_setup_script(cfg: UserConfig) -> str:
         Args:
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
             cluster: Which cluster to submit to ("odo", "frontier", or "perlmutter"). If only
-                one cluster is configured, this can be omitted. Odo uses S3M; Frontier and
-                Perlmutter both use IRI tokens via the amscrot SDK.
+                one cluster is configured, this can be omitted. Odo uses S3M; Frontier uses
+                OLCF's IRI service (compute) plus SSH (files); Perlmutter uses NERSC IRI.
+                Odo and Frontier share the same S3M token.
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
@@ -255,8 +265,13 @@ async def submit_hpc_job(
         _submitted_jobs[job_id] = SubmittedJob(
             cluster="perlmutter", log_path=log_path, output_dir=output_dir,
         )
-    else:  # "frontier" — wired in P3
-        raise ToolError("Frontier IRI dispatch not yet implemented (in progress).")
+    else:  # "frontier"
+        job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
+            cfg, job, node_count, duration_int, script_args,
+        )
+        _submitted_jobs[job_id] = SubmittedJob(
+            cluster="frontier", log_path=log_path, output_dir=output_dir,
+        )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
     h, rem = divmod(eff_duration, 3600)
@@ -455,9 +470,157 @@ async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
     local_job_dir = settings.local_hpc_jobs_dir / job
     uploaded: list[str] = []
     for f in sorted(local_job_dir.iterdir()):
-        if not f.is_file() or f.name.startswith(".") or f.name in PERLMUTTER_UPLOAD_SKIP:
+        if not f.is_file() or f.name.startswith(".") or f.name in _HPC_JOB_METADATA_FILES:
             continue
         await iri_client.upload(f, f"{src_dir}/{f.name}")
+        uploaded.append(f.name)
+    logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
+
+
+async def _submit_frontier_job(
+    cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+) -> tuple[str, str, str, int, int]:
+    """
+    Frontier dispatch (OLCF moderate enclave).
+
+    Compute lives on the AmSC IRI service at `settings.olcf_iri_url`. File ops
+    (mkdir / source upload / log fetch) fall back to SSH/SCP via
+    `get_frontier_ssh_conn()` because the OLCF moderate-enclave token's
+    `iri-frontend-moderate` scope does not authorize storage discovery.
+
+    The user record's `nersc_account` field doubles as the Frontier Slurm account
+    (re-labeled "IRI project account" in the UI — must match the S3M token's
+    `project` claim, e.g. "chm243").
+
+    Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
+    """
+    if not cfg.nersc_account:
+        raise ToolError(
+            "No IRI project account configured for this user. Set the 'NERSC account' "
+            "field in the Vista user settings page before submitting jobs to Frontier "
+            "(it doubles as the Frontier Slurm account; must match your S3M token's project)."
+        )
+    if not cfg.frontier_remote_dir:
+        raise ToolError(
+            "No Frontier remote dir configured for this user. Set 'Frontier remote "
+            "directory' in the Vista user settings page before submitting jobs to "
+            "Frontier (e.g. /lustre/orion/<project>/proj-shared/vista)."
+        )
+
+    job_info = AVAILABLE_JOBS[job]
+    defaults = job_info.cluster_defaults.frontier
+    if defaults is None:
+        raise ValueError(f"Job '{job}' has no \"frontier\" section in cluster_defaults.json")
+
+    local_job_dir = settings.local_hpc_jobs_dir / job
+    job_script_path = local_job_dir / FRONTIER_JOB_SCRIPT
+    if not job_script_path.exists():
+        raise ValueError(
+            f"Job '{job}' has no Frontier script at {job_script_path}. "
+            f"Add a {FRONTIER_JOB_SCRIPT} alongside job.slurm to enable Frontier submission."
+        )
+
+    iri_client = await create_olcf_iri_client(iri_token=require_s3m_token(cfg))
+    ssh_conn = get_frontier_ssh_conn()
+    base = require_frontier_remote_dir(cfg).rstrip('/')
+    session_dir = f"{base}/{settings.session_id}"
+    out_dir = f"{session_dir}/out"
+    src_dir = f"{base}/{job}/src"
+
+    # File ops via SSH (IRI storage scope is not granted on this token).
+    await ssh_bash_retry(ssh_conn, f"mkdir -p {shlex.quote(out_dir)}")
+    await _sync_frontier_sources(ssh_conn, job, src_dir)
+
+    job_script_text = job_script_path.read_text()
+    setup_script_path = local_job_dir / FRONTIER_SETUP_SCRIPT
+    pre_launch = (
+        f"bash -lc {shlex.quote(setup_script_path.read_text())}"
+        if setup_script_path.exists() else None
+    )
+
+    nodes = node_count or defaults.resources.node_count or 1
+    workers_per_node = defaults.resources.processes_per_node or 1
+    duration = duration_int or defaults.duration
+
+    setup_snippet = textwrap.dedent(f"""
+        export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
+        mkdir -p "$VISTA_OUT"
+    """).strip()
+    job_cmd_args = shlex.join(shlex.split(script_args or ""))
+    body_lines = [setup_snippet]
+    if job_cmd_args:
+        body_lines.append(f"set -- {job_cmd_args}")
+    body_lines.append(job_script_text)
+    job_cmd = "\n".join(body_lines) + "\n"
+
+    # Frontier-suffixed env vars so the user's job.frontier.slurm can pull them in
+    # without colliding with Perlmutter's _Perlmutter-suffixed names.
+    iri_env = {
+        "RUN_DIR_Frontier": src_dir,
+        "FORGE_MODEL_Frontier": f"{base}/{job}/model",
+    }
+    iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
+
+    if defaults.iri.image is not None:
+        iri_env["VISTA_FR_IMAGE"] = defaults.iri.image
+    if defaults.iri.module is not None:
+        iri_env["VISTA_FR_MODULE"] = defaults.iri.module
+    iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
+
+    stdout_template = f"{out_dir}/log-%j.out"
+    stderr_template = f"{out_dir}/log-%j.err"
+
+    spec = {
+        "executable": "bash",
+        "arguments": ["-l", "-c", job_cmd],
+        "resources": {
+            "node_count": nodes,
+            "process_count": nodes * workers_per_node,
+            "processes_per_node": workers_per_node,
+            "cpu_cores_per_process": defaults.resources.cpu_cores_per_process,
+            "exclusive_node_use": defaults.resources.exclusive_node_use,
+        },
+        "attributes": {
+            "resource_id": iri_client.compute_resource_id,
+            "queue_name": defaults.iri.queue_name,
+            "account": cfg.nersc_account,
+            "duration": duration,
+            **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
+            **({"pre_launch": pre_launch} if pre_launch else {}),
+            "directory": session_dir,
+            "stdout_path": stdout_template,
+            "stderr_path": stderr_template,
+            "environment": iri_env,
+        },
+    }
+    job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
+    logging.info(f"Submitted job {job_id} via IRI to {settings.olcf_machine}")
+    return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+
+
+async def _sync_frontier_sources(ssh_conn, job: str, src_dir: str) -> None:
+    """
+    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir` over SSH/SCP.
+
+    Parallels `_sync_perlmutter_sources` but uses SSH because the OLCF moderate-enclave
+    token has no storage scope on the IRI filesystem API. Idempotent: if `src_dir`
+    already has entries, the upload is skipped.
+    """
+    check = await ssh_bash_retry(
+        ssh_conn,
+        f"[ -d {shlex.quote(src_dir)} ] && ls -A {shlex.quote(src_dir)} | head -1 || true",
+    )
+    if check.strip():
+        logging.debug(f"frontier src dir {src_dir} already populated; skipping upload")
+        return
+
+    await ssh_bash_retry(ssh_conn, f"mkdir -p {shlex.quote(src_dir)}")
+    local_job_dir = settings.local_hpc_jobs_dir / job
+    uploaded: list[str] = []
+    for f in sorted(local_job_dir.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.name in _HPC_JOB_METADATA_FILES:
+            continue
+        await scp_retry(str(f), (ssh_conn, f"{src_dir}/{f.name}"))
         uploaded.append(f.name)
     logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
 
