@@ -1,0 +1,79 @@
+# VISTAGuard G4 -- direct outbound network access.
+#
+# Most legitimate VISTA tool calls reach the network through the
+# MCP server's controlled tool surface (which can be allow-listed
+# upstream by G2). Code that calls `urllib`, `requests`, `httpx`,
+# `aiohttp`, or raw sockets directly from inside the sandbox
+# bypasses that surface and is a strong signal of an exfiltration
+# attempt -- especially when paired with a credential-read rule.
+#
+# These rules don't allow-list specific hosts (Semgrep is awkward
+# at allow-listing string literals). The G4 slow-tier Q-LLM is the
+# layer that asks "what does this call *do*?"; this fast-tier
+# rule is the trigger that gets the slow tier invoked. Operators
+# who want host-level allow-listing should configure G2's tool
+# allow-list against the MCP server's `http_get` / `http_post`
+# tools instead.
+
+rules:
+  - id: vista-direct-outbound-network
+    languages: [python]
+    severity: WARNING
+    message: |
+      The agent is making a direct outbound HTTP/HTTPS request,
+      bypassing the MCP server's controlled tool surface. This is
+      either (a) a legitimate but un-policy-vetted external call
+      that should be routed through MCP tools, or (b) an
+      exfiltration attempt. The G4 slow-tier Q-LLM intent
+      extraction is the next check; in the meantime, surface this
+      pattern for review. 
+    metadata:
+      vista-threat-surface: data-exfiltration
+      vista-taxonomy: "5.5"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+    pattern-either:
+      - pattern: urllib.request.urlopen(...)
+      - pattern: urllib.request.urlretrieve(...)
+      - pattern: requests.get(...)
+      - pattern: requests.post(...)
+      - pattern: requests.put(...)
+      - pattern: requests.patch(...)
+      - pattern: requests.delete(...)
+      - pattern: requests.request(...)
+      - pattern: httpx.get(...)
+      - pattern: httpx.post(...)
+      - pattern: httpx.put(...)
+      - pattern: httpx.patch(...)
+      - pattern: httpx.delete(...)
+      - pattern: httpx.request(...)
+      - pattern: httpx.AsyncClient(...).get(...)
+      - pattern: httpx.AsyncClient(...).post(...)
+      - pattern: aiohttp.ClientSession(...).get(...)
+      - pattern: aiohttp.ClientSession(...).post(...)
+      - pattern: socket.socket(...)
+
+  - id: vista-globus-untrusted-endpoint
+    languages: [python]
+    severity: ERROR
+    message: |
+      The agent is initiating a Globus transfer or staging a
+      Globus endpoint. Allowed endpoint UUIDs live in the operator
+      allow-list (`<contracts_dir>/globus_endpoints.json`, Phase 5);
+      transfers to any other endpoint are credential-exfiltration
+      paths because Globus moves files between facility-trusted
+      identities. The G4 slow-tier Q-LLM asks "is this a benign
+      data move?"; flag for review. 
+    metadata:
+      vista-threat-surface: data-exfiltration
+      vista-taxonomy: "5.7"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-200: Exposure of Sensitive Information"
+    pattern-either:
+      - pattern: globus_sdk.TransferClient(...)
+      - pattern: globus_sdk.TransferData(...)
+      - pattern: $CLIENT.submit_transfer(...)
+      - pattern: $CLIENT.endpoint_activate(...)
+      - pattern: globus_sdk.NativeAppAuthClient(...)

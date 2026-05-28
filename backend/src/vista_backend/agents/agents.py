@@ -25,7 +25,10 @@ from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from ..vistaguard import VistaGuardSidecar
-from ..vistaguard.quarantine import build_quarantine_agent
+from ..vistaguard.quarantine import (
+    build_intent_extraction_agent,
+    build_quarantine_agent,
+)
 from .skills import to_prompt
 
 
@@ -221,6 +224,18 @@ class ProjectAgent:
             self._sidecar.attach_quarantine_agent(
                 build_quarantine_agent(settings.model)
             )
+            # G1 slow-tier shares the Q-LLM model spec but uses a
+            # separate Agent (different `output_type`).
+            self._sidecar.attach_intent_extraction_agent(
+                build_intent_extraction_agent(settings.model)
+            )
+
+        # VISTAGuard G1 tier banner 
+        if self._sidecar.is_gate_enabled("G1"):
+            @agent.system_prompt
+            def vistaguard_tier_banner(ctx: RunContext[Any]) -> str:
+                tier = self._sidecar.trust_scorer.current_tier()
+                return f"[VISTAGUARD] Session tier: {tier.value.upper()}"
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
@@ -415,8 +430,6 @@ class ProjectAgent:
     ) -> ProjectAgentResult:
         """
         Run the agent for a single agent "turn".
-
-        See run_stream for more info.
         """
 
         async for event in self.run_stream(
@@ -472,6 +485,18 @@ class ProjectAgent:
                         f"    userMessage: {json.dumps(user_prompt[:200])}",
                         f"    historyTurns: {len(message_history or [])}",
                     ]))
+
+
+                    # VISTAGuard G1 early-rejection. No-op when G1 isn't active.
+                    g1_deny = await self._sidecar.evaluate_user_prompt(user_prompt)
+                    if g1_deny is not None:
+                        yield log("WARNING", "VISTAGuard:G1", g1_deny.reason)
+                        yield ProjectAgentResultEvent(result=ProjectAgentResult(
+                            new_messages=[],
+                            usage=RunUsage(),
+                            logs=list(logs),
+                        ))
+                        return
 
                     async for event in self.agent.run_stream_events(
                         user_prompt,
