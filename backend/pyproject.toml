@@ -1,10 +1,10 @@
 [project]
 name = "vista-backend"
 version = "0.1.0"
-requires-python = "==3.14.3"
+requires-python = "~=3.14.3"
 dependencies = [
-    "fastapi>=0.136.1",
-    "uvicorn[standard]>=0.46.0",
+    "fastapi>=0.136.3",
+    "uvicorn[standard]>=0.48.0",
     "pydantic-ai>=1.90.0",
     "pydantic-settings>=2.14.0",
     "python-dotenv>=1.2.2",

@@ -1,7 +1,7 @@
 [project]
 name = "dev-mcp-server"
 version = "0.1.0"
-requires-python = "==3.14.3"
+requires-python = "~=3.14.3"
 dependencies = [
     "fastmcp>=3.1.1",
     "pydantic-settings>=2.0",
