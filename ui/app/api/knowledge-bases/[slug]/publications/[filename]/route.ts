@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../../../_backend";
+import { backendUrl, backendHeaders } from "../../../../_backend";
 
 export const runtime = "nodejs";
 
@@ -53,7 +53,7 @@ export async function GET(
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(upstreamPath));
+    upstream = await fetch(backendUrl(upstreamPath), { headers: await backendHeaders() });
   } catch {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
   }
@@ -98,7 +98,7 @@ export async function DELETE(
   try {
     upstream = await fetch(
       backendUrl(upstreamPath),
-      { method: "DELETE" }
+      { method: "DELETE", headers: await backendHeaders() }
     );
   } catch {
     return NextResponse.json({ ok: false, error: "Backend unreachable." }, { status: 502 });

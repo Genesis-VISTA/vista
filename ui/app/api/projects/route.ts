@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../_backend";
+import { backendUrl, backendHeaders } from "../_backend";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const upstream = await fetch(backendUrl("/projects"), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
     });
     if (!upstream.ok) {
       return NextResponse.json([], { status: 200 });
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   try {
     upstream = await fetch(backendUrl("/projects"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await backendHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     });
   } catch (error) {

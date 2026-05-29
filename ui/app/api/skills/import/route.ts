@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -26,10 +26,10 @@ export async function POST(request: Request) {
   try {
     upstream = await fetch(backendUrl("/skills/import"), {
       method: "POST",
-      headers: {
+      headers: await backendHeaders({
         "content-type": "application/json",
         accept: "application/json",
-      },
+      }),
       body: JSON.stringify(body ?? {}),
     });
   } catch {
