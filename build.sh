@@ -5,8 +5,16 @@ REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 # Source the .env file
 set -o allexport; source "$REPO_ROOT/.env" 2>/dev/null || true; set +o allexport
 
+PROD=false
+for arg in "$@"; do
+  case "$arg" in
+    --prod) PROD=true ;;
+    *) echo "Unknown build.sh argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
 cd "$REPO_ROOT/mcp_servers/vista_mcp_server/mcp-apps"
-npm install
+npm ci
 npm run build
 
 cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
@@ -26,6 +34,10 @@ cd "$REPO_ROOT/backend"
 uv sync --frozen
 
 cd "$REPO_ROOT/ui"
-npm install
+npm ci
+# In prod we serve a precompiled build via `npm start`, in dev we just run the devserver
+if [[ "$PROD" == true ]]; then
+    npm run build
+fi
 
 cd "$REPO_ROOT"
