@@ -643,7 +643,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
         return await _get_odo_job_status(cfg, job_id)
     if cluster == "perlmutter":
         return await _get_perlmutter_job_status(cfg, job_id)
-    raise ToolError("Frontier IRI job status not yet implemented (in progress).")
+    return await _get_frontier_job_status(cfg, job_id)
 
 
 async def _get_odo_job_status(cfg: UserConfig, job_id: str) -> str:
@@ -732,6 +732,70 @@ async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
     ])
 
 
+async def _get_frontier_job_status(cfg: UserConfig, job_id: str) -> str:
+    """
+    Frontier status: IRI for state, SSH for logs + output file listing.
+
+    IRI's filesystem API 401s for this token, so log/file reads fall back to SSH
+    (cat / find) over the persistent Frontier SSH conn opened in lifespan.
+    """
+    iri_client = await create_olcf_iri_client(iri_token=require_s3m_token(cfg))
+    status = await iri_client.get_job_status(job_id)
+    state = status.get("state", "UNKNOWN").upper()
+
+    metadata = {
+        "JOB_ID": job_id,
+        "CLUSTER": settings.olcf_machine,
+        "STATE": state,
+    }
+    if status.get("exit_code") is not None:
+        metadata["EXIT_CODE"] = status["exit_code"]
+    if status.get("message"):
+        metadata["MESSAGE"] = status["message"]
+
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.log_path is None:
+        return "\n\n".join([
+            "\n".join(f"{k}={v}" for k, v in metadata.items()),
+            "(no log path cached for this job; logs and outputs only available "
+            "for jobs submitted in the current session)",
+        ])
+
+    ssh_conn = get_frontier_ssh_conn()
+    try:
+        logs = await ssh_bash_retry(
+            ssh_conn,
+            f"head -n 200 {shlex.quote(submitted.log_path)} 2>/dev/null || true",
+        )
+    except Exception as e:
+        logs = f"(unable to fetch logs: {e})"
+
+    files: list[str] = []
+    if submitted.output_dir:
+        excludes = ['**/.venv*/*', '**/__pycache__/*']
+        try:
+            find_out = await ssh_bash_retry(ssh_conn, shlex.join([
+                "find", submitted.output_dir,
+                "-maxdepth", "3",
+                "-type", "f",
+                *itertools.chain(*[["-not", "-path", e] for e in excludes]),
+            ]) + " 2>/dev/null || true")
+            files = [
+                str(Path(line.strip()).relative_to(submitted.output_dir))
+                for line in find_out.strip().splitlines() if line.strip()
+            ][:20]
+        except Exception as e:
+            logging.info(f"output dir not readable yet ({submitted.output_dir}): {e}")
+
+    return "\n\n".join([
+        "\n".join(f"{k}={v}" for k, v in metadata.items()),
+        "--- LOGS ---",
+        logs.strip() if logs.strip() else "(no logs yet)",
+        "--- OUTPUT FILES ---",
+        "\n".join(files) if files else "(no output files yet)",
+    ])
+
+
 def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
     """
     Walk an amscrot ls() result and return file paths relative to *root*.
@@ -787,7 +851,7 @@ async def get_hpc_job_outputs(
         return await _get_odo_job_outputs(cfg, job_id, files)
     if cluster == "perlmutter":
         return await _get_perlmutter_job_outputs(cfg, job_id, files)
-    raise ToolError("Frontier IRI job outputs not yet implemented (in progress).")
+    return await _get_frontier_job_outputs(cfg, job_id, files)
 
 
 async def _get_odo_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -> str:
@@ -839,6 +903,37 @@ async def _get_perlmutter_job_outputs(cfg: UserConfig, job_id: str, files: list[
     return "Downloaded files:\n" + "\n".join(downloaded)
 
 
+async def _get_frontier_job_outputs(cfg: UserConfig, job_id: str, files: list[str]) -> str:
+    """
+    Frontier output retrieval via SCP over the persistent Frontier SSH conn.
+    SCP handles binary files (unlike NERSC IRI download, which is text-only) so
+    `.pt` checkpoints work directly.
+    """
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.output_dir is None:
+        raise ValueError(
+            f"No output directory cached for job {job_id!r}. Output retrieval is only "
+            f"available for Frontier jobs submitted in the current session."
+        )
+
+    ssh_conn = get_frontier_ssh_conn()
+    local_out_dir = settings.output_dir / job_id
+    sandbox_out_dir = Path("/mnt/data/output") / job_id
+
+    downloaded = []
+    for file in files:
+        if ".." in Path(file).parts or Path(file).is_absolute():
+            raise ValueError(f'Invalid path "{file}"')
+        remote_path = f"{submitted.output_dir.rstrip('/')}/{file}"
+        local_path = local_out_dir / file
+        sandbox_path = sandbox_out_dir / file
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        await scp_retry((ssh_conn, remote_path), str(local_path))
+        downloaded.append(str(sandbox_path))
+
+    return "Downloaded files:\n" + "\n".join(downloaded)
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     """
@@ -853,7 +948,7 @@ async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
         return await _list_odo_jobs(cfg)
     if cluster == "perlmutter":
         return _list_perlmutter_jobs()
-    raise ToolError("Frontier IRI job listing not yet implemented (in progress).")
+    return _list_frontier_jobs()
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
@@ -879,8 +974,9 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
     elif cluster == "perlmutter":
         iri_client = await create_iri_client(iri_token=require_nersc_iri_token(cfg))
         await iri_client.cancel_job(job_id)
-    else:
-        raise ToolError("Frontier IRI job cancel not yet implemented (in progress).")
+    else:  # "frontier"
+        iri_client = await create_olcf_iri_client(iri_token=require_s3m_token(cfg))
+        await iri_client.cancel_job(job_id)
     logging.info(f"Cancelled job {job_id} on {cluster}")
     return f"Cancellation requested for job {job_id} on {cluster}."
 
@@ -914,4 +1010,13 @@ def _list_perlmutter_jobs() -> str:
     ids = [jid for jid, s in _submitted_jobs.items() if s.cluster == "perlmutter"]
     if not ids:
         return "No Perlmutter jobs submitted in this session."
+    return "\n".join(ids)
+
+
+def _list_frontier_jobs() -> str:
+    # Same pattern as Perlmutter: no user-job listing endpoint on the OLCF IRI
+    # moderate-enclave service, so we fall back to the in-process cache.
+    ids = [jid for jid, s in _submitted_jobs.items() if s.cluster == "frontier"]
+    if not ids:
+        return "No Frontier jobs submitted in this session."
     return "\n".join(ids)
