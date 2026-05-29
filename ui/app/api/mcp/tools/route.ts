@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     const upstreamPath = `/projects/${encodeURIComponent(projectName)}/mcp/tools`;
 
     const upstream = await fetch(backendUrl(upstreamPath), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
       signal: AbortSignal.timeout(5000),
     });
     if (!upstream.ok) {

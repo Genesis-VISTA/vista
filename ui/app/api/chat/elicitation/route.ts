@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
       backendUrl(`/projects/${encodeURIComponent(projectName)}/elicitation`),
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify(upstreamBody),
       }
     );

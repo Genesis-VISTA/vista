@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -29,7 +29,7 @@ export async function GET(
   let upstream: Response;
   try {
     upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
     });
   } catch {
     return NextResponse.json({ error: "Skill not found" }, { status: 404 });
@@ -65,10 +65,10 @@ export async function PATCH(
   try {
     upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
       method: "PATCH",
-      headers: {
+      headers: await backendHeaders({
         "content-type": "application/json",
         accept: "application/json",
-      },
+      }),
       body: JSON.stringify(body ?? {}),
     });
   } catch {
@@ -103,7 +103,7 @@ export async function DELETE(
   try {
     upstream = await fetch(backendUrl(`/skills/${encodeURIComponent(slug)}`), {
       method: "DELETE",
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
     });
   } catch {
     return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });

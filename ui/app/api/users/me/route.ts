@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   let upstream: Response;
   try {
     upstream = await fetch(backendUrl(upstreamPath), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
       cache: "no-store",
     });
   } catch (error) {
@@ -53,7 +53,7 @@ export async function PUT(request: Request) {
   try {
     upstream = await fetch(backendUrl("/users/me"), {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: await backendHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     });
   } catch (error) {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ExecutionResult } from "@/lib/types";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -236,7 +236,7 @@ export async function POST(request: Request) {
   try {
     upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(projectName)}/mcp/call`), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await backendHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(upstreamBody),
       signal: AbortSignal.timeout(60000),
     });

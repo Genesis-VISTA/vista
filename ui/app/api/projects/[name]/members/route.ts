@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../../_backend";
+import { backendUrl, backendHeaders } from "../../../_backend";
 
 export const runtime = "nodejs";
 
@@ -17,7 +17,7 @@ export async function GET(
   try {
     upstream = await fetch(
       backendUrl(`/projects/${encodeURIComponent(name)}/members`),
-      { headers: { accept: "application/json" } }
+      { headers: await backendHeaders({ accept: "application/json" }) }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -51,7 +51,7 @@ export async function POST(
       backendUrl(`/projects/${encodeURIComponent(name)}/members`),
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify(body),
       }
     );

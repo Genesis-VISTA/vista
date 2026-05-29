@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../_backend";
+import { backendUrl, backendHeaders } from "../_backend";
 
 export const runtime = "nodejs";
 
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       ? `/knowledge-bases?project_name=${encodeURIComponent(projectName)}`
       : "/knowledge-bases";
     const upstream = await fetch(backendUrl(upstreamPath), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
       // KBs include progress snapshots that change without the underlying
       // row being touched — skip Next.js's per-request cache.
       cache: "no-store",
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
   try {
     upstream = await fetch(backendUrl("/knowledge-bases"), {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: await backendHeaders({ "content-type": "application/json", accept: "application/json" }),
       body: JSON.stringify(body),
     });
   } catch (error) {
