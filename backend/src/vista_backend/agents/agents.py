@@ -3,6 +3,7 @@ Logic to build the actual PydanticAI Agent
 """
 import fnmatch, json, logging, os, shutil, uuid, asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
@@ -25,7 +26,13 @@ from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if
 from ..vistaguard import VistaGuardSidecar
+from ..vistaguard.capabilities import (
+    ApprovalOutcome,
+    VistaGuardApprovalCapability,
+    VistaGuardDeny,
+)
 from ..vistaguard.quarantine import (
+    build_code_intent_extraction_agent,
     build_intent_extraction_agent,
     build_quarantine_agent,
 )
@@ -66,7 +73,30 @@ class McpUrlElicitationEvent(BaseModel):
     message: str
     url: str
 
-McpElicitationEvent = McpFormElicitationEvent | McpUrlElicitationEvent
+class McpToolApprovalEvent(BaseModel):
+    """
+    A high-stakes tool call awaiting human approval (VISTAGuard, Phase 3.5).
+
+    Emitted when a tool registered with `requires_approval=True` is called.
+    Resolve it with the existing `resolve_elicitation(elicitation_id, action,
+    content)` API: `action="accept"` approves (optional `content` overrides
+    the tool args), `decline`/`cancel` denies.
+    """
+    event_kind: Literal["mcp_tool_approval"] = "mcp_tool_approval"
+    mode: Literal["tool_approval"] = "tool_approval"
+    elicitation_id: str
+    tool_name: str
+    message: str
+    args: dict[str, Any] | None = None
+    decision_metadata: dict[str, Any] | None = None
+    """
+    VISTAGuard gate decision metadata for this call (e.g. G5's fast-tier
+    summary: resolved SLURM script, account verified, resource ceiling
+    passed, no denylist match). Populated from the sidecar's
+    `pending_approval_metadata`; None for tool calls with no gate context.
+    """
+
+McpElicitationEvent = McpFormElicitationEvent | McpUrlElicitationEvent | McpToolApprovalEvent
 
 
 class ProjectAgentResult(BaseModel):
@@ -170,7 +200,18 @@ class ProjectAgent:
         self._cur_mcp_elicitation_callback: mcp.client.session.ElicitationFnT | None = None
         self._cur_mcp_process_tool_call: ProcessToolCallback | None = None
         self._cur_mcp_log_handler: mcp.client.session.LoggingFnT | None = None
+        # Per-run emitter for high-stakes tool-approval requests (VISTAGuard
+        # R6); set in run_stream when elicitation is enabled.
+        self._cur_approval_emit: Callable[..., Any] | None = None
         self.agent = self._build_agent()
+
+    @property
+    def sidecar(self) -> VistaGuardSidecar:
+        """The per-session VISTAGuard sidecar (capability registry, trust
+        scorer, incident manager). The trust scorer backing the
+        ``/vistaguard/state`` and ``/vistaguard/reauth`` endpoints lives
+        here."""
+        return self._sidecar
 
     def _build_agent(self) -> Agent:
         """
@@ -214,28 +255,42 @@ class ProjectAgent:
         ]
         toolsets = [s.filtered(lambda ctx, tool: self._tool_allowed(tool.name)) for s in self._mcp_servers]
 
+        # VISTAGuard gates are PydanticAI capabilities (Phase 3.5). The
+        # sidecar is the factory that builds the capability list from its
+        # active gate set; a flag-off build yields an empty list, keeping
+        # the agent byte-identical to baseline VISTA. The Q-LLM agents
+        # (built from the top-level model spec) are threaded in for the
+        # slow tiers.
+        quarantine_agent = None
+        intent_extraction_agent = None
+        code_intent_extraction_agent = None
+        if settings.vistaguard.quarantine_enabled:
+            quarantine_agent = build_quarantine_agent(settings.model)
+            intent_extraction_agent = build_intent_extraction_agent(settings.model)
+            # Shared by G4 and G5 slow tiers ("what is this code/job
+            # trying to do?").
+            code_intent_extraction_agent = build_code_intent_extraction_agent(
+                settings.model
+            )
+
+        capabilities = self._sidecar.build_capabilities(
+            quarantine_agent=quarantine_agent,
+            intent_extraction_agent=intent_extraction_agent,
+            code_intent_extraction_agent=code_intent_extraction_agent,
+        )
+        # Human-in-the-loop approval for `requires_approval=True` tools
+        # (VISTAGuard R6). Inert until such a tool is registered (G5 in
+        # Phase 4); resolves via the existing resolve_elicitation surface.
+        capabilities.append(
+            VistaGuardApprovalCapability(request_approval=self._request_tool_approval)
+        )
+
         agent = Agent(
             model=infer_model(settings.model),
             toolsets=toolsets,
             end_strategy='exhaustive',
+            capabilities=capabilities,
         )
-
-        if settings.vistaguard.quarantine_enabled:
-            self._sidecar.attach_quarantine_agent(
-                build_quarantine_agent(settings.model)
-            )
-            # G1 slow-tier shares the Q-LLM model spec but uses a
-            # separate Agent (different `output_type`).
-            self._sidecar.attach_intent_extraction_agent(
-                build_intent_extraction_agent(settings.model)
-            )
-
-        # VISTAGuard G1 tier banner 
-        if self._sidecar.is_gate_enabled("G1"):
-            @agent.system_prompt
-            def vistaguard_tier_banner(ctx: RunContext[Any]) -> str:
-                tier = self._sidecar.trust_scorer.current_tier()
-                return f"[VISTAGUARD] Session tier: {tier.value.upper()}"
 
         @agent.system_prompt
         def system_prompt(ctx: RunContext[str]) -> str:
@@ -374,13 +429,10 @@ class ProjectAgent:
             if name in HPC_TOOLS:
                 metadata["vista"]["user"] = self.user.model_dump(mode='json')
 
-            if self._sidecar.is_active():
-                async def call_tool_wrapper(inner_name, inner_args, inner_metadata = None):
-                    inner_metadata = {**(inner_metadata or {}), **metadata} # Merge in metadatas
-                    return await call_tool(inner_name, inner_args, inner_metadata)
-                return await self._sidecar.process_tool_call(ctx, call_tool_wrapper, name, tool_args)
-            else:
-                return await call_tool(name, tool_args, metadata)
+            # VISTAGuard no longer mediates here: gate enforcement runs
+            # via the Agent's capability hooks (Phase 3.5). This callback
+            # only injects the per-call MCP metadata.
+            return await call_tool(name, tool_args, metadata)
         return process_tool_call
 
     def _make_mcp_elicitation_callback(self, stream_merger: StreamMerger[ProjectAgentStreamEvent]):
@@ -423,6 +475,74 @@ class ProjectAgent:
             finally:
                 self._elicitations.pop(event.elicitation_id, None)
         return elicitation_callback
+
+    async def _request_tool_approval(self, *, tool_name: str, tool_call_id: str, args: Any) -> ApprovalOutcome:
+        """
+        Ask the user to approve a high-stakes (`requires_approval`) tool
+        call. Called by `VistaGuardApprovalCapability`.
+
+        Routes through the current run's approval emitter (set in
+        `run_stream` when elicitation is enabled). When no approval
+        channel is active (e.g. `enable_elicitation=False`), fails closed
+        with a deny.
+        """
+        emit = self._cur_approval_emit
+        if emit is None:
+            return ApprovalOutcome(
+                approved=False,
+                message=(
+                    f"Tool {tool_name!r} requires approval but no approval "
+                    f"channel is active for this run."
+                ),
+            )
+        return await emit(tool_name=tool_name, tool_call_id=tool_call_id, args=args)
+
+    def _make_approval_emitter(self, stream_merger: StreamMerger[ProjectAgentStreamEvent]) -> Callable[..., Awaitable[ApprovalOutcome]]:
+        async def request_approval(*, tool_name: str, tool_call_id: str, args: Any) -> ApprovalOutcome:
+            # Reuse the elicitation Future registry + resolve_elicitation
+            # surface so the frontend's existing approve/deny flow applies.
+            if tool_call_id in self._elicitations:
+                return ApprovalOutcome(approved=False, message="Duplicate approval id.")
+
+            # VISTAGuard gate decision metadata for the approval UI (e.g.
+            # G5's fast-tier summary), stashed on the sidecar by the gate
+            # capability that deferred this call.
+            decision_metadata = self._sidecar.pending_approval_metadata.get(
+                tool_call_id
+            )
+            event = McpToolApprovalEvent(
+                elicitation_id=tool_call_id,
+                tool_name=tool_name,
+                message=f"Approve call to {tool_name!r}?",
+                args=args if isinstance(args, dict) else None,
+                decision_metadata=decision_metadata,
+            )
+            future: asyncio.Future[mcp.types.ElicitResult] = asyncio.get_running_loop().create_future()
+            self._elicitations[tool_call_id] = future
+            try:
+                stream_merger.send(event)
+            except StreamClosedError:
+                self._elicitations.pop(tool_call_id, None)
+                self._sidecar.note_approval_outcome(tool_call_id, approved=False)
+                return ApprovalOutcome(approved=False, message="Run finished before approval.")
+
+            try:
+                result = await asyncio.wait_for(future, timeout=5 * 60)
+            except asyncio.TimeoutError:
+                self._sidecar.note_approval_outcome(tool_call_id, approved=False)
+                return ApprovalOutcome(approved=False, message="Approval request timed out.")
+            finally:
+                self._elicitations.pop(tool_call_id, None)
+
+            approved = result.action == "accept"
+            # Record the outcome: clears the pending metadata and, on a
+            # decline of a G5-gated call, marks the sticky-on-decline.
+            self._sidecar.note_approval_outcome(tool_call_id, approved=approved)
+            if approved:
+                override = result.content if isinstance(result.content, dict) else None
+                return ApprovalOutcome(approved=True, override_args=override)
+            return ApprovalOutcome(approved=False, message=f"Tool call {result.action} by user.")
+        return request_approval
 
     async def run(self,
         user_prompt: str,
@@ -478,19 +598,15 @@ class ProjectAgent:
                 self._cur_mcp_elicitation_callback = self._make_mcp_elicitation_callback(merger) if enable_elicitation else None
                 self._cur_mcp_process_tool_call = self._make_mcp_process_tool_call()
                 self._cur_mcp_log_handler = log_handler
+                self._cur_approval_emit = self._make_approval_emitter(merger) if enable_elicitation else None
                 try:
-                    yield log("INFO", "Agent", "\n".join([
-                        f"New request:",
-                        f"    project: {self.project.name}",
-                        f"    userMessage: {json.dumps(user_prompt[:200])}",
-                        f"    historyTurns: {len(message_history or [])}",
-                    ]))
-
-
-                    # VISTAGuard G1 early-rejection. No-op when G1 isn't active.
-                    g1_deny = await self._sidecar.evaluate_user_prompt(user_prompt)
-                    if g1_deny is not None:
-                        yield log("WARNING", "VISTAGuard:G1", g1_deny.reason)
+                    # SEV1 termination (VISTAGuard incident playbook): once
+                    # the trust scorer is terminated, refuse every request
+                    # without invoking the model -- gate-agnostic, so the
+                    # session stays dead even if G1 is disabled.
+                    if self._sidecar.trust_scorer.terminated:
+                        yield log("ERROR", "VISTAGuard",
+                                  "Session terminated by a prior SEV1 incident; refusing request.")
                         yield ProjectAgentResultEvent(result=ProjectAgentResult(
                             new_messages=[],
                             usage=RunUsage(),
@@ -498,6 +614,16 @@ class ProjectAgent:
                         ))
                         return
 
+                    yield log("INFO", "Agent", "\n".join([
+                        f"New request:",
+                        f"    project: {self.project.name}",
+                        f"    userMessage: {json.dumps(user_prompt[:200])}",
+                        f"    historyTurns: {len(message_history or [])}",
+                    ]))
+
+                    # G1 early-rejection runs via the capability's
+                    # before_run hook and raises VistaGuardDeny (caught
+                    # below) before any model request.
                     async for event in self.agent.run_stream_events(
                         user_prompt,
                         message_history=message_history,
@@ -523,10 +649,19 @@ class ProjectAgent:
                                     yield log("INFO", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} completed")
 
                             yield event
+                except VistaGuardDeny as deny:
+                    yield log("WARNING", "VISTAGuard:G1", deny.decision.reason)
+                    yield ProjectAgentResultEvent(result=ProjectAgentResult(
+                        new_messages=[],
+                        usage=RunUsage(),
+                        logs=list(logs),
+                    ))
+                    return
                 finally:
                     self._cur_mcp_elicitation_callback = None
                     self._cur_mcp_process_tool_call = None
                     self._cur_mcp_log_handler = None
+                    self._cur_approval_emit = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)

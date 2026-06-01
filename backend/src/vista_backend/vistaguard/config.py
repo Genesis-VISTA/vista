@@ -61,6 +61,16 @@ class VistaGuardSettings(BaseModel):
     """Tool Gate. Enables tool-call gating inside `process_tool_call`.
     Phase 1."""
 
+    g2_minimize_via_retry: bool = False
+    """
+    When True, G2's Minimize layer raises `ModelRetry` after stripping
+    sensitive content from outgoing tool arguments, teaching the model
+    what was removed so it can re-issue a clean call. When False (the
+    default), Minimize silently substitutes the rewritten arguments and
+    the call proceeds. Default off to preserve current behavior and
+    avoid an unbounded retry-loop budget impact; flip on after Phase 6
+    evaluation measures that cost. Phase 3.5 (R3)."""
+
     g3_enabled: bool = False
     """RAG / Memory Gate. Enables sanitization of `rag_search` returns.
     Phase 2."""
@@ -260,6 +270,57 @@ class VistaGuardSettings(BaseModel):
     Semgrep ruleset spec. Default is the community security-audit
     ruleset; VISTAGuard-specific rules layered on top live in
     `vistaguard/contracts/semgrep/`.
+    """
+
+    # -----------------------------------------------------------------
+    # G5 HPC job gating -- Phase 4
+    # -----------------------------------------------------------------
+
+    g5_allocation_policy_path: str | None = None
+    """
+    Filesystem path to the operator-supplied G5 allocation policy
+    (`g5_allocation_policy.json`: authorized allocations + caps, mining
+    denylist, host allow-list). When None (the default), the sidecar
+    looks for `<contracts_dir>/g5_allocation_policy.json`. A missing,
+    unreadable, malformed, or wrong-version file falls back to the
+    bundled defaults with a WARNING -- the same posture as
+    `g3_kb_policy.json` and `vistaguard_tool_manifest.json`.
+    """
+
+    g5_resource_ceilings: dict[str, dict] = Field(default_factory=dict)
+    """
+    Per-allocation resource caps (node / time / GPU / partition),
+    expressed without authoring a full policy JSON file. Keyed by
+    allocation (account) name; each value carries `max_nodes`,
+    `max_time_seconds`, `max_gpus`, and `permitted_partitions`. These
+    apply only when the operator policy file does not itself supply an
+    `allocations` map -- the file wins when both are present.
+
+    Defaults to empty, which means *no* settings-driven ceiling
+    enforcement: consistent with the module-wide convention that every
+    field defaults to keep the system off / minimal, and with the
+    bundled `AllocationPolicy` carrying no allocations (so submissions
+    flow until an operator opts in to allocation enforcement).
+    """
+
+    g5_binary_denylist: frozenset[str] = frozenset()
+    """
+    Additional mining-binary IOCs to deny at G5, unioned at startup with
+    the gate's bundled denylist (`DEFAULT_MINING_BINARY_DENYLIST`, >= 10
+    public-feed entries) and the policy file's `binary_denylist`. The
+    bundled list is always in effect; this setting (and the policy file)
+    can only ever tighten coverage. Defaults to empty.
+    """
+
+    g5_chained_job_dag_enabled: bool = True
+    """
+    Toggle for the G5 slow-tier chained-job dependency DAG walker. When
+    True (the default), the slow tier walks `--dependency=afterok/...`
+    references and re-applies the fast-tier checks to each dependent job
+    (catching the cross-boundary chain attack). The walk is still gated
+    by the master slow-tier toggle (`quarantine_enabled`) and `g5_enabled`,
+    so this only matters when those are on; set False to disable just the
+    DAG walk while keeping the rest of G5's slow tier.
     """
 
     # -----------------------------------------------------------------

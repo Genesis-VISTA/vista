@@ -138,9 +138,24 @@ export type McpUrlElicitationEvent = {
   message: string;
   url: string;
 };
+export type McpToolApprovalEvent = {
+  event_kind: "mcp_tool_approval";
+  mode: "tool_approval";
+  elicitation_id: string;
+  tool_name: string;
+  message: string;
+  args?: Record<string, unknown> | null;
+  /**
+   * VISTAGuard gate decision metadata (e.g. G5's fast-tier summary:
+   * resolved SLURM script, account verified, resource ceiling passed,
+   * no denylist match). Loose by design — the modal renders what's set.
+   */
+  decision_metadata?: Record<string, unknown> | null;
+};
 export type McpElicitationEvent =
   | McpFormElicitationEvent
-  | McpUrlElicitationEvent;
+  | McpUrlElicitationEvent
+  | McpToolApprovalEvent;
 
 export type ProjectAgentResult = {
   new_messages: ModelMessage[];

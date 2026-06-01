@@ -23,6 +23,11 @@ from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id, get_tool_call_string
 
 
+def _truthy_env(name: str) -> bool:
+    """True when env var `name` is set to a truthy value (1/true/yes/on)."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 Cluster = Literal["odo", "perlmutter"]
 """ Supported HPC clusters. """
 
@@ -208,15 +213,24 @@ async def submit_hpc_job(
     cluster = _resolve_cluster(cluster, cfg)
     target = "odo" if cluster == "odo" else f"{settings.nersc_machine} (NERSC)"
 
-    # TODO: Move confirm logic to the client side. MCP elicitation is not the right place for this,
-    # but we're using it here for ease of migration.
-    confirm_result = await ctx.elicit(
-        message=f"Confirm running on {target}:\n" +
-            get_tool_call_string('submit_hpc_job', job=job, cluster=cluster, node_count=node_count, duration=duration, script_args=script_args),
-        response_type=Confirmation,
-    )
-    if confirm_result.action != "accept" or not confirm_result.data.confirm:
-        raise Exception("Job submission cancelled by user")
+    # Job-submission confirmation. When VISTAGuard's G5 HPC Job Gate is
+    # active on the backend, the user-approval step is handled natively by
+    # PydanticAI's deferred-tool-calls capability (the backend defers this
+    # call, shows the resolved SLURM script + G5 policy-check results, and
+    # only invokes the tool after the user approves). In that deployment
+    # the MCP-side elicitation below is a redundant second prompt, so the
+    # operator sets VISTA_MCP_DEFER_SUBMIT_APPROVAL=1 to skip it.
+    #
+    # Default (unset): the legacy MCP elicitation runs, preserving the
+    # existing behavior for deployments with G5 disabled (backward compat).
+    if not _truthy_env("VISTA_MCP_DEFER_SUBMIT_APPROVAL"):
+        confirm_result = await ctx.elicit(
+            message=f"Confirm running on {target}:\n" +
+                get_tool_call_string('submit_hpc_job', job=job, cluster=cluster, node_count=node_count, duration=duration, script_args=script_args),
+            response_type=Confirmation,
+        )
+        if confirm_result.action != "accept" or not confirm_result.data.confirm:
+            raise Exception("Job submission cancelled by user")
 
     if cluster == "odo":
         job_id, eff_nodes, eff_duration = await _submit_odo_job(cfg, job, node_count, duration_int, script_args)
