@@ -2,8 +2,9 @@
 
 ## Architecture
 
-- `./mcp-server`
-    - A MCP Server containing tools for sandboxed code execution, remote HPC job submission, and other tasks
+- `./mcp_servers`
+    - `vista_mcp_server` — MCP server with HPC, RAG, and `display_file` tools (sandboxed code execution, remote HPC job submission, and other tasks)
+    - `dev_mcp_server` — per-agent sandbox tools (`run_bash`, `create_file`, `view`), launched automatically over STDIO by the backend
 - `./hpc_jobs`
     - Predefined jobs that the agent can submit to the remote HPC system
 - `./skills`
@@ -14,7 +15,7 @@
       [docs/project-onboarding.md](docs/project-onboarding.md) for the project
       schema, the `/projects` CRUD UI, and how a project drives the agent.
 - `./ui`
-    - Frontend UI and agent loop that calls the tools in the mcp-server
+    - Frontend UI and agent loop that calls the tools in the MCP servers
 
 ## Prerequisites
 
@@ -84,7 +85,7 @@ cd ./ui && npm run dev
 ```
 
 ```bash
-cd ./mcp-server && uv run vista-mcp-server --transport=http
+cd ./mcp_servers/vista_mcp_server && uv run vista-mcp-server --transport=http
 ```
 
 ## Jobs
@@ -127,7 +128,7 @@ under that directory so that Vista can pull the results.
 
 ## VISTAGuard
 
-VISTAGuard is the optional security sidecar that mediates the agent's prompt input, tool calls, RAG retrievals, and sandboxed code emission. It ships as a set of independently flag-gated gates (Phase 1: G2 Tool Gate; Phase 2: G3 RAG / Memory Gate; Phase 3: G1 Prompt Gate + G4 Code Gate) inside the backend. All flags default to `false` — with VISTAGuard disabled, the agent runs byte-identical to baseline VISTA. See [docs/vistaguard_integration_plan.md](docs/vistaguard_integration_plan.md) for the full design.
+VISTAGuard is the optional security sidecar that mediates the agent's prompt input, tool calls, RAG retrievals, and sandboxed code emission. It ships as a set of independently flag-gated gates (Phase 1: G2 Tool Gate; Phase 2: G3 RAG / Memory Gate; Phase 3: G1 Prompt Gate + G4 Code Gate; Phase 4: G5 HPC Job Gate) inside the backend. All flags default to `false` — with VISTAGuard disabled, the agent runs byte-identical to baseline VISTA. See [docs/vistaguard_integration_plan.md](docs/vistaguard_integration_plan.md) for the full design.
 
 ### Quick start — enable everything
 
@@ -136,6 +137,7 @@ export VISTA_BACKEND_VISTAGUARD__ENABLED=true
 export VISTA_BACKEND_VISTAGUARD__G1_ENABLED=true
 export VISTA_BACKEND_VISTAGUARD__G2_ENABLED=true
 export VISTA_BACKEND_VISTAGUARD__G3_ENABLED=true
+export VISTA_BACKEND_VISTAGUARD__G5_ENABLED=true
 export VISTA_BACKEND_VISTAGUARD__QUARANTINE_ENABLED=true
 export VISTA_BACKEND_VISTAGUARD__G3_HYBRID_RETRIEVAL=true
 ./launch.sh logs
@@ -144,6 +146,8 @@ export VISTA_BACKEND_VISTAGUARD__G3_HYBRID_RETRIEVAL=true
 You can also flip individual gates without the others (e.g., `G2_ENABLED=true` alone for the tool gate without RAG defenses). VISTAGuard reads settings at backend startup, so changing env vars requires a backend restart.
 
 G4 has shipped at the gate level but is not yet wired into the sidecar's `process_tool_call`; setting `__G4_ENABLED=true` is therefore a no-op in this release and is documented below for forward compatibility. The G4 fast-tier code-scan path lands in the next phase-3 issue (`Wire G4 into sidecar's process_tool_call`).
+
+G5 (Phase 4) **is** wired — it ships natively on the PydanticAI capability pattern (`G5HpcCapability`), so `__G5_ENABLED=true` has runtime effect. It gates `submit_hpc_job` / `cancel_hpc_job` and HPC-bound `run_bash` SSH commands: the fast tier (allocation allow-list, resource ceilings, mining-binary denylist, path scoping, network egress, credential exfiltration) runs deterministically; the slow tier (Q-LLM job-intent extraction + chained-job DAG walk) fires when `__QUARANTINE_ENABLED=true`; and `submit_hpc_job` is held for human approval via PydanticAI's native deferred-tool-calls flow. Per-attack-class rationale + G2/G4 defense overlap: [docs/vistaguard/g5_threat_surface.md](docs/vistaguard/g5_threat_surface.md).
 
 ### Pre-flight: BM25 corpus for hybrid retrieval
 
@@ -185,7 +189,10 @@ All VISTAGuard settings use Pydantic's nested-env-var convention: double undersc
 | `VISTA_BACKEND_VISTAGUARD__G4_ENABLED` | G4 Code Gate. Constructs the gate (Semgrep-backed scan of `run_bash` / `create_file` arguments). **Sidecar wiring deferred to a follow-on issue**: flipping the flag in this release has no runtime effect. | `false` |
 | `VISTA_BACKEND_VISTAGUARD__SEMGREP_ENABLED` | G4 fast-tier toggle. When `true`, G4 invokes the `semgrep` CLI; when `false`, the fast tier is a no-op and the gate falls back to the slow tier. Requires the `[vistaguard-g4]` install. | `false` |
 | `VISTA_BACKEND_VISTAGUARD__SEMGREP_CONFIG` | Community Semgrep ruleset loaded alongside the bundled VISTAGuard rules. | `p/security-audit` |
-| `VISTA_BACKEND_VISTAGUARD__QUARANTINE_ENABLED` | Master slow-tier flag. Enables G1 intent extraction, G2 Minimize-and-Sanitize, and G3 per-chunk Q-LLM sanitization. | `false` |
+| `VISTA_BACKEND_VISTAGUARD__G5_ENABLED` | G5 HPC Job Gate. Fully wired via the capability pattern. Fast tier (allocation/account allow-list, per-allocation node/time/GPU ceilings, mining-binary IOC denylist + signature scan, opaque-execution `base64 -d \| bash`/`eval $(curl)`, path scoping, network egress, credential exfiltration) on `submit_hpc_job` / `cancel_hpc_job` and HPC-bound `run_bash` SSH commands. `submit_hpc_job` is removed from the toolset entirely at RESTRICTED trust tier, and held for human approval (deferred-tool-calls) otherwise. Slow tier (Q-LLM job-intent + chained-job DAG) fires when `__QUARANTINE_ENABLED=true`. | `false` |
+| `VISTA_BACKEND_VISTAGUARD__G5_ALLOCATION_POLICY_PATH` | Path to the operator allocation policy (`g5_allocation_policy.json`: authorized allocations + per-allocation caps, mining denylist, host allow-list). When unset, the sidecar reads `<contracts_dir>/g5_allocation_policy.json`. Missing / malformed / wrong-version → bundled defaults + WARNING. With no allocations supplied, the allocation + ceiling checks no-op (the binary / path / egress / credential checks still run). | None |
+| `VISTA_BACKEND_VISTAGUARD__G5_CHAINED_JOB_DAG_ENABLED` | G5 slow-tier chained-job dependency DAG walker. Walks `--dependency=afterok:JOBID` references and re-applies the fast-tier checks to each dependent job (catches the cross-boundary chain attack). Only active when the slow tier is on (`__QUARANTINE_ENABLED=true` + `__G5_ENABLED=true`). | `true` |
+| `VISTA_BACKEND_VISTAGUARD__QUARANTINE_ENABLED` | Master slow-tier flag. Enables G1 intent extraction, G2 Minimize-and-Sanitize, G3 per-chunk Q-LLM sanitization, and G5 job-intent extraction + DAG walk. | `false` |
 | `VISTA_BACKEND_VISTAGUARD__QUARANTINE_SELF_CONSISTENCY_SAMPLES` | Q-LLM samples per check. `2` enables two-sample agreement with default-deny on disagreement. | `1` |
 | `VISTA_BACKEND_VISTAGUARD__G3_HYBRID_RETRIEVAL` | Inject `hybrid=true` into `rag_search` (Semantic Chameleon BM25+vector fusion). Requires a built BM25 corpus per KB. | `false` |
 | `VISTA_BACKEND_VISTAGUARD__G3_HYBRID_ALPHA` | Weight on the vector modality when hybrid is on. `1.0` = vector only, `0.0` = BM25 only, `0.5` = equal. | `0.5` |
@@ -204,9 +211,10 @@ When `CONTRACTS_DIR` points at a directory, VISTAGuard reads:
 - `vistaguard_tool_manifest.json` — ETDI per-tool pinned hashes for mid-session rug-pull detection and deployment-time integrity checks.
 - `g3_kb_policy.json` — per-KB sensitivity tiers (`open` / `internal` / `cui` / `export_controlled`) and corpus-manifest hashes.
 - `jailbreak_signatures.txt` — G1 jailbreak / instruction-override regex patterns (one per line; `#` comments and blank lines ignored). When present, this file **replaces** the package-bundled defaults at [backend/src/vista_backend/vistaguard/contracts/jailbreak_signatures.txt](backend/src/vista_backend/vistaguard/contracts/jailbreak_signatures.txt) — copy that file as a starting point and prune / extend rather than authoring from scratch.
+- `g5_allocation_policy.json` — G5 authorized allocations (`{"version": 1, "allocations": {"approved-research": {"max_nodes": 64, "max_time_seconds": 14400, "max_gpus": 8, "permitted_partitions": ["batch", "gpu"]}}, "binary_denylist": [...], "host_allow_list": [...]}`). The file's `binary_denylist` / `host_allow_list` **augment** (never replace) the bundled mining-IOC list + OLCF/NERSC/OSTI host allow-list. Override the path with `__G5_ALLOCATION_POLICY_PATH`.
 - `semgrep/*.yml` — G4 Semgrep rules (planned override path; the runtime currently loads bundled rules only).
 
-All four files are optional. Missing or malformed files are non-fatal: VISTAGuard logs a warning and runs without the corresponding policy. Format and examples in the module docstrings of [tool_registry.py](backend/src/vista_backend/vistaguard/tool_registry.py), [gates/g3_rag.py](backend/src/vista_backend/vistaguard/gates/g3_rag.py), and [gates/g1_prompt.py](backend/src/vista_backend/vistaguard/gates/g1_prompt.py).
+All five files are optional. Missing or malformed files are non-fatal: VISTAGuard logs a warning and runs without the corresponding policy. Format and examples in the module docstrings of [tool_registry.py](backend/src/vista_backend/vistaguard/tool_registry.py), [gates/g3_rag.py](backend/src/vista_backend/vistaguard/gates/g3_rag.py), [gates/g1_prompt.py](backend/src/vista_backend/vistaguard/gates/g1_prompt.py), and [gates/g5_hpc.py](backend/src/vista_backend/vistaguard/gates/g5_hpc.py).
 
 ### Logs
 
@@ -250,28 +258,14 @@ grep VISTAGuard logs/backend.log | tail -5
 ```
 You'll see a `WARNING - VISTAGuard G3: rag_search denied ... G3 query-injection: ...` line and the agent will return an `ERROR: ...` string instead of running the search. With both `G1_ENABLED=true` and `G3_ENABLED=true` the G1 deny fires first (the prompt never reaches the agent loop, so `rag_search` is never called).
 
-### Running the evaluation harnesses
-
-Two synthetic evaluations ship reproducible reports under `docs/vistaguard/`:
+**G5 — HPC job deny.** With `__G5_ENABLED=true` and an allocation policy that caps `approved-research` at 64 nodes (drop `g5_allocation_policy.json` into `CONTRACTS_DIR`), ask the agent to submit a wildly over-scaled job. The fast tier denies it before the upstream MCP server is reached:
 ```bash
-cd backend
-uv run python -m vista_backend.vistaguard.eval --gate g2  # Phase-1 G2 vs AgentDojo + SciAgentBench A3
-uv run python -m vista_backend.vistaguard.eval --gate g3  # Phase-2 G3 vs PoisonedRAG / AgentPoison / MemoryGraft / JointOptimization
+# After ./launch.sh logs with G5_ENABLED=true (+ g5_allocation_policy.json in CONTRACTS_DIR):
+curl -X POST http://localhost:3000/api/chat \
+  -d '{"message": "Submit the forge-tune job on 10000 nodes."}'
+grep VISTAGuard logs/backend.log | tail -5
 ```
-Both pin `seed=42` and produce snapshots bit-identical to the committed [docs/vistaguard/g2_eval_phase1.md](docs/vistaguard/g2_eval_phase1.md) and [docs/vistaguard/g3_eval_phase2.md](docs/vistaguard/g3_eval_phase2.md). The Phase-3 G1 + G4 evaluation runs (jailbreak corpus vs. G1; malicious-code corpus vs. G4) are scheduled for the `Phase-3 evaluation` issue and will land at `docs/vistaguard/g1_g4_eval_phase3.md`.
+You'll see a `WARNING - VISTAGuard SEV2 at G5: G5 resource ceiling on allocation 'approved-research': nodes 10000 > cap 64` line; the tool call is rejected (the model sees a `VISTAGuard G5 denied call to 'submit_hpc_job': ...` tool result) and the deny is recorded as a **sticky** capability — the same session can't re-request that resource even after the trust score recovers. A SEV2 structured entry is written to the JSONL audit feed when `PROVENANCE_LOG_PATH` is set.
 
-### Phase 3 test coverage
+The other fast-tier checks fire on the **script body** (visible via an HPC-bound `run_bash` SSH command, an inline-script submission, or a job template): a mining binary (`./xmrig …`), a stratum pool URL, a `~/.ssh/id_*` read, or a `curl`/`scp` to a non-allow-listed host each deny **SEV1**/SEV2 on the deterministic tier — no Q-LLM required. The slow-tier Q-LLM (`__QUARANTINE_ENABLED=true`) adds intent-divergence and chained-job DAG catches on top.
 
-The unit + integration tests for Phase 3 cover G1 fast-tier (`test_g1_fast.py`, 71 tests), G1 slow-tier (`test_g1_slow.py`, 33), G1 wired into `run_stream` (`test_g1_integration.py`, 7), G4 fast-tier (`test_g4_fast.py`, 43), and the bundled Semgrep ruleset's structural validation (`test_g4_semgrep_rules.py`, 19 — runs without Semgrep installed):
-```bash
-cd backend
-uv run pytest src/vista_backend/vistaguard/tests/test_g1_fast.py \
-              src/vista_backend/vistaguard/tests/test_g1_slow.py \
-              src/vista_backend/vistaguard/tests/test_g1_integration.py \
-              src/vista_backend/vistaguard/tests/test_g4_fast.py \
-              src/vista_backend/vistaguard/tests/test_g4_semgrep_rules.py
-```
-Or run the entire VISTAGuard suite (532 tests, ~3s):
-```bash
-uv run pytest src/vista_backend/vistaguard/tests/
-```

@@ -35,6 +35,121 @@ EVENT_INCIDENT = "incident"
 
 
 # -----------------------------------------------------------------
+# Broker sink (Phase 7)
+# -----------------------------------------------------------------
+
+
+class FlowceptSink:
+    """
+    Ships `ProvenanceEvent`s to a Flowcept broker.
+
+    `flowcept` is an **optional dependency**, imported lazily on the first
+    emit so that importing VISTAGuard -- and constructing a
+    `ProvenanceEmitter` -- never requires it. Each provenance event is
+    published as a Flowcept *task* grouped under a per-session *workflow*
+    (the workflow id is the emitter's `session_id`), so an auditor can
+    pull every gate decision and incident for a session as one trace.
+
+    The actual broker call is isolated in `_publish`, which targets
+    Flowcept's documented ``Flowcept.db.insert_or_update_task`` API. It is
+    written defensively (attribute-probed, never assuming a private shape)
+    so a Flowcept version delta is a single-method fix, and so a broker or
+    API problem surfaces as an exception the `ProvenanceEmitter` catches
+    and degrades from -- provenance must never crash the agent run.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        session_id: str,
+        workflow_name: str = "vistaguard",
+    ) -> None:
+        self._endpoint = endpoint
+        self._session_id = session_id
+        self._workflow_name = workflow_name
+        self._flowcept: Any | None = None
+        self._db: Any | None = None
+        self._started = False
+
+    def _ensure_started(self) -> None:
+        """Lazily import flowcept and start the controller once."""
+        if self._started:
+            return
+        try:
+            from flowcept import Flowcept  # type: ignore
+        except ImportError as exc:  # optional dependency not installed
+            raise ImportError(
+                "VISTAGuard: flowcept_enabled=True but the 'flowcept' "
+                "package is not installed. Install the optional dependency "
+                "(e.g. `uv pip install flowcept` or the 'vistaguard-flowcept' "
+                "extra), or set "
+                "VISTA_BACKEND_VISTAGUARD__FLOWCEPT_ENABLED=false."
+            ) from exc
+
+        # Flowcept reads its MQ/DB connection from its own configuration;
+        # we record the operator-supplied endpoint on the controller so a
+        # deployment can route both through the same value. Controller
+        # construction kwargs are kept minimal and probed defensively.
+        self._flowcept = Flowcept(
+            workflow_name=self._workflow_name,
+            workflow_id=self._session_id,
+        )
+        start = getattr(self._flowcept, "start", None)
+        if callable(start):
+            start()
+        # `Flowcept.db` is the class-level persistence/DB API.
+        self._db = getattr(Flowcept, "db", None)
+        self._started = True
+
+    def emit(self, event: "ProvenanceEvent") -> None:
+        self._ensure_started()
+        self._publish(self._event_to_task(event))
+
+    def _event_to_task(self, event: "ProvenanceEvent") -> dict[str, Any]:
+        """Map a `ProvenanceEvent` to a Flowcept task message."""
+        return {
+            "task_id": f"{event.session_id}:{event.event_type}:{event.timestamp}",
+            "workflow_id": event.session_id,
+            "activity_id": event.event_type,
+            "used": {"session_id": event.session_id, "endpoint": self._endpoint},
+            "generated": dict(event.payload),
+            "custom_metadata": {
+                "vistaguard": True,
+                "event_type": event.event_type,
+                **dict(event.payload),
+            },
+            "started_at": event.timestamp,
+            "ended_at": event.timestamp,
+        }
+
+    def _publish(self, task: dict[str, Any]) -> None:
+        if self._db is None or not hasattr(self._db, "insert_or_update_task"):
+            raise RuntimeError(
+                "VISTAGuard: flowcept DB API unavailable "
+                "(Flowcept.db.insert_or_update_task missing); "
+                "cannot publish provenance task"
+            )
+        self._db.insert_or_update_task(task)
+
+    def close(self) -> None:
+        """Best-effort flush/stop of the Flowcept controller."""
+        if self._flowcept is not None:
+            stop = getattr(self._flowcept, "stop", None)
+            if callable(stop):
+                try:
+                    stop()
+                except Exception as exc:  # noqa: BLE001 - teardown must not raise
+                    logger.warning(
+                        "VISTAGuard: error stopping Flowcept controller (%s: %s)",
+                        type(exc).__name__, exc,
+                    )
+        self._flowcept = None
+        self._db = None
+        self._started = False
+
+
+# -----------------------------------------------------------------
 # ProvenanceEvent
 # -----------------------------------------------------------------
 
@@ -45,11 +160,6 @@ class ProvenanceEvent:
     A single audit event, returned from `ProvenanceEmitter.emit_*`
     and exposed as `ProvenanceEmitter.last_event` for tests and the
     Phase-5 incident-manager rate-limiting path.
-
-    The `payload` field is the serialized JSON-compatible dict that
-    was written to the log; reading it back is the simplest way for
-    tests to assert on the event schema without re-running the
-    serializer.
     """
 
     event_type: str
@@ -88,6 +198,7 @@ class ProvenanceEmitter:
         *,
         session_id: str | None = None,
         log_path: str | Path | None = None,
+        sink: Any | None = None,
     ) -> None:
         """
         Construct a ProvenanceEmitter.
@@ -141,6 +252,25 @@ class ProvenanceEmitter:
         )
 
         self._last_event: ProvenanceEvent | None = None
+
+        # Phase-7 broker sink. When Flowcept is enabled we ship events to
+        # the broker; an injected `sink` (tests, or an alternate broker)
+        # takes precedence over the default `FlowceptSink`. The sink is
+        # constructed eagerly but imports `flowcept` lazily, so this does
+        # not require the optional dependency at construction time.
+        if sink is not None:
+            self._sink: Any | None = sink
+        elif settings.flowcept_enabled:
+            self._sink = FlowceptSink(
+                settings.flowcept_endpoint,  # validated non-None above
+                session_id=self._session_id,
+            )
+        else:
+            self._sink = None
+        # Once the broker sink fails (e.g. flowcept not installed), stop
+        # retrying for this session and degrade to the JSONL log so the
+        # agent run is never blocked on provenance.
+        self._sink_failed = False
 
     # -----------------------------------------------------------------
     # Read-only state
@@ -275,23 +405,42 @@ class ProvenanceEmitter:
             payload=dict(payload),
         )
 
-        if self._settings.flowcept_enabled:
-            # Phase-0 stub: the broker integration lands in Phase 7.
-            # NotImplementedError is preferable to silent dropping
-            # because a deployment that flips `flowcept_enabled=True`
-            # before Phase 7 should learn immediately that the broker
-            # is not wired yet rather than accumulating a backlog of
-            # events on the filesystem.
-            raise NotImplementedError(
-                "ProvenanceEmitter: Flowcept broker emission is not "
-                "implemented in Phase 0. Set "
-                "VISTA_BACKEND_VISTAGUARD__FLOWCEPT_ENABLED=false to "
-                "use the JSONL log path until Phase 7 lands."
-            )
+        if self._sink is not None and not self._sink_failed:
+            try:
+                self._sink.emit(event)
+            except Exception as exc:  # noqa: BLE001 - provenance must not crash the run
+                # First failure (e.g. flowcept missing, broker
+                # unreachable): log loudly once, then degrade to the
+                # durable JSONL path for the rest of the session rather
+                # than spamming the log or blocking the agent.
+                self._sink_failed = True
+                logger.error(
+                    "VISTAGuard: Flowcept emission failed (%s: %s); "
+                    "falling back to the JSONL provenance log for the "
+                    "rest of this session.",
+                    type(exc).__name__, exc,
+                )
+                self._write_jsonl(event)
+            self._last_event = event
+            return event
 
         self._write_jsonl(event)
         self._last_event = event
         return event
+
+    def close(self) -> None:
+        """Flush/stop the broker sink (best-effort). Safe to call when no
+        sink is configured."""
+        if self._sink is not None:
+            close = getattr(self._sink, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:  # noqa: BLE001 - teardown must not raise
+                    logger.warning(
+                        "VISTAGuard: error closing provenance sink (%s: %s)",
+                        type(exc).__name__, exc,
+                    )
 
     def _write_jsonl(self, event: ProvenanceEvent) -> None:
         """
