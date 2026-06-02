@@ -33,7 +33,16 @@ mcp = FastMCP("AgentHPC")
 
 
 # Per-(session, app_type) cache of completed-trial scores.
-# Structure: { (session_id, app_type): { param_key: {"parameters": [...], "score": float} } }
+# Structure: { (session_id, app_type): { param_key: {"parameters": [...],
+#                                                     "score": float | None,
+#                                                     "trial_number": int | None,
+#                                                     "log_contents": str | None,
+#                                                     "job_id": str | None } } }
+# A record with ``score is None`` is a *claim sentinel*: another worker has
+# allocated this composition and is currently submitting / running it. The
+# sentinel reserves the param key so concurrent workers don't pick the same
+# composition. ``agenthpc_get_job_result`` overwrites the sentinel with the
+# final score; a submit failure removes it.
 # TTL matches _ssh_connections (1 hour) so state disappears alongside the SSH session.
 _results_cache: TTLCache[tuple[str, str], dict[str, dict]] = TTLCache(maxsize=256, ttl=3600)
 
@@ -46,6 +55,28 @@ _results_cache: TTLCache[tuple[str, str], dict[str, dict]] = TTLCache(maxsize=25
 #                                                  "trial_number": int | None,
 #                                                  "log_params": dict } } }
 _pending_jobs: TTLCache[tuple[str, str], dict[str, dict]] = TTLCache(maxsize=256, ttl=3600)
+
+
+# Per-(session, app_type) asyncio.Lock that serializes claim / result / cancel
+# mutations of ``_results_cache`` and ``_pending_jobs``. Without this, two
+# workers can both pass the duplicate-key check in agenthpc_submit_parameter_set
+# before either inserts the sentinel.
+_session_locks: TTLCache[tuple[str, str], asyncio.Lock] = TTLCache(maxsize=256, ttl=3600)
+
+
+# Per-(session, app_type) monotonically-increasing trial counter. We do NOT
+# derive trial_number from ``len(results)`` because rolling back a failed
+# submit would let two later workers collide on the same trial_number (and
+# therefore the same remote run_dir). The counter only goes up.
+_session_next_trial: TTLCache[tuple[str, str], int] = TTLCache(maxsize=256, ttl=3600)
+
+
+# Per-(session, app_type) cooperative stop flag. ``agenthpc_cancel_all_pending``
+# sets it so a backend-side worker pool blocked on agenthpc_run_workers can
+# notice the cancellation between rounds and exit cleanly.
+# agenthpc_get_all_results ORs this into ``should_stop`` so a single-worker
+# loop driven by the chat agent also notices.
+_session_stop_flags: TTLCache[tuple[str, str], bool] = TTLCache(maxsize=256, ttl=3600)
 
 
 def _get_app(app_type: str) -> BaseApplication:
@@ -72,6 +103,40 @@ def _session_pending(session_id: str, app_type: str) -> dict[str, dict]:
     if cache_key not in _pending_jobs:
         _pending_jobs[cache_key] = {}
     return _pending_jobs[cache_key]
+
+
+def _session_lock(session_id: str, app_type: str) -> asyncio.Lock:
+    cache_key = (session_id, app_type)
+    if cache_key not in _session_locks:
+        _session_locks[cache_key] = asyncio.Lock()
+    return _session_locks[cache_key]
+
+
+def _allocate_trial_number(session_id: str, app_type: str) -> int:
+    """Return the next unused trial_number and bump the counter. Caller must
+    hold ``_session_lock(session_id, app_type)``."""
+    cache_key = (session_id, app_type)
+    n = _session_next_trial.get(cache_key, 0)
+    _session_next_trial[cache_key] = n + 1
+    return n
+
+
+def _bump_trial_counter_past(session_id: str, app_type: str, trial_number: int) -> None:
+    """Ensure future ``_allocate_trial_number`` calls return values greater
+    than ``trial_number``. Used when a caller passed an explicit trial_number
+    so subsequent allocations don't collide. Caller must hold the lock."""
+    cache_key = (session_id, app_type)
+    _session_next_trial[cache_key] = max(
+        _session_next_trial.get(cache_key, 0), trial_number + 1
+    )
+
+
+def _get_stop_flag(session_id: str, app_type: str) -> bool:
+    return bool(_session_stop_flags.get((session_id, app_type), False))
+
+
+def _set_stop_flag(session_id: str, app_type: str, value: bool = True) -> None:
+    _session_stop_flags[(session_id, app_type)] = value
 
 
 # --------------------------------------------------------------------------- tools
@@ -122,12 +187,21 @@ async def agenthpc_submit_parameter_set(
     percentages. They MUST sum to exactly 1.0 (tolerance 1e-3); any other sum
     is rejected with an error before anything is submitted to HPC.
     ``trial_number`` controls the remote run directory name; if omitted, the
-    server uses the count of already-submitted trials in this session.
+    server allocates the next unused trial number for this session.
 
-    Returns ``{job_id, parameters, log_params, cached?}``. Pass ``job_id`` and
-    ``log_params`` back to the status/result tools. If the exact parameter set
-    has already been evaluated in this session, returns ``{"cached": true,
-    "score": ...}`` instead of submitting a new job.
+    Returns one of three shapes:
+
+    - ``{"cached": true, "score": ...}`` — the exact parameter set has already
+      been *scored* in this session; no new job is submitted.
+    - ``{"claim_lost": true, "trial_number": ...}`` — another worker in this
+      session has already claimed this composition and is currently running
+      it. Propose a different composition and try again.
+    - ``{"cached": false, "job_id": ..., "log_params": ..., ...}`` — a new
+      Slurm job was submitted. Pass ``job_id`` and ``log_params`` to the
+      status / result tools.
+
+    The duplicate check + slot claim is atomic under a per-session lock, so
+    concurrent workers cannot both submit the same composition.
     """
     app = _get_app(app_type)
 
@@ -152,43 +226,86 @@ async def agenthpc_submit_parameter_set(
         raise ValueError(f"Unsupported application: {app_type}")
 
     results = _session_results(ctx.session_id, app_type)
-    if key in results:
-        cached = results[key]
-        await ctx.info(f"agenthpc: returning cached score for {app_type} {key}")
-        return {
-            "cached": True,
-            "app_type": app_type,
-            "parameters": cached["parameters"],
-            "score": cached["score"],
+    lock = _session_lock(ctx.session_id, app_type)
+
+    # Claim phase: atomic under the lock. Either return a "cached" / "claim_lost"
+    # result, or reserve the slot with a sentinel (score=None) and exit the lock
+    # before doing the slow SSH/sbatch work.
+    async with lock:
+        existing = results.get(key)
+        if existing is not None:
+            if existing.get("score") is None:
+                await ctx.info(
+                    f"agenthpc: claim lost for {app_type} {key} — already claimed by another worker"
+                )
+                return {
+                    "claim_lost": True,
+                    "app_type": app_type,
+                    "parameters": existing["parameters"],
+                    "trial_number": existing.get("trial_number"),
+                }
+            await ctx.info(f"agenthpc: returning cached score for {app_type} {key}")
+            return {
+                "cached": True,
+                "app_type": app_type,
+                "parameters": existing["parameters"],
+                "score": existing["score"],
+            }
+
+        if trial_number is None:
+            trial_number = _allocate_trial_number(ctx.session_id, app_type)
+        else:
+            _bump_trial_counter_past(ctx.session_id, app_type, trial_number)
+
+        # Sentinel reserves the slot. ``score=None`` distinguishes "claimed but
+        # not yet scored" from a completed trial. ``job_id`` is filled in after
+        # sbatch succeeds.
+        results[key] = {
+            "parameters": list(params),
+            "score": None,
+            "trial_number": trial_number,
+            "log_contents": None,
+            "job_id": None,
         }
 
-    if trial_number is None:
-        # Count both completed and in-flight submissions in this session.
-        trial_number = sum(1 for _ in results)  # completed so far; collisions
-        # are tolerated since trial_number only names the remote run dir.
+    try:
+        ssh_conn = await get_ssh_conn_mcp_elicitation(
+            ctx,
+            message=get_tool_call_string(
+                "agenthpc_submit_parameter_set",
+                app_type=app_type,
+                parameters=list(params),
+                trial_number=trial_number,
+            ),
+            host=app.host,
+        )
+        if app_type == "monbtaw":
+            job_id = await hpc_ops.submit_monbtaw(ssh_conn, app.app_config, params, trial_number)
+            log_params = {"trial_number": trial_number}
+        else:
+            raise ValueError(f"Unsupported application: {app_type}")
+    except BaseException:
+        # Submit failed (or was cancelled). Roll back the claim so a future
+        # worker can take this composition. We do NOT reuse the trial_number
+        # since the remote run_dir may already have been partly prepared.
+        async with lock:
+            current = results.get(key)
+            if current is not None and current.get("score") is None:
+                del results[key]
+        raise
 
-    ssh_conn = await get_ssh_conn_mcp_elicitation(
-        ctx,
-        message=get_tool_call_string(
-            "agenthpc_submit_parameter_set",
-            app_type=app_type,
-            parameters=list(params),
-            trial_number=trial_number,
-        ),
-        host=app.host,
-    )
-    if app_type == "monbtaw":
-        job_id = await hpc_ops.submit_monbtaw(ssh_conn, app.app_config, params, trial_number)
-        log_params = {"trial_number": trial_number}
-    else:
-        raise ValueError(f"Unsupported application: {app_type}")
+    async with lock:
+        # Record the job_id on the sentinel so cancellation can find it.
+        current = results.get(key)
+        if current is not None and current.get("score") is None:
+            current["job_id"] = job_id
 
-    pending = _session_pending(ctx.session_id, app_type)
-    pending[job_id] = {
-        "parameters": list(params),
-        "trial_number": trial_number,
-        "log_params": log_params,
-    }
+        pending = _session_pending(ctx.session_id, app_type)
+        pending[job_id] = {
+            "parameters": list(params),
+            "trial_number": trial_number,
+            "log_params": log_params,
+        }
 
     await ctx.info(f"agenthpc: submitted {app_type} job {job_id} for params {params}")
     return {
@@ -309,12 +426,19 @@ async def agenthpc_get_job_result(
         host=app.host,
     )
     log_path = _log_path(app, log_params)
+    lock = _session_lock(ctx.session_id, app_type)
     pending = _session_pending(ctx.session_id, app_type)
     if not await hpc_ops.log_exists(ssh_conn, log_path):
-        # Job is gone and no log was produced — drop it from the pending
-        # registry so a later "cancel everything" call does not try to
-        # scancel a dead job id.
-        pending.pop(job_id, None)
+        # Job is gone and no log was produced — drop the pending entry AND
+        # the claim sentinel so a future worker can retry this composition.
+        params = tuple(float(p) for p in parameters)
+        key = key_from_params(*params)
+        async with lock:
+            pending.pop(job_id, None)
+            results = _session_results(ctx.session_id, app_type)
+            existing = results.get(key)
+            if existing is not None and existing.get("score") is None:
+                del results[key]
         return {
             "status": "no_log",
             "job_id": job_id,
@@ -328,17 +452,19 @@ async def agenthpc_get_job_result(
     params = tuple(float(p) for p in parameters)
     key = key_from_params(*params)
     trial_number = log_params.get("trial_number") if isinstance(log_params, dict) else None
-    results = _session_results(ctx.session_id, app_type)
-    # Stash the raw log contents and the trial number so agenthpc_plot_progress
-    # can build a cumulative specific-heat-curves plot without re-fetching
-    # stat0.dat over SSH for every call.
-    results[key] = {
-        "parameters": list(params),
-        "score": score,
-        "trial_number": int(trial_number) if trial_number is not None else None,
-        "log_contents": contents,
-    }
-    pending.pop(job_id, None)
+    async with lock:
+        results = _session_results(ctx.session_id, app_type)
+        # Stash the raw log contents and the trial number so agenthpc_plot_progress
+        # can build a cumulative specific-heat-curves plot without re-fetching
+        # stat0.dat over SSH for every call. This overwrites the claim sentinel
+        # placed by agenthpc_submit_parameter_set.
+        results[key] = {
+            "parameters": list(params),
+            "score": score,
+            "trial_number": int(trial_number) if trial_number is not None else None,
+            "log_contents": contents,
+        }
+        pending.pop(job_id, None)
 
     threshold = _effective_threshold(app, target_score)
     return {
@@ -371,26 +497,37 @@ async def agenthpc_get_all_results(
     """
     app = _get_app(app_type)
     results = _session_results(ctx.session_id, app_type)
+    # Completed trials only — skip claim sentinels (score is None) so the
+    # caller never sees "in flight" rows as if they were results.
     trials = [
         {"key": k, "parameters": v["parameters"], "score": v["score"]}
         for k, v in results.items()
+        if v.get("score") is not None
     ]
+    # In-flight count is useful for the worker pool's progress reporting.
+    in_flight = sum(1 for v in results.values() if v.get("score") is None)
     best_score = max((t["score"] for t in trials), default=0.0)
     best_trial = max(trials, key=lambda t: t["score"]) if trials else None
 
     threshold = _effective_threshold(app, target_score)
     budget = _effective_max_trials(app, max_trials)
 
+    stopped_by_user = _get_stop_flag(ctx.session_id, app_type)
+    threshold_reached = best_score >= threshold
+    budget_exhausted = len(trials) >= budget
+
     return {
         "app_type": app_type,
         "num_trials": len(trials),
+        "in_flight": in_flight,
         "max_trials": budget,
         "score_threshold": threshold,
         "best_score": best_score,
         "best_parameters": best_trial["parameters"] if best_trial else None,
-        "threshold_reached": best_score >= threshold,
-        "budget_exhausted": len(trials) >= budget,
-        "should_stop": (best_score >= threshold) or (len(trials) >= budget),
+        "threshold_reached": threshold_reached,
+        "budget_exhausted": budget_exhausted,
+        "stopped_by_user": stopped_by_user,
+        "should_stop": threshold_reached or budget_exhausted or stopped_by_user,
         "trials": trials,
         "defaults": {
             "score_threshold": app.score_threshold,
@@ -435,7 +572,10 @@ async def agenthpc_cancel_job(
     """
     Cancel a single in-flight Slurm job submitted through this MCP session.
     Idempotent — cancelling a job that has already finished or been cancelled
-    is a no-op. Drops the job from the pending-jobs registry.
+    is a no-op. Drops the job from the pending-jobs registry and clears the
+    corresponding claim sentinel so the composition can be tried again.
+    Does NOT set the session stop flag — use ``agenthpc_cancel_all_pending``
+    when the user wants to halt the entire campaign.
     """
     app = _get_app(app_type)
     ssh_conn = await get_ssh_conn_mcp_elicitation(
@@ -447,8 +587,18 @@ async def agenthpc_cancel_job(
     )
     output = await hpc_ops.scancel_job(ssh_conn, job_id)
 
+    lock = _session_lock(ctx.session_id, app_type)
     pending = _session_pending(ctx.session_id, app_type)
-    removed = pending.pop(job_id, None)
+    results = _session_results(ctx.session_id, app_type)
+    async with lock:
+        removed = pending.pop(job_id, None)
+        if removed is not None:
+            params = removed.get("parameters") or []
+            if len(params) == 4:
+                key = key_from_params(*params)
+                existing = results.get(key)
+                if existing is not None and existing.get("score") is None:
+                    del results[key]
 
     await ctx.info(f"agenthpc: cancelled {app_type} job {job_id}")
     return {
@@ -470,16 +620,27 @@ async def agenthpc_cancel_all_pending(
     ``app_type``. Use when the user asks to stop / abort / cancel the
     optimization. Returns the list of cancelled job ids.
 
-    Does not touch completed trials in the results cache — those are kept so
-    the user can still see what was found before stopping.
+    Also sets the session's cooperative stop flag so any backend-side worker
+    pool (``agenthpc_run_workers``) currently looping notices the cancellation
+    on its next ``agenthpc_get_all_results`` check and exits cleanly.
+
+    Does not touch *completed* trials in the results cache — those are kept so
+    the user can still see what was found before stopping. Claim sentinels for
+    the cancelled jobs are dropped so the search space is not poisoned.
     """
     app = _get_app(app_type)
     pending = _session_pending(ctx.session_id, app_type)
+    # Set the stop flag unconditionally — even when there are zero pending
+    # jobs, the user explicitly asked to halt, and a worker pool that just
+    # finished its in-flight batch should still not start a new one.
+    _set_stop_flag(ctx.session_id, app_type, True)
+
     if not pending:
         return {
             "app_type": app_type,
             "num_cancelled": 0,
             "cancelled": [],
+            "stop_flag_set": True,
             "message": "No in-flight jobs for this session.",
         }
 
@@ -490,11 +651,24 @@ async def agenthpc_cancel_all_pending(
         ),
         host=app.host,
     )
+    lock = _session_lock(ctx.session_id, app_type)
     cancelled: list[dict[str, Any]] = []
+    results = _session_results(ctx.session_id, app_type)
     # Snapshot keys so we can mutate the dict while iterating.
-    for job_id in list(pending.keys()):
-        info = pending.pop(job_id, None) or {}
+    async with lock:
+        pending_snapshot = list(pending.items())
+    for job_id, info in pending_snapshot:
         output = await hpc_ops.scancel_job(ssh_conn, job_id)
+        async with lock:
+            pending.pop(job_id, None)
+            # Drop the corresponding claim sentinel so the composition can be
+            # re-tried in a future session if the user resumes optimization.
+            params = info.get("parameters") or []
+            if len(params) == 4:
+                key = key_from_params(*params)
+                existing = results.get(key)
+                if existing is not None and existing.get("score") is None:
+                    del results[key]
         cancelled.append({
             "job_id": job_id,
             "parameters": info.get("parameters"),
@@ -507,6 +681,7 @@ async def agenthpc_cancel_all_pending(
         "app_type": app_type,
         "num_cancelled": len(cancelled),
         "cancelled": cancelled,
+        "stop_flag_set": True,
     }
 
 
