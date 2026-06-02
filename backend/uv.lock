@@ -1,6 +1,6 @@
 version = 1
 revision = 3
-requires-python = "==3.14.3"
+requires-python = ">=3.14.3, <3.15"
 
 [[package]]
 name = "ag-ui-protocol"
@@ -3619,7 +3619,7 @@ requires-dist = [
     { name = "anyio", extras = ["trio"], specifier = ">=4.0" },
     { name = "chromadb", specifier = ">=0.5.0" },
     { name = "cryptography", specifier = ">=48.0.0" },
-    { name = "fastapi", specifier = ">=0.136.1" },
+    { name = "fastapi", specifier = ">=0.136.3" },
     { name = "flowcept", specifier = ">=0.10.6" },
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "numpy", specifier = ">=1.26,<3" },
@@ -3636,7 +3636,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "sqlmodel", specifier = ">=0.0.38" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.46.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.48.0" },
 ]
 provides-extras = ["dev"]
 

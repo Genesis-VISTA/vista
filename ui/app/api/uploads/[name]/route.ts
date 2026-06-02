@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -42,7 +42,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
     upstream = await fetch(
       backendUrl(
         `/projects/${encodeURIComponent(projectName)}/uploads/${encodeURIComponent(safeName)}`
-      )
+      ),
+      { headers: await backendHeaders() }
     );
   } catch {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
@@ -78,7 +79,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ n
       backendUrl(
         `/projects/${encodeURIComponent(projectName)}/uploads/${encodeURIComponent(safeName)}`
       ),
-      { method: "DELETE" }
+      { method: "DELETE", headers: await backendHeaders() }
     );
   } catch {
     return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: 502 });

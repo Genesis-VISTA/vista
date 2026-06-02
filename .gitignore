@@ -1,6 +1,5 @@
 # Built MCP Apps
 /src/vista/mcp-apps/
-/vista.db*
 
 # Ignore Molten Salts DB
 /data/**

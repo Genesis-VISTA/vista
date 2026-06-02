@@ -4,9 +4,24 @@ set -euo pipefail
 REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$REPO_ROOT"
 
-MODE="${1:-terminal}"
+# Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
+MODE="terminal"
+PROD=false
+for arg in "$@"; do
+  case "$arg" in
+    --prod) PROD=true ;;
+    tmux|terminal|logs) MODE="$arg" ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod]" >&2; exit 1 ;;
+  esac
+done
 
-./build.sh
+if [[ "$PROD" == true ]]; then
+  ./build.sh --prod
+  UI_RUN_CMD="npm start"
+else
+  ./build.sh
+  UI_RUN_CMD="npm run dev"
+fi
 
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
@@ -23,11 +38,12 @@ BACKEND_CMD="
   uv run vista-backend;
 "
 
+# So that this passes even when authentication is enabled in prod, pass the wait condition on 401/403
 UI_CMD="
   cd '$REPO_ROOT/ui' &&
   echo 'Waiting for backend...' &&
-  until curl -fs -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
-  npm run dev;
+  until curl -s -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
+  $UI_RUN_CMD;
 "
 
 # Launches a command in a new terminal window

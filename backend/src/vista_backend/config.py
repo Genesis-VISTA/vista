@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     database_url: A[
         str,
-        Field(default_factory=lambda: f"sqlite+aiosqlite:///{(Path.cwd() / '../vista.db').resolve()}"),
+        Field(default_factory=lambda data: f"sqlite+aiosqlite:///{(data['data_dir'] / 'vista.db').resolve()}"),
     ]
     """ SQLAlchemy async database URL. Defaults to a local SQLite db via aiosqlite. """
 
