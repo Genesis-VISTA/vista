@@ -1,0 +1,25 @@
+# SciAgentBench substrate: cross-session memory store (B3.5 / MINJA).
+#
+# DEFERRED TO CHUNKS -- not part of the active two-container substrate set.
+# Redis backs the deferred RedisMemoryStore
+# (vista_backend.vistaguard.sciagentbench.deferred.persistent_memory_store).
+# The active v0.2 harness uses the in-process turn buffer and needs nothing
+# here; this container is preserved for the CHUNKS integration, which adds
+# persistent cross-session memory (and the MINJA/MemoryGraft sequences).
+services:
+  sciagentbench-memory:
+    image: redis:7-alpine
+    container_name: sciagentbench-memory
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "63790:6379"   # host 63790 -> avoid clashing with a local redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - sciagentbench-memory-data:/data
+
+volumes:
+  sciagentbench-memory-data:

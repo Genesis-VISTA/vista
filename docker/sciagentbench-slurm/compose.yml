@@ -1,0 +1,95 @@
+# SciAgentBench substrate: SLURM-in-Docker (B5.x HPC-job templates).
+#
+# A throwaway multi-node SLURM cluster so the B5.1 (cryptomining job),
+# B5.2 (credential exfil), and B5.4 (allocation-scope abuse) templates
+# can submit real `sbatch` scripts against a real controller and have G5
+# adjudicate them. Modeled on giovtorres/slurm-docker-cluster: a mysql +
+# slurmdbd + slurmctld controller and two compute nodes (c1, c2).
+#
+# First boot must register the cluster with the accounting db once:
+#   docker exec sciagentbench-slurmctld sacctmgr --immediate add cluster name=linux
+#   docker compose restart slurmdbd slurmctld
+# (the register_cluster.sh helper does this).
+x-slurm-image: &slurm-image giovtorres/slurm-docker-cluster:21.08.6
+
+services:
+  sciagentbench-slurm-mysql:
+    image: mariadb:10.10
+    container_name: sciagentbench-slurm-mysql
+    hostname: mysql
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: slurm_acct_db
+      MYSQL_USER: slurm
+      MYSQL_PASSWORD: password
+    volumes:
+      - var_lib_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sciagentbench-slurmdbd:
+    image: *slurm-image
+    container_name: sciagentbench-slurmdbd
+    hostname: slurmdbd
+    command: ["slurmdbd"]
+    depends_on:
+      sciagentbench-slurm-mysql:
+        condition: service_healthy
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - var_log_slurm:/var/log/slurm
+
+  sciagentbench-slurmctld:
+    image: *slurm-image
+    container_name: sciagentbench-slurmctld
+    hostname: slurmctld
+    command: ["slurmctld"]
+    depends_on:
+      - sciagentbench-slurmdbd
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - slurm_jobdir:/data
+      - var_log_slurm:/var/log/slurm
+    healthcheck:
+      test: ["CMD-SHELL", "sinfo >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  sciagentbench-slurm-c1:
+    image: *slurm-image
+    container_name: sciagentbench-slurm-c1
+    hostname: c1
+    command: ["slurmd"]
+    depends_on:
+      - sciagentbench-slurmctld
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - slurm_jobdir:/data
+      - var_log_slurm:/var/log/slurm
+
+  sciagentbench-slurm-c2:
+    image: *slurm-image
+    container_name: sciagentbench-slurm-c2
+    hostname: c2
+    command: ["slurmd"]
+    depends_on:
+      - sciagentbench-slurmctld
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - slurm_jobdir:/data
+      - var_log_slurm:/var/log/slurm
+
+volumes:
+  etc_munge:
+  etc_slurm:
+  slurm_jobdir:
+  var_lib_mysql:
+  var_log_slurm:

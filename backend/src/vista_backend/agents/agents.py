@@ -175,6 +175,32 @@ def get_dev_mcp_server(
     )
 
 
+def _tool_allowed(name: str, patterns: list[str]) -> bool:
+    """
+    Match `name` against fnmatch-style `patterns`.
+
+    Entries beginning with `!` are deny patterns; everything else is an
+    allow pattern. A tool is allowed iff at least one allow pattern matches
+    and no deny pattern matches. With no allow patterns, allow `*`.
+
+    Pure helper so the equivalent vendored copy in
+    `vistaguard.gates.g2_tool` can be pinned against it. The per-project
+    policy (reading `project.tools`, plus the no-knowledge-base
+    `rag_search` denial) lives in `ProjectAgent._tool_allowed`, which
+    delegates here.
+    """
+    allow_patterns = [p for p in patterns if not p.startswith("!")]
+    if not allow_patterns:
+        allow_patterns = ['*']
+    deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
+
+    if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
+        return False
+    if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
+        return False
+    return True
+
+
 class ProjectAgent:
     def __init__(self, project: ProjectPublic, user: UserPublicWithConfig):
         self.project = project
@@ -325,26 +351,16 @@ class ProjectAgent:
 
     def _tool_allowed(self, name: str) -> bool:
         """
-        Check if a tool should be included in the project or not
+        Check if a tool should be included in the project or not.
 
-        Match `name` against a list of fnmatch-style patterns in project.tools. Entries beginning
-        with `!` are deny patterns; everything else is an allow pattern. A tool is allowed iff at
-        least one allow pattern matches and no deny pattern matches. If there are no allow_patterns,
-        assume allow "*".
+        Applies the project's `tools` allow/deny patterns via the
+        module-level `_tool_allowed`, with one project-policy addition:
+        when the project has no knowledge bases, `rag_search` is denied.
         """
-        allow_patterns = [p for p in self.project.tools if not p.startswith("!")]
-        if not allow_patterns:
-            allow_patterns = ['*']
-        deny_patterns = [p[1:] for p in self.project.tools if p.startswith("!")]
-
-        if not self.project.knowledge_bases and "rag_search" not in deny_patterns:
-            deny_patterns.append("rag_search")
-
-        if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
-            return False
-        if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
-            return False
-        return True
+        patterns = list(self.project.tools)
+        if not self.project.knowledge_bases and "!rag_search" not in patterns:
+            patterns.append("!rag_search")
+        return _tool_allowed(name, patterns)
 
     async def list_tools(self) -> list[mcp.types.Tool]:
         """
@@ -385,6 +401,15 @@ class ProjectAgent:
         return self
 
     async def __aexit__(self, *exc):
+        # Flush/stop the VISTAGuard provenance sink (e.g. the Flowcept
+        # broker controller) before tearing down the agent. Best-effort:
+        # provenance teardown must never mask the agent's own exit.
+        try:
+            self._sidecar.provenance.close()
+        except Exception:  # noqa: BLE001 - teardown must not raise
+            logging.getLogger(__name__).warning(
+                "VISTAGuard: provenance.close() failed", exc_info=True
+            )
         await self.agent.__aexit__(*exc)
 
     async def _setup_volumes(self) -> None:

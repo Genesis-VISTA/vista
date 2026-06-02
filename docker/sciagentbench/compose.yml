@@ -1,0 +1,14 @@
+# SciAgentBench substrate -- the two active Phase-9 substrate containers
+# in one stack. Each is also runnable standalone from its own directory;
+# this top-level file `include:`s them so
+# `docker compose -f docker/sciagentbench/compose.yml up` boots both, and
+# `smoke_test.sh` validates each.
+#
+#   - sciagentbench-pypi-mirror  (pypiserver)   -> B4.3 typo-squat imports
+#   - sciagentbench-slurm-*      (SLURM cluster) -> B5.x HPC jobs
+#
+# The Redis cross-session memory container is deferred to CHUNKS and lives
+# under ../deferred/sciagentbench-memory/ (not part of the active stack).
+include:
+  - ../sciagentbench-pypi-mirror/compose.yml
+  - ../sciagentbench-slurm/compose.yml

@@ -30,6 +30,17 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
 ]
+# VISTAGuard G4 (code scanning). Optional: semgrep is only needed when
+# the G4 gate is enabled; the default install does not pull it in.
+vistaguard-g4 = [
+    "semgrep",
+]
+# VISTAGuard provenance shipping to a Flowcept broker (Phase 7). Optional:
+# the broker integration is lazily imported, so the backend runs without
+# it unless VISTA_BACKEND_VISTAGUARD__FLOWCEPT_ENABLED=true.
+vistaguard-flowcept = [
+    "flowcept",
+]
 
 [project.scripts]
 vista-backend = "vista_backend.api.api:main"
