@@ -43,7 +43,7 @@ camel-cases everything (`systemPrompt`, `usageLimits`).
 
 ### `tools` patterns
 
-The list is consumed by `_tool_allowed` in
+The list is consumed by `tool_allowed` in
 [agents.py:95](../backend/src/vista_backend/agents/agents.py). Rules:
 
 - Entries that don't start with `!` are **allow** patterns; entries with `!`
@@ -161,7 +161,7 @@ message history. The backend builds a one-shot agent per turn in
    - the rendered `<available_skills>` block listing every skill in
      `project.skills`, each pointing at `/mnt/skills/<slug>/SKILL.md`
      inside the sandbox.
-2. **Toolset.** The MCP server's tools, filtered through `_tool_allowed`
+2. **Toolset.** The MCP server's tools, filtered through `tool_allowed`
    against `project.tools`.
 3. **Usage limits.** `UsageLimits(**project.usage_limits)` is enforced
    per-turn.

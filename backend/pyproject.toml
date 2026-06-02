@@ -24,6 +24,8 @@ dependencies = [
     "numpy>=1.26,<3",
     "anyio[trio]>=4.0",
     "aiosqlite>=0.20.0",
+    "semgrep>=1.79.0",
+    "flowcept>=0.10.6",
 ]
 
 [project.optional-dependencies]

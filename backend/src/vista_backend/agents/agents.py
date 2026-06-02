@@ -24,7 +24,7 @@ import mcp.types
 from ..config import settings
 from ..db.schemas import ProjectPublic, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
-from ..utils.misc import json_dump_if
+from ..utils.misc import json_dump_if, tool_allowed
 from ..vistaguard import VistaGuardSidecar
 from ..vistaguard.capabilities import (
     ApprovalOutcome,
@@ -325,26 +325,17 @@ class ProjectAgent:
 
     def _tool_allowed(self, name: str) -> bool:
         """
-        Check if a tool should be included in the project or not
+        Check if a tool should be included in the project or not.
 
         Match `name` against a list of fnmatch-style patterns in project.tools. Entries beginning
         with `!` are deny patterns; everything else is an allow pattern. A tool is allowed iff at
         least one allow pattern matches and no deny pattern matches. If there are no allow_patterns,
         assume allow "*".
         """
-        allow_patterns = [p for p in self.project.tools if not p.startswith("!")]
-        if not allow_patterns:
-            allow_patterns = ['*']
-        deny_patterns = [p[1:] for p in self.project.tools if p.startswith("!")]
-
-        if not self.project.knowledge_bases and "rag_search" not in deny_patterns:
-            deny_patterns.append("rag_search")
-
-        if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
-            return False
-        if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
-            return False
-        return True
+        patterns = list(self.project.tools)
+        if not self.project.knowledge_bases and "!rag_search" not in patterns:
+            patterns.append("!rag_search")
+        return tool_allowed(name, patterns)
 
     async def list_tools(self) -> list[mcp.types.Tool]:
         """
@@ -385,6 +376,15 @@ class ProjectAgent:
         return self
 
     async def __aexit__(self, *exc):
+        # Flush/stop the VISTAGuard provenance sink (e.g. the Flowcept
+        # broker controller) before tearing down the agent. Best-effort:
+        # provenance teardown must never mask the agent's own exit.
+        try:
+            self._sidecar.provenance.close()
+        except Exception:  # noqa: BLE001 - teardown must not raise
+            logging.getLogger(__name__).warning(
+                "VISTAGuard: provenance.close() failed", exc_info=True
+            )
         await self.agent.__aexit__(*exc)
 
     async def _setup_volumes(self) -> None:

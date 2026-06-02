@@ -8,7 +8,8 @@ import uvicorn
 from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_vista_mcp_server
-from .agent import router as agent_router, register_vistaguard_routes
+from .agent import router as agent_router
+from .vistaguard import router as vistaguard_router
 from ..services.project_agent import project_agent_pool
 from .auth import get_user
 from .mcp import router as mcp_router
@@ -53,10 +54,11 @@ app.include_router(skills_router)
 app.include_router(uploads_router)
 app.include_router(users_router)
 
-# VISTAGuard trust-state + re-auth endpoints: mounted only when the
-# master flag is on, so they are absent from the API (and OpenAPI
-# schema) when VISTAGuard is disabled.
-register_vistaguard_routes(app, settings.vistaguard)
+# VISTAGuard trust-state + re-auth endpoints: mounted only when the master
+# flag is on, so they are absent from the API (and OpenAPI schema) when
+# VISTAGuard is disabled.
+if settings.vistaguard.enabled:
+    app.include_router(vistaguard_router)
 
 
 def main() -> None:

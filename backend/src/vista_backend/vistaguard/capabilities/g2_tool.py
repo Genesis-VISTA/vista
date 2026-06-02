@@ -35,8 +35,8 @@ from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.exceptions import SkipToolExecution
 
 from ..gates.base import GateContext
-from ..gates.g2_tool import _tool_allowed
 from .base import VistaGuardCapability
+from ...utils.misc import tool_allowed
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ToolCallPart
@@ -96,7 +96,7 @@ class G2ToolCapability(VistaGuardCapability):
         registry = gate.tool_registry
         kept: list[ToolDefinition] = []
         for tool_def in tool_defs:
-            if not _tool_allowed(tool_def.name, gate.allow_patterns):
+            if not tool_allowed(tool_def.name, gate.allow_patterns):
                 self._record_incident(
                     3,
                     f"G2 allow-list: dropping tool {tool_def.name!r} "
