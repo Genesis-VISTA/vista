@@ -2,7 +2,7 @@
 Logic to build the actual PydanticAI Agent
 """
 import fnmatch, json, logging, os, shutil, uuid, asyncio
-from typing import AsyncIterator, Literal, Annotated as A, Any
+from typing import AsyncIterator, Callable, Literal, Annotated as A, Any
 from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
@@ -170,6 +170,10 @@ class ProjectAgent:
         self._cur_mcp_elicitation_callback: mcp.client.session.ElicitationFnT | None = None
         self._cur_mcp_process_tool_call: ProcessToolCallback | None = None
         self._cur_mcp_log_handler: mcp.client.session.LoggingFnT | None = None
+        # Set during run_stream so backend-side tools (e.g. agenthpc_run_workers,
+        # which runs N async sub-agents inside one tool call) can push log lines
+        # into the same stream the chat agent sees. Signature: (level, area, msg).
+        self._cur_log_emitter: Callable[[str, str, str], None] | None = None
         self.agent = self._build_agent()
 
     def _build_agent(self) -> Agent:
@@ -219,6 +223,52 @@ class ProjectAgent:
             toolsets=toolsets,
             end_strategy='exhaustive',
         )
+
+        # Backend-side tool: drives a multi-worker pool for the alloy-design
+        # use case. Kept here rather than in the MCP server because each
+        # worker is itself a PydanticAI sub-Agent run that uses settings.model
+        # via the backend's infer_model. Workers share state via the parent
+        # ProjectAgent's MCP session (same session_id -> same _results_cache).
+        # Gated by the project's tool allow-list, same as MCP tools.
+        if self._tool_allowed("agenthpc_run_workers"):
+            from .agenthpc_workers import run_alloy_workers
+
+            @agent.tool_plain
+            async def agenthpc_run_workers(
+                num_workers: int,
+                app_type: str = "monbtaw",
+                target_score: float | None = None,
+                max_trials: int | None = None,
+            ) -> dict[str, Any]:
+                """
+                Run a parallel agenthpc optimization with ``num_workers``
+                independent LLM-driven worker loops. Each worker proposes one
+                composition, claims it, submits to HPC, waits for completion,
+                and records the score — sharing the per-session results cache
+                so two workers never evaluate the same composition. Blocks
+                until the campaign stops (threshold reached, budget exhausted,
+                or the user cancels via ``agenthpc_cancel_all_pending``).
+                Returns a final summary ``{best_parameters, best_score,
+                num_trials, threshold_reached, budget_exhausted,
+                stopped_by_user, trials}``.
+
+                Use this only when the user asked for ``num_workers > 1``. For
+                single-worker runs, drive the loop directly via the existing
+                ``agenthpc_*`` tools described in the alloy-design skill.
+                """
+                def emit(level: str, message: str) -> None:
+                    cb = self._cur_log_emitter
+                    if cb is not None:
+                        cb(level, "Workers", message)
+
+                return await run_alloy_workers(
+                    project_agent=self,
+                    app_type=app_type,
+                    num_workers=num_workers,
+                    target_score=target_score,
+                    max_trials=max_trials,
+                    log=emit,
+                )
 
         if settings.vistaguard.quarantine_enabled:
             self._sidecar.attach_quarantine_agent(
@@ -473,11 +523,20 @@ class ProjectAgent:
             except StreamClosedError:
                 pass # Merger already closed, the run finished before this notification.
 
+        def emit_log(level: str, area: str, message: str) -> None:
+            # Direct synchronous emitter used by backend-side tools that want
+            # to stream progress (e.g. agenthpc_run_workers' per-trial lines).
+            try:
+                merger.send(log(level, area, message))
+            except StreamClosedError:
+                pass
+
         async def agent_stream() -> AsyncIterator[ProjectAgentStreamEvent]:
             async with self._run_lock:
                 self._cur_mcp_elicitation_callback = self._make_mcp_elicitation_callback(merger) if enable_elicitation else None
                 self._cur_mcp_process_tool_call = self._make_mcp_process_tool_call()
                 self._cur_mcp_log_handler = log_handler
+                self._cur_log_emitter = emit_log
                 try:
                     yield log("INFO", "Agent", "\n".join([
                         f"New request:",
@@ -527,6 +586,7 @@ class ProjectAgent:
                     self._cur_mcp_elicitation_callback = None
                     self._cur_mcp_process_tool_call = None
                     self._cur_mcp_log_handler = None
+                    self._cur_log_emitter = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)
