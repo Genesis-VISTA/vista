@@ -28,13 +28,19 @@ Before running any tool, ask the user for:
    or does not specify, omit it and the YAML default will be used.
 2. **`max_trials`** — the maximum number of HPC jobs you may submit in this
    optimization (e.g. `50` or `100`). Same fallback rule as above.
-3. (Optional) any composition constraints the user wants — e.g. "keep Mo ≥ 0.2"
+3. **`num_workers`** — how many parallel LLM workers to run concurrently
+   (e.g. `1`, `4`, `8`). `1` runs the sequential loop described below.
+   `> 1` switches to **parallel mode** (see "Parallel mode" section) which
+   delegates the entire campaign to `agenthpc_run_workers` in a single
+   blocking tool call.
+4. (Optional) any composition constraints the user wants — e.g. "keep Mo ≥ 0.2"
    — and any notes about prior knowledge.
 
-Use a single, short clarifying question to collect these. Once you have them,
-pass `target_score` and `max_trials` to every tool call that supports them so
-the server's `should_stop`, `threshold_reached`, and `budget_exhausted` flags
-reflect the user's actual goal rather than the YAML defaults.
+Use a single, short clarifying question to collect all four. Once you have
+them, pass `target_score` and `max_trials` to every tool call that supports
+them so the server's `should_stop`, `threshold_reached`, and
+`budget_exhausted` flags reflect the user's actual goal rather than the YAML
+defaults.
 
 ## Tools
 
@@ -86,10 +92,69 @@ marked below.
    `Plot saved to <path>` so the UI auto-displays it in the output panel.
    Call this once after EVERY successful `agenthpc_get_job_result`.
 
-## The optimization loop
+10. **`agenthpc_run_workers(num_workers, app_type, target_score?, max_trials?)`**
+    — **parallel mode only.** Runs the entire campaign with `num_workers`
+    independent LLM workers in one blocking call. Each worker has its own
+    LLM conversation and proposes / submits / scores its own trials. They
+    share state through the same per-session results cache (so two workers
+    never evaluate the same composition). After every successful score,
+    each worker calls `agenthpc_plot_progress` itself, so the cumulative
+    Cv(T) figure in the output panel refreshes per-trial just like in
+    sequential mode. Returns the final summary `{best_parameters,
+    best_score, num_trials, threshold_reached, budget_exhausted,
+    stopped_by_user, trials}` only after the campaign stops (threshold
+    reached, budget exhausted, or `agenthpc_cancel_all_pending` set the
+    stop flag). Per-trial progress lines also stream into the chat as log
+    entries while the tool is running. Do NOT call this when
+    `num_workers == 1`.
+
+## Parallel mode (num_workers > 1)
+
+When the user asks for more than one worker, skip the sequential loop below
+and use the parallel tool instead. The workflow is:
 
 ```
-(0) Ask the user (one short question) for target_score and max_trials.
+(0) Ask the user (one short question) for target_score, max_trials, and
+    num_workers — same as sequential mode.
+
+(1) Call agenthpc_get_search_space("monbtaw", target_score=T, max_trials=N)
+    once so the user sees the search space, defaults, and effective stopping
+    criteria. (Optional but recommended — keeps the user informed.)
+
+(2) Call agenthpc_run_workers(num_workers=W, app_type="monbtaw",
+                              target_score=T, max_trials=N).
+    This BLOCKS until the campaign finishes. While it runs, the user will
+    see per-trial progress streamed as log lines in the chat AND the
+    cumulative Cv(T) figure in the output panel will refresh after every
+    completed trial — the workers call agenthpc_plot_progress themselves.
+    You do NOT write Trial Reports during this phase — workers emit their
+    own one-line summaries.
+
+(3) After the tool returns, write a **Campaign Summary** in chat: best
+    composition, best Tc vs target, number of trials, whether threshold
+    was reached, whether the budget was exhausted, and whether the user
+    cancelled. Reference the figure that has been refreshing in the
+    output panel — no extra plot call is needed.
+```
+
+Do not loop or call `agenthpc_run_workers` more than once per campaign.
+If the user wants to continue after a stop, ask for new `target_score` /
+`max_trials` / `num_workers` and call it again.
+
+If the user cancels during a parallel run, the cancel signal sets the
+session stop flag; workers exit on their next iteration and the blocking
+tool returns. After it returns, write the Campaign Summary as in step 3
+and note that the run was cancelled.
+
+## The optimization loop (sequential mode, num_workers == 1)
+
+This is the path you drive yourself, turn-by-turn, when the user asked for
+exactly one worker. For `num_workers > 1`, see the "Parallel mode" section
+above instead — do not run this loop manually in that case.
+
+```
+(0) Ask the user (one short question) for target_score, max_trials, and
+    num_workers.
 
 (1) Call agenthpc_get_search_space("monbtaw", target_score=T, max_trials=N).
     Remember the allowed values and the sum=1.0 constraint.
@@ -169,22 +234,35 @@ ends (threshold_reached or budget_exhausted), write ONE final
 ## Cancellation
 
 The user may ask to stop, abort, or cancel the optimization at any time
-("stop", "cancel", "abort", "kill the jobs", "we're done", etc.). When that
-happens:
+("stop", "cancel", "abort", "kill the jobs", "we're done", etc.).
+
+**Sequential mode (num_workers == 1).** You are between turns and can
+respond immediately:
 
 1. Call `agenthpc_list_pending_jobs("monbtaw")` and tell the user how many
    jobs are in flight and which compositions they represent.
 2. Call `agenthpc_cancel_all_pending("monbtaw")`. This runs `scancel` for
-   each job and clears the pending registry.
+   each job, clears the pending registry, AND sets the session stop flag
+   so any future `agenthpc_get_all_results` returns `should_stop=true`.
 3. Then call `agenthpc_get_all_results("monbtaw", target_score=T,
    max_trials=N)` one final time and report the best composition / score
    found among the completed trials, plus how many trials completed vs.
    how many were cancelled.
 4. DO NOT submit any new jobs after a cancel request. End the loop.
 
+**Parallel mode (num_workers > 1).** You are blocked inside
+`agenthpc_run_workers` and cannot send tool calls until it returns. When
+the user requests cancellation, the chat UI is expected to invoke
+`agenthpc_cancel_all_pending` directly through the MCP endpoint, which
+sets the session stop flag. Workers exit at their next iteration and the
+blocking tool returns with `stopped_by_user: true` in the summary. The
+plot in the output panel already reflects every completed trial (workers
+refresh it themselves), so write a Campaign Summary noting that the user
+cancelled and listing the completed trials.
+
 If the user only wants to cancel a specific job they named (e.g. "cancel
-job 12345"), use `agenthpc_cancel_job("monbtaw", "12345")` and continue
-the loop.
+job 12345"), use `agenthpc_cancel_job("monbtaw", "12345")` — this does NOT
+set the stop flag, so the optimization continues.
 
 ## Rules
 
@@ -197,13 +275,24 @@ the loop.
   `agenthpc_*` tools are the only correct path. They handle SSH, the run
   directory, the composition file, and the score extraction.
 - **Always** pass the user's `target_score` / `max_trials` to every tool
-  that accepts them, on every iteration. The server is stateless — it
-  won't remember what the user said last turn.
+  that accepts them, on every iteration (in sequential mode) or on the
+  single `agenthpc_run_workers` call (in parallel mode). The server is
+  stateless — it won't remember what the user said last turn.
 - **Never** skip `agenthpc_get_all_results` at the start of an iteration —
-  duplicates waste HPC allocation and can loop forever.
-- After each completed trial, include a one-line progress update so the
-  user can watch. Keep it terse: `Trial 7: (0.30, 0.25, 0.25, 0.20) → 1187 (best: 1212)`.
+  duplicates waste HPC allocation and can loop forever. (Parallel mode
+  handles this internally; you only need to follow the rule in sequential
+  mode.)
+- **Choose mode by `num_workers`:** call `agenthpc_run_workers` exactly
+  once when `num_workers > 1`; drive the sequential loop yourself when
+  `num_workers == 1`. Never mix the two within one campaign.
+- After each completed trial in sequential mode, include a one-line
+  progress update so the user can watch. Keep it terse:
+  `Trial 7: (0.30, 0.25, 0.25, 0.20) → 1187 (best: 1212)`. In parallel
+  mode, the workers stream their own progress lines and you only write the
+  final Campaign Summary.
 - If the user asks you to run a single trial (not an optimization), skip
-  the loop and report the single result.
+  the loop and report the single result. Single trials never go through
+  `agenthpc_run_workers`.
 - The first submission in a session elicits the user's Andes credentials;
-  subsequent submissions reuse the cached SSH connection.
+  subsequent submissions reuse the cached SSH connection. In parallel
+  mode, the first worker triggers the elicitation; the rest reuse it.

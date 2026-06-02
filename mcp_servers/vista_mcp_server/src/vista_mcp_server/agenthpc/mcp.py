@@ -692,6 +692,21 @@ async def agenthpc_cancel_all_pending(
 _PLOT_SANDBOX_DIR = "/mnt/data/output/alloy-progress"
 
 
+# Matplotlib's pyplot state is process-global, and ``fig.savefig`` to a single
+# path is not safe under concurrent calls (two workers can clobber each
+# other's writes). Serialize plot rendering across all sessions with a single
+# lock. The lock is initialized lazily so we don't bind it to the wrong event
+# loop at import time.
+_PLOT_LOCK: asyncio.Lock | None = None
+
+
+def _plot_lock() -> asyncio.Lock:
+    global _PLOT_LOCK
+    if _PLOT_LOCK is None:
+        _PLOT_LOCK = asyncio.Lock()
+    return _PLOT_LOCK
+
+
 def _parse_stat0(contents: str) -> tuple[list[float], list[float]]:
     """Return ``(temperatures, specific_heats)`` parsed from stat0.dat-style
     whitespace-separated text. Malformed or header lines are skipped."""
@@ -718,80 +733,96 @@ async def agenthpc_plot_progress(
     Render specific-heat-vs-temperature curves for every completed trial in
     this MCP session on a single figure, labelled by trial number, and save
     the PNG to the output panel. Call this after each successful
-    ``agenthpc_get_job_result`` so the user can watch the campaign evolve.
+    ``agenthpc_get_job_result`` so the user can watch the campaign evolve —
+    including from within parallel workers, which call it concurrently.
 
     Uses the ``stat0.dat`` contents cached by ``agenthpc_get_job_result`` —
     does not re-open the SSH connection. If no trials have completed yet,
     returns a short message instead of a plot.
+
+    The function is safe under concurrent calls: it snapshots the per-session
+    results dict under the session lock (so it doesn't race with claim /
+    result mutations), then renders under a single process-wide plot lock
+    (so concurrent workers don't clobber pyplot's global state or the
+    on-disk PNG).
     """
-    results = _session_results(ctx.session_id, app_type)
-    if not results:
-        return "No completed trials yet — nothing to plot."
-
-    # Matplotlib must be imported lazily and with Agg because this process is
-    # a long-running MCP server, not a one-shot sandbox job.
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    # Order trials by trial_number so colors follow the campaign timeline.
-    trials = sorted(
-        (r for r in results.values() if r.get("log_contents")),
-        key=lambda r: (r.get("trial_number") is None, r.get("trial_number") or 0),
-    )
-    if not trials:
+    # Snapshot the completed-trial records under the data lock so we don't
+    # race with concurrent writers from the worker pool.
+    session_lock = _session_lock(ctx.session_id, app_type)
+    async with session_lock:
+        results = _session_results(ctx.session_id, app_type)
+        if not results:
+            return "No completed trials yet — nothing to plot."
+        # Deep-ish snapshot: copy the per-trial dicts so a later mutation of
+        # `log_contents` (only ever set once today, but safer to copy) cannot
+        # invalidate the rendering pass.
+        snapshot = [dict(r) for r in results.values() if r.get("log_contents")]
+    if not snapshot:
         return "No completed trials have cached log contents — nothing to plot."
 
-    n = len(trials)
-    # viridis reads monotonically — aligns with "later trial = different shade",
-    # making temporal progression visible at a glance.
-    cmap = matplotlib.colormaps["viridis"].resampled(max(n, 2))
+    async with _plot_lock():
+        # Matplotlib must be imported lazily and with Agg because this process
+        # is a long-running MCP server, not a one-shot sandbox job.
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(8.2, 5.0), dpi=140)
-    skipped: list[int] = []
-    plotted = 0
-    best_score = -float("inf")
-    best_label = None
+        # Order trials by trial_number so colors follow the campaign timeline.
+        trials = sorted(
+            snapshot,
+            key=lambda r: (r.get("trial_number") is None, r.get("trial_number") or 0),
+        )
 
-    for i, trial in enumerate(trials):
-        temps, cvs = _parse_stat0(trial["log_contents"])
-        if not temps:
-            skipped.append(trial.get("trial_number") or -1)
-            continue
-        params = trial.get("parameters", [])
-        tn = trial.get("trial_number")
-        # Compact legend entry: trial tag + composition + Tc (score).
-        comp = ", ".join(f"{p:.2f}" for p in params) if params else ""
-        score = trial.get("score", 0.0)
-        label = f"Trial {tn if tn is not None else i+1}: ({comp}) → Tc={score:.1f}"
-        ax.plot(temps, cvs, color=cmap(i), linewidth=1.5, label=label)
-        plotted += 1
-        if score > best_score:
-            best_score = score
-            best_label = label
+        n = len(trials)
+        # viridis reads monotonically — aligns with "later trial = different shade",
+        # making temporal progression visible at a glance.
+        cmap = matplotlib.colormaps["viridis"].resampled(max(n, 2))
 
-    ax.set_xlabel("Temperature (K)", fontsize=11)
-    ax.set_ylabel("Specific heat  C$_v$", fontsize=11)
-    ax.set_title(
-        f"MoNbTaW progress — {plotted} trial{'s' if plotted != 1 else ''}"
-        + (f" · best Tc = {best_score:.1f} K" if best_label else ""),
-        fontsize=12, pad=12,
-    )
-    ax.grid(True, alpha=0.25, linestyle="--", linewidth=0.6)
-    # Legend outside the plot area when there are many curves.
-    legend_kwargs = {"fontsize": 8, "frameon": False}
-    if plotted > 6:
-        ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), **legend_kwargs)
-        fig.subplots_adjust(right=0.68)
-    else:
-        ax.legend(loc="best", **legend_kwargs)
+        fig, ax = plt.subplots(figsize=(8.2, 5.0), dpi=140)
+        skipped: list[int] = []
+        plotted = 0
+        best_score = -float("inf")
+        best_label = None
 
-    host_dir: Path = Path(get_vista_meta(ctx).project_paths.require_output_dir()) / "alloy-progress"
-    host_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{app_type}_progress.png"
-    host_path = host_dir / filename
-    fig.savefig(host_path, bbox_inches="tight")
-    plt.close(fig)
+        for i, trial in enumerate(trials):
+            temps, cvs = _parse_stat0(trial["log_contents"])
+            if not temps:
+                skipped.append(trial.get("trial_number") or -1)
+                continue
+            params = trial.get("parameters", [])
+            tn = trial.get("trial_number")
+            # Compact legend entry: trial tag + composition + Tc (score).
+            comp = ", ".join(f"{p:.2f}" for p in params) if params else ""
+            score = trial.get("score", 0.0)
+            label = f"Trial {tn if tn is not None else i+1}: ({comp}) → Tc={score:.1f}"
+            ax.plot(temps, cvs, color=cmap(i), linewidth=1.5, label=label)
+            plotted += 1
+            if score > best_score:
+                best_score = score
+                best_label = label
+
+        ax.set_xlabel("Temperature (K)", fontsize=11)
+        ax.set_ylabel("Specific heat  C$_v$", fontsize=11)
+        ax.set_title(
+            f"MoNbTaW progress — {plotted} trial{'s' if plotted != 1 else ''}"
+            + (f" · best Tc = {best_score:.1f} K" if best_label else ""),
+            fontsize=12, pad=12,
+        )
+        ax.grid(True, alpha=0.25, linestyle="--", linewidth=0.6)
+        # Legend outside the plot area when there are many curves.
+        legend_kwargs = {"fontsize": 8, "frameon": False}
+        if plotted > 6:
+            ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), **legend_kwargs)
+            fig.subplots_adjust(right=0.68)
+        else:
+            ax.legend(loc="best", **legend_kwargs)
+
+        host_dir: Path = Path(get_vista_meta(ctx).project_paths.require_output_dir()) / "alloy-progress"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{app_type}_progress.png"
+        host_path = host_dir / filename
+        fig.savefig(host_path, bbox_inches="tight")
+        plt.close(fig)
 
     sandbox_path = f"{_PLOT_SANDBOX_DIR}/{filename}"
     lines = [

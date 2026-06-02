@@ -282,6 +282,18 @@ async def _worker_loop(
             + ("  [threshold reached]" if threshold_reached else ""),
         )
 
+        # Step 6 — refresh the cumulative Cv(T) plot so the user sees the
+        # campaign evolve in the output panel. Concurrent worker calls are
+        # serialized inside agenthpc_plot_progress by a process-wide lock,
+        # so this is safe even with many workers finishing close together.
+        try:
+            await project_agent.call_tool(
+                "agenthpc_plot_progress", {"app_type": app_type},
+            )
+        except Exception as e:
+            # Plot failures must never block trial progress.
+            log("WARNING", f"Worker[{worker_id}] plot refresh failed: {e}")
+
 
 async def run_alloy_workers(
     project_agent: "ProjectAgent",
