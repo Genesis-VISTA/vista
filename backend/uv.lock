@@ -3624,7 +3624,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openai", specifier = ">=1.69" },
-    { name = "pydantic-ai", specifier = ">=1.90.0" },
+    { name = "pydantic-ai", specifier = ">=1.105.0" },
     { name = "pydantic-ai-shields", specifier = ">=0.3.2,<0.4" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
     { name = "pymupdf", specifier = ">=1.26" },

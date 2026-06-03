@@ -110,7 +110,14 @@ export type FunctionToolCallEvent = {
 };
 export type FunctionToolResultEvent = {
   event_kind: "function_tool_result";
-  result: ToolReturnPart | RetryPromptPart;
+  /**
+   * The tool result part. PydanticAI 1.105 renamed this field from `result`
+   * to `part` (`result` survives only as a deprecated, non-serialized Python
+   * property, so it no longer appears on the wire). `result` is kept here as
+   * an optional fallback for older backends.
+   */
+  part: ToolReturnPart | RetryPromptPart;
+  result?: ToolReturnPart | RetryPromptPart;
   content?: unknown;
 };
 export type LogEvent = {

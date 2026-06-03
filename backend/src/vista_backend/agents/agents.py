@@ -643,10 +643,10 @@ class ProjectAgent:
                             if isinstance(event, FunctionToolCallEvent):
                                 yield log("INFO", f"Tool:{event.part.tool_name}", message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}")
                             elif isinstance(event, FunctionToolResultEvent):
-                                if isinstance(event.result, RetryPromptPart):
-                                    yield log("WARNING", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} failed")
+                                if isinstance(event.part, RetryPromptPart):
+                                    yield log("WARNING", f"Tool:{event.part.tool_name}", f"Tool {event.part.tool_name} failed")
                                 else:
-                                    yield log("INFO", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} completed")
+                                    yield log("INFO", f"Tool:{event.part.tool_name}", f"Tool {event.part.tool_name} completed")
 
                             yield event
                 except VistaGuardDeny as deny:
