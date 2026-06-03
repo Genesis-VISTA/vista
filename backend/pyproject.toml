@@ -5,7 +5,7 @@ requires-python = "~=3.14.3"
 dependencies = [
     "fastapi>=0.136.3",
     "uvicorn[standard]>=0.48.0",
-    "pydantic-ai>=1.90.0",
+    "pydantic-ai>=1.105.0",
     "pydantic-settings>=2.14.0",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.27",
@@ -24,6 +24,8 @@ dependencies = [
     "numpy>=1.26,<3",
     "anyio[trio]>=4.0",
     "aiosqlite>=0.20.0",
+    "semgrep>=1.79.0",
+    "flowcept>=0.10.6",
 ]
 
 [project.optional-dependencies]

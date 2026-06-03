@@ -111,10 +111,63 @@ class Gate(ABC):
         """
         if not self.enabled:
             return decision
-        if ctx.quarantine_agent is None:
-            # Slow-tier requested but no Q-LLM available
+        # The Q-LLM slow tier runs only when a quarantine agent is wired;
+        # the contract-registry check needs no model, so it runs whenever
+        # the gate is enabled (Phase 5).
+        if ctx.quarantine_agent is not None:
+            decision = await self._check_slow_when_enabled(payload, ctx, decision)
+        return self._apply_contract_checks(payload, ctx, decision)
+
+    # -----------------------------------------------------------------
+    # Slow-tier contract enforcement (Phase 5)
+    # -----------------------------------------------------------------
+
+    #: Claim types this gate's slow tier never needs to look past (unused
+    #: today; the registry routes by claim ``type``). Kept so a future
+    #: gate can scope its contract checks if needed.
+    contract_domains: tuple[str, ...] = ()
+
+    def _extract_contract_claims(self, payload: Any, ctx: GateContext) -> list[dict]:
+        """Claims this gate's slow tier should run through the registry.
+
+        Default: a ``claims`` list on a dict payload, plus any on
+        ``ctx.metadata['claims']``. Gates whose claims live elsewhere
+        (e.g. inside retrieved text) override this.
+        """
+        claims: list[dict] = []
+        if isinstance(payload, dict) and isinstance(payload.get("claims"), list):
+            claims.extend(c for c in payload["claims"] if isinstance(c, dict))
+        meta = getattr(ctx, "metadata", None) or {}
+        if isinstance(meta.get("claims"), list):
+            claims.extend(c for c in meta["claims"] if isinstance(c, dict))
+        return claims
+
+    def _apply_contract_checks(
+        self, payload: Any, ctx: GateContext, decision: GateDecision
+    ) -> GateDecision:
+        """Run the contract registry over the gate's claims and fold any
+        violation into `decision` (deny + bumped incident level)."""
+        registry = getattr(ctx, "contracts", None)
+        if registry is None:
             return decision
-        return await self._check_slow_when_enabled(payload, ctx, decision)
+        claims = self._extract_contract_claims(payload, ctx)
+        if not claims:
+            return decision
+        from ..contracts.enforcement import enforce
+
+        outcome = enforce(registry, claims, ctx.trust_scorer)
+        if outcome.ok:
+            return decision
+        level = outcome.incident_level or 2
+        bumped = level if decision.incident_level is None else min(
+            decision.incident_level, level
+        )
+        prefix = f"{decision.reason}; " if decision.reason else ""
+        return decision.replace_with(
+            allow=False,
+            incident_level=bumped,
+            reason=f"{prefix}{self.name} contract violation -> {outcome.reason}",
+        )
 
     # -----------------------------------------------------------------
     # Subclass hooks

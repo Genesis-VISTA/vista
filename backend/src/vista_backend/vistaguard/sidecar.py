@@ -4,14 +4,24 @@ instantiates.
 """
 
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.capabilities import AbstractCapability
+
 from ..db.schemas import ProjectPublic
-from .capabilities import CapabilityRegistry
+from .capabilities import (
+    CapabilityRegistry,
+    CapabilityTag,
+    G1PromptCapability,
+    G3RagCapability,
+    G5HpcCapability,
+)
 from .config import VistaGuardSettings
-from .gates.base import Gate, GateContext, GateDecision
+from .contracts import load_contract_library
+from .gates.base import Gate
 from .gates.g1_prompt import (
     JAILBREAK_SIGNATURES_FILENAME,
     G1PromptGate,
@@ -24,13 +34,18 @@ from .gates.g2_tool import (
     discover_high_stakes_tools,
     discover_tool_metadata,
 )
-from .gates.g3_hybrid import inject_hybrid_args, should_inject_hybrid
 from .gates.g3_rag import (
     KB_POLICY_FILENAME,
     G3RagGate,
     KbPolicy,
     load_kb_policy,
-    tag_rag_chunks,
+)
+from .gates.g5_hpc import (
+    ALLOCATION_POLICY_FILENAME,
+    AllocationLimits,
+    AllocationPolicy,
+    G5HpcJobGate,
+    load_allocation_policy,
 )
 from .incidents import IncidentManager
 from .provenance import ProvenanceEmitter
@@ -43,14 +58,6 @@ from .trust import TrustScorer
 
 
 logger = logging.getLogger(__name__)
-
-
-# -----------------------------------------------------------------
-# Type aliases
-# -----------------------------------------------------------------
-
-
-CallToolFn = Callable[..., Awaitable[Any]]
 
 
 # -----------------------------------------------------------------
@@ -91,11 +98,14 @@ class VistaGuardSidecar:
             provenance=self._provenance,
         )
 
-        # Phase-1 will assign this via `attach_quarantine_agent`.
+        # Set by `build_capabilities(quarantine_agent=...)`; gate
+        # capabilities read it via the `quarantine_agent` property.
         self._quarantine_agent: Any | None = None
 
-        # Phase-5 will populate from `settings.contracts_dir`.
-        self._contracts: Any | None = None
+        # Phase-5 contract library: the builtin contracts plus any
+        # operator-supplied ones under `settings.contracts_dir`. Gates'
+        # slow tiers consult this via `GateContext.contracts`.
+        self._contracts = load_contract_library(settings.contracts_dir)
 
         # G2 cached MCP-tool metadata. 
         self._high_stakes_tools: frozenset[str] = HIGH_STAKES_FALLBACK
@@ -116,6 +126,16 @@ class VistaGuardSidecar:
         # construction lives. Phase 0 returns {}; Phase 1+ will
         # populate this dict conditioned on the per-gate flags.
         self._gates: dict[str, Gate] = self._build_gates()
+
+        # G5 (Phase 4) human-approval side-channel: maps a tool_call_id to
+        # the fast-tier decision metadata the approval UI renders. Written
+        # by `G5HpcCapability` when it defers a submission, read + cleared
+        # by the approval emitter via `note_approval_outcome`.
+        self._pending_approval_metadata: dict[str, dict[str, Any]] = {}
+        # Sticky-on-decline counter (Phase-5 sticky-capability-table
+        # integration point): incremented when a user declines an
+        # approval, without firing a security incident.
+        self._sticky_decline_count: int = 0
 
     # -----------------------------------------------------------------
     # Collaborators (read-only properties)
@@ -149,7 +169,7 @@ class VistaGuardSidecar:
 
     @property
     def quarantine_agent(self) -> Any | None:
-        """The Q-LLM agent attached via `attach_quarantine_agent`, or None."""
+        """The Q-LLM agent set by `build_capabilities`, or None."""
         return self._quarantine_agent
 
     @property
@@ -223,232 +243,113 @@ class VistaGuardSidecar:
         return name in self._gates
 
     # -----------------------------------------------------------------
+    # G5 human-approval side-channel (Phase 4)
+    # -----------------------------------------------------------------
+
+    @property
+    def pending_approval_metadata(self) -> dict[str, dict[str, Any]]:
+        """
+        Per-session map of ``tool_call_id`` -> gate decision metadata for
+        tool calls awaiting human approval. `G5HpcCapability` writes the
+        fast-tier summary here before deferring a ``submit_hpc_job`` so the
+        approval emitter can surface it to the user.
+        """
+        return self._pending_approval_metadata
+
+    @property
+    def sticky_decline_count(self) -> int:
+        """
+        Number of approvals the user has declined this session. The
+        Phase-5 sticky-capability table will consume this; Phase-4 records
+        it (and a registry mark) without firing an incident.
+        """
+        return self._sticky_decline_count
+
+    def note_approval_outcome(self, tool_call_id: str, *, approved: bool) -> None:
+        """
+        Record the outcome of a human-approval request and clear its
+        pending metadata.
+
+        On a *decline* of a G5-gated call this is the Phase-5
+        sticky-capability-table integration point: it increments the
+        sticky-decline counter and writes a sticky `CapabilityTag` to the
+        registry *without* firing a security incident -- a user saying
+        "no" is not a gate violation, but the sticky semantics (the
+        capability does not auto-recover within the session) still apply,
+        which breaks the probe-then-strike oscillation primitive.
+        """
+        metadata = self._pending_approval_metadata.pop(tool_call_id, None)
+        if approved or metadata is None or metadata.get("gate") != "G5":
+            return
+        self._sticky_decline_count += 1
+        self._capability_registry.tag(
+            f"sticky:decline:{tool_call_id}",
+            CapabilityTag(
+                source="tool:submit_hpc_job",
+                taint=True,
+                metadata={
+                    "sticky": True,
+                    "g5_check": "user_decline",
+                    "reason": "user declined HPC job submission at approval",
+                },
+            ),
+        )
+
+    # -----------------------------------------------------------------
     # Q-LLM attachment
     # -----------------------------------------------------------------
 
-    def attach_quarantine_agent(self, agent: Any) -> None:
-        """
-        Store the PydanticAI Q-LLM Agent for gates to invoke.
+    # -----------------------------------------------------------------
+    # Capability factory
+    # -----------------------------------------------------------------
 
+    def build_capabilities(
+        self,
+        *,
+        quarantine_agent: Any | None = None,
+        intent_extraction_agent: Any | None = None,
+        code_intent_extraction_agent: Any | None = None,
+    ) -> list[AbstractCapability]:
         """
-        self._quarantine_agent = agent
+        Build the VISTAGuard capability list for `Agent(capabilities=...)`.
 
-    def attach_intent_extraction_agent(self, agent: Any) -> None:
+        This is the sidecar's role under Phase 3.5: a factory that wraps
+        the built gates as PydanticAI capabilities. Every gate's runtime
+        behavior now lives on its capability's hooks; the sidecar no
+        longer mediates tool calls or prompts itself.
+
+        The Q-LLM agents are passed in (agents.py builds them from the
+        top-level model spec): ``quarantine_agent`` is stored so gate
+        capabilities can read it via ``sidecar.quarantine_agent``,
+        ``intent_extraction_agent`` is forwarded to the G1 gate's slow
+        tier, and ``code_intent_extraction_agent`` is forwarded to the G5
+        gate's slow tier (G4 and G5 share it).
+
+        Returns capabilities for the currently-wired gates (G1, G3, G5).
+        G2 and G4 have capabilities but stay unwired until their
+        Phase-6 evaluation gate; an empty gate set (flag-off) yields an
+        empty list, keeping the agent byte-identical to baseline VISTA.
         """
-        Forward the PydanticAI intent-extraction Agent to G1's
-        slow-tier.
-        """
+        self._quarantine_agent = quarantine_agent
+
         g1 = self._gates.get("G1")
-        if isinstance(g1, G1PromptGate):
-            g1.attach_intent_extraction_agent(agent)
+        if isinstance(g1, G1PromptGate) and intent_extraction_agent is not None:
+            g1.attach_intent_extraction_agent(intent_extraction_agent)
 
-    # -----------------------------------------------------------------
-    # G1 user-prompt evaluation (early-rejection path)
-    # -----------------------------------------------------------------
-
-    async def evaluate_user_prompt(
-        self,
-        user_prompt: str,
-        attached_files: list[dict[str, Any]] | None = None,
-    ) -> GateDecision | None:
-        """
-        Run G1 fast (and slow when wired) on a user prompt.
-
-        Recorded incidents:
-
-        - A fast-tier deny records the incident at the level the
-          gate decision carried (SEV2 jailbreak, SEV3 file policy).
-        - An allowed prompt with ``incident_level != None`` (CUI /
-          PII surfaced at SEV3) still records the incident; the
-          deny path is not taken.
-        - A slow-tier deny records at the level the intent-extraction
-          decision carried (SEV1 high-confidence dual-use, SEV2
-          low-confidence or moderate-confidence dual-use).
-
-        """
-        if not self.is_active() or "G1" not in self._gates:
-            return None
-
-        gate = self._gates["G1"]
-        gate_ctx = GateContext(
-            capability_registry=self._capability_registry,
-            trust_scorer=self._trust_scorer,
-            quarantine_agent=self._quarantine_agent,
-            provenance=self._provenance,
-        )
-        payload: dict[str, Any] = {
-            "user_prompt": user_prompt,
-            "attached_files": list(attached_files or []),
-        }
-
-        fast = await gate.check_fast(payload, gate_ctx)
-        if not fast.allow:
-            if fast.incident_level is not None:
-                self._incidents.record(
-                    level=fast.incident_level,
-                    gate="G1",
-                    reason=fast.reason,
-                    capability_tag=fast.capability_tag,
-                )
-            return fast
-
-        # Slow-tier intent extraction 
-        slow: GateDecision = fast
-        if isinstance(gate, G1PromptGate) and gate.intent_extraction_agent is not None:
-            try:
-                slow = await gate.extract_intent(payload, gate_ctx, fast)
-            except Exception as exc:  # noqa: BLE001 -- defensive
-                logger.warning(
-                    "VISTAGuard G1 slow-tier failed (%s: %s); "
-                    "falling back to fast-tier decision",
-                    type(exc).__name__, exc,
-                )
-                slow = fast
-
-        if not slow.allow:
-            if slow.incident_level is not None:
-                self._incidents.record(
-                    level=slow.incident_level,
-                    gate="G1",
-                    reason=slow.reason,
-                    capability_tag=slow.capability_tag,
-                )
-            return slow
-
-        # Allowed: surface any informational incident (CUI / PII /
-        # benign-intent annotations) without short-circuiting.
-        if slow.incident_level is not None:
-            self._incidents.record(
-                level=slow.incident_level,
-                gate="G1",
-                reason=slow.reason,
-                capability_tag=slow.capability_tag,
-            )
-        return None
-
-    # -----------------------------------------------------------------
-    # PydanticAI ProcessToolCallback surface
-    # -----------------------------------------------------------------
-
-    async def process_tool_call(
-        self,
-        ctx: Any,
-        call_tool: CallToolFn,
-        tool_name: str,
-        args: dict[str, Any],
-    ) -> Any:
-        """
-        The PydanticAI tool-call hook.
-
-        """
-        if not self.is_active():
-            return await call_tool(tool_name, args)
-
-        if (
-            self._settings.g3_enabled
-            and tool_name == "rag_search"
-            and isinstance(args, dict)
-        ):
-            return await self._dispatch_rag_search(call_tool, args)
-
-        return await call_tool(tool_name, args)
-
-    async def _dispatch_rag_search(
-        self,
-        call_tool: CallToolFn,
-        args: dict[str, Any],
-    ) -> Any:
-        """
-        G3 wiring around a single `rag_search` call.
-        """
-        # ----- Pre-call gate check (fast tier) ---------------------
+        capabilities: list[AbstractCapability] = []
+        if g1 is not None:
+            capabilities.append(G1PromptCapability(self, g1, self._settings))
         g3 = self._gates.get("G3")
-        if isinstance(g3, G3RagGate):
-            kb_slug = args.get("kb_slug")
-            query = args.get("query")
-            if isinstance(kb_slug, str) and isinstance(query, str):
-                gate_ctx = GateContext(
-                    capability_registry=self._capability_registry,
-                    trust_scorer=self._trust_scorer,
-                )
-                fast = await g3.check_fast(
-                    {"kb_slug": kb_slug, "query": query},
-                    gate_ctx,
-                )
-                if not fast.allow:
-                    # Surface the denial through the same "ERROR:
-                    # ..." string shape rag_mcp uses for its own
-                    # error returns. The agent then sees a
-                    # structured failure it can react to.
-                    logger.warning(
-                        "VISTAGuard G3: rag_search denied (kb_slug=%r): %s",
-                        kb_slug, fast.reason,
-                    )
-                    return f"ERROR: {fast.reason}"
-
-        effective_args = args
-        if should_inject_hybrid(self._settings, "rag_search"):
-            effective_args = inject_hybrid_args(
-                args,
-                alpha=self._settings.g3_hybrid_alpha,
-            )
-
-        result = await call_tool("rag_search", effective_args)
-
-        # Post-call handling
-        if not isinstance(result, str):
-            return result
-
-        kb_slug_raw = args.get("kb_slug") if isinstance(args, dict) else None
-        kb_slug = str(kb_slug_raw) if kb_slug_raw else "unknown"
-
-        slow_tier_active = (
-            self._settings.quarantine_enabled
-            and self._quarantine_agent is not None
-        )
-        g3 = self._gates.get("G3")
-
-        if slow_tier_active and isinstance(g3, G3RagGate):
-            gate_ctx = GateContext(
-                capability_registry=self._capability_registry,
-                trust_scorer=self._trust_scorer,
-                quarantine_agent=self._quarantine_agent,
-            )
-            try:
-                slow_decision = await g3.sanitize_chunks(
-                    result, gate_ctx, kb_slug=kb_slug,
-                )
-            except Exception as exc:  
-                # Slow-tier failure must not crash the agent.
-                logger.warning(
-                    "VISTAGuard G3 slow-tier failed (%s: %s); "
-                    "falling back to fast-tier tag-only path",
-                    type(exc).__name__,
-                    exc,
-                )
-            else:
-                if slow_decision.rewritten_result is not None:
-                    # Slow tier rewrote the result; per-chunk tags
-                    # tagging.
-                    return slow_decision.rewritten_result
-                # Slow tier ran but didn't rewrite 
-
-        try:
-            tag_rag_chunks(
-                result,
-                kb_slug=kb_slug,
-                registry=self._capability_registry,
-            )
-        except Exception as exc:  
-            
-            logger.warning(
-                "VISTAGuard G3: chunk tagging failed (%s: %s); "
-                "downstream taint-propagation may be incomplete",
-                type(exc).__name__,
-                exc,
-            )
-
-        return result
+        if g3 is not None:
+            capabilities.append(G3RagCapability(self, g3, self._settings))
+        g5 = self._gates.get("G5")
+        if g5 is not None:
+            if isinstance(g5, G5HpcJobGate) and code_intent_extraction_agent is not None:
+                # G4 and G5 share the code-intent Q-LLM (the prompt shape
+                # is "what is this code/job trying to do?").
+                g5.attach_code_intent_extraction_agent(code_intent_extraction_agent)
+            capabilities.append(G5HpcCapability(self, g5, self._settings))
+        return capabilities
 
     # -----------------------------------------------------------------
     # G2 high-stakes-tool discovery
@@ -532,6 +433,12 @@ class VistaGuardSidecar:
                 corpus_manifests=self._g3_kb_policy.corpus_manifests,
                 query_injection_enabled=self._settings.g3_query_injection_enabled,
             )
+        if self._settings.g5_enabled:
+            gates["G5"] = G5HpcJobGate(
+                enabled=True,
+                allocation_policy=self._load_g5_policy_if_present(),
+                chained_job_dag_enabled=self._settings.g5_chained_job_dag_enabled,
+            )
 
         return gates
 
@@ -548,11 +455,50 @@ class VistaGuardSidecar:
         """
         Read `<contracts_dir>/<KB_POLICY_FILENAME>` and return the
         loaded `KbPolicy`, or an empty policy when the file is
-        absent or malformed. 
+        absent or malformed.
         """
         contracts_dir = Path(self._settings.contracts_dir)
         policy_path = contracts_dir / KB_POLICY_FILENAME
         return load_kb_policy(policy_path)
+
+    def _load_g5_policy_if_present(self) -> AllocationPolicy:
+        """
+        Build the G5 `AllocationPolicy` from (in precedence order) the
+        operator policy file, the settings-level ceilings, and the bundled
+        defaults.
+
+        The policy file is read from `g5_allocation_policy_path` when set,
+        otherwise from `<contracts_dir>/<ALLOCATION_POLICY_FILENAME>`. A
+        missing / unreadable / malformed / wrong-version file falls back to
+        the bundled defaults with a WARNING (`load_allocation_policy`). When
+        the file supplies no `allocations` map, `g5_resource_ceilings` from
+        settings is used to build one. Finally, `g5_binary_denylist` from
+        settings is unioned into the denylist (the bundled IOC list is
+        always in effect).
+        """
+        if self._settings.g5_allocation_policy_path:
+            policy_path = Path(self._settings.g5_allocation_policy_path)
+        else:
+            policy_path = Path(self._settings.contracts_dir) / ALLOCATION_POLICY_FILENAME
+        policy = load_allocation_policy(policy_path)
+
+        # Settings-level ceilings fill in when the file supplies none.
+        if not policy.allocations_enforced and self._settings.g5_resource_ceilings:
+            allocations: dict[str, AllocationLimits] = {}
+            for name, limits in self._settings.g5_resource_ceilings.items():
+                if isinstance(name, str) and isinstance(limits, dict):
+                    allocations[name] = AllocationLimits.from_dict(limits)
+            if allocations:
+                policy = replace(policy, allocations=allocations)
+
+        # Operator-supplied additional mining IOCs augment the denylist.
+        if self._settings.g5_binary_denylist:
+            extra = {str(b).lower() for b in self._settings.g5_binary_denylist}
+            policy = replace(
+                policy, binary_denylist=policy.binary_denylist | extra
+            )
+
+        return policy
 
     def _effective_tool_patterns(self) -> list[str]:
         """

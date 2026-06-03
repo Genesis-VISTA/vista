@@ -28,6 +28,27 @@ from .g4_code import (
     SemgrepFinding,
     bundled_rules_dir,
 )
+from .g5_hpc import (
+    ALLOCATION_POLICY_FILENAME,
+    ALLOCATION_POLICY_VERSION,
+    DEFAULT_CREDENTIAL_PATTERNS,
+    DEFAULT_HOST_ALLOW_LIST,
+    DEFAULT_MINING_BINARY_DENYLIST,
+    DEFAULT_MINING_SIGNATURES,
+    DEFAULT_SENSITIVE_PATH_PATTERNS,
+    AllocationLimits,
+    AllocationPolicy,
+    G5HpcJobGate,
+    load_allocation_policy,
+)
+from .slurm_parser import (
+    DependencyRef,
+    ParsedCommand,
+    SbatchDirectives,
+    SlurmScript,
+    parse_slurm_script,
+    parse_slurm_time,
+)
 from .g3_anomaly import AnomalyResult, detect_embedding_anomalies
 from .g3_hybrid import (
     MirroredRetrievalResult,
@@ -51,8 +72,25 @@ from .g3_rag import (
 )
 
 __all__ = [
+    "ALLOCATION_POLICY_FILENAME",
+    "ALLOCATION_POLICY_VERSION",
+    "AllocationLimits",
+    "AllocationPolicy",
     "AnomalyResult",
     "CUI_MARKER_PATTERNS",
+    "DEFAULT_CREDENTIAL_PATTERNS",
+    "DEFAULT_HOST_ALLOW_LIST",
+    "DEFAULT_MINING_BINARY_DENYLIST",
+    "DEFAULT_MINING_SIGNATURES",
+    "DEFAULT_SENSITIVE_PATH_PATTERNS",
+    "DependencyRef",
+    "G5HpcJobGate",
+    "ParsedCommand",
+    "SbatchDirectives",
+    "SlurmScript",
+    "load_allocation_policy",
+    "parse_slurm_script",
+    "parse_slurm_time",
     "DEFAULT_ALLOWED_MIME_TYPES",
     "DEFAULT_MAX_FILE_SIZE_BYTES",
     "DEFAULT_QUERY_INJECTION_PATTERNS",

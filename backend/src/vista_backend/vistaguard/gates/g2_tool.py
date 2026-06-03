@@ -20,6 +20,7 @@ from ..quarantine import (
 )
 from ..tool_registry import ToolDescriptorRegistry
 from .base import Gate, GateContext, GateDecision
+from ...utils.misc import tool_allowed
 
 
 logger = logging.getLogger(__name__)
@@ -147,24 +148,6 @@ def _is_high_stakes(tool: Any) -> bool:
         annotations.destructiveHint is True
         or annotations.openWorldHint is True
     )
-
-
-def _tool_allowed(name: str, patterns: list[str]) -> bool:
-    """
-    fnmatch-based allow/deny pattern check.
-
-    """
-    import fnmatch
-
-    allow_patterns = [p for p in patterns if not p.startswith("!")]
-    if not allow_patterns:
-        allow_patterns = ["*"]
-    deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
-    if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
-        return False
-    if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
-        return False
-    return True
 
 
 def _iter_string_values(value: Any) -> Any:
@@ -340,7 +323,7 @@ class G2ToolGate(Gate):
     ) -> None:
         super().__init__(enabled=enabled)
         # Store the patterns verbatim; an empty / None list means
-        # "allow everything," matching `_tool_allowed`'s contract.
+        # "allow everything," matching `tool_allowed`'s contract.
         self._allow_patterns: list[str] = list(allow_patterns or [])
         self._high_stakes: frozenset[str] = high_stakes
         self._schemas: dict[str, dict[str, Any]] = dict(schemas or {})
@@ -416,7 +399,7 @@ class G2ToolGate(Gate):
             )
 
         # ----- 1. Allow-list ----------------------------------------
-        if not _tool_allowed(tool_name, self._allow_patterns):
+        if not tool_allowed(tool_name, self._allow_patterns):
             return GateDecision(
                 allow=False,
                 reason=(

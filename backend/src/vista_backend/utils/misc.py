@@ -1,6 +1,7 @@
 from typing import Any
 from pydantic import TypeAdapter
 from pathlib import Path
+import fnmatch
 
 def write_file_unique(path: Path | str, data: bytes) -> Path:
     """
@@ -32,3 +33,22 @@ def json_dump_if(data: Any) -> str:
         return data
     else:
         return TypeAdapter(Any).dump_json(data).decode()
+
+def tool_allowed(name: str, patterns: list[str]) -> bool:
+    """
+    Match `name` against fnmatch-style `patterns`.
+
+    Entries beginning with `!` are deny patterns; everything else is an
+    allow pattern. A tool is allowed iff at least one allow pattern matches
+    and no deny pattern matches. With no allow patterns, allow `*`.
+    """
+    allow_patterns = [p for p in patterns if not p.startswith("!")]
+    if not allow_patterns:
+        allow_patterns = ['*']
+    deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
+
+    if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):
+        return False
+    if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
+        return False
+    return True

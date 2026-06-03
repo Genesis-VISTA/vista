@@ -431,6 +431,19 @@ class G4CodeGate(Gate):
     # Per-tool override resolution
     # -----------------------------------------------------------------
 
+    def disabled_rules_for_tool(
+        self, tool_name: str
+    ) -> frozenset[str] | None:
+        """
+        Public accessor: resolve the disabled rule IDs for
+        ``tool_name``, raising ``ValueError`` on a malformed override.
+
+        `G4CodeCapability.prepare_tools` calls this to enforce the
+        Bell-LaPadula default-deny on a per-tool basis (a malformed
+        override drops only that tool from the toolset).
+        """
+        return self._disabled_rules_for_tool(tool_name)
+
     def _disabled_rules_for_tool(
         self, tool_name: str
     ) -> frozenset[str] | None:
@@ -647,16 +660,13 @@ class G4CodeGate(Gate):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=self._semgrep_timeout
-                )
-            except asyncio.TimeoutError as exc:
-                proc.kill()
-                await proc.wait()
-                raise TimeoutError(
-                    f"semgrep timed out after {self._semgrep_timeout}s"
-                ) from exc
+            # No internal timeout here: G4CodeCapability bounds the
+            # whole fast check with `anyio.fail_after(semgrep_timeout)`
+            # at the hook layer (the same primitive PydanticAI uses for
+            # native hook timeouts), so the deadline lives with the hook
+            # rather than buried in the runner. A timeout cancels this
+            # await; the capability converts it to a default-deny SEV2.
+            stdout_b, stderr_b = await proc.communicate()
 
             # Semgrep exits non-zero when it has findings, so the
             # return code is not a reliable success signal. The
