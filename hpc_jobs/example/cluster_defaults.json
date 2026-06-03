@@ -6,7 +6,7 @@
     }
   },
   "frontier": {
-    "duration": 120,
+    "duration": 600,
     "resources": {
       "node_count": 1
     },

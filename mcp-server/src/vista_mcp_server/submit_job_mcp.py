@@ -528,7 +528,11 @@ async def _submit_frontier_job(
     src_dir = f"{base}/{job}/src"
 
     # File ops via SSH (IRI storage scope is not granted on this token).
-    await ssh_bash_retry(ssh_conn, f"mkdir -p {shlex.quote(out_dir)}")
+    # Use mode 2775 (setgid + g+rwx) so the project automation user that the IRI
+    # service submits as (e.g. chm243_auser) can traverse and write to these dirs.
+    # Without this, Slurm's prolog can't access RUN_DIR_Frontier / VISTA_OUT and
+    # kills the job at startup with a misleading "hetjob" error.
+    await ssh_bash_retry(ssh_conn, f"mkdir -p -m 2775 {shlex.quote(out_dir)}")
     await _sync_frontier_sources(ssh_conn, job, src_dir)
 
     job_script_text = job_script_path.read_text()
@@ -542,9 +546,16 @@ async def _submit_frontier_job(
     workers_per_node = defaults.resources.processes_per_node or 1
     duration = duration_int or defaults.duration
 
+    # Frontier compute nodes have no direct outbound network — pip / curl / git
+    # against the public internet need the OLCF HTTP proxy. Matches the Odo setup
+    # template (config.py:ODO_SETUP_SCRIPT) so user scripts don't have to know.
     setup_snippet = textwrap.dedent(f"""
         export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
         mkdir -p "$VISTA_OUT"
+
+        export https_proxy="http://proxy.ccs.ornl.gov:3128"
+        export http_proxy="http://proxy.ccs.ornl.gov:3128"
+        export no_proxy="localhost,127.0.0.1,0.0.0.0"
     """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
@@ -565,7 +576,11 @@ async def _submit_frontier_job(
         iri_env["VISTA_FR_IMAGE"] = defaults.iri.image
     if defaults.iri.module is not None:
         iri_env["VISTA_FR_MODULE"] = defaults.iri.module
-    iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
+    # NOTE: we do NOT set SLURM_GPUS_PER_NODE here. On Frontier with `--exclusive`
+    # the prolog already binds all 8 GCDs and exports SLURM_GPUS_ON_NODE=8 plus
+    # SLURM_JOB_GPUS=0..7 automatically — setting SLURM_GPUS_PER_NODE is redundant.
+    # (Perlmutter's dispatch sets it because shifter reads it for per-task GCD
+    # binding inside the container; Frontier doesn't use shifter here.)
 
     stdout_template = f"{out_dir}/log-%j.out"
     stderr_template = f"{out_dir}/log-%j.err"
@@ -606,15 +621,23 @@ async def _sync_frontier_sources(ssh_conn, job: str, src_dir: str) -> None:
     token has no storage scope on the IRI filesystem API. Idempotent: if `src_dir`
     already has entries, the upload is skipped.
     """
+    # Explicit POPULATED/EMPTY marker so we're not fooled by SSH banner/motd noise
+    # showing up in stdout (which the previous "any output means populated" check
+    # silently caused — sources never got uploaded, jobs died at prolog because the
+    # RUN_DIR_Frontier path didn't exist).
     check = await ssh_bash_retry(
         ssh_conn,
-        f"[ -d {shlex.quote(src_dir)} ] && ls -A {shlex.quote(src_dir)} | head -1 || true",
+        f"[ -d {shlex.quote(src_dir)} ] && "
+        f"[ -n \"$(ls -A {shlex.quote(src_dir)} 2>/dev/null | head -1)\" ] && "
+        f"echo POPULATED || echo EMPTY",
     )
-    if check.strip():
+    if "POPULATED" in check:
         logging.debug(f"frontier src dir {src_dir} already populated; skipping upload")
         return
 
-    await ssh_bash_retry(ssh_conn, f"mkdir -p {shlex.quote(src_dir)}")
+    # mode 2775 = setgid + g+rwx so the project automation user (e.g. chm243_auser)
+    # the IRI service submits jobs as can read source files from src_dir.
+    await ssh_bash_retry(ssh_conn, f"mkdir -p -m 2775 {shlex.quote(src_dir)}")
     local_job_dir = settings.local_hpc_jobs_dir / job
     uploaded: list[str] = []
     for f in sorted(local_job_dir.iterdir()):
@@ -622,6 +645,9 @@ async def _sync_frontier_sources(ssh_conn, job: str, src_dir: str) -> None:
             continue
         await scp_retry(str(f), (ssh_conn, f"{src_dir}/{f.name}"))
         uploaded.append(f.name)
+    # SCP'd files arrive with the SCP'ing user's umask (no group write). Force g+rwX
+    # so the automation user can read sources (and cd into the dir tree).
+    await ssh_bash_retry(ssh_conn, f"chmod -R g+rwX {shlex.quote(src_dir)}")
     logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
 
 

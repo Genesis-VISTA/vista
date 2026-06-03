@@ -156,7 +156,15 @@ class IriClient:
             service_client=self._service_client,
             job_spec=job_spec,
         )
-        self._service_client.plan(job)
+        # `skip_checks=True` downgrades plan errors to logged warnings instead of raising.
+        # Needed because OLCF's moderate-enclave IRI doesn't update its per-resource
+        # status feed — Frontier shows `current_status="unknown"` from
+        # /api/v1/status/resources/<id> even though the list endpoint and OLCF's own
+        # status board show "up"/"OPERATIONAL". `create()` itself doesn't depend on
+        # `plan()` succeeding, so this only loses non-status checks (resource_id
+        # lookup, executable presence, spec conversion) as failures — they still log
+        # as warnings, and `create()` would re-do them anyway.
+        self._service_client.plan(job, skip_checks=True)
         self._service_client.create(job)
         if not job.id:
             raise RuntimeError(f"IRI submission for '{name}' returned no job id")
