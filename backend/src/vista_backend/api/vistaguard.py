@@ -13,8 +13,8 @@ from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import project as project_service
 from ..services.project_agent import project_agent_pool
+from ..services.auth import UserDep
 from ..vistaguard import TrustScorer
-from .auth import UserDep
 from fastapi import APIRouter
 
 router = APIRouter(tags=["vistaguard"])

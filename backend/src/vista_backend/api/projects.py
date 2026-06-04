@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from ..db.db import SessionDep
 from ..db.schemas import ProjectCreate, ProjectPublic, UserPublic
 from ..services import project as project_service
-from .auth import UserDep
+from ..services.auth import UserDep
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])

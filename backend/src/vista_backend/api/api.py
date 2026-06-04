@@ -11,7 +11,7 @@ from ..agents.agents import get_vista_mcp_server
 from .agent import router as agent_router
 from .vistaguard import router as vistaguard_router
 from ..services.project_agent import project_agent_pool
-from .auth import get_user
+from ..services.auth import get_user
 from .mcp import router as mcp_router
 from .knowledge_bases import router as knowledge_bases_router
 from .projects import router as projects_router
