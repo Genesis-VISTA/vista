@@ -549,13 +549,28 @@ async def _submit_frontier_job(
     # Frontier compute nodes have no direct outbound network — pip / curl / git
     # against the public internet need the OLCF HTTP proxy. Matches the Odo setup
     # template (config.py:ODO_SETUP_SCRIPT) so user scripts don't have to know.
+    #
+    # HOME fallback: amscrot's IRI service env doesn't carry HOME, and a missing
+    # HOME makes conda activation hooks (run by `module load xforge`) silently
+    # break — Python then segfaults at import. Default to VISTA_OUT (guaranteed
+    # writable, per-job-id) so conda/pip caches go somewhere sane.
+    #
+    # `module purge` clears any modules already loaded in amscrot's IRI service
+    # host env (Lmod state propagates via --export=ALL, which leaves Cray PE
+    # modules stacked with refcount > 1 when the job script then does
+    # `module load xforge` — stacked libsci/PE in LD_LIBRARY_PATH then conflicts
+    # with the xforge-provided versions and PyTorch segfaults at import).
     setup_snippet = textwrap.dedent(f"""
         export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
         mkdir -p "$VISTA_OUT"
 
+        export HOME="${{HOME:-$VISTA_OUT}}"
+
         export https_proxy="http://proxy.ccs.ornl.gov:3128"
         export http_proxy="http://proxy.ccs.ornl.gov:3128"
         export no_proxy="localhost,127.0.0.1,0.0.0.0"
+
+        module purge 2>/dev/null || true
     """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
@@ -606,6 +621,13 @@ async def _submit_frontier_job(
             "stdout_path": stdout_template,
             "stderr_path": stderr_template,
             "environment": iri_env,
+            # Keep `inherit_environment` at its default (True). Setting False strips
+            # the IRI service host's LD_LIBRARY_PATH / PYTHONPATH but ALSO blocks
+            # Slurm's SLURM_* vars from reaching the batch step on Frontier (set -u
+            # then trips on SLURM_NNODES, etc.). Instead, the job.frontier.slurm
+            # script `unset`s the contaminated library/path vars BEFORE module load
+            # — that keeps SLURM_* intact while giving `module load xforge` a clean
+            # slate.
         },
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")

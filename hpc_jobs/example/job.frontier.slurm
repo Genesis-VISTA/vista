@@ -3,15 +3,23 @@
 # Runs inside the IRI JobSpec's bash -l -c invocation, with VISTA_OUT and
 # RUN_DIR_Frontier pre-set by vista's IRI dispatcher (submit_job_mcp.py).
 #
-# Note: don't call `srun` here. amscrot's IRI service already launches this
-# script once per task in parallel (via process_count from cluster_defaults.json).
-# An inner srun would try to create a new step inside the already-allocated one.
-# Mirrors the Perlmutter pattern in job.perlmutter.slurm.
+# Note: no inner srun here because this example is a 1-rank job (node_count=1,
+# no processes_per_node in cluster_defaults.json -> Vista sets process_count=1).
+# For multi-rank / distributed jobs on Frontier, you DO need an inner srun —
+# Frontier's IRI service launches the batch script once on the head node and
+# leaves task fan-out to the user (mirrors Odo). See hpc_jobs/forge-tune/job.frontier.slurm
+# for an 8-ranks-per-node example.
 
 set -euo pipefail
 
 : "${VISTA_OUT:?VISTA_OUT not set}"
 : "${RUN_DIR_Frontier:?RUN_DIR_Frontier not set}"
+
+# Defensive: amscrot's IRI defaults to --export=ALL, which can pull library/path
+# vars from the IRI service host into the Frontier job. Clear them so module load
+# starts on a clean slate. (Matches the pattern in forge-tune/job.frontier.slurm.)
+unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME MODULEPATH
+source /etc/profile
 
 cd "${RUN_DIR_Frontier}"
 

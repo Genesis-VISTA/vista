@@ -2,10 +2,10 @@
 name: model-fine-tuning
 description: >-
   Fine-tune or evaluate the FORGE-based molten-salt regression model. Supports
-  the local forge-tune workflow and HPC submission on three clusters: Odo and
-  Frontier at OLCF (both via S3M, different compute resources) and Perlmutter
-  at NERSC (via IRI). Use when the user asks to train, fine-tune, resume, or
-  evaluate a model on the molten salt CSV data.
+  the local forge-tune workflow and HPC submission on three clusters: Odo
+  (OLCF, S3M API), Frontier (OLCF, IRI compute + SSH file ops), and Perlmutter
+  (NERSC, IRI). Use when the user asks to train, fine-tune, resume, or evaluate
+  a model on the molten salt CSV data.
 metadata:
   tags: ["OLCF", "Odo", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
 author: VISTA Team
@@ -25,10 +25,22 @@ Upstream/source copies currently also exist in `hpc_jobs/forge-tune/`.
 
 Progress:
 - [ ] 1. Confirm run goal (train, resume, or eval-only)
-- [ ] 2. Decide where to run. **First check whether the user already named one** —
-       "Perlmutter" / "NERSC" → cluster="perlmutter"; "Frontier" → cluster="frontier";
-       "Odo" / "OLCF" (unqualified) → cluster="odo". Only ask if none was mentioned.
-       If HPC, use `submit_hpc_job(job="forge-tune", cluster="odo" | "frontier" | "perlmutter", ...)`.
+- [ ] 2. Decide which cluster. If the user's message contains a cluster name,
+       USE THAT CLUSTER. No fallback, no "default to Odo", no asking again.
+       Word-to-cluster mapping (exact, case-insensitive):
+         - "Frontier"             → `cluster="frontier"`
+         - "Perlmutter" / "NERSC" → `cluster="perlmutter"`
+         - "Odo"                  → `cluster="odo"`
+         - "OLCF" alone (no Frontier/Odo) → ASK which OLCF cluster
+       Only if NO cluster name appears in the recent conversation, ask:
+       *"Submit on Odo (OLCF), Frontier (OLCF), or Perlmutter (NERSC)?"*
+
+       Worked example of the correct behavior:
+         user: "submit a fine-tune job to Frontier"
+         agent: "Submit this as a Frontier job now?"   ← uses Frontier; does NOT say "Odo"
+       Wrong behavior (DO NOT do this):
+         user: "submit a fine-tune job to Frontier"
+         agent: "Submit this as an Odo job now?"       ← BUG: ignored what the user said
 - [ ] 3. Confirm model path and dataset path
 - [ ] 4. Build command or job submission args
 - [ ] 5. Run and collect key metrics/artifacts
@@ -132,18 +144,14 @@ Artifacts:
 - Treat this as regression by default unless user explicitly requests classification.
 - For `--eval-only`, require `--resume-from <checkpoint_path>`.
 - Keep commands explicit and reproducible; include all non-default args in the final command.
-- For fine-tuning HPC submissions, resolve the target cluster **before** asking
-  for confirmation. Two cases, mutually exclusive:
-  - **The user named a cluster** in this or a recent message → use it directly.
-    Mapping: "Perlmutter" / "NERSC" → `cluster="perlmutter"`; "Frontier" →
-    `cluster="frontier"`; "Odo" / "OLCF" (unqualified) → `cluster="odo"`. Do
-    NOT ask again, do NOT mention other clusters as options, and do NOT use a
-    cluster name the user didn't say.
-  - **The user has not named a cluster** → ask exactly: *"Submit on Odo
-    (OLCF), Frontier (OLCF), or Perlmutter (NERSC)?"*
-- Once the cluster is known, ask the final confirmation, substituting the
-  resolved cluster name: *"Submit this as a {Odo|Frontier|Perlmutter} job
-  now?"* — never template a different cluster name into this question.
+- Resolve the target cluster from the user's words BEFORE composing any
+  confirmation question. See workflow step 2 for the mapping. NEVER default
+  to Odo. NEVER substitute a different cluster name into the confirmation
+  prompt than the one the user named.
+- Confirmation template: *"Submit this as a {} job
+  now?"* — substitute {} with exactly one of those three names (Odo, Frontier, Perlmutter), the one matching
+  workflow step 2's resolution. If the user said "Frontier", the question
+  MUST say "Frontier", not "Odo".
 - In the first response for fine-tuning, ask only the cluster question (if
   needed) plus the confirmation, and defer all other configuration questions
   until the user answers.
