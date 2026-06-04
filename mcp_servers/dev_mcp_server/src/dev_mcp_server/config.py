@@ -23,7 +23,7 @@ class AppSettings(BaseSettings):
     - `podman` runs commands inside a podman container.
     """
 
-    dockerfile: ResolvedPath = Path(__file__).parent / "docker" / "Dockerfile"
+    dockerfile: ResolvedPath | None = Path(__file__).parent / "docker" / "Dockerfile"
     image: str = "vista-sandbox"
 
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = []
