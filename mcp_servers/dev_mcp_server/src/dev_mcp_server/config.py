@@ -24,7 +24,7 @@ class AppSettings(BaseSettings):
     """
 
     dockerfile: ResolvedPath | None = Path(__file__).parent / "docker" / "Dockerfile"
-    image: str = "vista-sandbox"
+    image: str = "vista-sandbox:latest"
 
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = []
     """
