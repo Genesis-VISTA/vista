@@ -99,11 +99,24 @@ case "$MODE" in
     pids=()
     cleanup() {
       echo "Shutting down..."
-      kill "${pids[@]}" 2>/dev/null || true
+      for pid in "${pids[@]}"; do
+        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      done
       wait "${pids[@]}" 2>/dev/null || true
     }
     trap cleanup INT TERM
 
+    # Run a service, tee-ing output to a log file and showing a prefix on stdout
+    run_service() {
+      # TODO Remove this forground bit when we remove ssh
+      local name="$1" logfile="$2" cmd="$3" fg="${4:-}"
+      if [[ "$fg" == fg ]]; then
+        bash -c "$cmd" 2>&1 | tee "$logfile"
+      else
+        setsid bash -c "$cmd" > >(tee "$logfile" | sed -u "s/^/[$name] /") 2>&1 &
+        pids+=($!)
+      fi
+    }
 
     echo "All services will be started, logging to:"
     echo "  MCP server: $LOG_DIR/mcp.log"
@@ -111,12 +124,10 @@ case "$MODE" in
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
-    bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
-    pids+=($!)
-    bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &
-    pids+=($!)
+    run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
+    run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     # Foreground the mcp server so you can input the ssh login prompt if needed.
-    bash -c "$MCP_CMD" 2>&1 | tee "$LOG_DIR/mcp.log"
+    run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD" fg
 
     wait
     ;;
