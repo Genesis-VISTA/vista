@@ -7,19 +7,21 @@ cd "$REPO_ROOT"
 # Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
 MODE="terminal"
 PROD=false
+NO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
+    --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build]" >&2; exit 1 ;;
   esac
 done
 
 if [[ "$PROD" == true ]]; then
-  ./build.sh --prod
+  [[ "$NO_BUILD" == true ]] || ./build.sh --prod
   UI_RUN_CMD="npm start"
 else
-  ./build.sh
+  [[ "$NO_BUILD" == true ]] || ./build.sh
   UI_RUN_CMD="npm run dev"
 fi
 
