@@ -31,9 +31,8 @@ built_digest="${built_digest##sha256:}"
 # Export the sandbox image to a tar (skip if it already matches)
 if [[ ! -f "$TAR_FILE" || ! -f "$DIGEST_FILE" || "$(cat "$DIGEST_FILE")" != "$built_digest" ]]; then
   echo "==> Exporting $SANDBOX_IMAGE -> $TAR_FILE"
+  rm "$TAR_FILE" "$DIGEST_FILE"
   if [[ "$RUNTIME" == podman ]]; then
-    # podman defaults to OCI archive; force docker-archive so `msb load` reads it the
-    # same way it reads `docker save` output.
     "$RUNTIME" save --format docker-archive -o "$TAR_FILE" "$SANDBOX_IMAGE"
   else
     "$RUNTIME" save -o "$TAR_FILE" "$SANDBOX_IMAGE"
