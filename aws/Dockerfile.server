@@ -1,8 +1,7 @@
 # VISTA "all-in-one" server image for the EKS beta deployment.
 #
-# Build context is the repo root:
-#   docker build -f aws/Dockerfile.server -t <ecr>/vista-server:<tag> .
-FROM ubuntu:24.04
+# Use ./aws/build-image.sh to build this with the correct context
+FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,6 +39,17 @@ RUN cd mcp_servers/dev_mcp_server && uv sync --frozen --no-install-project
 COPY backend/pyproject.toml backend/uv.lock backend/
 RUN cd backend && uv sync --frozen --no-install-project
 
+# Load the prebuilt sandbox image into the microsandbox OCI store at ~/.microsandbox, in an
+# isolated stage so the tar isn't included in the final image. We use "named build contexts" to 
+# allow referencing the tar without it getting caught in `COPY . .` below.
+FROM base AS msb-load
+COPY --from=sandbox_tar vista-sandbox.tar /tmp/sandbox.tar
+RUN mcp_servers/dev_mcp_server/.venv/bin/msb load -i /tmp/sandbox.tar -t vista-sandbox:latest 
+
+FROM base
+
+COPY --from=msb-load /root/.microsandbox /root/.microsandbox
+
 COPY . .
 RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm run build
 RUN cd mcp_servers/vista_mcp_server && uv sync --frozen
@@ -48,5 +58,8 @@ RUN cd backend && uv sync --frozen
 RUN cd ui && npm run build
 
 ENV VISTA_MCP_DISABLE_SERVERS=submit_job,agenthpc
+ENV VISTA_DEV_MCP_DOCKERFILE=
+ENV VISTA_DEV_MCP_IMAGE=vista-sandbox:latest
+
 EXPOSE 3000 8001
 ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build"]

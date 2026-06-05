@@ -1,6 +1,11 @@
 .git/
 .gitignore
 .*
+
+# Prebuilt sandbox image export.
+aws/vista-sandbox.tar
+aws/vista-sandbox.tar.digest
+
 # Ignore Molten Salts DB
 data/**
 !data/**/
@@ -259,4 +264,3 @@ mcp_servers/vista_mcp_server/src/vista_mcp_server/mcp-apps
 # From ui/.gitignore
 ui/**/*.tsbuildinfo
 ui/**/next-env.d.ts
-
