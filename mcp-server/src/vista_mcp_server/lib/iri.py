@@ -1,11 +1,9 @@
 """
-NERSC IRI client for job submission and filesystem access via the amscrot SDK.
+IRI client for job submission via the amscrot SDK.
 
-This module mirrors the shape of ``lib/s3m.py`` so ``submit_job_mcp.py`` can
-dispatch between Odo (S3M) and Perlmutter (IRI) without duplicating logic.
-
-amscrot is an *optional* dependency (the ``nersc`` extras group). Importing
-this module fails clearly with the install hint when amscrot is missing.
+Used for both NERSC IRI (Perlmutter) and OLCF AmSC IRI (Frontier, moderate
+enclave). ``submit_job_mcp.py`` dispatches between Odo (S3M) and both IRI
+backends through this client.
 """
 
 from __future__ import annotations
@@ -18,14 +16,9 @@ from pydantic import BaseModel
 
 from ..config import settings
 
-
-try:
-    from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
-    from amscrot.serviceclient import ServiceClient
-    from amscrot.util.constants import Constants
-    AMSCROT_AVAILABLE = True
-except ImportError:
-    AMSCROT_AVAILABLE = False
+from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
+from amscrot.serviceclient import ServiceClient
+from amscrot.util.constants import Constants
 
 
 class IriResourceSpec(BaseModel):
@@ -65,10 +58,6 @@ class IriClient:
     """
 
     def __init__(self, *, api_endpoint: str, api_key: str, machine: str, profile: str = "nersc-iri"):
-        if not AMSCROT_AVAILABLE:
-            raise RuntimeError(
-                "NERSC support requires amscrot. Install with: uv sync --extra nersc"
-            )
         self.api_endpoint = api_endpoint
         self.machine = machine
         self.profile = profile

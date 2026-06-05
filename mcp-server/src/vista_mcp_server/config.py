@@ -118,6 +118,13 @@ class AppSettings(BaseSettings):
     Default is OLCF's current production DTN. Verify with the helper script at
     OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
     """
+    globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
+    """
+    Globus Native App client UUID used to mint refresh-token authorizers from
+    per-user refresh tokens. Default matches the client ID in
+    OLCF-Globus-Transfer/get_olcf_token.py so refresh tokens minted by that script
+    remain valid here.
+    """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
