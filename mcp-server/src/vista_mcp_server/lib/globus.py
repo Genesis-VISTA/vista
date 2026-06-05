@@ -36,38 +36,19 @@ class GlobusClient:
     """
     Async wrapper around `globus_sdk.TransferClient` with refresh-token auth.
 
-    Created per submission via `create_globus_client`. The underlying authorizer
-    auto-refreshes the access token using the user's refresh token, so a single
-    client survives the ~48h Globus access-token TTL without re-authentication.
+    Created per submission via `create_globus_client`. The underlying
+    `RefreshTokenAuthorizer` mints a fresh ~48h-lived access token from the
+    user's long-lived refresh token on first use, then auto-renews when each
+    minted access token expires.
     """
 
-    def __init__(
-        self, *,
-        access_token: str | None = None,
-        refresh_token: str | None = None,
-        client_id: str | None = None,
-    ):
+    def __init__(self, *, refresh_token: str, client_id: str | None = None):
         client_id = client_id or settings.globus_native_app_client_id
-        if refresh_token:
-            # RefreshTokenAuthorizer mints a fresh access token using the refresh
-            # token on first call, then auto-renews when each minted token expires.
-            # We deliberately don't pass `access_token` here: globus-sdk v4.x requires
-            # access_token + expires_at together or neither, and we don't track
-            # expires_at on the user record — letting the authorizer mint from
-            # scratch is simpler than threading a third DB column.
-            native_app = globus_sdk.NativeAppAuthClient(client_id)
-            self._authorizer: globus_sdk.authorizers.GlobusAuthorizer = (
-                globus_sdk.RefreshTokenAuthorizer(
-                    refresh_token=refresh_token,
-                    auth_client=native_app,
-                )
-            )
-        elif access_token:
-            # Fallback for callers that have only a short-lived access token (no
-            # refresh). Will hard-fail after ~48h when the token expires.
-            self._authorizer = globus_sdk.AccessTokenAuthorizer(access_token)
-        else:
-            raise ValueError("GlobusClient requires either refresh_token or access_token")
+        native_app = globus_sdk.NativeAppAuthClient(client_id)
+        self._authorizer = globus_sdk.RefreshTokenAuthorizer(
+            refresh_token=refresh_token,
+            auth_client=native_app,
+        )
         self._tc = globus_sdk.TransferClient(authorizer=self._authorizer)
 
     # --- transfer task submission + wait -----------------------------------
@@ -235,13 +216,6 @@ class GlobusClient:
             raise
 
 
-def create_globus_client(
-    *,
-    access_token: str | None = None,
-    refresh_token: str | None = None,
-) -> GlobusClient:
-    """
-    Construct a GlobusClient. Pass `refresh_token` (preferred) for auto-renewal,
-    or just `access_token` for one-shot use until it expires (~48h).
-    """
-    return GlobusClient(access_token=access_token, refresh_token=refresh_token)
+def create_globus_client(*, refresh_token: str) -> GlobusClient:
+    """ Construct a GlobusClient. The authorizer auto-refreshes the access token. """
+    return GlobusClient(refresh_token=refresh_token)

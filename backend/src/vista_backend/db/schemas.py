@@ -292,7 +292,8 @@ class UserBase(SQLModel):
 # Treat "" the same as None for the optional config fields so a cleared frontend
 # input doesn't end up as a non-null-but-empty token/account in the DB
 _USER_CONFIG_NULLABLE_FIELDS = (
-    "nersc_account", "nersc_remote_dir", "frontier_remote_dir", "s3m_token", "nersc_iri_token",
+    "nersc_account", "nersc_remote_dir", "frontier_remote_dir",
+    "s3m_token", "nersc_iri_token", "globus_token",
 )
 def _empty_str_to_none(v): return None if v == "" else v
 
@@ -306,6 +307,7 @@ class UserCreate(UserBase):
     frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -321,6 +323,7 @@ class UserUpdate(UserBase):
     frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -335,6 +338,7 @@ class UserSelfUpdate(UserBase):
     frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -359,6 +363,7 @@ class UserPublicWithConfig(UserBase):
     frontier_remote_dir: str | None = None
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
 
 class UserTable(SQLModel, table=True):
@@ -385,4 +390,14 @@ class UserTable(SQLModel, table=True):
     """
     Globus access token for NERSC IRI. Encrypted at rest. Expires ~48h.
     Refresh: python iri-api-get-globus-token-main/get_globus_token.py --refresh-only
+    """
+    globus_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
+    """
+    Globus Transfer refresh token, used for Frontier file ops via the OLCF
+    DTN collection. Long-lived; the MCP server mints short-lived access
+    tokens from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
+    Encrypted at rest.
+    Obtain with: python OLCF-Globus-Transfer/get_olcf_token.py --force-login
+                       --session-domain sso.ccs.ornl.gov
+    Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
     """

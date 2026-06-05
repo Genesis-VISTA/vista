@@ -18,6 +18,7 @@ class UserConfig(BaseModel):
     nersc_remote_dir: str | None = None
     remote_hpc_jobs_dir: str | None = None
     frontier_remote_dir: str | None = None
+    globus_token: str | None = None
 
 
 def get_user_config(ctx: Context) -> UserConfig:
@@ -67,3 +68,20 @@ def require_frontier_remote_dir(cfg: UserConfig) -> str:
             "Frontier (typically /lustre/orion/<project>/proj-shared/vista)."
         )
     return cfg.frontier_remote_dir
+
+
+def require_globus_token(cfg: UserConfig) -> str:
+    """
+    Returns the user's Globus refresh token, used for Frontier file ops on
+    the OLCF DTN collection. The MCP server mints short-lived access tokens
+    from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
+    """
+    if not cfg.globus_token:
+        raise ToolError(
+            "No Globus token configured for this user. Mint with: "
+            "python OLCF-Globus-Transfer/get_olcf_token.py --force-login "
+            "--session-domain sso.ccs.ornl.gov, then paste the refresh_token "
+            "value from ~/.globus/olcf_tokens.json into the Vista user "
+            "settings page before submitting jobs to Frontier."
+        )
+    return cfg.globus_token

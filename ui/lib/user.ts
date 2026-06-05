@@ -29,6 +29,7 @@ export type UserPublicWithConfig = UserPublic & {
   frontier_remote_dir: string | null;
   s3m_token: string | null;
   nersc_iri_token: string | null;
+  globus_token: string | null;
 };
 
 /**
@@ -44,6 +45,7 @@ export type UserSelfUpdate = {
   frontier_remote_dir?: string | null;
   s3m_token?: string | null;
   nersc_iri_token?: string | null;
+  globus_token?: string | null;
 };
 
 let userCache: UserPublic | null = null;

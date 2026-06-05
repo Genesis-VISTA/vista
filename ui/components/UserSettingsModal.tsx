@@ -99,6 +99,7 @@ function UserSettingsForm({
   const [frontierRemoteDir, setFrontierRemoteDir] = useState(user.frontier_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
+  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -125,6 +126,7 @@ function UserSettingsForm({
       ["frontier_remote_dir", user.frontier_remote_dir ?? null, blankToNull(frontierRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
+      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -242,6 +244,25 @@ function UserSettingsForm({
         />
         <span className="user-settings-hint">
           Globus access token for NERSC IRI. Expires ~48h; stored encrypted at rest.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Globus token
+        <input
+          className="input"
+          type="password"
+          value={globusToken}
+          onChange={(e) => setGlobusToken(e.target.value)}
+          placeholder="Globus Transfer refresh token"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          For Frontier file transfer via the OLCF DTN. Mint with:
+          {" "}<code>python OLCF-Globus-Transfer/get_olcf_token.py --force-login --session-domain sso.ccs.ornl.gov</code>,
+          then paste the <code>refresh_token</code> value from{" "}
+          <code>~/.globus/olcf_tokens.json</code>. Long-lived; stored encrypted at rest.
         </span>
       </label>
 
