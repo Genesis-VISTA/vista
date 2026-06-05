@@ -6,7 +6,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy
+from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy, NetworkPolicy, Rule, Action, Destination, Protocol, Direction
+from microsandbox.types import DnsConfig  # not re-exported from package root
 from microsandbox._runtime import msb_path as _msb_path
 
 from .sandbox import Sandbox, Volume
@@ -96,7 +97,18 @@ class MicrosandboxSandbox(Sandbox):
             shell="/bin/bash",
             volumes=msb_volumes,
             env=dict(env) if env else {},
-            network=Network.public_only(),
+            # TODO: Note, there's currently and issue where microsandbox writes /etc/resolv.conf with mode 0700, so if we make the sandbox image non root dns fails
+            network=Network(
+                # policy=NetworkPolicy(
+                #     default_egress=Action.DENY,
+                #     rules=tuple([
+                #         *Rule.allow_dns(),
+                #         *[Rule.allow(direction=Direction.EGRESS, destination=Destination.domain(d), port=443, protocol=Protocol.TCP) for d in ["www.example.com"]],
+                #     ]),
+                # ),
+                policy='public_only',
+                dns=DnsConfig(nameservers=("1.1.1.1", "8.8.8.8")),
+            ),
         )
         return cls(sandbox=sandbox)
 
