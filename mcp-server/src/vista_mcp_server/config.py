@@ -101,6 +101,24 @@ class AppSettings(BaseSettings):
     olcf_machine: str = "frontier"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
 
+    # Globus file-transfer config for Frontier (cluster="frontier"). The Vista
+    # server hosts its own Globus collection (GCS or GCP) exposing `local_hpc_jobs_dir`
+    # for source uploads and `output_dir` for output downloads; the user's per-record
+    # Globus Auth + Transfer tokens authenticate as their OLCF identity for access to
+    # `olcf_globus_collection_id`.
+    vista_globus_collection_id: str | None = None
+    """
+    UUID of the Globus Collection hosted on the Vista server. Must expose the paths
+    `local_hpc_jobs_dir` and `output_dir` (or a common ancestor). Required for Frontier
+    file ops once the Globus pivot lands; empty during transition.
+    """
+    olcf_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
+    """
+    UUID of the OLCF DTN (GCS5) Globus Collection that exposes Frontier's filesystem.
+    Default is OLCF's current production DTN. Verify with the helper script at
+    OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
+    """
+
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
     SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
