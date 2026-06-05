@@ -136,6 +136,8 @@ async def init_s3m_ssh_conn():
     global _ssh_conn
     if _ssh_conn is None:
         logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
+        if not settings.hpc_ssh_host:
+            raise RuntimeError(f"VISTA_MCP_HPC_SSH_USER is required")
         _ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
         logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
 
