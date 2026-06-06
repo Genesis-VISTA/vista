@@ -1,15 +1,10 @@
 """
-S3M API client plus SSH/SCP file transfer helpers.
+S3M API client plus SSH/SCP file transfer helpers — Odo only.
 
-Used for Odo (OLCF) job submission. Frontier and Perlmutter both go through the
-IRI path in `lib/iri.py` instead — Frontier's S3M token is IRI-scoped and has no
-permission to hit the S3M /compute endpoints.
-
-Frontier still needs SSH/SCP for filesystem operations (storage discovery on its
-IRI token 401s, so we fall back to SCP — same workaround as Odo). The lifespan
-in submit_job_mcp.py calls `init_s3m_ssh_conn()` which opens the Odo conn
-unconditionally and the Frontier conn iff `settings.frontier_ssh_host` is set.
-The Frontier IRI dispatch reaches for `get_frontier_ssh_conn()` to do file ops.
+Frontier and Perlmutter both go through the IRI path in `lib/iri.py` for
+compute. Frontier's file ops go through Globus (`lib/globus.py`); Perlmutter's
+go through amscrot's IRI Filesystem API. Only Odo still needs a persistent
+SSH conn for SCP/sacct because the S3M API doesn't yet have file endpoints.
 """
 
 from __future__ import annotations
@@ -140,65 +135,40 @@ class S3mDefaults(BaseModel):
     resources: S3mResourceSpec = S3mResourceSpec()
 
 
-_ssh_conns: dict[str, asyncssh.SSHClientConnection] = {}
+_ssh_conn: asyncssh.SSHClientConnection | None = None
 """
-SSH connections for file ops, keyed by cluster slug ("odo" / "frontier").
-
-Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the lack of
-filesystem APIs (Odo's S3M doesn't have /file endpoints; Frontier's IRI token 401s on storage
-discovery). Remove these once both backends gain filesystem support.
-
-"odo" is always opened. "frontier" is opened only when `settings.frontier_ssh_host` is set.
+SSH connection for Odo file ops. Initialized by submit_job_mcp's lifespan.
+Temporary workaround until the Odo S3M API exposes file endpoints.
 """
 
 
 async def init_s3m_ssh_conn():
-    """ Open the SSH conn for Odo, and (if configured) for Frontier. """
-    if "odo" not in _ssh_conns:
+    """ Open the SSH conn for Odo file access. """
+    global _ssh_conn
+    if _ssh_conn is None:
         host = settings.hpc_ssh_host
         user = settings.hpc_ssh_user
         logging.info(f"Connecting to {user}@{host[-1]} via SSH for Odo file access...")
-        _ssh_conns["odo"] = await get_ssh_conn(host, user)
+        _ssh_conn = await get_ssh_conn(host, user)
         logging.info(f"SSH connection established to {host[-1]} (odo)")
-    if settings.frontier_ssh_host and "frontier" not in _ssh_conns:
-        host = list(settings.frontier_ssh_host)
-        user = settings.frontier_ssh_user or settings.hpc_ssh_user
-        logging.info(f"Connecting to {user}@{host[-1]} via SSH for Frontier file access...")
-        _ssh_conns["frontier"] = await get_ssh_conn(host, user)
-        logging.info(f"SSH connection established to {host[-1]} (frontier)")
 
 
 def close_s3m_ssh_conns():
-    """ Close all open SSH conns. Safe to call when none are open. """
-    for slug, conn in list(_ssh_conns.items()):
-        conn.close()
-        del _ssh_conns[slug]
+    """ Close the Odo SSH conn if open. Plural-named for historical compatibility. """
+    global _ssh_conn
+    if _ssh_conn is not None:
+        _ssh_conn.close()
+        _ssh_conn = None
 
 
 def get_s3m_client(*, s3m_token: str) -> S3mClient:
-    """ Odo-only S3M client. Frontier uses the IRI path in `lib/iri.py` for compute. """
-    conn = _ssh_conns.get("odo")
-    if conn is None:
+    """ Odo S3M client. Frontier uses Globus (lib/globus.py) for file ops. """
+    if _ssh_conn is None:
         raise RuntimeError("S3M SSH connection not initialized; call init_s3m_ssh_conn() first")
     return S3mClient(
         s3m_api=settings.s3m_url,
         s3m_token=s3m_token,
         resource_id=settings.s3m_resource,
-        ssh_conn=conn,
+        ssh_conn=_ssh_conn,
         expected_project=settings.hpc_account,
     )
-
-
-def get_frontier_ssh_conn() -> asyncssh.SSHClientConnection:
-    """
-    SSH connection for Frontier file ops, used by the Frontier IRI dispatch in
-    `submit_job_mcp.py`. Raises if the conn wasn't initialized (i.e. the deployment
-    didn't set VISTA_MCP_FRONTIER_SSH_HOST).
-    """
-    conn = _ssh_conns.get("frontier")
-    if conn is None:
-        raise RuntimeError(
-            "Frontier SSH connection not initialized. Set VISTA_MCP_FRONTIER_SSH_HOST "
-            "and restart the MCP server to enable cluster=\"frontier\" routing."
-        )
-    return conn

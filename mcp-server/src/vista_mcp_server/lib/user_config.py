@@ -17,6 +17,7 @@ class UserConfig(BaseModel):
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     remote_hpc_jobs_dir: str | None = None
+    frontier_account: str | None = None
     frontier_remote_dir: str | None = None
     globus_token: str | None = None
 
@@ -68,6 +69,17 @@ def require_frontier_remote_dir(cfg: UserConfig) -> str:
             "Frontier (typically /lustre/orion/<project>/proj-shared/vista)."
         )
     return cfg.frontier_remote_dir
+
+
+def require_frontier_account(cfg: UserConfig) -> str:
+    if not cfg.frontier_account:
+        raise ToolError(
+            "No Frontier account configured for this user. Set 'Frontier account' "
+            "in the Vista user settings page before submitting jobs to Frontier "
+            "(your OLCF project name, e.g. 'chm243'; must match your S3M token's "
+            "project claim)."
+        )
+    return cfg.frontier_account
 
 
 def require_globus_token(cfg: UserConfig) -> str:

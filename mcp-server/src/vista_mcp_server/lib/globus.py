@@ -116,7 +116,10 @@ class GlobusClient:
             task = self._tc.get_task(task_id)
             status = task["status"]
             if status in ("SUCCEEDED", "FAILED"):
-                return dict(task)
+                # `task` is a globus_sdk.GlobusHTTPResponse; its __iter__ yields
+                # ints (treats the response like a sequence), so `dict(task)`
+                # raises KeyError. Use `.data` — the parsed JSON body dict.
+                return dict(task.data)
             if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"Globus task {task_id} did not finish in {timeout_seconds}s "
@@ -200,9 +203,10 @@ class GlobusClient:
 
     async def operation_mkdir(self, *, endpoint: str, path: str) -> None:
         """
-        Create a directory on the collection. Idempotent: succeeds if the dir
-        already exists (Globus returns ExternalError.MkdirFailed.Exists, which
-        we swallow).
+        Create a single directory on the collection. Idempotent: succeeds if the
+        dir already exists (Globus returns ExternalError.MkdirFailed.Exists, which
+        we swallow). Fails if the parent doesn't exist — use `operation_mkdir_p`
+        for `mkdir -p` semantics.
         """
         await asyncio.to_thread(self._operation_mkdir, endpoint, path)
 
@@ -214,6 +218,37 @@ class GlobusClient:
             if "Exists" in code or "exists" in code:
                 return
             raise
+
+    async def operation_mkdir_p(
+        self, *, endpoint: str, path: str, parents_below: str,
+    ) -> None:
+        """
+        `mkdir -p` equivalent for a Globus collection: idempotently create
+        `path` plus any missing intermediate dirs BELOW `parents_below`.
+
+        `parents_below` is the deepest ancestor we assume already exists (and
+        do NOT try to create). For Vista's Frontier path this is the user's
+        `frontier_remote_dir` — Globus would reject mkdir of /lustre, /lustre/orion,
+        etc. anyway, and walking that high is wasteful.
+
+        Globus's MKD is one-level-only, so this helper walks the suffix between
+        `parents_below` and `path` and calls `operation_mkdir` for each segment.
+        Already-existing segments are no-ops thanks to operation_mkdir's
+        Exists-swallowing behavior.
+        """
+        path = path.rstrip("/")
+        parents_below = parents_below.rstrip("/")
+        if not (path == parents_below or path.startswith(parents_below + "/")):
+            raise ValueError(
+                f"path {path!r} is not under parents_below {parents_below!r}"
+            )
+        suffix = path[len(parents_below):].lstrip("/")
+        if not suffix:
+            return
+        current = parents_below
+        for part in suffix.split("/"):
+            current = f"{current}/{part}"
+            await self.operation_mkdir(endpoint=endpoint, path=current)
 
 
 def create_globus_client(*, refresh_token: str) -> GlobusClient:

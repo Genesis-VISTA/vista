@@ -15,12 +15,6 @@ set -euo pipefail
 : "${VISTA_OUT:?VISTA_OUT not set}"
 : "${RUN_DIR_Frontier:?RUN_DIR_Frontier not set}"
 
-# Defensive: amscrot's IRI defaults to --export=ALL, which can pull library/path
-# vars from the IRI service host into the Frontier job. Clear them so module load
-# starts on a clean slate. (Matches the pattern in forge-tune/job.frontier.slurm.)
-unset LD_LIBRARY_PATH PYTHONPATH PYTHONHOME MODULEPATH
-source /etc/profile
-
 cd "${RUN_DIR_Frontier}"
 
 module load cray-python

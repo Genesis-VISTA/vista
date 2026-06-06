@@ -96,6 +96,7 @@ function UserSettingsForm({
   const [hpcDir, setHpcDir] = useState(user.remote_hpc_jobs_dir);
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
+  const [frontierAccount, setFrontierAccount] = useState(user.frontier_account ?? "");
   const [frontierRemoteDir, setFrontierRemoteDir] = useState(user.frontier_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
@@ -123,6 +124,7 @@ function UserSettingsForm({
     > = [
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
+      ["frontier_account", user.frontier_account ?? null, blankToNull(frontierAccount)],
       ["frontier_remote_dir", user.frontier_remote_dir ?? null, blankToNull(frontierRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
@@ -170,6 +172,21 @@ function UserSettingsForm({
         />
         <span className="user-settings-hint">
           Where hpc_jobs are copied to on Odo.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Frontier account
+        <input
+          className="input"
+          value={frontierAccount}
+          onChange={(e) => setFrontierAccount(e.target.value)}
+          placeholder="e.g. chm243"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          OLCF project name for Frontier Slurm submissions. Must match your S3M
+          token&apos;s project claim. Required for cluster=&quot;frontier&quot;.
         </span>
       </label>
 

@@ -133,14 +133,6 @@ class AppSettings(BaseSettings):
     """
     hpc_ssh_user: str
     """ SSH user to log in as for the Odo SSH connection. """
-    frontier_ssh_host: CommaSeparatedList[str] = []
-    """
-    SSH host(s) for file access (SCP) on Frontier. Empty disables cluster="frontier"
-    routing. IRI storage discovery 401s on the moderate-enclave token, so source
-    upload + log/output transfer falls back to SSH, mirroring the Odo workaround.
-    """
-    frontier_ssh_user: str | None = None
-    """ SSH user for the Frontier SSH connection. Falls back to `hpc_ssh_user` when unset. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """
