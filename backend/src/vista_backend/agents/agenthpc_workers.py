@@ -30,6 +30,26 @@ if TYPE_CHECKING:
 # enclosing run_stream's StreamMerger. Signature: (level, message) -> None.
 LogFn = Callable[[str, str], None]
 
+# Push a per-trial "report back" line into the UI's intermediate-bubble
+# (agent thinking) channel — each call produces one standalone bubble that
+# the user can read live and that collapses once the agent's final response
+# arrives. Signature: (text) -> None.
+ProgressFn = Callable[[str], None]
+
+# Synthesize a (function_tool_call, function_tool_result) pair for an MCP
+# tool the chat agent did not directly invoke (used here for display_file at
+# the end of the pool, so the UI auto-renders the final plot just like in
+# sequential mode). Signature: (tool_name, args, content) -> None.
+ToolEventFn = Callable[[str, dict[str, Any], Any], None]
+
+
+def _noop_progress(text: str) -> None:
+    return None
+
+
+def _noop_tool_event(tool_name: str, args: dict[str, Any], content: Any) -> None:
+    return None
+
 
 WORKER_PROMPT = (Path(__file__).parent / "alloy_worker_prompt.md").read_text()
 
@@ -143,6 +163,38 @@ async def _propose_composition(
         return None
 
 
+# Sandbox URI of the cumulative plot the workers refresh after every score.
+# Matches agenthpc.mcp._PLOT_SANDBOX_DIR + the per-app filename, kept in sync
+# manually because the MCP server doesn't expose this path through a tool.
+_ALLOY_PLOT_URI = "/mnt/data/output/alloy-progress/monbtaw_progress.png"
+
+
+async def _show_alloy_plot(
+    project_agent: "ProjectAgent",
+    emit_tool_event: ToolEventFn,
+    log: LogFn,
+    worker_id: int | None = None,
+) -> None:
+    """Pull the current plot's HTML through ``display_file`` and synthesize a
+    function-tool-result event so the chat UI's image renderer fires. Used
+    after every worker's per-trial ``agenthpc_plot_progress`` call so the
+    figure refreshes live, exactly like sequential mode. Best-effort — a
+    failure here must never block trial progress."""
+    try:
+        display_result = _parse_tool_result(
+            "display_file",
+            await project_agent.call_tool("display_file", {"uri": _ALLOY_PLOT_URI}),
+        )
+        # display_file's HTML can come back as a wrapped {"_text": html}
+        # (string return), a {"ui": {"kind": "html", "html": ...}} dict, or
+        # the raw HTML dict shape returned directly by the tool.
+        html_content = display_result.get("_text") or display_result
+        emit_tool_event("display_file", {"uri": _ALLOY_PLOT_URI}, html_content)
+    except Exception as e:
+        who = f"Worker[{worker_id}] " if worker_id is not None else ""
+        log("WARNING", f"{who}plot display refresh failed: {e}")
+
+
 async def _worker_loop(
     worker_id: int,
     num_workers: int,
@@ -151,6 +203,8 @@ async def _worker_loop(
     target_score: float | None,
     max_trials: int | None,
     log: LogFn,
+    progress: ProgressFn,
+    emit_tool_event: ToolEventFn,
 ) -> None:
     """One worker's main loop. Each iteration: read shared state → propose →
     claim+submit → wait → score. Exits when ``should_stop`` is True."""
@@ -216,10 +270,12 @@ async def _worker_loop(
         if not job_id:
             log("WARNING", f"Worker[{worker_id}] submit returned no job_id: {submit}")
             continue
-        log(
-            "INFO",
-            f"Worker[{worker_id}] submitted job {job_id} for {composition.fmt()}",
+        submit_msg = (
+            f"🚀 Worker {worker_id}/{num_workers} submitted job `{job_id}` for "
+            f"composition {composition.fmt()}"
         )
+        log("INFO", submit_msg)
+        progress(submit_msg)
 
         # Step 4 — wait for completion.
         wait_resp = _parse_tool_result(
@@ -276,11 +332,13 @@ async def _worker_loop(
             continue
         score = result.get("score", 0.0)
         threshold_reached = result.get("threshold_reached")
-        log(
-            "INFO",
-            f"Worker[{worker_id}] trial done: {composition.fmt()} -> Tc = {score:.1f}"
-            + ("  [threshold reached]" if threshold_reached else ""),
+        done_msg = (
+            f"✅ Worker {worker_id}/{num_workers} completed job `{job_id}`: "
+            f"{composition.fmt()} → Tc = **{score:.1f} K**"
+            + ("  · 🎯 threshold reached" if threshold_reached else "")
         )
+        log("INFO", done_msg)
+        progress(done_msg)
 
         # Step 6 — refresh the cumulative Cv(T) plot so the user sees the
         # campaign evolve in the output panel. Concurrent worker calls are
@@ -293,6 +351,15 @@ async def _worker_loop(
         except Exception as e:
             # Plot failures must never block trial progress.
             log("WARNING", f"Worker[{worker_id}] plot refresh failed: {e}")
+            continue
+
+        # Step 7 — push the refreshed PNG to the chat UI's image renderer
+        # by synthesizing a display_file tool-result event. Without this
+        # the agent's run_stream never sees the per-trial plot updates —
+        # only the file on disk would change. Concurrent workers may both
+        # land here near-simultaneously; the UI keeps only the latest
+        # rendering, which is the right behavior (latest data wins).
+        await _show_alloy_plot(project_agent, emit_tool_event, log, worker_id)
 
 
 async def run_alloy_workers(
@@ -302,9 +369,20 @@ async def run_alloy_workers(
     target_score: float | None,
     max_trials: int | None,
     log: LogFn,
+    progress: ProgressFn = _noop_progress,
+    emit_tool_event: ToolEventFn = _noop_tool_event,
 ) -> dict[str, Any]:
     """Run ``num_workers`` independent worker loops concurrently and return a
     final summary when the campaign stops (threshold, budget, or stop flag).
+
+    ``progress`` is used to surface per-trial submit / complete events to the
+    chat UI as intermediate "agent thinking" bubbles, mirroring the per-trial
+    visibility users get in sequential mode.
+
+    ``emit_tool_event`` is invoked once at the end with ``display_file``'s
+    HTML output so the UI's image renderer fires automatically — again
+    matching the sequential-mode UX without forcing the chat agent to call
+    ``display_file`` itself after this blocking tool returns.
 
     On ``asyncio.CancelledError`` (the chat agent run was cancelled by the UI),
     cancels every in-flight Slurm job through ``agenthpc_cancel_all_pending``
@@ -313,7 +391,12 @@ async def run_alloy_workers(
     if num_workers < 1:
         raise ValueError(f"num_workers must be >= 1, got {num_workers}")
 
-    log("INFO", f"Starting worker pool: {num_workers} workers for {app_type}")
+    start_msg = (
+        f"🧵 Starting parallel optimization with **{num_workers} workers** "
+        f"for `{app_type}` (target Tc = {target_score}, max trials = {max_trials})."
+    )
+    log("INFO", start_msg)
+    progress(start_msg)
     tasks = [
         asyncio.create_task(
             _worker_loop(
@@ -324,6 +407,8 @@ async def run_alloy_workers(
                 target_score=target_score,
                 max_trials=max_trials,
                 log=log,
+                progress=progress,
+                emit_tool_event=emit_tool_event,
             ),
             name=f"agenthpc-worker-{i + 1}",
         )
@@ -358,12 +443,20 @@ async def run_alloy_workers(
             },
         ),
     )
-    log(
-        "INFO",
-        f"Worker pool finished after {final.get('num_trials', 0)} trials. "
-        f"Best Tc = {final.get('best_score', 0.0):.1f} at "
-        f"{final.get('best_parameters')}",
+    summary_msg = (
+        f"🏁 Worker pool finished after **{final.get('num_trials', 0)} trials**. "
+        f"Best Tc = **{final.get('best_score', 0.0):.1f} K** "
+        f"at {final.get('best_parameters')}"
     )
+    log("INFO", summary_msg)
+    progress(summary_msg)
+
+    # Workers already display the plot after every successful trial. Do
+    # one final refresh here as a safety net so the chat UI always shows
+    # the very last state — covers the edge case where the final trial's
+    # display call lost the race with the pool's exit signal.
+    await _show_alloy_plot(project_agent, emit_tool_event, log)
+
     return {
         "app_type": app_type,
         "num_workers": num_workers,
@@ -374,4 +467,5 @@ async def run_alloy_workers(
         "budget_exhausted": final.get("budget_exhausted"),
         "stopped_by_user": final.get("stopped_by_user"),
         "trials": final.get("trials", []),
+        "plot_path": _ALLOY_PLOT_URI,
     }

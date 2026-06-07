@@ -110,7 +110,14 @@ export type FunctionToolCallEvent = {
 };
 export type FunctionToolResultEvent = {
   event_kind: "function_tool_result";
-  result: ToolReturnPart | RetryPromptPart;
+  /**
+   * Current PydanticAI versions serialize the tool-return part as `part`.
+   * Older versions used `result`. Read whichever is present (see
+   * helpers below).
+   */
+  part?: ToolReturnPart | RetryPromptPart;
+  /** Deprecated alias for `part`, retained for backward compatibility. */
+  result?: ToolReturnPart | RetryPromptPart;
   content?: unknown;
 };
 export type LogEvent = {

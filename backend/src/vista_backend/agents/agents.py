@@ -13,7 +13,12 @@ from pydantic_ai.messages import (
     ModelMessage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    PartEndEvent,
+    PartStartEvent,
     RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import infer_model
 import mcp.client.session
@@ -200,6 +205,16 @@ class ProjectAgent:
         # which runs N async sub-agents inside one tool call) can push log lines
         # into the same stream the chat agent sees. Signature: (level, area, msg).
         self._cur_log_emitter: Callable[[str, str, str], None] | None = None
+        # Emits a synthesized TextPart so the chat UI's intermediate "agent
+        # thinking" bubble renderer picks up the message. Used by long-running
+        # backend tools (workers) to surface per-trial progress in the same
+        # visual channel the model's own thinking text uses.
+        self._cur_progress_emitter: Callable[[str], None] | None = None
+        # Synthesizes a (FunctionToolCallEvent, FunctionToolResultEvent) pair
+        # so the chat UI's tool-result handler fires for an MCP tool the user
+        # never sees the agent call directly (e.g. workers showing the plot
+        # mid-run). The content is whatever the MCP tool returned.
+        self._cur_tool_event_emitter: Callable[[str, dict[str, Any], Any], None] | None = None
         self.agent = self._build_agent()
 
     def _build_agent(self) -> Agent:
@@ -287,6 +302,16 @@ class ProjectAgent:
                     if cb is not None:
                         cb(level, "Workers", message)
 
+                def emit_progress(text: str) -> None:
+                    cb = self._cur_progress_emitter
+                    if cb is not None:
+                        cb(text)
+
+                def emit_tool_event(tool_name: str, args: dict[str, Any], content: Any) -> None:
+                    cb = self._cur_tool_event_emitter
+                    if cb is not None:
+                        cb(tool_name, args, content)
+
                 return await run_alloy_workers(
                     project_agent=self,
                     app_type=app_type,
@@ -294,6 +319,8 @@ class ProjectAgent:
                     target_score=target_score,
                     max_trials=max_trials,
                     log=emit,
+                    progress=emit_progress,
+                    emit_tool_event=emit_tool_event,
                 )
 
         if settings.vistaguard.quarantine_enabled:
@@ -382,23 +409,56 @@ class ProjectAgent:
                     tools.append(tool)
         return tools
 
+    # Tool names that require the user's identity for HPC credential
+    # lookup. ``_build_mcp_metadata`` adds the user payload for these.
+    _HPC_TOOLS_NEEDING_USER: set[str] = {
+        "submit_hpc_job", "get_hpc_job_status",
+        "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
+    }
+
+    def _build_mcp_metadata(self, tool_name: str) -> dict[str, Any]:
+        """Build the ``vista`` metadata blob the MCP server expects: the
+        per-agent project paths (always), plus the user payload for HPC
+        tools that need credentials. Kept here so both ``call_tool`` and
+        the agent-runtime ``process_tool_call`` use the same shape."""
+        metadata: dict[str, Any] = {
+            "vista": {
+                "project_paths": {
+                    "skills_dir": str(self.skills_volume_dir),
+                    "output_dir": str(self.output_dir),
+                    "uploads_dir": str(self.uploads_dir),
+                },
+            },
+        }
+        if tool_name in self._HPC_TOOLS_NEEDING_USER:
+            metadata["vista"]["user"] = self.user.model_dump(mode='json')
+        return metadata
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> mcp.types.CallToolResult:
         """
         Call an MCP tool by name, searching across all attached MCP servers.
 
         Honors the project's `tools` filter. Returns the raw `CallToolResult`
         envelope (does not unwrap or raise on `isError=True`).
+
+        Passes the same ``vista`` metadata the agent runtime would attach
+        (project_paths, plus user for HPC tools) so tools like
+        ``display_file`` can resolve ``/mnt/...`` sandbox paths against the
+        calling agent's host volumes.
         """
         if not self._tool_allowed(name):
             raise KeyError(f"Tool {name!r} not found on any MCP server")
+        metadata = self._build_mcp_metadata(name)
         for server in self._mcp_servers:
             tools = await server.list_tools()
             if any(t.name == name for t in tools):
-                # TODO: This bypasses process_tool_call. That's probably fine for VistaGuard as these
-                # calls are user triggered. But will break job submission. Leaving for now as using
-                # metadata for job submission credentials is a temporary solution anyways
+                # NOTE: This bypasses process_tool_call (the VistaGuard
+                # sidecar). For internal calls driven by backend tools
+                # (e.g. agenthpc workers showing the plot) the bypass is
+                # intentional — the gate has already been applied to the
+                # outer tool call that triggered this one.
                 try:
-                    raw = await server.direct_call_tool(name, arguments)
+                    raw = await server.direct_call_tool(name, arguments, metadata)
                     is_error = False
                 except Exception as exc:
                     raw = str(exc)
@@ -440,21 +500,7 @@ class ProjectAgent:
             # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
             # environment vars/headers necessary.
             # The project_paths should also be changed to use env vars or some other mechanism.
-            metadata: dict[str, Any] = {
-                "vista": {
-                    "project_paths": {
-                        "skills_dir": str(self.skills_volume_dir),
-                        "output_dir": str(self.output_dir),
-                        "uploads_dir": str(self.uploads_dir),
-                    },
-                },
-            }
-            HPC_TOOLS = {
-                "submit_hpc_job", "get_hpc_job_status",
-                "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
-            }
-            if name in HPC_TOOLS:
-                metadata["vista"]["user"] = self.user.model_dump(mode='json')
+            metadata = self._build_mcp_metadata(name)
 
             if self._sidecar.is_active():
                 async def call_tool_wrapper(inner_name, inner_args, inner_metadata = None):
@@ -563,12 +609,52 @@ class ProjectAgent:
             except StreamClosedError:
                 pass
 
+        # Synthetic-part index allocator. The chat agent's own run uses small
+        # indices starting at 0; we use a high base so backend-tool-emitted
+        # parts never collide.
+        synthetic_index = [10_000]
+
+        def emit_progress(text: str) -> None:
+            """Push an intermediate TextPart that the UI renders as an "agent
+            thinking" bubble. Each call gets its own index so it shows up as
+            a standalone bubble that collapses when the final response lands."""
+            if not text:
+                return
+            idx = synthetic_index[0]
+            synthetic_index[0] += 1
+            part = TextPart(content=text)
+            try:
+                merger.send(PartStartEvent(index=idx, part=part))
+                merger.send(PartEndEvent(index=idx, part=part))
+            except StreamClosedError:
+                pass
+
+        def emit_tool_event(tool_name: str, args: dict[str, Any], content: Any) -> None:
+            """Synthesize the (call, result) event pair for an MCP tool the
+            chat agent did not invoke directly. Used to surface workers'
+            display_file call so the chat UI's image renderer fires."""
+            try:
+                call_part = ToolCallPart(tool_name=tool_name, args=args)
+                merger.send(FunctionToolCallEvent(part=call_part))
+                return_part = ToolReturnPart(
+                    tool_name=tool_name,
+                    content=content,
+                    tool_call_id=call_part.tool_call_id,
+                )
+                # Use `part=` rather than the deprecated `result=` so the
+                # serialized JSON includes the field name the UI expects.
+                merger.send(FunctionToolResultEvent(part=return_part))
+            except StreamClosedError:
+                pass
+
         async def agent_stream() -> AsyncIterator[ProjectAgentStreamEvent]:
             async with self._run_lock:
                 self._cur_mcp_elicitation_callback = self._make_mcp_elicitation_callback(merger) if enable_elicitation else None
                 self._cur_mcp_process_tool_call = self._make_mcp_process_tool_call()
                 self._cur_mcp_log_handler = log_handler
                 self._cur_log_emitter = emit_log
+                self._cur_progress_emitter = emit_progress
+                self._cur_tool_event_emitter = emit_tool_event
                 try:
                     yield log("INFO", "Agent", "\n".join([
                         f"New request:",
@@ -608,10 +694,13 @@ class ProjectAgent:
                             if isinstance(event, FunctionToolCallEvent):
                                 yield log("INFO", f"Tool:{event.part.tool_name}", message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}")
                             elif isinstance(event, FunctionToolResultEvent):
-                                if isinstance(event.result, RetryPromptPart):
-                                    yield log("WARNING", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} failed")
+                                # `event.part` in current PydanticAI; `.result`
+                                # is the deprecated alias. Use the new name.
+                                result_part = event.part
+                                if isinstance(result_part, RetryPromptPart):
+                                    yield log("WARNING", f"Tool:{result_part.tool_name}", f"Tool {result_part.tool_name} failed")
                                 else:
-                                    yield log("INFO", f"Tool:{event.result.tool_name}", f"Tool {event.result.tool_name} completed")
+                                    yield log("INFO", f"Tool:{result_part.tool_name}", f"Tool {result_part.tool_name} completed")
 
                             yield event
                 finally:
@@ -619,6 +708,8 @@ class ProjectAgent:
                     self._cur_mcp_process_tool_call = None
                     self._cur_mcp_log_handler = None
                     self._cur_log_emitter = None
+                    self._cur_progress_emitter = None
+                    self._cur_tool_event_emitter = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)

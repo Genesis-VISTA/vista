@@ -656,7 +656,9 @@ export default function HomePage() {
 
         case "function_tool_result": {
           const ev = data as FunctionToolResultEvent;
-          const result = ev.result;
+          // PydanticAI renamed this field from `result` -> `part`. Accept
+          // either so we keep working across SDK versions.
+          const result = ev.part ?? ev.result;
           if (!result) break;
           if (result.part_kind === "retry-prompt") {
             pushLog(

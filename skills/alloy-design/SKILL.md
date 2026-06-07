@@ -111,7 +111,24 @@ marked below.
 ## Parallel mode (num_workers > 1)
 
 When the user asks for more than one worker, skip the sequential loop below
-and use the parallel tool instead. The workflow is:
+and use the parallel tool instead.
+
+> ⚠️ **Before you call `agenthpc_run_workers`, post this warning to the user
+> in chat** (paraphrase, don't quote verbatim — the user should see it as
+> your own message, not boilerplate):
+>
+> > Parallel mode will submit Slurm jobs automatically without asking again
+> > between trials. You'll be prompted for SSH credentials once on the first
+> > submit and the cached connection will be reused by every worker. Be
+> > mindful that `num_workers × max_trials` is the upper bound on jobs you
+> > may consume from your HPC allocation, and once a job is submitted the
+> > only way to stop the campaign is to ask for cancellation
+> > (which triggers `agenthpc_cancel_all_pending`).
+>
+> Wait briefly for the user to acknowledge or revise their inputs before
+> calling the tool.
+
+The workflow is:
 
 ```
 (0) Ask the user (one short question) for target_score, max_trials, and
