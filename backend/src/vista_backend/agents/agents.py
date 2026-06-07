@@ -35,6 +35,32 @@ from .skills import to_prompt
 BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
 
 
+def _wrap_as_call_tool_result(raw: Any, *, is_error: bool) -> mcp.types.CallToolResult:
+    """Build a ``mcp.types.CallToolResult`` from a pydantic-ai ``ToolResult``.
+
+    ``MCPServer.direct_call_tool`` returns ``str | BinaryContent | dict | list
+    | Sequence`` directly (PydanticAI unwraps the MCP envelope for us). The
+    HTTP `/mcp/call` endpoint, on the other hand, exposes the original MCP
+    ``CallToolResult`` envelope to clients. Wrap whatever we got back into
+    the envelope shape so callers (the HTTP route + the agenthpc worker
+    pool's `_parse_tool_result`) see a stable type.
+    """
+    content: list[Any] = []
+    if isinstance(raw, str):
+        content.append(mcp.types.TextContent(type="text", text=raw))
+    elif isinstance(raw, (dict, list)):
+        content.append(mcp.types.TextContent(type="text", text=json.dumps(raw)))
+    elif isinstance(raw, mcp.types.TextContent | mcp.types.ImageContent | mcp.types.EmbeddedResource):
+        content.append(raw)
+    elif isinstance(raw, list | tuple):
+        for item in raw:
+            content.extend(_wrap_as_call_tool_result(item, is_error=is_error).content)
+    else:
+        # Fallback: stringify anything else (e.g. BinaryContent edge cases).
+        content.append(mcp.types.TextContent(type="text", text=str(raw)))
+    return mcp.types.CallToolResult(content=content, isError=is_error)
+
+
 class LogEntry(BaseModel):
     """
     A log line emitted during an agent run.
@@ -371,7 +397,13 @@ class ProjectAgent:
                 # TODO: This bypasses process_tool_call. That's probably fine for VistaGuard as these
                 # calls are user triggered. But will break job submission. Leaving for now as using
                 # metadata for job submission credentials is a temporary solution anyways
-                return await server._client.call_tool(name, arguments)
+                try:
+                    raw = await server.direct_call_tool(name, arguments)
+                    is_error = False
+                except Exception as exc:
+                    raw = str(exc)
+                    is_error = True
+                return _wrap_as_call_tool_result(raw, is_error=is_error)
         raise KeyError(f"Tool {name!r} not found on any MCP server")
 
     async def __aenter__(self):

@@ -9,6 +9,29 @@ import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
 
+
+# Load .env file entries into os.environ BEFORE AppSettings is instantiated.
+#
+# AppSettings has env_prefix="VISTA_MCP_", so pydantic-settings would only
+# read VISTA_MCP_* keys from .env into its own fields. Subserver modules
+# such as agenthpc/config.py and other code that goes through
+# ``os.environ.get(...)`` for non-prefixed vars (e.g.
+# ``VISTA_AGENTHPC_ALLOY_DIR``) would otherwise silently see ``None`` even
+# when the user put the entry in .env. Loading the file into the actual
+# process environment first removes that footgun. We walk the same parent
+# chain pydantic-settings uses and keep the closest .env's value (load with
+# override=False so the first-loaded entry wins; we iterate from cwd
+# outward).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+except ImportError:  # pragma: no cover - dotenv ships with pydantic-settings
+    _load_dotenv = None
+
+if _load_dotenv is not None:
+    for _env_path in [p / ".env" for p in [Path.cwd(), *Path.cwd().parents]]:
+        if _env_path.exists():
+            _load_dotenv(_env_path, override=False)
+
 ODO_SETUP_SCRIPT = textwrap.dedent(r"""
     export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
     mkdir -p -m 2775 "$VISTA_OUT"
