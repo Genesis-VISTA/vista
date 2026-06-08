@@ -101,13 +101,14 @@ case "$MODE" in
 
     pids=()
     cleanup() {
+      trap - INT TERM EXIT  # Disarm so this only runs once.
       echo "Shutting down..."
       for pid in "${pids[@]}"; do
         kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
       done
       wait "${pids[@]}" 2>/dev/null || true
     }
-    trap cleanup INT TERM
+    trap cleanup INT TERM EXIT
 
     # Run a service, tee-ing output to a log file and showing a prefix on stdout
     run_service() {
@@ -116,7 +117,7 @@ case "$MODE" in
       if [[ "$fg" == fg ]]; then
         bash -c "$cmd" 2>&1 | tee "$logfile"
       else
-        bash -c "$cmd" > >(tee "$logfile" | sed -u "s/^/[$name] /") 2>&1 &
+        ( bash -c "$cmd" 2>&1 | tee "$logfile" | sed -u "s/^/[$name] /" ) &
         pids+=($!)
       fi
     }
@@ -131,8 +132,6 @@ case "$MODE" in
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     # Foreground the mcp server so you can input the ssh login prompt if needed.
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD" fg
-
-    wait
     ;;
   *)
     echo "Usage: $0 [tmux|terminal|logs]"
