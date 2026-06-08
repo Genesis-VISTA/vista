@@ -1,19 +1,23 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 import mcp.types
 from pydantic import BaseModel
 
-from ..agents.agents import get_mcp_server, ProjectAgent
+from ..db.db import SessionDep
+from ..services import project as project_service
+from ..services.project_agent import project_agent_pool, resolve_elicitation
+from .auth import UserDep
 
 
-router = APIRouter()
+router = APIRouter(tags=["mcp"])
 
 
-@router.get("/mcp/tools")
-async def mcp_tools() -> list[mcp.types.Tool]:
-    async with get_mcp_server() as server:
-        return await server.list_tools()
+@router.get("/projects/{project_name}/mcp/tools")
+async def mcp_tools(project_name: str, session: SessionDep, user: UserDep) -> list[mcp.types.Tool]:
+    project = await project_service.get_project_by_name(session, project_name, user)
+    async with project_agent_pool.get((project.id, user.id)) as agent:
+        return await agent.list_tools()
 
 
 class McpCallRequest(BaseModel):
@@ -21,12 +25,14 @@ class McpCallRequest(BaseModel):
     arguments: dict[str, Any] = {}
 
 
-@router.post("/mcp/call")
-async def mcp_call(req: McpCallRequest) -> mcp.types.CallToolResult:
-    server = get_mcp_server()
-    async with server:
+@router.post("/projects/{project_name}/mcp/call")
+async def mcp_call(
+    project_name: str, req: McpCallRequest, session: SessionDep, user: UserDep,
+) -> mcp.types.CallToolResult:
+    project = await project_service.get_project_by_name(session, project_name, user)
+    async with project_agent_pool.get((project.id, user.id)) as agent:
         try:
-            return await server._client.call_tool(req.name, req.arguments)
+            return await agent.call_tool(req.name, req.arguments)
         except Exception as exc:
             return mcp.types.CallToolResult(
                 content=[mcp.types.TextContent(type="text", text=f"MCP error: {exc}")],
@@ -40,16 +46,12 @@ class ElicitationSubmit(BaseModel):
     content: dict[str, Any] | None = None
 
 
-@router.post("/mcp/elicitation")
-async def mcp_elicitation(submit: ElicitationSubmit, request: Request):
+@router.post("/projects/{project_name}/elicitation")
+async def mcp_elicitation(project_name: str, submit: ElicitationSubmit, session: SessionDep, user: UserDep):
     """
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
-    agent: ProjectAgent | None = request.app.state.elicitations.pop(submit.id, None)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Elicitation not found or already resolved")
-    try:
-        await agent.resolve_elicitation(submit.id, submit.action, submit.content)
-    except KeyError:
+    project = await project_service.get_project_by_name(session, project_name, user)
+    if not resolve_elicitation(submit.id, submit.action, submit.content):
         raise HTTPException(status_code=404, detail="Elicitation not found or already resolved")
     return {"ok": True}

@@ -79,7 +79,19 @@ class ProjectPublic(ProjectBase):
 
 class ProjectTable(ProjectBase, table=True):
     """ Project SQL model """
+    __tablename__ = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+
+
+class ProjectMemberTable(SQLModel, table=True):
+    """
+    Membership join table. A row grants `user_id` read+write access to
+    `project_id`. The composite primary key makes a (project, user) pair
+    unique, so a duplicate add raises IntegrityError.
+    """
+    __tablename__ = "project_member"
+    project_id: uuid.UUID = Field(foreign_key="project.id", primary_key=True, ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", primary_key=True, ondelete="CASCADE")
 
 
 

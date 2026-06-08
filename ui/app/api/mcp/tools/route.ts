@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,25 +18,27 @@ type McpToolsDiscoveryResult = {
 };
 
 /**
- * Proxy for `GET /mcp/tools`. Backend returns a bare `list[Tool]`;
- * the frontend expects an `{ok, tools, error?}` envelope.
+ * Proxy for `GET /projects/{project_name}/mcp/tools`. Backend returns a bare
+ * `list[Tool]`; the frontend expects an `{ok, tools, error?}` envelope.
  *
- * Forwards a `?project_name=<name>` query string when supplied so the
- * backend filters the returned tools to those allowed for the project
+ * The backend filters the returned tools to those allowed for the project
  * (project-level `tools` patterns plus the `!rag_search` hide when no
- * Knowledge Bases are configured). Unscoped discovery is preserved for
- * callers that don't have a project context (e.g. the smoke-test page).
+ * Knowledge Bases are configured). `?project_name=<name>` is required.
  */
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const projectName = url.searchParams.get("project_name");
-    const upstreamPath = projectName
-      ? `/mcp/tools?project_name=${encodeURIComponent(projectName)}`
-      : "/mcp/tools";
+    if (!projectName) {
+      return NextResponse.json(
+        { ok: false, tools: [], error: "Missing project_name." } satisfies McpToolsDiscoveryResult,
+        { status: 400, headers: { "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate" } }
+      );
+    }
+    const upstreamPath = `/projects/${encodeURIComponent(projectName)}/mcp/tools`;
 
     const upstream = await fetch(backendUrl(upstreamPath), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
       signal: AbortSignal.timeout(5000),
     });
     if (!upstream.ok) {

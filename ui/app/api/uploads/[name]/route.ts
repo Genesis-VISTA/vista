@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -16,7 +16,22 @@ function sanitizeName(rawName: string): string | null {
   return base;
 }
 
-export async function GET(_request: Request, { params }: { params: Promise<{ name: string }> }) {
+function requireProjectName(request: Request): { projectName: string } | NextResponse {
+  const projectName = new URL(request.url).searchParams.get("project_name");
+  if (!projectName) {
+    return NextResponse.json(
+      { ok: false, error: "Missing 'project_name' query parameter." },
+      { status: 400 }
+    );
+  }
+  return { projectName };
+}
+
+export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
+  const resolved = requireProjectName(request);
+  if (resolved instanceof NextResponse) return resolved;
+  const { projectName } = resolved;
+
   const safeName = sanitizeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
@@ -24,7 +39,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ nam
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/uploads/${encodeURIComponent(safeName)}`));
+    upstream = await fetch(
+      backendUrl(
+        `/projects/${encodeURIComponent(projectName)}/uploads/${encodeURIComponent(safeName)}`
+      ),
+      { headers: await backendHeaders() }
+    );
   } catch {
     return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
   }
@@ -43,7 +63,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ nam
   });
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ name: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ name: string }> }) {
+  const resolved = requireProjectName(request);
+  if (resolved instanceof NextResponse) return resolved;
+  const { projectName } = resolved;
+
   const safeName = sanitizeName((await params).name);
   if (!safeName) {
     return NextResponse.json({ ok: false, error: "Invalid file name." }, { status: 400 });
@@ -51,9 +75,12 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/uploads/${encodeURIComponent(safeName)}`), {
-      method: "DELETE",
-    });
+    upstream = await fetch(
+      backendUrl(
+        `/projects/${encodeURIComponent(projectName)}/uploads/${encodeURIComponent(safeName)}`
+      ),
+      { method: "DELETE", headers: await backendHeaders() }
+    );
   } catch {
     return NextResponse.json({ ok: false, error: "Failed to delete file." }, { status: 502 });
   }

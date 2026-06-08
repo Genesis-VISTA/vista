@@ -1107,6 +1107,13 @@ class TextRAG:
             log.info("  Text chunks : %d", self.text_collection.count())
             log.info("  Citations   : %d", self.citation_collection.count())
             log.info("Set force_reindex=True to rebuild.")
+            # Defensive: an existing ChromaDB may pre-date the BM25
+            # corpus file. Build it from the live chroma chunks so a
+            # hybrid-retrieval-enabled MCP server picks it up at
+            # startup without forcing a full re-index. Skipping when
+            # the corpus file already exists keeps repeated
+            # build_rag.py invocations cheap.
+            self._build_bm25_corpus_if_missing()
             return
 
         if self.force_reindex and self.db_exists:
@@ -1122,6 +1129,10 @@ class TextRAG:
             self.citation_collection = self.client.create_collection(
                 name="citations", metadata={"hnsw:space": "cosine"}
             )
+            # The old BM25 corpus is stale -- drop it so the post-index
+            # build below produces a fresh file matching the new
+            # ChromaDB contents.
+            self._delete_bm25_corpus_if_present()
 
         pdf_files = sorted(self.pdf_folder.glob("**/*.pdf"))
         log.info("Found %d PDF(s) to process", len(pdf_files))
@@ -1129,6 +1140,10 @@ class TextRAG:
         for i, pdf_path in enumerate(pdf_files, 1):
             log.info("[%d/%d] %s", i, len(pdf_files), pdf_path.name)
             self.index_single_pdf(pdf_path)
+
+        # Build the BM25 corpus file from the text_chunks we just
+        # wrote to ChromaDB. 
+        self._build_bm25_corpus()
 
         log.info("=" * 50)
         log.info("Indexing complete!")
@@ -1138,6 +1153,99 @@ class TextRAG:
     # ------------------------------------------------------------------
     # Querying
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # BM25 corpus build (VISTAGuard G3 hybrid retrieval)
+    # ------------------------------------------------------------------
+    @property
+    def _bm25_corpus_path(self) -> Path:
+        """
+        Filesystem location of the per-KB BM25 corpus file.
+
+        """
+        return Path(self.db_path) / "bm25_corpus.json"
+
+    def _delete_bm25_corpus_if_present(self) -> None:
+        """Drop the BM25 corpus file ahead of a force-reindex."""
+        path = self._bm25_corpus_path
+        if path.exists():
+            try:
+                path.unlink()
+                log.info("BM25: removed stale corpus %s ahead of reindex", path)
+            except OSError as exc:
+                log.warning("BM25: could not remove %s: %s", path, exc)
+
+    def _build_bm25_corpus_if_missing(self) -> None:
+        """Skip the build when the corpus already exists on disk."""
+        if self._bm25_corpus_path.exists():
+            log.info(
+                "BM25: corpus %s already present; skipping rebuild "
+                "(delete the file or run with force_reindex to refresh)",
+                self._bm25_corpus_path,
+            )
+            return
+        self._build_bm25_corpus()
+
+    def _build_bm25_corpus(self) -> None:
+        """
+        Scan the ChromaDB `text_chunks` collection and write a
+        BM25 corpus file alongside it.
+
+        """
+        try:
+            from vista_mcp_server.bm25 import BM25Okapi, tokenize  # noqa: WPS433
+        except ImportError as exc:
+            log.warning(
+                "BM25: cannot import vista_mcp_server.bm25 (%s); "
+                "skipping corpus build. The MCP server's hybrid retrieval "
+                "will degrade to vector-only until this is fixed.",
+                exc,
+            )
+            return
+
+        try:
+            raw = self.text_collection.get(include=["documents"])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("BM25: could not read text_chunks for corpus build: %s", exc)
+            return
+
+        ids = raw.get("ids") or []
+        docs = raw.get("documents") or []
+        if not ids or not docs or len(ids) != len(docs):
+            log.warning(
+                "BM25: text_chunks collection is empty or malformed "
+                "(ids=%d docs=%d); skipping corpus build",
+                len(ids), len(docs),
+            )
+            return
+
+        log.info("BM25: building corpus over %d chunks", len(ids))
+        index = BM25Okapi()
+        # Pre-tokenize once so the on-disk corpus already has
+        # tokens cached -- the MCP server then skips re-tokenization
+        # at startup, which keeps cold-start time bounded by I/O
+        # rather than CPU on large KBs.
+        documents = list(zip([str(i) for i in ids], [str(d) for d in docs]))
+        pre_tokenized = [tokenize(text) for _, text in documents]
+        index.add_documents(documents, pre_tokenized=pre_tokenized)
+
+        try:
+            payload = index.to_dict()
+            self._bm25_corpus_path.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            log.info(
+                "BM25: wrote corpus to %s (%d chunks)",
+                self._bm25_corpus_path,
+                len(documents),
+            )
+        except OSError as exc:
+            log.warning(
+                "BM25: could not write corpus to %s: %s",
+                self._bm25_corpus_path,
+                exc,
+            )
+
     def query(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search text chunks collection."""
         query_embedding = self.embed_text([query])[0]

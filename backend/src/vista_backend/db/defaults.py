@@ -4,7 +4,7 @@ Default data to seed the DB with
 import uuid
 from pathlib import Path
 from ..config import settings
-from .schemas import KnowledgeBaseTable, ProjectTable, UserTable
+from .schemas import KnowledgeBaseTable, ProjectMemberTable, ProjectTable, UserTable
 
 SYSTEM_PROMPTS = Path(__file__).parent / 'system_prompts'
 
@@ -61,6 +61,11 @@ DEFAULT_USERS: list[UserTable] = [
         email="vista-test-user@americansciencecloud.org",
         is_admin=False,
     ),
+]
+
+DEFAULT_PROJECT_MEMBERS: list[ProjectMemberTable] = [
+    ProjectMemberTable(project_id=project.id, user_id=DEFAULT_USERS[1].id)
+    for project in DEFAULT_PROJECTS
 ]
 
 DEFAULT_KNOWLEDGE_BASES: list[KnowledgeBaseTable] = [

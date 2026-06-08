@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../../_backend";
+import { backendUrl, backendHeaders } from "../../../_backend";
 
 export const runtime = "nodejs";
 
@@ -59,7 +59,7 @@ export async function POST(
   try {
     upstream = await fetch(
       backendUrl(upstreamPath),
-      { method: "POST", body: outgoing }
+      { method: "POST", headers: await backendHeaders(), body: outgoing }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

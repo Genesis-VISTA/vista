@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
@@ -18,7 +18,7 @@ export async function GET(
   let upstream: Response;
   try {
     upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -50,7 +50,7 @@ export async function PUT(
   try {
     upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: await backendHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(body),
     });
   } catch (error) {
@@ -74,7 +74,7 @@ export async function DELETE(
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), { method: "DELETE" });
+    upstream = await fetch(backendUrl(`/projects/${encodeURIComponent(name)}`), { method: "DELETE", headers: await backendHeaders() });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
+import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
 import {
   SkillEditorModal,
   type SkillDraftFields,
@@ -21,6 +22,7 @@ import {
   type LogEvent,
   type McpFormElicitationEvent,
   type McpUrlElicitationEvent,
+  type McpToolApprovalEvent,
   type ModelMessage,
   type PartDeltaEvent,
   type PartEndEvent,
@@ -248,6 +250,13 @@ export default function HomePage() {
     message: string;
     schema: Record<string, unknown>;
   } | null>(null);
+  const [pendingToolApproval, setPendingToolApproval] = useState<{
+    id: string;
+    toolName: string;
+    message: string;
+    args: Record<string, unknown> | null;
+    decisionMetadata: DecisionMetadata | null;
+  } | null>(null);
   const [chatService] = useState(MODEL_SERVICES[0]);
   const [chatFamily, setChatFamily] = useState(MODEL_FAMILIES[0]);
   const [chatOpenModel, setChatOpenModel] = useState(OPEN_MODELS[0]);
@@ -364,11 +373,17 @@ export default function HomePage() {
     content?: Record<string, unknown>
   ) {
     setPendingElicitation(null);
+    setPendingToolApproval(null);
+    // Resolve against the project that issued the elicitation. We only ever
+    // start an agent run with an active project, so falling back to the
+    // current selection is correct in practice.
+    const projectName = readActiveProjectName();
+    if (!projectName) return;
     try {
       await fetch("/api/chat/elicitation", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, action, content })
+        body: JSON.stringify({ project_name: projectName, id, action, content })
       });
     } catch {
       // bridge timeout will auto-cancel if POST fails
@@ -651,7 +666,9 @@ export default function HomePage() {
 
         case "function_tool_result": {
           const ev = data as FunctionToolResultEvent;
-          const result = ev.result;
+          // PydanticAI 1.105 renamed `result` -> `part`; fall back to
+          // `result` for older backends.
+          const result = ev.part ?? ev.result;
           if (!result) break;
           if (result.part_kind === "retry-prompt") {
             pushLog(
@@ -714,6 +731,18 @@ export default function HomePage() {
             allow ? "accept" : "cancel"
           );
           if (allow) window.open(ev.url, "_blank", "noopener,noreferrer");
+          break;
+        }
+
+        case "mcp_tool_approval": {
+          const ev = data as McpToolApprovalEvent;
+          setPendingToolApproval({
+            id: ev.elicitation_id,
+            toolName: ev.tool_name,
+            message: ev.message,
+            args: ev.args ?? null,
+            decisionMetadata: (ev.decision_metadata as DecisionMetadata) ?? null,
+          });
           break;
         }
       }
@@ -825,6 +854,19 @@ export default function HomePage() {
 
   async function runSaltAnalysis() {
     const tool = "run_bash";
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Select a project first — open the Projects page from the sidebar."
+        }
+      ]);
+      setShowAnalyzeModal(false);
+      return;
+    }
     setIsCalling(true);
     const salt = saltInput.trim() || "AlCl3-KCl";
     const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
@@ -834,7 +876,7 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args: { command } })
+        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
       });
       const t1 = performance.now();
 
@@ -848,7 +890,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -902,6 +944,19 @@ export default function HomePage() {
 
   async function runSaltPrediction() {
     const tool = "run_bash";
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Select a project first — open the Projects page from the sidebar."
+        }
+      ]);
+      setShowPredictModal(false);
+      return;
+    }
     setIsCalling(true);
     const formula = predictFormulaInput.trim() || "NaCl";
     const comp = predictCompInput.trim() || "Pure Salt";
@@ -914,7 +969,7 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tool, args: { command } })
+        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
       });
       const t1 = performance.now();
 
@@ -928,7 +983,7 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -981,9 +1036,20 @@ export default function HomePage() {
   }
 
   async function checkMcpHealth() {
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMcpHealth({
+        ok: false,
+        mcpBaseUrl: "unknown",
+        detail: "Select a project to probe the MCP connection."
+      });
+      return;
+    }
     setIsCheckingHealth(true);
     try {
-      const response = await fetch("/api/mcp/health");
+      const response = await fetch(
+        `/api/mcp/health?project_name=${encodeURIComponent(projectName)}`
+      );
       const data = (await response.json()) as McpHealth;
       setMcpHealth(data);
     } catch {
@@ -998,9 +1064,20 @@ export default function HomePage() {
   }
 
   async function listMcpTools() {
+    const projectName = readActiveProjectName();
+    if (!projectName) {
+      setMcpTools({
+        ok: false,
+        tools: [],
+        error: "Select a project to list MCP tools."
+      });
+      return;
+    }
     setIsLoadingTools(true);
     try {
-      const response = await fetch("/api/mcp/tools");
+      const response = await fetch(
+        `/api/mcp/tools?project_name=${encodeURIComponent(projectName)}`
+      );
       const data = (await response.json()) as McpToolsResponse;
       setMcpTools(data);
     } catch {
@@ -1456,6 +1533,17 @@ export default function HomePage() {
           id={pendingElicitation.id}
           message={pendingElicitation.message}
           schema={pendingElicitation.schema}
+          onSubmit={handleElicitationSubmit}
+        />
+      )}
+
+      {pendingToolApproval && (
+        <ToolApprovalModal
+          id={pendingToolApproval.id}
+          toolName={pendingToolApproval.toolName}
+          message={pendingToolApproval.message}
+          args={pendingToolApproval.args}
+          decisionMetadata={pendingToolApproval.decisionMetadata}
           onSubmit={handleElicitationSubmit}
         />
       )}

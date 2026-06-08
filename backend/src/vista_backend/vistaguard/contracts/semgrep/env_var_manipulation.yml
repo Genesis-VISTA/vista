@@ -1,0 +1,71 @@
+# VISTAGuard G4 -- malicious environment-variable manipulation.
+#
+# Writes to `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`,
+# `PYTHONPATH`, and `PATH` are classic library-hijack / preload
+# attacks: subsequent process spawns load attacker-controlled code
+# from the modified path. The sandbox should never need to mutate
+# these from inside agent-emitted code; refusing the write is the
+# right policy.
+
+rules:
+  - id: vista-env-var-preload-hijack
+    languages: [python]
+    severity: ERROR
+    message: |
+      Writing to `LD_PRELOAD` / `LD_LIBRARY_PATH` /
+      `DYLD_INSERT_LIBRARIES` / `DYLD_LIBRARY_PATH` is a
+      shared-library hijack primitive. Subsequent process spawns
+      load attacker-controlled shared objects ahead of system
+      libraries. The agent should never need to mutate these inside
+      the sandbox; refuse. 
+    metadata:
+      vista-threat-surface: sandbox-escape
+      vista-taxonomy: "4.5"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-426: Untrusted Search Path"
+    pattern-either:
+      - pattern: os.environ["LD_PRELOAD"] = ...
+      - pattern: os.environ["LD_LIBRARY_PATH"] = ...
+      - pattern: os.environ["DYLD_INSERT_LIBRARIES"] = ...
+      - pattern: os.environ["DYLD_LIBRARY_PATH"] = ...
+      - pattern: os.putenv("LD_PRELOAD", ...)
+      - pattern: os.putenv("LD_LIBRARY_PATH", ...)
+      - pattern: os.putenv("DYLD_INSERT_LIBRARIES", ...)
+      - pattern: os.putenv("DYLD_LIBRARY_PATH", ...)
+
+  - id: vista-env-var-pythonpath-pollution
+    languages: [python]
+    severity: WARNING
+    message: |
+      Writing to `PYTHONPATH` redirects future `import` statements
+      to attacker-controlled modules. The sandbox should not need
+      `PYTHONPATH` mutation; if the agent legitimately needs to add
+      a path, do it inside the process via `sys.path.insert(...)`
+      and review the inserted path. 
+    metadata:
+      vista-threat-surface: sandbox-escape
+      vista-taxonomy: "4.5"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-426: Untrusted Search Path"
+    pattern-either:
+      - pattern: os.environ["PYTHONPATH"] = ...
+      - pattern: os.putenv("PYTHONPATH", ...)
+
+  - id: vista-env-var-path-pollution
+    languages: [python]
+    severity: WARNING
+    message: |
+      Writing to `PATH` redirects subsequent subprocess spawns to
+      attacker-controlled binaries. Prefer passing absolute paths
+      to `subprocess.run`.
+    metadata:
+      vista-threat-surface: sandbox-escape
+      vista-taxonomy: "4.5"
+      vista-rule-version: 1
+      category: security
+      cwe: "CWE-426: Untrusted Search Path"
+    pattern-either:
+      - pattern: os.environ["PATH"] = ...
+      - pattern: os.putenv("PATH", ...)

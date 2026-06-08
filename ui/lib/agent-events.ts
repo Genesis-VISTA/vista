@@ -110,7 +110,14 @@ export type FunctionToolCallEvent = {
 };
 export type FunctionToolResultEvent = {
   event_kind: "function_tool_result";
-  result: ToolReturnPart | RetryPromptPart;
+  /**
+   * The tool result part. PydanticAI 1.105 renamed this field from `result`
+   * to `part` (`result` survives only as a deprecated, non-serialized Python
+   * property, so it no longer appears on the wire). `result` is kept here as
+   * an optional fallback for older backends.
+   */
+  part: ToolReturnPart | RetryPromptPart;
+  result?: ToolReturnPart | RetryPromptPart;
   content?: unknown;
 };
 export type LogEvent = {
@@ -138,9 +145,24 @@ export type McpUrlElicitationEvent = {
   message: string;
   url: string;
 };
+export type McpToolApprovalEvent = {
+  event_kind: "mcp_tool_approval";
+  mode: "tool_approval";
+  elicitation_id: string;
+  tool_name: string;
+  message: string;
+  args?: Record<string, unknown> | null;
+  /**
+   * VISTAGuard gate decision metadata (e.g. G5's fast-tier summary:
+   * resolved SLURM script, account verified, resource ceiling passed,
+   * no denylist match). Loose by design — the modal renders what's set.
+   */
+  decision_metadata?: Record<string, unknown> | null;
+};
 export type McpElicitationEvent =
   | McpFormElicitationEvent
-  | McpUrlElicitationEvent;
+  | McpUrlElicitationEvent
+  | McpToolApprovalEvent;
 
 export type ProjectAgentResult = {
   new_messages: ModelMessage[];
@@ -162,6 +184,13 @@ export type ProjectPublic = {
   knowledge_bases: string[];
   tools: string[];
   usage_limits: Record<string, unknown>;
+};
+
+/** Backend `UserPublic` — returned by `GET /projects/{name}/members`. */
+export type UserPublic = {
+  id: string;
+  email: string;
+  is_admin: boolean;
 };
 
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */

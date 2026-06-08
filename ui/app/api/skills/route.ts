@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../_backend";
+import { backendUrl, backendHeaders } from "../_backend";
 
 export const runtime = "nodejs";
 
@@ -29,7 +29,7 @@ type BackendSkill = {
 export async function GET() {
   try {
     const upstream = await fetch(backendUrl("/skills"), {
-      headers: { accept: "application/json" },
+      headers: await backendHeaders({ accept: "application/json" }),
     });
     if (!upstream.ok) {
       return NextResponse.json([], { status: 200 });
@@ -71,10 +71,10 @@ export async function POST(request: Request) {
   try {
     upstream = await fetch(backendUrl("/skills"), {
       method: "POST",
-      headers: {
+      headers: await backendHeaders({
         "content-type": "application/json",
         accept: "application/json",
-      },
+      }),
       body: JSON.stringify(body ?? {}),
     });
   } catch {

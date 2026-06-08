@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backendUrl } from "../_backend";
+import { backendUrl, backendHeaders } from "../_backend";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       backendUrl(`/projects/${encodeURIComponent(projectName)}/agent/run`),
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           stream: true,
           user_prompt: body.user_prompt,
