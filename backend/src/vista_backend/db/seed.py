@@ -115,7 +115,7 @@ async def seed_db(engine: AsyncEngine) -> None:
                 id=uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661"),
                 name="alloy-design",
                 description="High Entropy Alloy Design — agentic optimization of refractory MoNbTaW compositions on the Andes HPC cluster.",
-                system_prompt=(SYSTEM_PROMPTS / "allow-design.md").read_text(),
+                system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(),
                 skills=["alloy-design"],
                 knowledge_bases=[],
                 tools=[
