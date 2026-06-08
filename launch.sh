@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+set -m # set jobcontrol
 
 REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$REPO_ROOT"
@@ -115,7 +116,7 @@ case "$MODE" in
       if [[ "$fg" == fg ]]; then
         bash -c "$cmd" 2>&1 | tee "$logfile"
       else
-        setsid bash -c "$cmd" > >(tee "$logfile" | sed -u "s/^/[$name] /") 2>&1 &
+        bash -c "$cmd" > >(tee "$logfile" | sed -u "s/^/[$name] /") 2>&1 &
         pids+=($!)
       fi
     }
