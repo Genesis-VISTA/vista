@@ -72,9 +72,20 @@ class AppSettings(BaseSettings):
     """
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
-    """ Base URL for the S3M API (Odo only). """
+    """
+    Base URL for the OLCF AmSC IRI API on the open enclave (Odo / Defiant /
+    Wombat / Quokka). Historically named `s3m_url` from the pre-IRI Odo path;
+    Frontier uses the moderate-enclave equivalent (`olcf_iri_url`).
+    """
     s3m_resource: str = "odo"
-    """ S3M compute resource id to submit jobs against. """
+    """ OLCF compute resource group name (matched against the IRI discovery result). """
+    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
+    """
+    Pinned IRI compute resource UUID for Odo. Bypasses `discover()` since the
+    open-enclave service lists Odo / Defiant / Wombat / Quokka without a stable
+    name/group match for `s3m_resource`. Look up via amscrot's `discover()` if
+    OLCF rotates resource ids.
+    """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
@@ -105,6 +116,12 @@ class AppSettings(BaseSettings):
     UUID of the OLCF DTN (GCS5) Globus Collection that exposes Frontier's filesystem.
     Default is OLCF's current production DTN. Verify with the helper script at
     OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
+    """
+    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
+    """
+    UUID of the Globus Collection that exposes Odo's filesystem (open enclave;
+    /gpfs/wolf2/olcf/gen150/... etc.). Distinct from the OLCF DTN used for
+    Frontier — the two enclaves are reachable via different collections.
     """
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
