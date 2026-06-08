@@ -12,12 +12,11 @@ ChromaDB store, plus an optional legacy single-KB path
 chooses which KB to query by passing `kb_slug` to `rag_search`.
 
 Environment variables:
-    VISTA_MCP_KNOWLEDGE_BASES_DIR  Root directory of per-KB ChromaDB stores.
-                                    Default: ../data/knowledge-bases
-    VISTA_MCP_RAG_DB_PATH          Legacy single-KB path; registered under
-                                    the slug "molten-salt-papers" if its
-                                    layout looks like a ChromaDB store.
-                                    Default: ../data/knowledge-bases/molten-salt-papers/rag_db
+    VISTA_DATA_DIR                 Root data directory. `knowledge_bases_dir`
+                                    (`<data_dir>/knowledge-bases`) and the
+                                    legacy single-KB `rag_db_path`
+                                    (`.../molten-salt-papers/rag_db`) are
+                                    derived from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
                                     Default: google/embeddinggemma-300m
 """
