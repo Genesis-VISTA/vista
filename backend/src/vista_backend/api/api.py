@@ -26,7 +26,6 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-
     await init_db()
 
     # Check that the vista MCP server is up so we fail early if there's an issue.

@@ -7,16 +7,13 @@ DOI, journal, year) extracted at index time.
 
 The MCP server discovers Knowledge Bases at startup by scanning
 `settings.knowledge_bases_dir` for subdirectories that look like a built
-ChromaDB store, plus an optional legacy single-KB path
-(`settings.rag_db_path`). Each KB is registered under its slug; the agent
-chooses which KB to query by passing `kb_slug` to `rag_search`.
+ChromaDB store. Each KB is registered under its slug; the agent chooses
+which KB to query by passing `kb_slug` to `rag_search`.
 
 Environment variables:
     VISTA_DATA_DIR                 Root data directory. `knowledge_bases_dir`
-                                    (`<data_dir>/knowledge-bases`) and the
-                                    legacy single-KB `rag_db_path`
-                                    (`.../molten-salt-papers/rag_db`) are
-                                    derived from it. Default: ../../data
+                                    (`<data_dir>/knowledge-bases`) is derived
+                                    from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
                                     Default: google/embeddinggemma-300m
 """
@@ -28,6 +25,7 @@ from pathlib import Path
 from typing import Annotated as A, Any, Optional
 
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
@@ -83,14 +81,9 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
       1. `settings.knowledge_bases_dir/<slug>/rag_db/` — the canonical
          per-KB layout shared with the backend.
       2. `settings.knowledge_bases_dir/<slug>/` itself when that directory
-         is a ChromaDB store (the legacy layout used by the shipped
-         molten-salt seed).
-      3. `settings.rag_db_path` registered under the slug
-         "molten-salt-papers" when it points at a ChromaDB store outside
-         the discovery tree.
+         is a ChromaDB store (the legacy single-directory layout).
 
-    Duplicate slugs (e.g. legacy path resolves to the same place as the
-    canonical) are de-duplicated keeping the first hit.
+    Duplicate slugs are de-duplicated keeping the first hit.
     """
     discovered: dict[str, Path] = {}
 
@@ -108,12 +101,6 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
                 continue
             if _looks_like_chroma_store(child):
                 discovered.setdefault(slug, child.resolve())
-
-    legacy = settings.rag_db_path
-    if _looks_like_chroma_store(legacy):
-        resolved = legacy.resolve()
-        if resolved not in discovered.values():
-            discovered.setdefault("molten-salt-papers", resolved)
 
     return [(slug, path) for slug, path in discovered.items()]
 
@@ -137,7 +124,11 @@ async def app_lifespan(server):
     for slug, db_path in discovered:
         logger.info("RAG: opening ChromaDB for %s at %s", slug, db_path)
         try:
-            client = chromadb.PersistentClient(path=str(db_path))
+            # Match build_rag.TextRAG's settings
+            client = chromadb.PersistentClient(
+                path=str(db_path),
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
         except Exception as exc:
             logger.error("RAG: could not open ChromaDB for %s: %s", slug, exc)
             continue

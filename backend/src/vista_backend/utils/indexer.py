@@ -225,6 +225,13 @@ def _clear_progress(rag_db_path: str) -> None:
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kb-indexer")
 
 
+def shutdown(*, wait: bool = True) -> None:
+    """
+    Shut down the module-level indexing thread pool.
+    """
+    _executor.shutdown(wait=wait)
+
+
 # ---------------------------------------------------------------------------
 # Provider gate: same logic as build_rag._resolve_llm_config, but only
 # the "do we have any credentials?" decision. Returns False when nothing

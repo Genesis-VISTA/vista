@@ -161,7 +161,6 @@ export type KnowledgeBase = {
   slug: string;
   name: string;
   description?: string | null;
-  builtin: boolean;
   pdfs_dir: string;
   rag_db_path: string;
   shared_with_mcp: boolean;

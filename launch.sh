@@ -6,8 +6,8 @@ REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$REPO_ROOT"
 
 # Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
-MODE="terminal"
-PROD=false
+MODE="logs"
+PROD=''
 NO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
@@ -18,16 +18,21 @@ for arg in "$@"; do
   esac
 done
 
-if [[ "$PROD" == true ]]; then
-  [[ "$NO_BUILD" == true ]] || ./build.sh --prod
-  UI_RUN_CMD="npm start"
-else
-  [[ "$NO_BUILD" == true ]] || ./build.sh
-  UI_RUN_CMD="npm run dev"
+if [[ "$NO_BUILD" != true ]]; then
+  ./build.sh ${PROD:+--prod}
 fi
+
+cd "$REPO_ROOT/backend"
+uv run python scripts/seed_db.py
 
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
+
+if [[ "$PROD" == true ]]; then
+  UI_RUN_CMD="npm start"
+else
+  UI_RUN_CMD="npm run dev"
+fi
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&

@@ -137,26 +137,14 @@ class AppSettings(BaseSettings):
     """ Directory for data such as sandbox volumes and other created files """
 
     @property
-    def rag_db_path(self) -> Path:
-        """
-        Legacy single-KB ChromaDB directory the rag_search tool queries.
-        Retained for backwards compatibility — when the multi-KB discovery
-        under `knowledge_bases_dir` finds nothing, the rag_search tool falls
-        back to this path under the slug "molten-salt-papers". Derived from
-        `data_dir` to match the backend's `molten_salt_rag_db`.
-        """
-        return self.knowledge_bases_dir / "molten-salt-papers" / "rag_db"
-
-    @property
     def knowledge_bases_dir(self) -> Path:
         """
         Root directory the MCP server scans at startup to discover the
         Knowledge Bases available to `rag_search`. Each immediate
         subdirectory whose name is a valid KB slug and that contains a
-        `rag_db/` subfolder (or, for the legacy molten-salt layout, whose
-        own directory is itself a ChromaDB store) is registered as a KB.
-        The agent then names the KB it wants via the tool's `kb_slug`
-        argument.
+        `rag_db/` subfolder (or whose own directory is itself a ChromaDB
+        store) is registered as a KB. The agent then names the KB it wants
+        via the tool's `kb_slug` argument.
 
         Derived from `data_dir`, matching the backend's
         `knowledge_bases_dir` so the two services agree on layout out of

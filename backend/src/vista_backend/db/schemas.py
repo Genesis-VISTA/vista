@@ -206,26 +206,15 @@ class KnowledgeBaseBase(SQLModel):
     name: str
     description: str | None = None
 
-    builtin: bool = False
-    """
-    True for seeded KBs (e.g. the molten-salt corpus). Built-in KBs
-    can't be renamed or deleted via the API, only re-indexed.
-    """
-
     pdfs_dir: str
     """
     Absolute filesystem path to the directory holding source PDFs.
-    For user KBs, written to `{knowledge_bases_dir}/{slug}/pdfs`.
-    For the seeded molten-salt KB, points at the shared `<repo>/pdfs`
-    so a PDF uploaded through the UI lands in the same corpus the
-    MCP server's rag_search tool queries.
+    Written to `{knowledge_bases_dir}/{slug}/pdfs`.
     """
 
     rag_db_path: str
     """
     Absolute filesystem path to the ChromaDB persist directory.
-    Same sharing story as pdfs_dir — the molten-salt seed pins this to
-    the shared `<repo>/rag_db` location.
     """
 
     shared_with_mcp: bool = False

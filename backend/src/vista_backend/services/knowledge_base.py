@@ -56,7 +56,6 @@ async def create_kb(session: AsyncSession, payload: KnowledgeBaseCreate) -> Know
         slug=payload.slug,
         name=payload.name,
         description=payload.description,
-        builtin=False,
         pdfs_dir=str(pdfs_dir),
         rag_db_path=str(rag_db_path),
         shared_with_mcp=False,
@@ -88,11 +87,9 @@ async def delete_kb(session: AsyncSession, slug: str) -> tuple[str, str]:
     """
     Deletes the KB row and clears in-memory indexer state.
     Returns (pdfs_dir, rag_db_path) for the caller to clean up on disk.
-    Raises 404 if not found, 403 if builtin.
+    Raises 404 if not found.
     """
     kb = await get_kb(session, slug)
-    if kb.builtin:
-        raise HTTPException(status_code=403, detail="Built-in knowledge bases cannot be deleted.")
 
     pdfs_dir = str(Path(kb.pdfs_dir).resolve())
     rag_db_path = str(Path(kb.rag_db_path).resolve())

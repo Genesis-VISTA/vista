@@ -54,36 +54,9 @@ class Settings(BaseSettings):
     def knowledge_bases_dir(self) -> Path:
         """
         Root directory for Knowledge Bases. Each KB gets a subdirectory:
-        `{knowledge_bases_dir}/{slug}/{pdfs/, rag_db/}`. The builtin
-        molten-salt KB lives under the same root so all KBs follow one
-        consistent layout.
+        `{knowledge_bases_dir}/{slug}/{pdfs/, rag_db/}`
         """
         return self.data_dir / "knowledge-bases"
-
-    @property
-    def molten_salt_kb_dir(self) -> Path:
-        """On-disk home of the seeded `molten-salt-papers` KB, under
-        `knowledge_bases_dir` like every other KB."""
-        return self.knowledge_bases_dir / "molten-salt-papers"
-
-    @property
-    def molten_salt_pdfs_dir(self) -> Path:
-        """
-        Source PDFs for the seeded molten-salt KB. Shared with build_rag.py;
-        a PDF uploaded through the UI lands here so it ends up in the same
-        corpus the MCP server queries. Points underneath `knowledge_bases_dir`
-        so the builtin KB follows the same on-disk layout as user-created ones.
-        """
-        return self.molten_salt_kb_dir / "pdfs"
-
-    @property
-    def molten_salt_rag_db(self) -> Path:
-        """
-        ChromaDB directory for the seeded molten-salt KB. Shared with the
-        `vista-mcp-server` rag_search tool — the env var is the same one
-        the MCP server reads, so configuring it once configures both sides.
-        """
-        return self.molten_salt_kb_dir / "rag_db"
 
     database_url: A[
         str,
@@ -107,6 +80,12 @@ class Settings(BaseSettings):
     Optional GitHub personal access token used when importing skills from
     private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
     header on requests to api.github.com. If unset, only public repos work.
+    """
+
+    gitlab_token: str | None = None
+    """
+    Optional GitLab personal access token. When set, the vista-data repo is cloned over HTTPS
+    using this token instead of SSH (see db/seed.py).
     """
 
     vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)

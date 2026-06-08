@@ -218,12 +218,17 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
     # (~1s for the import); subsequent calls are cheap.
     try:
         import chromadb
+        from chromadb.config import Settings as ChromaSettings
     except ImportError:
         logger.warning("chromadb not installed; cannot read citations from %s", rag_db_path)
         return None
 
     try:
-        client = chromadb.PersistentClient(path=str(db_path))
+        # Settings MUST match build_rag.TextRAG's client or ChromaDB will throw
+        client = chromadb.PersistentClient(
+            path=str(db_path),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to open chroma at %s: %s", rag_db_path, exc)
         return None
@@ -561,7 +566,7 @@ async def list_knowledge_bases(
             ))
         else:
             out.append(_public_with_progress(row))
-    out.sort(key=lambda kb: (not kb["builtin"], kb["slug"]))
+    out.sort(key=lambda kb: kb["slug"])
     return out
 
 

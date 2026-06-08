@@ -37,6 +37,7 @@ import time
 
 import fitz  # PyMuPDF
 import chromadb
+from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
 from openai import AzureOpenAI, BadRequestError, OpenAI
 
@@ -669,8 +670,11 @@ class TextRAG:
         log.info("Loading text model: %s", text_model)
         self.text_encoder = SentenceTransformer(text_model, device="cpu")
 
-        # ChromaDB client
-        self.client = chromadb.PersistentClient(path=db_path)
+        self.client = chromadb.PersistentClient(
+            path=db_path,
+            # telemetry complicates process cleanup
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
         self.db_exists = self._check_database_exists()
 
         # Collections
