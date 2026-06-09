@@ -19,6 +19,7 @@ for candidate in docker podman; do
   fi
 done
 [[ -n "$RUNTIME" ]] || { echo "error: neither docker nor podman found on PATH" >&2; exit 1; }
+export DOCKER_BUILDKIT=1
 
 echo "==> Building $SANDBOX_IMAGE"
 "$RUNTIME" build -t "$SANDBOX_IMAGE" "$REPO_ROOT/mcp_servers/dev_mcp_server/src/dev_mcp_server/docker"

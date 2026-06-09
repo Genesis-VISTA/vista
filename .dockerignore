@@ -1,6 +1,7 @@
 .git/
 .gitignore
 .*
+!.dockerignore
 
 # Prebuilt sandbox image export.
 aws/vista-sandbox.tar
