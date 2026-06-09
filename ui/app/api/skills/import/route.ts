@@ -50,12 +50,16 @@ export async function POST(request: Request) {
     name: string;
     description: string;
     metadata?: Record<string, string | string[]> | null;
-    tags?: string[];
     author?: string | null;
     repo_url?: string | null;
     is_public?: boolean;
+    created_at?: string;
   };
   const skill = payload as BackendSkill;
+  // Tags are read out of the spec `metadata` dict; an imported skill only has
+  // them if its SKILL.md declares `metadata.tags`, otherwise this is empty.
+  const tags = Array.isArray(skill.metadata?.tags) ? skill.metadata!.tags : [];
+  const createdAt = skill.created_at ? Date.parse(skill.created_at) : NaN;
   return NextResponse.json(
     {
       slug: skill.name,
@@ -63,11 +67,11 @@ export async function POST(request: Request) {
       description: skill.description,
       path: `skills/${skill.name}/SKILL.md`,
       metadata: skill.metadata ?? undefined,
-      tags: skill.tags ?? [],
+      tags,
       author: skill.author ?? null,
       repoUrl: skill.repo_url ?? null,
       isPublic: skill.is_public ?? false,
-      addedAt: null,
+      addedAt: Number.isFinite(createdAt) ? createdAt : null,
     },
     { status: 201 }
   );

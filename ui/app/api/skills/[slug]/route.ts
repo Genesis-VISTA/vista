@@ -10,10 +10,11 @@ type BackendSkillDetail = {
   compatibility?: string | null;
   allowed_tools?: string | null;
   metadata?: Record<string, string | string[]> | null;
-  tags?: string[];
   author?: string | null;
   repo_url?: string | null;
   is_public?: boolean;
+  created_at?: string;
+  updated_at?: string;
   body: string;
 };
 
@@ -133,8 +134,9 @@ function reshape(slug: string, detail: BackendSkillDetail) {
   if (detail.license != null) frontmatter.license = detail.license;
   if (detail.compatibility != null) frontmatter.compatibility = detail.compatibility;
   if (detail.allowed_tools != null) frontmatter["allowed-tools"] = detail.allowed_tools;
+  // Tags now live inside `metadata` (under a `tags` key), so they round-trip
+  // into the frontmatter via the line above; no separate `tags` field anymore.
   if (detail.metadata != null) frontmatter.metadata = detail.metadata;
-  if (detail.tags != null) frontmatter.tags = detail.tags;
   if (detail.author != null) frontmatter.author = detail.author;
   if (detail.repo_url != null) frontmatter.repo_url = detail.repo_url;
   if (detail.is_public != null) frontmatter.is_public = detail.is_public;
