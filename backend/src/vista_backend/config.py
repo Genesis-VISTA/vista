@@ -89,10 +89,10 @@ class Settings(BaseSettings):
     header on requests to api.github.com. If unset, only public repos work.
     """
 
-    gitlab_token: str | None = None
+    vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None
     """
-    Optional GitLab personal access token. When set, the vista-data repo is cloned over HTTPS
-    using this token instead of SSH (see db/seed.py).
+    Optional GitLab personal access token, used to fetch private data. Needs Developer role and read_api and
+    read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
     """
 
     vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)

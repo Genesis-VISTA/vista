@@ -1,13 +1,12 @@
 import asyncio
 import logging
-import os
 import shutil
 import uuid
-import tempfile
 from pathlib import Path
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from contextlib import nullcontext
+from urllib.parse import quote
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -22,6 +21,62 @@ from ..utils.misc import now_iso
 
 SYSTEM_PROMPTS = Path(__file__).parent / "system_prompts"
 SKILLS_SRC = Path(__file__).parent / "skills"
+
+
+class GitlabRepoClient:
+    """A client scoped to the vista-data repository API, authed with the gitlab token. """
+    def __init__(self, domain: str, repo: str, token: str | None = None) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=f"https://{domain}/api/v4/projects/{quote(repo, safe='')}/repository",
+            headers={"PRIVATE-TOKEN": token or ""},
+            timeout=60,
+        )
+
+    async def __aenter__(self) -> "GitlabRepoClient":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self._client.aclose()
+
+    async def _get(self, url: str, params: dict) -> httpx.Response:
+        resp = await self._client.get(url, params=params)
+        resp.raise_for_status()
+        return resp
+
+    async def download_file(self, repo_path: str, dest: Path) -> None:
+        logging.info(f"Downloading {repo_path} to {dest}..")
+        resp = await self._get(f"/files/{quote(repo_path, safe='')}/raw", params={"ref": "main"})
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".part")
+        tmp.write_bytes(resp.content)
+        tmp.replace(dest)
+
+    async def _list_tree(self, repo_dir: str) -> list[dict]:
+        blobs: list[dict] = []
+        page = 1
+        while page:
+            resp = await self._get(
+                "/tree",
+                params={"path": repo_dir, "ref": "main", "recursive": "true", "per_page": 100, "page": page},
+            )
+            blobs.extend(entry for entry in resp.json() if entry["type"] == "blob")
+            next_page = resp.headers.get("x-next-page")
+            page = int(next_page) if next_page else 0
+        return blobs
+
+    async def download_dir(self, repo_dir: str, dest: Path) -> None:
+        # Gitlab's archive endpoint tends to time out so download files individually
+        dest = dest.resolve()
+        logging.info(f"Downloading {repo_dir} to {dest}..")
+        blobs = sorted(await self._list_tree(repo_dir), key=lambda e: e["path"])
+        for blob in blobs:
+            rel = Path(blob["path"]).relative_to(repo_dir)
+            out = (dest / rel).resolve()
+            if not out.is_relative_to(dest):
+                raise ValueError(f"Tree entry escapes destination: {blob['path']}")
+            if out.exists():
+                continue  # already fetched on a prior run
+            await self.download_file(blob["path"], out)
 
 
 async def _build_knowledge_base(kb_dir: Path):
@@ -49,47 +104,6 @@ async def _build_knowledge_base(kb_dir: Path):
     logging.info(f"Knowledge base built at {rag_db}")
 
 
-@asynccontextmanager
-async def _fetch_vista_data_repo() -> AsyncIterator[Path | None]:
-    """
-    Fetches the vista-data repo to a tmpdir. Returns None if not accessible. Contextmanager
-    to clean up the repo.
-    """
-    if settings.gitlab_token:
-        clone_url = f"https://oauth2:{settings.gitlab_token}@code.ornl.gov/v28/vista-data.git"
-        log_url = "https://code.ornl.gov/v28/vista-data.git"
-    else:
-        clone_url = "git@code.ornl.gov:v28/vista-data.git"
-        log_url = clone_url
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = Path(tmp_dir)
-
-        # Shallow clone — we only need the current PDFs, not the history.
-        proc = await asyncio.create_subprocess_exec(
-            "git", "clone", "--depth", "1", clone_url, str(tmp_dir),
-            env = {
-                **os.environ,
-                "GIT_TERMINAL_PROMPT": "0",
-                "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new",
-            },
-        )
-        try:
-            returncode = await asyncio.wait_for(proc.wait(), 300)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            logging.warning(f"Timed out cloning {log_url}, seeding only with public data.")
-            yield None
-            return
-
-        if returncode == 0:
-            yield tmp_dir
-        else:
-            logging.warning(f"Unable to fetch {log_url}, seeding only with public data.")
-            yield None
-
-
 async def seed_db(engine: AsyncEngine) -> None:
     """
     Seed the DB with default data on first run, and a no-op thereafter.
@@ -101,27 +115,59 @@ async def seed_db(engine: AsyncEngine) -> None:
 
     logging.info("Seeding database and data dir with initial data (this can take a bit)...")
     molten_salt_kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
-    have_vista_data = False
-    if (molten_salt_kb_dir / 'pdfs').exists():
-        have_vista_data = True
+
+    if settings.vista_data_token:
+        ctx_manager = GitlabRepoClient("code.ornl.gov", "v28/vista-data", token=settings.vista_data_token)
     else:
-        async with _fetch_vista_data_repo() as vista_data_repo:
-            if vista_data_repo:
-                have_vista_data = True
-                shutil.copytree(vista_data_repo / "molten-salt-papers", molten_salt_kb_dir / 'pdfs')
-    if have_vista_data:
-        await _build_knowledge_base(molten_salt_kb_dir)
+        ctx_manager = nullcontext()
+        logging.warning("No vista_data_token configured; skipping vista-data fetch: seeding only public data")
+    async with ctx_manager as vista_data_client, AsyncSession(engine) as session:
+        if vista_data_client:
+            # download_dir is resumable (skips files already on disk)
+            await vista_data_client.download_dir("molten-salt-papers", molten_salt_kb_dir / "pdfs")
+            await _build_knowledge_base(molten_salt_kb_dir)
 
-    now = now_iso()
+        SKILL_ASSETS = {
+            "model-fine-tuning": {"assets/Molten_Salt_Thermophysical_Properties.csv": "mstdb/Molten_Salt_Thermophysical_Properties.csv"},
+            "salt-analysis": {"assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json"},
+            "salt-prediction": {
+                "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json",
+                "assets/elemental-properties.csv": "mstdb/elemental-properties.csv",
+            }
+        }
+        skipped_skills = set()
 
-    async with AsyncSession(engine) as session:
+        for src in sorted(p for p in SKILLS_SRC.iterdir() if p.is_dir()):
+            path = new_storage_path()
+            if vista_data_client:
+                for asset_dest, asset_src in SKILL_ASSETS.get(src.name, {}).items():
+                    asset_dest = settings.data_dir / path / asset_dest
+                    asset_dest.parent.mkdir(exist_ok=True, parents=True)
+                    await vista_data_client.download_file(asset_src, asset_dest)
+            elif SKILL_ASSETS.get(src.name):
+                skipped_skills.add(src.name)
+                continue
+            shutil.copytree(src, settings.data_dir / path, dirs_exist_ok=True)
+
+            skill = read_skill(settings.data_dir / path)
+            session.add(build_skill_row(
+                skill,
+                path=path,
+                author="VISTA Team",
+                repo_url=None,
+                is_public=True,
+                now=now_iso(),
+            ))
+
+        now = now_iso()
+
         projects = [
             ProjectTable(
                 id=uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661"),
                 name="alloy-design",
                 description="High Entropy Alloy Design — agentic optimization of refractory MoNbTaW compositions on the Andes HPC cluster.",
                 system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(),
-                skills=["alloy-design"],
+                skills=sorted({"alloy-design"} - skipped_skills),
                 knowledge_bases=[],
                 tools=[
                     "*",
@@ -137,8 +183,8 @@ async def seed_db(engine: AsyncEngine) -> None:
                 name="molten-salt",
                 description="Molten salt thermophysical properties assistant — querying the MSTDB-TP database, plotting phase diagrams, and searching the literature corpus.",
                 system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(),
-                skills=["salt-analysis"],
-                knowledge_bases=[molten_salt_kb_dir.name] if have_vista_data else [],
+                skills=sorted({"salt-analysis"} - skipped_skills),
+                knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
                 # Allow everything except the alloy-design HPC toolchain.
                 tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=10),
@@ -146,7 +192,7 @@ async def seed_db(engine: AsyncEngine) -> None:
         ]
         session.add_all(projects)
 
-        if have_vista_data:
+        if vista_data_client:
             session.add(KnowledgeBaseTable(
                 id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
                 slug=molten_salt_kb_dir.name,
@@ -164,19 +210,6 @@ async def seed_db(engine: AsyncEngine) -> None:
                 last_built_at=now,
                 created_at=now,
                 updated_at=now,
-            ))
-
-        for src in sorted(p for p in SKILLS_SRC.iterdir() if p.is_dir()):
-            path = new_storage_path()
-            shutil.copytree(src, settings.data_dir / path)
-            skill = read_skill(settings.data_dir / path)
-            session.add(build_skill_row(
-                skill,
-                path=path,
-                author="VISTA Team",
-                repo_url=None,
-                is_public=True,
-                now=now,
             ))
 
         # Test users / memberships only outside prod.
