@@ -133,12 +133,13 @@ class AppSettings(BaseSettings):
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
-    SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
-    or comma separated list of hosts.
+    Legacy SSH host list, kept for the optional agenthpc subserver (disabled by
+    default). The Odo/Frontier job tools no longer SSH — compute goes through
+    IRI and file ops through Globus. To use a jump host, pass an array or comma
+    separated list of hosts.
     """
-
     hpc_ssh_user: str | None = None
-    """ SSH user to log in as """
+    """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

@@ -6,7 +6,6 @@ MCP for remote HPC job submission. Dispatches between:
 """
 from __future__ import annotations
 import logging, shlex, textwrap, time, dataclasses
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -16,8 +15,6 @@ from pydantic import BaseModel
 from mcp.types import ToolAnnotations
 
 from .config import settings
-from .lib import s3m
-from .lib.s3m import init_s3m_ssh_conn
 from .lib.iri import (
     IriClient, IriDefaults, create_iri_client, create_odo_iri_client, create_olcf_iri_client,
 )
@@ -117,19 +114,7 @@ disable caching (always re-fetch).
 """
 
 
-@asynccontextmanager
-async def lifespan(server):
-    # TODO Temporary workaround for S3M API limitations, we use ssh for file operations.
-    await init_s3m_ssh_conn()
-    try:
-        yield
-    finally:
-        if s3m._ssh_conn:
-            s3m._ssh_conn.close()
-            s3m._ssh_conn = None
-
-
-mcp = FastMCP("Submit Job", lifespan=lifespan)
+mcp = FastMCP("Submit Job")
 
 
 @dataclasses.dataclass
