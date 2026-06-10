@@ -3,9 +3,11 @@ name = "vista-mcp-server"
 version = "0.1.0"
 requires-python = "~=3.14.3"
 dependencies = [
+    "amscrot-py @ git+ssh://git@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
     "asyncssh>=2.14",
     "chromadb>=0.5.0",
     "fastmcp>=3.1.1",
+    "globus-sdk>=3.40",
     "matplotlib>=3.10.8",
     "numpy>=2.4.1",
     "pydantic-settings>=2.0",
@@ -19,9 +21,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-]
-nersc = [
-    "amscrot-py @ git+ssh://git@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
 ]
 
 [project.scripts]

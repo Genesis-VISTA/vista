@@ -57,7 +57,12 @@ class AppSettings(BaseSettings):
 
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
     hpc_account: str = "gen150-vista"
-    """ Slurm account name for HPC job submission. """
+    """
+    OLCF project name used for Odo jobs. Doubles as (a) the expected `project`
+    on the user's S3M token (validated before submission) and (b) the Slurm
+    `account` attribute on the submitted job. Frontier uses the user's
+    per-record `nersc_account` instead (re-labeled "IRI project account" in UI).
+    """
     hpc_setup_script_template: str = ODO_SETUP_SCRIPT
     """
     Script sourced before every job script.
@@ -67,7 +72,7 @@ class AppSettings(BaseSettings):
     """
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
-    """ Base URL for the S3M API. """
+    """ Base URL for the S3M API (Odo only). """
     s3m_resource: str = "odo"
     """ S3M compute resource id to submit jobs against. """
 
@@ -76,13 +81,46 @@ class AppSettings(BaseSettings):
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
 
+    olcf_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    """
+    Base URL for the OLCF AmSC IRI API (moderate enclave — Frontier).
+    The open-enclave host (amsc-open.s3m.olcf.ornl.gov) serves Odo/Defiant/Wombat/Quokka.
+    """
+    olcf_machine: str = "frontier"
+    """ OLCF compute resource group name (used to match the IRI discovery result). """
+
+    # Globus file-transfer config for Frontier (cluster="frontier"). The Vista
+    # server hosts its own Globus collection (GCS or GCP) exposing `local_hpc_jobs_dir`
+    # for source uploads and `output_dir` for output downloads; the user's per-record
+    # Globus Auth + Transfer tokens authenticate as their OLCF identity for access to
+    # `olcf_globus_collection_id`.
+    vista_globus_collection_id: str | None = None
+    """
+    UUID of the Globus Collection hosted on the Vista server. Must expose the paths
+    `local_hpc_jobs_dir` and `output_dir` (or a common ancestor). Required for Frontier
+    file ops once the Globus pivot lands; empty during transition.
+    """
+    olcf_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
+    """
+    UUID of the OLCF DTN (GCS5) Globus Collection that exposes Frontier's filesystem.
+    Default is OLCF's current production DTN. Verify with the helper script at
+    OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
+    """
+    globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
+    """
+    Globus Native App client UUID used to mint refresh-token authorizers from
+    per-user refresh tokens. Default matches the client ID in
+    OLCF-Globus-Transfer/get_olcf_token.py so refresh tokens minted by that script
+    remain valid here.
+    """
+
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
-    SSH host for file access (SCP/sacct) on the HPC cluster.
-    To use a jump host, pass an array or comma separated list of hosts.
+    SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
+    or comma separated list of hosts.
     """
     hpc_ssh_user: str
-    """ SSH user to log in as """
+    """ SSH user to log in as for the Odo SSH connection. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """
