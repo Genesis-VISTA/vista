@@ -171,7 +171,9 @@ function UserSettingsForm({
           required
         />
         <span className="user-settings-hint">
-          Where hpc_jobs are copied to on Odo.
+          Where hpc_jobs are copied to on Odo (via Globus). One-time setup:
+          {" "}<code>chmod 2775</code> this directory on Odo so the IRI automation
+          user can traverse Vista-created subdirectories.
         </span>
       </label>
 
@@ -244,7 +246,8 @@ function UserSettingsForm({
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for S3M API auth. Stored encrypted at rest.
+          Bearer token for the OLCF AmSC IRI services — enables both Odo (open
+          enclave) and Frontier (moderate enclave) compute. Stored encrypted at rest.
         </span>
       </label>
 
@@ -276,7 +279,7 @@ function UserSettingsForm({
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          For Frontier file transfer via the OLCF DTN. Mint with:
+          For Odo and Frontier file transfer via Globus. Mint with:
           {" "}<code>python OLCF-Globus-Transfer/get_olcf_token.py --force-login --session-domain sso.ccs.ornl.gov</code>,
           then paste the <code>refresh_token</code> value from{" "}
           <code>~/.globus/olcf_tokens.json</code>. Long-lived; stored encrypted at rest.

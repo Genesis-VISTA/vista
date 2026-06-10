@@ -456,8 +456,9 @@ class G5HpcCapability(VistaGuardCapability):
 
     def _read_job_template(self, job: str) -> str | None:
         """
-        Read ``<job_templates_dir>/<job>/job.slurm`` (falling back to the
-        Perlmutter script). Returns None when no template is found or the
+        Read the first per-cluster job script under ``<job_templates_dir>/<job>/``
+        (``job.odo.slurm``, then the other clusters; ``job.slurm`` is the legacy
+        pre-rename Odo name). Returns None when no template is found or the
         job name is unsafe.
         """
         base = self._job_templates_dir
@@ -469,7 +470,7 @@ class G5HpcCapability(VistaGuardCapability):
                 "VISTAGuard G5: refusing to resolve unsafe job name %r", job
             )
             return None
-        for filename in ("job.slurm", "job.perlmutter.slurm"):
+        for filename in ("job.odo.slurm", "job.slurm", "job.frontier.slurm", "job.perlmutter.slurm"):
             candidate = base / job / filename
             try:
                 if candidate.is_file():
