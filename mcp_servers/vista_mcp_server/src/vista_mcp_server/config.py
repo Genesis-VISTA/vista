@@ -2,23 +2,11 @@ import os, logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
-import textwrap
 from typing import Annotated as A
 import getpass
 import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
-
-ODO_SETUP_SCRIPT = textwrap.dedent(r"""
-    export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
-    mkdir -p -m 2775 "$VISTA_OUT"
-    chmod 2775 "{remote_hpc_jobs_dir}" "{remote_hpc_jobs_dir}/out"
-
-    export https_proxy="http://proxy.ccs.ornl.gov:3128";
-    export http_proxy="http://proxy.ccs.ornl.gov:3128";
-    export no_proxy="localhost,127.0.0.1,0.0.0.0";
-""").strip()
-
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -58,17 +46,9 @@ class AppSettings(BaseSettings):
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
     hpc_account: str = "gen150-vista"
     """
-    OLCF project name used for Odo jobs. Doubles as (a) the expected `project`
-    on the user's S3M token (validated before submission) and (b) the Slurm
-    `account` attribute on the submitted job. Frontier uses the user's
-    per-record `nersc_account` instead (re-labeled "IRI project account" in UI).
-    """
-    hpc_setup_script_template: str = ODO_SETUP_SCRIPT
-    """
-    Script sourced before every job script.
-
-    This is a format string referencing `{remote_hpc_jobs_dir}` (supplied per
-    tool call via MCP metadata) and other settings.
+    OLCF project name used as the Slurm `account` for Odo jobs (one shared
+    project for all Vista users). The user's S3M token must belong to this
+    project. Frontier uses the per-user `frontier_account` field instead.
     """
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"

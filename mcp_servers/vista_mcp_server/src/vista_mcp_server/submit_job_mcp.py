@@ -178,18 +178,6 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig, job_id: str | Non
     return _default_cluster(cfg)
 
 
-def _render_hpc_setup_script(cfg: UserConfig) -> str:
-    """ Format the setup script template with both global settings and per-user config. """
-    return settings.hpc_setup_script_template.format(
-        **settings.model_dump(include={
-            "session_id", "hpc_account",
-            "s3m_url", "s3m_resource",
-            "nersc_iri_url", "nersc_machine",
-        }),
-        remote_hpc_jobs_dir=cfg.require_remote_hpc_jobs_dir(),
-    )
-
-
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
@@ -458,8 +446,8 @@ async def _submit_perlmutter_job(
     workers_per_node = defaults.resources.processes_per_node or 1
     duration = duration_int or defaults.duration
 
-    # Mirror Odo's hpc_setup_script_template UX: the user's job.perlmutter.slurm runs with
-    # $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
+    # Mirror the Odo/Frontier setup-snippet UX: the user's job.perlmutter.slurm runs
+    # with $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
     setup_snippet = textwrap.dedent(f"""
         export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
         mkdir -p "$VISTA_OUT"
@@ -630,7 +618,7 @@ async def _submit_frontier_job(
 
     # Frontier compute nodes have no direct outbound network — pip / curl / git
     # against the public internet need the OLCF HTTP proxy. Matches the Odo setup
-    # template (config.py:ODO_SETUP_SCRIPT) so user scripts don't have to know.
+    # snippet (_submit_odo_job) so user scripts don't have to know.
     #
     # HOME fallback: amscrot's IRI service env doesn't carry HOME, and a missing
     # HOME makes conda activation hooks (run by `module load xforge`) silently
