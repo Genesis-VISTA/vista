@@ -1,5 +1,10 @@
 """
-S3M API client plus SSH/SCP file transfer helpers.
+S3M API client plus SSH/SCP file transfer helpers — Odo only.
+
+Frontier and Perlmutter both go through the IRI path in `lib/iri.py` for
+compute. Frontier's file ops go through Globus (`lib/globus.py`); Perlmutter's
+go through amscrot's IRI Filesystem API. Only Odo still needs a persistent
+SSH conn for SCP/sacct because the S3M API doesn't yet have file endpoints.
 """
 from pathlib import Path
 import asyncssh
@@ -21,11 +26,13 @@ class S3mClient:
         s3m_token: str,
         resource_id: str,
         ssh_conn: asyncssh.SSHClientConnection,
+        expected_project: str,
     ):
         self.s3m_api = s3m_api.rstrip("/")
         self.s3m_token = s3m_token
         self.resource_id = resource_id
         self.ssh_conn = ssh_conn
+        self.expected_project = expected_project
         self._token_validated = False
 
     def _headers(self) -> dict[str, str]:
@@ -33,11 +40,12 @@ class S3mClient:
             "Authorization": f"Bearer {self.s3m_token}",
             "Content-Type": "application/json",
         }
-    
+
     async def _validate_token(self):
-        """ Verify the token is valid and in the right group """
-        # TODO This is a temporary check because of the current ssh/scp workarounds, we have to make
-        # sure the token matches the group of our ssh session. We can remove this once that's fixed.
+        """ Verify the token is valid and in the right OLCF project. """
+        # TODO This is a temporary check because of the current ssh/scp workarounds: we have to
+        # make sure the token's project matches the project of our ssh session so file uploads
+        # land in the right group dir. We can remove this once S3M /file endpoints land.
         # This is also hard coded to OLCF resources, each API can do tokens differently.
         if not self._token_validated:
             async with httpx.AsyncClient() as client:
@@ -50,8 +58,11 @@ class S3mClient:
                 token_info = resp.json()
 
                 token_project = token_info.get("token", {}).get('project')
-                if token_project != 'gen150-vista':
-                    raise ValueError(f"S3M token must be part of gen150-vista group, current token is {token_project}")
+                if token_project != self.expected_project:
+                    raise ValueError(
+                        f"S3M token must be part of {self.expected_project!r} project, "
+                        f"current token is in {token_project!r}"
+                    )
                 self._token_validated = True
 
     async def submit_job(self, spec: dict) -> dict:
@@ -124,25 +135,34 @@ class S3mDefaults(BaseModel):
 
 _ssh_conn: asyncssh.SSHClientConnection | None = None
 """
-The shared SSH connection.
-
-Initialized by submit_job_mcp's lifespan. This is a temporary hack to work around the ODO s3m api's
-lack of file operation support. We should remove it as soon as file support is added and greatly
-simplify the MCP server launch sequence.
+SSH connection for Odo file ops. Initialized by submit_job_mcp's lifespan.
+Temporary workaround until the Odo S3M API exposes file endpoints.
 """
 
 
 async def init_s3m_ssh_conn():
+    """ Open the SSH conn for Odo file access. """
     global _ssh_conn
     if _ssh_conn is None:
-        logging.info(f"Connecting to {settings.hpc_ssh_host[-1]} via SSH for file access...")
-        if not settings.hpc_ssh_host:
+        host = settings.hpc_ssh_host
+        user = settings.hpc_ssh_user
+        if not user:
             raise RuntimeError(f"VISTA_MCP_HPC_SSH_USER is required")
-        _ssh_conn = await get_ssh_conn(settings.hpc_ssh_host, settings.hpc_ssh_user)
-        logging.info(f"SSH connection established to {settings.hpc_ssh_host[-1]}")
+        logging.info(f"Connecting to {user}@{host[-1]} via SSH for Odo file access...")
+        _ssh_conn = await get_ssh_conn(host, user)
+        logging.info(f"SSH connection established to {host[-1]} (odo)")
+
+
+def close_s3m_ssh_conns():
+    """ Close the Odo SSH conn if open. Plural-named for historical compatibility. """
+    global _ssh_conn
+    if _ssh_conn is not None:
+        _ssh_conn.close()
+        _ssh_conn = None
 
 
 def get_s3m_client(*, s3m_token: str) -> S3mClient:
+    """ Odo S3M client. Frontier uses Globus (lib/globus.py) for file ops. """
     if _ssh_conn is None:
         raise RuntimeError("S3M SSH connection not initialized; call init_s3m_ssh_conn() first")
     return S3mClient(
@@ -150,4 +170,5 @@ def get_s3m_client(*, s3m_token: str) -> S3mClient:
         s3m_token=s3m_token,
         resource_id=settings.s3m_resource,
         ssh_conn=_ssh_conn,
+        expected_project=settings.hpc_account,
     )

@@ -18,12 +18,10 @@ npm ci
 npm run build
 
 cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
-# Include the `nersc` extras (amscrot) only when the user has a NERSC IRI token, since pulling the package also requires ssh config
-if [[ -n "${VISTA_MCP_NERSC_IRI_TOKEN:-}" ]]; then
-    uv sync --extra nersc --frozen
-else
-    uv sync --frozen
-fi
+# amscrot-py (the AmSC IRI SDK) is a base dependency since both NERSC (Perlmutter)
+# and OLCF (Frontier) routing rely on it. The git+ssh:// URL requires GitLab SSH
+# keys configured for the user running this build — see README.md.
+uv sync --frozen
 
 cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
 uv sync --frozen

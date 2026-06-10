@@ -1,11 +1,9 @@
 """
-NERSC IRI client for job submission and filesystem access via the amscrot SDK.
+IRI client for job submission via the amscrot SDK.
 
-This module mirrors the shape of ``lib/s3m.py`` so ``submit_job_mcp.py`` can
-dispatch between Odo (S3M) and Perlmutter (IRI) without duplicating logic.
-
-amscrot is an *optional* dependency (the ``nersc`` extras group). Importing
-this module fails clearly with the install hint when amscrot is missing.
+Used for both NERSC IRI (Perlmutter) and OLCF AmSC IRI (Frontier, moderate
+enclave). ``submit_job_mcp.py`` dispatches between Odo (S3M) and both IRI
+backends through this client.
 """
 import asyncio
 import logging
@@ -16,14 +14,9 @@ from pydantic import BaseModel
 
 from ..config import settings
 
-
-try:
-    from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
-    from amscrot.serviceclient import ServiceClient
-    from amscrot.util.constants import Constants
-    AMSCROT_AVAILABLE = True
-except ImportError:
-    AMSCROT_AVAILABLE = False
+from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
+from amscrot.serviceclient import ServiceClient
+from amscrot.util.constants import Constants
 
 
 class IriResourceSpec(BaseModel):
@@ -37,7 +30,8 @@ class IriResourceSpec(BaseModel):
 class IriAttributes(BaseModel):
     """IRI-specific JobSpec attributes that vary per job (image, queue, constraint, ...)."""
     queue_name: str = "regular"
-    constraint: str = "gpu"
+    constraint: str | None = None
+    """ Slurm constraint, e.g. "gpu" on Perlmutter. Omitted on Frontier. """
     image: str | None = None
     module: str | None = None
     pre_launch: str | None = None
@@ -62,10 +56,6 @@ class IriClient:
     """
 
     def __init__(self, *, api_endpoint: str, api_key: str, machine: str, profile: str = "nersc-iri"):
-        if not AMSCROT_AVAILABLE:
-            raise RuntimeError(
-                "NERSC support requires amscrot. Install with: uv sync --extra nersc"
-            )
         self.api_endpoint = api_endpoint
         self.machine = machine
         self.profile = profile
@@ -90,7 +80,10 @@ class IriClient:
     def _resolve_resources(self) -> None:
         discovery = self._service_client.discover()
         if not discovery.compute:
-            raise RuntimeError("No NERSC IRI compute resources discovered (check token validity)")
+            raise RuntimeError(
+                f"No IRI compute resources discovered for profile {self.profile!r} "
+                f"(check token validity / endpoint)"
+            )
 
         # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
         # grouped under the facility (site); the entry with group=<machine> & name="compute"
@@ -150,7 +143,15 @@ class IriClient:
             service_client=self._service_client,
             job_spec=job_spec,
         )
-        self._service_client.plan(job)
+        # `skip_checks=True` downgrades plan errors to logged warnings instead of raising.
+        # Needed because OLCF's moderate-enclave IRI doesn't update its per-resource
+        # status feed — Frontier shows `current_status="unknown"` from
+        # /api/v1/status/resources/<id> even though the list endpoint and OLCF's own
+        # status board show "up"/"OPERATIONAL". `create()` itself doesn't depend on
+        # `plan()` succeeding, so this only loses non-status checks (resource_id
+        # lookup, executable presence, spec conversion) as failures — they still log
+        # as warnings, and `create()` would re-do them anyway.
+        self._service_client.plan(job, skip_checks=True)
         self._service_client.create(job)
         if not job.id:
             raise RuntimeError(f"IRI submission for '{name}' returned no job id")
@@ -229,10 +230,32 @@ class IriClient:
 
 # TODO maybe should cache this per session
 async def create_iri_client(*, iri_token: str) -> IriClient:
+    """ NERSC IRI client (Perlmutter). """
     client = IriClient(
         api_endpoint=settings.nersc_iri_url,
         api_key=iri_token,
         machine=settings.nersc_machine,
+        profile="nersc-iri",
+    )
+    await client.init_resources()
+    return client
+
+
+async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
+    """
+    OLCF AmSC IRI client (Frontier, moderate enclave).
+
+    Reuses the user's S3M token — the same bearer that authenticates against Odo's
+    S3M endpoint also works against the OLCF moderate-enclave IRI service. The
+    token's `iri-frontend-moderate` scope authorizes compute discovery/submit but
+    NOT storage; the caller must handle file ops out-of-band (SSH) since
+    `storage_resource_id` will raise on use.
+    """
+    client = IriClient(
+        api_endpoint=settings.olcf_iri_url,
+        api_key=iri_token,
+        machine=settings.olcf_machine,
+        profile="olcf-iri",
     )
     await client.init_resources()
     return client
