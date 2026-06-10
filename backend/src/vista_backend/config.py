@@ -112,3 +112,9 @@ for env_file in reversed(Settings.model_config['env_file']):
         load_dotenv(env_file, interpolate=False)
 
 settings = Settings()
+
+logging.basicConfig(
+    level=settings.log_level,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True,
+)

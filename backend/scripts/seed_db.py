@@ -10,6 +10,7 @@ Usage (from the backend/ directory):
 import asyncio
 import sys
 
+from vista_backend.config import settings # import so logging gets configured
 from vista_backend.db.db import init_db
 from vista_backend.utils import indexer
 
