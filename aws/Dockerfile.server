@@ -29,7 +29,12 @@ RUN cd ui && npm ci
 COPY mcp_servers/vista_mcp_server/pyproject.toml \
      mcp_servers/vista_mcp_server/uv.lock \
      mcp_servers/vista_mcp_server/
-RUN cd mcp_servers/vista_mcp_server && uv sync --frozen --no-install-project
+# amscrot-py is a private GitLab dep, PAT is supplied as a BuildKit secret
+RUN --mount=type=secret,id=gitlab_token,required=true \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://oauth2:$(cat /run/secrets/gitlab_token)@gitlab.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://gitlab.com/" \
+    sh -c 'cd mcp_servers/vista_mcp_server && uv sync --frozen --no-install-project'
 
 COPY mcp_servers/dev_mcp_server/pyproject.toml \
      mcp_servers/dev_mcp_server/uv.lock \

@@ -37,7 +37,7 @@ wheels = [
 [[package]]
 name = "amscrot-py"
 version = "1.0.0.post18"
-source = { git = "ssh://git@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git#b42b2fef0819ce5aebda792948853894db2517ff" }
+source = { git = "https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git#b42b2fef0819ce5aebda792948853894db2517ff" }
 dependencies = [
     { name = "amsc-iri" },
     { name = "ansible" },
@@ -4296,7 +4296,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "amscrot-py", git = "ssh://git@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" },
+    { name = "amscrot-py", git = "https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" },
     { name = "asyncssh", specifier = ">=2.14" },
     { name = "cachetools", specifier = ">=7.0.5" },
     { name = "chromadb", specifier = ">=0.5.0" },
