@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..db.db import SessionDep
 from ..services import project as project_service
 from ..services.project_agent import project_agent_pool, resolve_elicitation
-from .auth import UserDep
+from ..services.auth import UserDep
 
 
 router = APIRouter(tags=["mcp"])

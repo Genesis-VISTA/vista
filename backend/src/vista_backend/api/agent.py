@@ -11,7 +11,7 @@ from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import project as project_service
 from ..services.project_agent import project_agent_pool, register_elicitation
-from .auth import UserDep
+from ..services.auth import UserDep
 
 router = APIRouter()
 

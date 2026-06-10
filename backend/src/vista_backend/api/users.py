@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from ..db.db import SessionDep
 from ..db.schemas import UserCreate, UserUpdate, UserSelfUpdate, UserPublic, UserPublicWithConfig
 from ..services import user as user_service
-from .auth import AdminDep, UserDep
+from ..services.auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
 

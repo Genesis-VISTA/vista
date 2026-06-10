@@ -1,10 +1,10 @@
 import os, logging
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Annotated as A
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .lib.types import ResolvedPath
+from .lib.types import ResolvedPath, EmptyIsNone
 
 
 class AppSettings(BaseSettings):
@@ -23,8 +23,8 @@ class AppSettings(BaseSettings):
     - `podman` runs commands inside a podman container.
     """
 
-    dockerfile: ResolvedPath = Path(__file__).parent / "docker" / "Dockerfile"
-    image: str = "vista-sandbox"
+    dockerfile: A[ResolvedPath | None, EmptyIsNone] = Path(__file__).parent / "docker" / "Dockerfile"
+    image: str = "vista-sandbox:latest"
 
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = []
     """

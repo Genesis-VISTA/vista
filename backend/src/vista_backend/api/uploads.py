@@ -11,7 +11,7 @@ from ..db.db import SessionDep
 from ..services import project as project_service
 from ..utils.misc import write_file_unique, path_is_under
 from ..services.project_agent import project_agent_pool
-from .auth import UserDep
+from ..services.auth import UserDep
 
 
 router = APIRouter()

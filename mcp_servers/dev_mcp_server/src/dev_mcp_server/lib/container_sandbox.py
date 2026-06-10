@@ -11,17 +11,14 @@ from .util import check_output
 
 
 def resolve_container_runtime(runtime: str | None = None) -> str:
-    if runtime:
-        path = shutil.which(runtime)
-        if not path:
-            raise RuntimeError(f"{runtime} not found on PATH")
-    else:
-        for candidate in ("docker", "podman"):
-            path = shutil.which(candidate)
-            if path:
-                break
-        else:
-            raise RuntimeError("Neither 'podman' nor 'docker' found on PATH")
+    path = None
+    candidates = [runtime] if runtime else ["docker", "podman"]
+    for candidate in candidates:
+        path = shutil.which(candidate)
+        if path:
+            break
+    if not path:
+        raise RuntimeError(f"{' or '.join(candidates)} not found on PATH")
     return path
 
 

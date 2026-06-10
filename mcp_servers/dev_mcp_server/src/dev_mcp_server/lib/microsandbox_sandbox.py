@@ -2,104 +2,22 @@ import asyncio
 import logging
 import os
 import pty
+import tempfile
 import uuid
 from pathlib import Path
 
-from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy
+from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy, NetworkPolicy, Rule, Action, Destination, Protocol, Direction
+from microsandbox.types import DnsConfig  # not re-exported from package root
 from microsandbox._runtime import msb_path as _msb_path
 
 from .sandbox import Sandbox, Volume
-from .util import check_output, find_free_port
+from .util import check_output, parse_output
 from .container_sandbox import resolve_container_runtime
-
-
-REGISTRY_CONTAINER_NAME = "vista-sandbox-registry"
-
-
-async def _ensure_local_registry(runtime: str) -> str:
-    """
-    Ensure a local OCI registry container is running and return its URL
-    (``localhost:<port>``).
-
-    If the registry container is already running its host-side port is read from the
-    container's port bindings so every caller gets a consistent reference regardless of
-    which port was chosen when the container was first started.
-    """
-    # Check whether the registry container is already running and get its bound port.
-    port_fmt = "{{(index (index .NetworkSettings.Ports \"5000/tcp\") 0).HostPort}}"
-    try:
-        out, _ = await check_output(
-            runtime, "container", "inspect", f"--format={port_fmt}", REGISTRY_CONTAINER_NAME,
-        )
-        host_port = out.strip().decode()
-        if host_port:
-            logging.info("Registry container already running on port %s", host_port)
-            return f"localhost:{host_port}"
-    except RuntimeError:
-        pass
-
-    port = find_free_port()
-    logging.info("Starting local OCI registry on :%d...", port)
-    try:
-        await check_output(
-            runtime, "run", "-d", "--rm",
-            "-p", f"{port}:5000",
-            "-v", f"{REGISTRY_CONTAINER_NAME}-data:/var/lib/registry",
-            "--name", REGISTRY_CONTAINER_NAME,
-            "registry:2",
-        )
-    except RuntimeError:
-        # Another process may have raced us; try to read the port from the now-running container.
-        try:
-            out, _ = await check_output(
-                runtime, "container", "inspect", f"--format={port_fmt}", REGISTRY_CONTAINER_NAME,
-            )
-            host_port = out.strip().decode()
-            if host_port:
-                logging.info("Registry started by concurrent process on port %s", host_port)
-                return f"localhost:{host_port}"
-        except RuntimeError:
-            pass
-        raise
-
-    return f"localhost:{port}"
-
-
-async def _build_and_push_local_image(dockerfile: Path, image_name: str) -> str:
-    """
-    Build a local OCI image with docker/podman and push it to a local registry so the
-    microsandbox runtime can pull it. See https://docs.microsandbox.dev/recipes/local-images.
-
-    Returns the registry-qualified image reference suitable for ``Sandbox.create(image=...)``.
-    """
-    dockerfile = Path(dockerfile).resolve()
-    runtime = resolve_container_runtime()
-
-    registry_url = await _ensure_local_registry(runtime)
-    image_tag = f"{registry_url}/{image_name}:latest"
-
-    logging.info("Building sandbox image %s...", image_tag)
-    await check_output(
-        runtime, "build", "-t", image_tag, "-f", str(dockerfile), str(dockerfile.parent),
-    )
-
-    push_args = [runtime, "push"]
-    if Path(runtime).name == "podman":
-        push_args.append("--tls-verify=false")
-    push_args += ["-q", image_tag]
-    await check_output(*push_args)
-
-    return image_tag
 
 
 class MicrosandboxSandbox(Sandbox):
     """
     Sandbox backed by https://github.com/superradcompany/microsandbox MicroVMs.
-
-    Each spawn creates a uniquely-named MicroVM with ``Network.public_only`` and tears it down
-    on close. If a dockerfile is given the image is built locally and pushed to a localhost OCI
-    registry so the microsandbox runtime can pull it; with a plain image reference no registry
-    is started.
     """
 
     def __init__(self, sandbox: MsbSandbox):
@@ -112,30 +30,33 @@ class MicrosandboxSandbox(Sandbox):
         image: str | None = None,
     ):
         if dockerfile:
-            image_ref = await _build_and_push_local_image(Path(dockerfile), image or "vista-sandbox")
+            image = image or "vista-sandbox:latest"
+            dockerfile = Path(dockerfile).resolve()
+            runtime = resolve_container_runtime()
+            logging.info(f"Building sandbox image {image}...", )
+            await check_output(
+                runtime, "build", "-t", image, "-f", str(dockerfile), str(dockerfile.parent),
+            )
+
+            oci_inspect = await parse_output(runtime, "image", "inspect", image)
+            oci_digest = oci_inspect[0]["Id"].split(":")[-1] # podman doesn't prefix sha256:
+            # TODO: in microsandbox 0.5.5, we should be able to use the python SDK for this
+            msb_inspect = await parse_output(str(_msb_path()), "image", "inspect", "--format=json", image)
+            msb_digest = msb_inspect['config']['digest'].split(":")[-1] if msb_inspect else None
+            if msb_digest != oci_digest:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    archive = str(Path(tmpdir) / "image.tar")
+                    await check_output(runtime, "save", "-o", archive, image)
+                    await check_output(str(_msb_path()), "load", "-i", archive, "-t", image)
         elif image:
-            image_ref = image
+            msb_inspect = await parse_output(str(_msb_path()), "image", "inspect", "--format=json", image)
+            if not msb_inspect:
+                logging.info(f"Pulling sandbox image {image}...")
+                await check_output(str(_msb_path()), "pull", image)
         else:
             raise ValueError("You must specify image or dockerfile")
 
-        # For local (HTTP) registries pull the image explicitly with --insecure so the msb
-        # runtime does not need any persistent config changes.
-        msb_args = [str(_msb_path()), "pull", image_ref]
-        if image_ref.startswith("localhost:"):
-            msb_args.append("--insecure")
-        logging.info(f"Pulling sandbox image {image_ref}...")
-        pull_proc = await asyncio.create_subprocess_exec(
-            *msb_args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await pull_proc.communicate()
-        if pull_proc.returncode != 0:
-            raise RuntimeError(
-                f"msb pull --insecure {image_ref!r} failed "
-                f"(exit {pull_proc.returncode}):\n{stderr.decode()}"
-            )
-        return image_ref
+        return image
 
     @classmethod
     async def build(
@@ -162,21 +83,32 @@ class MicrosandboxSandbox(Sandbox):
             for src, dst, mode in volumes
         }
 
-        image_ref = await cls._build(dockerfile=dockerfile, image=image)
+        image = await cls._build(dockerfile=dockerfile, image=image)
 
         name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"
-        logging.info(f"Launching microsandbox {name} from {image_ref}...")
+        logging.info(f"Launching microsandbox {name}...")
         sandbox = await MsbSandbox.create(
             name,
-            image=image_ref,
-            pull_policy=PullPolicy.IF_MISSING,
+            image=image,
+            pull_policy=PullPolicy.NEVER, # Should have already been built or pulled
             replace=True,
             cpus=cpus,
             memory=memory,
             shell="/bin/bash",
             volumes=msb_volumes,
             env=dict(env) if env else {},
-            network=Network.public_only(),
+            # TODO: Note, there's currently and issue where microsandbox writes /etc/resolv.conf with mode 0700, so if we make the sandbox image non root dns fails
+            network=Network(
+                # policy=NetworkPolicy(
+                #     default_egress=Action.DENY,
+                #     rules=tuple([
+                #         *Rule.allow_dns(),
+                #         *[Rule.allow(direction=Direction.EGRESS, destination=Destination.domain(d), port=443, protocol=Protocol.TCP) for d in ["www.example.com"]],
+                #     ]),
+                # ),
+                policy='public_only',
+                dns=DnsConfig(nameservers=("1.1.1.1", "8.8.8.8")),
+            ),
         )
         return cls(sandbox=sandbox)
 

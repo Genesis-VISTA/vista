@@ -1,0 +1,70 @@
+# VISTA "all-in-one" server image for the EKS beta deployment.
+#
+# Use ./aws/build-image.sh to build this with the correct context
+FROM ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git unzip libmagic1 libmagic-dev build-essential \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.1 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.1 /uvx /usr/local/bin/uvx
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
+
+WORKDIR /app
+
+# Don't use ./build.sh directly so that we can make it cache better
+COPY mcp_servers/vista_mcp_server/mcp-apps/package.json \
+     mcp_servers/vista_mcp_server/mcp-apps/package-lock.json \
+     mcp_servers/vista_mcp_server/mcp-apps/
+RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm ci
+
+COPY ui/package.json ui/package-lock.json ui/
+RUN cd ui && npm ci
+
+COPY mcp_servers/vista_mcp_server/pyproject.toml \
+     mcp_servers/vista_mcp_server/uv.lock \
+     mcp_servers/vista_mcp_server/
+# amscrot-py is a private GitLab dep, PAT is supplied as a BuildKit secret
+RUN --mount=type=secret,id=gitlab_token,required=true \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://oauth2:$(cat /run/secrets/gitlab_token)@gitlab.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://gitlab.com/" \
+    sh -c 'cd mcp_servers/vista_mcp_server && uv sync --frozen --no-install-project'
+
+COPY mcp_servers/dev_mcp_server/pyproject.toml \
+     mcp_servers/dev_mcp_server/uv.lock \
+     mcp_servers/dev_mcp_server/
+RUN cd mcp_servers/dev_mcp_server && uv sync --frozen --no-install-project
+
+COPY backend/pyproject.toml backend/uv.lock backend/
+RUN cd backend && uv sync --frozen --no-install-project
+
+# Load the prebuilt sandbox image into the microsandbox OCI store at ~/.microsandbox, in an
+# isolated stage so the tar isn't included in the final image. We use "named build contexts" to 
+# allow referencing the tar without it getting caught in `COPY . .` below.
+FROM base AS msb-load
+COPY --from=sandbox_tar vista-sandbox.tar /tmp/sandbox.tar
+RUN mcp_servers/dev_mcp_server/.venv/bin/msb load -i /tmp/sandbox.tar -t vista-sandbox:latest 
+
+FROM base
+
+COPY --from=msb-load /root/.microsandbox /root/.microsandbox
+
+COPY . .
+RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm run build
+RUN cd mcp_servers/vista_mcp_server && uv sync --frozen
+RUN cd mcp_servers/dev_mcp_server && uv sync --frozen
+RUN cd backend && uv sync --frozen
+RUN cd ui && npm run build
+
+ENV VISTA_MCP_DISABLE_SERVERS=submit_job,agenthpc
+ENV VISTA_DEV_MCP_DOCKERFILE=
+ENV VISTA_DEV_MCP_IMAGE=vista-sandbox:latest
+
+EXPOSE 3000 8001
+ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build"]

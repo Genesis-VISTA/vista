@@ -50,23 +50,28 @@ DEFAULT_PROJECTS: list[ProjectTable] = [
 # baked in here — keeping the defaults file pure data makes the seed
 # reproducible and lets `init_db` detect "first-run" cleanly.
 
-DEFAULT_USERS: list[UserTable] = [
-    UserTable(
-        id=uuid.UUID("2acb5d94-c542-42b5-a2fd-66f97cffd8d7"),
-        email="vista-test-admin@americansciencecloud.org",
-        is_admin=True,
-    ),
-    UserTable(
-        id=uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b"),
-        email="vista-test-user@americansciencecloud.org",
-        is_admin=False,
-    ),
-]
-
-DEFAULT_PROJECT_MEMBERS: list[ProjectMemberTable] = [
-    ProjectMemberTable(project_id=project.id, user_id=DEFAULT_USERS[1].id)
-    for project in DEFAULT_PROJECTS
-]
+DEFAULT_USERS: list[UserTable]
+DEFAULT_PROJECT_MEMBERS: list[ProjectMemberTable]
+if settings.env != 'prod':
+    DEFAULT_USERS = [
+        UserTable(
+            id=uuid.UUID("2acb5d94-c542-42b5-a2fd-66f97cffd8d7"),
+            email="vista-test-admin@americansciencecloud.org",
+            is_admin=True,
+        ),
+        UserTable(
+            id=uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b"),
+            email="vista-test-user@americansciencecloud.org",
+            is_admin=False,
+        ),
+    ]
+    DEFAULT_PROJECT_MEMBERS = [
+        ProjectMemberTable(project_id=project.id, user_id=DEFAULT_USERS[1].id)
+        for project in DEFAULT_PROJECTS
+    ]
+else:
+    DEFAULT_USERS = []
+    DEFAULT_PROJECT_MEMBERS = []
 
 DEFAULT_KNOWLEDGE_BASES: list[KnowledgeBaseTable] = [
     KnowledgeBaseTable(

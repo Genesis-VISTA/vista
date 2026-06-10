@@ -119,8 +119,9 @@ class AppSettings(BaseSettings):
     SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
     or comma separated list of hosts.
     """
-    hpc_ssh_user: str
-    """ SSH user to log in as for the Odo SSH connection. """
+
+    hpc_ssh_user: str | None = None
+    """ SSH user to log in as """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

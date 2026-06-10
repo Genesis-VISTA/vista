@@ -1,5 +1,6 @@
-# Built MCP Apps
-/src/vista/mcp-apps/
+# Prebuilt sandbox image export (created by aws/build-image.sh)
+aws/vista-sandbox.tar
+aws/vista-sandbox.tar.digest
 
 # Ignore Molten Salts DB
 /data/**

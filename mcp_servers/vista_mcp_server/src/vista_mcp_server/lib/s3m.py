@@ -146,6 +146,8 @@ async def init_s3m_ssh_conn():
     if _ssh_conn is None:
         host = settings.hpc_ssh_host
         user = settings.hpc_ssh_user
+        if not user:
+            raise RuntimeError(f"VISTA_MCP_HPC_SSH_USER is required")
         logging.info(f"Connecting to {user}@{host[-1]} via SSH for Odo file access...")
         _ssh_conn = await get_ssh_conn(host, user)
         logging.info(f"SSH connection established to {host[-1]} (odo)")

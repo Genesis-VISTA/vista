@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+set -m # set jobcontrol
 
 REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "$REPO_ROOT"
@@ -7,19 +8,21 @@ cd "$REPO_ROOT"
 # Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
 MODE="terminal"
 PROD=false
+NO_BUILD=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
+    --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build]" >&2; exit 1 ;;
   esac
 done
 
 if [[ "$PROD" == true ]]; then
-  ./build.sh --prod
+  [[ "$NO_BUILD" == true ]] || ./build.sh --prod
   UI_RUN_CMD="npm start"
 else
-  ./build.sh
+  [[ "$NO_BUILD" == true ]] || ./build.sh
   UI_RUN_CMD="npm run dev"
 fi
 
@@ -98,12 +101,26 @@ case "$MODE" in
 
     pids=()
     cleanup() {
+      trap - INT TERM EXIT  # Disarm so this only runs once.
       echo "Shutting down..."
-      kill "${pids[@]}" 2>/dev/null || true
+      for pid in "${pids[@]}"; do
+        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      done
       wait "${pids[@]}" 2>/dev/null || true
     }
-    trap cleanup INT TERM
+    trap cleanup INT TERM EXIT
 
+    # Run a service, tee-ing output to a log file and showing a prefix on stdout
+    run_service() {
+      # TODO Remove this forground bit when we remove ssh
+      local name="$1" logfile="$2" cmd="$3" fg="${4:-}"
+      if [[ "$fg" == fg ]]; then
+        bash -c "$cmd" 2>&1 | tee "$logfile"
+      else
+        ( bash -c "$cmd" 2>&1 | tee "$logfile" | sed -u "s/^/[$name] /" ) &
+        pids+=($!)
+      fi
+    }
 
     echo "All services will be started, logging to:"
     echo "  MCP server: $LOG_DIR/mcp.log"
@@ -111,14 +128,10 @@ case "$MODE" in
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
-    bash -c "$BACKEND_CMD" >> "$LOG_DIR/backend.log" 2>&1 &
-    pids+=($!)
-    bash -c "$UI_CMD" >> "$LOG_DIR/ui.log" 2>&1 &
-    pids+=($!)
+    run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
+    run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     # Foreground the mcp server so you can input the ssh login prompt if needed.
-    bash -c "$MCP_CMD" 2>&1 | tee "$LOG_DIR/mcp.log"
-
-    wait
+    run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD" fg
     ;;
   *)
     echo "Usage: $0 [tmux|terminal|logs]"
