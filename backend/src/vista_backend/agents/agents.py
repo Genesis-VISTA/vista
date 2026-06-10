@@ -1,7 +1,7 @@
 """
 Logic to build the actual PydanticAI Agent
 """
-import fnmatch, json, logging, os, shutil, uuid, asyncio
+import json, logging, os, shutil, uuid, asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -20,9 +20,12 @@ from pydantic_ai.models import infer_model
 import mcp.client.session
 import mcp.shared.context
 import mcp.types
+from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
-from ..db.schemas import ProjectPublic, UserPublicWithConfig
+from ..db.db import get_engine
+from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
 from ..vistaguard import VistaGuardSidecar
@@ -395,11 +398,17 @@ class ProjectAgent:
         self.volume_root.mkdir(parents=True, exist_ok=True)
 
         # Set up skill volume
+        async with AsyncSession(get_engine()) as session:
+            rows = (await session.exec(
+                select(SkillTable).where(col(SkillTable.name).in_(self.project.skills))
+            )).all()
+        skill_dirs = {row.name: settings.data_dir / row.path for row in rows}
+
         shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
         self.skills_volume_dir.mkdir()
         for name in self.project.skills:
-            src = settings.skills_dir / name
-            if not src.is_dir():
+            src = skill_dirs.get(name)
+            if src is None or not src.is_dir():
                 logging.warning(f"Skill {name!r} not found at {src}; skipping")
                 continue
             shutil.copytree(src, self.skills_volume_dir / name, symlinks=True)

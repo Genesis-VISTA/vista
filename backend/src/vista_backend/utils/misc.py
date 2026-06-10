@@ -1,6 +1,7 @@
 from typing import Any
 from pydantic import TypeAdapter
 from pathlib import Path
+from datetime import datetime, timezone
 import fnmatch
 
 def write_file_unique(path: Path | str, data: bytes) -> Path:
@@ -34,6 +35,7 @@ def json_dump_if(data: Any) -> str:
     else:
         return TypeAdapter(Any).dump_json(data).decode()
 
+
 def tool_allowed(name: str, patterns: list[str]) -> bool:
     """
     Match `name` against fnmatch-style `patterns`.
@@ -52,3 +54,7 @@ def tool_allowed(name: str, patterns: list[str]) -> bool:
     if any(fnmatch.fnmatchcase(name, p) for p in deny_patterns):
         return False
     return True
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()

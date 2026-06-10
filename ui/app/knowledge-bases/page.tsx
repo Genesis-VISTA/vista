@@ -352,14 +352,6 @@ function KnowledgeBaseExplorerPageContent() {
                         aria-hidden="true"
                       />
                       <span>{kb.name}</span>
-                      {kb.builtin && (
-                        <span
-                          className="project-card-badge"
-                          style={{ marginLeft: 4 }}
-                        >
-                          Built-in
-                        </span>
-                      )}
                     </button>
                   );
                 })}
@@ -544,7 +536,6 @@ function KbListItem({
     >
       <div className="kb-list-item-head">
         <div className="kb-list-item-name">{kb.name}</div>
-        {kb.builtin && <span className="project-card-badge">Built-in</span>}
       </div>
       <div className="kb-list-item-meta">
         {kb.publications.length}{" "}
@@ -773,10 +764,6 @@ function KbDetailView({
   }
 
   async function deleteKb() {
-    if (kb.builtin) {
-      onError("Built-in knowledge bases cannot be deleted.");
-      return;
-    }
     const ok = window.confirm(
       `Delete knowledge base "${kb.name}"? This removes all PDFs and cannot be undone.`
     );
@@ -805,7 +792,6 @@ function KbDetailView({
           <span className={`tag kb-detail-status-${status.tone}`}>
             {status.label}
           </span>
-          {kb.builtin && <span className="tag">Built-in</span>}
         </div>
       </div>
       <div className="panel-body kb-detail-body">
@@ -900,15 +886,13 @@ function KbDetailView({
                 >
                   Edit metadata
                 </button>
-                {!kb.builtin && (
-                  <button
-                    type="button"
-                    className="button ghost button-sm"
-                    onClick={() => void deleteKb()}
-                  >
-                    Delete KB
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="button ghost button-sm"
+                  onClick={() => void deleteKb()}
+                >
+                  Delete KB
+                </button>
               </div>
             </>
           )}

@@ -45,34 +45,25 @@ class Settings(BaseSettings):
     MCP servers (e.g. `dev_mcp_server`) that the backend launches directly via `uv run`.
     """
 
-    skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
-
     data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../data")
     """ Directory for data such as sandbox volumes and other created files """
 
-    # TODO: combine this with data_dir
-    knowledge_bases_dir: A[ResolvedPath, Field(validation_alias="VISTA_KNOWLEDGE_BASES_DIR")] = Path("../data/knowledge-bases")
-    """
-    Root directory for Knowledge Bases. Each KB gets a subdirectory:
-    `{knowledge_bases_dir}/{slug}/{pdfs/, rag_db/}`. The builtin
-    molten-salt KB lives under the same root so all KBs follow one
-    consistent layout.
-    """
+    @property
+    def knowledge_bases_dir(self) -> Path:
+        """
+        Root directory for Knowledge Bases. Each KB gets a subdirectory:
+        `{knowledge_bases_dir}/{slug}/{pdfs/, rag_db/}`
+        """
+        return self.data_dir / "knowledge-bases"
 
-    molten_salt_pdfs_dir: A[ResolvedPath, Field(validation_alias="VISTA_MCP_RAG_PDFS_PATH")] = Path("../data/knowledge-bases/molten-salt-papers/pdfs")
-    """
-    Source PDFs for the seeded molten-salt KB. Shared with build_rag.py;
-    a PDF uploaded through the UI lands here so it ends up in the same
-    corpus the MCP server queries. Points underneath `knowledge_bases_dir`
-    so the builtin KB follows the same on-disk layout as user-created ones.
-    """
-
-    molten_salt_rag_db: A[ResolvedPath, Field(validation_alias="VISTA_MCP_RAG_DB_PATH")] = Path("../data/knowledge-bases/molten-salt-papers/rag_db")
-    """
-    ChromaDB directory for the seeded molten-salt KB. Shared with the
-    `vista-mcp-server` rag_search tool — the env var is the same one
-    the MCP server reads, so configuring it once configures both sides.
-    """
+    @property
+    def storage_dir(self) -> Path:
+        """
+        Root directory for arbitrary stored files (e.g. skill folders). Entries
+        are keyed by uuid; the owning DB row records the location as a path
+        relative to `data_dir`.
+        """
+        return self.data_dir / "storage"
 
     database_url: A[
         str,
@@ -98,6 +89,12 @@ class Settings(BaseSettings):
     header on requests to api.github.com. If unset, only public repos work.
     """
 
+    vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None
+    """
+    Optional GitLab personal access token, used to fetch private data. Needs Developer role and read_api and
+    read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
+    """
+
     vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)
     """
     VISTAGuard sidecar configuration. See `vista_backend.vistaguard.config`
@@ -115,3 +112,9 @@ for env_file in reversed(Settings.model_config['env_file']):
         load_dotenv(env_file, interpolate=False)
 
 settings = Settings()
+
+logging.basicConfig(
+    level=settings.log_level,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True,
+)

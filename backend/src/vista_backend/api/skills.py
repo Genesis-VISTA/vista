@@ -1,42 +1,27 @@
-import logging
-import shutil
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
-from ..agents.skills import (
-    find_skill_md,
-    find_skills,
-    read_skill,
-    update_skill_frontmatter,
-    write_skill,
-    Skill,
-    SkillError,
-    SkillMetadata,
-)
-from ..agents.skill_authoring import SkillDraft, generate_skill_draft
-from ..agents.skill_import import SkillImportError, import_skill_from_github
-from ..config import settings
-from ..utils.misc import path_is_under
+from ..agents.skill_authoring import SkillDraft
+from ..agents.skills import Skill
+from ..db.db import SessionDep
+from ..db.schemas import SkillPublic, SkillUpdate
+from ..services import skills as skills_service
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
-# TODO: should make this a full CRUD so you can create and update your own skills
-# Skills stored in the database as zip blobs?
-# Also need to work on how skills are mounted into the container now that you can filter available
-# skills (and when we separate project containers)
 
-class SkillCreate(BaseModel):
-    name: str
-    description: str
-    body: str
+class SkillCreate(Skill):
+    """ The full AgentSkills spec (`Skill`, incl. `body`) plus DB-only hub metadata. """
     author: str | None = None
     repo_url: str | None = None
-    tags: list[str] = Field(default_factory=list)
     is_public: bool = False
+
+
+class SkillDetail(SkillPublic):
+    """ A skill's stored metadata plus its SKILL.md body (read from disk). """
+    body: str
 
 
 class SkillGenerateRequest(BaseModel):
@@ -58,53 +43,43 @@ class SkillImportRequest(BaseModel):
     url: str
 
 
+class SkillPatch(SkillUpdate):
+    """
+    PATCH body
+    """
+    body: str | None = None
+
+
+def _detail(skill, body: str) -> SkillDetail:
+    return SkillDetail.model_validate(skill, from_attributes=True, update={"body": body})
+
+
 @router.get("/skills")
-async def list_skills() -> list[SkillMetadata]:
-    skills_root = settings.skills_dir
-    response: list[SkillMetadata] = []
-    for skill_dir in find_skills([skills_root]):
-        skill = read_skill(skill_dir)
-        response.append(SkillMetadata.model_validate(skill, from_attributes=True))
-    return response
+async def list_skills(session: SessionDep) -> list[SkillPublic]:
+    """ List skill metadata from the DB (no SKILL.md reads). """
+    rows = await skills_service.list_skills(session)
+    return [SkillPublic.model_validate(row) for row in rows]
 
 
 @router.get("/skills/{name}")
-async def get_skill(name: str) -> Skill:
-    skill_dir = settings.skills_dir / name
-    if not path_is_under(settings.skills_dir, skill_dir):
-        raise HTTPException(status_code=404, detail="Skill not found")
-    if find_skill_md(skill_dir) is None:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    return read_skill(skill_dir)
-
-
-class SkillPatch(BaseModel):
-    is_public: bool | None = None
-    author: str | None = None
-    repo_url: str | None = None
+async def get_skill(name: str, session: SessionDep) -> SkillDetail:
+    skill, body = await skills_service.get_skill_detail(session, name)
+    return _detail(skill, body)
 
 
 @router.post("/skills", status_code=201)
-async def create_skill(body: SkillCreate) -> Skill:
-    """Create a new skill on disk (private by default)."""
-    try:
-        return write_skill(
-            settings.skills_dir,
-            name=body.name,
-            description=body.description,
-            body=body.body,
-            author=body.author,
-            repo_url=body.repo_url,
-            tags=body.tags,
-            is_public=body.is_public,
-        )
-    except FileExistsError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"A skill named {body.name!r} already exists.",
-        )
-    except SkillError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail:
+    """ Create a new skill (private by default). """
+    skill = await skills_service.create_skill(
+        session,
+        spec=payload,
+        author=payload.author,
+        repo_url=payload.repo_url,
+        is_public=payload.is_public,
+    )
+    # Read the body back from the written SKILL.md rather than echoing the raw request
+    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    return _detail(skill, body_text)
 
 
 @router.post("/skills/generate")
@@ -113,72 +88,28 @@ async def generate_skill(body: SkillGenerateRequest) -> SkillDraft:
     Draft a SKILL.md from a chat conversation. Does NOT persist anything — the
     client edits the draft in a form and then submits `POST /skills` to save.
     """
-    return await generate_skill_draft(body.message_history, body.hint)
+    return await skills_service.generate_draft(body.message_history, body.hint)
 
 
 @router.post("/skills/import", status_code=201)
-async def import_skill(body: SkillImportRequest) -> Skill:
+async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDetail:
     """
     Import a skill from a public (or token-accessible) GitHub repository.
-    Imported skills are forced `is_public:false`; the user can publish later
-    via `PATCH /skills/{name}`.
+    Imported skills are private; the user can publish later via `PATCH /skills/{name}`.
     """
-    try:
-        dest_dir = import_skill_from_github(body.url, settings.skills_dir)
-    except FileExistsError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except SkillImportError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return read_skill(dest_dir)
+    skill = await skills_service.import_skill(session, body.url)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    return _detail(skill, body_text)
 
 
 @router.patch("/skills/{name}")
-async def patch_skill(name: str, body: SkillPatch) -> Skill:
-    skill_dir = settings.skills_dir / name
-    if not path_is_under(settings.skills_dir, skill_dir):
-        raise HTTPException(status_code=404, detail="Skill not found")
-    if find_skill_md(skill_dir) is None:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    updates = body.model_dump(exclude_unset=True)
-    if not updates:
-        return read_skill(skill_dir)
-    # Publish is one-way: once a skill is published to the hub, it cannot be
-    # made private again. Reject the request rather than silently no-op so the
-    # UI can show a clear error.
-    if "is_public" in updates and updates["is_public"] is False:
-        current = read_skill(skill_dir)
-        if current.is_public:
-            raise HTTPException(
-                status_code=409,
-                detail="Published skills cannot be unpublished.",
-            )
-    return update_skill_frontmatter(skill_dir, updates)
+async def patch_skill(name: str, payload: SkillPatch, session: SessionDep) -> SkillDetail:
+    skill = await skills_service.update_skill(session, name, payload, body=payload.body)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    return _detail(skill, body_text)
 
 
 @router.delete("/skills/{name}", status_code=204)
-async def delete_skill(name: str) -> None:
-    """
-    Permanently delete an unpublished skill directory from local storage.
-    Published skills are protected because they are listed on the Skill Hub.
-    """
-    skill_dir = settings.skills_dir / name
-    if not path_is_under(settings.skills_dir, skill_dir):
-        raise HTTPException(status_code=404, detail="Skill not found")
-    skill_md = find_skill_md(skill_dir)
-    if skill_md is None:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    current = read_skill(skill_dir)
-    if current.is_public:
-        raise HTTPException(
-            status_code=409,
-            detail="Published skills cannot be deleted.",
-        )
-
-    try:
-        shutil.rmtree(skill_dir)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    except OSError as e:
-        logger.warning("Failed to delete skill directory %s: %s", skill_dir, e)
-        raise HTTPException(status_code=500, detail="Failed to delete skill directory.")
+async def delete_skill(name: str, session: SessionDep) -> None:
+    """ Delete a skill """
+    await skills_service.delete_skill(session, name)

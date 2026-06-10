@@ -2,16 +2,15 @@
 Database engine, session factory, and FastAPI session dependency.
 """
 import functools
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from . import schemas
 from ..config import settings
+from .seed import seed_db
 
 
 @functools.cache
@@ -85,81 +84,11 @@ async def init_db() -> None:
     if settings.database_url.startswith("sqlite"):
         Path(settings.database_url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
     engine = get_engine()
+    from . import schemas # Import so all SQLModels are loaded
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
-    from .defaults import (
-        DEFAULT_KNOWLEDGE_BASES,
-        DEFAULT_PROJECT_MEMBERS,
-        DEFAULT_PROJECTS,
-        DEFAULT_USERS,
-    )
-
-    now = datetime.now(timezone.utc).isoformat()
-
-    async with AsyncSession(engine) as session:
-        for project in DEFAULT_PROJECTS:
-            existing = (await session.exec(
-                select(schemas.ProjectTable).where(schemas.ProjectTable.id == project.id)
-            )).first()
-            if existing is None:
-                session.add(project)
-            # else:
-            #     for key, value in project.model_dump(exclude={"id"}).items():
-            #         setattr(existing, key, value)
-            #     session.add(existing)
-
-        # Seed built-in Knowledge Bases. Re-running re-syncs the
-        # description / paths / shared_with_mcp flag in case the user
-        # changed their `VISTA_MCP_RAG_DB_PATH` env var. We deliberately
-        # leave `publications`, `build_status`, and `last_built_at`
-        # alone — those are owned by the indexer at runtime.
-        for kb in DEFAULT_KNOWLEDGE_BASES:
-            existing_kb = (await session.exec(
-                select(schemas.KnowledgeBaseTable).where(schemas.KnowledgeBaseTable.slug == kb.slug)
-            )).first()
-            seed_fields = kb.model_dump(
-                exclude={"id", "publications", "build_status", "last_built_at",
-                         "created_at", "updated_at"}
-            )
-            if existing_kb is None:
-                # Use the seed's id so re-runs are deterministic.
-                row = schemas.KnowledgeBaseTable(
-                    id=kb.id,
-                    publications=[],
-                    build_status="pending",
-                    last_built_at=None,
-                    created_at=now,
-                    updated_at=now,
-                    **seed_fields,
-                )
-                session.add(row)
-            # else:
-            #     for key, value in seed_fields.items():
-            #         setattr(existing_kb, key, value)
-            #     existing_kb.updated_at = now
-            #     session.add(existing_kb)
-
-        for user in DEFAULT_USERS:
-            existing_user = (await session.exec(
-                select(schemas.UserTable).where(schemas.UserTable.id == user.id)
-            )).first()
-            if existing_user is None:
-                session.add(user)
-
-        for member in DEFAULT_PROJECT_MEMBERS:
-            existing_member = (await session.exec(
-                select(schemas.ProjectMemberTable).where(
-                    schemas.ProjectMemberTable.project_id == member.project_id,
-                    schemas.ProjectMemberTable.user_id == member.user_id,
-                )
-            )).first()
-            if existing_member is None:
-                session.add(schemas.ProjectMemberTable(
-                    project_id=member.project_id, user_id=member.user_id,
-                ))
-
-        await session.commit()
+    await seed_db(engine)
 
 
 EngineDep = A[AsyncEngine, Depends(get_engine)]

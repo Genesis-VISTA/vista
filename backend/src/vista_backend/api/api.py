@@ -1,4 +1,3 @@
-import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -19,14 +18,8 @@ from .skills import router as skills_router
 from .uploads import router as uploads_router
 from .users import router as users_router
 
-logging.basicConfig(
-    level=settings.log_level,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-
     await init_db()
 
     # Check that the vista MCP server is up so we fail early if there's an issue.

@@ -17,10 +17,10 @@ The tarball is fetched from the GitHub API (no `git` binary needed). If
 repos.
 
 After download we copy the entire skill directory (SKILL.md plus any sibling
-scripts / references / assets) to `skills/<name>/` where `name` comes from the
-imported SKILL.md's frontmatter. `repo_url` is filled in from the source URL
-when missing, and `is_public` is forced to `false` so imports land private
-(the user can publish them via the /skills tab).
+scripts / references / assets) to the caller-provided destination directory.
+`repo_url` is filled in from the source URL when missing, and `is_public` is
+forced to `false` so imports land private (the user can publish them via the
+/skills tab).
 """
 import io
 import re
@@ -31,12 +31,13 @@ import urllib.request
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
+from pydantic import ValidationError
 
 from .skills import (
+    Skill,
     SkillError,
     find_skill_md,
     read_skill,
-    update_skill_frontmatter,
 )
 from ..config import settings
 
@@ -149,16 +150,15 @@ def _download_tarball(parsed: ParsedGithubUrl, dest_root: Path) -> Path:
         return dest_root / top
 
 
-def import_skill_from_github(url: str, skills_root: Path | str) -> Path:
+def import_skill_from_github(url: str, dest_dir: Path | str) -> Skill:
     """
-    Import the skill at `url` into `skills_root/<name>/`.
+    Import the skill at `url` into `dest_dir` (which must not already exist).
 
-    Returns the destination skill directory. Raises `SkillImportError` for
-    any user-facing problem, `FileExistsError` if a skill with the same name
-    already exists.
+    Returns the imported `Skill`. Raises `SkillImportError` for any
+    user-facing problem.
     """
     parsed = parse_github_url(url)
-    skills_root = Path(skills_root).resolve()
+    dest_dir = Path(dest_dir).resolve()
 
     with tempfile.TemporaryDirectory() as tmp:
         extracted = _download_tarball(parsed, Path(tmp))
@@ -172,23 +172,9 @@ def import_skill_from_github(url: str, skills_root: Path | str) -> Path:
                 f"No SKILL.md found at {parsed.subpath or '<repo root>'} in {parsed.owner}/{parsed.repo}."
             )
         try:
-            source_skill = read_skill(source_dir)
-        except SkillError as e:
+            skill = read_skill(source_dir)
+        except (SkillError, ValidationError) as e:
             raise SkillImportError(f"Imported SKILL.md is invalid: {e}") from e
 
-        dest_dir = (skills_root / source_skill.name).resolve()
-        if not dest_dir.is_relative_to(skills_root):
-            raise SkillImportError(
-                f"Imported skill name {source_skill.name!r} resolves outside skills root"
-            )
-        if dest_dir.exists():
-            raise FileExistsError(f"Skill directory already exists: {dest_dir}")
-
         shutil.copytree(source_dir, dest_dir)
-        # Force `is_public:false` on import; auto-fill repo_url from the source
-        # URL if the imported SKILL.md didn't set one. Author is left alone.
-        patch: dict[str, object] = {"is_public": False}
-        if not source_skill.repo_url:
-            patch["repo_url"] = url
-        update_skill_frontmatter(dest_dir, patch)
-        return dest_dir
+        return skill
