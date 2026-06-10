@@ -21,6 +21,7 @@ from ..utils.misc import now_iso
 
 SYSTEM_PROMPTS = Path(__file__).parent / "system_prompts"
 SKILLS_SRC = Path(__file__).parent / "skills"
+REPO_ROOT = Path(__file__).parents[4]
 
 
 class GitlabRepoClient:
@@ -123,6 +124,10 @@ async def seed_db(engine: AsyncEngine) -> None:
         logging.warning("No vista_data_token configured; skipping vista-data fetch: seeding only public data")
     async with ctx_manager as vista_data_client, AsyncSession(engine) as session:
         if vista_data_client:
+            # TODO This is not really where we should handle the hpc_jobs files, but it will work for now
+            job_mstdb_file = REPO_ROOT / 'hpc_jobs/forge-tune/Molten_Salt_Thermophysical_Properties.csv'
+            if not job_mstdb_file.exists():
+                await vista_data_client.download_file('mstdb/Molten_Salt_Thermophysical_Properties.csv', job_mstdb_file)
             # download_dir is resumable (skips files already on disk)
             await vista_data_client.download_dir("molten-salt-papers", molten_salt_kb_dir / "pdfs")
             await _build_knowledge_base(molten_salt_kb_dir)
