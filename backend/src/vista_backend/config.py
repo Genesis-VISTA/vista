@@ -45,8 +45,6 @@ class Settings(BaseSettings):
     MCP servers (e.g. `dev_mcp_server`) that the backend launches directly via `uv run`.
     """
 
-    skills_dir: A[ResolvedPath, Field(validation_alias="VISTA_SKILLS_DIR")] = Path("../skills")
-
     data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../data")
     """ Directory for data such as sandbox volumes and other created files """
 
@@ -57,6 +55,15 @@ class Settings(BaseSettings):
         `{knowledge_bases_dir}/{slug}/{pdfs/, rag_db/}`
         """
         return self.data_dir / "knowledge-bases"
+
+    @property
+    def storage_dir(self) -> Path:
+        """
+        Root directory for arbitrary stored files (e.g. skill folders). Entries
+        are keyed by uuid; the owning DB row records the location as a path
+        relative to `data_dir`.
+        """
+        return self.data_dir / "storage"
 
     database_url: A[
         str,

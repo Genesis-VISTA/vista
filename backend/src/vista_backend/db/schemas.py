@@ -286,6 +286,78 @@ class IndexProgress(BaseModel):
     """ Unix epoch seconds. """
 
 
+# Skills
+# Note, this is different than the models in agents/skills.py. agents/skills.py only handles the
+# skills spec directly (https://agentskills.io/specification). This database model handles storing
+# to location on disk, and some ownership metadata, in addition to mirroring the Skill spec metadata
+# 
+# TODO: Currently skills are still globably editable, and project just select a subset of skills.
+# We need to make skills scoped to a project, only editable by their creator, etc.
+
+
+class SkillBase(SQLModel):
+    name: str
+    """
+    SKILL.md name. Must be kebab case. Unique
+    """
+
+    # Mirrored AgentSkills spec metadata (synced from SKILL.md). The on-disk
+    # SKILL.md is the source of truth; these columns are kept in sync on
+    # create/patch so the full spec is readable without touching disk.
+    description: str
+    license: str | None = None
+    compatibility: str | None = None
+    allowed_tools: str | None = None
+    skill_metadata: A[
+        dict[str, str | list[str]] | None,
+        Field(default=None, sa_column=Column(JSON), serialization_alias="metadata"),
+    ]
+    """
+    The spec's client-specific `metadata` dict. The column is named
+    `skill_metadata` because `metadata` is reserved on SQLAlchemy declarative
+    models, but the API exposes it as `metadata` (matching create/patch input).
+    """
+
+    # DB-only hub metadata (never written to SKILL.md).
+    author: str | None = None
+    repo_url: str | None = None
+    is_public: bool = False
+
+
+class SkillPublic(SkillBase):
+    id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+
+class SkillTable(SkillBase, table=True):
+    """ Skill SQL model. """
+    __tablename__ = "skill"
+    __table_args__ = (UniqueConstraint("name", name="uq_skill_name"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    path: str
+    """ The skill's folder on disk, relative to `settings.data_dir` """
+    created_at: str = Field(default="")
+    """ ISO timestamp set at row insert time. """
+    updated_at: str = Field(default="")
+    """ ISO timestamp updated on every write. """
+
+
+class SkillUpdate(BaseModel):
+    """
+    Fields editable on an existing skill via PATCH.
+    """
+    description: str | None = None
+    license: str | None = None
+    compatibility: str | None = None
+    allowed_tools: str | None = None
+    metadata: dict[str, str | list[str]] | None = None
+    author: str | None = None
+    repo_url: str | None = None
+    is_public: bool | None = None
+
+
 class UserBase(SQLModel):
     pass
 

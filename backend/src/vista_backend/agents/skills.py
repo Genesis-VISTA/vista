@@ -4,9 +4,9 @@ AgentSkills spec implementation
 Basically a port of https://github.com/agentskills/agentskills/blob/main/skills-ref
 """
 import html
-import re
+from typing import Annotated as A
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Iterable
 import logging
 import textwrap
@@ -22,32 +22,23 @@ class ParseError(SkillError):
 
 class SkillMetadata(BaseModel):
     """
-    Properties parsed from a skill's SKILL.md frontmatter.
+    AgentSkills-spec properties parsed from a skill's SKILL.md frontmatter.
 
     Attributes:
-        path: Full path to the skill.md file.
         name: Skill name in kebab-case (required)
         description: What the skill does and when the model should use it (required)
         license: License for the skill (optional)
         compatibility: Compatibility information for the skill (optional)
         allowed_tools: Tool patterns the skill requires (optional, experimental)
-        metadata: Key-value pairs for client-specific properties (defaults to
-            empty dict; omitted from to_dict() output when empty)
-        author: Display name (and optional contact) of the skill author.
-        repo_url: External URL where the skill's source lives (GitHub repo, etc.).
-        is_public: If true the skill is listed on the Skill Hub; private skills
-            are still installed locally but hidden from hub browsing.
+        metadata: Key-value pairs for client-specific properties (optional).
     """
-    name: StrippedStr
+    name: A[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
     description: StrippedStr
     license: str | None = None
     compatibility: str | None = None
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
-    tags: list[str] = []
-    author: str | None = None
-    repo_url: str | None = None
-    is_public: bool = False
+
 
 class Skill(SkillMetadata):
     body: str
@@ -89,26 +80,14 @@ def find_skills(search_paths: Iterable[Path|str]) -> list[Path]:
     return results
 
 
-def read_skill(skill_dir: Path|str) -> Skill:
+def parse_skill(content: str) -> Skill:
     """
-    Read skill properties from SKILL.md frontmatter.
-
-    Args:
-        skill_dir: Path to the skill directory
-
-    Returns:
-        SkillProperties with parsed metadata
+    Parse SKILL.md text (YAML frontmatter + markdown body) into a `Skill`.
 
     Raises:
-        ParseError: If SKILL.md is missing or has invalid YAML
-        ValidationError: If required fields (name, description) are missing
+        ParseError: If the frontmatter is missing, malformed, or not a mapping.
+        ValidationError: If required fields (name, description) are missing.
     """
-    skill_dir = Path(skill_dir).resolve()
-    skill_md = find_skill_md(skill_dir)
-    if skill_md is None:
-        raise ParseError(f"SKILL.md not found in {skill_dir}")
-    
-    content = skill_md.read_text()
     if not content.startswith("---"):
         raise ParseError("SKILL.md must start with YAML frontmatter (---)")
     parts = content.split("---", 2)
@@ -123,128 +102,66 @@ def read_skill(skill_dir: Path|str) -> Skill:
         raise ParseError(f"Invalid YAML in frontmatter: {e}") from e
     if not isinstance(frontmatter_dict, dict):
         raise ParseError("SKILL.md frontmatter must be a YAML mapping")
-    
-    frontmatter_dict['path'] = skill_md
+
     frontmatter_dict['body'] = body
-    skill_parsed = Skill.model_validate(frontmatter_dict)
-    return skill_parsed
+    return Skill.model_validate(frontmatter_dict)
 
 
-_FRONTMATTER_RE = re.compile(r"\A---\n(.*?\n)---\n?(.*)\Z", re.DOTALL)
-_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-
-
-def write_skill(
-    skills_root: Path | str,
-    *,
-    name: str,
-    description: str,
-    body: str,
-    author: str | None = None,
-    repo_url: str | None = None,
-    is_public: bool = False,
-    tags: list[str] | None = None,
-    license: str | None = None,
-    metadata: dict[str, str | list[str]] | None = None,
-) -> Skill:
+def read_skill(skill_dir: Path|str) -> Skill:
     """
-    Create a new skill on disk under `skills_root/<name>/SKILL.md`.
-
-    The directory must not already exist. The slug `name` is validated as
-    kebab-case before any filesystem work.
-
-    Returns the parsed `Skill` after writing (round-trip validates the result).
-
-    Raises:
-        SkillError: If the slug is malformed.
-        FileExistsError: If a skill directory with the same name already exists.
-    """
-    if not _SLUG_RE.match(name):
-        raise SkillError(
-            f"Invalid skill name {name!r}; must be kebab-case "
-            "(lowercase letters/digits separated by single dashes)"
-        )
-    skills_root = Path(skills_root).resolve()
-    skill_dir = (skills_root / name).resolve()
-    if not skill_dir.is_relative_to(skills_root):
-        raise SkillError(f"Skill name {name!r} resolves outside skills root")
-    if skill_dir.exists():
-        raise FileExistsError(f"Skill directory already exists: {skill_dir}")
-
-    # Build the frontmatter dict, preserving a sensible key order. Only emit
-    # keys that have a non-default value so generated files stay tidy.
-    fm: dict[str, object] = {"name": name, "description": description}
-    if license is not None:
-        fm["license"] = license
-    if metadata:
-        fm["metadata"] = metadata
-    if tags:
-        fm["tags"] = tags
-    if author:
-        fm["author"] = author
-    if repo_url:
-        fm["repo_url"] = repo_url
-    fm["is_public"] = is_public
-
-    frontmatter_text = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=1000)
-    content = f"---\n{frontmatter_text}---\n\n{body.strip()}\n"
-
-    skill_dir.mkdir(parents=True, exist_ok=False)
-    (skill_dir / "SKILL.md").write_text(content)
-    return read_skill(skill_dir)
-
-
-def update_skill_frontmatter(skill_dir: Path | str, updates: dict[str, object]) -> Skill:
-    """
-    Patch top-level keys in an existing SKILL.md's frontmatter, preserving the
-    body and the formatting of unrelated frontmatter keys.
-
-    For each key in `updates`: if a top-level `key: ...` line already exists in
-    the frontmatter, its value is rewritten; otherwise the key is appended just
-    before the closing `---`. Values are YAML-emitted in flow style so booleans
-    serialize as `true`/`false` and strings get quoted as needed.
+    Read skill properties from a directory's SKILL.md.
 
     Args:
-        skill_dir: Path to the skill directory.
-        updates: Mapping of frontmatter key -> new value.
+        skill_dir: Path to the skill directory
 
     Returns:
-        The freshly parsed `Skill` after the rewrite.
+        Parsed `Skill`
 
     Raises:
-        ParseError: If SKILL.md is missing or its frontmatter can't be located.
+        ParseError: If SKILL.md is missing or has invalid YAML
+        ValidationError: If required fields (name, description) are missing
     """
     skill_dir = Path(skill_dir).resolve()
     skill_md = find_skill_md(skill_dir)
     if skill_md is None:
         raise ParseError(f"SKILL.md not found in {skill_dir}")
+    return parse_skill(skill_md.read_text())
 
-    content = skill_md.read_text()
-    match = _FRONTMATTER_RE.match(content)
-    if not match:
-        raise ParseError("SKILL.md frontmatter not properly delimited with ---")
-    frontmatter_text = match.group(1)
-    rest = match.group(2)
 
-    for key, value in updates.items():
-        serialized = yaml.safe_dump({key: value}, default_flow_style=True).strip()
-        # safe_dump emits e.g. "{is_public: true}" in flow style; strip the braces.
-        if serialized.startswith("{") and serialized.endswith("}"):
-            serialized = serialized[1:-1].strip()
-        key_line_re = re.compile(rf"(?m)^{re.escape(key)}\s*:.*\n?")
-        if key_line_re.search(frontmatter_text):
-            frontmatter_text = key_line_re.sub(serialized + "\n", frontmatter_text, count=1)
-        else:
-            if not frontmatter_text.endswith("\n"):
-                frontmatter_text += "\n"
-            frontmatter_text += serialized + "\n"
+def skill_to_markdown(skill: Skill) -> str:
+    """
+    Serialize a `Skill` to a SKILL.md document: generated YAML frontmatter (every
+    spec field that has a value, in spec order) followed by the markdown body.
+    """
+    fm: dict[str, object] = {"name": skill.name, "description": skill.description}
+    if skill.license is not None:
+        fm["license"] = skill.license
+    if skill.compatibility is not None:
+        fm["compatibility"] = skill.compatibility
+    if skill.allowed_tools is not None:
+        fm["allowed_tools"] = skill.allowed_tools
+    if skill.metadata:
+        fm["metadata"] = skill.metadata
 
-    # The regex consumed the newline directly after the closing `---`; put it
-    # back so the body's leading whitespace is preserved verbatim.
-    new_content = f"---\n{frontmatter_text}---\n{rest}"
-    if not new_content.endswith("\n"):
-        new_content += "\n"
-    skill_md.write_text(new_content)
+    frontmatter_text = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=1000)
+    return f"---\n{frontmatter_text}---\n\n{skill.body.strip()}\n"
+
+
+def write_skill(skill_dir: Path | str, skill: Skill) -> Skill:
+    """
+    Create a new skill on disk at `skill_dir/SKILL.md`, generating the
+    frontmatter from `skill`'s spec fields.
+
+    The directory must not already exist.
+
+    Returns the parsed `Skill` after writing (round-trip validates the result).
+
+    Raises:
+        FileExistsError: If `skill_dir` already exists.
+    """
+    skill_dir = Path(skill_dir).resolve()
+    skill_dir.mkdir(parents=True, exist_ok=False)
+    (skill_dir / "SKILL.md").write_text(skill_to_markdown(skill))
     return read_skill(skill_dir)
 
 

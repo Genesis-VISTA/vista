@@ -4,7 +4,6 @@ import os
 import shutil
 import uuid
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -15,9 +14,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
 from .schemas import KnowledgeBaseTable, ProjectMemberTable, ProjectTable, UserTable
+from ..agents.skills import read_skill
+from ..services._helpers import new_storage_path
+from ..services.skills import build_skill_row
+from ..utils.misc import now_iso
 
 
 SYSTEM_PROMPTS = Path(__file__).parent / "system_prompts"
+SKILLS_SRC = Path(__file__).parent / "skills"
+
 
 async def _build_knowledge_base(kb_dir: Path):
     """
@@ -107,7 +112,7 @@ async def seed_db(engine: AsyncEngine) -> None:
     if have_vista_data:
         await _build_knowledge_base(molten_salt_kb_dir)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
 
     async with AsyncSession(engine) as session:
         projects = [
@@ -159,6 +164,19 @@ async def seed_db(engine: AsyncEngine) -> None:
                 last_built_at=now,
                 created_at=now,
                 updated_at=now,
+            ))
+
+        for src in sorted(p for p in SKILLS_SRC.iterdir() if p.is_dir()):
+            path = new_storage_path()
+            shutil.copytree(src, settings.data_dir / path)
+            skill = read_skill(settings.data_dir / path)
+            session.add(build_skill_row(
+                skill,
+                path=path,
+                author="VISTA Team",
+                repo_url=None,
+                is_public=True,
+                now=now,
             ))
 
         # Test users / memberships only outside prod.
