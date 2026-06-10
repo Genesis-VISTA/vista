@@ -1,6 +1,6 @@
 #!/bin/bash -l
 # Frontier Slurm script for forge-tune via the OLCF moderate-enclave IRI API.
-# Pattern mirrors hpc_jobs/forge-tune/job.slurm (Odo): the IRI submission allocates
+# Pattern mirrors hpc_jobs/forge-tune/job.odo.slurm (Odo): the IRI submission allocates
 # the node with a single batch task, and we use an inner `srun -n 8` here to spawn
 # the 8 ranks needed for distributed training (one per GCD).
 #
@@ -25,12 +25,12 @@ set -euo pipefail
 module use /sw/aaims/crusher/modulefiles
 module load xforge
 
-# Frontier networking / runtime knobs (mirrors Odo's job.slurm).
+# Frontier networking / runtime knobs (mirrors Odo's job.odo.slurm).
 export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-hsn}"
 export MIOPEN_DISABLE_CACHE="${MIOPEN_DISABLE_CACHE:-1}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-7}"
 
-# Hyperparameters (mirrors job.slurm + job.perlmutter.slurm; override by editing or env).
+# Hyperparameters (mirrors job.odo.slurm + job.perlmutter.slurm; override by editing or env).
 initial_lr="${initial_lr:-1e-3}"
 min_lr="${min_lr:-1e-5}"
 warmup_epochs="${warmup_epochs:-5}"

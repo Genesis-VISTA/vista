@@ -4,6 +4,9 @@
     "resources": {
       "node_count": 16,
       "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch"
     }
   },
   "perlmutter": {

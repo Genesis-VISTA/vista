@@ -3,6 +3,9 @@
     "duration": 120,
     "resources": {
       "node_count": 1
+    },
+    "iri": {
+      "queue_name": "batch"
     }
   },
   "frontier": {

@@ -33,8 +33,7 @@ PERLMUTTER_SETUP_SCRIPT = "setup_perlmutter.sh"
 FRONTIER_JOB_SCRIPT = "job.frontier.slurm"
 FRONTIER_SETUP_SCRIPT = "setup_frontier.sh"
 
-ODO_JOB_SCRIPT = "job.slurm"
-""" Odo keeps the historical un-suffixed name; every job dir must have one. """
+ODO_JOB_SCRIPT = "job.odo.slurm"
 ODO_SETUP_SCRIPT = "setup_odo.sh"
 
 # Orchestration metadata files Vista uses to drive submission — never uploaded to remote
@@ -43,6 +42,7 @@ _HPC_JOB_METADATA_FILES = {
     "README.md",
     "cluster_defaults.json",
     "s3m_defaults.json",      # legacy from before the rename
+    "job.slurm",              # legacy Odo script name from before the per-cluster suffix
     ODO_JOB_SCRIPT,
     ODO_SETUP_SCRIPT,
     PERLMUTTER_JOB_SCRIPT,
@@ -69,13 +69,18 @@ class JobInfo:
     cluster_defaults: ClusterDefaults
 
 
+_CLUSTER_JOB_SCRIPTS = (ODO_JOB_SCRIPT, PERLMUTTER_JOB_SCRIPT, FRONTIER_JOB_SCRIPT)
+
+
 def get_available_jobs() -> dict[str, JobInfo]:
     jobs = {}
     for file in settings.local_hpc_jobs_dir.iterdir():
         if file.is_dir():
-            job_script = file / "job.slurm"
-            if not job_script.exists():
-                raise ValueError(f"Job {file} missing job.slurm")
+            if not any((file / s).exists() for s in _CLUSTER_JOB_SCRIPTS):
+                raise ValueError(
+                    f"Job {file} has no job script; add at least one of: "
+                    f"{', '.join(_CLUSTER_JOB_SCRIPTS)}"
+                )
             readme = file / "README.md"
             if not readme.exists():
                 raise ValueError(f"No README.md in {file}")
@@ -280,8 +285,7 @@ async def _submit_odo_job(
     - the Slurm account is the global `settings.hpc_account` (one shared OLCF
       project for all Vista users), not a per-user field
     - the remote base is the user's existing `remote_hpc_jobs_dir`
-    - the job script keeps the historical un-suffixed name `job.slurm`
-    - the setup snippet `cd`s into RUN_DIR_Odo so legacy job.slurm scripts that
+    - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
 
     Like Frontier, the user's `remote_hpc_jobs_dir` must be one-time
@@ -303,8 +307,12 @@ async def _submit_odo_job(
         )
 
     local_job_dir = settings.local_hpc_jobs_dir / job
-    # `job.slurm` existence is enforced at startup by get_available_jobs().
     job_script_path = local_job_dir / ODO_JOB_SCRIPT
+    if not job_script_path.exists():
+        raise ValueError(
+            f"Job '{job}' has no Odo script at {job_script_path}. "
+            f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
+        )
 
     iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token())
     globus = create_globus_client(refresh_token=cfg.require_globus_token())
@@ -337,7 +345,7 @@ async def _submit_odo_job(
     # Mirrors Frontier's setup snippet (proxy because Odo compute nodes have no
     # direct outbound network, HOME fallback for amscrot's bare IRI env, module
     # purge against host-env Lmod contamination via --export=ALL) plus a `cd`
-    # into the synced source dir to preserve the legacy job.slurm contract of
+    # into the synced source dir to preserve the job.odo.slurm contract of
     # running from the job directory.
     setup_snippet = textwrap.dedent(f"""
         export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
@@ -428,7 +436,7 @@ async def _submit_perlmutter_job(
     if not job_script_path.exists():
         raise ValueError(
             f"Job '{job}' has no Perlmutter script at {job_script_path}. "
-            f"Add a {PERLMUTTER_JOB_SCRIPT} alongside job.slurm to enable Perlmutter submission."
+            f"Add a {PERLMUTTER_JOB_SCRIPT} to enable Perlmutter submission."
         )
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
@@ -573,7 +581,7 @@ async def _submit_frontier_job(
     if not job_script_path.exists():
         raise ValueError(
             f"Job '{job}' has no Frontier script at {job_script_path}. "
-            f"Add a {FRONTIER_JOB_SCRIPT} alongside job.slurm to enable Frontier submission."
+            f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
     if not settings.vista_globus_collection_id:
