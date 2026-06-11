@@ -18,7 +18,7 @@ Note that the `./launch.sh` script will not terminate until cancelled, and then 
 
 To build everything without launching, run
 ```bash
-./build.sh
+./scripts/build.sh
 ```
 
 ### MCP Server (vista_mcp_server)

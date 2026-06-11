@@ -79,7 +79,7 @@ to bring up the MCP server and frontend in terminal windows instead of a tmux se
 ### Manual launch
 Run:
 ```bash
-./build.sh
+./scripts/build.sh
 ```
 
 Then launch in separate terminals run:

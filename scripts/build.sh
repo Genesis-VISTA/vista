@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO_ROOT="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 # Source the .env file
 set -o allexport; source "$REPO_ROOT/.env" 2>/dev/null || true; set +o allexport
 
