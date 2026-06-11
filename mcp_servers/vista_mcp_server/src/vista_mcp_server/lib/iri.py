@@ -89,37 +89,34 @@ class IriClient:
         )
 
     def _resolve_resources(self) -> None:
-        # If the caller pre-pinned the compute id, skip discovery for compute.
-        # We still try storage discovery — it's best-effort and tolerated empty
-        # for clusters whose token scope doesn't authorize storage (Odo + Frontier).
+        # A pre-pinned compute id means no discovery at all: the only pinning
+        # caller (Odo) does its file ops through Globus, never IRI storage, so
+        # the discover() roundtrip would add latency to every tool call for a
+        # storage id that is never used.
         if self._compute_resource_id:
-            try:
-                discovery = self._service_client.discover()
-            except Exception as e:
-                logging.debug(f"IRI storage discovery skipped ({e})")
-                return
-        else:
-            discovery = self._service_client.discover()
-            if not discovery.compute:
-                raise RuntimeError(
-                    f"No IRI compute resources discovered for profile {self.profile!r} "
-                    f"(check token validity / endpoint)"
-                )
+            return
 
-            # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
-            # grouped under the facility (site); the entry with group=<machine> & name="compute"
-            # is the right one. Fall back to the first compute resource if no exact match.
-            compute_res = None
-            for c in discovery.compute:
-                if (c.data and c.data.get("group") == self.machine and c.name == "compute") or c.name == self.machine:
-                    compute_res = c
-                    break
-            if not compute_res:
-                compute_res = discovery.compute[0]
-                logging.warning(
-                    f"IRI: no exact compute match for '{self.machine}', using fallback {compute_res.name!r}"
-                )
-            self._compute_resource_id = compute_res.data.get("id")
+        discovery = self._service_client.discover()
+        if not discovery.compute:
+            raise RuntimeError(
+                f"No IRI compute resources discovered for profile {self.profile!r} "
+                f"(check token validity / endpoint)"
+            )
+
+        # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
+        # grouped under the facility (site); the entry with group=<machine> & name="compute"
+        # is the right one. Fall back to the first compute resource if no exact match.
+        compute_res = None
+        for c in discovery.compute:
+            if (c.data and c.data.get("group") == self.machine and c.name == "compute") or c.name == self.machine:
+                compute_res = c
+                break
+        if not compute_res:
+            compute_res = discovery.compute[0]
+            logging.warning(
+                f"IRI: no exact compute match for '{self.machine}', using fallback {compute_res.name!r}"
+            )
+        self._compute_resource_id = compute_res.data.get("id")
 
         # Storage: prefer one with "home" in its name (mirrors IriServiceClient._get_storage_resource_id).
         for s in discovery.storage:

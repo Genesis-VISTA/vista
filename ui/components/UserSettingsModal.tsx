@@ -171,9 +171,10 @@ function UserSettingsForm({
           required
         />
         <span className="user-settings-hint">
-          Where hpc_jobs are copied to on Odo (via Globus). One-time setup:
-          {" "}<code>chmod 2775</code> this directory on Odo so the IRI automation
-          user can traverse Vista-created subdirectories.
+          Where hpc_jobs are copied to on Odo (via Globus). One-time setup on Odo:
+          {" "}<code>mkdir -p -m 2775 &lt;this dir&gt;/out</code> — job logs and
+          outputs are written there by the IRI automation user, and Globus cannot
+          create group-writable directories.
         </span>
       </label>
 

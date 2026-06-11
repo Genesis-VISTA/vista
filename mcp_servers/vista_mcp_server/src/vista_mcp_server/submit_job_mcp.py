@@ -112,10 +112,17 @@ MAX_TIME = int(parse_time_limit("4:00:00").total_seconds())
 
 _LOG_CACHE_TTL_S = 30
 """
-How long `_get_frontier_job_status` will serve a previously-fetched log file
+How long `_get_olcf_job_status` will serve a previously-fetched log file
 from the local filesystem before re-fetching via Globus. Trades log freshness
 for fast back-to-back status calls within a single chat turn. Set to 0 to
 disable caching (always re-fetch).
+"""
+
+_PRE_RUN_STATES = {"NEW", "QUEUED", "PENDING", "HELD"}
+"""
+IRI/PSI-J job states in which the job hasn't touched a compute node yet, so no
+log file or output dir can exist — status queries skip the Globus round trips
+entirely while the job is in one of these.
 """
 
 
@@ -275,10 +282,17 @@ async def _submit_odo_job(
     - the remote base is the user's existing `remote_hpc_jobs_dir`
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
+    - Globus NEVER creates the output dir (see below); the user pre-creates
+      `<remote_hpc_jobs_dir>/out` once with `mkdir -p -m 2775`
 
-    Like Frontier, the user's `remote_hpc_jobs_dir` must be one-time
-    `chmod 2775`'d so dirs created via Globus inherit setgid + group rwx and the
-    IRI automation user (<project>_auser) can traverse them.
+    Permissions model: Globus mkdir/transfer runs as the user's mapped account
+    with the DTN's umask, so Globus-created dirs are NOT group-writable, and
+    unlike Frontier, Odo has no setfacl to grant the IRI automation user
+    (<project>_auser) write access after the fact. Globus is therefore only
+    allowed to create/write things the auser merely READS (the `<job>/src`
+    tree). Everything the auser WRITES lives under the pre-created,
+    group-writable `<base>/out`: Slurm logs land directly in it, and the
+    per-job `$VISTA_OUT` subdir is mkdir'd at runtime by the auser itself.
 
     Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
@@ -305,15 +319,13 @@ async def _submit_odo_job(
     iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token())
     globus = create_globus_client(refresh_token=cfg.require_globus_token())
     base = cfg.require_remote_hpc_jobs_dir().rstrip('/')
-    session_dir = f"{base}/{settings.session_id}"
-    out_dir = f"{session_dir}/out"
+    # No session prefix: job ids are unique, and the out dir must be the
+    # pre-created group-writable one — a fresh per-session dir would have to be
+    # created by Globus, which is exactly what breaks auser write access.
+    out_dir = f"{base}/out"
     src_dir = f"{base}/{job}/src"
 
-    await globus.operation_mkdir_p(
-        endpoint=settings.odo_globus_collection_id,
-        path=out_dir,
-        parents_below=base,
-    )
+    await _require_odo_out_dir(globus, base=base, out_dir=out_dir)
     await _sync_job_sources(
         globus, job, src_dir, base=base,
         remote_endpoint=settings.odo_globus_collection_id,
@@ -388,7 +400,7 @@ async def _submit_odo_job(
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": session_dir,
+            "directory": base,
             "stdout_path": stdout_template,
             "stderr_path": stderr_template,
             "environment": iri_env,
@@ -397,6 +409,46 @@ async def _submit_odo_job(
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to odo")
     return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+
+
+async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str) -> None:
+    """
+    Verify the pre-created, group-writable `<base>/out` exists before submitting.
+
+    We deliberately do NOT create it via Globus — the DTN applies the user's
+    umask, so a Globus-made dir would deny the IRI automation user write access
+    and the job would die at Slurm-log creation with no useful error. Checking
+    up front turns that into an actionable message. Globus `ls` reports a
+    `permissions` octal string per entry; group-write is the bit we need.
+    """
+    try:
+        entries = await globus.operation_ls(
+            endpoint=settings.odo_globus_collection_id, path=base,
+        )
+    except Exception as e:
+        raise ToolError(
+            f"Cannot list {base} on the Odo Globus collection ({e}). Check that the "
+            "'Remote HPC jobs directory' in your user settings exists on Odo and "
+            "your Globus token grants access to it."
+        )
+    out_entry = next(
+        (e for e in entries if e.get("name") == "out" and e.get("type") == "dir"),
+        None,
+    )
+    if out_entry is None:
+        raise ToolError(
+            f"Missing output directory {out_dir} on Odo. One-time setup — log in "
+            f"to Odo and run:\n  mkdir -p -m 2775 {out_dir}\nThis lets the IRI "
+            "automation user write job logs and outputs (Globus cannot create "
+            "group-writable directories, and Odo has no setfacl)."
+        )
+    perms = out_entry.get("permissions")
+    if perms and not (int(perms, 8) & 0o020):
+        raise ToolError(
+            f"{out_dir} exists but is not group-writable (permissions {perms}), so "
+            f"the IRI automation user cannot write job logs there. Run on Odo:\n"
+            f"  chmod 2775 {out_dir}"
+        )
 
 
 async def _submit_perlmutter_job(
@@ -718,10 +770,14 @@ async def _sync_job_sources(
     `base` is the cluster's remote base dir (assumed pre-existing); we use it
     as the parents_below floor for the recursive mkdir.
 
-    Group/setgid perms required for the IRI auto-user (e.g. chm243_auser) to
-    read sources come from a ONE-TIME `chmod 2775 <base>` the user does
-    manually on the cluster — Globus's operation_mkdir doesn't take a mode, so
-    new dirs only get the right group/setgid by inheriting from the parent.
+    Permissions: the IRI auto-user (e.g. gen150_auser / chm243_auser) only
+    needs to READ the src tree, which the DTN's default umask grants
+    (755 dirs / 644 files); correct group ownership is inherited from `base`,
+    which the user one-time `chmod 2775`'d. Globus-created dirs are NOT
+    group-writable — anything the auto-user must WRITE has to live elsewhere
+    (see `_require_odo_out_dir` for Odo; Frontier relies on setfacl).
+    Pre-creating `<base>/<job>/src` manually also works — the mkdir here is
+    idempotent and the transfer just adds files.
     """
     # Probe the remote collection: if src_dir exists and contains entries, skip upload.
     try:
@@ -879,6 +935,15 @@ async def _get_olcf_job_status(
             "for jobs submitted in the current session)",
         ])
 
+    # While the job is still waiting for resources, neither the log file nor the
+    # output dir exists — a Globus fetch would just burn ~10-30s of task overhead
+    # to learn that. Answer from the IRI state alone.
+    if state in _PRE_RUN_STATES:
+        return "\n\n".join([
+            "\n".join(f"{k}={v}" for k, v in metadata.items()),
+            "(job has not started yet; logs and outputs will appear once it runs)",
+        ])
+
     # Pull the log file across Globus, then read locally. The local landing
     # spot doubles as the cached log for subsequent reads — if it was fetched
     # within `_LOG_CACHE_TTL_S`, skip the Globus call entirely. Trades some
@@ -900,6 +965,8 @@ async def _get_olcf_job_status(
                 items=[(submitted.log_path, str(local_log_path), False)],
                 label=f"vista log fetch: {job_id}",
                 sync_level="mtime",  # log file grows; mtime is cheaper than checksum
+                poll_seconds=3,      # logs are small; don't sit out the default 10s poll
+                timeout_seconds=120, # fail fast instead of hanging the chat turn
             )
         except Exception as e:
             logs = f"(unable to fetch logs: {e})"
