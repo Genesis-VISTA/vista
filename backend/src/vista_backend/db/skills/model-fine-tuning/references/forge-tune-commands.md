@@ -93,10 +93,10 @@ The local commands above are for ad-hoc runs. For real training, submit via
 `submit_hpc_job` and let vista handle Slurm + file paths. Three clusters supported:
 
 ```text
-# Odo (OLCF Frontier-class training system) — defaults from "odo" section, S3M API
+# Odo (OLCF Frontier-class training system) — defaults from "odo" section, IRI compute + Globus file ops
 submit_hpc_job(job="forge-tune", cluster="odo", duration="0:30:00")
 
-# Frontier (OLCF production) — defaults from "frontier" section, IRI compute + SSH file ops
+# Frontier (OLCF production) — defaults from "frontier" section, IRI compute + Globus file ops
 submit_hpc_job(job="forge-tune", cluster="frontier", duration="0:30:00")
 
 # Perlmutter (NERSC) — defaults from "perlmutter" section, runs under shifter

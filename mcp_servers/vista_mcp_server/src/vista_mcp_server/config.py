@@ -2,23 +2,11 @@ import os, logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
-import textwrap
 from typing import Annotated as A
 import getpass
 import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
-
-ODO_SETUP_SCRIPT = textwrap.dedent(r"""
-    export VISTA_OUT="{remote_hpc_jobs_dir}/out/$SLURM_JOB_ID"
-    mkdir -p -m 2775 "$VISTA_OUT"
-    chmod 2775 "{remote_hpc_jobs_dir}" "{remote_hpc_jobs_dir}/out"
-
-    export https_proxy="http://proxy.ccs.ornl.gov:3128";
-    export http_proxy="http://proxy.ccs.ornl.gov:3128";
-    export no_proxy="localhost,127.0.0.1,0.0.0.0";
-""").strip()
-
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -58,23 +46,26 @@ class AppSettings(BaseSettings):
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
     hpc_account: str = "gen150-vista"
     """
-    OLCF project name used for Odo jobs. Doubles as (a) the expected `project`
-    on the user's S3M token (validated before submission) and (b) the Slurm
-    `account` attribute on the submitted job. Frontier uses the user's
-    per-record `nersc_account` instead (re-labeled "IRI project account" in UI).
-    """
-    hpc_setup_script_template: str = ODO_SETUP_SCRIPT
-    """
-    Script sourced before every job script.
-
-    This is a format string referencing `{remote_hpc_jobs_dir}` (supplied per
-    tool call via MCP metadata) and other settings.
+    OLCF project name used as the Slurm `account` for Odo jobs (one shared
+    project for all Vista users). The user's S3M token must belong to this
+    project. Frontier uses the per-user `frontier_account` field instead.
     """
 
     s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
-    """ Base URL for the S3M API (Odo only). """
+    """
+    Base URL for the OLCF AmSC IRI API on the open enclave (Odo / Defiant /
+    Wombat / Quokka). Historically named `s3m_url` from the pre-IRI Odo path;
+    Frontier uses the moderate-enclave equivalent (`olcf_iri_url`).
+    """
     s3m_resource: str = "odo"
-    """ S3M compute resource id to submit jobs against. """
+    """ OLCF compute resource group name (matched against the IRI discovery result). """
+    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
+    """
+    Pinned IRI compute resource UUID for Odo. Bypasses `discover()` since the
+    open-enclave service lists Odo / Defiant / Wombat / Quokka without a stable
+    name/group match for `s3m_resource`. Look up via amscrot's `discover()` if
+    OLCF rotates resource ids.
+    """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
@@ -106,6 +97,12 @@ class AppSettings(BaseSettings):
     Default is OLCF's current production DTN. Verify with the helper script at
     OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
     """
+    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
+    """
+    UUID of the Globus Collection that exposes Odo's filesystem (open enclave;
+    /gpfs/wolf2/olcf/gen150/... etc.). Distinct from the OLCF DTN used for
+    Frontier — the two enclaves are reachable via different collections.
+    """
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
     Globus Native App client UUID used to mint refresh-token authorizers from
@@ -116,12 +113,13 @@ class AppSettings(BaseSettings):
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
-    SSH host for file access (SCP/sacct) on Odo. To use a jump host, pass an array
-    or comma separated list of hosts.
+    Legacy SSH host list, kept for the optional agenthpc subserver (disabled by
+    default). The Odo/Frontier job tools no longer SSH — compute goes through
+    IRI and file ops through Globus. To use a jump host, pass an array or comma
+    separated list of hosts.
     """
-
     hpc_ssh_user: str | None = None
-    """ SSH user to log in as """
+    """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
 
     session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
     """ Unique id for the Vista session """

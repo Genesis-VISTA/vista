@@ -5,7 +5,7 @@ For questions beyond the database and literature corpus (general nuclear science
 
 ## HPC Job Submission (Odo)
 To run jobs on the Odo HPC cluster, use these tools directly — do NOT use run_bash:
-- submit_hpc_job(job, nodes?, time_limit?, script_args?): Submit a Slurm job via S3M. Available jobs: example, forge-tune.
+- submit_hpc_job(job, nodes?, time_limit?, script_args?): Submit a Slurm job via the IRI service. Available jobs: example, forge-tune.
 - get_hpc_job_status(job_id): Check the status and logs of a submitted job.
 - list_hpc_jobs(): List all recently submitted jobs.
 Use submit_hpc_job whenever the user asks to run, launch, or execute anything on Odo or the HPC cluster.

@@ -55,7 +55,14 @@ class IriClient:
     blocking the MCP server's event loop.
     """
 
-    def __init__(self, *, api_endpoint: str, api_key: str, machine: str, profile: str = "nersc-iri"):
+    def __init__(
+        self, *,
+        api_endpoint: str,
+        api_key: str,
+        machine: str,
+        profile: str = "nersc-iri",
+        compute_resource_id: str | None = None,
+    ):
         self.api_endpoint = api_endpoint
         self.machine = machine
         self.profile = profile
@@ -66,7 +73,11 @@ class IriClient:
             name=profile,
             credential={"api_key": api_key, "api_endpoint": api_endpoint},
         )
-        self._compute_resource_id: str | None = None
+        # Explicit override: when set, init_resources() skips compute discovery
+        # and uses this id directly. Used for Odo (open enclave) where discovery
+        # returns multiple unrelated resources and `machine="odo"` doesn't reliably
+        # match by name/group; matches the pattern in odo-iri-test.py.
+        self._compute_resource_id: str | None = compute_resource_id
         self._storage_resource_id: str | None = None
 
     async def init_resources(self) -> None:
@@ -78,6 +89,13 @@ class IriClient:
         )
 
     def _resolve_resources(self) -> None:
+        # A pre-pinned compute id means no discovery at all: the only pinning
+        # caller (Odo) does its file ops through Globus, never IRI storage, so
+        # the discover() roundtrip would add latency to every tool call for a
+        # storage id that is never used.
+        if self._compute_resource_id:
+            return
+
         discovery = self._service_client.discover()
         if not discovery.compute:
             raise RuntimeError(
@@ -256,6 +274,32 @@ async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
         api_key=iri_token,
         machine=settings.olcf_machine,
         profile="olcf-iri",
+    )
+    await client.init_resources()
+    return client
+
+
+async def create_odo_iri_client(*, iri_token: str) -> IriClient:
+    """
+    OLCF AmSC IRI client (Odo, open enclave).
+
+    Uses the same S3M token the user already configures for Odo, but routes
+    compute through the IRI service at `s3m_url` (open enclave) instead of the
+    legacy direct S3M REST endpoint. File ops on Odo go through Globus
+    (`lib/globus.py`) — IRI's storage scope isn't authorized for this token —
+    so `storage_resource_id` will raise on use, same as the Frontier client.
+
+    Pins the compute resource id from settings (matches the working pattern in
+    odo-iri-test.py) rather than relying on `discover()` to match
+    `machine="odo"` — open-enclave discovery returns several unrelated resources
+    (Odo / Defiant / Wombat / Quokka) without a stable naming convention.
+    """
+    client = IriClient(
+        api_endpoint=settings.s3m_url,
+        api_key=iri_token,
+        machine=settings.s3m_resource,
+        profile="odo-iri",
+        compute_resource_id=settings.odo_compute_resource_id,
     )
     await client.init_resources()
     return client

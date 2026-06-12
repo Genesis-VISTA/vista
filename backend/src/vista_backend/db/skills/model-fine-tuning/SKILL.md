@@ -3,9 +3,9 @@ name: model-fine-tuning
 description: >-
   Fine-tune or evaluate the FORGE-based molten-salt regression model. Supports
   the local forge-tune workflow and HPC submission on three clusters: Odo
-  (OLCF, S3M API), Frontier (OLCF, IRI compute + SSH file ops), and Perlmutter
-  (NERSC, IRI). Use when the user asks to train, fine-tune, resume, or evaluate
-  a model on the molten salt CSV data.
+  (OLCF, IRI compute + Globus file ops), Frontier (OLCF, IRI compute + Globus
+  file ops), and Perlmutter (NERSC, IRI). Use when the user asks to train,
+  fine-tune, resume, or evaluate a model on the molten salt CSV data.
 metadata:
   tags: ["OLCF", "Odo", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
 ---

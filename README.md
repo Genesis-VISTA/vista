@@ -51,13 +51,16 @@ cp .env.sample .env
 and fill out your env keys and settings.
 
 Important env vars:
-| Variable                      | Description                                                                                      | Default                                   |
-| ----------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| OPENAI_API_KEY                | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                           |
-| VISTA_MCP_S3M_TOKEN           | See [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token). Use open enclave and the gen150-vista project. Token expires in 24 hours. | None (required) |
-| VISTA_MCP_HPC_SSH_USER        | SSH username to log into Odo (ucams id)                                                          | None (required)                           |
-| VISTA_MCP_REMOTE_HPC_JOBS_DIR | Where to upload HPC jobs                                                                         | /gpfs/wolf2/olcf/gen150/proj-shared/vista |
-| VISTA_MCP_OMD_API_KEY         | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None (optional)                           |
+| Variable                             | Description                                                                                      | Default                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| OPENAI_API_KEY                       | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                           |
+| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID | UUID of the Globus collection hosted on the Vista server (must expose `hpc_jobs/` and the output dir). Required for Odo/Frontier file ops. | None (required for HPC) |
+| VISTA_MCP_OMD_API_KEY                | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None (optional)                           |
+
+Per-user HPC credentials (S3M token, Globus refresh token, NERSC IRI token, remote
+directories) are **not** env vars — each user sets them in the UI under User settings.
+S3M tokens follow the [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
+(open enclave, gen150-vista project; expires in 24 hours).
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
@@ -89,38 +92,52 @@ cd ./mcp_servers/vista_mcp_server && uv run vista-mcp-server --transport=http
 ```
 
 ## Jobs
-The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires at minimum a `job.slurm` script. An optional `s3m_defaults.json` file sets resource defaults for the S3M scheduler.
+The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires a `README.md` plus at least one per-cluster job script. A job opts in to a cluster by providing the matching script (and, optionally, a section in `cluster_defaults.json`).
+
+All three clusters follow the same submission architecture: compute goes through an IRI service (OLCF AmSC IRI for Odo/Frontier, NERSC IRI for Perlmutter) and file transfer goes through Globus on OLCF clusters (or the IRI Filesystem API on Perlmutter). No SSH is involved.
 
 ### Directory layout
 ```
 hpc_jobs/
 └── my-job/
-    ├── job.slurm          # required — Slurm batch script, run via S3M
-    ├── s3m_defaults.json  # optional — resource/duration defaults
-    └── README.md          # optional — shown to agent as job description
-    └── ...                # Other supporting files. All files will be uploaded to the HPC cluster
+    ├── README.md              # required — shown to agent as job description
+    ├── job.odo.slurm          # Slurm batch script for Odo (OLCF, open enclave)
+    ├── job.frontier.slurm     # Slurm batch script for Frontier (OLCF, moderate enclave)
+    ├── job.perlmutter.slurm   # Slurm batch script for Perlmutter (NERSC)
+    ├── setup_odo.sh           # optional — pre_launch setup, inlined into the JobSpec
+    ├── setup_frontier.sh      # optional — same, for Frontier
+    ├── setup_perlmutter.sh    # optional — same, for Perlmutter
+    ├── cluster_defaults.json  # optional — per-cluster resource/duration defaults
+    └── ...                    # Other supporting files, uploaded to <remote>/<job>/src
 ```
 
-### job.slurm
-A standard Slurm batch script. The agent can pass argument to the job, which you can use in the script.
+### job.<cluster>.slurm
+A standard Slurm batch script, inlined into the IRI JobSpec (not uploaded). The agent can pass arguments to the job, which you can use in the script via `$1`, `$2`, ... The dispatcher exports `RUN_DIR_<Cluster>` (the synced source dir) and `FORGE_MODEL_<Cluster>` env vars; on Odo the script additionally starts with its working directory set to the source dir.
 
-### s3m_defaults.json
-Overrides default S3M submission parameters. All fields are optional:
+### cluster_defaults.json
+Per-cluster submission defaults. A job opts in to a cluster by including the corresponding section (`odo`, `frontier`, `perlmutter`). All fields are optional:
 ```json
 {
-  "duration": 120,
-  "resources": {
-    "node_count": 1,
-    "process_count": null,
-    "processes_per_node": null,
-    "cpu_cores_per_process": null,
-    "gpu_cores_per_process": null,
-    "exclusive_node_use": true,
-    "memory": null
+  "odo": {
+    "duration": 120,
+    "resources": {
+      "node_count": 1,
+      "process_count": null,
+      "processes_per_node": null,
+      "cpu_cores_per_process": null,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "constraint": null,
+      "image": null,
+      "module": null,
+      "environment": {}
+    }
   }
 }
 ```
-`duration` is in **seconds**. `memory` is in **bytes**. If `s3m_defaults.json` is absent, the defaults are 120 s and 1 node.
+`duration` is in **seconds**. `iri.environment` entries are merged into the job's environment and win over the dispatcher-provided defaults.
 
 ### Job Output
 Inside the job, the `VISTA_OUT` environment variable will be set to the path of an output directory. Any output files and logs should be saved

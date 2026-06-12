@@ -192,8 +192,8 @@ DEFAULT_MINING_SIGNATURES: tuple[str, ...] = (
 
 # Host allow-list for the network-egress check. fnmatch globs. Covers
 # the OLCF / NERSC / OSTI infrastructure VISTA's HPC dispatchers already
-# talk to (Odo via S3M at OLCF, Perlmutter via IRI at NERSC), plus
-# loopback for in-allocation traffic.
+# talk to (Odo/Frontier via IRI at OLCF, Perlmutter via IRI at NERSC),
+# plus loopback for in-allocation traffic.
 DEFAULT_HOST_ALLOW_LIST: tuple[str, ...] = (
     "*.olcf.ornl.gov",
     "*.ornl.gov",

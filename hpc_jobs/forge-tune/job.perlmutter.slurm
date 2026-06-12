@@ -21,7 +21,7 @@ set -euo pipefail
 : "${RUN_DIR_Perlmutter:?RUN_DIR_Perlmutter not set; add to cluster_defaults.json iri.environment}"
 : "${FORGE_MODEL_Perlmutter:?FORGE_MODEL_Perlmutter not set; add to cluster_defaults.json iri.environment}"
 
-# Hyperparameters (mirrors hpc_jobs/forge-tune/job.slurm; override by editing or env).
+# Hyperparameters (mirrors hpc_jobs/forge-tune/job.odo.slurm; override by editing or env).
 initial_lr="${initial_lr:-1e-3}"
 min_lr="${min_lr:-1e-5}"
 warmup_epochs="${warmup_epochs:-5}"
