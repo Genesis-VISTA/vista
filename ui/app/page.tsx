@@ -15,6 +15,10 @@ import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { readActiveProjectName, useActiveProject } from "@/lib/projects";
 import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
+  fetchPersistedChatSession,
+  savePersistedChatSession,
+} from "@/lib/chat-session";
+import {
   htmlFromToolReturnContent,
   type AgentRunResultEvent,
   type FunctionToolCallEvent,
@@ -195,6 +199,8 @@ export default function HomePage() {
    * Overrides the collapsed-by-default state for non-latest intermediates.
    */
   const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
+  const [isSessionHydrated, setIsSessionHydrated] = useState(false);
+  const lastPersistedSnapshotRef = useRef<string | null>(null);
 
   function toggleIntermediate(id: string) {
     setExpandedIntermediates((prev) => {
@@ -222,6 +228,68 @@ export default function HomePage() {
     setLatestIntermediateId(null);
     setExpandedIntermediates(new Set());
   }, [activeProject?.id]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) {
+      lastPersistedSnapshotRef.current = null;
+      setIsSessionHydrated(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSessionHydrated(false);
+
+    void (async () => {
+      try {
+        const persisted = await fetchPersistedChatSession(projectName);
+        if (cancelled) return;
+        const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
+        const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
+        setMessages(restoredMessages);
+        setMessageHistory(restoredHistory);
+        setLatestIntermediateId(null);
+        setExpandedIntermediates(new Set());
+        lastPersistedSnapshotRef.current = JSON.stringify({
+          messages: restoredMessages,
+          messageHistory: restoredHistory,
+        });
+      } catch {
+        if (cancelled) return;
+        setMessages([]);
+        setMessageHistory([]);
+        setLatestIntermediateId(null);
+        setExpandedIntermediates(new Set());
+        lastPersistedSnapshotRef.current = JSON.stringify({
+          messages: [],
+          messageHistory: [],
+        });
+      } finally {
+        if (!cancelled) setIsSessionHydrated(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, activeProject?.name]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !isSessionHydrated) return;
+    if (messageHistory.length === 0) return;
+
+    const snapshot = JSON.stringify({ messages, messageHistory });
+    if (snapshot === lastPersistedSnapshotRef.current) return;
+
+    lastPersistedSnapshotRef.current = snapshot;
+    void savePersistedChatSession(projectName, { messages, messageHistory }).catch(() => {
+      // Best-effort persistence for Phase 1. A failed save should not break the live chat.
+      if (lastPersistedSnapshotRef.current === snapshot) {
+        lastPersistedSnapshotRef.current = null;
+      }
+    });
+  }, [activeProject?.name, isSessionHydrated, messages, messageHistory]);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");

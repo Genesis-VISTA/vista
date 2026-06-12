@@ -3,7 +3,7 @@ Data models / schemas
 """
 import re
 import uuid
-from typing import Annotated as A, Literal, Optional
+from typing import Annotated as A, Any, Literal, Optional
 from sqlalchemy import JSON, Column, String
 from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
@@ -92,6 +92,57 @@ class ProjectMemberTable(SQLModel, table=True):
     __tablename__ = "project_member"
     project_id: uuid.UUID = Field(foreign_key="project.id", primary_key=True, ondelete="CASCADE")
     user_id: uuid.UUID = Field(foreign_key="app_user.id", primary_key=True, ondelete="CASCADE")
+
+
+ChatMessageRole = Literal["user", "assistant", "system", "tool"]
+
+
+class ChatTranscriptMessage(BaseModel):
+    """
+    Minimal persisted chat bubble for the UI.
+    """
+    id: str
+    role: ChatMessageRole
+    content: str
+    intermediate: bool | None = None
+
+
+class ChatSessionBase(SQLModel):
+    """
+    Persisted chat state for one (user, project) pair.
+
+    Phase 1 keeps exactly one resumable conversation per user/project. We
+    store both the opaque PydanticAI message history needed to continue the
+    agent run, and a lightweight transcript copy for restoring the UI.
+    """
+    message_history: A[list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))]
+    messages: A[list[ChatTranscriptMessage], Field(default_factory=list, sa_column=Column(JSON))]
+
+
+class ChatSessionUpdate(BaseModel):
+    message_history: list[dict[str, Any]] = Field(default_factory=list)
+    messages: list[ChatTranscriptMessage] = Field(default_factory=list)
+
+
+class ChatSessionPublic(ChatSessionBase):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    project_id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+
+class ChatSessionTable(ChatSessionBase, table=True):
+    __tablename__ = "chat_session"
+    __table_args__ = (
+        UniqueConstraint("user_id", "project_id", name="uq_chat_session_user_project"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
 
 
 
