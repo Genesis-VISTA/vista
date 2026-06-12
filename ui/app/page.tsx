@@ -182,9 +182,9 @@ export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   /**
    * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
-   * `agent_run_result.new_messages` and sent back as `message_history` on the
-   * next turn so the agent has full conversational context. Separate from the
-   * display `messages` state; we never construct or mutate these payloads.
+   * `agent_run_result.new_messages`. The backend now owns the canonical
+   * session history for chat runs; we still keep this client copy for UI
+   * restore, local features like "Save as skill", and Phase 1/2 compatibility.
    */
   const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
@@ -842,7 +842,6 @@ export default function HomePage() {
         body: JSON.stringify({
           project_name: projectName,
           user_prompt: text,
-          message_history: messageHistory,
         })
       });
 

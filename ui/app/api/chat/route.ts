@@ -8,9 +8,10 @@ export const dynamic = "force-dynamic";
  * Thin proxy to the Python backend's `POST /projects/{project_name}/agent/run`
  * SSE endpoint.
  *
- * The client sends `{ project_name, user_prompt, message_history }`; we add
- * `stream: true` and forward to the project-scoped agent route. The backend
- * emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
+ * The client sends `{ project_name, user_prompt }` for the normal path; an
+ * optional `message_history` is still accepted as a migration fallback for
+ * older clients. We add `stream: true` and forward to the project-scoped
+ * agent route. The backend emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
  * `agent_run_result`, `mcp_form_elicitation`, `mcp_url_elicitation`) as
  * Server-Sent Events with real `event:` lines — this route streams them
  * straight through; the parser lives in `app/page.tsx`.
