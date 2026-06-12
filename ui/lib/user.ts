@@ -7,8 +7,8 @@
  * Two views:
  *   - `UserPublic` — id/email/is_admin only. Cached module-level and used
  *     by the nav rail; fetched on first mount, never carries secrets.
- *   - `UserPublicWithConfig` — adds the per-user config (HPC dir, NERSC
- *     account, decrypted tokens). Fetched on demand by the settings modal
+ *   - `UserPublicWithConfig` — adds the per-user config (NERSC account,
+ *     decrypted S3M / IRI tokens). Fetched on demand by the settings modal
  *     so we don't decrypt or surface secrets on every page load.
  */
 
@@ -23,31 +23,24 @@ export type UserPublic = {
 
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
 export type UserPublicWithConfig = UserPublic & {
-  remote_hpc_jobs_dir: string;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
-  frontier_account: string | null;
-  frontier_remote_dir: string | null;
-  s3m_token: string | null;
+  odo_s3m_token: string | null;
+  frontier_s3m_token: string | null;
   nersc_iri_token: string | null;
-  globus_token: string | null;
 };
 
 /**
  * Backend `UserSelfUpdate` — accepted by `PUT /users/me`. Every field is
- * optional; only the keys actually present are written. `remote_hpc_jobs_dir`
- * is non-nullable (the backend column has a default and never holds NULL);
- * the other fields accept `null` to clear them.
+ * optional; only the keys actually present are written, and each accepts
+ * `null` to clear it.
  */
 export type UserSelfUpdate = {
-  remote_hpc_jobs_dir?: string;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
-  frontier_account?: string | null;
-  frontier_remote_dir?: string | null;
-  s3m_token?: string | null;
+  odo_s3m_token?: string | null;
+  frontier_s3m_token?: string | null;
   nersc_iri_token?: string | null;
-  globus_token?: string | null;
 };
 
 let userCache: UserPublic | null = null;

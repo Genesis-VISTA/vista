@@ -419,8 +419,7 @@ class UserBase(SQLModel):
 # input doesn't end up as a non-null-but-empty token/account in the DB
 _USER_CONFIG_NULLABLE_FIELDS = (
     "nersc_account", "nersc_remote_dir",
-    "frontier_account", "frontier_remote_dir",
-    "s3m_token", "nersc_iri_token", "globus_token",
+    "odo_s3m_token", "frontier_s3m_token", "nersc_iri_token",
 )
 def _empty_str_to_none(v): return None if v == "" else v
 
@@ -428,14 +427,11 @@ def _empty_str_to_none(v): return None if v == "" else v
 class UserCreate(UserBase):
     email: str
     is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
-    frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
-    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -445,14 +441,11 @@ class UserCreate(UserBase):
 
 class UserUpdate(UserBase):
     is_admin: bool | None = None
-    remote_hpc_jobs_dir: str | None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
-    frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
-    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -461,14 +454,11 @@ class UserUpdate(UserBase):
 
 
 class UserSelfUpdate(UserBase):
-    remote_hpc_jobs_dir: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
-    frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
-    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -487,14 +477,11 @@ class UserPublicWithConfig(UserBase):
     id: uuid.UUID
     email: str
     is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
-    frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
-    globus_token: str | None = None
 
 
 class UserTable(SQLModel, table=True):
@@ -502,40 +489,19 @@ class UserTable(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     email: str = Field(unique=True)
     is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
-    """ Folder on the HPC cluster (Odo) where hpc_jobs will be copied. """
+
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None
     """ Absolute remote dir on the NERSC machine (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter. """
-    frontier_account: str | None = None
-    """
-    OLCF project name used as the Slurm `--account` for Frontier submissions
-    (e.g. "chm243"). Must match the `project` claim on the user's S3M token,
-    since the IRI service submits Slurm jobs as <project>_auser. Required for
-    cluster="frontier".
-    """
-    frontier_remote_dir: str | None = None
-    """
-    Folder on Frontier where hpc_jobs will be copied (e.g.
-    /lustre/orion/<project>/proj-shared/vista). Required for cluster="frontier";
-    must be writable by the user's Frontier project (typically different from
-    the Odo proj-shared dir).
-    """
-    s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
-    """ Bearer token for S3M API authentication. Encrypted at rest. """
     nersc_iri_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
     """
     Globus access token for NERSC IRI. Encrypted at rest. Expires ~48h.
     Refresh: python iri-api-get-globus-token-main/get_globus_token.py --refresh-only
     """
-    globus_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
-    """
-    Globus Transfer refresh token, used for Frontier file ops via the OLCF
-    DTN collection. Long-lived; the MCP server mints short-lived access
-    tokens from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
-    Encrypted at rest.
-    Obtain with: python OLCF-Globus-Transfer/get_olcf_token.py --force-login
-                       --session-domain sso.ccs.ornl.gov
-    Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
-    """
+
+    frontier_s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
+    """  Bearer token for S3M API authentication and access to the IRI API for Frontier """
+
+    odo_s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
+    """  Bearer token for S3M API authentication and access to the IRI API for odo """

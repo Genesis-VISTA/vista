@@ -1,12 +1,16 @@
 """
-Globus file-transfer client for Frontier (cluster="frontier") file operations.
+Globus file-transfer client for Odo and Frontier file operations.
 
-Vista submits jobs to Frontier through the OLCF AmSC IRI service for compute,
-but the IRI service's per-user token doesn't grant storage scope; file ops
-therefore go through Globus. The Vista server runs a Globus Connect (Personal
-or Server) instance exposing local_hpc_jobs_dir + output_dir; the user's
-per-record Globus Auth + Transfer tokens authenticate as their OLCF identity
-for access to the OLCF DTN collection.
+Vista submits jobs to OLCF through the AmSC IRI service for compute, but the
+IRI service's per-user token doesn't grant storage scope; file ops therefore
+go through Globus. The Vista server runs a Globus Connect (Personal or Server)
+instance exposing local_hpc_jobs_dir + output_dir, and a deployment-wide,
+developer-owned Globus refresh token authorizes both sides of every transfer.
+Odo (open enclave) and Frontier (moderate enclave) sit behind different OLCF SSO
+session domains, so there is one token per enclave
+(`settings.odo_globus_refresh_token` / `settings.frontier_globus_refresh_token`,
+selected via `settings.require_globus_token(cluster)`). Per-user authorization is
+the S3M token project check in `lib/olcf_token.py`.
 
 This module is the async wrapper around `globus_sdk.TransferClient`. All
 calls run in worker threads (globus-sdk is sync) and the underlying
@@ -38,8 +42,8 @@ class GlobusClient:
 
     Created per submission via `create_globus_client`. The underlying
     `RefreshTokenAuthorizer` mints a fresh ~48h-lived access token from the
-    user's long-lived refresh token on first use, then auto-renews when each
-    minted access token expires.
+    deployment's long-lived refresh token on first use, then auto-renews when
+    each minted access token expires.
     """
 
     def __init__(self, *, refresh_token: str, client_id: str | None = None):

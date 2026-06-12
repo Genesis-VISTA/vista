@@ -51,16 +51,23 @@ cp .env.sample .env
 and fill out your env keys and settings.
 
 Important env vars:
-| Variable                             | Description                                                                                      | Default                                   |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| OPENAI_API_KEY                       | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)            | None (required)                           |
-| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID | UUID of the Globus collection hosted on the Vista server (must expose `hpc_jobs/` and the output dir). Required for Odo/Frontier file ops. | None (required for HPC) |
-| VISTA_MCP_OMD_API_KEY                | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                           | None (optional)                           |
+| Variable                                | Description                                                                                               | Default |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
+| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID    | UUID of VISTA Globus collection. Written automatically by `./scripts/launch_globus.sh`                    | None    |
+| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster odo --save-env`      | None    |
+| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster frontier --save-env` | None    |
+| VISTA_MCP_OMD_API_KEY                | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                       | None    |
 
-Per-user HPC credentials (S3M token, Globus refresh token, NERSC IRI token, remote
-directories) are **not** env vars — each user sets them in the UI under User settings.
-S3M tokens follow the [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
-(open enclave, gen150-vista project; expires in 24 hours).
+Per-user HPC credentials (S3M token, NERSC IRI token) are **not** env vars — each
+user sets them in the UI under User settings. S3M tokens follow the
+[s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
+(expires in 24 hours).
+
+The Vista-side Globus endpoint (Globus Connect Personal) is launched by
+`./scripts/launch_globus.sh` (started automatically by `./launch.sh`). First-time
+setup needs one interactive Globus login, or set `GLOBUS_SETUP_KEY` (from
+`globus gcp create mapped`) for headless setup, e.g. on AWS.
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.

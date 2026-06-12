@@ -19,6 +19,7 @@ from .lib.iri import (
     IriClient, IriDefaults, create_iri_client, create_odo_iri_client, create_olcf_iri_client,
 )
 from .lib.globus import GlobusClient, create_globus_client
+from .lib.olcf_token import require_s3m_project
 from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
 
@@ -147,17 +148,18 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
     """
     Return the only configured cluster. Raises if zero or multiple are configured.
 
-    - `s3m_token` enables Odo (IRI compute; file ops additionally need
-      `globus_token`, which is checked at use with an actionable error).
-    - `s3m_token` + `globus_token` enables Frontier (S3M token for IRI compute,
-      Globus refresh token for file ops against the OLCF DTN collection).
+    Each S3M token is per-cluster (group-scoped to one OLCF project), so the
+    presence of a token directly selects the cluster:
+
+    - `odo_s3m_token` enables Odo.
+    - `frontier_s3m_token` enables Frontier.
     - `nersc_iri_token` enables Perlmutter.
     """
     configured: list[Cluster] = []
-    if cfg.s3m_token:
+    if cfg.odo_s3m_token:
         configured.append("odo")
-        if cfg.globus_token:
-            configured.append("frontier")
+    if cfg.frontier_s3m_token:
+        configured.append("frontier")
     if cfg.nersc_iri_token:
         configured.append("perlmutter")
 
@@ -194,8 +196,8 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig, job_id: str | Non
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
             cluster: Which cluster to submit to ("odo", "frontier", or "perlmutter"). If only
                 one cluster is configured, this can be omitted. Odo and Frontier use OLCF's
-                IRI service (compute) plus Globus (files) and share the same S3M token;
-                Perlmutter uses NERSC IRI.
+                IRI service (compute) plus Globus (files), each with its own per-enclave S3M
+                token; Perlmutter uses NERSC IRI.
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
@@ -275,15 +277,15 @@ async def _submit_odo_job(
     Odo dispatch (OLCF open enclave): IRI compute + Globus file ops, the same
     architecture as Frontier (`_submit_frontier_job`). Differences:
 
-    - open-enclave IRI endpoint (`settings.s3m_url`) with a pinned compute
+    - open-enclave IRI endpoint (`settings.odo_iri_url`) with a pinned compute
       resource id (`settings.odo_compute_resource_id`)
-    - the Slurm account is the global `settings.hpc_account` (one shared OLCF
-      project for all Vista users), not a per-user field
-    - the remote base is the user's existing `remote_hpc_jobs_dir`
+    - the Slurm account is the global `settings.odo_account` (one shared OLCF
+      project for all Vista users); the user's S3M token must belong to it
+    - the remote base is the preset `settings.odo_remote_dir`
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
-    - Globus NEVER creates the output dir (see below); the user pre-creates
-      `<remote_hpc_jobs_dir>/out` once with `mkdir -p -m 2775`
+    - Globus NEVER creates the output dir (see below); an admin pre-creates
+      `<odo_remote_dir>/out` once with `mkdir -p -m 2775`
 
     Permissions model: Globus mkdir/transfer runs as the user's mapped account
     with the DTN's umask, so Globus-created dirs are NOT group-writable, and
@@ -316,9 +318,10 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
-    iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token())
-    globus = create_globus_client(refresh_token=cfg.require_globus_token())
-    base = cfg.require_remote_hpc_jobs_dir().rstrip('/')
+    await _require_olcf_access(cfg, "odo")
+    iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
+    globus = create_globus_client(refresh_token=settings.require_globus_token("odo"))
+    base = settings.odo_remote_dir.rstrip('/')
     # No session prefix: job ids are unique, and the out dir must be the
     # pre-created group-writable one — a fresh per-session dir would have to be
     # created by Globus, which is exactly what breaks auser write access.
@@ -396,7 +399,7 @@ async def _submit_odo_job(
         "attributes": {
             "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
-            "account": settings.hpc_account,
+            "account": settings.odo_account,
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
@@ -427,9 +430,9 @@ async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str)
         )
     except Exception as e:
         raise ToolError(
-            f"Cannot list {base} on the Odo Globus collection ({e}). Check that the "
-            "'Remote HPC jobs directory' in your user settings exists on Odo and "
-            "your Globus token grants access to it."
+            f"Cannot list {base} on the Odo Globus collection ({e}). Check that "
+            "VISTA_MCP_ODO_REMOTE_DIR exists on Odo and that the deployment's "
+            "Globus identity has access to it."
         )
     out_entry = next(
         (e for e in entries if e.get("name") == "out" and e.get("type") == "dir"),
@@ -592,25 +595,17 @@ async def _submit_frontier_job(
     """
     Frontier dispatch (OLCF moderate enclave).
 
-    Compute lives on the AmSC IRI service at `settings.olcf_iri_url`. File ops
-    (mkdir / source upload / log fetch / output download) go through Globus
+    Compute lives on the AmSC IRI service at `settings.frontier_iri_url`. File
+    ops (mkdir / source upload / log fetch / output download) go through Globus
     via `lib/globus.py` — the OLCF moderate-enclave token's
-    `iri-frontend-moderate` scope doesn't authorize IRI storage discovery, and
-    a separate per-user Globus refresh token grants access to the OLCF DTN.
+    `iri-frontend-moderate` scope doesn't authorize IRI storage discovery, so
+    the deployment-wide Globus refresh token grants access to the OLCF DTN.
 
-    The user record's `frontier_account` field is the Frontier Slurm account
-    (must match the S3M token's `project` claim, e.g. "chm243").
+    The Slurm account is the global `settings.frontier_account` (one shared
+    OLCF project for all Vista users); the user's S3M token must belong to it.
 
     Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
-    frontier_account = cfg.require_frontier_account()
-    if not cfg.frontier_remote_dir:
-        raise ToolError(
-            "No Frontier remote dir configured for this user. Set 'Frontier remote "
-            "directory' in the Vista user settings page before submitting jobs to "
-            "Frontier (e.g. /lustre/orion/<project>/proj-shared/vista)."
-        )
-
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.frontier
     if defaults is None:
@@ -631,9 +626,10 @@ async def _submit_frontier_job(
             "Globus collection covering both local_hpc_jobs_dir and output_dir."
         )
 
-    iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token())
-    globus = create_globus_client(refresh_token=cfg.require_globus_token())
-    base = cfg.require_frontier_remote_dir().rstrip('/')
+    await _require_olcf_access(cfg, "frontier")
+    iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
+    globus = create_globus_client(refresh_token=settings.require_globus_token("frontier"))
+    base = settings.frontier_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
     src_dir = f"{base}/{job}/src"
@@ -648,13 +644,13 @@ async def _submit_frontier_job(
     # Globus's MKD is one-level-only; we walk under `base` to create
     # <session>/out and <job>/src (two levels each).
     await globus.operation_mkdir_p(
-        endpoint=settings.olcf_globus_collection_id,
+        endpoint=settings.frontier_globus_collection_id,
         path=out_dir,
         parents_below=base,
     )
     await _sync_job_sources(
         globus, job, src_dir, base=base,
-        remote_endpoint=settings.olcf_globus_collection_id,
+        remote_endpoint=settings.frontier_globus_collection_id,
     )
 
     job_script_text = job_script_path.read_text()
@@ -735,7 +731,7 @@ async def _submit_frontier_job(
         "attributes": {
             "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
-            "account": frontier_account,
+            "account": settings.frontier_account,
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
@@ -753,7 +749,7 @@ async def _submit_frontier_job(
         },
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
-    logging.info(f"Submitted job {job_id} via IRI to {settings.olcf_machine}")
+    logging.info(f"Submitted job {job_id} via IRI to {settings.frontier_machine}")
     return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
 
 
@@ -819,15 +815,32 @@ async def _sync_job_sources(
 async def _create_olcf_iri_for(cluster: Cluster, cfg: UserConfig) -> IriClient:
     """ IRI client for an OLCF cluster: "odo" (open enclave) or "frontier" (moderate). """
     if cluster == "odo":
-        return await create_odo_iri_client(iri_token=cfg.require_s3m_token())
-    return await create_olcf_iri_client(iri_token=cfg.require_s3m_token())
+        return await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
+    return await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
 
 
 def _olcf_collection_id(cluster: Cluster) -> str:
     """ Globus collection exposing the cluster's filesystem. """
     if cluster == "odo":
         return settings.odo_globus_collection_id
-    return settings.olcf_globus_collection_id
+    return settings.frontier_globus_collection_id
+
+
+async def _require_olcf_access(cfg: UserConfig, cluster: Cluster) -> None:
+    """
+    Verify the user's S3M token belongs to the cluster's OLCF project before
+    any file op. Globus transfers run under Vista's own identity against
+    project-shared directories, so this introspection is what authorizes the
+    user — it must guard every path that touches Globus, including
+    `_get_olcf_job_outputs`, which never calls IRI.
+    """
+    if cluster == "odo":
+        account, url = settings.odo_account, settings.odo_introspect_url
+    else:
+        account, url = settings.frontier_account, settings.frontier_introspect_url
+    await require_s3m_project(
+        cfg.require_s3m_token(cluster), account, cluster=cluster, introspect_url=url,
+    )
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
@@ -912,6 +925,7 @@ async def _get_olcf_job_status(
     SSH `head` (~30s of Globus task overhead per call) but matches the
     "no SSH" architecture choice; see README.
     """
+    await _require_olcf_access(cfg, cluster)
     remote_collection = _olcf_collection_id(cluster)
     iri_client = await _create_olcf_iri_for(cluster, cfg)
     status = await iri_client.get_job_status(job_id)
@@ -958,7 +972,7 @@ async def _get_olcf_job_status(
     )
     if log_age >= _LOG_CACHE_TTL_S:
         try:
-            globus = create_globus_client(refresh_token=cfg.require_globus_token())
+            globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
             await globus.transfer_and_wait(
                 src_endpoint=remote_collection,
                 dst_endpoint=settings.vista_globus_collection_id,
@@ -990,7 +1004,7 @@ async def _get_olcf_job_status(
     if submitted.output_dir:
         excludes = (".venv", "__pycache__")
         try:
-            ls_globus = create_globus_client(refresh_token=cfg.require_globus_token())
+            ls_globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
             entries = await ls_globus.operation_ls(
                 endpoint=remote_collection,
                 path=submitted.output_dir,
@@ -1116,6 +1130,7 @@ async def _get_olcf_job_outputs(
     To force a fresh pull (e.g. checkpoint updated mid-training), delete the
     local copy first.
     """
+    await _require_olcf_access(cfg, cluster)
     submitted = _submitted_jobs.get(job_id)
     if submitted is None or submitted.output_dir is None:
         raise ValueError(
@@ -1131,6 +1146,12 @@ async def _get_olcf_job_outputs(
     sandbox_paths: list[str] = []
     cached_paths: list[str] = []
     for file in files:
+        # Globus runs as Vista's shared OLCF identity, so this relative-path check + the
+        # server-defined remote_out_dir confine the transfer to the resolved output dir.
+        # NOTE: users can still request jobs from other users by job id. But since we are limiting
+        # access to only gen150-vista and chm245 the jobs all run as a service account the users
+        # would have had access to anyways. When OLCF supports IRI file transfer, we can remove
+        # globus and rely on the S3M token for restricting file access.
         if ".." in Path(file).parts or Path(file).is_absolute():
             raise ValueError(f'Invalid path "{file}"')
         local_path = local_out_dir / file
@@ -1145,7 +1166,7 @@ async def _get_olcf_job_outputs(
         items.append((remote_path, str(local_path), False))
 
     if items:
-        globus = create_globus_client(refresh_token=cfg.require_globus_token())
+        globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
         await globus.transfer_and_wait(
             src_endpoint=_olcf_collection_id(cluster),
             dst_endpoint=settings.vista_globus_collection_id,

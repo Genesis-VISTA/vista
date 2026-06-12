@@ -3,11 +3,21 @@
 # requires-python = ">=3.14, <3.15"
 # dependencies = [
 #    "globus_sdk",
+#    "fastmcp>=3.1.1",
+#    "pydantic-settings>=2.0",
 # ]
 # ///
 """Acquire Globus Transfer tokens for OLCF -> local transfers.
 
 Ports the structure of get_globus_token.py to OLCF.
+
+The usual invocation is per-cluster: --cluster odo|frontier pulls the
+collection ID, SSO session domain, and Native App client ID from the
+vista_mcp_server config, and --save-env writes the resulting refresh token
+into .env at the repo root:
+
+    ./scripts/get_olcf_token.py --cluster odo --save-env
+    ./scripts/get_olcf_token.py --cluster frontier --save-env
 
 By default it requests only the Globus Transfer API scope
 (transfer.api.globus.org:all), which is correct for OLCF's Globus 4 DTN
@@ -28,7 +38,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
+import sys
 import time
 from pathlib import Path
 
@@ -54,6 +66,22 @@ REQUIRED_AUTH_SCOPES = {
 }
 TRANSFER_SCOPE = "urn:globus:auth:scope:transfer.api.globus.org:all"
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The two OLCF enclaves authenticate against different SSO domains.
+CLUSTER_SESSION_DOMAINS = {
+    "odo": "opensso.ccs.ornl.gov",
+    "frontier": "sso.ccs.ornl.gov",
+}
+
+
+def load_mcp_settings():
+    """Import the vista_mcp_server settings (collection IDs, client ID)."""
+    sys.path.insert(0, str(REPO_ROOT / "mcp_servers" / "vista_mcp_server" / "src"))
+    from vista_mcp_server.config import settings
+
+    return settings
+
 
 def build_transfer_scope(collection_id: str | None) -> str:
     """Return the Transfer scope, optionally with a data_access dependency.
@@ -77,7 +105,6 @@ def get_requested_scopes(data_access_collection_id: str | None) -> list[str]:
 
 
 def parse_args() -> argparse.Namespace:
-    default_token_file = Path.home() / ".globus" / "olcf_tokens.json"
     parser = argparse.ArgumentParser(
         description=(
             "Get Globus Auth + Transfer tokens for OLCF transfers. "
@@ -85,10 +112,31 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
+        "--cluster",
+        choices=sorted(CLUSTER_SESSION_DOMAINS),
+        default=None,
+        help=(
+            "Pull the OLCF collection ID, session domain, and client ID for "
+            "this cluster from the vista_mcp_server config (overrides "
+            "--olcf-collection-id, --session-domain, and --client-id)."
+        ),
+    )
+    parser.add_argument(
+        "--save-env",
+        action="store_true",
+        help=(
+            "Write the refresh token to .env at the repo root as "
+            "VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN (requires --cluster). "
+        ),
+    )
+    parser.add_argument(
         "--token-file",
         type=Path,
-        default=default_token_file,
-        help=f"Path for saved token JSON (default: {default_token_file})",
+        default=None,
+        help=(
+            "Path for saved token JSON (default: ~/.globus/olcf_tokens.json, "
+            "or ~/.globus/olcf_tokens_<cluster>.json with --cluster)"
+        ),
     )
     parser.add_argument(
         "--olcf-collection-id",
@@ -170,6 +218,21 @@ def save_tokens(token_file: Path, tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
     os.replace(tmp, token_file)
     os.chmod(token_file, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def update_env_file(env_file: Path, key: str, value: str) -> None:
+    """Set key=value in env_file, replacing an existing (possibly commented-out) line."""
+    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
+    pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}=")
+    match_idx = next((i for i in range(len(lines) - 1, -1, -1) if pattern.match(lines[i])), None)
+    if match_idx is not None:
+        lines[match_idx] = f"{key}={value}"
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"{key}={value}")
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(env_file, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def parse_scope_string(scope_string: str) -> set[str]:
@@ -343,6 +406,19 @@ def main() -> None:
     args = parse_args()
     if args.force_login and args.refresh_only:
         raise RuntimeError("Choose only one of --force-login or --refresh-only")
+    if args.save_env and not args.cluster:
+        raise RuntimeError("--save-env requires --cluster (it picks the .env variable name)")
+
+    if args.cluster:
+        settings = load_mcp_settings()
+        args.olcf_collection_id = getattr(settings, f"{args.cluster}_globus_collection_id")
+        args.session_domain = CLUSTER_SESSION_DOMAINS[args.cluster]
+        args.client_id = settings.globus_native_app_client_id
+    if args.token_file is None:
+        # Per-cluster cache: the two enclaves use different SSO identities, so
+        # sharing one file would clobber the other cluster's refresh token.
+        suffix = f"_{args.cluster}" if args.cluster else ""
+        args.token_file = Path.home() / ".globus" / f"olcf_tokens{suffix}.json"
 
     client = globus_sdk.NativeAppAuthClient(args.client_id)
 
@@ -386,13 +462,23 @@ def main() -> None:
         print(f"Transfer access token valid for ~{ttl} seconds.")
     print(f"Transfer token scopes: {transfer_token.get('scope', '')}")
 
+    if args.save_env:
+        refresh_token = transfer_token.get("refresh_token")
+        if not refresh_token:
+            raise RuntimeError(
+                "No refresh token in the Transfer token response, cannot --save-env. "
+                "Re-run with --force-login (a --refresh-only flow reuses the existing "
+                "access token and may not return a refresh token)."
+            )
+        env_file = REPO_ROOT / ".env"
+        env_var = f"VISTA_MCP_{args.cluster.upper()}_GLOBUS_REFRESH_TOKEN"
+        update_env_file(env_file, env_var, refresh_token)
+        print(f"Wrote {env_var} to {env_file}")
     if args.print_token:
         print("\nTransfer access token:")
         print(transfer_token["access_token"])
         print("\nRefresh token:")
         print(transfer_token["refresh_token"])
-    else:
-        print("Transfer access token not printed (use --print-token to display).")
 
 
 if __name__ == "__main__":

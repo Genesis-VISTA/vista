@@ -93,42 +93,27 @@ function UserSettingsForm({
   user: UserPublicWithConfig;
   onClose: () => void;
 }) {
-  const [hpcDir, setHpcDir] = useState(user.remote_hpc_jobs_dir);
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
-  const [frontierAccount, setFrontierAccount] = useState(user.frontier_account ?? "");
-  const [frontierRemoteDir, setFrontierRemoteDir] = useState(user.frontier_remote_dir ?? "");
-  const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
+  const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
+  const [frontierS3mToken, setFrontierS3mToken] = useState(user.frontier_s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
-  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   async function save() {
     // Build a minimal diff against the loaded user so we only send fields
-    // that actually changed. Empty strings become null to clear nullable
-    // fields; `remote_hpc_jobs_dir` is non-nullable and must stay a string,
-    // so blank input is rejected with an inline error.
-    const trimmedHpcDir = hpcDir.trim();
-    if (trimmedHpcDir === "") {
-      setSaveError("Remote HPC jobs directory cannot be empty.");
-      return;
-    }
+    // that actually changed. Empty strings become null to clear the field.
     const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
     const diff: UserSelfUpdate = {};
-    if (trimmedHpcDir !== user.remote_hpc_jobs_dir) {
-      diff.remote_hpc_jobs_dir = trimmedHpcDir;
-    }
     const nullableCandidates: Array<
-      [Exclude<keyof UserSelfUpdate, "remote_hpc_jobs_dir">, string | null, string | null]
+      [keyof UserSelfUpdate, string | null, string | null]
     > = [
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
-      ["frontier_account", user.frontier_account ?? null, blankToNull(frontierAccount)],
-      ["frontier_remote_dir", user.frontier_remote_dir ?? null, blankToNull(frontierRemoteDir)],
-      ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
+      ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
+      ["frontier_s3m_token", user.frontier_s3m_token ?? null, blankToNull(frontierS3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
-      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -161,49 +146,36 @@ function UserSettingsForm({
       </div>
 
       <label className="project-modal-label">
-        Remote HPC jobs directory (Odo)
+        Odo S3M token
         <input
           className="input"
-          value={hpcDir}
-          onChange={(e) => setHpcDir(e.target.value)}
-          placeholder="/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+          type="password"
+          value={odoS3mToken}
+          onChange={(e) => setOdoS3mToken(e.target.value)}
+          placeholder="Bearer token"
+          autoComplete="off"
           spellCheck={false}
-          required
         />
         <span className="user-settings-hint">
-          Where hpc_jobs are copied to on Odo (via Globus). One-time setup on Odo:
-          {" "}<code>mkdir -p -m 2775 &lt;this dir&gt;/out</code> — job logs and
-          outputs are written there by the IRI automation user, and Globus cannot
-          create group-writable directories.
+          Bearer token for the OLCF AmSC IRI service on Odo (open enclave).
+          Required for cluster=&quot;odo&quot;. Stored encrypted at rest.
         </span>
       </label>
 
       <label className="project-modal-label">
-        Frontier account
+        Frontier S3M token
         <input
           className="input"
-          value={frontierAccount}
-          onChange={(e) => setFrontierAccount(e.target.value)}
-          placeholder="e.g. chm243"
+          type="password"
+          value={frontierS3mToken}
+          onChange={(e) => setFrontierS3mToken(e.target.value)}
+          placeholder="Bearer token"
+          autoComplete="off"
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          OLCF project name for Frontier Slurm submissions. Must match your S3M
-          token&apos;s project claim. Required for cluster=&quot;frontier&quot;.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        Frontier remote directory
-        <input
-          className="input"
-          value={frontierRemoteDir}
-          onChange={(e) => setFrontierRemoteDir(e.target.value)}
-          placeholder="/lustre/orion/<project>/proj-shared/vista"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Where hpc_jobs are copied to on Frontier. Required for cluster=&quot;frontier&quot;.
+          Bearer token for the OLCF AmSC IRI service on Frontier (moderate
+          enclave). Required for cluster=&quot;frontier&quot;. Stored encrypted at rest.
         </span>
       </label>
 
@@ -236,23 +208,6 @@ function UserSettingsForm({
       </label>
 
       <label className="project-modal-label">
-        S3M token
-        <input
-          className="input"
-          type="password"
-          value={s3mToken}
-          onChange={(e) => setS3mToken(e.target.value)}
-          placeholder="Bearer token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI services — enables both Odo (open
-          enclave) and Frontier (moderate enclave) compute. Stored encrypted at rest.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
         NERSC IRI token
         <input
           className="input"
@@ -265,25 +220,6 @@ function UserSettingsForm({
         />
         <span className="user-settings-hint">
           Globus access token for NERSC IRI. Expires ~48h; stored encrypted at rest.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        Globus token
-        <input
-          className="input"
-          type="password"
-          value={globusToken}
-          onChange={(e) => setGlobusToken(e.target.value)}
-          placeholder="Globus Transfer refresh token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          For Odo and Frontier file transfer via Globus. Mint with:
-          {" "}<code>python OLCF-Globus-Transfer/get_olcf_token.py --force-login --session-domain sso.ccs.ornl.gov</code>,
-          then paste the <code>refresh_token</code> value from{" "}
-          <code>~/.globus/olcf_tokens.json</code>. Long-lived; stored encrypted at rest.
         </span>
       </label>
 

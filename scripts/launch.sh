@@ -25,14 +25,15 @@ fi
 cd "$REPO_ROOT/backend"
 uv run python scripts/seed_db.py
 
+if [[ "$PROD" != true ]]; then
+  bash "$REPO_ROOT/scripts/launch_globus.sh" --setup --save-env
+fi
+
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
-if [[ "$PROD" == true ]]; then
-  UI_RUN_CMD="npm start"
-else
-  UI_RUN_CMD="npm run dev"
-fi
+
+GLOBUS_CMD="bash '$REPO_ROOT/scripts/launch_globus.sh';"
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
@@ -46,13 +47,18 @@ BACKEND_CMD="
   uv run vista-backend;
 "
 
-# So that this passes even when authentication is enabled in prod, pass the wait condition on 401/403
+if [[ "$PROD" == true ]]; then
+  UI_RUN_CMD="npm start"
+else
+  UI_RUN_CMD="npm run dev"
+fi
 UI_CMD="
   cd '$REPO_ROOT/ui' &&
   echo 'Waiting for backend...' &&
   until curl -s -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
   $UI_RUN_CMD;
 "
+
 
 # Launches a command in a new terminal window
 launch_terminal() {
@@ -87,6 +93,8 @@ case "$MODE" in
   tmux)
     tmux new-session \
       -d -s vista-dev \
+      "$GLOBUS_CMD; exec bash" \; \
+      split-window -v \
       "$MCP_CMD; exec bash" \; \
       split-window -h \
       "$BACKEND_CMD; exec bash" \; \
@@ -95,6 +103,7 @@ case "$MODE" in
       attach
     ;;
   terminal)
+    launch_terminal "Globus Endpoint" "$GLOBUS_CMD; exec bash"
     launch_terminal "Backend" "$BACKEND_CMD; exec bash"
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
@@ -123,11 +132,13 @@ case "$MODE" in
     }
 
     echo "All services will be started, logging to:"
+    echo "  Globus:     $LOG_DIR/globus.log"
     echo "  MCP server: $LOG_DIR/mcp.log"
     echo "  Backend:    $LOG_DIR/backend.log"
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
+    run_service globus "$LOG_DIR/globus.log" "$GLOBUS_CMD"
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"
