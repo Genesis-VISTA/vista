@@ -201,6 +201,7 @@ export default function HomePage() {
   const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
   const [isSessionHydrated, setIsSessionHydrated] = useState(false);
   const lastPersistedSnapshotRef = useRef<string | null>(null);
+  const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
 
   function toggleIntermediate(id: string) {
     setExpandedIntermediates((prev) => {
@@ -225,6 +226,7 @@ export default function HomePage() {
     if (prev === undefined || prev === currentId) return;
     setMessages([]);
     setMessageHistory([]);
+    setLatestResult(null);
     setLatestIntermediateId(null);
     setExpandedIntermediates(new Set());
   }, [activeProject?.id]);
@@ -246,23 +248,28 @@ export default function HomePage() {
         if (cancelled) return;
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
+        const restoredLatestResult = persisted.latest_result ?? null;
         setMessages(restoredMessages);
         setMessageHistory(restoredHistory);
+        setLatestResult(restoredLatestResult);
         setLatestIntermediateId(null);
         setExpandedIntermediates(new Set());
         lastPersistedSnapshotRef.current = JSON.stringify({
           messages: restoredMessages,
           messageHistory: restoredHistory,
+          latestResult: restoredLatestResult,
         });
       } catch {
         if (cancelled) return;
         setMessages([]);
         setMessageHistory([]);
+        setLatestResult(null);
         setLatestIntermediateId(null);
         setExpandedIntermediates(new Set());
         lastPersistedSnapshotRef.current = JSON.stringify({
           messages: [],
           messageHistory: [],
+          latestResult: null,
         });
       } finally {
         if (!cancelled) setIsSessionHydrated(true);
@@ -277,19 +284,19 @@ export default function HomePage() {
   useEffect(() => {
     const projectName = activeProject?.name ?? null;
     if (!projectName || !isSessionHydrated) return;
-    if (messageHistory.length === 0) return;
+    if (messageHistory.length === 0 && messages.length === 0 && latestResult == null) return;
 
-    const snapshot = JSON.stringify({ messages, messageHistory });
+    const snapshot = JSON.stringify({ messages, messageHistory, latestResult });
     if (snapshot === lastPersistedSnapshotRef.current) return;
 
     lastPersistedSnapshotRef.current = snapshot;
-    void savePersistedChatSession(projectName, { messages, messageHistory }).catch(() => {
+    void savePersistedChatSession(projectName, { messages, messageHistory, latestResult }).catch(() => {
       // Best-effort persistence for Phase 1. A failed save should not break the live chat.
       if (lastPersistedSnapshotRef.current === snapshot) {
         lastPersistedSnapshotRef.current = null;
       }
     });
-  }, [activeProject?.name, isSessionHydrated, messages, messageHistory]);
+  }, [activeProject?.name, isSessionHydrated, messages, messageHistory, latestResult]);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
@@ -305,7 +312,6 @@ export default function HomePage() {
   const [skillDraft, setSkillDraft] = useState<SkillDraftFields | null>(null);
   const [skillSaveError, setSkillSaveError] = useState<string | null>(null);
 
-  const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
   const [isCalling, setIsCalling] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<McpHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);

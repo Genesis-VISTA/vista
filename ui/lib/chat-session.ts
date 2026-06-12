@@ -1,5 +1,5 @@
 import type { ModelMessage } from "./agent-events";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ExecutionResult } from "./types";
 
 export type PersistedChatSession = {
   id: string;
@@ -9,6 +9,7 @@ export type PersistedChatSession = {
   updated_at: string;
   message_history: ModelMessage[];
   messages: ChatMessage[];
+  latest_result: ExecutionResult | null;
 };
 
 async function extractError(res: Response): Promise<string> {
@@ -38,7 +39,7 @@ export async function fetchPersistedChatSession(projectName: string): Promise<Pe
 
 export async function savePersistedChatSession(
   projectName: string,
-  payload: { messageHistory: ModelMessage[]; messages: ChatMessage[] }
+  payload: { messageHistory: ModelMessage[]; messages: ChatMessage[]; latestResult: ExecutionResult | null }
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/session", {
     method: "PUT",
@@ -47,6 +48,7 @@ export async function savePersistedChatSession(
       project_name: projectName,
       message_history: payload.messageHistory,
       messages: payload.messages,
+      latest_result: payload.latestResult,
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));

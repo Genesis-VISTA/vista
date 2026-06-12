@@ -117,11 +117,13 @@ class ChatSessionBase(SQLModel):
     """
     message_history: A[list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))]
     messages: A[list[ChatTranscriptMessage], Field(default_factory=list, sa_column=Column(JSON))]
+    latest_result: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
 
 
 class ChatSessionUpdate(BaseModel):
     message_history: list[dict[str, Any]] = Field(default_factory=list)
     messages: list[ChatTranscriptMessage] = Field(default_factory=list)
+    latest_result: dict[str, Any] | None = None
 
 
 class ChatSessionPublic(ChatSessionBase):

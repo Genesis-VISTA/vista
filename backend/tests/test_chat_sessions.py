@@ -67,6 +67,14 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
                     "intermediate": False,
                 },
             ],
+            latest_result={
+                "ok": True,
+                "stdout": "",
+                "stderr": "",
+                "artifacts": [],
+                "meta": {"tool": "display_file"},
+                "ui": {"kind": "html", "html": "<div>plot</div>"},
+            },
         ),
     )
 
@@ -79,6 +87,7 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
     assert updated.id == reloaded.id
     assert reloaded.message_history[0]["kind"] == "request"
     assert reloaded.messages[1]["content"] == "hi there"
+    assert reloaded.latest_result["ui"]["html"] == "<div>plot</div>"
 
 
 @pytest.mark.anyio

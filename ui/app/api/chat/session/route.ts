@@ -37,6 +37,7 @@ export async function PUT(request: Request) {
     project_name?: unknown;
     message_history?: unknown;
     messages?: unknown;
+    latest_result?: unknown;
   };
   try {
     body = await request.json();
@@ -59,6 +60,7 @@ export async function PUT(request: Request) {
         body: JSON.stringify({
           message_history: body.message_history ?? [],
           messages: body.messages ?? [],
+          latest_result: body.latest_result ?? null,
         }),
       }
     );

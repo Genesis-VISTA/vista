@@ -40,6 +40,7 @@ async def get_or_create_chat_session(
         project_id=project_id,
         message_history=[],
         messages=[],
+        latest_result=None,
         created_at=now,
         updated_at=now,
     )
@@ -60,6 +61,7 @@ async def update_chat_session(
     normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(updates.message_history)
     row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(normalized_history, mode="json")
     row.messages = [message.model_dump(mode="json") for message in updates.messages]
+    row.latest_result = updates.latest_result
     row.updated_at = now_iso()
     session.add(row)
     await session.flush()

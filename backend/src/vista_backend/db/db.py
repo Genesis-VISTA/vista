@@ -87,8 +87,24 @@ async def init_db() -> None:
     from . import schemas # Import so all SQLModels are loaded
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        if settings.database_url.startswith("sqlite"):
+            await _apply_sqlite_compat_migrations(conn)
 
     await seed_db(engine)
+
+
+async def _apply_sqlite_compat_migrations(conn) -> None:
+    """
+    Apply lightweight additive schema fixes for dev SQLite databases.
+
+    We currently rely on `create_all()` rather than a full migration system, so
+    existing local DBs need small `ALTER TABLE` steps when new nullable columns
+    are introduced.
+    """
+    result = await conn.exec_driver_sql("PRAGMA table_info(chat_session)")
+    columns = {row[1] for row in result.fetchall()}
+    if columns and "latest_result" not in columns:
+        await conn.exec_driver_sql("ALTER TABLE chat_session ADD COLUMN latest_result JSON")
 
 
 EngineDep = A[AsyncEngine, Depends(get_engine)]
