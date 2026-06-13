@@ -38,3 +38,6 @@ artifacts = [
   "*.html",
   "agenthpc/*.yaml",
 ]
+
+[tool.uv]
+python-preference = "only-managed"

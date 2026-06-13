@@ -25,3 +25,6 @@ build-backend = "hatchling.build"
 artifacts = [
   "docker/*",
 ]
+
+[tool.uv]
+python-preference = "only-managed"
