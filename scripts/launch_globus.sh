@@ -28,9 +28,11 @@ set -o allexport; source .env 2>/dev/null || true; set +o allexport
 
 HPC_JOBS_DIR="${VISTA_MCP_LOCAL_HPC_JOBS_DIR:-./hpc_jobs}"
 VOLUMES_DIR="${VISTA_DATA_DIR:-./data}/volumes"
-mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR"
+GLOBUS_CONFIG_DIR="${VISTA_DATA_DIR:-./data}/.globusonline" # Persist GCP config
+mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR" "$GLOBUS_CONFIG_DIR"
 HPC_JOBS_DIR=$(realpath "$HPC_JOBS_DIR")
 VOLUMES_DIR=$(realpath "$VOLUMES_DIR")
+GLOBUS_CONFIG_DIR=$(realpath "$GLOBUS_CONFIG_DIR")
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   RUNTIME=""
@@ -62,12 +64,13 @@ DOCKERFILE
     -v "$REPO_ROOT:$REPO_ROOT" \
     -v "$HPC_JOBS_DIR:$HPC_JOBS_DIR" \
     -v "$VOLUMES_DIR:$VOLUMES_DIR" \
+    -v "$GLOBUS_CONFIG_DIR:$GLOBUS_CONFIG_DIR" \
     -w "$REPO_ROOT" \
     vista-globus \
     bash scripts/launch_globus.sh "$@"
 fi
 
-if [[ ! -d "$HOME/.globusonline/lta" && -z "${GLOBUS_SETUP_KEY:-}" && ! -t 0 ]]; then
+if [[ ! -d "$GLOBUS_CONFIG_DIR/lta" && -z "${GLOBUS_SETUP_KEY:-}" && ! -t 0 ]]; then
   echo "error: Globus Connect Personal is not set up. Run 'launch_globus.sh --setup' in an" >&2
   echo "interactive terminal or set GLOBUS_SETUP_KEY" >&2
   exit 1
@@ -86,15 +89,15 @@ if [[ -z "$GCP" ]]; then
   fi
 fi
 
-if [[ ! -d "$HOME/.globusonline/lta" ]]; then
+if [[ ! -f "$GLOBUS_CONFIG_DIR/lta/client-id.txt" ]]; then
   if [[ -n "${GLOBUS_SETUP_KEY:-}" ]]; then
-    "$GCP" -setup "$GLOBUS_SETUP_KEY"
+    "$GCP" -dir "$GLOBUS_CONFIG_DIR" -setup "$GLOBUS_SETUP_KEY"
   else
-    "$GCP" -setup --no-gui
+    "$GCP" -dir "$GLOBUS_CONFIG_DIR" -setup --no-gui
   fi
 fi
 
-COLLECTION_ID="$(cat "$HOME/.globusonline/lta/client-id.txt" | tr -d '[:space:]')"
+COLLECTION_ID="$(cat "$GLOBUS_CONFIG_DIR/lta/client-id.txt" | tr -d '[:space:]')"
 if [[ "$SAVE_ENV" -eq 1 ]]; then
   touch ".env"
   if grep -qE '^[[:space:]]*#?[[:space:]]*VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=' ".env"; then
@@ -114,4 +117,4 @@ if [[ "$SETUP" -eq 1 ]]; then
   exit 0
 fi
 
-exec "$GCP" -start -restrict-paths "r${HPC_JOBS_DIR}/,rw${VOLUMES_DIR}/"
+exec "$GCP" -dir "$GLOBUS_CONFIG_DIR" -start -restrict-paths "r${HPC_JOBS_DIR}/,rw${VOLUMES_DIR}/"
