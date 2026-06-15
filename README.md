@@ -27,19 +27,17 @@
     - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login` (Or add HF_TOKEN to .env)
 - [git lfs](https://git-lfs.com/) (for the rag db)
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
+- [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)
 
 On MacOS, you may need to install `libmagic` first as well:
 ```bash
 brew install libmagic
 ```
 
-To install the nersc dependencies, you need to be able to ssh to https://gitlab.com/amsc2.
-Log into gitlab with your AmSC account [here](https://apps.pingone.com/19636b99-842b-427d-b2f8-754de01a3756/myapps/#), and upload your ssh key.
-On ORNL Network, you'll need to set up .ssh/config like so:
-```
-Host gitlab.com
-    User git
-    ProxyJump bstn-wks-gate
+To install the nersc dependencies, you need to be able to clone https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git
+If you cloned VISTA over HTTP this should already work. If you are cloning VISTA over SSH you need to run this to make it use SSH:
+```bash
+git config --global url."ssh://git@gitlab.com/amsc2/".insteadOf "https://gitlab.com/amsc2/"
 ```
 
 ## Environment Setup
@@ -54,20 +52,15 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID    | UUID of VISTA Globus collection. Written automatically by `./scripts/launch_globus.sh`                    | None    |
+| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID    | UUID of VISTA Globus collection. Mint with `./scripts/launch_globus.sh --setup --save-env`                | None    |
 | VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster odo --save-env`      | None    |
 | VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster frontier --save-env` | None    |
-| VISTA_MCP_OMD_API_KEY                | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                       | None    |
+| VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
 Per-user HPC credentials (S3M token, NERSC IRI token) are **not** env vars — each
 user sets them in the UI under User settings. S3M tokens follow the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
-
-The Vista-side Globus endpoint (Globus Connect Personal) is launched by
-`./scripts/launch_globus.sh` (started automatically by `./launch.sh`). First-time
-setup needs one interactive Globus login, or set `GLOBUS_SETUP_KEY` (from
-`globus gcp create mapped`) for headless setup, e.g. on AWS.
 
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
