@@ -29,57 +29,10 @@ set -o allexport; source .env 2>/dev/null || true; set +o allexport
 HPC_JOBS_DIR="${VISTA_MCP_LOCAL_HPC_JOBS_DIR:-./hpc_jobs}"
 VOLUMES_DIR="${VISTA_DATA_DIR:-./data}/volumes"
 GLOBUS_CONFIG_DIR="${VISTA_DATA_DIR:-./data}/globusonline" # Persist GCP config
-GCP_HOME_DIR="${VISTA_DATA_DIR:-./data}/globus-home"
-mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR" "$GLOBUS_CONFIG_DIR" "$GCP_HOME_DIR"
+mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR" "$GLOBUS_CONFIG_DIR"
 HPC_JOBS_DIR=$(realpath "$HPC_JOBS_DIR")
 VOLUMES_DIR=$(realpath "$VOLUMES_DIR")
 GLOBUS_CONFIG_DIR=$(realpath "$GLOBUS_CONFIG_DIR")
-GCP_HOME_DIR=$(realpath "$GCP_HOME_DIR")
-
-if [[ "$(uname -s)" != "Linux" ]]; then
-  RUNTIME=""
-  for candidate in docker podman; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      RUNTIME="$candidate"
-      break
-    fi
-  done
-  [[ -n "$RUNTIME" ]] || { echo "error: neither docker nor podman found on PATH (required to run Globus Connect Personal on $(uname -s))" >&2; exit 1; }
-
-  TTY_FLAG=""
-  [[ -t 0 ]] && TTY_FLAG="-t"
-  PLATFORM_ARGS=()
-  if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
-    PLATFORM_ARGS=(--platform linux/amd64)
-  fi
-
-  # Build the vista-globus image once so the deps aren't reinstalled on every run.
-  echo "Building vista-globus image ..." >&2
-  # The container runs as the host user so permissions work out
-  "$RUNTIME" build "${PLATFORM_ARGS[@]}" -t vista-globus - <<'DOCKERFILE'
-FROM ubuntu:26.04
-RUN apt-get update -qq \
-    && apt-get install -y -qq curl ca-certificates python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /gcphome && chmod 0777 /gcphome
-DOCKERFILE
-
-  "$RUNTIME" rm -f vista-globus >/dev/null 2>&1 || true
-  exec "$RUNTIME" run --rm -i $TTY_FLAG "${PLATFORM_ARGS[@]}" \
-    --name vista-globus \
-    --user "$(id -u):$(id -g)" \
-    -e GLOBUS_SETUP_KEY \
-    -e HOME=/gcphome \
-    -e USER="$(id -un)" \
-    -v "$GCP_HOME_DIR:/gcphome" \
-    -v "$REPO_ROOT:$REPO_ROOT" \
-    -v "$HPC_JOBS_DIR:$HPC_JOBS_DIR" \
-    -v "$VOLUMES_DIR:$VOLUMES_DIR" \
-    -v "$GLOBUS_CONFIG_DIR:$GLOBUS_CONFIG_DIR" \
-    -w "$REPO_ROOT" \
-    vista-globus \
-    bash scripts/launch_globus.sh "$@"
-fi
 
 if [[ ! -d "$GLOBUS_CONFIG_DIR/lta" && -z "${GLOBUS_SETUP_KEY:-}" && ! -t 0 ]]; then
   echo "error: Globus Connect Personal is not set up. Run 'launch_globus.sh --setup' in an" >&2
@@ -92,11 +45,23 @@ GCP_TARBALL_URL="https://downloads.globus.org/globus-connect-personal/linux/stab
 
 GCP="$(command -v globusconnectpersonal || true)"
 if [[ -z "$GCP" ]]; then
-  GCP="$GCP_INSTALL_DIR/globusconnectpersonal"
-  if [[ ! -d "$GCP_INSTALL_DIR" ]]; then
-    echo "globusconnectpersonal not found; installing to $GCP_INSTALL_DIR ..."
-    mkdir -p "$GCP_INSTALL_DIR"
-    curl -fsSL "$GCP_TARBALL_URL" | tar -xz -C "$GCP_INSTALL_DIR" --strip-components=1
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    # Linux: download the standalone client to the user's home if not present.
+    GCP="$GCP_INSTALL_DIR/globusconnectpersonal"
+    if [[ ! -d "$GCP_INSTALL_DIR" ]]; then
+      echo "globusconnectpersonal not found; installing to $GCP_INSTALL_DIR ..."
+      mkdir -p "$GCP_INSTALL_DIR"
+      curl -fsSL "$GCP_TARBALL_URL" | tar -xz -C "$GCP_INSTALL_DIR" --strip-components=1
+    fi
+  else
+    # Can't easily autodownload the MacOS GUI application
+    GCP="/Applications/Globus Connect Personal.app/Contents/MacOS/globusconnectpersonal"
+    if [[ ! -x "$GCP" ]]; then
+      echo "error: globusconnectpersonal not found" >&2
+      echo "Install Globus Connect Personal from" >&2
+      echo "  https://www.globus.org/globus-connect-personal" >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -112,7 +77,9 @@ COLLECTION_ID="$(cat "$GLOBUS_CONFIG_DIR/lta/client-id.txt" | tr -d '[:space:]')
 if [[ "$SAVE_ENV" -eq 1 ]]; then
   touch ".env"
   if grep -qE '^[[:space:]]*#?[[:space:]]*VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=' ".env"; then
-    sed -i -E "s|^[[:space:]]*#?[[:space:]]*VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=.*|VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=$COLLECTION_ID|" ".env"
+    tmp="$(mktemp)"
+    sed -E "s|^[[:space:]]*#?[[:space:]]*VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=.*|VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=$COLLECTION_ID|" ".env" > "$tmp"
+    mv "$tmp" ".env"
   else
     echo  >> ".env"
     echo "VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID=$COLLECTION_ID" >> ".env"
