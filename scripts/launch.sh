@@ -26,14 +26,14 @@ cd "$REPO_ROOT/backend"
 uv run python scripts/seed_db.py
 
 if [[ "$PROD" != true ]]; then
-  bash "$REPO_ROOT/scripts/launch_globus.sh" --setup --save-env
+  "$REPO_ROOT/scripts/launch_globus.py" --setup --save-env
 fi
 
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
 
-GLOBUS_CMD="bash '$REPO_ROOT/scripts/launch_globus.sh';"
+GLOBUS_CMD="'$REPO_ROOT/scripts/launch_globus.py';"
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&

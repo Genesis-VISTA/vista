@@ -114,7 +114,7 @@ class AppSettings(BaseSettings):
     """
     UUID of the Globus Collection hosted on the Vista server. Must expose the paths
     `local_hpc_jobs_dir` and `output_dir` (or a common ancestor). Required for Odo
-    and Frontier file ops. Written to .env by scripts/launch_globus.sh.
+    and Frontier file ops. Written to .env by scripts/launch_globus.py.
     """
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
