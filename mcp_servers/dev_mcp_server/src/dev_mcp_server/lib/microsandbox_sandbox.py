@@ -6,13 +6,20 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy, NetworkPolicy, Rule, Action, Destination, Protocol, Direction
+from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy, Image, ImageNotFoundError
 from microsandbox.types import DnsConfig  # not re-exported from package root
 from microsandbox._runtime import msb_path as _msb_path
 
 from .sandbox import Sandbox, Volume
 from .util import check_output, parse_output
 from .container_sandbox import resolve_container_runtime
+
+
+async def _inspect_image(image: str):
+    try:
+        return await Image.inspect(image)
+    except ImageNotFoundError:
+        return None
 
 
 class MicrosandboxSandbox(Sandbox):
@@ -28,8 +35,18 @@ class MicrosandboxSandbox(Sandbox):
         cls,
         dockerfile: Path | str | None = None,
         image: str | None = None,
+        oci_image_tar: Path | str | None = None,
     ):
-        if dockerfile:
+        if oci_image_tar:
+            if dockerfile:
+                raise ValueError("Can't specify both dockerfile and oci_image_tar")
+            # Seed the store from a prebuilt tar
+            image = image or "vista-sandbox:latest"
+            oci_image_tar = Path(oci_image_tar).resolve()
+            if not await _inspect_image(image):
+                logging.info(f"Loading sandbox image {image} from {oci_image_tar}...")
+                await check_output(str(_msb_path()), "load", "-i", str(oci_image_tar), "-t", image)
+        elif dockerfile:
             image = image or "vista-sandbox:latest"
             dockerfile = Path(dockerfile).resolve()
             runtime = resolve_container_runtime()
@@ -40,17 +57,18 @@ class MicrosandboxSandbox(Sandbox):
 
             oci_inspect = await parse_output(runtime, "image", "inspect", image)
             oci_digest = oci_inspect[0]["Id"].split(":")[-1] # podman doesn't prefix sha256:
-            # TODO: in microsandbox 0.5.5, we should be able to use the python SDK for this
-            msb_inspect = await parse_output(str(_msb_path()), "image", "inspect", "--format=json", image)
-            msb_digest = msb_inspect['config']['digest'].split(":")[-1] if msb_inspect else None
+            msb_detail = await _inspect_image(image)
+            if msb_detail and msb_detail.config:
+                msb_digest = msb_detail.config.digest.split(":")[-1]
+            else:
+                msb_digest = None
             if msb_digest != oci_digest:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     archive = str(Path(tmpdir) / "image.tar")
                     await check_output(runtime, "save", "-o", archive, image)
                     await check_output(str(_msb_path()), "load", "-i", archive, "-t", image)
         elif image:
-            msb_inspect = await parse_output(str(_msb_path()), "image", "inspect", "--format=json", image)
-            if not msb_inspect:
+            if not await _inspect_image(image):
                 logging.info(f"Pulling sandbox image {image}...")
                 await check_output(str(_msb_path()), "pull", image)
         else:
@@ -63,8 +81,9 @@ class MicrosandboxSandbox(Sandbox):
         cls,
         dockerfile: Path | str | None = None,
         image: str | None = None,
+        oci_image_tar: Path | str | None = None,
     ) -> None:
-        await cls._build(dockerfile=dockerfile, image=image)
+        await cls._build(dockerfile=dockerfile, image=image, oci_image_tar=oci_image_tar)
 
     @classmethod
     async def spawn(
@@ -73,6 +92,7 @@ class MicrosandboxSandbox(Sandbox):
         env: dict[str, str] | None = None,
         image: str | None = None,
         dockerfile: Path | str | None = None,
+        oci_image_tar: Path | str | None = None,
         cpus: int = 1,
         memory: int = 1024,
     ) -> "MicrosandboxSandbox":
@@ -83,7 +103,7 @@ class MicrosandboxSandbox(Sandbox):
             for src, dst, mode in volumes
         }
 
-        image = await cls._build(dockerfile=dockerfile, image=image)
+        image = await cls._build(dockerfile=dockerfile, image=image, oci_image_tar=oci_image_tar)
 
         name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"
         logging.info(f"Launching microsandbox {name}...")

@@ -26,6 +26,8 @@ class AppSettings(BaseSettings):
 
     dockerfile: A[ResolvedPath | None, EmptyIsNone] = Path(__file__).parent / "docker" / "Dockerfile"
     image: str = "vista-sandbox:latest"
+    oci_image_tar: A[ResolvedPath | None, EmptyIsNone] = None
+    """ Path to a tar archive (e.g. from `docker save`) of the sandbox image """
 
     volumes: list[tuple[ResolvedPath, Path, Literal['r', 'w']]] = []
     """
