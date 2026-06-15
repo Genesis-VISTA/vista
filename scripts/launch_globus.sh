@@ -28,11 +28,13 @@ set -o allexport; source .env 2>/dev/null || true; set +o allexport
 
 HPC_JOBS_DIR="${VISTA_MCP_LOCAL_HPC_JOBS_DIR:-./hpc_jobs}"
 VOLUMES_DIR="${VISTA_DATA_DIR:-./data}/volumes"
-GLOBUS_CONFIG_DIR="${VISTA_DATA_DIR:-./data}/.globusonline" # Persist GCP config
-mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR" "$GLOBUS_CONFIG_DIR"
+GLOBUS_CONFIG_DIR="${VISTA_DATA_DIR:-./data}/globusonline" # Persist GCP config
+GCP_HOME_DIR="${VISTA_DATA_DIR:-./data}/globus-home"
+mkdir -p "$HPC_JOBS_DIR" "$VOLUMES_DIR" "$GLOBUS_CONFIG_DIR" "$GCP_HOME_DIR"
 HPC_JOBS_DIR=$(realpath "$HPC_JOBS_DIR")
 VOLUMES_DIR=$(realpath "$VOLUMES_DIR")
 GLOBUS_CONFIG_DIR=$(realpath "$GLOBUS_CONFIG_DIR")
+GCP_HOME_DIR=$(realpath "$GCP_HOME_DIR")
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   RUNTIME=""
@@ -46,21 +48,30 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 
   TTY_FLAG=""
   [[ -t 0 ]] && TTY_FLAG="-t"
+  PLATFORM_ARGS=()
+  if [[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]]; then
+    PLATFORM_ARGS=(--platform linux/amd64)
+  fi
 
   # Build the vista-globus image once so the deps aren't reinstalled on every run.
   echo "Building vista-globus image ..." >&2
-  "$RUNTIME" build -t vista-globus - <<'DOCKERFILE'
-FROM ubuntu:24.04
+  # The container runs as the host user so permissions work out
+  "$RUNTIME" build "${PLATFORM_ARGS[@]}" -t vista-globus - <<'DOCKERFILE'
+FROM ubuntu:26.04
 RUN apt-get update -qq \
-    && apt-get install -y -qq curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y -qq curl ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /gcphome && chmod 0777 /gcphome
 DOCKERFILE
 
   "$RUNTIME" rm -f vista-globus >/dev/null 2>&1 || true
-  exec "$RUNTIME" run --rm -i $TTY_FLAG \
+  exec "$RUNTIME" run --rm -i $TTY_FLAG "${PLATFORM_ARGS[@]}" \
     --name vista-globus \
+    --user "$(id -u):$(id -g)" \
     -e GLOBUS_SETUP_KEY \
-    -v vista-gcp-home:/root \
+    -e HOME=/gcphome \
+    -e USER="$(id -un)" \
+    -v "$GCP_HOME_DIR:/gcphome" \
     -v "$REPO_ROOT:$REPO_ROOT" \
     -v "$HPC_JOBS_DIR:$HPC_JOBS_DIR" \
     -v "$VOLUMES_DIR:$VOLUMES_DIR" \
