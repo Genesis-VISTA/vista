@@ -15,6 +15,10 @@ import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { readActiveProjectName, useActiveProject } from "@/lib/projects";
 import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
+  fetchPersistedChatSession,
+  savePersistedChatSession,
+} from "@/lib/chat-session";
+import {
   htmlFromToolReturnContent,
   type AgentRunResultEvent,
   type FunctionToolCallEvent,
@@ -178,9 +182,9 @@ export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   /**
    * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
-   * `agent_run_result.new_messages` and sent back as `message_history` on the
-   * next turn so the agent has full conversational context. Separate from the
-   * display `messages` state; we never construct or mutate these payloads.
+   * `agent_run_result.new_messages`. The backend now owns the canonical
+   * session history for chat runs; we still keep this client copy for UI
+   * restore, local features like "Save as skill", and Phase 1/2 compatibility.
    */
   const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
@@ -195,6 +199,9 @@ export default function HomePage() {
    * Overrides the collapsed-by-default state for non-latest intermediates.
    */
   const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
+  const [isSessionHydrated, setIsSessionHydrated] = useState(false);
+  const lastPersistedSnapshotRef = useRef<string | null>(null);
+  const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
 
   function toggleIntermediate(id: string) {
     setExpandedIntermediates((prev) => {
@@ -219,9 +226,77 @@ export default function HomePage() {
     if (prev === undefined || prev === currentId) return;
     setMessages([]);
     setMessageHistory([]);
+    setLatestResult(null);
     setLatestIntermediateId(null);
     setExpandedIntermediates(new Set());
   }, [activeProject?.id]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) {
+      lastPersistedSnapshotRef.current = null;
+      setIsSessionHydrated(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSessionHydrated(false);
+
+    void (async () => {
+      try {
+        const persisted = await fetchPersistedChatSession(projectName);
+        if (cancelled) return;
+        const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
+        const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
+        const restoredLatestResult = persisted.latest_result ?? null;
+        setMessages(restoredMessages);
+        setMessageHistory(restoredHistory);
+        setLatestResult(restoredLatestResult);
+        setLatestIntermediateId(null);
+        setExpandedIntermediates(new Set());
+        lastPersistedSnapshotRef.current = JSON.stringify({
+          messages: restoredMessages,
+          messageHistory: restoredHistory,
+          latestResult: restoredLatestResult,
+        });
+      } catch {
+        if (cancelled) return;
+        setMessages([]);
+        setMessageHistory([]);
+        setLatestResult(null);
+        setLatestIntermediateId(null);
+        setExpandedIntermediates(new Set());
+        lastPersistedSnapshotRef.current = JSON.stringify({
+          messages: [],
+          messageHistory: [],
+          latestResult: null,
+        });
+      } finally {
+        if (!cancelled) setIsSessionHydrated(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.id, activeProject?.name]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !isSessionHydrated) return;
+    if (messageHistory.length === 0 && messages.length === 0 && latestResult == null) return;
+
+    const snapshot = JSON.stringify({ messages, messageHistory, latestResult });
+    if (snapshot === lastPersistedSnapshotRef.current) return;
+
+    lastPersistedSnapshotRef.current = snapshot;
+    void savePersistedChatSession(projectName, { messages, messageHistory, latestResult }).catch(() => {
+      // Best-effort persistence for Phase 1. A failed save should not break the live chat.
+      if (lastPersistedSnapshotRef.current === snapshot) {
+        lastPersistedSnapshotRef.current = null;
+      }
+    });
+  }, [activeProject?.name, isSessionHydrated, messages, messageHistory, latestResult]);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
@@ -237,7 +312,6 @@ export default function HomePage() {
   const [skillDraft, setSkillDraft] = useState<SkillDraftFields | null>(null);
   const [skillSaveError, setSkillSaveError] = useState<string | null>(null);
 
-  const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
   const [isCalling, setIsCalling] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<McpHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -774,7 +848,6 @@ export default function HomePage() {
         body: JSON.stringify({
           project_name: projectName,
           user_prompt: text,
-          message_history: messageHistory,
         })
       });
 

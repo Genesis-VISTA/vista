@@ -2,15 +2,16 @@ from typing import AsyncGenerator, Any
 
 from fastapi import APIRouter
 from fastapi.responses import Response
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import ProjectAgentResult, McpElicitationEvent
+from ..agents.agents import ProjectAgentResult, ProjectAgentResultEvent, McpElicitationEvent
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
+from ..services import chat_session as chat_session_service
 from ..services import project as project_service
-from ..services.project_agent import project_agent_pool, register_elicitation
+from ..services.project_agent import get_project_agent_key, project_agent_pool, register_elicitation
 from ..services.auth import UserDep
 
 router = APIRouter()
@@ -20,27 +21,25 @@ class AgentRunRequest(BaseModel):
     """
     Request body for an agent turn.
 
-    `message_history` and the returned `new_messages` use PydanticAI's
-    `ModelMessage` schema -- see https://pydantic.dev/docs/ai/core-concepts/messages/
-    for the message/part shape. To continue a conversation, append the previous
-    call's `new_messages` to your stored history and send the result here.
+    `message_history` is kept as a compatibility fallback while session-backed
+    history ownership moves to the backend. `new_messages` still uses
+    PydanticAI's `ModelMessage` schema -- see
+    https://pydantic.dev/docs/ai/core-concepts/messages/ for the message/part
+    shape.
     """
     stream: bool = False
     """ If True, stream the response as Server-Sent Events. """
     user_prompt: str
     """ The user prompt to the agent. """
-    message_history: list[ModelMessage] = []
-    """ Prior `ModelMessage`s from earlier turns (as returned from a previous call). """
+    message_history: list[ModelMessage] = Field(default_factory=list)
+    """ Optional fallback history from older clients; backend session state wins when present. """
 
 @router.post("/projects/{project_name}/agent/run", response_model=ProjectAgentResult)
 async def agent_run(
     project_name: str, body: AgentRunRequest, session: SessionDep, user: UserDep,
 ) -> ProjectAgentResult | Response:
     """
-    Stateless chat completion that runs the full agent loop for one turn.
-
-    Pass the `message_history`. The response contains the messages produced in this agent turn --
-    append them to your stored history to continue in the next call.
+    Session-backed chat completion that runs the full agent loop for one turn.
 
     Both the streaming and non-streaming payloads are built directly on PydanticAI's data model:
 
@@ -62,25 +61,48 @@ async def agent_run(
     """
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    effective_history = await chat_session_service.get_effective_message_history(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        fallback_history=body.message_history,
+    )
 
     if body.stream:
         async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
-            async with project_agent_pool.get((project.id, user.id)) as agent:
+            async with project_agent_pool.get(agent_key) as agent:
                 async for event in agent.run_stream(
                     user_prompt=body.user_prompt,
-                    message_history=body.message_history,
+                    message_history=effective_history,
                     enable_elicitation=True,
                 ):
                     if isinstance(event, McpElicitationEvent):
                         register_elicitation(event.elicitation_id, agent)
                         # calling /projects/{project_name}/elicitation will resolve the elicitation request
+                    if isinstance(event, ProjectAgentResultEvent):
+                        await chat_session_service.append_message_history(
+                            session,
+                            project_id=project.id,
+                            user_id=user.id,
+                            prior_history=effective_history,
+                            new_messages=event.result.new_messages,
+                        )
                     data = TypeAdapter(Any).dump_json(event).decode()
                     yield ServerSentEvent(event=event.event_kind, data=data)
 
         return EventSourceResponse(agent_events())
     else:
-        async with project_agent_pool.get((project.id, user.id)) as agent:
-            return await agent.run(
+        async with project_agent_pool.get(agent_key) as agent:
+            result = await agent.run(
                 user_prompt=body.user_prompt,
-                message_history=body.message_history,
+                message_history=effective_history,
             )
+        await chat_session_service.append_message_history(
+            session,
+            project_id=project.id,
+            user_id=user.id,
+            prior_history=effective_history,
+            new_messages=result.new_messages,
+        )
+        return result

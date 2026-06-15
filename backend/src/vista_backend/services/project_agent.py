@@ -9,27 +9,37 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
-from ..db.schemas import ProjectPublic, ProjectTable, UserPublicWithConfig, UserTable
+from ..db.schemas import ChatSessionTable, ProjectPublic, ProjectTable, UserPublicWithConfig, UserTable
 from ..utils.ttl_pool import TTLPool
+from . import chat_session as chat_session_service
 
 
-ProjectAgentKey = tuple[uuid.UUID, uuid.UUID]
-""" (project_id, user_id) """
+ProjectAgentKey = tuple[uuid.UUID, uuid.UUID, uuid.UUID]
+""" (chat_session_id, project_id, user_id) """
 
 
-async def _build_project_agent(project_id: uuid.UUID, user_id: uuid.UUID) -> ProjectAgent:
+async def _build_project_agent(
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> ProjectAgent:
     async with AsyncSession(get_engine()) as session:
+        chat_session_row = (await session.exec(
+            select(ChatSessionTable).where(ChatSessionTable.id == chat_session_id)
+        )).first()
         project_row = (await session.exec(
             select(ProjectTable).where(ProjectTable.id == project_id)
         )).first()
         user_row = (await session.exec(
             select(UserTable).where(UserTable.id == user_id)
         )).first()
-        if project_row is None or user_row is None:
-            raise RuntimeError(f"Project {project_id} or user {user_id} not found")
+        if chat_session_row is None or project_row is None or user_row is None:
+            raise RuntimeError(
+                f"Chat session {chat_session_id}, project {project_id}, or user {user_id} not found"
+            )
         project = ProjectPublic.model_validate(project_row)
         user = UserPublicWithConfig.model_validate(user_row)
-    agent = ProjectAgent(project, user)
+    agent = ProjectAgent(project, user, chat_session_id)
     await agent.__aenter__()
     return agent
 
@@ -51,6 +61,37 @@ project_agent_pool: TTLPool[ProjectAgentKey, ProjectAgent] = TTLPool(
     cleanup=_cleanup_project_agent,
 )
 _active_elicitations: dict[str, ProjectAgent] = {}
+
+
+async def get_project_agent_key(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> ProjectAgentKey:
+    chat_session = await chat_session_service.get_or_create_chat_session(
+        session,
+        project_id=project_id,
+        user_id=user_id,
+    )
+    return (chat_session.id, project_id, user_id)
+
+
+async def find_live_project_agent_key(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> ProjectAgentKey | None:
+    chat_session = await chat_session_service.get_chat_session_optional(
+        session,
+        project_id=project_id,
+        user_id=user_id,
+    )
+    if chat_session is None:
+        return None
+    key = (chat_session.id, project_id, user_id)
+    return key if key in project_agent_pool.keys() else None
 
 
 def register_elicitation(elicitation_id: str, agent: ProjectAgent) -> None:
@@ -85,7 +126,7 @@ def invalidate_agents(
 
     - project_id only: evict all agents for that project
     - user_id only: evict all agents for that user
-    - both: evict only the specific (project, user) pair
+    - both: evict only agents for that specific (project, user) scope
     - neither: raises ValueError
     """
     if project_id is None and user_id is None:
@@ -99,10 +140,10 @@ def _flush_agent_invalidations(session: Session) -> None:
     for project_id, user_id in pending:
         for key in list(project_agent_pool.keys()):
             if project_id is not None and user_id is not None:
-                match = key == (project_id, user_id)
+                match = key[1] == project_id and key[2] == user_id
             elif project_id is not None:
-                match = key[0] == project_id
+                match = key[1] == project_id
             else:
-                match = key[1] == user_id
+                match = key[2] == user_id
             if match:
                 project_agent_pool.delete(key)

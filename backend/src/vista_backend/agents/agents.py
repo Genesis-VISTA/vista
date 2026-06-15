@@ -179,12 +179,14 @@ def get_dev_mcp_server(
 
 
 class ProjectAgent:
-    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig):
+    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig, session_id: uuid.UUID):
         self.project = project
         self.user = user
-        # Id per project agent. A new ProjectAgent with the same input Project x User will have the
-        # same id
-        self.id = f"{project.id}-{user.id}"
+        self.session_id = session_id
+        # Id per chat session. A new ProjectAgent with the same session gets
+        # the same sandbox/storage roots; different sessions for the same
+        # project+user are isolated.
+        self.id = f"{session_id}"
         self.volume_root = settings.data_dir / "volumes" / self.id
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
@@ -196,9 +198,9 @@ class ProjectAgent:
         # instance between run_stream calls and not relaunch the MCP servers each call. However, we need to
         # customize the callbacks in each run_stream call to hook up the streaming output and such. We set the callbacks
         # to dispatch to these, which we will swap out in run_stream.
-        # TODO: Note, this means we have to lock to prevent parallel run_stream calls. We should look for a way to remove
-        # that restriction. Though, once we implement sessions, we can scope the agent to each session and then locking
-        # would be more reasonable.
+        # Note: we lock to prevent parallel run_stream calls on the same live
+        # session agent. Session-scoped agents make that granularity
+        # reasonable.
         self._run_lock = asyncio.Lock()
         self._cur_mcp_elicitation_callback: mcp.client.session.ElicitationFnT | None = None
         self._cur_mcp_process_tool_call: ProcessToolCallback | None = None
