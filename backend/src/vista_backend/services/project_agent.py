@@ -39,7 +39,7 @@ async def _build_project_agent(
             )
         project = ProjectPublic.model_validate(project_row)
         user = UserPublicWithConfig.model_validate(user_row)
-    agent = ProjectAgent(project, user, session_id=chat_session_id)
+    agent = ProjectAgent(project, user, chat_session_id)
     await agent.__aenter__()
     return agent
 
