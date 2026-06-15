@@ -6,7 +6,7 @@ from typing import AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from pydantic import BaseModel, Field, Discriminator, TypeAdapter
+from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
 from pydantic_ai.mcp import MCPServer, MCPServerStdio, MCPServerStreamableHTTP, ProcessToolCallback, CallToolFunc, ToolResult
 from pydantic_ai.messages import (
@@ -43,39 +43,6 @@ from .skills import to_prompt
 
 
 BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
-_MESSAGE_HISTORY_ADAPTER = TypeAdapter(list[ModelMessage])
-
-
-def _history_stats(message_history: list[ModelMessage] | None) -> dict[str, int]:
-    if not message_history:
-        return {
-            "turns": 0,
-            "bytes": 0,
-            "parts": 0,
-            "tool_returns": 0,
-            "max_part_bytes": 0,
-        }
-
-    dumped = _MESSAGE_HISTORY_ADAPTER.dump_python(message_history, mode="json")
-    encoded = _MESSAGE_HISTORY_ADAPTER.dump_json(message_history)
-
-    part_count = 0
-    tool_return_count = 0
-    max_part_bytes = 0
-    for message in dumped:
-        for part in message.get("parts", []):
-            part_count += 1
-            if part.get("part_kind") == "tool-return":
-                tool_return_count += 1
-            max_part_bytes = max(max_part_bytes, len(json.dumps(part)))
-
-    return {
-        "turns": len(message_history),
-        "bytes": len(encoded),
-        "parts": part_count,
-        "tool_returns": tool_return_count,
-        "max_part_bytes": max_part_bytes,
-    }
 
 
 class LogEntry(BaseModel):
@@ -601,7 +568,6 @@ class ProjectAgent:
             message_history = message_history,
             enable_elicitation=False,
         ):
-            print(user_prompt)
             if isinstance(event, ProjectAgentResultEvent):
                 return event.result
         raise RuntimeError("Agent didn't emit a result") # Should be unreachable
@@ -659,19 +625,12 @@ class ProjectAgent:
                         ))
                         return
 
-                    history_stats = _history_stats(message_history)
-                    request_log = "\n".join([
+                    yield log("INFO", "Agent", "\n".join([
                         f"New request:",
                         f"    project: {self.project.name}",
                         f"    userMessage: {json.dumps(user_prompt[:200])}",
-                        f"    historyTurns: {history_stats['turns']}",
-                        f"    historyBytes: {history_stats['bytes']}",
-                        f"    historyParts: {history_stats['parts']}",
-                        f"    historyToolReturns: {history_stats['tool_returns']}",
-                        f"    maxPartBytes: {history_stats['max_part_bytes']}",
-                    ])
-                    print(request_log, flush=True)
-                    yield log("INFO", "Agent", request_log)
+                        f"    historyTurns: {len(message_history or [])}",
+                    ]))
 
                     # G1 early-rejection runs via the capability's
                     # before_run hook and raises VistaGuardDeny (caught
