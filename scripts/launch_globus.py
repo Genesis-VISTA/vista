@@ -7,9 +7,6 @@
   - hpc_jobs/        (source uploads:  Vista -> OLCF)
   - data/volumes/    (per-project x user output dirs; downloads + log fetches)
 
-Pass --save-env to write the collection UUID to .env as
-VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID (otherwise it is just printed).
-
 First-time setup needs a one-time Globus login. Either:
   - run this script once in an interactive terminal (browser login flow), or
   - set GLOBUS_SETUP_KEY for headless setup, create the key with:
@@ -22,6 +19,7 @@ docker/podman container, mounting the repo and data dirs at their host paths.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import platform
 import textwrap
@@ -32,7 +30,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
@@ -88,14 +86,22 @@ def relaunch_in_container(data_dir: Path, hpc_jobs_dir: Path, argv: list[str]) -
 
     # Build the image once so deps aren't reinstalled on every run.
     print("Building vista-globus image ...", file=sys.stderr)
+    # The container runs as the host user (see --user below) so Globus does not
+    # run as root and the files it writes stay owned by the host user. That user
+    # has no entry in the image's /etc/passwd, so give it a world-writable HOME.
     dockerfile = textwrap.dedent(r"""
         FROM ubuntu:24.04
         RUN apt-get update -qq \
-            && apt-get install -y -qq curl ca-certificates python3 python3-dotenv \
-            && rm -rf /var/lib/apt/lists/*
+            && apt-get install -y -qq curl ca-certificates python3 python3-dotenv libstdc++6 \
+            && rm -rf /var/lib/apt/lists/* \
+            && mkdir -p /gcphome && chmod 0777 /gcphome
+        ARG HOST_UID=1000
+        ARG HOST_GID=1000
+        RUN (getent group "$HOST_GID" >/dev/null || groupadd -g "$HOST_GID" vista) \
+            && (getent passwd "$HOST_UID" >/dev/null || useradd -u "$HOST_UID" -g "$HOST_GID" -d /gcphome -s /bin/sh -M vista)
     """)
     subprocess.run(
-        [runtime, "build", "-t", "vista-globus", "-"],
+        [runtime, "build", "-t", "vista-globus", "--build-arg", f"HOST_UID={os.getuid()}", "--build-arg", f"HOST_GID={os.getgid()}", "-"],
         input=dockerfile.encode(),
         check=True,
     )
@@ -108,7 +114,15 @@ def relaunch_in_container(data_dir: Path, hpc_jobs_dir: Path, argv: list[str]) -
     cmd = [runtime, "run", "--rm", "-i"]
     if sys.stdin.isatty():
         cmd.append("-t")
-    cmd += ["--name", "vista-globus", "-e", "GLOBUS_SETUP_KEY", "-v", "vista-gcp-home:/root"]
+    cmd += [
+        "--name", "vista-globus",
+        "--user", f"{os.getuid()}:{os.getgid()}",
+        "-e", "GLOBUS_SETUP_KEY",
+        "-e", "HOME=/gcphome",
+        "-e", f"USER={getpass.getuser()}",
+        "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
+        "-v", f"{data_dir / "gcphome"}:/gcphome",
+    ]
     # Mount the repo plus any data/hpc dirs that live outside it, at matching paths.
     mounts = [REPO_ROOT]
     mounts += [d for d in (data_dir, hpc_jobs_dir) if not d.is_relative_to(REPO_ROOT)]
@@ -141,7 +155,8 @@ def main() -> None:
     hpc_jobs_dir = Path(os.environ.get("VISTA_MCP_LOCAL_HPC_JOBS_DIR", "./hpc_jobs")).resolve()
     volumes_dir = data_dir / "volumes"
     config_dir = data_dir / "globusonline"
-    for d in (hpc_jobs_dir, volumes_dir, config_dir):
+    home_dir = data_dir / "gcphome"
+    for d in (hpc_jobs_dir, volumes_dir, config_dir, home_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     if sys.platform != "linux":

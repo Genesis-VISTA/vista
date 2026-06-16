@@ -35,7 +35,7 @@ class AppSettings(BaseSettings):
     data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../../data")
 
 settings = AppSettings()
-os.environ['MSB_HOME'] = str(settings.data_dir / "microsandbox")
+# os.environ['MSB_HOME'] = str(settings.data_dir / "microsandbox")
 
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
