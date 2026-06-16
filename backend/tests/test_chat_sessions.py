@@ -1,6 +1,6 @@
 import pytest
 
-from vista_backend.db.schemas import ChatSessionUpdate, ProjectCreate
+from vista_backend.db.schemas import ChatSessionCreate, ChatSessionUpdate, ProjectCreate
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import project as project_service
 
@@ -12,27 +12,36 @@ def _kind(message):
 
 
 @pytest.mark.anyio
-async def test_get_or_create_chat_session_is_unique_per_user_project(session, alice):
+async def test_create_and_list_chat_sessions_support_multiple_per_project(session, alice):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="session-project", description=None, system_prompt=None),
         alice,
     )
 
-    first = await chat_session_service.get_or_create_chat_session(
+    first = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         user_id=alice.id,
+        payload=ChatSessionCreate(title="First"),
     )
-    second = await chat_session_service.get_or_create_chat_session(
+    second = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        payload=ChatSessionCreate(title="Second"),
+    )
+
+    listed = await chat_session_service.list_chat_sessions(
         session,
         project_id=project.id,
         user_id=alice.id,
     )
 
-    assert first.id == second.id
+    assert first.id != second.id
     assert first.message_history == []
     assert first.messages == []
+    assert [row.title for row in listed] == ["Second", "First"]
 
 
 @pytest.mark.anyio
@@ -82,6 +91,7 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=updated.id,
     )
 
     assert updated.id == reloaded.id
