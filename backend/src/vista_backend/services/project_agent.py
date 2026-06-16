@@ -68,11 +68,13 @@ async def get_project_agent_key(
     *,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey:
     chat_session = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project_id,
         user_id=user_id,
+        chat_session_id=chat_session_id,
     )
     return (chat_session.id, project_id, user_id)
 
@@ -82,11 +84,13 @@ async def find_live_project_agent_key(
     *,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey | None:
     chat_session = await chat_session_service.get_chat_session_optional(
         session,
         project_id=project_id,
         user_id=user_id,
+        chat_session_id=chat_session_id,
     )
     if chat_session is None:
         return None

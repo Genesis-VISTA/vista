@@ -15,8 +15,14 @@ import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { readActiveProjectName, useActiveProject } from "@/lib/projects";
 import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
+  createPersistedChatSession,
   fetchPersistedChatSession,
+  listPersistedChatSessions,
+  notifyActiveChatSessionChanged,
   savePersistedChatSession,
+  type PersistedChatSessionSummary,
+  useActiveChatSessionId,
+  writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import {
   htmlFromToolReturnContent,
@@ -178,8 +184,15 @@ export default function HomePage() {
    * hook's storage subscription.
    */
   const activeProject = useActiveProject();
+  const activeChatSessionId = useActiveChatSessionId(activeProject?.name ?? null);
+  const isConversationListView = !!activeProject && !activeChatSessionId;
+  const isConversationOpen = !!activeProject && !!activeChatSessionId;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatSessions, setChatSessions] = useState<PersistedChatSessionSummary[]>([]);
+  const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
+  const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
+  const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
   /**
    * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
    * `agent_run_result.new_messages`. The backend now owns the canonical
@@ -200,6 +213,7 @@ export default function HomePage() {
    */
   const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
   const [isSessionHydrated, setIsSessionHydrated] = useState(false);
+  const hydratedSessionKeyRef = useRef<string | null>(null);
   const lastPersistedSnapshotRef = useRef<string | null>(null);
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
 
@@ -234,18 +248,38 @@ export default function HomePage() {
   useEffect(() => {
     const projectName = activeProject?.name ?? null;
     if (!projectName) {
+      hydratedSessionKeyRef.current = null;
       lastPersistedSnapshotRef.current = null;
+      setActiveChatSessionTitle(null);
+      setIsSessionHydrated(false);
+      return;
+    }
+    if (!activeChatSessionId) {
+      hydratedSessionKeyRef.current = null;
+      lastPersistedSnapshotRef.current = null;
+      setActiveChatSessionTitle(null);
+      setMessages([]);
+      setMessageHistory([]);
+      setLatestResult(null);
+      setLatestIntermediateId(null);
+      setExpandedIntermediates(new Set());
       setIsSessionHydrated(false);
       return;
     }
 
     let cancelled = false;
+    const sessionKey = `${projectName}:${activeChatSessionId ?? ""}`;
     setIsSessionHydrated(false);
 
     void (async () => {
       try {
-        const persisted = await fetchPersistedChatSession(projectName);
+        const persisted = await fetchPersistedChatSession(projectName, activeChatSessionId);
         if (cancelled) return;
+        if (persisted.id !== activeChatSessionId) {
+          writeActiveChatSessionId(projectName, persisted.id);
+          notifyActiveChatSessionChanged();
+        }
+        setActiveChatSessionTitle(persisted.title);
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -261,6 +295,7 @@ export default function HomePage() {
         });
       } catch {
         if (cancelled) return;
+        setActiveChatSessionTitle(null);
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
@@ -272,31 +307,67 @@ export default function HomePage() {
           latestResult: null,
         });
       } finally {
-        if (!cancelled) setIsSessionHydrated(true);
+        if (!cancelled) {
+          hydratedSessionKeyRef.current = sessionKey;
+          setIsSessionHydrated(true);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeProject?.id, activeProject?.name]);
+  }, [activeProject?.id, activeProject?.name, activeChatSessionId]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !isConversationListView) return;
+
+    let cancelled = false;
+    setChatSessionsLoading(true);
+    setChatSessionsError(null);
+
+    void listPersistedChatSessions(projectName)
+      .then((sessions) => {
+        if (!cancelled) setChatSessions(sessions);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setChatSessions([]);
+          setChatSessionsError(error instanceof Error ? error.message : "Failed to load conversations.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setChatSessionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject?.name, isConversationListView]);
 
   useEffect(() => {
     const projectName = activeProject?.name ?? null;
     if (!projectName || !isSessionHydrated) return;
+    if (hydratedSessionKeyRef.current !== `${projectName}:${activeChatSessionId ?? ""}`) return;
     if (messageHistory.length === 0 && messages.length === 0 && latestResult == null) return;
 
     const snapshot = JSON.stringify({ messages, messageHistory, latestResult });
     if (snapshot === lastPersistedSnapshotRef.current) return;
 
     lastPersistedSnapshotRef.current = snapshot;
-    void savePersistedChatSession(projectName, { messages, messageHistory, latestResult }).catch(() => {
+    void savePersistedChatSession(projectName, {
+      chatSessionId: activeChatSessionId,
+      messages,
+      messageHistory,
+      latestResult,
+    }).catch(() => {
       // Best-effort persistence for Phase 1. A failed save should not break the live chat.
       if (lastPersistedSnapshotRef.current === snapshot) {
         lastPersistedSnapshotRef.current = null;
       }
     });
-  }, [activeProject?.name, isSessionHydrated, messages, messageHistory, latestResult]);
+  }, [activeProject?.name, activeChatSessionId, isSessionHydrated, messages, messageHistory, latestResult]);
 
   const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
   const [saltInput, setSaltInput] = useState("AlCl3-KCl");
@@ -847,6 +918,7 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           project_name: projectName,
+          chat_session_id: activeChatSessionId,
           user_prompt: text,
         })
       });
@@ -1173,6 +1245,37 @@ export default function HomePage() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [agentLogs]);
 
+  async function handleCreateConversation() {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) return;
+    try {
+      const created = await createPersistedChatSession(projectName);
+      setChatSessions((prev) => [created, ...prev.filter((session) => session.id !== created.id)]);
+      setActiveChatSessionTitle(created.title);
+      writeActiveChatSessionId(projectName, created.id);
+      notifyActiveChatSessionChanged();
+    } catch (error) {
+      setChatSessionsError(
+        error instanceof Error ? error.message : "Failed to create conversation."
+      );
+    }
+  }
+
+  function handleOpenConversation(chatSession: PersistedChatSessionSummary) {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) return;
+    setActiveChatSessionTitle(chatSession.title);
+    writeActiveChatSessionId(projectName, chatSession.id);
+    notifyActiveChatSessionChanged();
+  }
+
+  function handleBackToConversationList() {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) return;
+    writeActiveChatSessionId(projectName, null);
+    notifyActiveChatSessionChanged();
+  }
+
   return (
     <main
       ref={mainRef}
@@ -1205,220 +1308,282 @@ export default function HomePage() {
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
           <div className="panel-header-stack">
-            <div className="panel-title">Chat with</div>
-            <div className="model-cascade-menu" ref={modelMenuRef}>
-              <button
-                type="button"
-                className="input model-menu-trigger"
-                onClick={() => {
-                  setIsModelMenuOpen((prev) => {
-                    const next = !prev;
-                    if (next) {
-                      setIsServiceExpanded(true);
-                      setIsOpenModelsExpanded(chatFamily === "open models");
-                    }
-                    return next;
-                  });
-                }}
-              >
-                {chatService} / {chatFamily === "open models" ? chatOpenModel : chatFamily}
-              </button>
+            <div className="panel-title">
+              {isConversationListView ? "Conversations" : "Chat with"}
+            </div>
+            {isConversationOpen && (
+              <div className="model-cascade-menu" ref={modelMenuRef}>
+                <button
+                  type="button"
+                  className="input model-menu-trigger"
+                  onClick={() => {
+                    setIsModelMenuOpen((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        setIsServiceExpanded(true);
+                        setIsOpenModelsExpanded(chatFamily === "open models");
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  {chatService} / {chatFamily === "open models" ? chatOpenModel : chatFamily}
+                </button>
 
-              {isModelMenuOpen && (
-                <div className="model-menu level1">
-                  <button
-                    type="button"
-                    className="model-menu-item has-children"
-                    onMouseEnter={() => setIsServiceExpanded(true)}
-                    onClick={() => setIsServiceExpanded((prev) => !prev)}
-                  >
-                    {chatService}
-                  </button>
+                {isModelMenuOpen && (
+                  <div className="model-menu level1">
+                    <button
+                      type="button"
+                      className="model-menu-item has-children"
+                      onMouseEnter={() => setIsServiceExpanded(true)}
+                      onClick={() => setIsServiceExpanded((prev) => !prev)}
+                    >
+                      {chatService}
+                    </button>
 
-                  {isServiceExpanded && (
-                    <div className="model-menu level2">
-                      {MODEL_FAMILIES.map((family) => (
-                        <button
-                          type="button"
-                          key={family}
-                          className={`model-menu-item ${family === "open models" ? "has-children" : ""}`}
-                          onMouseEnter={() => setIsOpenModelsExpanded(family === "open models")}
-                          onClick={() => {
-                            setChatFamily(family);
-                            if (family !== "open models") {
+                    {isServiceExpanded && (
+                      <div className="model-menu level2">
+                        {MODEL_FAMILIES.map((family) => (
+                          <button
+                            type="button"
+                            key={family}
+                            className={`model-menu-item ${family === "open models" ? "has-children" : ""}`}
+                            onMouseEnter={() => setIsOpenModelsExpanded(family === "open models")}
+                            onClick={() => {
+                              setChatFamily(family);
+                              if (family !== "open models") {
+                                setIsModelMenuOpen(false);
+                                setIsOpenModelsExpanded(false);
+                              } else {
+                                setIsOpenModelsExpanded(true);
+                              }
+                            }}
+                          >
+                            {family}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {isServiceExpanded && isOpenModelsExpanded && (
+                      <div className="model-menu level3">
+                        {OPEN_MODELS.map((model) => (
+                          <button
+                            type="button"
+                            key={model}
+                            className="model-menu-item"
+                            onClick={() => {
+                              setChatFamily("open models");
+                              setChatOpenModel(model);
                               setIsModelMenuOpen(false);
                               setIsOpenModelsExpanded(false);
-                            } else {
-                              setIsOpenModelsExpanded(true);
-                            }
-                          }}
-                        >
-                          {family}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {isServiceExpanded && isOpenModelsExpanded && (
-                    <div className="model-menu level3">
-                      {OPEN_MODELS.map((model) => (
-                        <button
-                          type="button"
-                          key={model}
-                          className="model-menu-item"
-                          onClick={() => {
-                            setChatFamily("open models");
-                            setChatOpenModel(model);
-                            setIsModelMenuOpen(false);
-                            setIsOpenModelsExpanded(false);
-                          }}
-                        >
-                          {model}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                            }}
+                          >
+                            {model}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
-              Analyze salt…
-            </button>
-            <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
-              Predict salt…
-            </button>
-            <button
-              className="quick-chip"
-              disabled={messageHistory.length === 0}
-              title={
-                messageHistory.length === 0
-                  ? "Have a conversation first; the skill is drafted from it."
-                  : "Distill this conversation into a reusable SKILL.md"
-              }
-              onClick={() => void openSaveAsSkill()}
-            >
-              Save as skill…
-            </button>
-            <label className="toggle-wrap">
-              <span className="toggle-label">Agent</span>
-              <input
-                className="toggle-input"
-                type="checkbox"
-                checked={useLlm}
-                onChange={(event) => setUseLlm(event.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
+            {isConversationListView ? (
+              <button className="quick-chip" onClick={() => void handleCreateConversation()}>
+                + New conversation
+              </button>
+            ) : isConversationOpen ? (
+              <>
+                <button className="quick-chip" onClick={handleBackToConversationList}>
+                  ← Back to conversations
+                </button>
+                <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
+                  Analyze salt…
+                </button>
+                <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
+                  Predict salt…
+                </button>
+                <button
+                  className="quick-chip"
+                  disabled={messageHistory.length === 0}
+                  title={
+                    messageHistory.length === 0
+                      ? "Have a conversation first; the skill is drafted from it."
+                      : "Distill this conversation into a reusable SKILL.md"
+                  }
+                  onClick={() => void openSaveAsSkill()}
+                >
+                  Save as skill…
+                </button>
+                <label className="toggle-wrap">
+                  <span className="toggle-label">Agent</span>
+                  <input
+                    className="toggle-input"
+                    type="checkbox"
+                    checked={useLlm}
+                    onChange={(event) => setUseLlm(event.target.checked)}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+              </>
+            ) : null}
           </div>
         </div>
         <div className="panel-body" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-          <div ref={chatListRef} className="chat-list" onScroll={handleChatScroll}>
-            {messages.length === 0 && (
-              <div className="chat-bubble">
-                Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
-              </div>
-            )}
-            {messages.map((msg) => {
-              const isIntermediate = !!msg.intermediate;
-              const isLatestIntermediate = isIntermediate && msg.id === latestIntermediateId;
-              const isManuallyExpanded = expandedIntermediates.has(msg.id);
-              const collapsed = isIntermediate && !isLatestIntermediate && !isManuallyExpanded;
-
-              if (collapsed) {
-                return (
-                  <button
-                    key={msg.id}
-                    type="button"
-                    className="chat-bubble intermediate collapsed"
-                    onClick={() => toggleIntermediate(msg.id)}
-                    aria-expanded="false"
-                  >
-                    <span className="intermediate-chevron" aria-hidden="true">▸</span>
-                    <span className="intermediate-label">agent thinking</span>
-                    <span className="intermediate-preview">{intermediatePreview(msg.content)}</span>
-                  </button>
-                );
-              }
-
-              return (
-                <div
-                  key={msg.id}
-                  className={`chat-bubble ${msg.role}${isIntermediate ? ` intermediate${isLatestIntermediate ? " current" : " expanded"}` : ""}`}
+          {isConversationListView ? (
+            <div className="chat-list conversation-list-view">
+              {!activeProject && (
+                <div className="chat-bubble">
+                  Select a project first to see its conversations.
+                </div>
+              )}
+              {activeProject && chatSessionsLoading && (
+                <div className="chat-bubble">Loading conversations…</div>
+              )}
+              {activeProject && !chatSessionsLoading && chatSessionsError && (
+                <div className="chat-bubble error">{chatSessionsError}</div>
+              )}
+              {activeProject && !chatSessionsLoading && !chatSessionsError && chatSessions.length === 0 && (
+                <div className="chat-bubble">
+                  No conversations yet. Create a new conversation to get started.
+                </div>
+              )}
+              {chatSessions.map((chatSession) => (
+                <button
+                  key={chatSession.id}
+                  type="button"
+                  className="conversation-list-item"
+                  onClick={() => handleOpenConversation(chatSession)}
                 >
-                  {isIntermediate && (
-                    <div className="intermediate-header">
-                      <span className="intermediate-label">
-                        {isLatestIntermediate ? "agent thinking · latest" : "agent thinking"}
-                      </span>
-                      {!isLatestIntermediate && (
-                        <button
-                          type="button"
-                          className="intermediate-toggle"
-                          onClick={() => toggleIntermediate(msg.id)}
-                          aria-expanded="true"
-                        >
-                          collapse
-                        </button>
+                  <span className="conversation-list-title">{chatSession.title}</span>
+                  <span className="conversation-list-date">
+                    {new Date(chatSession.updated_at).toLocaleString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : isConversationOpen ? (
+            <>
+              <div ref={chatListRef} className="chat-list" onScroll={handleChatScroll}>
+                {activeChatSessionTitle && (
+                  <div className="chat-session-banner">{activeChatSessionTitle}</div>
+                )}
+                {messages.length === 0 && (
+                  <div className="chat-bubble">
+                    Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
+                  </div>
+                )}
+                {messages.map((msg) => {
+                  const isIntermediate = !!msg.intermediate;
+                  const isLatestIntermediate = isIntermediate && msg.id === latestIntermediateId;
+                  const isManuallyExpanded = expandedIntermediates.has(msg.id);
+                  const collapsed = isIntermediate && !isLatestIntermediate && !isManuallyExpanded;
+
+                  if (collapsed) {
+                    return (
+                      <button
+                        key={msg.id}
+                        type="button"
+                        className="chat-bubble intermediate collapsed"
+                        onClick={() => toggleIntermediate(msg.id)}
+                        aria-expanded="false"
+                      >
+                        <span className="intermediate-chevron" aria-hidden="true">▸</span>
+                        <span className="intermediate-label">agent thinking</span>
+                        <span className="intermediate-preview">{intermediatePreview(msg.content)}</span>
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`chat-bubble ${msg.role}${isIntermediate ? ` intermediate${isLatestIntermediate ? " current" : " expanded"}` : ""}`}
+                    >
+                      {isIntermediate && (
+                        <div className="intermediate-header">
+                          <span className="intermediate-label">
+                            {isLatestIntermediate ? "agent thinking · latest" : "agent thinking"}
+                          </span>
+                          {!isLatestIntermediate && (
+                            <button
+                              type="button"
+                              className="intermediate-toggle"
+                              onClick={() => toggleIntermediate(msg.id)}
+                              aria-expanded="true"
+                            >
+                              collapse
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {msg.role === "assistant" ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      ) : (
+                        msg.content
+                      )}
+                      {msg.result && !msg.result.ok && (
+                        <div className="error" style={{ marginTop: 6 }}>
+                          {msg.result.stderr}
+                        </div>
                       )}
                     </div>
-                  )}
-                  {msg.role === "assistant" ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                  ) : (
-                    msg.content
-                  )}
-                  {msg.result && !msg.result.ok && (
-                    <div className="error" style={{ marginTop: 6 }}>
-                      {msg.result.stderr}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {isChatLoading && (
-              <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
-                <span className="thinking-loader" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-                <span>Working on it...</span>
+                  );
+                })}
+                {isChatLoading && (
+                  <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
+                    <span className="thinking-loader" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    <span>Working on it...</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {showJumpToLatest && (
-            <button
-              type="button"
-              className="chat-jump-latest"
-              aria-label="Jump to latest"
-              title="Jump to latest"
-              onClick={() => {
-                setShowJumpToLatest(false);
-                scrollChatToLatest("smooth");
-              }}
-            >
-              ↓
-            </button>
+              {showJumpToLatest && (
+                <button
+                  type="button"
+                  className="chat-jump-latest"
+                  aria-label="Jump to latest"
+                  title="Jump to latest"
+                  onClick={() => {
+                    setShowJumpToLatest(false);
+                    scrollChatToLatest("smooth");
+                  }}
+                >
+                  ↓
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="chat-list conversation-list-view">
+              <div className="chat-bubble">
+                Select a project first to open its conversations.
+              </div>
+            </div>
           )}
         </div>
-        <div className="chat-input-row">
-          <input
-            className="input"
-            placeholder="Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                void sendUserMessage();
-              }
-            }}
-          />
-          <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
-            {isChatLoading ? "Agent working..." : "⏎"}
-          </button>
-        </div>
+        {isConversationOpen && (
+          <div className="chat-input-row">
+            <input
+              className="input"
+              placeholder="Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void sendUserMessage();
+                }
+              }}
+            />
+            <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
+              {isChatLoading ? "Agent working..." : "⏎"}
+            </button>
+          </div>
+        )}
       </section>
 
       <div

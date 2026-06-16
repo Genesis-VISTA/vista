@@ -1,3 +1,4 @@
+import uuid
 from typing import AsyncGenerator, Any
 
 from fastapi import APIRouter
@@ -31,6 +32,8 @@ class AgentRunRequest(BaseModel):
     """ If True, stream the response as Server-Sent Events. """
     user_prompt: str
     """ The user prompt to the agent. """
+    chat_session_id: uuid.UUID | None = None
+    """ Optional selected chat session. When omitted, use the default/latest session. """
     message_history: list[ModelMessage] = Field(default_factory=list)
     """ Optional fallback history from older clients; backend session state wins when present. """
 
@@ -61,12 +64,18 @@ async def agent_run(
     """
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=body.chat_session_id,
+    )
     effective_history = await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
         user_id=user.id,
         fallback_history=body.message_history,
+        chat_session_id=body.chat_session_id,
     )
 
     if body.stream:
@@ -87,6 +96,7 @@ async def agent_run(
                             user_id=user.id,
                             prior_history=effective_history,
                             new_messages=event.result.new_messages,
+                            chat_session_id=body.chat_session_id,
                         )
                     data = TypeAdapter(Any).dump_json(event).decode()
                     yield ServerSentEvent(event=event.event_kind, data=data)
@@ -104,5 +114,6 @@ async def agent_run(
             user_id=user.id,
             prior_history=effective_history,
             new_messages=result.new_messages,
+            chat_session_id=body.chat_session_id,
         )
         return result

@@ -1,8 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  notifyActiveChatSessionChanged,
+  writeActiveChatSessionId,
+} from "@/lib/chat-session";
 import { useActiveProject } from "@/lib/projects";
 import { useCurrentUser, userDisplayName, userInitials } from "@/lib/user";
 import { UserSettingsModal } from "./UserSettingsModal";
@@ -161,6 +165,7 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
 ];
 
 export function NavRail() {
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeProject = useActiveProject();
@@ -257,6 +262,16 @@ export function NavRail() {
     );
   }
 
+  function handleOpenChatList() {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) return;
+    writeActiveChatSessionId(projectName, null);
+    notifyActiveChatSessionChanged();
+    router.push("/");
+  }
+
+  const projectEntries = PROJECT_LOCAL_ENTRIES.slice(1);
+
   return (
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
@@ -313,7 +328,22 @@ export function NavRail() {
             </div>
           </div>
         )}
-        {PROJECT_LOCAL_ENTRIES.map((entry) =>
+        {activeProject ? (
+          <button
+            type="button"
+            className={`nav-rail-entry${isEntryActive("/") ? " active" : ""} project-child`}
+            onClick={handleOpenChatList}
+            title="Chat"
+          >
+            <span className="nav-rail-icon" aria-hidden="true">
+              {PROJECT_LOCAL_ENTRIES[0].icon}
+            </span>
+            {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
+          </button>
+        ) : (
+          renderEntry({ ...PROJECT_LOCAL_ENTRIES[0], disabled: true }, "project-child")
+        )}
+        {projectEntries.map((entry) =>
           renderEntry(
             activeProject ? entry : { ...entry, disabled: true },
             "project-child"
