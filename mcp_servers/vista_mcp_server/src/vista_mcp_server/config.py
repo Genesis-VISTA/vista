@@ -184,6 +184,7 @@ class AppSettings(BaseSettings):
 settings = AppSettings()
 if settings.hf_token:
     os.environ['HF_TOKEN'] = settings.hf_token
+os.environ["HF_HOME"] = str(settings.data_dir / 'huggingface')
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
