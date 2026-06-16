@@ -92,3 +92,38 @@ export async function PUT(request: Request) {
     headers: { "content-type": "application/json" },
   });
 }
+
+export async function DELETE(request: Request) {
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const chatSessionId = url.searchParams.get("chat_session_id");
+  if (!projectName) {
+    return NextResponse.json({ error: "Missing project_name." }, { status: 400 });
+  }
+  if (!chatSessionId) {
+    return NextResponse.json({ error: "Missing chat_session_id." }, { status: 400 });
+  }
+
+  let upstream: Response;
+  try {
+    const upstreamUrl = new URL(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`)
+    );
+    upstreamUrl.searchParams.set("chat_session_id", chatSessionId);
+    upstream = await fetch(
+      upstreamUrl,
+      {
+        method: "DELETE",
+        headers: await backendHeaders(),
+      }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json(
+      { error: `Backend unreachable: ${message}` },
+      { status: 502 }
+    );
+  }
+
+  return new NextResponse(null, { status: upstream.status });
+}

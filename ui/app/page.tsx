@@ -16,6 +16,7 @@ import { readActiveProjectName, useActiveProject } from "@/lib/projects";
 import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
   createPersistedChatSession,
+  deletePersistedChatSession,
   fetchPersistedChatSession,
   listPersistedChatSessions,
   notifyActiveChatSessionChanged,
@@ -194,6 +195,9 @@ export default function HomePage() {
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
+  const [editingChatSessionId, setEditingChatSessionId] = useState<string | null>(null);
+  const [draftChatSessionTitle, setDraftChatSessionTitle] = useState("");
+  const [deleteSessionTarget, setDeleteSessionTarget] = useState<PersistedChatSessionSummary | null>(null);
   /**
    * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
    * `agent_run_result.new_messages`. The backend now owns the canonical
@@ -1301,13 +1305,18 @@ export default function HomePage() {
     notifyActiveChatSessionChanged();
   }
 
-  async function handleRenameConversation(chatSession: PersistedChatSessionSummary) {
+  async function handleRenameConversation() {
     const projectName = activeProject?.name ?? null;
-    if (!projectName) return;
-    const nextTitle = window.prompt("Rename conversation", chatSession.title)?.trim();
-    if (!nextTitle || nextTitle === chatSession.title) return;
+    if (!projectName || !editingChatSessionId) return;
+    const sessionToRename = chatSessions.find((session) => session.id === editingChatSessionId);
+    if (!sessionToRename) return;
+    const nextTitle = draftChatSessionTitle.trim();
+    if (!nextTitle || nextTitle === sessionToRename.title) {
+      setEditingChatSessionId(null);
+      return;
+    }
     try {
-      const updated = await renamePersistedChatSession(projectName, chatSession.id, nextTitle);
+      const updated = await renamePersistedChatSession(projectName, editingChatSessionId, nextTitle);
       setChatSessions((prev) =>
         prev.map((session) =>
           session.id === updated.id ? { ...session, title: updated.title, updated_at: updated.updated_at } : session
@@ -1316,11 +1325,31 @@ export default function HomePage() {
       if (activeChatSessionId === updated.id) {
         setActiveChatSessionTitle(updated.title);
       }
+      setEditingChatSessionId(null);
     } catch (error) {
       setChatSessionsError(
         error instanceof Error ? error.message : "Failed to rename conversation."
       );
     }
+  }
+
+  async function handleDeleteConversation() {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !deleteSessionTarget) return;
+    try {
+      await deletePersistedChatSession(projectName, deleteSessionTarget.id);
+      setChatSessions((prev) => prev.filter((session) => session.id !== deleteSessionTarget.id));
+      setDeleteSessionTarget(null);
+    } catch (error) {
+      setChatSessionsError(
+        error instanceof Error ? error.message : "Failed to delete conversation."
+      );
+    }
+  }
+
+  function beginInlineRename(chatSession: PersistedChatSessionSummary) {
+    setEditingChatSessionId(chatSession.id);
+    setDraftChatSessionTitle(chatSession.title);
   }
 
   return (
@@ -1438,13 +1467,30 @@ export default function HomePage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {isConversationListView ? (
-              <button className="quick-chip" onClick={() => void handleCreateConversation()}>
-                + New conversation
+              <button
+                className="conversation-action-button primary"
+                onClick={() => void handleCreateConversation()}
+                title="New conversation"
+                aria-label="New conversation"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                <span>New conversation</span>
               </button>
             ) : isConversationOpen ? (
               <>
-                <button className="quick-chip" onClick={handleBackToConversationList}>
-                  ← Back to conversations
+                <button
+                  className="conversation-back-button"
+                  onClick={handleBackToConversationList}
+                  title="Back to conversations"
+                  aria-label="Back to conversations"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                  <span>Back to conversations</span>
                 </button>
                 <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
                   Analyze salt…
@@ -1504,17 +1550,82 @@ export default function HomePage() {
                     className="conversation-list-open"
                     onClick={() => handleOpenConversation(chatSession)}
                   >
-                    <span className="conversation-list-title">{chatSession.title}</span>
-                    <span className="conversation-list-date">
-                      {new Date(chatSession.updated_at).toLocaleString()}
-                    </span>
+                    {editingChatSessionId === chatSession.id ? (
+                      <>
+                        <input
+                          className="input conversation-list-title-input"
+                          value={draftChatSessionTitle}
+                          onChange={(event) => setDraftChatSessionTitle(event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void handleRenameConversation();
+                            }
+                            if (event.key === "Escape") {
+                              setEditingChatSessionId(null);
+                            }
+                          }}
+                        />
+                        <span className="conversation-list-date">
+                          {new Date(chatSession.updated_at).toLocaleString()}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="conversation-list-title">{chatSession.title}</span>
+                        <span className="conversation-list-date">
+                          {new Date(chatSession.updated_at).toLocaleString()}
+                        </span>
+                      </>
+                    )}
                   </button>
+                  {editingChatSessionId === chatSession.id ? (
+                    <>
+                      <button
+                        type="button"
+                        className="conversation-list-edit"
+                        onClick={() => void handleRenameConversation()}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        className="conversation-list-edit ghost"
+                        onClick={() => setEditingChatSessionId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="conversation-list-edit"
+                      title="Edit conversation name"
+                      aria-label="Edit conversation name"
+                      onClick={() => beginInlineRename(chatSession)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className="conversation-list-edit"
-                    onClick={() => void handleRenameConversation(chatSession)}
+                    className="conversation-list-delete"
+                    title="Delete conversation"
+                    aria-label="Delete conversation"
+                    onClick={() => setDeleteSessionTarget(chatSession)}
                   >
-                    Edit name
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4h8v2" />
+                      <path d="M19 6l-1 14H6L5 6" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                    </svg>
                   </button>
                 </div>
               ))}
@@ -1627,7 +1738,7 @@ export default function HomePage() {
               className="input"
               placeholder={
                 isConversationListView
-                  ? "Start typing to create a new conversation..."
+                  ? "Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
                   : "Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
               }
               value={input}
@@ -1820,6 +1931,32 @@ export default function HomePage() {
               <button className="button secondary" onClick={runSaltPrediction} disabled={isCalling}>
                 {isCalling ? "Running..." : "Run prediction"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteSessionTarget && (
+        <div className="modal-backdrop" onClick={() => setDeleteSessionTarget(null)}>
+          <div className="modal" onClick={(event) => event.stopPropagation()}>
+            <div className="panel-header">
+              <div className="panel-title">Delete Conversation</div>
+              <button className="button ghost" onClick={() => setDeleteSessionTarget(null)}>
+                Close
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                Delete <strong>{deleteSessionTarget.title}</strong>? This conversation history will be removed.
+              </p>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="button ghost" onClick={() => setDeleteSessionTarget(null)}>
+                  Cancel
+                </button>
+                <button className="button secondary" onClick={() => void handleDeleteConversation()}>
+                  Delete conversation
+                </button>
+              </div>
             </div>
           </div>
         </div>

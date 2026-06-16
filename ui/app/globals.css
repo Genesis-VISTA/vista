@@ -1836,7 +1836,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .conversation-list-item {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 10px;
   width: 100%;
   padding: 10px;
@@ -1882,24 +1882,63 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
 }
 
-.conversation-list-edit {
-  flex: 0 0 auto;
-  align-self: center;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+.conversation-action-button,
+.conversation-list-edit,
+.conversation-list-delete,
+.conversation-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #213b61 0%, #112a4d 100%);
+  color: #f3f6fb;
   cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  box-shadow: 0 6px 16px rgba(17, 42, 77, 0.18);
+  transition: transform 120ms ease, filter 120ms ease, border-color 120ms ease;
 }
 
-.conversation-list-edit:hover {
-  border-color: var(--brand);
-  color: var(--brand);
-  background: rgba(0, 69, 115, 0.06);
+.conversation-action-button:hover,
+.conversation-list-edit:hover,
+.conversation-list-delete:hover,
+.conversation-back-button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.conversation-action-button {
+  height: 38px;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: 12px;
+  font-family: "Figtree", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.conversation-action-button.primary {
+  background: linear-gradient(180deg, #1a4f7c 0%, #004573 100%);
+}
+
+.conversation-back-button {
+  height: 42px;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: 14px;
+  font-family: "Figtree", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conversation-list-delete {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #7a2630 0%, #5c1119 100%);
+  color: #fff3f4;
 }
 
 .chat-session-banner {
@@ -1911,6 +1950,29 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--brand);
   font-size: 12px;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.conversation-list-edit {
+  width: 56px;
+  height: 36px;
+  align-self: stretch;
+  border-radius: 10px;
+}
+
+.conversation-list-edit.ghost {
+  background: linear-gradient(180deg, #667383 0%, #4f5c6b 100%);
+  color: #eef2f7;
+}
+
+.conversation-list-title-input {
+  min-width: 220px;
+  max-width: 100%;
+  height: 34px;
+  padding: 5px 10px;
 }
 
 /* ------------------------------------------------------------------ */

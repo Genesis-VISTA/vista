@@ -151,6 +151,23 @@ async def update_chat_session(
     return row
 
 
+async def delete_chat_session(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    user_id: uuid.UUID,
+    chat_session_id: uuid.UUID,
+) -> None:
+    row = await get_chat_session(
+        session,
+        project_id=project_id,
+        user_id=user_id,
+        chat_session_id=chat_session_id,
+    )
+    await session.delete(row)
+    await session.flush()
+
+
 async def get_effective_message_history(
     session: AsyncSession,
     *,

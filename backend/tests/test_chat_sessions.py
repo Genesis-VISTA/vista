@@ -221,3 +221,40 @@ async def test_append_message_history_extends_existing_session_history(session, 
         user_id=alice.id,
     )
     assert [message["kind"] for message in reloaded.message_history] == ["request", "response"]
+
+
+@pytest.mark.anyio
+async def test_delete_chat_session_removes_only_target_session(session, alice):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="delete-project", description=None, system_prompt=None),
+        alice,
+    )
+
+    first = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        payload=ChatSessionCreate(title="First"),
+    )
+    second = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        payload=ChatSessionCreate(title="Second"),
+    )
+
+    await chat_session_service.delete_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        chat_session_id=first.id,
+    )
+
+    listed = await chat_session_service.list_chat_sessions(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+
+    assert [row.id for row in listed] == [second.id]

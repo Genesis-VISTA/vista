@@ -168,3 +168,17 @@ export async function renamePersistedChatSession(
     title,
   });
 }
+
+export async function deletePersistedChatSession(
+  projectName: string,
+  chatSessionId: string,
+): Promise<void> {
+  const qs = new URLSearchParams({
+    project_name: projectName,
+    chat_session_id: chatSessionId,
+  });
+  const res = await fetch(`/api/chat/session?${qs.toString()}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+}

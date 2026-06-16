@@ -83,3 +83,19 @@ async def put_chat_session(
         chat_session_id=chat_session_id,
     )
     return ChatSessionPublic.model_validate(chat_session, from_attributes=True)
+
+
+@router.delete("/{project_name}/chat-session", status_code=204)
+async def delete_chat_session(
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
+    chat_session_id: uuid.UUID,
+) -> None:
+    project = await project_service.get_project_by_name(session, project_name, user)
+    await chat_session_service.delete_chat_session(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=chat_session_id,
+    )
