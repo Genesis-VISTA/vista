@@ -1836,18 +1836,13 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .conversation-list-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: stretch;
+  gap: 10px;
   width: 100%;
-  padding: 14px 16px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel-2);
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
@@ -1857,15 +1852,54 @@ button.chat-bubble.intermediate.collapsed:hover {
   transform: translateY(-1px);
 }
 
+.conversation-list-open {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .conversation-list-title {
   font-family: "Figtree", system-ui, sans-serif;
   font-size: 14px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .conversation-list-date {
   font-size: 11px;
   color: var(--muted);
+}
+
+.conversation-list-edit {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.conversation-list-edit:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: rgba(0, 69, 115, 0.06);
 }
 
 .chat-session-banner {

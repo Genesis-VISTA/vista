@@ -137,9 +137,9 @@ export async function savePersistedChatSession(
   payload: {
     chatSessionId?: string | null;
     title?: string | null;
-    messageHistory: ModelMessage[];
-    messages: ChatMessage[];
-    latestResult: ExecutionResult | null;
+    messageHistory?: ModelMessage[] | null;
+    messages?: ChatMessage[] | null;
+    latestResult?: ExecutionResult | null;
   }
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/session", {
@@ -149,11 +149,22 @@ export async function savePersistedChatSession(
       project_name: projectName,
       chat_session_id: payload.chatSessionId ?? null,
       title: payload.title ?? null,
-      message_history: payload.messageHistory,
-      messages: payload.messages,
-      latest_result: payload.latestResult,
+      message_history: payload.messageHistory ?? null,
+      messages: payload.messages ?? null,
+      latest_result: payload.latestResult ?? null,
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()) as PersistedChatSession;
+}
+
+export async function renamePersistedChatSession(
+  projectName: string,
+  chatSessionId: string,
+  title: string,
+): Promise<PersistedChatSession> {
+  return savePersistedChatSession(projectName, {
+    chatSessionId,
+    title,
+  });
 }

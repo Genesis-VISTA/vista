@@ -101,6 +101,48 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
 
 
 @pytest.mark.anyio
+async def test_update_chat_session_title_only_preserves_existing_history(session, alice):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="rename-project", description=None, system_prompt=None),
+        alice,
+    )
+
+    created = await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        updates=ChatSessionUpdate(
+            message_history=[
+                {
+                    "kind": "request",
+                    "parts": [{"part_kind": "user-prompt", "content": "hello"}],
+                }
+            ],
+            messages=[
+                {
+                    "id": "m1",
+                    "role": "user",
+                    "content": "hello",
+                }
+            ],
+        ),
+    )
+
+    renamed = await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        chat_session_id=created.id,
+        updates=ChatSessionUpdate(title="Renamed conversation"),
+    )
+
+    assert renamed.title == "Renamed conversation"
+    assert renamed.message_history[0]["kind"] == "request"
+    assert renamed.messages[0]["content"] == "hello"
+
+
+@pytest.mark.anyio
 async def test_effective_message_history_uses_fallback_only_when_session_is_empty(session, alice):
     project = await project_service.create_project(
         session,

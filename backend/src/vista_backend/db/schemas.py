@@ -123,8 +123,8 @@ class ChatSessionCreate(BaseModel):
 
 class ChatSessionUpdate(BaseModel):
     title: str | None = None
-    message_history: list[dict[str, Any]] = Field(default_factory=list)
-    messages: list[ChatTranscriptMessage] = Field(default_factory=list)
+    message_history: list[dict[str, Any]] | None = None
+    messages: list[ChatTranscriptMessage] | None = None
     latest_result: dict[str, Any] | None = None
 
 

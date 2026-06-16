@@ -135,10 +135,13 @@ async def update_chat_session(
         user_id=user_id,
         chat_session_id=chat_session_id,
     )
-    normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(updates.message_history)
-    row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(normalized_history, mode="json")
-    row.messages = [message.model_dump(mode="json") for message in updates.messages]
-    row.latest_result = updates.latest_result
+    if updates.message_history is not None:
+        normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(updates.message_history)
+        row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(normalized_history, mode="json")
+    if updates.messages is not None:
+        row.messages = [message.model_dump(mode="json") for message in updates.messages]
+    if updates.latest_result is not None:
+        row.latest_result = updates.latest_result
     if updates.title is not None and updates.title.strip():
         row.title = updates.title.strip()
     row.updated_at = now_iso()

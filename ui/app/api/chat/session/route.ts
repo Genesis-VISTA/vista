@@ -73,8 +73,8 @@ export async function PUT(request: Request) {
         headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           title: typeof body.title === "string" ? body.title : null,
-          message_history: body.message_history ?? [],
-          messages: body.messages ?? [],
+          message_history: body.message_history ?? null,
+          messages: body.messages ?? null,
           latest_result: body.latest_result ?? null,
         }),
       }

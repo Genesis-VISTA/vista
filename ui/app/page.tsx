@@ -19,6 +19,7 @@ import {
   fetchPersistedChatSession,
   listPersistedChatSessions,
   notifyActiveChatSessionChanged,
+  renamePersistedChatSession,
   savePersistedChatSession,
   type PersistedChatSessionSummary,
   useActiveChatSessionId,
@@ -665,6 +666,30 @@ export default function HomePage() {
       return;
     }
 
+    let targetChatSessionId = activeChatSessionId;
+    if (!targetChatSessionId) {
+      try {
+        const created = await createPersistedChatSession(projectName, {
+          title: text.slice(0, 60),
+        });
+        targetChatSessionId = created.id;
+        setChatSessions((prev) => [created, ...prev.filter((session) => session.id !== created.id)]);
+        setActiveChatSessionTitle(created.title);
+        writeActiveChatSessionId(projectName, created.id);
+        notifyActiveChatSessionChanged();
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Could not create a new conversation."
+          }
+        ]);
+        return;
+      }
+    }
+
     setIsChatLoading(true);
     // Per-turn streaming-part accumulator, keyed by PartStartEvent.index.
     // Text parts also track the id of the live assistant bubble they update.
@@ -918,7 +943,7 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           project_name: projectName,
-          chat_session_id: activeChatSessionId,
+          chat_session_id: targetChatSessionId,
           user_prompt: text,
         })
       });
@@ -1276,6 +1301,28 @@ export default function HomePage() {
     notifyActiveChatSessionChanged();
   }
 
+  async function handleRenameConversation(chatSession: PersistedChatSessionSummary) {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName) return;
+    const nextTitle = window.prompt("Rename conversation", chatSession.title)?.trim();
+    if (!nextTitle || nextTitle === chatSession.title) return;
+    try {
+      const updated = await renamePersistedChatSession(projectName, chatSession.id, nextTitle);
+      setChatSessions((prev) =>
+        prev.map((session) =>
+          session.id === updated.id ? { ...session, title: updated.title, updated_at: updated.updated_at } : session
+        )
+      );
+      if (activeChatSessionId === updated.id) {
+        setActiveChatSessionTitle(updated.title);
+      }
+    } catch (error) {
+      setChatSessionsError(
+        error instanceof Error ? error.message : "Failed to rename conversation."
+      );
+    }
+  }
+
   return (
     <main
       ref={mainRef}
@@ -1451,17 +1498,25 @@ export default function HomePage() {
                 </div>
               )}
               {chatSessions.map((chatSession) => (
-                <button
-                  key={chatSession.id}
-                  type="button"
-                  className="conversation-list-item"
-                  onClick={() => handleOpenConversation(chatSession)}
-                >
-                  <span className="conversation-list-title">{chatSession.title}</span>
-                  <span className="conversation-list-date">
-                    {new Date(chatSession.updated_at).toLocaleString()}
-                  </span>
-                </button>
+                <div key={chatSession.id} className="conversation-list-item">
+                  <button
+                    type="button"
+                    className="conversation-list-open"
+                    onClick={() => handleOpenConversation(chatSession)}
+                  >
+                    <span className="conversation-list-title">{chatSession.title}</span>
+                    <span className="conversation-list-date">
+                      {new Date(chatSession.updated_at).toLocaleString()}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="conversation-list-edit"
+                    onClick={() => void handleRenameConversation(chatSession)}
+                  >
+                    Edit name
+                  </button>
+                </div>
               ))}
             </div>
           ) : isConversationOpen ? (
@@ -1566,11 +1621,15 @@ export default function HomePage() {
             </div>
           )}
         </div>
-        {isConversationOpen && (
+        {(isConversationOpen || isConversationListView) && (
           <div className="chat-input-row">
             <input
               className="input"
-              placeholder="Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
+              placeholder={
+                isConversationListView
+                  ? "Start typing to create a new conversation..."
+                  : "Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
+              }
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -1580,7 +1639,7 @@ export default function HomePage() {
               }}
             />
             <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
-              {isChatLoading ? "Agent working..." : "⏎"}
+              {isChatLoading ? "Agent working..." : isConversationListView ? "Start chat" : "⏎"}
             </button>
           </div>
         )}
