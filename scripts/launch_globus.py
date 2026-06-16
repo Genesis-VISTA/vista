@@ -125,11 +125,6 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--save-env",
-        action="store_true",
-        help="Write the collection UUID to .env as VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID (else just print it).",
-    )
-    parser.add_argument(
         "--setup",
         action="store_true",
         help="Run first-time setup and exit without starting the endpoint.",
@@ -166,15 +161,6 @@ def main() -> None:
             subprocess.run([gcp, "-dir", str(config_dir), "-setup", setup_key], check=True)
         else:
             subprocess.run([gcp, "-dir", str(config_dir), "-setup", "--no-gui"], check=True)
-
-    collection_id = client_id_file.read_text().strip()
-    if args.save_env:
-        ENV_FILE.touch(exist_ok=True)
-        set_key(ENV_FILE, "VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID", collection_id, quote_mode="never")
-        print(f"Wrote VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID={collection_id} to .env")
-    else:
-        print(f"VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID={collection_id}")
-        print("(pass --save-env to write this to .env)")
 
     print("Globus endpoint setup complete.")
     if not args.setup:

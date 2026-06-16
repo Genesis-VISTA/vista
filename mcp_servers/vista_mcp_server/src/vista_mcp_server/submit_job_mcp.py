@@ -305,8 +305,8 @@ async def _submit_odo_job(
 
     if not settings.vista_globus_collection_id:
         raise ToolError(
-            "VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID is not set on this deployment. "
-            "Odo file ops go through Globus; the Vista server must expose a "
+            "Vista's Globus collection is not set up on this deployment. "
+            "Odo file ops go through Globus; run ./scripts/launch_globus.py to expose a "
             "Globus collection covering both local_hpc_jobs_dir and output_dir."
         )
 
@@ -621,8 +621,8 @@ async def _submit_frontier_job(
 
     if not settings.vista_globus_collection_id:
         raise ToolError(
-            "VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID is not set on this deployment. "
-            "Frontier file ops go through Globus; the Vista server must expose a "
+            "Vista's Globus collection is not set up on this deployment. "
+            "Frontier file ops go through Globus; run ./scripts/launch_globus.py to expose a "
             "Globus collection covering both local_hpc_jobs_dir and output_dir."
         )
 

@@ -1,4 +1,4 @@
-import os, logging
+import os, sys, functools, logging
 from fastmcp.exceptions import ToolError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
@@ -110,12 +110,6 @@ class AppSettings(BaseSettings):
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
 
-    vista_globus_collection_id: str | None = None
-    """
-    UUID of the Globus Collection hosted on the Vista server. Must expose the paths
-    `local_hpc_jobs_dir` and `output_dir` (or a common ancestor). Required for Odo
-    and Frontier file ops. Written to .env by scripts/launch_globus.py.
-    """
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
     Globus Native App client UUID used to mint refresh-token authorizers from
@@ -160,6 +154,17 @@ class AppSettings(BaseSettings):
         the box.
         """
         return self.data_dir / "knowledge-bases"
+
+    @functools.cached_property
+    def vista_globus_collection_id(self) -> str | None:
+        """
+        UUID of the Globus Collection hosted on the Vista server, read from the
+        Globus Connect Personal config.
+        """
+        client_id_file = self.data_dir / "globusonline" / "lta" / "client-id.txt"
+        if not client_id_file.exists():
+            return None
+        return client_id_file.read_text().strip() or None
 
     def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
         """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """

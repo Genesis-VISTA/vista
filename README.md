@@ -52,7 +52,6 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_VISTA_GLOBUS_COLLECTION_ID    | UUID of VISTA Globus collection. Mint with `./scripts/launch_globus.py --setup --save-env`                | None    |
 | VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster odo --save-env`      | None    |
 | VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_olcf_token.py --cluster frontier --save-env` | None    |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
