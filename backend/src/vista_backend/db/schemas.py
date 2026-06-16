@@ -539,3 +539,145 @@ class UserTable(SQLModel, table=True):
                        --session-domain sso.ccs.ornl.gov
     Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
     """
+
+
+# ---------------------------------------------------------------------------
+# Multi-agent campaigns
+#
+# A campaign is one long-running run of the planner + subagents workflow (see
+# docs/multi-agent-framework.md). The backend is domain-agnostic: a campaign's
+# behaviour comes entirely from the planner skill named in `planner_skill` and
+# its `campaign.yaml` manifest. These tables only persist the durable run state
+# so the workflow survives a backend restart and resumes from where it stopped:
+#
+#   CampaignRun  — the run: its agreed spec, the editable plan, and status.
+#   CampaignStep — one unit of work in a cycle (a subagent order, or a
+#                  planner `decision`), with its parsed result.
+#   HpcJob       — a submitted HPC job, linked to the step that launched it.
+#                  The backend's durable record of in-flight jobs the monitor
+#                  polls; complements the MCP server's own job registry.
+# ---------------------------------------------------------------------------
+
+CampaignStatus = Literal[
+    "gathering",      # eliciting inputs from the user (Phase A)
+    "planning",       # drafting / awaiting plan approval (Phase B)
+    "running",        # a cycle's jobs are in flight (Phase C)
+    "awaiting_user",  # paused on a user decision (Phase D/E)
+    "converged",      # goal met (Phase G)
+    "exited",         # user-confirmed exit (Phase G)
+]
+
+
+class CampaignRunBase(SQLModel):
+    domain: str
+    """ Campaign/domain key, from the planner skill's `campaign.yaml` (e.g. "splash"). """
+    planner_skill: str
+    """ Name of the planner skill providing the playbook + manifest; reloaded on resume. """
+    title: str | None = None
+    """ Human-friendly campaign title; the planner may set this once the goal is known. """
+    spec: A[dict[str, Any], Field(default_factory=dict, sa_column=Column(JSON))]
+    """ The agreed campaign spec: variables, ranges, metric targets, constraints, platform, budget. """
+    plan: A[list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))]
+    """ The editable, user-facing numbered plan (the source of truth the user can amend). """
+    status: A[
+        CampaignStatus,
+        Field(default="gathering", sa_column=Column(String, nullable=False, default="gathering")),
+    ]
+
+
+class CampaignRunPublic(CampaignRunBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    user_id: uuid.UUID
+    session_id: uuid.UUID | None = None
+    created_at: str
+    updated_at: str
+
+
+class CampaignRunTable(CampaignRunBase, table=True):
+    __tablename__ = "campaign_run"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+    session_id: uuid.UUID | None = Field(
+        default=None, foreign_key="chat_session.id", ondelete="SET NULL"
+    )
+    """ The chat session driving this campaign, if any (so a resume can reattach the conversation). """
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+CampaignStepStatus = Literal[
+    "pending",     # created, not yet dispatched
+    "dispatched",  # order issued, job(s) submitted
+    "running",     # job(s) executing
+    "completed",   # result collected
+    "failed",      # the step's work failed
+    "cancelled",   # cancelled by the planner/user
+]
+
+
+class CampaignStepBase(SQLModel):
+    cycle: int = 0
+    """ Zero-based optimization cycle this step belongs to. """
+    kind: str
+    """ The subagent role (e.g. "neutronics", "chemistry") or "decision" for a planner decision. """
+    candidate: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
+    """ The candidate composition/spec this step concerns; None for `decision` steps. """
+    order_spec: A[dict[str, Any], Field(default_factory=dict, sa_column=Column(JSON))]
+    """ The order given to the subagent (or the decision context). """
+    status: A[
+        CampaignStepStatus,
+        Field(default="pending", sa_column=Column(String, nullable=False, default="pending")),
+    ]
+    result: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
+    """ The structured, parsed result (collected outputs / scores); None until completed. """
+
+
+class CampaignStepPublic(CampaignStepBase):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+
+class CampaignStepTable(CampaignStepBase, table=True):
+    __tablename__ = "campaign_step"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    run_id: uuid.UUID = Field(foreign_key="campaign_run.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class HpcJobBase(SQLModel):
+    cluster: str
+    """ "odo", "frontier", or "perlmutter". """
+    job_name: str | None = None
+    """ The `hpc_jobs/<name>` that was submitted. """
+    state: str = Field(default="submitted")
+    """ Last known job state (IRI/SLURM, e.g. PENDING/RUNNING/COMPLETED/FAILED); updated by the monitor. """
+    log_path: str | None = None
+    output_dir: str | None = None
+    notified: bool = False
+    """ Whether the completion email has been sent (so the monitor doesn't double-notify). """
+    result_collected: bool = False
+    """ Whether the subagent has parsed this job's outputs into its step result. """
+    submitted_at: str = Field(default="")
+    last_polled_at: str | None = None
+
+
+class HpcJobPublic(HpcJobBase):
+    job_id: str
+    step_id: uuid.UUID
+    user_id: uuid.UUID
+
+
+class HpcJobTable(HpcJobBase, table=True):
+    __tablename__ = "hpc_job"
+
+    job_id: str = Field(primary_key=True)
+    """ The HPC job id returned by submit_hpc_job; unique across clusters (matches the MCP registry key). """
+    step_id: uuid.UUID = Field(foreign_key="campaign_step.id", ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
