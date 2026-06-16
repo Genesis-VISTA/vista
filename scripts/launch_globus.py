@@ -14,11 +14,17 @@ First-time setup needs a one-time Globus login. Either:
   - run this script once in an interactive terminal (browser login flow), or
   - set GLOBUS_SETUP_KEY for headless setup, create the key with:
         uvx --from globus-cli globus gcp create mapped "vista-server"
+
+Globus Connect Personal only ships a Linux CLI, so on macOS (and any other
+non-Linux host) this script transparently re-launches itself inside a Linux
+docker/podman container, mounting the repo and data dirs at their host paths.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import platform
+import textwrap
 import shutil
 import subprocess
 import sys
@@ -31,7 +37,10 @@ from dotenv import load_dotenv, set_key
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 
-GCP_TARBALL_URL = "https://downloads.globus.org/globus-connect-personal/linux/stable/globusconnectpersonal-latest.tgz"
+GCP_TARBALL_URLS = {
+    "x86_64": "https://downloads.globus.org/globus-connect-personal/linux/stable/globusconnectpersonal-latest.tgz",
+    "aarch64": "https://downloads.globus.org/globus-connect-personal/linux_aarch64/stable/globusconnectpersonal-aarch64-latest.tgz",
+}
 
 
 def die(*lines: str) -> None:
@@ -45,32 +54,68 @@ def resolve_gcp(data_dir: Path) -> str:
     if gcp:
         return gcp
 
-    if sys.platform == "darwin":
-        # The macOS GUI app can't be auto-downloaded; require a manual install.
-        gcp = "/Applications/Globus Connect Personal.app/Contents/MacOS/globusconnectpersonal"
-        if not Path(gcp).exists():
-            die(
-                "error: globusconnectpersonal not found",
-                "Install Globus Connect Personal from",
-                "  https://www.globus.org/globus-connect-personal",
-            )
-    elif sys.platform == "linux":
-        # Linux: install under the data dir so it persists when data/ is a k8s volume.
-        install_dir = data_dir / "globusconnectpersonal"
-        gcp = str(install_dir / "globusconnectpersonal")
-        if not Path(gcp).exists():
-            print(f"globusconnectpersonal not found; installing to {install_dir} ...")
-            install_dir.mkdir(parents=True, exist_ok=True)
-            with urllib.request.urlopen(GCP_TARBALL_URL) as resp:
-                with tarfile.open(fileobj=resp, mode="r|gz") as tar:
-                    def _strip_top_level(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
-                        """Drop the leading 'globusconnectpersonal-x.y.z/' path component."""
-                        _, _, member.name = member.name.partition("/")
-                        return member if member.name else None
-                    tar.extractall(install_dir, filter=_strip_top_level)
-    else:
-        die("Platform not supported")
+    arch = platform.machine()
+    arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(arch, arch)
+    url = GCP_TARBALL_URLS.get(arch)
+    if url is None:
+        die(f"error: no Globus Connect Personal build for architecture {arch!r}")
+
+    # Install under the data dir so it persists when data/ is a k8s volume.
+    install_dir = data_dir / "globusconnectpersonal"
+    gcp = str(install_dir / "globusconnectpersonal")
+    if not Path(gcp).exists():
+        print(f"globusconnectpersonal not found; installing to {install_dir} ...")
+        install_dir.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(url) as resp:
+            with tarfile.open(fileobj=resp, mode="r|gz") as tar:
+                def _strip_top_level(member: tarfile.TarInfo, path: str) -> tarfile.TarInfo | None:
+                    """Drop the leading 'globusconnectpersonal-x.y.z/' path component."""
+                    _, _, member.name = member.name.partition("/")
+                    return member if member.name else None
+                tar.extractall(install_dir, filter=_strip_top_level)
     return gcp
+
+
+def relaunch_in_container(data_dir: Path, hpc_jobs_dir: Path, argv: list[str]) -> None:
+    """Re-exec this script inside a Linux container. """
+    runtime = shutil.which("docker") or shutil.which("podman")
+    if not runtime:
+        die(
+            "error: neither docker nor podman found on PATH",
+            f"(required to run Globus Connect Personal on {platform.system()})",
+        )
+        return
+
+    # Build the image once so deps aren't reinstalled on every run.
+    print("Building vista-globus image ...", file=sys.stderr)
+    dockerfile = textwrap.dedent(r"""
+        FROM ubuntu:24.04
+        RUN apt-get update -qq \
+            && apt-get install -y -qq curl ca-certificates python3 python3-dotenv \
+            && rm -rf /var/lib/apt/lists/*
+    """)
+    subprocess.run(
+        [runtime, "build", "-t", "vista-globus", "-"],
+        input=dockerfile.encode(),
+        check=True,
+    )
+    subprocess.run(
+        [runtime, "rm", "-f", "vista-globus"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    cmd = [runtime, "run", "--rm", "-i"]
+    if sys.stdin.isatty():
+        cmd.append("-t")
+    cmd += ["--name", "vista-globus", "-e", "GLOBUS_SETUP_KEY", "-v", "vista-gcp-home:/root"]
+    # Mount the repo plus any data/hpc dirs that live outside it, at matching paths.
+    mounts = [REPO_ROOT]
+    mounts += [d for d in (data_dir, hpc_jobs_dir) if not d.is_relative_to(REPO_ROOT)]
+    for d in mounts:
+        cmd += ["-v", f"{d}:{d}"]
+    cmd += ["-w", str(REPO_ROOT), "vista-globus", "python3", "scripts/launch_globus.py", *argv]
+    os.execvp(runtime, cmd)
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,6 +148,9 @@ def main() -> None:
     config_dir = data_dir / "globusonline"
     for d in (hpc_jobs_dir, volumes_dir, config_dir):
         d.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform != "linux":
+        relaunch_in_container(data_dir, hpc_jobs_dir, sys.argv[1:])
 
     setup_key = os.environ.get("GLOBUS_SETUP_KEY")
     client_id_file = config_dir / "lta" / "client-id.txt"
