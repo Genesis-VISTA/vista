@@ -393,7 +393,6 @@ export default function HomePage() {
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [mcpTools, setMcpTools] = useState<McpToolsResponse | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [useLlm, setUseLlm] = useState(true);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [pendingElicitation, setPendingElicitation] = useState<{
     id: string;
@@ -654,8 +653,6 @@ export default function HomePage() {
     requestAnimationFrame(() => scrollChatToLatest("auto"));
     setAgentLogs([]);
     setLatestIntermediateId(null);
-
-    if (!useLlm) return;
 
     const projectName = readActiveProjectName();
     if (!projectName) {
@@ -1465,7 +1462,7 @@ export default function HomePage() {
               </div>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="chat-header-actions">
             {isConversationListView ? (
               <button
                 className="conversation-action-button primary"
@@ -1481,45 +1478,43 @@ export default function HomePage() {
               </button>
             ) : isConversationOpen ? (
               <>
-                <button
-                  className="conversation-back-button"
-                  onClick={handleBackToConversationList}
-                  title="Back to conversations"
-                  aria-label="Back to conversations"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="m15 18-6-6 6-6" />
-                  </svg>
-                  <span>Back to conversations</span>
-                </button>
-                <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
-                  Analyze salt…
-                </button>
-                <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
-                  Predict salt…
-                </button>
-                <button
-                  className="quick-chip"
-                  disabled={messageHistory.length === 0}
-                  title={
-                    messageHistory.length === 0
-                      ? "Have a conversation first; the skill is drafted from it."
-                      : "Distill this conversation into a reusable SKILL.md"
-                  }
-                  onClick={() => void openSaveAsSkill()}
-                >
-                  Save as skill…
-                </button>
-                <label className="toggle-wrap">
-                  <span className="toggle-label">Agent</span>
-                  <input
-                    className="toggle-input"
-                    type="checkbox"
-                    checked={useLlm}
-                    onChange={(event) => setUseLlm(event.target.checked)}
-                  />
-                  <span className="toggle-slider" />
-                </label>
+                <div className="chat-header-presets">
+                  <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
+                    Analyze salt…
+                  </button>
+                  <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
+                    Predict salt…
+                  </button>
+                </div>
+                <div className="chat-header-secondary-actions">
+                  <button
+                    className="conversation-back-button"
+                    onClick={handleBackToConversationList}
+                    title="Back to conversations"
+                    aria-label="Back to conversations"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="m15 18-6-6 6-6" />
+                    </svg>
+                    <span>Back to conversations</span>
+                  </button>
+                  <button
+                    className="conversation-back-button"
+                    disabled={messageHistory.length === 0}
+                    title={
+                      messageHistory.length === 0
+                        ? "Have a conversation first; the skill is drafted from it."
+                        : "Distill this conversation into a reusable SKILL.md"
+                    }
+                    onClick={() => void openSaveAsSkill()}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 3H5a2 2 0 0 0-2 2v14l4-3h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
+                      <path d="M19 21V8a2 2 0 0 0-2-2h-3" />
+                    </svg>
+                    <span>Save as skill</span>
+                  </button>
+                </div>
               </>
             ) : null}
           </div>
