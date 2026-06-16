@@ -1,4 +1,7 @@
-export type UiPayload = { kind: "html"; html: string } | { kind: "none" };
+export type UiPayload =
+  | { kind: "html"; html: string }
+  | { kind: "file"; url: string; mimeType?: string; name?: string }
+  | { kind: "none" };
 
 export type Artifact = {
   type: string;

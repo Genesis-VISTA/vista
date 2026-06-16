@@ -16,12 +16,6 @@ class AppSettings(BaseSettings):
         extra='ignore',
     )
 
-    allowed_uris: list[str] = ["file://.*"]
-    """
-    List of regex patterns. A URI must match at least one to be allowed.
-    This is used to limit what files the display_file tool can render.
-    """
-    
     # uri_map: dict[str, str] = {
     #     "file:///mnt/skills/": f"file://{Path('../../skills').resolve()}/",
     #     "file:///mnt/data/output/": f"file://{Path('../../data/output').resolve()}/",
