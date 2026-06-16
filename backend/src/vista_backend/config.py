@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     encryption_key: A[SecretStr, Field(default_factory=lambda data: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' if data['env'] == 'dev' else None)]
     """
-    Fernet key for encrypting sensitive user token fields (s3m_token, nersc_iri_token) in the database.
+    Fernet key for encrypting sensitive user token fields in the database.
 
     Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     Required in prod, defaults to a dummy key in dev.

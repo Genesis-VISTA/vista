@@ -270,9 +270,9 @@ async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
     `storage_resource_id` will raise on use.
     """
     client = IriClient(
-        api_endpoint=settings.olcf_iri_url,
+        api_endpoint=settings.frontier_iri_url,
         api_key=iri_token,
-        machine=settings.olcf_machine,
+        machine=settings.frontier_machine,
         profile="olcf-iri",
     )
     await client.init_resources()
@@ -284,8 +284,8 @@ async def create_odo_iri_client(*, iri_token: str) -> IriClient:
     OLCF AmSC IRI client (Odo, open enclave).
 
     Uses the same S3M token the user already configures for Odo, but routes
-    compute through the IRI service at `s3m_url` (open enclave) instead of the
-    legacy direct S3M REST endpoint. File ops on Odo go through Globus
+    compute through the IRI service at `odo_iri_url` (open enclave) instead of
+    the legacy direct S3M REST endpoint. File ops on Odo go through Globus
     (`lib/globus.py`) — IRI's storage scope isn't authorized for this token —
     so `storage_resource_id` will raise on use, same as the Frontier client.
 
@@ -295,9 +295,9 @@ async def create_odo_iri_client(*, iri_token: str) -> IriClient:
     (Odo / Defiant / Wombat / Quokka) without a stable naming convention.
     """
     client = IriClient(
-        api_endpoint=settings.s3m_url,
+        api_endpoint=settings.odo_iri_url,
         api_key=iri_token,
-        machine=settings.s3m_resource,
+        machine=settings.odo_machine,
         profile="odo-iri",
         compute_resource_id=settings.odo_compute_resource_id,
     )

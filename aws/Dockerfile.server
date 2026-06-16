@@ -17,7 +17,7 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
 WORKDIR /app
 
-# Don't use ./build.sh directly so that we can make it cache better
+# Don't use ./scripts/build.sh directly so that we can make it cache better
 COPY mcp_servers/vista_mcp_server/mcp-apps/package.json \
      mcp_servers/vista_mcp_server/mcp-apps/package-lock.json \
      mcp_servers/vista_mcp_server/mcp-apps/

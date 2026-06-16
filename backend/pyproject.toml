@@ -51,3 +51,6 @@ artifacts = [
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.uv]
+python-preference = "only-managed"

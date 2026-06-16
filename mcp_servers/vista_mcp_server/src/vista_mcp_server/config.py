@@ -1,8 +1,9 @@
-import os, logging
+import os, sys, functools, logging
+from fastmcp.exceptions import ToolError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
-from typing import Annotated as A
+from typing import Annotated as A, Literal
 import getpass
 import uuid
 from datetime import datetime
@@ -44,27 +45,64 @@ class AppSettings(BaseSettings):
     image: str = "vista-sandbox"
 
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
-    hpc_account: str = "gen150-vista"
-    """
-    OLCF project name used as the Slurm `account` for Odo jobs (one shared
-    project for all Vista users). The user's S3M token must belong to this
-    project. Frontier uses the per-user `frontier_account` field instead.
-    """
 
-    s3m_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
+    odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
+    """ Base URL for the OLCF AmSC IRI API on the open enclave """
+    odo_account: str = "gen150-vista"
     """
-    Base URL for the OLCF AmSC IRI API on the open enclave (Odo / Defiant /
-    Wombat / Quokka). Historically named `s3m_url` from the pre-IRI Odo path;
-    Frontier uses the moderate-enclave equivalent (`olcf_iri_url`).
+    OLCF project name used as the Slurm account for Odo jobs. The user's S3M token must belong to
+    this project.
     """
-    s3m_resource: str = "odo"
-    """ OLCF compute resource group name (matched against the IRI discovery result). """
+    odo_remote_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+    """ Base dir on Odo where job sources and outputs live """
+    odo_machine: str = "odo"
+    """ OLCF compute resource group name (used to match the IRI discovery result). """
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
     """
     Pinned IRI compute resource UUID for Odo. Bypasses `discover()` since the
     open-enclave service lists Odo / Defiant / Wombat / Quokka without a stable
-    name/group match for `s3m_resource`. Look up via amscrot's `discover()` if
+    name/group match for `odo_machine`. Look up via amscrot's `discover()` if
     OLCF rotates resource ids.
+    """
+    odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
+    """
+    S3M token introspection endpoint used to verify that a user's token belongs
+    to `odo_account` before Vista moves files for them with Globus
+    """
+    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
+    """
+    UUID of the Globus Collection that exposes Odo's filesystem (open enclave)
+    """
+    odo_globus_refresh_token: str | None = None
+    """
+    Globus Transfer refresh token for Odo (open enclave) file ops to work around the lack of
+    IRI File API support.
+    Generate with:
+        ./scripts/get_olcf_token.py --cluster odo --save-env
+    """
+
+    frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
+    frontier_account: str = "chm243"
+    """
+    OLCF project name used as the Slurm account for Frontier jobs. The user's S3M token must
+    belong to this project.
+    """
+    frontier_remote_dir: str = "/lustre/orion/chm243/proj-shared/vista"
+    """ Base dir on Frontier where job sources and outputs live """
+    frontier_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
+    """ Same as `odo_introspect_url`, for Frontier tokens (`frontier_account`). """
+    frontier_machine: str = "frontier"
+    """ OLCF compute resource group name (used to match the IRI discovery result). """
+    frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
+    """
+    UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
+    """
+    frontier_globus_refresh_token: str | None = None
+    """
+    Deployment-wide Globus Transfer refresh token for Frontier (moderate enclave) file ops.
+    Generate with:
+        ./scripts/get_olcf_token.py --cluster frontier --save-env
     """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
@@ -72,43 +110,10 @@ class AppSettings(BaseSettings):
     nersc_machine: str = "perlmutter"
     """ NERSC compute resource group name (used to match the IRI discovery result). """
 
-    olcf_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
-    """
-    Base URL for the OLCF AmSC IRI API (moderate enclave — Frontier).
-    The open-enclave host (amsc-open.s3m.olcf.ornl.gov) serves Odo/Defiant/Wombat/Quokka.
-    """
-    olcf_machine: str = "frontier"
-    """ OLCF compute resource group name (used to match the IRI discovery result). """
-
-    # Globus file-transfer config for Frontier (cluster="frontier"). The Vista
-    # server hosts its own Globus collection (GCS or GCP) exposing `local_hpc_jobs_dir`
-    # for source uploads and `output_dir` for output downloads; the user's per-record
-    # Globus Auth + Transfer tokens authenticate as their OLCF identity for access to
-    # `olcf_globus_collection_id`.
-    vista_globus_collection_id: str | None = None
-    """
-    UUID of the Globus Collection hosted on the Vista server. Must expose the paths
-    `local_hpc_jobs_dir` and `output_dir` (or a common ancestor). Required for Frontier
-    file ops once the Globus pivot lands; empty during transition.
-    """
-    olcf_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
-    """
-    UUID of the OLCF DTN (GCS5) Globus Collection that exposes Frontier's filesystem.
-    Default is OLCF's current production DTN. Verify with the helper script at
-    OLCF-Globus-Transfer/list_my_endpoints.py if OLCF rotates collections.
-    """
-    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
-    """
-    UUID of the Globus Collection that exposes Odo's filesystem (open enclave;
-    /gpfs/wolf2/olcf/gen150/... etc.). Distinct from the OLCF DTN used for
-    Frontier — the two enclaves are reachable via different collections.
-    """
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
     Globus Native App client UUID used to mint refresh-token authorizers from
-    per-user refresh tokens. Default matches the client ID in
-    OLCF-Globus-Transfer/get_olcf_token.py so refresh tokens minted by that script
-    remain valid here.
+    the deployment's Globus refresh token.
     """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
@@ -150,6 +155,26 @@ class AppSettings(BaseSettings):
         """
         return self.data_dir / "knowledge-bases"
 
+    @functools.cached_property
+    def vista_globus_collection_id(self) -> str | None:
+        """
+        UUID of the Globus Collection hosted on the Vista server, read from the
+        Globus Connect Personal config.
+        """
+        client_id_file = self.data_dir / "globusonline" / "lta" / "client-id.txt"
+        if not client_id_file.exists():
+            return None
+        return client_id_file.read_text().strip() or None
+
+    def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
+        """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """
+        if cluster == "odo":
+            token = self.odo_globus_refresh_token
+        else:
+            token = self.frontier_globus_refresh_token
+        if not token:
+            raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
+        return token
 
     rag_model: str = "google/embeddinggemma-300m"
 

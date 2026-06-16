@@ -18,7 +18,7 @@ Note that the `./launch.sh` script will not terminate until cancelled, and then 
 
 To build everything without launching, run
 ```bash
-./build.sh
+./scripts/build.sh
 ```
 
 ### MCP Server (vista_mcp_server)
@@ -57,7 +57,10 @@ curl http://localhost:3000/api/mcp/health       # Smoke test
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
 
 The vista MCP server boots without any interactive login — HPC job submission authenticates
-with per-user tokens (S3M / Globus / NERSC IRI) supplied via the UI at tool-call time. Set
+with per-user tokens (S3M / NERSC IRI) supplied via the UI at tool-call time, plus
+deployment-wide Globus refresh tokens (`VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` for Odo's open
+enclave, `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` for Frontier's moderate enclave) for file
+ops. Set
 `VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
 
 ## NextJS

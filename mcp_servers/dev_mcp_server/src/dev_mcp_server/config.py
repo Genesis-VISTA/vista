@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Literal, Annotated as A
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 from .lib.types import ResolvedPath, EmptyIsNone
 
@@ -31,7 +32,10 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
+    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../../data")
+
 settings = AppSettings()
+# os.environ['MSB_HOME'] = str(settings.data_dir / "microsandbox")
 
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
