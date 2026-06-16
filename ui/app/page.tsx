@@ -1047,7 +1047,12 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
+        body: JSON.stringify({
+          project_name: projectName,
+          chat_session_id: activeChatSessionId,
+          tool,
+          args: { command },
+        })
       });
       const t1 = performance.now();
 
@@ -1061,7 +1066,12 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({
+              project_name: projectName,
+              chat_session_id: activeChatSessionId,
+              tool: "display_file",
+              args: { uri: plotPath },
+            })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -1140,7 +1150,12 @@ export default function HomePage() {
       const response = await fetch("/api/mcp/call", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ project_name: projectName, tool, args: { command } })
+        body: JSON.stringify({
+          project_name: projectName,
+          chat_session_id: activeChatSessionId,
+          tool,
+          args: { command },
+        })
       });
       const t1 = performance.now();
 
@@ -1154,7 +1169,12 @@ export default function HomePage() {
           const previewResponse = await fetch("/api/mcp/call", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ project_name: projectName, tool: "display_file", args: { uri: plotPath } })
+            body: JSON.stringify({
+              project_name: projectName,
+              chat_session_id: activeChatSessionId,
+              tool: "display_file",
+              args: { uri: plotPath },
+            })
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
@@ -1219,7 +1239,9 @@ export default function HomePage() {
     setIsCheckingHealth(true);
     try {
       const response = await fetch(
-        `/api/mcp/health?project_name=${encodeURIComponent(projectName)}`
+        `/api/mcp/health?project_name=${encodeURIComponent(projectName)}${
+          activeChatSessionId ? `&chat_session_id=${encodeURIComponent(activeChatSessionId)}` : ""
+        }`
       );
       const data = (await response.json()) as McpHealth;
       setMcpHealth(data);
@@ -1247,7 +1269,9 @@ export default function HomePage() {
     setIsLoadingTools(true);
     try {
       const response = await fetch(
-        `/api/mcp/tools?project_name=${encodeURIComponent(projectName)}`
+        `/api/mcp/tools?project_name=${encodeURIComponent(projectName)}${
+          activeChatSessionId ? `&chat_session_id=${encodeURIComponent(activeChatSessionId)}` : ""
+        }`
       );
       const data = (await response.json()) as McpToolsResponse;
       setMcpTools(data);
@@ -1540,42 +1564,39 @@ export default function HomePage() {
               )}
               {chatSessions.map((chatSession) => (
                 <div key={chatSession.id} className="conversation-list-item">
-                  <button
-                    type="button"
-                    className="conversation-list-open"
-                    onClick={() => handleOpenConversation(chatSession)}
-                  >
-                    {editingChatSessionId === chatSession.id ? (
-                      <>
-                        <input
-                          className="input conversation-list-title-input"
-                          value={draftChatSessionTitle}
-                          onChange={(event) => setDraftChatSessionTitle(event.target.value)}
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => {
-                            event.stopPropagation();
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              void handleRenameConversation();
-                            }
-                            if (event.key === "Escape") {
-                              setEditingChatSessionId(null);
-                            }
-                          }}
-                        />
-                        <span className="conversation-list-date">
-                          {new Date(chatSession.updated_at).toLocaleString()}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="conversation-list-title">{chatSession.title}</span>
-                        <span className="conversation-list-date">
-                          {new Date(chatSession.updated_at).toLocaleString()}
-                        </span>
-                      </>
-                    )}
-                  </button>
+                  {editingChatSessionId === chatSession.id ? (
+                    <div className="conversation-list-open conversation-list-open-static">
+                      <input
+                        className="input conversation-list-title-input"
+                        value={draftChatSessionTitle}
+                        onChange={(event) => setDraftChatSessionTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void handleRenameConversation();
+                          }
+                          if (event.key === "Escape") {
+                            setEditingChatSessionId(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <span className="conversation-list-date">
+                        {new Date(chatSession.updated_at).toLocaleString()}
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="conversation-list-open"
+                      onClick={() => handleOpenConversation(chatSession)}
+                    >
+                      <span className="conversation-list-title">{chatSession.title}</span>
+                      <span className="conversation-list-date">
+                        {new Date(chatSession.updated_at).toLocaleString()}
+                      </span>
+                    </button>
+                  )}
                   {editingChatSessionId === chatSession.id ? (
                     <>
                       <button

@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
@@ -14,9 +15,19 @@ router = APIRouter(tags=["mcp"])
 
 
 @router.get("/projects/{project_name}/mcp/tools")
-async def mcp_tools(project_name: str, session: SessionDep, user: UserDep) -> list[mcp.types.Tool]:
+async def mcp_tools(
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
+    chat_session_id: uuid.UUID | None = None,
+) -> list[mcp.types.Tool]:
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=chat_session_id,
+    )
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.list_tools()
 
@@ -24,6 +35,7 @@ async def mcp_tools(project_name: str, session: SessionDep, user: UserDep) -> li
 class McpCallRequest(BaseModel):
     name: str
     arguments: dict[str, Any] = {}
+    chat_session_id: uuid.UUID | None = None
 
 
 @router.post("/projects/{project_name}/mcp/call")
@@ -31,7 +43,12 @@ async def mcp_call(
     project_name: str, req: McpCallRequest, session: SessionDep, user: UserDep,
 ) -> mcp.types.CallToolResult:
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=req.chat_session_id,
+    )
     async with project_agent_pool.get(agent_key) as agent:
         try:
             return await agent.call_tool(req.name, req.arguments)

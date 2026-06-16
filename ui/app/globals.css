@@ -1841,6 +1841,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   cursor: pointer;
 }
 
+.conversation-list-open-static {
+  cursor: default;
+}
+
 .conversation-list-title {
   font-family: "Figtree", system-ui, sans-serif;
   font-size: 14px;

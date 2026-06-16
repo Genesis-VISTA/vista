@@ -19,7 +19,9 @@ type HealthResponse = {
  */
 export async function GET(request: Request) {
   const mcpBaseUrl = getMcpBaseUrl();
-  const projectName = new URL(request.url).searchParams.get("project_name");
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const chatSessionId = url.searchParams.get("chat_session_id");
   if (!projectName) {
     return NextResponse.json(
       { ok: false, mcpBaseUrl, detail: "Missing project_name." } satisfies HealthResponse,
@@ -27,13 +29,14 @@ export async function GET(request: Request) {
     );
   }
   try {
-    const upstream = await fetch(
-      backendUrl(`/projects/${encodeURIComponent(projectName)}/mcp/tools`),
-      {
-        headers: await backendHeaders({ accept: "application/json" }),
-        signal: AbortSignal.timeout(5000),
-      }
+    const upstreamUrl = new URL(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/mcp/tools`)
     );
+    if (chatSessionId) upstreamUrl.searchParams.set("chat_session_id", chatSessionId);
+    const upstream = await fetch(upstreamUrl, {
+      headers: await backendHeaders({ accept: "application/json" }),
+      signal: AbortSignal.timeout(5000),
+    });
     if (!upstream.ok) {
       const detail = await upstream.text().catch(() => "");
       return NextResponse.json(
