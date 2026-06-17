@@ -120,8 +120,8 @@ budget/cycle ceilings; cite job IDs/outputs for every reported number.
 
 ## PR plan (stacked)
 
-**PR 1 — Generic framework (domain-agnostic, reviewable on its own).** Built as a sequence of
-commits, each leaving the tree green:
+**PR 1 — Generic framework (domain-agnostic, reviewable on its own).** ✅ Landed. Built as a
+sequence of commits, each leaving the tree green:
 1. **Design + docs** — this doc + the SPLASH playbook under version control.
 2. **Campaign data model** — `CampaignRun` / `CampaignStep` / `HpcJob` tables + status enum + CRUD tests.
 3. **Restart-safe HPC job registry** — persist `submit_job_mcp.py`'s `_submitted_jobs`, rehydrate on startup.
@@ -137,27 +137,45 @@ commits, each leaving the tree green:
    `build_collector`), and an end-to-end test driving create → dispatch → poll → collect →
    email → resume → exit over a mock domain with the HPC boundary faked.
 
-**Deferred to PR 2 (live runtime wiring — needs a real model + MCP + skills to exercise):**
-- The app-lifespan monitor start + the live `invoke` closure (MCP call with per-user credential
-  metadata) and per-job planner reconstruction. The seams (commit 8 `wiring.py`) and the gated
-  toggle are in place; PR 2 wires the real closures and turns the monitor on.
-- The **conversational LLM planner driver** — registering the campaign tools (`dispatch` /
-  `collect` / `record-decision` / `finish`) on a chat agent and the `StreamMerger` callbacks, so
-  the planner LLM drives the playbook with the user in the loop. PR 1 runs campaigns
-  programmatically (API + `CampaignPlanner`); PR 2 adds the chat-driven planner alongside the
-  SPLASH skills, verified via Playwright.
+**PR 2 — Live framework wiring (domain-agnostic; depends on PR 1).** Turns PR 1's programmatic
+engine into a campaign that actually *runs* — conversationally and monitored. Still no domain
+code; verified against the mock domain (no real MCP / LLM / HPC needed in tests):
+1. **Design/docs** — this split + the parked PR 3 decisions.
+2. **Live MCP invoke** — `mcp_invoke.py`: `unwrap_tool_result` + `build_invoke(call_tool, user,
+   project_paths)` (builds the `{"vista":{"user","project_paths"}}` metadata) + `project_paths_for`
+   + a thin live `build_mcp_invoke` over `get_vista_mcp_server()`. Pure parts unit-tested.
+3. **Per-job wiring + monitor session** — `build_invoke_for_job` / `build_planner_for_job` (load
+   run → planner skill dir → `load_manifest` → `build_subagents` with real `McpHpcTools`); refactor
+   the monitor's `poll` to `poll(session, job)` so it derives per-job user creds.
+4. **Conversational planner driver** — thread the request `AsyncSession` + progress emitters
+   (`_cur_db_session` / `_cur_progress_emitter`, reusing the `subagent` pattern) through
+   `run_stream`; register campaign `@agent.tool`s (`start_campaign`, intake via elicitation forms,
+   `propose/edit_plan`, `dispatch_cycle`, `gather_and_score`, `decide`, `finish`) over
+   `CampaignPlanner`. HITL = **hybrid** (elicitation forms for intake, chat for approvals/edits).
+   Driven deterministically in tests via PydanticAI `FunctionModel`; default chat behavior
+   unchanged when no campaign is active.
+5. **Lifespan monitor start** — `CampaignSettings` (on/off + interval); start
+   `CampaignMonitor.run_forever` in the app lifespan with the real `poll`/`collect`, resuming open
+   jobs; stop on shutdown. Gated.
+6. **Mock-domain live end-to-end test** — a `FunctionModel` planner drives intake→plan→dispatch
+   through the real agent tools; the monitor (fake MCP `invoke`, on-disk mock planner+sim skills)
+   polls→collects→emails→resumes. Proves the whole live path with no real MCP/LLM/HPC.
 
-**PR 2 — SPLASH skills (depends on PR 1).**
+**PR 3 — SPLASH skills + UI (depends on PR 2).**
 1. `splash-planner` skill: the playbook (`SKILL.md`), `campaign.yaml` manifest, and the
    **tiered TBR-first scorer** (`scripts/score_candidates.py`) using the thresholds in
    [`splash-planner-playbook.md`](./splash-planner-playbook.md).
-2. `neutronics-shift` and `chemistry-supersalt` sim skills + `hpc_jobs/neutronics/` (Shift stub)
-   and `hpc_jobs/chemistry/` (SuperSalt stub) — physically-plausible stub outputs first; real
-   solvers in a follow-up.
-3. UI: campaign panel with live per-step status, plan-edit affordance, resume entry.
+2. `neutronics-shift` and `chemistry-supersalt` sim skills + `hpc_jobs/neutronics/` and
+   `hpc_jobs/chemistry/` stub jobs. Stubs compute an **analytic surrogate** (cheap correlations so
+   the optimization shows realistic trends — TBR rising with Li-6/Be/thickness, properties varying
+   with composition), behind a **solver-swappable interface** so real Shift / SuperSalt drop in
+   later without changing the skill/agent contract.
+3. UI: a **focused read + resume** campaign panel (swappable right-column view showing plan +
+   per-step status + job states, polling the state endpoint, with a Resume action); campaign
+   creation + plan edits go through the chat planner, not the UI.
 4. End-to-end smoke test (Playwright).
 
-**PR 3 (optional follow-on) — Alloy/HPC worker-pool instantiation.** Port the `origin/subagent`
+**PR 4 (optional follow-on) — Alloy/HPC worker-pool instantiation.** Port the `origin/subagent`
 use case onto the framework purely as skills (a coordinator playbook skill + a proposer sim skill
 + its HPC job). Proof that the abstraction generalizes; requires *no* core framework changes.
 
@@ -174,3 +192,12 @@ use case onto the framework purely as skills (a coordinator playbook skill + a p
   domain-agnostic; new domains add only skills.
 - **Scoring lives in the planner skill** (deterministic scripts run in the sandbox), not in
   backend code — editable per domain without redeploying.
+- **PR staging**: PR 2 lands the domain-agnostic live wiring (verified on the mock domain); PR 3
+  adds the SPLASH skills + UI on top — keeping the framework reusable and reviewable apart from
+  any one domain.
+- **HITL = hybrid**: elicitation forms for structured intake (salt, ranges, platform, targets,
+  budget); conversational chat turns for plan approval, edits, and continue/exit decisions.
+- **Stub fidelity = analytic surrogate** behind a solver-swappable interface: realistic
+  optimization trends now, with real Shift / SuperSalt as a later drop-in.
+- **Campaign UI = focused read + resume**: the panel surfaces plan/step/job state and a resume
+  action; campaign creation and plan edits happen through the chat planner.
