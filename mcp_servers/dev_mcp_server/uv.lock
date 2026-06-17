@@ -238,7 +238,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=3.1.1" },
-    { name = "microsandbox", specifier = ">=0.5.5" },
+    { name = "microsandbox", specifier = ">=0.5.7" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-magic", specifier = ">=0.4.27" },
@@ -588,12 +588,12 @@ wheels = [
 
 [[package]]
 name = "microsandbox"
-version = "0.5.5"
+version = "0.5.7"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/7e/beafa0238e1e0b998b1674911e2df013ca2e6b5ab60114b235c4a6fd7399/microsandbox-0.5.5-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:0b157a34da1a56fdbe8fe9753912a97dce0b377034847551dee105cdada8b3a9", size = 32375020, upload-time = "2026-06-05T18:14:43.223Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/ab/48666e023769497c47488aab40a68c7a763a62683526735b86ee195d2e6f/microsandbox-0.5.5-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:a57cea1d774832022d0ec91b6079a92ceb161b7c9ee6f9ee8f00d0abb3cbfd60", size = 34042876, upload-time = "2026-06-05T18:14:49.633Z" },
-    { url = "https://files.pythonhosted.org/packages/c3/c7/fee92dd8ed5f090aac322633be227e1fee73a3cee5292dbd3262cdde7087/microsandbox-0.5.5-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e7abbea86dcc8c45134e61d98f285ed797ac489e7a7e2c329176dded94a321bf", size = 30479147, upload-time = "2026-06-05T18:14:46.416Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/35/f86dc68d782dff09827da4d04228d8640bcf3e864f75d2e7fb0c67da81ee/microsandbox-0.5.7-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:f18c69576b6066bce7c0c661e22890b415598f0b2e445dee79709d7af4b0d41a", size = 32647782, upload-time = "2026-06-14T21:58:12.261Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/80/85a7b8f213c0c50c105f0326724ded09d848ecef6fdd40378ea89d7e27b0/microsandbox-0.5.7-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e9e2582d8edc52ff48ba96c8b722f36f473ab4670018d23b9421d94682d2be44", size = 34322175, upload-time = "2026-06-14T21:58:15.144Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/b1/dedbb71f187f517cf657178e990bdbd00fd9e725ee654b0b126a3a66e0a2/microsandbox-0.5.7-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:74480692c5bdb11fb629ca96422b329d3b0b4f09f9456e6a0a0a6ee0d14efe92", size = 30782317, upload-time = "2026-06-14T21:58:09.522Z" },
 ]
 
 [[package]]

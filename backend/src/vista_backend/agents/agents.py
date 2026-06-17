@@ -19,6 +19,9 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
 )
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.toolsets.wrapper import WrapperToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.models import infer_model
 import mcp.client.session
 import mcp.shared.context
@@ -51,6 +54,28 @@ from .campaign.planner import CampaignPlanner, build_subagents
 
 
 BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
+
+
+class ToolErrorToolset(WrapperToolset[Any]):
+    """
+    Wrap a toolset so tool failures are returned to the model instead of raised.
+
+    PydanticAI raises an exception once a tool has failed "retry" times, which crashes the agent run.
+    This wraps errors so they return the error to the model rather than crashing.
+
+    See https://github.com/pydantic/pydantic-ai/issues/2671
+    """
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        try:
+            return await super().call_tool(name, tool_args, ctx, tool)
+        except ModelRetry as exc:
+            if ctx.retry < tool.max_retries:
+                raise
+            logging.warning(f"Tool {name} failed; returning error to model: {exc}")
+            return f"Error calling tool {name!r}: {exc}"
 
 
 class LogEntry(BaseModel):
@@ -187,14 +212,14 @@ def get_dev_mcp_server(
 
 
 class ProjectAgent:
-    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig, session_id: uuid.UUID):
+    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig, session_id: uuid.UUID | None):
         self.project = project
         self.user = user
         self.session_id = session_id
         # Id per chat session. A new ProjectAgent with the same session gets
         # the same sandbox/storage roots; different sessions for the same
         # project+user are isolated.
-        self.id = f"{session_id}"
+        self.id = f"{session_id}" if session_id else f"{project.id}-{user.id}"
         self.volume_root = settings.data_dir / "volumes" / self.id
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
@@ -271,7 +296,10 @@ class ProjectAgent:
                 log_handler=log_handler,
             ),
         ]
-        toolsets = [s.filtered(lambda ctx, tool: self._tool_allowed(tool.name)) for s in self._mcp_servers]
+        toolsets = [
+            ToolErrorToolset(s.filtered(lambda ctx, tool: self._tool_allowed(tool.name)))
+            for s in self._mcp_servers
+        ]
 
         # VISTAGuard gates are PydanticAI capabilities (Phase 3.5). The
         # sidecar is the factory that builds the capability list from its

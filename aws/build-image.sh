@@ -41,9 +41,7 @@ if [[ ! -f "$TAR_FILE" || ! -f "$DIGEST_FILE" || "$(cat "$DIGEST_FILE")" != "$bu
   printf '%s\n' "$built_digest" > "$DIGEST_FILE"
 fi
 
-#  Build the server image
-# The tar is .dockerignored from the default context (so the big `COPY . .` never bakes
-# it into a layer); hand it to the `msb load` as a named build context instead.
+# Build the server image
 # The private amscrot-py GitLab dependency is private, pass the Gitlab PAT to Docker build
 if [[ -z "${GITLAB_TOKEN:-}" ]]; then
   # Read from .git-credentials
@@ -61,7 +59,6 @@ export GITLAB_TOKEN
 echo "==> Building server image $SERVER_IMAGE"
 "$RUNTIME" build \
   -f "$REPO_ROOT/aws/Dockerfile.server" \
-  --build-context "sandbox_tar=$REPO_ROOT/aws" \
   --secret "id=gitlab_token,env=GITLAB_TOKEN" \
   -t "$SERVER_IMAGE" \
   "$REPO_ROOT"

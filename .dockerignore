@@ -3,13 +3,8 @@
 .*
 !.dockerignore
 
-# Prebuilt sandbox image export.
-aws/vista-sandbox.tar
-aws/vista-sandbox.tar.digest
-
 # Ignore Molten Salts DB
 data/**
-!data/knowledge-bases/molten-salt-papers/**
 
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,python,git,linux,macos,windows
@@ -167,7 +162,6 @@ data/**
 # Environments
 **/.env
 **/.env.*
-!**/.env.sample
 **/.venv
 **/env/
 **/venv/
@@ -211,11 +205,6 @@ site
 
 ### VisualStudioCode ###
 **/.vscode/*
-!**/.vscode/settings.json
-!**/.vscode/tasks.json
-!**/.vscode/launch.json
-!**/.vscode/extensions.json
-!**/.vscode/*.code-snippets
 
 # Local History for Visual Studio Code
 **/.history/

@@ -18,7 +18,7 @@ from .lib.view import view_path
 SANDBOX_SPAWN_FUNCS: dict[str, Callable[..., Awaitable[Sandbox]]] = {
     "microsandbox": lambda volumes=None, env=None: MicrosandboxSandbox.spawn(
         volumes=volumes, env=env,
-        dockerfile=settings.dockerfile, image=settings.image,
+        dockerfile=settings.dockerfile, image=settings.image, oci_image_tar=settings.oci_image_tar,
     ),
     "container": lambda volumes=None, env=None: ContainerSandbox.spawn(
         volumes=volumes, env=env,
@@ -38,7 +38,7 @@ SANDBOX_SPAWN_FUNCS: dict[str, Callable[..., Awaitable[Sandbox]]] = {
 
 SANDBOX_BUILD_FUNCS: dict[str, Callable[[], Awaitable[None]]] = {
     "microsandbox": lambda: MicrosandboxSandbox.build(
-        dockerfile=settings.dockerfile, image=settings.image,
+        dockerfile=settings.dockerfile, image=settings.image, oci_image_tar=settings.oci_image_tar,
     ),
     "container": lambda: ContainerSandbox.build(
         dockerfile=settings.dockerfile, image=settings.image,

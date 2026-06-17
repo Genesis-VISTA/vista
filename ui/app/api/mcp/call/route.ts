@@ -211,6 +211,7 @@ export async function POST(request: Request) {
   let tool = "";
   let args: Record<string, unknown> = {};
   let projectName: string | null = null;
+  let chatSessionId: string | null = null;
 
   try {
     const body = await request.json();
@@ -218,6 +219,9 @@ export async function POST(request: Request) {
     args = body.args && typeof body.args === "object" && !Array.isArray(body.args) ? body.args : {};
     if (typeof body.project_name === "string" && body.project_name.length > 0) {
       projectName = body.project_name;
+    }
+    if (typeof body.chat_session_id === "string" && body.chat_session_id.length > 0) {
+      chatSessionId = body.chat_session_id;
     }
   } catch {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Invalid JSON body." }), { status: 400 });
@@ -230,7 +234,11 @@ export async function POST(request: Request) {
     return NextResponse.json(createEnvelope({ ok: false, stderr: "Missing project_name." }), { status: 400 });
   }
 
-  const upstreamBody: Record<string, unknown> = { name: tool, arguments: args };
+  const upstreamBody: Record<string, unknown> = {
+    name: tool,
+    arguments: args,
+    chat_session_id: chatSessionId,
+  };
 
   let upstream: Response;
   try {
