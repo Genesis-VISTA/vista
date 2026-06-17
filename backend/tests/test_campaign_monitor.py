@@ -58,7 +58,7 @@ async def test_pending_job_stays_open_and_unnotified(session, alice):
     run, step, job = await _make_job(session, alice)
     emailer = _Emailer()
 
-    async def poll(j):
+    async def poll(_session, j):
         return "PENDING", ""
 
     async def collect(_session, j, raw):
@@ -81,7 +81,7 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     emailer = _Emailer()
     collected = []
 
-    async def poll(j):
+    async def poll(_session, j):
         return "COMPLETED", "TBR=1.18"
 
     async def collect(_session, j, raw):
@@ -116,7 +116,7 @@ async def test_failed_job_marks_step_failed_and_emails(session, alice):
     run, step, job = await _make_job(session, alice)
     emailer = _Emailer()
 
-    async def poll(j):
+    async def poll(_session, j):
         return "FAILED", ""
 
     async def collect(_session, j, raw):
@@ -141,7 +141,7 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
     run, step, job = await _make_job(session, alice, notified=True)
     emailer = _Emailer()
 
-    async def poll(j):
+    async def poll(_session, j):
         return "COMPLETED", ""
 
     async def collect(_session, j, raw):

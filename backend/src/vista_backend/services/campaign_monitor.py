@@ -71,8 +71,8 @@ def format_job_notification(
     return subject, body
 
 
-# poll(job) -> (state, raw_status); collect(session, job, raw_status) -> None (parses + completes the step)
-PollFn = Callable[[HpcJobTable], Awaitable[tuple[str, str]]]
+# poll(session, job) -> (state, raw_status); collect(session, job, raw_status) -> None
+PollFn = Callable[[AsyncSession, HpcJobTable], Awaitable[tuple[str, str]]]
 CollectFn = Callable[[AsyncSession, HpcJobTable, str], Awaitable[None]]
 SendEmailFn = Callable[..., Awaitable[bool]]
 
@@ -94,7 +94,7 @@ class CampaignMonitor:
         return len(jobs)
 
     async def _process(self, session: AsyncSession, job: HpcJobTable) -> None:
-        state, raw_status = await self._poll(job)
+        state, raw_status = await self._poll(session, job)
         await campaign_service.update_job(
             session, job_id=job.job_id, state=state, last_polled_at=now_iso()
         )

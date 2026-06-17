@@ -105,7 +105,7 @@ async def test_campaign_end_to_end(session, alice):
     emailer = _Emailer()
     state_box = {"state": "PENDING"}
 
-    async def poll(job):
+    async def poll(_session, job):
         return state_box["state"], f"STATE={state_box['state']}"
 
     async def planner_provider(_session, _job):
