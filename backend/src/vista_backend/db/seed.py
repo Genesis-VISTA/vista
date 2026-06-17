@@ -93,7 +93,7 @@ async def _build_knowledge_base(kb_dir: Path):
     if (rag_db / 'chroma.sqlite3').exists():
         return
 
-    filenames = sorted(p.name for p in pdfs_dir.glob("*.pdf"))
+    filenames = sorted(p.name for p in pdfs_dir.glob("**/*.pdf"))
     logging.info(f"Embedding {len(filenames)} PDF(s) into the knowledge base at {rag_db}.")
     results = await indexer.index_publications(
         rag_db_path=str(rag_db), pdfs_dir=str(pdfs_dir), filenames=filenames,
