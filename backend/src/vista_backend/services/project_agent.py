@@ -14,14 +14,12 @@ from ..utils.ttl_pool import TTLPool
 from . import chat_session as chat_session_service
 
 
-ProjectAgentKey = tuple[uuid.UUID, uuid.UUID, uuid.UUID]
+ProjectAgentKey = tuple[uuid.UUID | None, uuid.UUID, uuid.UUID]
 """ (chat_session_id, project_id, user_id) """
-
-_STATELESS_AGENT_NAMESPACE = uuid.UUID("7f6c94ec-1dcb-4d73-9b95-0da2c96f7f1a")
 
 
 async def _build_project_agent(
-    chat_session_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> ProjectAgent:
@@ -36,7 +34,7 @@ async def _build_project_agent(
             raise RuntimeError(
                 f"Project {project_id} or user {user_id} not found"
             )
-        if chat_session_id != _stateless_agent_id(project_id, user_id):
+        if chat_session_id is not None:
             chat_session_row = (await session.exec(
                 select(ChatSessionTable).where(ChatSessionTable.id == chat_session_id)
             )).first()
@@ -68,10 +66,6 @@ project_agent_pool: TTLPool[ProjectAgentKey, ProjectAgent] = TTLPool(
 _active_elicitations: dict[str, ProjectAgent] = {}
 
 
-def _stateless_agent_id(project_id: uuid.UUID, user_id: uuid.UUID) -> uuid.UUID:
-    return uuid.uuid5(_STATELESS_AGENT_NAMESPACE, f"{project_id}:{user_id}")
-
-
 async def get_project_agent_key(
     session: AsyncSession,
     *,
@@ -80,7 +74,7 @@ async def get_project_agent_key(
     chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey:
     if chat_session_id is None:
-        return (_stateless_agent_id(project_id, user_id), project_id, user_id)
+        return (None, project_id, user_id)
     chat_session = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project_id,
@@ -97,6 +91,9 @@ async def find_live_project_agent_key(
     user_id: uuid.UUID,
     chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey | None:
+    if chat_session_id is None:
+        key = (None, project_id, user_id)
+        return key if key in project_agent_pool.keys() else None
     chat_session = await chat_session_service.get_chat_session_optional(
         session,
         project_id=project_id,
