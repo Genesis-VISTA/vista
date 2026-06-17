@@ -3,10 +3,6 @@
 .*
 !.dockerignore
 
-# Prebuilt sandbox image export.
-aws/vista-sandbox.tar
-aws/vista-sandbox.tar.digest
-
 # Ignore Molten Salts DB
 data/**
 
@@ -166,7 +162,6 @@ data/**
 # Environments
 **/.env
 **/.env.*
-!**/.env.sample
 **/.venv
 **/env/
 **/venv/
@@ -210,11 +205,6 @@ site
 
 ### VisualStudioCode ###
 **/.vscode/*
-!**/.vscode/settings.json
-!**/.vscode/tasks.json
-!**/.vscode/launch.json
-!**/.vscode/extensions.json
-!**/.vscode/*.code-snippets
 
 # Local History for Visual Studio Code
 **/.history/

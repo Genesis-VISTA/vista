@@ -113,6 +113,8 @@ for env_file in reversed(Settings.model_config['env_file']):
 
 settings = Settings()
 
+os.environ["HF_HOME"] = str(settings.data_dir / 'huggingface')
+
 logging.basicConfig(
     level=settings.log_level,
     format='%(asctime)s - %(levelname)s - %(message)s',
