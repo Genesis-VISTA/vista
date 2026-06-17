@@ -7,7 +7,7 @@ from vista_backend.services import project_agent as project_agent_service
 
 
 @pytest.mark.anyio
-async def test_get_project_agent_key_includes_chat_session_id(session, alice):
+async def test_get_project_agent_key_is_stateless_without_chat_session_id(session, alice):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="agent-scope-project", description=None, system_prompt=None),
@@ -23,6 +23,12 @@ async def test_get_project_agent_key_includes_chat_session_id(session, alice):
     assert key[1] == project.id
     assert key[2] == alice.id
     assert key[0] not in (project.id, alice.id)
+    listed = await chat_session_service.list_chat_sessions(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+    assert listed == []
 
 
 @pytest.mark.anyio

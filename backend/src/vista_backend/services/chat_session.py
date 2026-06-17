@@ -177,12 +177,12 @@ async def get_effective_message_history(
     fallback_history: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
     """
-    Load the canonical persisted message history for a user/project.
-
-    If the stored session is empty, fall back to caller-provided history so an
-    older client can still continue a conversation during the migration to
-    backend-owned state.
+    Load persisted message history for an explicit chat session, otherwise use
+    caller-provided history as a stateless API path.
     """
+    if chat_session_id is None:
+        return _MESSAGE_HISTORY_ADAPTER.validate_python(fallback_history or [])
+
     row = await get_or_create_chat_session(
         session,
         project_id=project_id,
@@ -203,6 +203,8 @@ async def save_message_history(
     message_history: list[ModelMessage],
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable:
+    if chat_session_id is None:
+        raise ValueError("chat_session_id is required to persist message history")
     row = await get_or_create_chat_session(
         session,
         project_id=project_id,
@@ -227,6 +229,8 @@ async def append_message_history(
     new_messages: list[ModelMessage],
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable:
+    if chat_session_id is None:
+        raise ValueError("chat_session_id is required to append message history")
     combined = [*prior_history, *new_messages]
     return await save_message_history(
         session,

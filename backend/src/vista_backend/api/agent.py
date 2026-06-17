@@ -89,7 +89,7 @@ async def agent_run(
                     if isinstance(event, McpElicitationEvent):
                         register_elicitation(event.elicitation_id, agent)
                         # calling /projects/{project_name}/elicitation will resolve the elicitation request
-                    if isinstance(event, ProjectAgentResultEvent):
+                    if isinstance(event, ProjectAgentResultEvent) and body.chat_session_id is not None:
                         await chat_session_service.append_message_history(
                             session,
                             project_id=project.id,
@@ -108,12 +108,13 @@ async def agent_run(
                 user_prompt=body.user_prompt,
                 message_history=effective_history,
             )
-        await chat_session_service.append_message_history(
-            session,
-            project_id=project.id,
-            user_id=user.id,
-            prior_history=effective_history,
-            new_messages=result.new_messages,
-            chat_session_id=body.chat_session_id,
-        )
+        if body.chat_session_id is not None:
+            await chat_session_service.append_message_history(
+                session,
+                project_id=project.id,
+                user_id=user.id,
+                prior_history=effective_history,
+                new_messages=result.new_messages,
+                chat_session_id=body.chat_session_id,
+            )
         return result

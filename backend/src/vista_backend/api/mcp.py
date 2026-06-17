@@ -1,4 +1,3 @@
-import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
@@ -19,14 +18,12 @@ async def mcp_tools(
     project_name: str,
     session: SessionDep,
     user: UserDep,
-    chat_session_id: uuid.UUID | None = None,
 ) -> list[mcp.types.Tool]:
     project = await project_service.get_project_by_name(session, project_name, user)
     agent_key = await get_project_agent_key(
         session,
         project_id=project.id,
         user_id=user.id,
-        chat_session_id=chat_session_id,
     )
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.list_tools()
@@ -35,7 +32,6 @@ async def mcp_tools(
 class McpCallRequest(BaseModel):
     name: str
     arguments: dict[str, Any] = {}
-    chat_session_id: uuid.UUID | None = None
 
 
 @router.post("/projects/{project_name}/mcp/call")
@@ -47,7 +43,6 @@ async def mcp_call(
         session,
         project_id=project.id,
         user_id=user.id,
-        chat_session_id=req.chat_session_id,
     )
     async with project_agent_pool.get(agent_key) as agent:
         try:

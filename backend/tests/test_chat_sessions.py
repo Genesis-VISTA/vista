@@ -52,10 +52,17 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
         alice,
     )
 
+    created = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+
     updated = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=created.id,
         updates=ChatSessionUpdate(
             message_history=[
                 {
@@ -108,10 +115,17 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
         alice,
     )
 
+    created = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+
     created = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=created.id,
         updates=ChatSessionUpdate(
             message_history=[
                 {
@@ -143,7 +157,7 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
 
 
 @pytest.mark.anyio
-async def test_effective_message_history_uses_fallback_only_when_session_is_empty(session, alice):
+async def test_effective_message_history_is_stateless_without_chat_session_id(session, alice):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="history-project", description=None, system_prompt=None),
@@ -165,10 +179,23 @@ async def test_effective_message_history_uses_fallback_only_when_session_is_empt
     assert len(effective) == 1
     assert _kind(effective[0]) == "request"
 
+    listed = await chat_session_service.list_chat_sessions(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+    assert listed == []
+
+    persisted_session = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
     await chat_session_service.save_message_history(
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=persisted_session.id,
         message_history=[
             {
                 "kind": "response",
@@ -180,6 +207,7 @@ async def test_effective_message_history_uses_fallback_only_when_session_is_empt
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=persisted_session.id,
         fallback_history=fallback,
     )
     assert len(persisted) == 1
@@ -207,18 +235,26 @@ async def test_append_message_history_extends_existing_session_history(session, 
         }
     ]
 
+    created = await chat_session_service.create_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+    )
+
     await chat_session_service.append_message_history(
         session,
         project_id=project.id,
         user_id=alice.id,
         prior_history=prior_history,
         new_messages=new_messages,
+        chat_session_id=created.id,
     )
 
     reloaded = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project.id,
         user_id=alice.id,
+        chat_session_id=created.id,
     )
     assert [message["kind"] for message in reloaded.message_history] == ["request", "response"]
 
