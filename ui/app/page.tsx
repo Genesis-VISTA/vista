@@ -28,6 +28,7 @@ import {
 } from "@/lib/chat-session";
 import {
   htmlFromToolReturnContent,
+  fileFromToolReturnContent,
   type AgentRunResultEvent,
   type FunctionToolCallEvent,
   type FunctionToolResultEvent,
@@ -850,15 +851,21 @@ export default function HomePage() {
             break;
           }
           if (result.part_kind === "tool-return" || result.part_kind === "builtin-tool-return") {
-            const html = htmlFromToolReturnContent(result.content);
-            if (html) {
+            const file = result.tool_name === "display_file" ? fileFromToolReturnContent(result.content) : null;
+            const html = file ? null : htmlFromToolReturnContent(result.content);
+            const ui = file
+              ? ({ kind: "file", url: file.url, mimeType: file.mimeType, name: file.name } as const)
+              : html
+                ? ({ kind: "html", html } as const)
+                : null;
+            if (ui) {
               setLatestResult({
                 ok: true,
                 stdout: "",
                 stderr: "",
                 artifacts: [],
                 meta: { tool: result.tool_name },
-                ui: { kind: "html", html }
+                ui
               });
             }
           }
@@ -1075,7 +1082,7 @@ export default function HomePage() {
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
-          if (previewResult.ui?.kind === "html") {
+          if (previewResult.ui?.kind === "html" || previewResult.ui?.kind === "file") {
             finalResult = {
               ...result,
               ui: previewResult.ui
@@ -1178,7 +1185,7 @@ export default function HomePage() {
           });
           const previewResult = (await previewResponse.json()) as ExecutionResult;
           previewMs = performance.now() - previewStart;
-          if (previewResult.ui?.kind === "html") {
+          if (previewResult.ui?.kind === "html" || previewResult.ui?.kind === "file") {
             finalResult = {
               ...result,
               ui: previewResult.ui
@@ -1791,7 +1798,20 @@ export default function HomePage() {
               {latestResult && latestResult.ui?.kind === "html" && (
                 <SandboxedHtmlCard html={latestResult.ui.html} />
               )}
-              {latestResult && latestResult.ui?.kind !== "html" && (
+              {latestResult && latestResult.ui?.kind === "file" && (
+                latestResult.ui.mimeType?.startsWith("image/") ? (
+                  <img
+                    src={latestResult.ui.url}
+                    alt={latestResult.ui.name ?? "Tool output"}
+                    style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                  />
+                ) : (
+                  <a href={latestResult.ui.url} target="_blank" rel="noreferrer" className="chat-bubble">
+                    Download {latestResult.ui.name ?? "file"}
+                  </a>
+                )
+              )}
+              {latestResult && latestResult.ui?.kind !== "html" && latestResult.ui?.kind !== "file" && (
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
               )}
               {latestPredictionSummary && (

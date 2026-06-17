@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
-import type { ExecutionResult } from "@/lib/types";
+import type { ExecutionResult, UiPayload } from "@/lib/types";
 import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
@@ -66,95 +64,31 @@ function extractUiHtml(payload: unknown): string | null {
   return null;
 }
 
-function getMimeTypeFromPath(filePath: string): string {
-  const ext = extname(filePath).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".gif") return "image/gif";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".svg") return "image/svg+xml";
-  return "application/octet-stream";
-}
-
-function findUriDeep(payload: unknown, depth = 0): string | null {
-  if (depth > 6 || payload == null) return null;
-
-  if (typeof payload === "string") {
-    const trimmed = payload.trim();
-    if (trimmed.startsWith("file://") || trimmed.startsWith("/")) return trimmed;
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        return findUriDeep(JSON.parse(trimmed), depth + 1);
-      } catch {
-        return null;
-      }
-    }
-    const fileUriMatch = trimmed.match(/file:\/\/[^\s"']+/);
-    if (fileUriMatch) return fileUriMatch[0];
-    const absPathMatch = trimmed.match(/\/[^\s"']+\.(png|jpe?g|gif|webp|svg)/i);
-    if (absPathMatch) return absPathMatch[0];
-    return null;
+/**
+ * Detect a `display_file`-style structured payload: a record with a string `uri`
+ * (the backend download URL, plus optional `mime_type`/`filename`). `display_file`
+ * returns its result as `structuredContent` on the `CallToolResult`; the SDK may
+ * wrap a single value in `{ result: ... }`, so we check that too.
+ */
+function fileUiFromResult(raw: Record<string, unknown>): UiPayload | null {
+  const candidates: unknown[] = [raw.structuredContent];
+  const structured = raw.structuredContent;
+  if (structured && typeof structured === "object" && "result" in structured) {
+    candidates.push((structured as Record<string, unknown>).result);
   }
-
-  if (Array.isArray(payload)) {
-    for (const item of payload) {
-      const found = findUriDeep(item, depth + 1);
-      if (found) return found;
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    const obj = candidate as Record<string, unknown>;
+    if (typeof obj.uri === "string" && obj.uri.length > 0) {
+      return {
+        kind: "file",
+        url: obj.uri,
+        mimeType: typeof obj.mime_type === "string" ? obj.mime_type : undefined,
+        name: typeof obj.filename === "string" ? obj.filename : undefined,
+      };
     }
-    return null;
-  }
-
-  if (typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
-
-  if (typeof obj.uri === "string") return obj.uri;
-  if (typeof obj.path === "string" && obj.path.startsWith("/")) return obj.path;
-
-  for (const value of Object.values(obj)) {
-    const found = findUriDeep(value, depth + 1);
-    if (found) return found;
   }
   return null;
-}
-
-/**
- * Fallback for `display_file` results that come back as a URI-only payload
- * with no rendered HTML / inline image. Reads the file off disk and inlines
- * it as a base64 <img>, mirroring the legacy Next.js direct-call route.
- */
-async function addDisplayFileFallbackUi(
-  envelope: ExecutionResult,
-  tool: string
-): Promise<ExecutionResult> {
-  if (tool !== "display_file") return envelope;
-  if (envelope.ui?.kind === "html") return envelope;
-
-  const uri = findUriDeep(envelope.data) ?? findUriDeep(envelope.stdout);
-  if (!uri) return envelope;
-
-  let filePath = uri;
-  if (uri.startsWith("file://")) {
-    try {
-      filePath = decodeURIComponent(uri.slice("file://".length));
-    } catch {
-      filePath = uri.slice("file://".length);
-    }
-  }
-
-  if (!filePath.startsWith("/")) return envelope;
-
-  try {
-    const bytes = await readFile(filePath);
-    const mimeType = getMimeTypeFromPath(filePath);
-    if (!mimeType.startsWith("image/")) return envelope;
-    const base64Data = bytes.toString("base64");
-    return {
-      ...envelope,
-      ui: { kind: "html", html: toImageUiHtml(mimeType, base64Data) },
-    };
-  } catch {
-    return envelope;
-  }
 }
 
 function normalizeCallToolResult(raw: Record<string, unknown>, tool: string): ExecutionResult {
@@ -202,6 +136,16 @@ function normalizeCallToolResult(raw: Record<string, unknown>, tool: string): Ex
 
   if (envelope.ui?.kind !== "html" && envelope.stdout.includes("<img")) {
     envelope.ui = { kind: "html", html: envelope.stdout };
+  }
+
+  // A `display_file` URL payload wins over the text/html heuristics above. Scoped to
+  // `display_file` so other tools that happen to return a `uri` field aren't rendered
+  // as a downloadable file.
+  if (tool === "display_file") {
+    const fileUi = fileUiFromResult(raw);
+    if (fileUi) {
+      envelope.ui = fileUi;
+    }
   }
 
   return envelope;
@@ -277,6 +221,5 @@ export async function POST(request: Request) {
 
   const raw = (await upstream.json()) as Record<string, unknown>;
   const envelope = normalizeCallToolResult(raw, tool);
-  const withFallback = await addDisplayFileFallbackUi(envelope, tool);
-  return NextResponse.json(withFallback);
+  return NextResponse.json(envelope);
 }

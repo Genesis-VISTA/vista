@@ -218,14 +218,53 @@ function htmlFromString(value: string): string | null {
   return HTML_RE.test(value) ? value : null;
 }
 
+export type ToolReturnFile = { url: string; mimeType?: string; name?: string };
+
+/**
+ * Walk an arbitrary tool-return `content` value looking for a `display_file`-style
+ * payload: a record carrying a string `uri` (the backend download URL, plus optional
+ * `mime_type`/`filename`).
+ *
+ * `display_file` returns `{uri, mime_type, filename}`; PydanticAI surfaces the
+ * structured object as `ToolReturnPart.content` directly, but we walk defensively
+ * in case it's wrapped/nested.
+ */
+export function fileFromToolReturnContent(
+  content: unknown,
+  depth = 0
+): ToolReturnFile | null {
+  if (depth > 6 || content == null) return null;
+
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      const hit = fileFromToolReturnContent(item, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  if (!isRecord(content)) return null;
+
+  if (typeof content.uri === "string" && content.uri.length > 0) {
+    return {
+      url: content.uri,
+      mimeType: typeof content.mime_type === "string" ? content.mime_type : undefined,
+      name: typeof content.filename === "string" ? content.filename : undefined,
+    };
+  }
+
+  for (const value of Object.values(content)) {
+    const hit = fileFromToolReturnContent(value, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /**
  * Walk an arbitrary tool-return `content` value looking for renderable HTML.
  *
- * The common case is the MCP `display_file` tool, which is typed `-> str` and
- * returns a raw `<img ...>` HTML string; PydanticAI unwraps
- * `structuredContent={"result": ...}` so `ToolReturnPart.content` is that
- * string directly. We also handle PydanticAI `MultiModalContent` objects and
- * raw MCP content blocks defensively.
+ * Used for tools that emit raw HTML (svg/table/div). We handle PydanticAI
+ * `MultiModalContent` objects and raw MCP content blocks defensively.
  */
 export function htmlFromToolReturnContent(
   content: unknown,

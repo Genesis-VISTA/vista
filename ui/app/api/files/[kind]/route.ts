@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
-import { backendUrl, backendHeaders } from "../_backend";
+import { backendUrl, backendHeaders } from "../../_backend";
 
 export const runtime = "nodejs";
 
-type BackendUpload = {
+/** File kinds the backend exposes under /projects/{name}/{kind}. */
+const FILE_KINDS = ["uploads", "outputs"] as const;
+type FileKind = (typeof FILE_KINDS)[number];
+
+function parseKind(value: string): FileKind | null {
+  return (FILE_KINDS as readonly string[]).includes(value) ? (value as FileKind) : null;
+}
+
+type BackendFile = {
   name: string;
   size: number;
   created: string;
@@ -22,29 +30,39 @@ function requireProjectName(request: Request): { projectName: string } | NextRes
 }
 
 /**
- * GET /api/uploads?project_name=... — list uploaded files for a project agent.
+ * GET /api/files/{kind}?project_name=... — list a project agent's files.
  *
  * Backend returns `{name, size, created, modified}`. The frontend reads
- * `modifiedAt`, so we rename `modified` on the way out.
+ * `modifiedAt` and a `source` discriminator, so we reshape on the way out:
+ * uploaded files are `"upload"`, generated outputs are `"generated"`.
  */
-export async function GET(request: Request) {
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ kind: string }> }
+) {
+  const kind = parseKind((await params).kind);
+  if (!kind) {
+    return NextResponse.json({ ok: false, error: "Unknown file kind." }, { status: 404 });
+  }
+
   const resolved = requireProjectName(request);
   if (resolved instanceof NextResponse) return resolved;
   const { projectName } = resolved;
 
   try {
     const upstream = await fetch(
-      backendUrl(`/projects/${encodeURIComponent(projectName)}/uploads`),
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/${kind}`),
       { headers: await backendHeaders({ accept: "application/json" }) }
     );
     if (!upstream.ok) {
       return NextResponse.json([], { status: 200 });
     }
-    const files = (await upstream.json()) as BackendUpload[];
+    const files = (await upstream.json()) as BackendFile[];
     const summaries = files.map((file) => ({
       name: file.name,
       size: file.size,
       modifiedAt: file.modified,
+      source: kind === "outputs" ? "generated" : "upload",
     }));
     return NextResponse.json(summaries);
   } catch {
@@ -53,12 +71,24 @@ export async function GET(request: Request) {
 }
 
 /**
- * POST /api/uploads?project_name=... — forward the multipart body to the backend.
+ * POST /api/files/uploads?project_name=... — forward the multipart body to the
+ * backend. Only the `uploads` kind is writable; generated `outputs` are not.
  *
  * The backend's response is `list[str]` (saved filenames). The frontend
  * expects `{ok, saved}` with a 4xx body of `{ok: false, error}` on failure.
  */
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ kind: string }> }
+) {
+  const kind = parseKind((await params).kind);
+  if (kind !== "uploads") {
+    return NextResponse.json(
+      { ok: false, error: "Only uploads can be created." },
+      { status: 405 }
+    );
+  }
+
   const resolved = requireProjectName(request);
   if (resolved instanceof NextResponse) return resolved;
   const { projectName } = resolved;

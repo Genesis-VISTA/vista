@@ -3,12 +3,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "@/lib/projects";
 
+type FileKind = "uploads" | "outputs";
+
 type UploadFileInfo = {
   name: string;
   size: number;
   modifiedAt: string;
   source?: "upload" | "generated";
 };
+
+function kindForSource(source: UploadFileInfo["source"]): FileKind {
+  return source === "generated" ? "outputs" : "uploads";
+}
+
+/** Encode a (possibly nested) relative path per segment, keeping `/` literal. */
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
 
 type UploadResponse = {
   ok: boolean;
@@ -60,9 +71,18 @@ export default function DatasetsPage() {
     }
     setIsLoadingUploads(true);
     try {
-      const response = await fetch(`/api/uploads${projectQuery}`);
-      const data = (await response.json()) as UploadFileInfo[];
-      setUploads(Array.isArray(data) ? data : []);
+      const [uploadsRes, outputsRes] = await Promise.all([
+        fetch(`/api/files/uploads${projectQuery}`),
+        fetch(`/api/files/outputs${projectQuery}`),
+      ]);
+      const [uploadsData, outputsData] = await Promise.all([
+        uploadsRes.json(),
+        outputsRes.json(),
+      ]);
+      setUploads([
+        ...(Array.isArray(uploadsData) ? (uploadsData as UploadFileInfo[]) : []),
+        ...(Array.isArray(outputsData) ? (outputsData as UploadFileInfo[]) : []),
+      ]);
     } catch {
       setUploads([]);
     } finally {
@@ -90,8 +110,10 @@ export default function DatasetsPage() {
     setUploadMessage("");
     try {
       const form = new FormData();
-      for (const file of Array.from(files)) form.append("files", file);
-      const response = await fetch(`/api/uploads${projectQuery}`, { method: "POST", body: form });
+      for (const file of Array.from(files)) {
+        form.append("files", file, file.webkitRelativePath || file.name);
+      }
+      const response = await fetch(`/api/files/uploads${projectQuery}`, { method: "POST", body: form });
       const data = (await response.json()) as UploadResponse;
       if (!response.ok || !data.ok) {
         setUploadError(data.error || "Upload failed.");
@@ -107,18 +129,19 @@ export default function DatasetsPage() {
     }
   }
 
-  async function deleteUpload(name: string) {
+  async function deleteUpload(name: string, kind: FileKind) {
     if (!projectName) {
       setUploadError("Select a project before deleting uploads.");
       return;
     }
-    setDeletingUploadName(name);
+    setDeletingUploadName(`${kind}:${name}`);
     setUploadError("");
     setUploadMessage("");
     try {
-      const response = await fetch(`/api/uploads/${encodeURIComponent(name)}${projectQuery}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/files/${kind}/${encodePath(name)}${projectQuery}`,
+        { method: "DELETE" }
+      );
       const data = (await response.json()) as UploadResponse;
       if (!response.ok || !data.ok) {
         setUploadError(data.error || "Delete failed.");
@@ -251,17 +274,17 @@ export default function DatasetsPage() {
                       <div className="upload-actions">
                         <a
                           className="button ghost button-xs upload-action-btn"
-                          href={`/api/uploads/${encodeURIComponent(file.name)}${projectQuery}`}
+                          href={`/api/files/${kindForSource(file.source)}/${encodePath(file.name)}${projectQuery}`}
                           download={file.name}
                         >
                           Download
                         </a>
                         <button
                           className="button ghost button-xs upload-action-btn"
-                          onClick={() => void deleteUpload(file.name)}
-                          disabled={deletingUploadName === file.name}
+                          onClick={() => void deleteUpload(file.name, kindForSource(file.source))}
+                          disabled={deletingUploadName === `${kindForSource(file.source)}:${file.name}`}
                         >
-                          {deletingUploadName === file.name ? "Deleting..." : "Delete"}
+                          {deletingUploadName === `${kindForSource(file.source)}:${file.name}` ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </div>
@@ -282,17 +305,17 @@ export default function DatasetsPage() {
                       <div className="upload-actions">
                         <a
                           className="button ghost button-xs upload-action-btn"
-                          href={`/api/uploads/${encodeURIComponent(file.name)}${projectQuery}`}
+                          href={`/api/files/${kindForSource(file.source)}/${encodePath(file.name)}${projectQuery}`}
                           download={file.name}
                         >
                           Download
                         </a>
                         <button
                           className="button ghost button-xs upload-action-btn"
-                          onClick={() => void deleteUpload(file.name)}
-                          disabled={deletingUploadName === file.name}
+                          onClick={() => void deleteUpload(file.name, kindForSource(file.source))}
+                          disabled={deletingUploadName === `${kindForSource(file.source)}:${file.name}`}
                         >
-                          {deletingUploadName === file.name ? "Deleting..." : "Delete"}
+                          {deletingUploadName === `${kindForSource(file.source)}:${file.name}` ? "Deleting..." : "Delete"}
                         </button>
                       </div>
                     </div>

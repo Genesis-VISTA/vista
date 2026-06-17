@@ -5,6 +5,7 @@ import json, logging, os, shutil, uuid, asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
@@ -208,14 +209,14 @@ class ProjectAgent:
         self.project = project
         self.user = user
         self.session_id = session_id
-        # Id per chat session. A new ProjectAgent with the same session gets
-        # the same sandbox/storage roots; different sessions for the same
-        # project+user are isolated.
+        # Sandboxes are isolated per chat session.
+        # Uploads and output volumes are isolated per project x user to allow reusing files
+        # TODO: We may want to rethink that, perhaps having separate "session scratch" and "project" storage
         self.id = f"{session_id}" if session_id else f"{project.id}-{user.id}"
-        self.volume_root = settings.data_dir / "volumes" / self.id
-        self.output_dir = self.volume_root / "data" / "output"
-        self.uploads_dir = self.volume_root / "data" / "uploads"
-        self.skills_volume_dir = self.volume_root / "skills"
+        volumes_dir = settings.data_dir / "volumes"
+        self.output_volume_dir = volumes_dir / f"{project.id}-{user.id}/output"
+        self.uploads_volume_dir = volumes_dir / f"{project.id}-{user.id}/uploads"
+        self.skills_volume_dir = volumes_dir / f"{self.id}/skills"
         self._elicitations: dict[str, asyncio.Future] = {}
         self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
 
@@ -276,7 +277,9 @@ class ProjectAgent:
             ),
             get_dev_mcp_server(
                 volumes=[
-                    (str(self.volume_root), "/mnt", 'w'),
+                    (str(self.skills_volume_dir), "/mnt/skills", 'r'),
+                    (str(self.output_volume_dir), "/mnt/data/output", 'w'),
+                    (str(self.uploads_volume_dir), "/mnt/data/uploads", 'r'),
                 ],
                 elicitation_callback=elicitation_callback,
                 process_tool_call=process_tool_call,
@@ -397,10 +400,7 @@ class ProjectAgent:
         for server in self._mcp_servers:
             tools = await server.list_tools()
             if any(t.name == name for t in tools):
-                # TODO: This bypasses process_tool_call. That's probably fine for VistaGuard as these
-                # calls are user triggered. But will break job submission. Leaving for now as using
-                # metadata for job submission credentials is a temporary solution anyways
-                return await server._client.call_tool(name, arguments)
+                return await server._client.call_tool(name, arguments, meta=self._build_vista_metadata(name))
         raise KeyError(f"Tool {name!r} not found on any MCP server")
 
     async def __aenter__(self):
@@ -425,7 +425,8 @@ class ProjectAgent:
         Prepare the sandbox volumes. Note that volumes persist across reboots and ProjectAgent
         evictions.
         """
-        self.volume_root.mkdir(parents=True, exist_ok=True)
+        self.output_volume_dir.mkdir(parents=True, exist_ok=True)
+        self.uploads_volume_dir.mkdir(parents=True, exist_ok=True)
 
         # Set up skill volume
         async with AsyncSession(get_engine()) as session:
@@ -435,7 +436,7 @@ class ProjectAgent:
         skill_dirs = {row.name: settings.data_dir / row.path for row in rows}
 
         shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
-        self.skills_volume_dir.mkdir()
+        self.skills_volume_dir.mkdir(parents=True, exist_ok=True)
         for name in self.project.skills:
             src = skill_dirs.get(name)
             if src is None or not src.is_dir():
@@ -445,33 +446,40 @@ class ProjectAgent:
         proc = await asyncio.create_subprocess_exec("chmod", "-R", "o+rX", str(self.skills_volume_dir))
         await proc.wait()
 
+    def _build_vista_metadata(self, name: str) -> dict[str, Any]:
+        # TODO Temporary scaffolding for getting per-user HPC credentials and project paths
+        # to the MCP server via MCP metadata. Later we'll set up more generic MCP server
+        # configuration that supports 3rd party MCP servers, launching isolated server
+        # instances per project with configurable env vars/headers.
+        # Root-relative download-URL templates for `display_file`, with the project name
+        # baked in. `{path}` is replaced by the URL-encoded relative path on the MCP side.
+        proj = quote(self.project.name, safe="")
+        uri_map = {
+            "file:///mnt/data/output/{path}": f"/api/files/outputs/{{path}}?project_name={proj}",
+            "file:///mnt/data/uploads/{path}": f"/api/files/uploads/{{path}}?project_name={proj}",
+        }
+        vista: dict[str, Any] = {
+            "project_paths": {
+                "skills_dir": str(self.skills_volume_dir),
+                "output_dir": str(self.output_volume_dir),
+                "uploads_dir": str(self.uploads_volume_dir),
+            },
+            "uri_map": uri_map,
+        }
+        HPC_TOOLS = {
+            "submit_hpc_job", "get_hpc_job_status",
+            "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
+        }
+        if name in HPC_TOOLS:
+            vista["user"] = self.user.model_dump(mode='json')
+        return {"vista": vista}
+
     def _make_mcp_process_tool_call(self):
         async def process_tool_call(ctx: RunContext[Any], call_tool: CallToolFunc, name: str, tool_args: dict[str, Any]) -> ToolResult:
-            # TODO Temporary scaffolding for getting per-user HPC credentials to the MCP server, we set up the s3m
-            # creds via MCP metadata. Later we'll set up more generic MCP server configuration that supports 3rd party
-            # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
-            # environment vars/headers necessary.
-            # The project_paths should also be changed to use env vars or some other mechanism.
-            metadata: dict[str, Any] = {
-                "vista": {
-                    "project_paths": {
-                        "skills_dir": str(self.skills_volume_dir),
-                        "output_dir": str(self.output_dir),
-                        "uploads_dir": str(self.uploads_dir),
-                    },
-                },
-            }
-            HPC_TOOLS = {
-                "submit_hpc_job", "get_hpc_job_status",
-                "get_hpc_job_outputs", "list_hpc_jobs", "cancel_hpc_job",
-            }
-            if name in HPC_TOOLS:
-                metadata["vista"]["user"] = self.user.model_dump(mode='json')
-
             # VISTAGuard no longer mediates here: gate enforcement runs
             # via the Agent's capability hooks (Phase 3.5). This callback
             # only injects the per-call MCP metadata.
-            return await call_tool(name, tool_args, metadata)
+            return await call_tool(name, tool_args, self._build_vista_metadata(name))
         return process_tool_call
 
     def _make_mcp_elicitation_callback(self, stream_merger: StreamMerger[ProjectAgentStreamEvent]):
