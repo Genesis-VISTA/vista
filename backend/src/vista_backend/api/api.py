@@ -8,6 +8,7 @@ from ..config import settings
 from ..db.db import init_db
 from ..agents.agents import get_vista_mcp_server
 from .agent import router as agent_router
+from .campaign import router as campaign_router
 from .chat_sessions import router as chat_sessions_router
 from .vistaguard import router as vistaguard_router
 from ..services.project_agent import project_agent_pool
@@ -41,6 +42,7 @@ app = FastAPI(
     dependencies=[Depends(get_user)], # Require login for all routes
 )
 app.include_router(agent_router)
+app.include_router(campaign_router)
 app.include_router(chat_sessions_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)

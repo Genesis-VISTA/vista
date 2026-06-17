@@ -71,9 +71,9 @@ def format_job_notification(
     return subject, body
 
 
-# poll(job) -> (state, raw_status); collect(job, raw_status) -> None (parses + completes the step)
+# poll(job) -> (state, raw_status); collect(session, job, raw_status) -> None (parses + completes the step)
 PollFn = Callable[[HpcJobTable], Awaitable[tuple[str, str]]]
-CollectFn = Callable[[HpcJobTable, str], Awaitable[None]]
+CollectFn = Callable[[AsyncSession, HpcJobTable, str], Awaitable[None]]
 SendEmailFn = Callable[..., Awaitable[bool]]
 
 
@@ -104,7 +104,7 @@ class CampaignMonitor:
         ok = is_success(state)
         if ok:
             # The collector parses outputs and completes the step (subagent.collect).
-            await self._collect(job, raw_status)
+            await self._collect(session, job, raw_status)
         else:
             await campaign_service.update_step(
                 session, step_id=job.step_id, status="failed",

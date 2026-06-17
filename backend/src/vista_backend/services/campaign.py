@@ -17,6 +17,7 @@ from ..db.schemas import (
     CampaignStatus,
     CampaignStepStatus,
     CampaignStepTable,
+    CampaignUpdate,
     HpcJobTable,
 )
 from ..utils.misc import now_iso
@@ -83,6 +84,32 @@ async def require_campaign(session: AsyncSession, run_id: uuid.UUID) -> Campaign
     if run is None:
         raise ValueError(f"Campaign {run_id} not found")
     return run
+
+
+async def require_campaign_in_project(
+    session: AsyncSession, *, run_id: uuid.UUID, project_id: uuid.UUID
+) -> CampaignRunTable:
+    """Load a run and confirm it belongs to `project_id` (the API's access boundary)."""
+    run = await get_campaign(session, run_id)
+    if run is None or run.project_id != project_id:
+        raise ValueError(f"Campaign {run_id} not found in project {project_id}")
+    return run
+
+
+async def patch_campaign(
+    session: AsyncSession, *, run_id: uuid.UUID, updates: CampaignUpdate
+) -> CampaignRunTable:
+    """Apply a `CampaignUpdate` (only its set fields) to a run."""
+    fields = {}
+    if updates.title is not None:
+        fields["title"] = updates.title
+    if updates.spec is not None:
+        fields["spec"] = updates.spec
+    if updates.plan is not None:
+        fields["plan"] = updates.plan
+    if updates.status is not None:
+        fields["status"] = updates.status
+    return await update_campaign(session, run_id=run_id, **fields)
 
 
 async def list_campaigns(
@@ -275,6 +302,18 @@ async def list_jobs_for_step(
             await session.exec(select(HpcJobTable).where(HpcJobTable.step_id == step_id))
         ).all()
     )
+
+
+async def list_jobs_for_run(
+    session: AsyncSession, *, run_id: uuid.UUID
+) -> list[HpcJobTable]:
+    """All jobs across a run's steps (for the campaign-state / resume view)."""
+    stmt = (
+        select(HpcJobTable)
+        .join(CampaignStepTable, HpcJobTable.step_id == CampaignStepTable.id)
+        .where(CampaignStepTable.run_id == run_id)
+    )
+    return list((await session.exec(stmt)).all())
 
 
 async def list_open_jobs(session: AsyncSession) -> list[HpcJobTable]:

@@ -681,3 +681,26 @@ class HpcJobTable(HpcJobBase, table=True):
     """ The HPC job id returned by submit_hpc_job; unique across clusters (matches the MCP registry key). """
     step_id: uuid.UUID = Field(foreign_key="campaign_step.id", ondelete="CASCADE")
     user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+
+
+class CampaignCreate(BaseModel):
+    """Fields a user supplies to start a campaign (the project comes from the URL)."""
+    domain: str
+    planner_skill: str
+    title: str | None = None
+    spec: dict[str, Any] = {}
+
+
+class CampaignUpdate(BaseModel):
+    """Fields editable on a campaign run via PATCH (omitted fields are left unchanged)."""
+    title: str | None = None
+    spec: dict[str, Any] | None = None
+    plan: list[dict[str, Any]] | None = None
+    status: CampaignStatus | None = None
+
+
+class CampaignStatePublic(BaseModel):
+    """Full campaign state for the UI / resume: the run plus its steps and jobs."""
+    run: CampaignRunPublic
+    steps: list[CampaignStepPublic]
+    jobs: list[HpcJobPublic]

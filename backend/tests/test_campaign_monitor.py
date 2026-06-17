@@ -61,7 +61,7 @@ async def test_pending_job_stays_open_and_unnotified(session, alice):
     async def poll(j):
         return "PENDING", ""
 
-    async def collect(j, raw):
+    async def collect(_session, j, raw):
         raise AssertionError("should not collect a pending job")
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
@@ -84,7 +84,7 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     async def poll(j):
         return "COMPLETED", "TBR=1.18"
 
-    async def collect(j, raw):
+    async def collect(_session, j, raw):
         collected.append((j.job_id, raw))
         await campaign_service.update_step(
             session, step_id=j.step_id, status="completed", result={"metrics": {"TBR": 1.18}}
@@ -119,7 +119,7 @@ async def test_failed_job_marks_step_failed_and_emails(session, alice):
     async def poll(j):
         return "FAILED", ""
 
-    async def collect(j, raw):
+    async def collect(_session, j, raw):
         raise AssertionError("failed jobs should not be collected")
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
@@ -144,7 +144,7 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
     async def poll(j):
         return "COMPLETED", ""
 
-    async def collect(j, raw):
+    async def collect(_session, j, raw):
         await campaign_service.update_step(session, step_id=j.step_id, status="completed", result={})
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)

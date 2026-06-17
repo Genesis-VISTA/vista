@@ -127,11 +127,25 @@ commits, each leaving the tree green:
 3. **Restart-safe HPC job registry** — persist `submit_job_mcp.py`'s `_submitted_jobs`, rehydrate on startup.
 4. **Campaign service** — `services/campaign.py`: create/load/resume run, persist plan, steps, transitions.
 5. **Generic subagent runtime** — skill-specialized worker (dispatch/collect) on the HPC tools.
-6. **Generic planner runtime + delegation + manifest loader** — playbook-skill-driven orchestrator,
-   campaign tools, delegation per `campaign.yaml`, stream callbacks ported from `subagent`.
-7. **Monitor + email + resume** — `services/email.py` + SMTP config; background poller; startup rehydration.
-8. **Campaign API + mock-domain end-to-end test** — `api/campaign.py` + a mock domain (planner skill +
-   one mock sim skill + a fake echo `hpc_jobs` entry) exercising the full loop without a real solver.
+6. **Generic planner runtime + delegation + manifest loader** — `manifest.py` (`campaign.yaml`
+   loader), `hpc_tools.py` (`McpHpcTools` over an injected MCP invoke), `planner.py`
+   (`CampaignPlanner` delegation engine + `build_subagents` + playbook prompt builder).
+7. **Monitor + email + resume** — `services/email.py` + SMTP config; `CampaignMonitor`
+   (poll → collect/fail → notify) + terminal-state classification + resume query.
+8. **Campaign API + wiring + mock-domain end-to-end test** — `api/campaign.py` (CRUD + state),
+   `wiring.py` (the monitor↔MCP/planner seams: `parse_job_state` / `build_status_poll` /
+   `build_collector`), and an end-to-end test driving create → dispatch → poll → collect →
+   email → resume → exit over a mock domain with the HPC boundary faked.
+
+**Deferred to PR 2 (live runtime wiring — needs a real model + MCP + skills to exercise):**
+- The app-lifespan monitor start + the live `invoke` closure (MCP call with per-user credential
+  metadata) and per-job planner reconstruction. The seams (commit 8 `wiring.py`) and the gated
+  toggle are in place; PR 2 wires the real closures and turns the monitor on.
+- The **conversational LLM planner driver** — registering the campaign tools (`dispatch` /
+  `collect` / `record-decision` / `finish`) on a chat agent and the `StreamMerger` callbacks, so
+  the planner LLM drives the playbook with the user in the loop. PR 1 runs campaigns
+  programmatically (API + `CampaignPlanner`); PR 2 adds the chat-driven planner alongside the
+  SPLASH skills, verified via Playwright.
 
 **PR 2 — SPLASH skills (depends on PR 1).**
 1. `splash-planner` skill: the playbook (`SKILL.md`), `campaign.yaml` manifest, and the
