@@ -109,21 +109,32 @@ class ChatTranscriptMessage(BaseModel):
 
 class ChatSessionBase(SQLModel):
     """
-    Persisted chat state for one (user, project) pair.
-
-    Phase 1 keeps exactly one resumable conversation per user/project. We
-    store both the opaque PydanticAI message history needed to continue the
-    agent run, and a lightweight transcript copy for restoring the UI.
+    Persisted chat state for a single conversation inside a project.
     """
+    title: str = "New conversation"
     message_history: A[list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))]
     messages: A[list[ChatTranscriptMessage], Field(default_factory=list, sa_column=Column(JSON))]
     latest_result: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
 
 
+class ChatSessionCreate(BaseModel):
+    title: str | None = None
+
+
 class ChatSessionUpdate(BaseModel):
-    message_history: list[dict[str, Any]] = Field(default_factory=list)
-    messages: list[ChatTranscriptMessage] = Field(default_factory=list)
+    title: str | None = None
+    message_history: list[dict[str, Any]] | None = None
+    messages: list[ChatTranscriptMessage] | None = None
     latest_result: dict[str, Any] | None = None
+
+
+class ChatSessionSummary(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    created_at: str
+    updated_at: str
 
 
 class ChatSessionPublic(ChatSessionBase):
@@ -136,9 +147,6 @@ class ChatSessionPublic(ChatSessionBase):
 
 class ChatSessionTable(ChatSessionBase, table=True):
     __tablename__ = "chat_session"
-    __table_args__ = (
-        UniqueConstraint("user_id", "project_id", name="uq_chat_session_user_project"),
-    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")

@@ -5,15 +5,21 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const projectName = new URL(request.url).searchParams.get("project_name");
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const chatSessionId = url.searchParams.get("chat_session_id");
   if (!projectName) {
     return NextResponse.json({ error: "Missing project_name." }, { status: 400 });
   }
 
   let upstream: Response;
   try {
+    const upstreamUrl = new URL(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`)
+    );
+    if (chatSessionId) upstreamUrl.searchParams.set("chat_session_id", chatSessionId);
     upstream = await fetch(
-      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`),
+      upstreamUrl,
       {
         headers: await backendHeaders({ accept: "application/json" }),
       }
@@ -35,6 +41,8 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   let body: {
     project_name?: unknown;
+    chat_session_id?: unknown;
+    title?: unknown;
     message_history?: unknown;
     messages?: unknown;
     latest_result?: unknown;
@@ -52,14 +60,21 @@ export async function PUT(request: Request) {
 
   let upstream: Response;
   try {
+    const upstreamUrl = new URL(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`)
+    );
+    if (typeof body.chat_session_id === "string" && body.chat_session_id.length > 0) {
+      upstreamUrl.searchParams.set("chat_session_id", body.chat_session_id);
+    }
     upstream = await fetch(
-      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`),
+      upstreamUrl,
       {
         method: "PUT",
         headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
-          message_history: body.message_history ?? [],
-          messages: body.messages ?? [],
+          title: typeof body.title === "string" ? body.title : null,
+          message_history: body.message_history ?? null,
+          messages: body.messages ?? null,
           latest_result: body.latest_result ?? null,
         }),
       }
@@ -76,4 +91,39 @@ export async function PUT(request: Request) {
     status: upstream.status,
     headers: { "content-type": "application/json" },
   });
+}
+
+export async function DELETE(request: Request) {
+  const url = new URL(request.url);
+  const projectName = url.searchParams.get("project_name");
+  const chatSessionId = url.searchParams.get("chat_session_id");
+  if (!projectName) {
+    return NextResponse.json({ error: "Missing project_name." }, { status: 400 });
+  }
+  if (!chatSessionId) {
+    return NextResponse.json({ error: "Missing chat_session_id." }, { status: 400 });
+  }
+
+  let upstream: Response;
+  try {
+    const upstreamUrl = new URL(
+      backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`)
+    );
+    upstreamUrl.searchParams.set("chat_session_id", chatSessionId);
+    upstream = await fetch(
+      upstreamUrl,
+      {
+        method: "DELETE",
+        headers: await backendHeaders(),
+      }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json(
+      { error: `Backend unreachable: ${message}` },
+      { status: 502 }
+    );
+  }
+
+  return new NextResponse(null, { status: upstream.status });
 }

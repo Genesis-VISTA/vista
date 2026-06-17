@@ -179,14 +179,14 @@ def get_dev_mcp_server(
 
 
 class ProjectAgent:
-    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig, session_id: uuid.UUID):
+    def __init__(self, project: ProjectPublic, user: UserPublicWithConfig, session_id: uuid.UUID | None):
         self.project = project
         self.user = user
         self.session_id = session_id
         # Id per chat session. A new ProjectAgent with the same session gets
         # the same sandbox/storage roots; different sessions for the same
         # project+user are isolated.
-        self.id = f"{session_id}"
+        self.id = f"{session_id}" if session_id else f"{project.id}-{user.id}"
         self.volume_root = settings.data_dir / "volumes" / self.id
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
