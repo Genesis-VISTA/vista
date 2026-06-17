@@ -34,10 +34,11 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
-    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../../data")
+    msb_home: A[ResolvedPath | None, Field(validation_alias="MSB_HOME")] = None
 
 settings = AppSettings()
-# os.environ['MSB_HOME'] = str(settings.data_dir / "microsandbox")
+if settings.msb_home:
+    os.environ['MSB_HOME'] = str(settings.msb_home)
 
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
