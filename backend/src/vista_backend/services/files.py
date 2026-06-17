@@ -27,7 +27,7 @@ class FileInfo(BaseModel):
 
 def _kind_dir(agent: ProjectAgent, kind: FileKind) -> Path:
     """ Resolve the on-disk directory for a file kind on the given agent. """
-    return agent.uploads_dir if kind == "uploads" else agent.output_dir
+    return agent.uploads_volume_dir if kind == "uploads" else agent.output_volume_dir
 
 
 def _sanitize_filename(name: str | None) -> str:
@@ -90,7 +90,7 @@ async def save_uploads(
     project = await project_service.get_project_by_name(session, project_name, user)
     agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
     async with project_agent_pool.get(agent_key) as agent:
-        uploads_dir = agent.uploads_dir
+        uploads_dir = agent.uploads_volume_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
 
         saved: list[str] = []

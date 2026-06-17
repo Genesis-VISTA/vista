@@ -14,29 +14,32 @@ from ..utils.ttl_pool import TTLPool
 from . import chat_session as chat_session_service
 
 
-ProjectAgentKey = tuple[uuid.UUID, uuid.UUID, uuid.UUID]
+ProjectAgentKey = tuple[uuid.UUID | None, uuid.UUID, uuid.UUID]
 """ (chat_session_id, project_id, user_id) """
 
 
 async def _build_project_agent(
-    chat_session_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> ProjectAgent:
     async with AsyncSession(get_engine()) as session:
-        chat_session_row = (await session.exec(
-            select(ChatSessionTable).where(ChatSessionTable.id == chat_session_id)
-        )).first()
         project_row = (await session.exec(
             select(ProjectTable).where(ProjectTable.id == project_id)
         )).first()
         user_row = (await session.exec(
             select(UserTable).where(UserTable.id == user_id)
         )).first()
-        if chat_session_row is None or project_row is None or user_row is None:
+        if project_row is None or user_row is None:
             raise RuntimeError(
-                f"Chat session {chat_session_id}, project {project_id}, or user {user_id} not found"
+                f"Project {project_id} or user {user_id} not found"
             )
+        if chat_session_id is not None:
+            chat_session_row = (await session.exec(
+                select(ChatSessionTable).where(ChatSessionTable.id == chat_session_id)
+            )).first()
+            if chat_session_row is None:
+                raise RuntimeError(f"Chat session {chat_session_id} not found")
         project = ProjectPublic.model_validate(project_row)
         user = UserPublicWithConfig.model_validate(user_row)
     agent = ProjectAgent(project, user, chat_session_id)
@@ -68,11 +71,15 @@ async def get_project_agent_key(
     *,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey:
+    if chat_session_id is None:
+        return (None, project_id, user_id)
     chat_session = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project_id,
         user_id=user_id,
+        chat_session_id=chat_session_id,
     )
     return (chat_session.id, project_id, user_id)
 
@@ -82,11 +89,16 @@ async def find_live_project_agent_key(
     *,
     project_id: uuid.UUID,
     user_id: uuid.UUID,
+    chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey | None:
+    if chat_session_id is None:
+        key = (None, project_id, user_id)
+        return key if key in project_agent_pool.keys() else None
     chat_session = await chat_session_service.get_chat_session_optional(
         session,
         project_id=project_id,
         user_id=user_id,
+        chat_session_id=chat_session_id,
     )
     if chat_session is None:
         return None

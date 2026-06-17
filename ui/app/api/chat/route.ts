@@ -8,16 +8,21 @@ export const dynamic = "force-dynamic";
  * Thin proxy to the Python backend's `POST /projects/{project_name}/agent/run`
  * SSE endpoint.
  *
- * The client sends `{ project_name, user_prompt }` for the normal path; an
- * optional `message_history` is still accepted as a migration fallback for
- * older clients. We add `stream: true` and forward to the project-scoped
- * agent route. The backend emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
+ * The client sends `{ project_name, user_prompt, chat_session_id? }` for the
+ * normal path; an optional `message_history` is still accepted as a migration
+ * fallback for older clients. We add `stream: true` and forward to the
+ * project-scoped agent route. The backend emits PydanticAI `AgentStreamEvent`s plus app events (`log`,
  * `agent_run_result`, `mcp_form_elicitation`, `mcp_url_elicitation`) as
  * Server-Sent Events with real `event:` lines — this route streams them
  * straight through; the parser lives in `app/page.tsx`.
  */
 export async function POST(request: Request) {
-  let body: { project_name?: unknown; user_prompt?: unknown; message_history?: unknown };
+  let body: {
+    project_name?: unknown;
+    user_prompt?: unknown;
+    chat_session_id?: unknown;
+    message_history?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -45,6 +50,10 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           stream: true,
           user_prompt: body.user_prompt,
+          chat_session_id:
+            typeof body.chat_session_id === "string" && body.chat_session_id.length > 0
+              ? body.chat_session_id
+              : null,
           message_history: body.message_history ?? [],
         }),
         signal: request.signal,
