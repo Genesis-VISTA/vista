@@ -27,6 +27,16 @@ class EmailSettings(BaseModel):
         return self.enabled and bool(self.host)
 
 
+class CampaignSettings(BaseModel):
+    """
+    Multi-agent campaign settings. The background monitor (poll → notify → resume open
+    HPC jobs) is opt-in; off by default so it doesn't poll the MCP server in dev/CI.
+    Override via `VISTA_BACKEND_CAMPAIGNS__MONITOR_ENABLED=true` etc.
+    """
+    monitor_enabled: bool = False
+    monitor_interval: float = 300.0
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=[p / '.env' for p in reversed([Path.cwd(), *Path.cwd().parents])],
@@ -116,6 +126,9 @@ class Settings(BaseSettings):
 
     email: EmailSettings = Field(default_factory=EmailSettings)
     """ Outbound SMTP notification settings; see `EmailSettings`. Disabled by default. """
+
+    campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
+    """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
 
     vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)
     """

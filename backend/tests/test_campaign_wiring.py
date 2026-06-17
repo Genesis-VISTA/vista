@@ -21,6 +21,7 @@ from vista_backend.agents.campaign.wiring import (
 from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
+from vista_backend.services import chat_session as chat_session_service
 
 
 MANIFEST_YAML = """
@@ -48,8 +49,11 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
     project = ProjectTable(name=f"wiring-{planner_skill}")
     session.add(project)
     await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
+        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
         domain="testdomain", planner_skill=planner_skill,
     )
     step = await campaign_service.add_step(
@@ -92,7 +96,7 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
     invoke = await build_invoke_for_job(session, job, invoke_builder=fake_builder)
     assert await invoke("get_hpc_job_status", {}) == "OK"
     assert captured["user"].email == alice.email
-    assert captured["paths"] == project_paths_for(run.project_id, run.user_id)
+    assert captured["paths"] == project_paths_for(run.session_id)
 
 
 # --- build_status_poll -----------------------------------------------------
@@ -124,8 +128,8 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     _project, run, _step, job = await _make_run_step_job(session, alice)
 
-    # Materialize the planner skill's campaign.yaml in the project's volume skills dir.
-    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
+    # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
+    skills_dir = Path(project_paths_for(run.session_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
 

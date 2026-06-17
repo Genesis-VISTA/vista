@@ -13,10 +13,9 @@ from vista_backend.config import settings
 
 
 def test_project_paths_for_matches_volume_layout():
-    pid = uuid.uuid4()
-    uid = uuid.uuid4()
-    paths = project_paths_for(pid, uid)
-    root = settings.data_dir / "volumes" / f"{pid}-{uid}"
+    sid = uuid.uuid4()
+    paths = project_paths_for(sid)
+    root = settings.data_dir / "volumes" / f"{sid}"
     assert paths == {
         "skills_dir": str(root / "skills"),
         "output_dir": str(root / "data" / "output"),

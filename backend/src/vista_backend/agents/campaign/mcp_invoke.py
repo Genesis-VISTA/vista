@@ -23,9 +23,12 @@ from .hpc_tools import InvokeTool
 CallToolFn = Callable[[str, dict, dict | None], Awaitable[Any]]
 
 
-def project_paths_for(project_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, str]:
-    """The sandbox-volume paths the HPC tools resolve log/output dirs against (per ProjectAgent)."""
-    volume_root = settings.data_dir / "volumes" / f"{project_id}-{user_id}"
+def project_paths_for(session_id: uuid.UUID) -> dict[str, str]:
+    """The sandbox-volume paths the HPC tools resolve log/output dirs against.
+
+    The volume is keyed by the chat session id, matching `ProjectAgent.volume_root`.
+    """
+    volume_root = settings.data_dir / "volumes" / f"{session_id}"
     return {
         "skills_dir": str(volume_root / "skills"),
         "output_dir": str(volume_root / "data" / "output"),

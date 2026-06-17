@@ -37,6 +37,8 @@ class CampaignDriverDeps:
     """What the campaign tools need, injected so the driver isn't coupled to ProjectAgent."""
     project_id: uuid.UUID
     user_id: uuid.UUID
+    session_id: uuid.UUID | None
+    """ The chat session driving the campaign; recorded on the run so the monitor can find its sandbox. """
     get_session: Callable[[], AsyncSession | None]
     get_planner: PlannerForRun
     emit_progress: Callable[[str], None] = _noop
@@ -68,7 +70,7 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         """Begin a campaign. `planner_skill` and `domain` come from the active playbook skill."""
         run = await campaign_service.create_campaign(
             _session(), project_id=deps.project_id, user_id=deps.user_id,
-            domain=domain, planner_skill=planner_skill, title=title,
+            session_id=deps.session_id, domain=domain, planner_skill=planner_skill, title=title,
         )
         return (
             f"Started campaign. run_id={run.id} status={run.status}. "

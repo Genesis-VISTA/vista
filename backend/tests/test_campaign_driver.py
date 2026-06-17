@@ -111,6 +111,7 @@ async def test_function_model_drives_full_campaign(session, alice):
     deps = CampaignDriverDeps(
         project_id=project.id,
         user_id=alice.id,
+        session_id=None,
         get_session=lambda: session,
         get_planner=lambda _s, _run: _fake_planner_async(),
         emit_progress=progress.append,
@@ -172,7 +173,7 @@ async def test_tools_reject_run_from_another_project(session, alice, bob):
         return ModelResponse(parts=[ToolCallPart("get_campaign_status", {"run_id": str(other.id)})])
 
     deps = CampaignDriverDeps(
-        project_id=alice_project.id, user_id=alice.id,
+        project_id=alice_project.id, user_id=alice.id, session_id=None,
         get_session=lambda: session, get_planner=lambda _s, _r: _fake_planner_async(),
     )
     agent = Agent(model=FunctionModel(driver))

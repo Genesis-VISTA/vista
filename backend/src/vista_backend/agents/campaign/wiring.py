@@ -23,6 +23,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...db.schemas import HpcJobTable, UserPublicWithConfig, UserTable
 from ...services import campaign as campaign_service
+from ...services.campaign_monitor import CampaignMonitor
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
 from .mcp_invoke import build_mcp_invoke, project_paths_for
@@ -51,11 +52,13 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
     if step is None:
         raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
     run = await campaign_service.require_campaign(session, step.run_id)
+    if run.session_id is None:
+        raise ValueError(f"Campaign {run.id} has no session_id; cannot resolve its sandbox volume.")
     user_row = await session.get(UserTable, job.user_id)
     if user_row is None:
         raise ValueError(f"User {job.user_id} for job {job.job_id} not found")
     user = UserPublicWithConfig.model_validate(user_row)
-    paths = project_paths_for(run.project_id, run.user_id)
+    paths = project_paths_for(run.session_id)
     return run, user, paths
 
 
@@ -103,3 +106,8 @@ def build_collector(planner_provider: PlannerProvider = build_planner_for_job):
         await planner.collect_job(session, job=job)
 
     return collect
+
+
+def build_default_monitor() -> CampaignMonitor:
+    """The production monitor: poll job status + collect results via the live MCP/planner wiring."""
+    return CampaignMonitor(poll=build_status_poll(), collect=build_collector())

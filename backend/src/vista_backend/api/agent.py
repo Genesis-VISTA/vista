@@ -76,6 +76,7 @@ async def agent_run(
                     user_prompt=body.user_prompt,
                     message_history=effective_history,
                     enable_elicitation=True,
+                    db_session=session,
                 ):
                     if isinstance(event, McpElicitationEvent):
                         register_elicitation(event.elicitation_id, agent)
