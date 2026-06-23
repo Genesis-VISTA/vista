@@ -5,7 +5,7 @@ MCP for remote HPC job submission. Dispatches between:
 - Perlmutter (NERSC) via the NERSC IRI API and amscrot SDK (`lib/iri.py`)
 """
 from __future__ import annotations
-import logging, shlex, textwrap, time, dataclasses
+import json, logging, os, shlex, textwrap, time, dataclasses
 from pathlib import Path
 from typing import Literal
 
@@ -138,10 +138,79 @@ class SubmittedJob:
     output_dir: str | None = None
 
 
-# In-memory cache of job_id -> SubmittedJob for jobs submitted in this session. Used by
-# get_hpc_job_status / get_hpc_job_outputs / list_hpc_jobs to dispatch when the caller
-# doesn't pass an explicit `cluster` arg, and to resolve per-job log/output paths.
+# Durable registry of job_id -> SubmittedJob. Used by get_hpc_job_status /
+# get_hpc_job_outputs / list_hpc_jobs to dispatch when the caller doesn't pass an
+# explicit `cluster` arg, and to resolve per-job log/output paths.
+#
+# Persisted to disk (see _persist_submitted_jobs) and reloaded on startup so a job
+# submitted before an MCP-server restart stays pollable: the rendered log/output
+# paths can't be recomputed after the fact (they depend on the submitting session's
+# session_id), so we remember them.
 _submitted_jobs: dict[str, SubmittedJob] = {}
+
+
+def _registry_path() -> Path:
+    """ On-disk location of the persisted job registry. """
+    return settings.data_dir / "hpc_job_registry.json"
+
+
+def _serialize_jobs(jobs: dict[str, SubmittedJob]) -> dict[str, dict]:
+    return {
+        jid: {"cluster": s.cluster, "log_path": s.log_path, "output_dir": s.output_dir}
+        for jid, s in jobs.items()
+    }
+
+
+def _deserialize_jobs(data: dict) -> dict[str, SubmittedJob]:
+    jobs: dict[str, SubmittedJob] = {}
+    for jid, rec in data.items():
+        if not isinstance(rec, dict) or "cluster" not in rec:
+            continue  # skip malformed entries rather than failing the whole load
+        jobs[jid] = SubmittedJob(
+            cluster=rec["cluster"],
+            log_path=rec.get("log_path"),
+            output_dir=rec.get("output_dir"),
+        )
+    return jobs
+
+
+def _load_submitted_jobs(path: Path | None = None) -> dict[str, SubmittedJob]:
+    """ Read the persisted registry. Missing or corrupt file -> empty dict (best-effort). """
+    path = path or _registry_path()
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, OSError) as e:
+        logging.warning(f"Ignoring unreadable HPC job registry at {path}: {e}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return _deserialize_jobs(data)
+
+
+def _persist_submitted_jobs(path: Path | None = None) -> None:
+    """ Atomically write the current registry. Best-effort: never raises into a tool call. """
+    path = path or _registry_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w") as f:
+            json.dump(_serialize_jobs(_submitted_jobs), f)
+        os.replace(tmp, path)
+    except OSError as e:
+        logging.warning(f"Could not persist HPC job registry to {path}: {e}")
+
+
+def _record_submitted_job(job_id: str, submitted: SubmittedJob) -> None:
+    """ Add a job to the in-memory registry and persist the registry to disk. """
+    _submitted_jobs[job_id] = submitted
+    _persist_submitted_jobs()
+
+
+# Rehydrate from disk at import so a restarted server remembers prior submissions.
+_submitted_jobs.update(_load_submitted_jobs())
 
 
 def _default_cluster(cfg: UserConfig) -> Cluster:
@@ -241,23 +310,19 @@ async def submit_hpc_job(
         job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
             cfg, job, node_count, duration_int, script_args,
         )
-        _submitted_jobs[job_id] = SubmittedJob(
-            cluster="odo", log_path=log_path, output_dir=output_dir,
-        )
     elif cluster == "perlmutter":
         job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
             cfg, job, node_count, duration_int, script_args,
-        )
-        _submitted_jobs[job_id] = SubmittedJob(
-            cluster="perlmutter", log_path=log_path, output_dir=output_dir,
         )
     else:  # "frontier"
         job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
             cfg, job, node_count, duration_int, script_args,
         )
-        _submitted_jobs[job_id] = SubmittedJob(
-            cluster="frontier", log_path=log_path, output_dir=output_dir,
-        )
+
+    # Record + persist so status/outputs survive an MCP-server restart (see _persist_submitted_jobs).
+    _record_submitted_job(
+        job_id, SubmittedJob(cluster=cluster, log_path=log_path, output_dir=output_dir)
+    )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
     h, rem = divmod(eff_duration, 3600)
@@ -1183,19 +1248,20 @@ async def _get_olcf_job_outputs(
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     """
-    List HPC jobs submitted in this session.
+    List HPC jobs known to this server (persisted across restarts).
 
     Args:
         cluster: Which cluster to list jobs for. If omitted, lists from the only-configured cluster.
     """
     cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg)
-    # None of the IRI services expose user-job listing, so this is the in-process
-    # cache of jobs submitted in this session. (The old Odo path ran sacct over
-    # SSH and could see other sessions' jobs; that went away with the SSH conn.)
+    # None of the IRI services expose user-job listing, so this is the server's
+    # registry of jobs submitted via this MCP server. The registry is persisted to
+    # disk and reloaded on startup, so this also covers jobs from before a restart.
+    # (The old Odo path ran sacct over SSH; that went away with the SSH conn.)
     ids = [jid for jid, s in _submitted_jobs.items() if s.cluster == cluster]
     if not ids:
-        return f"No {cluster} jobs submitted in this session."
+        return f"No {cluster} jobs known to this server."
     return "\n".join(ids)
 
 

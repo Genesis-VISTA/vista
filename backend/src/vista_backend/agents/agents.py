@@ -15,7 +15,10 @@ from pydantic_ai.messages import (
     ModelMessage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    PartEndEvent,
+    PartStartEvent,
     RetryPromptPart,
+    TextPart,
 )
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.toolsets.wrapper import WrapperToolset
@@ -44,6 +47,11 @@ from ..vistaguard.quarantine import (
     build_quarantine_agent,
 )
 from .skills import to_prompt
+from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from .campaign.hpc_tools import McpHpcTools
+from .campaign.manifest import load_manifest
+from .campaign.mcp_invoke import build_invoke
+from .campaign.planner import CampaignPlanner, build_subagents
 
 
 BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
@@ -234,6 +242,11 @@ class ProjectAgent:
         # Per-run emitter for high-stakes tool-approval requests (VISTAGuard
         # R6); set in run_stream when elicitation is enabled.
         self._cur_approval_emit: Callable[..., Any] | None = None
+        # Per-run hooks for campaign mode (set in run_stream): the request DB
+        # session the campaign tools persist through, and a progress emitter
+        # that streams planner/subagent progress into this run's event stream.
+        self._cur_db_session: AsyncSession | None = None
+        self._cur_progress_emitter: Callable[[str], None] | None = None
         self.agent = self._build_agent()
 
     @property
@@ -357,7 +370,46 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
+        # Campaign mode: the planner LLM drives a multi-cycle campaign via these tools
+        # (see docs/multi-agent-framework.md). They are inert outside a campaign — the LLM
+        # only calls them when following a campaign playbook skill, and they require the
+        # per-run DB session (set when run_stream is called with db_session).
+        register_campaign_tools(agent, self._campaign_driver_deps())
+
         return agent
+
+    def _campaign_driver_deps(self) -> CampaignDriverDeps:
+        """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
+        def emit_progress(message: str) -> None:
+            cb = self._cur_progress_emitter
+            if cb is not None:
+                cb(message)
+
+        return CampaignDriverDeps(
+            project_id=self.project.id,
+            user_id=self.user.id,
+            session_id=self.session_id,
+            get_session=lambda: self._cur_db_session,
+            get_planner=self._build_campaign_planner_for_run,
+            emit_progress=emit_progress,
+        )
+
+    async def _build_campaign_planner_for_run(self, session, run) -> CampaignPlanner:
+        """Build the planner for a campaign run: its manifest + subagents over this agent's MCP server."""
+        project_paths = {
+            "skills_dir": str(self.skills_volume_dir),
+            "output_dir": str(self.output_dir),
+            "uploads_dir": str(self.uploads_dir),
+        }
+        # Reuse this agent's already-connected vista MCP server to submit/monitor jobs.
+        invoke = build_invoke(
+            self._mcp_servers[0].direct_call_tool, user=self.user, project_paths=project_paths
+        )
+        manifest = load_manifest(self.skills_volume_dir / run.planner_skill)
+        subagents = build_subagents(
+            manifest, hpc=McpHpcTools(invoke), skills_dir=self.skills_volume_dir
+        )
+        return CampaignPlanner(manifest=manifest, subagents=subagents)
 
     def _tool_allowed(self, name: str) -> bool:
         """
@@ -612,6 +664,7 @@ class ProjectAgent:
         user_prompt: str,
         message_history: list[ModelMessage]|None = None,
         enable_elicitation: bool = False,
+        db_session: AsyncSession | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
         Run the agent and return a stream of events.
@@ -623,6 +676,9 @@ class ProjectAgent:
 
         Pass enable_elicitation to support MCP elicitation. When enabled, it will yield an McpElicitation
         event when elicitation is requested. You should call agent.resolve_elicitation with the result.
+
+        Pass db_session to enable campaign mode: the campaign tools persist through this session and
+        their progress streams into this run's events. Without it, the campaign tools are unavailable.
         """
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
@@ -640,12 +696,27 @@ class ProjectAgent:
             except StreamClosedError:
                 pass # Merger already closed, the run finished before this notification.
 
+        # Campaign progress -> synthetic text parts in this run's stream. High indices keep
+        # them clear of the model's own response parts.
+        synthetic_index = [10_000]
+        def progress(text: str) -> None:
+            try:
+                idx = synthetic_index[0]
+                synthetic_index[0] += 1
+                part = TextPart(content=text)
+                merger.send(PartStartEvent(index=idx, part=part))
+                merger.send(PartEndEvent(index=idx, part=part))
+            except StreamClosedError:
+                pass
+
         async def agent_stream() -> AsyncIterator[ProjectAgentStreamEvent]:
             async with self._run_lock:
                 self._cur_mcp_elicitation_callback = self._make_mcp_elicitation_callback(merger) if enable_elicitation else None
                 self._cur_mcp_process_tool_call = self._make_mcp_process_tool_call()
                 self._cur_mcp_log_handler = log_handler
                 self._cur_approval_emit = self._make_approval_emitter(merger) if enable_elicitation else None
+                self._cur_db_session = db_session
+                self._cur_progress_emitter = progress
                 try:
                     # SEV1 termination (VISTAGuard incident playbook): once
                     # the trust scorer is terminated, refuse every request
@@ -709,6 +780,8 @@ class ProjectAgent:
                     self._cur_mcp_process_tool_call = None
                     self._cur_mcp_log_handler = None
                     self._cur_approval_emit = None
+                    self._cur_db_session = None
+                    self._cur_progress_emitter = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)
