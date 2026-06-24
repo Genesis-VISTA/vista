@@ -158,7 +158,7 @@ async def seed_db(engine: AsyncEngine) -> None:
             session.add(build_skill_row(
                 skill,
                 path=path,
-                author="VISTA Team",
+                author=skill.author or "VISTA Team",
                 repo_url=None,
                 is_public=True,
                 now=now_iso(),
@@ -188,7 +188,7 @@ async def seed_db(engine: AsyncEngine) -> None:
                 name="molten-salt",
                 description="Molten salt thermophysical properties assistant — querying the MSTDB-TP database, plotting phase diagrams, and searching the literature corpus.",
                 system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(),
-                skills=sorted({"salt-analysis"} - skipped_skills),
+                skills=sorted({"salt-analysis", "salt-chemistry-md"} - skipped_skills),
                 knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
                 # Allow everything except the alloy-design HPC toolchain.
                 tools=["*", "!agenthpc_*"],
