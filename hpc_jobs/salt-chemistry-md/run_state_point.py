@@ -65,6 +65,15 @@ def main(argv=None) -> int:
     py = sys.executable
     structure = os.path.join(out, "structure.pdb")
 
+    # run_npt.py must run with HOME pointing at the writable per-job dir, NOT the user's
+    # real HOME. Under vista's IRI dispatch the inherited HOME drags in
+    # ~/.local/lib/pythonX/site-packages onto sys.path, which shadows the conda env's
+    # torch so torch.cuda.is_available() is False ("Torch reports no GPU"). Exporting
+    # HOME in the slurm shell does NOT reliably reach this spawned run_npt.py, so set it
+    # (plus PYTHONNOUSERSITE) directly in the child env — mirrors the verified-working
+    # `HOME=$VISTA_OUT python run_npt.py`.
+    child_env = {**os.environ, "HOME": out, "PYTHONNOUSERSITE": "1"}
+
     # ---- build the periodic box ----
     build = [py, os.path.join(skill_root, "scripts", "build_structure.py")]
     if args.mol_percent_bef2 is not None:
@@ -85,7 +94,7 @@ def main(argv=None) -> int:
         build += ["--seed", str(args.seed)]
     build += ["-o", structure]
     print("[salt-chemistry-md] build:", " ".join(build), flush=True)
-    subprocess.run(build, cwd=skill_root, check=True)
+    subprocess.run(build, cwd=skill_root, check=True, env=child_env)
 
     # ---- resolve the ML potential (relative paths live in the clone) ----
     model = args.model if os.path.isabs(args.model) else os.path.join(skill_root, args.model)
@@ -121,7 +130,7 @@ def main(argv=None) -> int:
     if args.seed is not None:
         run += ["--seed", str(args.seed)]
     print("[salt-chemistry-md] run:", " ".join(run), flush=True)
-    subprocess.run(run, cwd=skill_root, check=True)
+    subprocess.run(run, cwd=skill_root, check=True, env=child_env)
 
     print(f"[salt-chemistry-md] done — results.json in {out}", flush=True)
     return 0

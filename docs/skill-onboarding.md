@@ -159,6 +159,44 @@ The `/skills` page shows `loadedSlugs = project.skills ∪ additions[project]`.
 Project-mandated skills carry a `required` chip and cannot be unloaded from
 the UI; user additions show a normal `Unload` button.
 
+## Lightweight & HPC-backed skills (clone at runtime)
+
+A skill does **not** have to vendor its implementation into VISTA. When the
+tooling already lives in a public Git repo — especially a heavy simulation
+package — the skill can ship just a `SKILL.md` and clone the code **at runtime**.
+This keeps the VISTA tree small and lets the skill track its upstream repo.
+
+`salt-chemistry-md` is the reference example (OpenMM + MACE molten-salt MD). It
+runs across **two execution contexts**, each of which bootstraps the code itself:
+
+| Context | Where | Runs | How the code arrives |
+| --- | --- | --- | --- |
+| **Sandbox (CPU)** | `run_bash` sandbox | structure build, analysis, plotting | the agent `curl`s + `tar`s the repo tarball into `/mnt/data/output` (the sandbox has egress; `git` isn't installed, so use the tarball URL) |
+| **HPC (GPU)** | OLCF Frontier | the GPU simulation | a thin `hpc_jobs/<job>/` clones the repo on the compute node |
+
+The GPU path is the only part that **can't** be pure clone-at-runtime: VISTA's
+`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (Globus-staged and
+launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)).
+So an HPC-backed skill pairs a `SKILL.md`
+with a **thin bootstrap job** — no simulation code vendored, just:
+
+- `README.md` (starts with `# <job>`), `cluster_defaults.json` (per-cluster resources +
+  `iri.environment` for things like the repo URL/ref and a pre-provisioned env path),
+- `job.<cluster>.slurm` that **clones the public repo** on the node (the compute node's
+  HTTP proxy is pre-exported by the dispatcher), **activates a pre-provisioned conda env**
+  (build it once on the cluster — a fresh `conda env create` per job would blow the
+  walltime), then runs the simulation, writing outputs to `$VISTA_OUT`,
+- optionally a small wrapper script (the *only* non-metadata file, so it's the one thing
+  staged to `$RUN_DIR_<Cluster>`) that turns one flat `script_args` order into the repo's
+  CLI calls, and a `setup_<cluster>.sh` pre-launch validation gate.
+
+See [`hpc_jobs/salt-chemistry-md/`](../hpc_jobs/salt-chemistry-md) for the worked job and
+[`db/skills/salt-chemistry-md/SKILL.md`](../backend/src/vista_backend/db/skills/salt-chemistry-md/SKILL.md)
+for the skill, including the **sim-skill dispatch/collect contract** (`order → script_args
+→ submit_hpc_job`; `results.json → structured result`) that lets a campaign planner fan
+out one subagent per state point — see the
+[multi-agent framework](./multi-agent-framework.md).
+
 ## Troubleshooting
 
 **"Invalid skill name 'X'; must be kebab-case…"** — Slugs must be lowercase

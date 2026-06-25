@@ -2,9 +2,10 @@
 # Frontier Slurm script for salt-chemistry-md via the OLCF moderate-enclave IRI API.
 #
 # Runs inside vista's IRI `bash -l -c` invocation, which has already exported the
-# OLCF HTTP proxy, set HOME to a writable dir, and done `module purge`. One node,
-# one rank (node_count=1, no processes_per_node) -> we use a single inner srun to
-# bind one GCD for the GPU MD run (mirrors the repo's templates/submit_frontier.sbatch).
+# OLCF HTTP proxy and done `module purge`. One node, one rank (node_count=1, no
+# processes_per_node) -> the MD run executes directly on the exclusive compute node
+# (all 8 GCDs visible; OpenMM uses device 0), so no inner srun is needed. We force
+# HOME to VISTA_OUT to avoid a user-site clash — see the note below the env checks.
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT          per-job output dir, already mkdir'd. results.json lands here.
@@ -21,6 +22,9 @@ set -euo pipefail
 : "${VISTA_OUT:?VISTA_OUT not set}"
 : "${RUN_DIR_Frontier:?RUN_DIR_Frontier not set}"
 : "${SALTMD_ENV:?SALTMD_ENV not set; add it to cluster_defaults.json iri.environment}"
+
+export HOME="${VISTA_OUT}"
+export PYTHONNOUSERSITE=1
 
 REPO_URL="${SALTMD_REPO_URL:-https://github.com/jqyin/salt-chemistry-skill}"
 REPO_REF="${SALTMD_REPO_REF:-main}"
@@ -47,6 +51,20 @@ export LD_LIBRARY_PATH="${CRAY_LD_LIBRARY_PATH:-}:${LD_LIBRARY_PATH:-}"
 eval "$(conda shell.bash hook)"
 conda activate "${SALTMD_ENV}"
 
+
+_cache_tag="${SLURM_JOB_ID:-$$}_${SLURM_LOCALID:-0}"
+_cache_root="${SALTMD_CACHE_ROOT:-/tmp/${USER}/saltmd-cache}/${_cache_tag}"
+mkdir -p "$_cache_root"/torch_ext "$_cache_root"/miopen "$_cache_root"/triton \
+         "$_cache_root"/inductor "$_cache_root"/kernels
+export TORCH_EXTENSIONS_DIR="$_cache_root/torch_ext"     # e3nn/MACE C++/HIP JIT builds
+export MIOPEN_USER_DB_PATH="$_cache_root/miopen"         # MIOpen perf db (SQLite)
+export MIOPEN_CUSTOM_CACHE_DIR="$_cache_root/miopen"     # MIOpen compiled kernels
+export TRITON_CACHE_DIR="$_cache_root/triton"
+export TORCHINDUCTOR_CACHE_DIR="$_cache_root/inductor"
+export PYTORCH_KERNEL_CACHE_PATH="$_cache_root/kernels"
+export MIOPEN_DISABLE_CACHE=1
+export AMD_SERIALIZE_KERNEL=3
+
 # OpenMM backend for the AMD MI250X GPUs (run_npt.py reads these from the env).
 export OPENMM_PLATFORM="${OPENMM_PLATFORM:-HIP}"
 export OPENMM_PRECISION="${OPENMM_PRECISION:-mixed}"
@@ -56,8 +74,9 @@ echo "[salt-chemistry-md] env ready on $(hostname): python=$(which python) OPENM
 
 # 3. Build the structure + run NPT on one GPU. run_state_point.py turns the flat order
 #    into build_structure.py + run_npt.py against the cloned repo, writing results.json.
-srun -N1 -n1 -c7 --gpus-per-task=1 --gpu-bind=closest \
-    python -u "${RUN_DIR_Frontier}/run_state_point.py" \
-        --skill-root "${CLONE_DIR}" \
-        --output-dir "${VISTA_OUT}" \
-        "$@"
+#
+echo "[salt-chemistry-md] GPU env: ROCR_VISIBLE_DEVICES=${ROCR_VISIBLE_DEVICES:-unset} HIP_VISIBLE_DEVICES=${HIP_VISIBLE_DEVICES:-unset} HOME=${HOME}"
+srun -N1 -n1 -c7 --gpus-per-task=1 --gpu-bind=closest python -u "${RUN_DIR_Frontier}/run_state_point.py" \
+    --skill-root "${CLONE_DIR}" \
+    --output-dir "${VISTA_OUT}" \
+    "$@"
