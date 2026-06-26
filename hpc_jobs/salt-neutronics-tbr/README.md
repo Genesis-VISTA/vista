@@ -5,7 +5,10 @@ emulated by interpolating a precomputed Shift Monte Carlo parameter study — on
 **Odo** (the open enclave). One submission = one state point (one composition at one
 Li-6 enrichment) = one `results.json`. The job clones the public salt-neutronics-skill
 repo at runtime, builds a throwaway Python venv (numpy/scipy/h5py/matplotlib), runs the
-`tbr` query, and writes `results.json` into the job's output dir.
+`tbr` query, and writes `results.json` into the job's output dir. The clone, the venv,
+and all caches live in **node-local scratch** (`/tmp`), so the only thing in `$VISTA_OUT`
+is `results.json` — this keeps the post-run `get_hpc_job_status` output listing to a
+single Globus call instead of walking hundreds of venv/`.git` subdirs.
 
 This is the HPC backend for the `salt-neutronics-tbr` skill. No analysis code is
 vendored into VISTA — the `salt_neutronics` package and the bundled Shift data table

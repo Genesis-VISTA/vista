@@ -11,6 +11,12 @@
 # no pre-provisioned conda env. We clone the public repo and build a throwaway venv at
 # runtime (light deps -> seconds), then run one TBR query.
 #
+# IMPORTANT: the clone and the venv go into NODE-LOCAL scratch ($WORK under /tmp), NOT
+# $VISTA_OUT. Only results.json lands in $VISTA_OUT. This keeps the job's output dir to
+# a single file so `get_hpc_job_status`' recursive Globus listing of the output dir
+# stays a single call instead of walking hundreds of venv/.git subdirs (which makes a
+# status check hang for minutes).
+#
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT        per-job output dir, already mkdir'd. results.json lands here.
 #   RUN_DIR_Odo      <odo_remote_dir>/<job>/src — where vista staged run_state_point.py.
@@ -25,7 +31,16 @@ set -euo pipefail
 
 REPO_URL="${SALTN_REPO_URL:-https://github.com/jqyin/salt-neutronics-skill}"
 REPO_REF="${SALTN_REPO_REF:-main}"
-CLONE_DIR="${VISTA_OUT}/salt-neutronics-skill"
+
+# Node-local scratch for the clone, the venv, and all caches (pip/matplotlib). Keeping
+# these OUT of $VISTA_OUT is what makes the post-run status check fast.
+WORK="${TMPDIR:-/tmp}/saltn-${SLURM_JOB_ID:-$$}"
+mkdir -p "${WORK}"
+trap 'rm -rf "${WORK}"' EXIT
+export HOME="${WORK}"               # pip/matplotlib drop dotfiles in HOME — keep them off $VISTA_OUT
+export XDG_CACHE_HOME="${WORK}/.cache"
+CLONE_DIR="${WORK}/salt-neutronics-skill"
+VENV="${WORK}/venv"
 
 # 1. Clone the analysis code at runtime (system git; proxy already exported by vista).
 echo "[salt-neutronics-tbr] cloning ${REPO_URL}@${REPO_REF} -> ${CLONE_DIR}"
@@ -36,16 +51,14 @@ if [ "${REPO_REF}" != "main" ]; then
     git -C "${CLONE_DIR}" checkout --detach FETCH_HEAD
 fi
 
-# 2. Build a throwaway Python env under VISTA_OUT — the only auser-writable tree on Odo
-#    (the Globus-staged RUN_DIR_Odo is read-only at runtime). Deps are light
+# 2. Build a throwaway Python env in node-local scratch. Deps are light
 #    (numpy/scipy/h5py/matplotlib): a fresh venv installs in seconds, no conda needed.
 module load cray-python 2>/dev/null || module load python 2>/dev/null || true
-VENV="${VISTA_OUT}/venv"
 python3 -m venv "${VENV}"
 # shellcheck disable=SC1091
 source "${VENV}/bin/activate"
-python3 -m pip install --quiet --upgrade pip
-python3 -m pip install --quiet numpy scipy h5py matplotlib
+python3 -m pip install --no-cache-dir --quiet --upgrade pip
+python3 -m pip install --no-cache-dir --quiet numpy scipy h5py matplotlib
 
 export MPLBACKEND=Agg
 
@@ -54,6 +67,7 @@ echo "[salt-neutronics-tbr] env ready on $(hostname): python=$(command -v python
 # 3. Run one TBR state point. run_state_point.py turns the flat order into the repo's
 #    `salt_neutronics.cli tbr ... --json --output $VISTA_OUT/results.json`. Use the
 #    venv interpreter explicitly so the activated env survives the srun task launch.
+#    Only results.json is written to $VISTA_OUT (everything else stays in $WORK).
 srun -N1 -n1 "${VENV}/bin/python" -u "${RUN_DIR_Odo}/run_state_point.py" \
     --skill-root "${CLONE_DIR}" \
     --output-dir "${VISTA_OUT}" \
