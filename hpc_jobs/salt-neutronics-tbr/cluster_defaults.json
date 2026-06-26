@@ -1,0 +1,15 @@
+{
+  "odo": {
+    "duration": 600,
+    "resources": {
+      "node_count": 1
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "SALTN_REPO_URL": "https://github.com/jqyin/salt-neutronics-skill",
+        "SALTN_REPO_REF": "main"
+      }
+    }
+  }
+}
