@@ -11,5 +11,22 @@
         "SALTN_REPO_REF": "main"
       }
     }
+  },
+  "perlmutter": {
+    "duration": 600,
+    "resources": {
+      "node_count": 1,
+      "processes_per_node": 1,
+      "cpu_cores_per_process": 4,
+      "exclusive_node_use": false
+    },
+    "iri": {
+      "queue_name": "shared",
+      "constraint": "cpu",
+      "environment": {
+        "SALTN_REPO_URL": "https://github.com/jqyin/salt-neutronics-skill",
+        "SALTN_REPO_REF": "main"
+      }
+    }
   }
 }

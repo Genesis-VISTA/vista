@@ -1,14 +1,15 @@
 # salt-neutronics-tbr
 
 Tritium breeding ratio (TBR) of a FLiBe (LiF–BeF₂) molten-salt breeding blanket,
-emulated by interpolating a precomputed Shift Monte Carlo parameter study — on OLCF
-**Odo** (the open enclave). One submission = one state point (one composition at one
-Li-6 enrichment) = one `results.json`. The job clones the public salt-neutronics-skill
-repo at runtime, builds a throwaway Python venv (numpy/scipy/h5py/matplotlib), runs the
-`tbr` query, and writes `results.json` into the job's output dir. The clone, the venv,
-and all caches live in **node-local scratch** (`/tmp`), so the only thing in `$VISTA_OUT`
-is `results.json` — this keeps the post-run `get_hpc_job_status` output listing to a
-single Globus call instead of walking hundreds of venv/`.git` subdirs.
+emulated by interpolating a precomputed Shift Monte Carlo parameter study. It ships CPU
+backends for **Odo** (the OLCF open enclave) and **Perlmutter** (NERSC) — pick with
+`cluster=`. One submission = one state point (one composition at one Li-6 enrichment) =
+one `results.json`. The job clones the public salt-neutronics-skill repo at runtime, uses
+a tiny Python env (numpy/scipy/h5py/matplotlib), runs the `tbr` query, and writes
+`results.json` into the job's output dir. The clone, the env, and all caches live in
+**node-local/scratch** workspace (off `$VISTA_OUT`), so the only thing in `$VISTA_OUT` is
+`results.json` — this keeps the post-run `get_hpc_job_status` output listing to a single
+call instead of walking hundreds of venv/`.git` subdirs.
 
 This is the HPC backend for the `salt-neutronics-tbr` skill. No analysis code is
 vendored into VISTA — the `salt_neutronics` package and the bundled Shift data table
@@ -40,6 +41,7 @@ Example:
 
     submit_hpc_job(job="salt-neutronics-tbr", cluster="odo", duration="0:10:00",
         script_args="--bef2 33.33 --li6 0.075")
+    # cluster="perlmutter" works identically (NERSC CPU partition).
 
 ## Outputs (in $VISTA_OUT)
 
@@ -49,6 +51,8 @@ point. See `references/data_schema.md` in the repo for the full schema.
 
 ## Prerequisites
 
-None beyond a configured Odo S3M token + the deployment's Odo Globus refresh token (the
-same credentials any Odo job uses). The repo URL / ref can be overridden via
-`iri.environment` in `cluster_defaults.json` (`SALTN_REPO_URL`, `SALTN_REPO_REF`).
+Just the standard credentials for whichever cluster you target — for **Odo**, an Odo S3M
+token + the deployment's Odo Globus refresh token; for **Perlmutter**, a NERSC IRI token
+plus `nersc_account` / `nersc_remote_dir` in the user settings. No pre-provisioned env is
+needed on either. The repo URL / ref can be overridden per cluster via `iri.environment`
+in `cluster_defaults.json` (`SALTN_REPO_URL`, `SALTN_REPO_REF`).

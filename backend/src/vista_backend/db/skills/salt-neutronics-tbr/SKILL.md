@@ -56,7 +56,7 @@ enough to run in either — pick by what you're doing:
 | Context | Where | Use it for | How the code arrives |
 |---|---|---|---|
 | **Sandbox (CPU)** | `run_bash` sandbox | ad-hoc single queries, sweeps, **plotting**, exploration | you `curl`+`tar` the repo into `/mnt/data/output` |
-| **HPC (CPU)** | OLCF Odo (open enclave) | the **per-state-point sim in a campaign** (`submit_hpc_job`) | the job `git clone`s the repo for you |
+| **HPC (CPU)** | OLCF Odo (open enclave) **or** NERSC Perlmutter | the **per-state-point sim in a campaign** (`submit_hpc_job`) | the job `git clone`s the repo for you |
 
 The HPC path is not required for correctness (there's no GPU step), but it is how a
 **multi-agent campaign** runs one state point per subagent through VISTA's HPC backend,
@@ -132,22 +132,26 @@ override); sweeps return `NaN` for out-of-grid points. See `references/physics.m
 the clone for the assumption behind the mapping and how to change the nominal
 (`--nominal-bef2`).
 
-## Running the TBR sim on Odo (the HPC step)
+## Running the TBR sim on HPC (the HPC step)
 
-The query is wrapped as the VISTA HPC job **`salt-neutronics-tbr`** on **Odo** (the OLCF
-open enclave; CPU, one node, one core). One submission = one state point = one
-`results.json`. The job clones the repo on the node, creates a tiny Python env at
-runtime (numpy/scipy/h5py/matplotlib — seconds, no pre-provisioning), runs the `tbr`
-query, and writes `results.json` into the job's output dir.
+The query is wrapped as the VISTA HPC job **`salt-neutronics-tbr`**, with CPU backends for
+both **Odo** (the OLCF open enclave) and **Perlmutter** (NERSC) — pick with `cluster=`.
+Both run on a single CPU core; one submission = one state point = one `results.json`. The
+job clones the repo on the node, uses a tiny Python env at runtime
+(numpy/scipy/h5py/matplotlib — seconds, no pre-provisioning), runs the `tbr` query, and
+writes `results.json` into the job's output dir.
 
 ```python
 submit_hpc_job(
     job="salt-neutronics-tbr",
-    cluster="odo",
+    cluster="odo",            # or cluster="perlmutter"
     duration="0:10:00",
     script_args="--bef2 33.33 --li6 0.075",
 )
 ```
+
+Use whichever cluster the user has credentials for; the `script_args` contract and the
+`results.json` output are identical across backends.
 
 ### `script_args` contract
 
@@ -170,7 +174,8 @@ query):
   state point. (Full schema: `references/data_schema.md` in the repo.)
 
 Poll with `get_hpc_job_status`; when complete, fetch with
-`get_hpc_job_outputs(job_id, files=["results.json"], cluster="odo")`.
+`get_hpc_job_outputs(job_id, files=["results.json"], cluster=…)` (the same cluster you
+submitted to).
 
 ## Sim-skill contract for multi-agent campaigns
 
@@ -180,7 +185,7 @@ operations a subagent performs:
 
 - **dispatch(order) → job:** turn the order (a composition + Li-6 enrichment) into the
   `script_args` string above, call
-  `submit_hpc_job(job="salt-neutronics-tbr", cluster="odo", duration="0:10:00", script_args=…)`,
+  `submit_hpc_job(job="salt-neutronics-tbr", cluster="odo"|"perlmutter", duration="0:10:00", script_args=…)`,
   and record the returned `job_id` + `cluster`.
 - **collect(job) → result:** once the job completes,
   `get_hpc_job_outputs(... files=["results.json"])` and parse it into a structured
