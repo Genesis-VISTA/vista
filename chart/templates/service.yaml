@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}-svc
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "vista.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP

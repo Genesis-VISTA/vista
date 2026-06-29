@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vista-config
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+data:
+  # Runtime environment
+  VISTA_ENV: {{ .Values.config.vistaEnv | quote }}
+  VISTA_DATA_DIR: "/data"
+
+  # Backend bind address — must listen on all interfaces so the liveness probe
+  # and the Next.js BFF can reach it within the same pod.
+  VISTA_BACKEND_HOST: "0.0.0.0"
+  VISTA_BACKEND_PORT: "8001"
+
+  # Internal service URLs (all processes share localhost within a single pod)
+  VISTA_BACKEND_URL: "http://localhost:8001"
+  VISTA_MCP_URL: "http://localhost:8000/mcp"
+
+  # Microsandbox home (persisted on the /data PVC)
+  MSB_HOME: "/data/msb"
+
+  # Pre-built sandbox OCI image tar bundled in the container image
+  VISTA_DEV_MCP_OCI_IMAGE_TAR: "/app/aws/vista-sandbox.tar"
+  VISTA_DEV_MCP_SANDBOX_MODE: {{ .Values.config.sandboxMode | quote }}
+
+  # Disable agenthpc MCP sub-server by default (not yet production-ready)
+  VISTA_MCP_DISABLE_SERVERS: {{ .Values.config.mcpDisabledServers | quote }}
+
+  # LLM inference endpoint (AmSC inference API)
+  OPENAI_BASE_URL: {{ .Values.config.openaiBaseUrl | quote }}
+
+  {{- if .Values.config.vistaModel }}
+  VISTA_BACKEND_MODEL: {{ .Values.config.vistaModel | quote }}
+  {{- end }}

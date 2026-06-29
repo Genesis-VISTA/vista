@@ -1,0 +1,104 @@
+# Default values for vista.
+# ArgoCD overrides these per environment via helm.values in the Application spec.
+
+replicaCount: 1
+
+image:
+  repository: 879946464637.dkr.ecr.us-east-1.amazonaws.com/interfaces/vista
+  tag: latest
+  pullPolicy: Always
+
+namespace: vista
+
+host: vista.dev.american-science-cloud.org
+
+# Kong Gateway API reference — must match the platform's Gateway resource
+gateway:
+  name: kong
+  namespace: if-kong
+
+# Globus OIDC — session-based web login.
+# clientId, clientSecret, sessionSecret, and redis.host are injected by ArgoCD
+# from platform-managed secrets. Do not commit real values here.
+oidc:
+  discovery: https://auth.globus.org/.well-known/openid-configuration
+  scope: "openid email profile"
+  clientId: ""
+  clientSecret: ""
+  sessionSecret: ""
+  sessionCookieName: amsc-oidc-sess
+  sessionCookieDomain: .american-science-cloud.org
+  redis:
+    host: ""
+    port: 6379
+    prefix: amsc-oidc-session
+  # Set enabled: true to pull OIDC credentials from AWS Secrets Manager via ESO.
+  # The platform team must create the secret at oidc.externalSecret.secretsManagerPath.
+  externalSecret:
+    enabled: false
+    secretsManagerPath: ""  # e.g. /amsc/dev/vista-oidc
+
+# Application secrets.
+# Option A (dev bootstrap): set create: true and pass values via ArgoCD helm.values.
+# Option B (production): set create: false + externalSecret.enabled: true.
+appSecrets:
+  create: false
+  openaiApiKey: ""
+  encryptionKey: ""        # Fernet key: VISTA_BACKEND_ENCRYPTION_KEY
+  hfToken: ""              # HuggingFace token for google/embeddinggemma-300m
+  globusSetupKey: ""       # Headless Globus Connect Personal setup
+  globusOdoRefreshToken: ""
+  globusFrontierRefreshToken: ""
+  omdApiKey: ""            # OpenMetadata catalog API key
+  externalSecret:
+    enabled: false
+    secretsManagerPath: ""  # e.g. /amsc/dev/vista
+
+# Non-sensitive runtime configuration.
+config:
+  vistaEnv: prod
+  openaiBaseUrl: https://api.i2-core.american-science-cloud.org
+  vistaModel: ""           # PydanticAI model spec, e.g. openai:claude-sonnet-4-5
+  mcpDisabledServers: agenthpc
+  sandboxMode: microsandbox  # microsandbox | docker | container
+
+# Persistent volume for /data (SQLite, ChromaDB, HF models, sandbox volumes)
+persistence:
+  size: 50Gi
+  storageClass: ebs-gp3
+  accessMode: ReadWriteOnce
+
+# KVM device host path for microsandbox MicroVMs.
+# Requires KVM-capable nodes. Set enabled: false to disable privileged mode.
+kvm:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 4Gi
+  limits:
+    cpu: 4000m
+    memory: 8Gi
+
+probes:
+  # Startup probe accounts for the slow multi-process launch (up to 5 minutes).
+  startup:
+    path: /
+    port: 3000
+    failureThreshold: 30
+    periodSeconds: 10
+  liveness:
+    path: /
+    port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /
+    port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 3

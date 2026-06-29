@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vista
+description: VISTA — AI research assistant with HPC job management, RAG, and multi-agent chat
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

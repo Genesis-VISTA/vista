@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # ReadWriteOnce PVC only supports a single writer — block rolling updates from
+  # creating a second pod before the first terminates.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vista.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vista.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: ui
+              containerPort: 3000
+            - name: backend
+              containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: vista-config
+            - secretRef:
+                name: {{ include "vista.secretName" . }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.kvm.enabled }}
+          securityContext:
+            privileged: true
+          {{- end }}
+          # Generous startup probe — launch.sh starts four processes sequentially
+          # and waits for MCP readiness before starting the backend.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: {{ .Values.probes.startup.port }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.kvm.enabled }}
+            - name: dev-kvm
+              mountPath: /dev/kvm
+            {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vista-data
+        {{- if .Values.kvm.enabled }}
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+        {{- end }}

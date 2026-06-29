@@ -1,0 +1,58 @@
+{{- $ns := .Values.namespace }}
+---
+# vista-oidc: Globus session-based OIDC login for the VISTA web UI.
+# Uses configFrom (ExternalSecret path) when oidc.externalSecret.enabled=true,
+# otherwise reads inline values from the chart's values (ArgoCD dev bootstrap).
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: vista-oidc
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+plugin: kong-openid-connect
+{{- if .Values.oidc.externalSecret.enabled }}
+configFrom:
+  secretKeyRef:
+    name: {{ include "vista.oidcSecretName" . }}
+    namespace: {{ $ns }}
+    key: oidc-config
+{{- else }}
+config:
+  client_id: {{ .Values.oidc.clientId | quote }}
+  client_secret: {{ .Values.oidc.clientSecret | quote }}
+  discovery: {{ .Values.oidc.discovery }}
+  scope: {{ .Values.oidc.scope | quote }}
+  token_endpoint_auth_method: client_secret_basic
+  timeout: 5000
+  ssl_verify: false
+  keepalive: true
+  session_storage: redis
+  session_redis_host: {{ .Values.oidc.redis.host | quote }}
+  session_redis_port: {{ .Values.oidc.redis.port }}
+  session_redis_prefix: {{ .Values.oidc.redis.prefix | quote }}
+  session_cookie_name: {{ .Values.oidc.sessionCookieName | quote }}
+  session_cookie_domain: {{ .Values.oidc.sessionCookieDomain | quote }}
+  session_cookie_samesite: Lax
+  session_cookie_secure: true
+  session_cookie_httponly: true
+  session_secret: {{ .Values.oidc.sessionSecret | quote }}
+  redirect_uri: {{ printf "https://%s/auth" .Values.host | quote }}
+  logout_path: /auth/logout
+  logout_redirect_uri: {{ printf "https://auth.globus.org/v2/web/logout?redirect_uri=https://%s" .Values.host | quote }}
+{{- end }}
+---
+# vista-login-termination: after the OIDC code exchange completes, redirect the
+# browser back to / so the user lands on the VISTA UI rather than a blank page.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: vista-login-termination
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+plugin: request-termination
+config:
+  status_code: 200
+  content_type: text/html
+  body: '<html><head><meta http-equiv="refresh" content="0;url=/" /></head><body><script>window.location.href="/";</script>Redirecting...</body></html>'

@@ -1,0 +1,93 @@
+{{- $ns := .Values.namespace }}
+{{- $host := .Values.host }}
+{{- $gw := .Values.gateway }}
+---
+# vista-login: OIDC initiation (/kong-login) and code-exchange callback (/auth).
+# Attaches vista-oidc to perform the Globus session flow, then vista-login-termination
+# sends a JS redirect to / so the browser lands on the VISTA UI.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vista-login
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+  annotations:
+    konghq.com/plugins: vista-oidc,vista-login-termination
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gw.name }}
+      namespace: {{ $gw.namespace }}
+  hostnames:
+    - {{ $host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /kong-login
+        - path:
+            type: PathPrefix
+            value: /auth
+      backendRefs:
+        - name: vista-svc
+          port: 80
+---
+# vista-static: Next.js static asset bundle — no authentication required so that
+# the OIDC redirect page can load its own JS before a session exists.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vista-static
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gw.name }}
+      namespace: {{ $gw.namespace }}
+  hostnames:
+    - {{ $host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /_next/
+        - path:
+            type: PathPrefix
+            value: /favicon.ico
+      backendRefs:
+        - name: vista-svc
+          port: 80
+---
+# vista-main: catch-all route — requires Globus login.
+# All VISTA pages and API routes (/api/*) pass through here; the Next.js BFF
+# handles per-request JWT auth internally after Kong establishes the OIDC session.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: vista-main
+  namespace: {{ $ns }}
+  labels:
+    {{- include "vista.labels" . | nindent 4 }}
+  annotations:
+    konghq.com/plugins: vista-oidc
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $gw.name }}
+      namespace: {{ $gw.namespace }}
+  hostnames:
+    - {{ $host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: vista-svc
+          port: 80
