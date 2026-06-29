@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-SPLASH candidate scorer (v1, focused viability set).
+SPLASH candidate scorer (v1).
 
 The planner runs this in the sandbox over the cycle's collected results:
 
     python3 score_candidates.py results.json     # or pipe JSON on stdin
 
 Input JSON: {"tbr_target": 1.1, "candidates": [{"params": {...}, "metrics": {...}}, ...]}
-Each candidate's metrics use these keys (what the v1 stub sims emit):
-    TBR, melting_point_c, density_g_cm3, viscosity_mpa_s, thermal_conductivity_w_mk
 
-Rule: maximize TBR among candidates that pass the chemistry-viability filter; a candidate that
-misses TBR > target is not a solution even if viable. Boiling point / Cp / ionic diffusion /
-corrosion / tritium-affinity are NOT modeled in v1.
+v1 metric keys actually produced by the simulations:
+    TBR            — salt-neutronics-tbr (neutronics)
+    density_g_cm3  — salt-chemistry-md  (chemistry; from results.json density.density_g_cm3)
+
+Scoring (v1):
+  - Primary (ranked): maximize TBR (target > tbr_target).
+  - Hard viability gate (scored): density_g_cm3 in [1.8, 2.5]. Missing or out-of-range -> infeasible.
+  - Advisory only (never gates or ranks): melting/boiling point, viscosity, thermal conductivity,
+    Cp. Reported when present; v1 sims don't compute them, so they're listed as unmodeled.
 """
 from __future__ import annotations
 
@@ -22,46 +26,58 @@ import sys
 
 DEFAULT_TBR_TARGET = 1.1
 
-# Viability thresholds (from evaluation-metrics.txt; the focused v1 subset).
-MELTING_POINT_MAX_C = 550.0
+# Hard, sim-backed viability gate (the only chemistry constraint v1 can actually evaluate).
 DENSITY_MIN_G_CM3, DENSITY_MAX_G_CM3 = 1.8, 2.5
-VISCOSITY_MAX_MPA_S = 15.0
-THERMAL_CONDUCTIVITY_MIN_W_MK = 0.8
+
+# Advisory criteria (from the scientific playbook / evaluation-metrics.txt): (key, target, predicate).
+# Reported, never gating or ranking — v1 simulations don't compute most of them.
+ADVISORY = [
+    ("melting_point_c", "< 550 °C", lambda v: v < 550.0),
+    ("boiling_point_c", "> 1000 °C", lambda v: v > 1000.0),
+    ("viscosity_mpa_s", "< 15 mPa·s", lambda v: v < 15.0),
+    ("thermal_conductivity_w_mk", "> 0.8 W/(m·K)", lambda v: v > 0.8),
+    ("cp_kj_kgk", "> 1.5 kJ/(kg·K)", lambda v: v > 1.5),
+]
 
 
-def viability_failures(metrics: dict) -> list[str]:
-    """Return the list of viability constraints this candidate fails (empty == viable)."""
-    failures: list[str] = []
-
-    mp = metrics.get("melting_point_c")
-    if mp is None or mp >= MELTING_POINT_MAX_C:
-        failures.append(f"melting_point_c={mp} not < {MELTING_POINT_MAX_C}")
-
+def density_gate_failure(metrics: dict) -> str | None:
+    """Return a reason string if the density viability gate fails, else None."""
     density = metrics.get("density_g_cm3")
-    if density is None or not (DENSITY_MIN_G_CM3 <= density <= DENSITY_MAX_G_CM3):
-        failures.append(f"density_g_cm3={density} not in [{DENSITY_MIN_G_CM3}, {DENSITY_MAX_G_CM3}]")
+    if density is None:
+        return "density_g_cm3 missing"
+    if not (DENSITY_MIN_G_CM3 <= density <= DENSITY_MAX_G_CM3):
+        return f"density_g_cm3={density} not in [{DENSITY_MIN_G_CM3}, {DENSITY_MAX_G_CM3}]"
+    return None
 
-    viscosity = metrics.get("viscosity_mpa_s")
-    if viscosity is None or viscosity >= VISCOSITY_MAX_MPA_S:
-        failures.append(f"viscosity_mpa_s={viscosity} not < {VISCOSITY_MAX_MPA_S}")
 
-    k = metrics.get("thermal_conductivity_w_mk")
-    if k is None or k <= THERMAL_CONDUCTIVITY_MIN_W_MK:
-        failures.append(f"thermal_conductivity_w_mk={k} not > {THERMAL_CONDUCTIVITY_MIN_W_MK}")
-
-    return failures
+def advisory_checks(metrics: dict) -> list[dict]:
+    """Evaluate advisory criteria that are present in `metrics` (never gates or ranks)."""
+    checks: list[dict] = []
+    for key, target, predicate in ADVISORY:
+        value = metrics.get(key)
+        if value is not None:
+            checks.append({"metric": key, "value": value, "target": target, "ok": predicate(value)})
+    return checks
 
 
 def score_candidates(candidates: list[dict], *, tbr_target: float = DEFAULT_TBR_TARGET) -> dict:
-    """Filter by viability, rank the feasible ones by TBR, and report the decision."""
+    """Gate on density, rank feasible candidates by TBR, and report advisories."""
     feasible: list[dict] = []
     infeasible: list[dict] = []
+    advisory_seen: set[str] = set()
     for candidate in candidates:
         metrics = candidate.get("metrics", {}) or {}
-        entry = {"params": candidate.get("params"), "metrics": metrics, "tbr": metrics.get("TBR")}
-        failures = viability_failures(metrics)
-        if failures:
-            infeasible.append({**entry, "reasons": failures})
+        checks = advisory_checks(metrics)
+        advisory_seen.update(c["metric"] for c in checks)
+        entry = {
+            "params": candidate.get("params"),
+            "metrics": metrics,
+            "tbr": metrics.get("TBR"),
+            "advisory": checks,
+        }
+        reason = density_gate_failure(metrics)
+        if reason:
+            infeasible.append({**entry, "reasons": [reason]})
         else:
             feasible.append(entry)
 
@@ -73,12 +89,14 @@ def score_candidates(candidates: list[dict], *, tbr_target: float = DEFAULT_TBR_
     )
     best = ranked[0] if ranked else None
     target_met = best is not None and best["tbr"] >= tbr_target
+    advisory_unmodeled = [key for key, _t, _p in ADVISORY if key not in advisory_seen]
     return {
         "tbr_target": tbr_target,
         "ranked": ranked,
         "best": best,
         "target_met": target_met,
         "infeasible": infeasible,
+        "advisory_unmodeled": advisory_unmodeled,
     }
 
 

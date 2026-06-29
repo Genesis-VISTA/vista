@@ -17,14 +17,17 @@ license: Proprietary
 
 Drive a multi-cycle campaign that finds a molten-salt blanket composition maximizing the
 **Tritium Breeding Ratio (TBR)** subject to thermophysical-viability constraints. You are the
-planner: you talk to the user, and you delegate simulation work to the `neutronics` and
-`chemistry` subagents via the **campaign tools**. The full scientific rationale is in the
-`splash-playbook` (standalone) skill; this skill is the operational version wired to VISTA.
+planner: you talk to the user, and you delegate simulation work to the `neutronics`
+(`salt-neutronics-tbr`) and `chemistry` (`salt-chemistry-md`) subagents via the **campaign
+tools**. The full scientific rationale is in the `splash-playbook` (standalone) skill; this
+skill is the operational version wired to VISTA.
 
-> **v1 scope.** Simulations run as fast analytic-surrogate stub jobs and report a focused metric
-> set: **TBR** (neutronics) and **melting point, density, viscosity, thermal conductivity**
-> (chemistry). Boiling point, heat capacity, ionic diffusion, corrosion, and tritium
-> extractability are **not modeled in v1** — say so in your final report.
+> **v1 scope.** The subagents are the real simulation skills: **`salt-neutronics-tbr`** returns
+> the **TBR** (a precomputed Shift parameter study) and **`salt-chemistry-md`** returns the
+> **mass density** (an OpenMM MD run). So v1 *scores* on **TBR (primary)** and **density (hard
+> gate)**; melting/boiling point, viscosity, thermal conductivity, Cp, ionic diffusion, corrosion,
+> and tritium extractability are **not modeled in v1** — the scorer treats them as *advisory*
+> (reported if present, never gating) and you must flag them as unmodeled in your final report.
 
 ## Required user inputs — gather these FIRST
 
@@ -69,22 +72,30 @@ Drive these campaign tools in order; **never dispatch HPC work without an approv
    around the best feasible region, get approval, and go to step 4. If the user wants to stop →
    **`finish_campaign(run_id, "exited")`**.
 
-## Scoring — focused viability set (v1)
+## Scoring (v1) — TBR-primary, density-gated, others advisory
 
 `scripts/score_candidates.py` applies (matching `campaign.yaml`):
 
-- **Primary:** maximize **TBR** (target `> 1.1`).
-- **Viability filter (drop the candidate if any fail):** melting point `< 550 °C`,
-  density `1.8–2.5 g/cm³`, viscosity `< 15 mPa·s`, thermal conductivity `> 0.8 W/(m·K)`.
+- **Primary (ranked):** maximize **TBR** (target `> 1.1`).
+- **Hard viability gate (scored):** **density ∈ [1.8, 2.5] g/cm³** — the only sim-backed chemistry
+  constraint in v1. A candidate missing density or out of range is infeasible.
+- **Advisory (reported, never gates or ranks):** melting point `< 550 °C`, boiling point
+  `> 1000 °C`, viscosity `< 15 mPa·s`, thermal conductivity `> 0.8 W/(m·K)`, Cp `> 1.5 kJ/(kg·K)`.
+  Checked only when present; v1 sims don't compute them, so the scorer lists them as unmodeled —
+  surface that to the user.
 
-Input JSON shape (one entry per candidate):
+The scorer ranks feasible candidates by TBR and reports the best, whether the target is met, the
+infeasible candidates (with reasons), per-candidate advisory results, and which advisory metrics
+were unmodeled this cycle.
+
+Input JSON shape (one entry per candidate; `TBR` comes from the neutronics job, `density_g_cm3`
+from the chemistry job's `results.json` `density.density_g_cm3`):
 
 ```json
 {"tbr_target": 1.1,
  "candidates": [
    {"params": {"li6_enrichment": 0.7, "be_concentration": 0.005, "blanket_thickness": 60, "temperature": 900},
-    "metrics": {"TBR": 1.18, "melting_point_c": 480, "density_g_cm3": 2.0,
-                "viscosity_mpa_s": 8.0, "thermal_conductivity_w_mk": 1.0}}
+    "metrics": {"TBR": 1.18, "density_g_cm3": 2.0}}
  ]}
 ```
 
@@ -92,5 +103,6 @@ Input JSON shape (one entry per candidate):
 
 - No HPC jobs without an approved plan; confirm before each new cycle and before exit.
 - The user's instructions and plan edits always override your defaults.
-- Cite job ids / results for every number you report, and flag the **v1 unmodeled** properties
-  (boiling point, Cp, ionic diffusion, corrosion, tritium extractability) in the final report.
+- Cite job ids / results for every number you report, and flag the **advisory / v1-unmodeled**
+  properties (melting & boiling point, viscosity, thermal conductivity, Cp, ionic diffusion,
+  corrosion, tritium extractability) in the final report.

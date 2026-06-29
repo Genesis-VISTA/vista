@@ -14,8 +14,8 @@ metrics:
   scorer: scripts/score_candidates.py   # deterministic tiered/viability scorer, run in the sandbox
 
 subagents:
-  - {role: neutronics, skill: neutronics-shift,    job: neutronics, default_count: 1}
-  - {role: chemistry,  skill: chemistry-supersalt, job: chemistry,  default_count: 1}
+  - {role: neutronics, skill: salt-neutronics-tbr, job: salt-neutronics-tbr, default_count: 1}
+  - {role: chemistry,  skill: salt-chemistry-md,   job: salt-chemistry-md,   default_count: 1}
 
 search:
   strategy: bayesian   # bayesian | grid | llm

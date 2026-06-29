@@ -29,22 +29,19 @@ def test_campaign_manifest_is_valid():
     assert {v.name for v in manifest.variables} == {
         "li6_enrichment", "temperature", "be_concentration", "blanket_thickness"
     }
+    # Bound to the real simulation skills + HPC jobs.
     neutronics = manifest.subagent("neutronics")
-    assert neutronics.skill == "neutronics-shift" and neutronics.job == "neutronics"
+    assert neutronics.skill == "salt-neutronics-tbr" and neutronics.job == "salt-neutronics-tbr"
     chemistry = manifest.subagent("chemistry")
-    assert chemistry.skill == "chemistry-supersalt" and chemistry.job == "chemistry"
+    assert chemistry.skill == "salt-chemistry-md" and chemistry.job == "salt-chemistry-md"
 
 
 # --- scorer ----------------------------------------------------------------
 
-def _candidate(li6, *, tbr, mp=480.0, density=2.0, viscosity=8.0, k=1.0):
-    return {
-        "params": {"li6_enrichment": li6},
-        "metrics": {
-            "TBR": tbr, "melting_point_c": mp, "density_g_cm3": density,
-            "viscosity_mpa_s": viscosity, "thermal_conductivity_w_mk": k,
-        },
-    }
+def _candidate(li6, *, tbr, density=2.0, **advisory):
+    """A v1 candidate: TBR (neutronics) + density (chemistry), plus optional advisory metrics."""
+    metrics = {"TBR": tbr, "density_g_cm3": density, **advisory}
+    return {"params": {"li6_enrichment": li6}, "metrics": metrics}
 
 
 def test_scorer_ranks_feasible_by_tbr_and_reports_target():
@@ -60,20 +57,20 @@ def test_scorer_ranks_feasible_by_tbr_and_reports_target():
     assert result["infeasible"] == []
 
 
-def test_scorer_filters_chemistry_infeasible_candidates():
+def test_scorer_density_gate_filters_infeasible():
     scorer = _load_scorer()
     result = scorer.score_candidates(
         [
-            _candidate(0.9, tbr=1.30, mp=600.0),       # melting point too high -> infeasible
-            _candidate(0.7, tbr=1.15, viscosity=20.0),  # too viscous -> infeasible
-            _candidate(0.6, tbr=1.12),                  # viable
+            _candidate(0.9, tbr=1.30, density=3.1),   # density too high -> infeasible
+            _candidate(0.8, tbr=1.25, density=None),  # density missing -> infeasible
+            _candidate(0.6, tbr=1.12, density=2.0),   # in range -> feasible
         ],
         tbr_target=1.1,
     )
-    # The highest-TBR candidate is infeasible; the best feasible one wins.
+    # The two highest-TBR candidates are gated out on density; the in-range one wins.
     assert result["best"]["tbr"] == 1.12
     assert len(result["infeasible"]) == 2
-    assert any("melting_point_c" in r for r in result["infeasible"][0]["reasons"])
+    assert all("density_g_cm3" in r for cand in result["infeasible"] for r in cand["reasons"])
 
 
 def test_scorer_target_not_met_when_best_below_target():
@@ -81,3 +78,29 @@ def test_scorer_target_not_met_when_best_below_target():
     result = scorer.score_candidates([_candidate(0.5, tbr=1.05)], tbr_target=1.1)
     assert result["best"]["tbr"] == 1.05
     assert result["target_met"] is False
+
+
+def test_advisory_metrics_are_reported_not_gated():
+    scorer = _load_scorer()
+    # A candidate that's density-feasible but would FAIL an advisory check (high melting point)
+    # is still feasible/ranked; the advisory result is reported, not gating.
+    result = scorer.score_candidates(
+        [_candidate(0.7, tbr=1.15, density=2.0, melting_point_c=600.0)], tbr_target=1.1
+    )
+    assert result["infeasible"] == []
+    best = result["best"]
+    mp_check = next(c for c in best["advisory"] if c["metric"] == "melting_point_c")
+    assert mp_check["ok"] is False  # reported as failing, but did not gate
+    # Advisory metrics no candidate produced this cycle are flagged unmodeled.
+    assert "viscosity_mpa_s" in result["advisory_unmodeled"]
+    assert "melting_point_c" not in result["advisory_unmodeled"]  # was present here
+
+
+def test_all_advisory_unmodeled_when_only_tbr_and_density():
+    scorer = _load_scorer()
+    result = scorer.score_candidates([_candidate(0.7, tbr=1.15, density=2.0)], tbr_target=1.1)
+    assert set(result["advisory_unmodeled"]) == {
+        "melting_point_c", "boiling_point_c", "viscosity_mpa_s",
+        "thermal_conductivity_w_mk", "cp_kj_kgk",
+    }
+    assert result["best"]["advisory"] == []
