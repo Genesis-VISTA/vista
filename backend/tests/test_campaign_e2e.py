@@ -21,6 +21,7 @@ from vista_backend.agents.campaign.subagent import (
 from vista_backend.agents.campaign.wiring import build_collector
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
+from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services.campaign_monitor import CampaignMonitor, resume_open_campaigns
 
 
@@ -85,8 +86,11 @@ async def test_campaign_end_to_end(session, alice):
     project = ProjectTable(name="e2e-project")
     session.add(project)
     await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
+        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
         domain="mockdomain", planner_skill="mock-planner", title="Mock sweep",
     )
     await campaign_service.save_plan(session, run_id=run.id, plan=[{"step": 1, "text": "cycle 0"}])

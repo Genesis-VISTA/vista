@@ -94,6 +94,19 @@ class CampaignMonitor:
         return len(jobs)
 
     async def _process(self, session: AsyncSession, job: HpcJobTable) -> None:
+        # Abandon jobs whose campaign was orphaned by multi-session edits — e.g. the
+        # conversation backing it was deleted, which sets CampaignRun.session_id NULL (FK
+        # SET NULL) so the planner/sandbox can no longer be reconstructed. Stop watching it
+        # instead of polling (and failing to resolve) forever.
+        if await self._is_orphaned(session, job):
+            logger.warning("Abandoning job %s: its campaign is detached from a chat session.", job.job_id)
+            await campaign_service.update_step(
+                session, step_id=job.step_id, status="failed",
+                result={"abandoned": "campaign detached from its chat session"},
+            )
+            await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
+            return
+
         state, raw_status = await self._poll(session, job)
         await campaign_service.update_job(
             session, job_id=job.job_id, state=state, last_polled_at=now_iso()
@@ -113,6 +126,14 @@ class CampaignMonitor:
         # The monitor owns "stop watching this job" regardless of the collector.
         await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
         await self._notify(session, job, state=state, ok=ok)
+
+    async def _is_orphaned(self, session: AsyncSession, job: HpcJobTable) -> bool:
+        """A job is orphaned if its step/run is gone or the run lost its chat session."""
+        step = await campaign_service.get_step(session, job.step_id)
+        if step is None:
+            return True
+        run = await campaign_service.get_campaign(session, step.run_id)
+        return run is None or run.session_id is None
 
     async def _notify(
         self, session: AsyncSession, job: HpcJobTable, *, state: str, ok: bool

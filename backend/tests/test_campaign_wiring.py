@@ -185,3 +185,50 @@ async def test_build_collector_routes_to_run_planner(session, alice):
     step = await campaign_service.get_step(session, job.step_id)
     assert step.status == "completed"
     assert step.result["metrics"]["SCORE"] == 9
+
+
+# --- multi-session isolation ----------------------------------------------
+
+@pytest.mark.anyio
+async def test_two_sessions_in_one_project_resolve_distinct_volumes(session, alice):
+    """Two campaigns in two conversations of the same project resolve to separate sandboxes."""
+    project = ProjectTable(name="multi-session-iso")
+    session.add(project)
+    await session.flush()
+    chat_a = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    chat_b = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    assert chat_a.id != chat_b.id
+
+    async def _job_for(chat, job_id):
+        run = await campaign_service.create_campaign(
+            session, project_id=project.id, user_id=alice.id, session_id=chat.id,
+            domain="d", planner_skill="p",
+        )
+        step = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="alpha")
+        return await campaign_service.record_job(
+            session, job_id=job_id, step_id=step.id, user_id=alice.id, cluster="odo"
+        )
+
+    job_a = await _job_for(chat_a, "job-a")
+    job_b = await _job_for(chat_b, "job-b")
+
+    seen_paths: list[dict] = []
+
+    def fake_builder(user, paths):
+        seen_paths.append(paths)
+
+        async def invoke(name, args):
+            return "OK"
+
+        return invoke
+
+    await build_invoke_for_job(session, job_a, invoke_builder=fake_builder)
+    await build_invoke_for_job(session, job_b, invoke_builder=fake_builder)
+
+    assert seen_paths[0] == project_paths_for(chat_a.id)
+    assert seen_paths[1] == project_paths_for(chat_b.id)
+    assert seen_paths[0] != seen_paths[1]  # distinct per-session sandbox volumes
