@@ -58,7 +58,7 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
     if user_row is None:
         raise ValueError(f"User {job.user_id} for job {job.job_id} not found")
     user = UserPublicWithConfig.model_validate(user_row)
-    paths = project_paths_for(run.session_id)
+    paths = project_paths_for(run.session_id, run.project_id, run.user_id)
     return run, user, paths
 
 

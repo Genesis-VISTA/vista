@@ -96,7 +96,7 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
     invoke = await build_invoke_for_job(session, job, invoke_builder=fake_builder)
     assert await invoke("get_hpc_job_status", {}) == "OK"
     assert captured["user"].email == alice.email
-    assert captured["paths"] == project_paths_for(run.session_id)
+    assert captured["paths"] == project_paths_for(run.session_id, run.project_id, run.user_id)
 
 
 # --- build_status_poll -----------------------------------------------------
@@ -129,7 +129,7 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
     _project, run, _step, job = await _make_run_step_job(session, alice)
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(run.session_id)["skills_dir"])
+    skills_dir = Path(project_paths_for(run.session_id, run.project_id, run.user_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
 
@@ -229,6 +229,7 @@ async def test_two_sessions_in_one_project_resolve_distinct_volumes(session, ali
     await build_invoke_for_job(session, job_a, invoke_builder=fake_builder)
     await build_invoke_for_job(session, job_b, invoke_builder=fake_builder)
 
-    assert seen_paths[0] == project_paths_for(chat_a.id)
-    assert seen_paths[1] == project_paths_for(chat_b.id)
-    assert seen_paths[0] != seen_paths[1]  # distinct per-session sandbox volumes
+    assert seen_paths[0] == project_paths_for(chat_a.id, project.id, alice.id)
+    assert seen_paths[1] == project_paths_for(chat_b.id, project.id, alice.id)
+    # Distinct sandbox/skills volumes per session (output/uploads stay project x user).
+    assert seen_paths[0]["skills_dir"] != seen_paths[1]["skills_dir"]

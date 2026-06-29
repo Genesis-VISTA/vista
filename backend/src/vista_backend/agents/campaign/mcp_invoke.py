@@ -23,16 +23,23 @@ from .hpc_tools import InvokeTool
 CallToolFn = Callable[[str, dict, dict | None], Awaitable[Any]]
 
 
-def project_paths_for(session_id: uuid.UUID) -> dict[str, str]:
+def project_paths_for(
+    session_id: uuid.UUID, project_id: uuid.UUID, user_id: uuid.UUID
+) -> dict[str, str]:
     """The sandbox-volume paths the HPC tools resolve log/output dirs against.
 
-    The volume is keyed by the chat session id, matching `ProjectAgent.volume_root`.
+    Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): the
+    sandbox/skills volume is keyed per chat session, while the output/uploads volumes are
+    keyed per project x user so files are reusable across a project's sessions. The monitor
+    rebuilds these paths from a job's DB row, so they must match what the dispatching agent
+    wrote — `test_project_paths_for_matches_project_agent` pins the two together.
     """
-    volume_root = settings.data_dir / "volumes" / f"{session_id}"
+    volumes = settings.data_dir / "volumes"
+    proj_user = f"{project_id}-{user_id}"
     return {
-        "skills_dir": str(volume_root / "skills"),
-        "output_dir": str(volume_root / "data" / "output"),
-        "uploads_dir": str(volume_root / "data" / "uploads"),
+        "skills_dir": str(volumes / f"{session_id}" / "skills"),
+        "output_dir": str(volumes / proj_user / "output"),
+        "uploads_dir": str(volumes / proj_user / "uploads"),
     }
 
 

@@ -398,8 +398,8 @@ class ProjectAgent:
         """Build the planner for a campaign run: its manifest + subagents over this agent's MCP server."""
         project_paths = {
             "skills_dir": str(self.skills_volume_dir),
-            "output_dir": str(self.output_dir),
-            "uploads_dir": str(self.uploads_dir),
+            "output_dir": str(self.output_volume_dir),
+            "uploads_dir": str(self.uploads_volume_dir),
         }
         # Reuse this agent's already-connected vista MCP server to submit/monitor jobs.
         invoke = build_invoke(
