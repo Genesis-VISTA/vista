@@ -72,7 +72,7 @@ class AppSettings(BaseSettings):
     Globus Transfer refresh token for Odo (open enclave) file ops to work around the lack of
     IRI File API support.
     Generate with:
-        ./scripts/get_olcf_token.py --cluster odo --save-env
+        ./scripts/get_globus_token.py --cluster odo --save-env
     """
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
@@ -96,7 +96,7 @@ class AppSettings(BaseSettings):
     """
     Deployment-wide Globus Transfer refresh token for Frontier (moderate enclave) file ops.
     Generate with:
-        ./scripts/get_olcf_token.py --cluster frontier --save-env
+        ./scripts/get_globus_token.py --cluster frontier --save-env
     """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
