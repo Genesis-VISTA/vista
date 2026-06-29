@@ -194,6 +194,24 @@ async def seed_db(engine: AsyncEngine) -> None:
                 tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=10),
             ),
+            ProjectTable(
+                id=uuid.UUID("7d3e9b2a-1c4f-4a8e-9b6d-2f0a5c3e1d77"),
+                name="splash",
+                description=(
+                    "SPLASH tritium-breeding campaign — multi-agent, human-in-the-loop optimization "
+                    "of a fusion molten-salt blanket composition: maximize TBR (salt-neutronics-tbr) "
+                    "subject to density viability (salt-chemistry-md), driven by the campaign planner."
+                ),
+                system_prompt=(SYSTEM_PROMPTS / "splash.md").read_text(),
+                skills=sorted(
+                    {"splash-planner", "salt-neutronics-tbr", "salt-chemistry-md"} - skipped_skills
+                ),
+                knowledge_bases=[],
+                # The campaign dispatches + monitors HPC jobs; allow the HPC toolchain,
+                # deny only the legacy agenthpc subserver.
+                tools=["*", "!agenthpc_*"],
+                usage_limits=dict(request_limit=600),
+            ),
         ]
         session.add_all(projects)
 
