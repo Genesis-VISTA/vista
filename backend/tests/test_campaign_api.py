@@ -10,11 +10,39 @@ import pytest
 
 from vista_backend.db.schemas import CampaignUpdate, ProjectCreate
 from vista_backend.services import campaign as campaign_service
+from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import project as project_service
 
 
 async def _project(session, user, name="api-campaign"):
     return await project_service.create_project(session, ProjectCreate(name=name), user)
+
+
+@pytest.mark.anyio
+async def test_list_campaigns_filters_by_chat_session(session, alice):
+    """The campaign UI lists campaigns for the active conversation via the session_id filter."""
+    project = await _project(session, alice)
+    chat_a = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    chat_b = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    run_a = await campaign_service.create_campaign(
+        session, project_id=project.id, user_id=alice.id, session_id=chat_a.id,
+        domain="splash", planner_skill="splash-planner",
+    )
+    await campaign_service.create_campaign(
+        session, project_id=project.id, user_id=alice.id, session_id=chat_b.id,
+        domain="splash", planner_skill="splash-planner",
+    )
+
+    only_a = await campaign_service.list_campaigns(
+        session, project_id=project.id, session_id=chat_a.id
+    )
+    assert [r.id for r in only_a] == [run_a.id]
+    # Without the filter, both conversations' campaigns are returned.
+    assert len(await campaign_service.list_campaigns(session, project_id=project.id)) == 2
 
 
 @pytest.mark.anyio
