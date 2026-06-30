@@ -212,6 +212,23 @@ async def seed_db(engine: AsyncEngine) -> None:
                 tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=600),
             ),
+            ProjectTable(
+                id=uuid.UUID("b2c6f1a4-3d8e-4f5a-9c7b-1e0d2a6f4c39"),
+                name="vit-nas",
+                description=(
+                    "ViT-NAS campaign — multi-agent, human-in-the-loop search over Vision "
+                    "Transformer architecture, learning-rate, and parallelism settings: maximize "
+                    "training efficiency (throughput / val_loss) by training each candidate "
+                    "(vit-train) on HPC GPUs, driven by the campaign planner."
+                ),
+                system_prompt=(SYSTEM_PROMPTS / "vit-nas.md").read_text(),
+                skills=sorted({"vit-nas-planner", "vit-train"} - skipped_skills),
+                knowledge_bases=[],
+                # The campaign dispatches + monitors HPC jobs; allow the HPC toolchain,
+                # deny only the legacy agenthpc subserver.
+                tools=["*", "!agenthpc_*"],
+                usage_limits=dict(request_limit=600),
+            ),
         ]
         session.add_all(projects)
 
