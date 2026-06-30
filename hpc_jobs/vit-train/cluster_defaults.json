@@ -1,0 +1,36 @@
+{
+  "frontier": {
+    "duration": 3600,
+    "resources": {
+      "node_count": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "CLIMATEVIT_REPO_URL": "https://github.com/jqyin/climate-vit",
+        "CLIMATEVIT_REPO_REF": "main",
+        "CLIMATEVIT_DATA_ROOT": "/lustre/orion/world-shared/stf218/junqi/data/EAR5",
+        "CLIMATEVIT_NUM_ITERS": "2000",
+        "GPUS_PER_NODE": "8"
+      }
+    }
+  },
+  "perlmutter": {
+    "duration": 3600,
+    "resources": {
+      "node_count": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "regular",
+      "constraint": "gpu",
+      "environment": {
+        "CLIMATEVIT_REPO_URL": "https://github.com/jqyin/climate-vit",
+        "CLIMATEVIT_REPO_REF": "main",
+        "CLIMATEVIT_NUM_ITERS": "2000",
+        "GPUS_PER_NODE": "4"
+      }
+    }
+  }
+}
