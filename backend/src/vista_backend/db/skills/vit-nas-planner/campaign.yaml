@@ -1,0 +1,34 @@
+# ViT-NAS campaign manifest (read by the multi-agent framework's load_manifest).
+# Defines the campaign entirely as skills: the search variables, the goal metric +
+# scorer, and the single training subagent role bound to its sim skill + HPC job.
+#
+# Domain-agnostic ViT neural-architecture / hyperparameter search: the planner proposes
+# search points, fans out one `training` subagent per point (each runs one model training
+# on HPC), and scores them by training efficiency. The default sim trains the public
+# `climate-vit` weather model on ERA5, but nothing here is weather-specific — point the
+# `vit-train` job at another ViT training repo to reuse this campaign for other ViT tasks.
+domain: vit-nas
+
+# Generic ViT search space: architecture + learning rate + parallelism/throughput knobs.
+# Ranges bound the space the planner proposes within; the SKILL.md lists the discrete
+# values that actually make sense (e.g. embed_dim divisible by num_heads, powers of two).
+variables:
+  - {name: embed_dim,         range: [256, 4096], unit: dims}
+  - {name: depth,             range: [4, 24],     unit: layers}
+  - {name: num_heads,         range: [4, 32],     unit: heads}
+  - {name: patch_size,        range: [2, 16],     unit: pixels}
+  - {name: lr,                range: [5.0e-7, 5.0e-3]}
+  - {name: global_batch_size, range: [8, 1024],   unit: samples}
+  - {name: tensor_parallel,   range: [1, 8],      unit: ranks}
+  - {name: context_parallel,  range: [1, 64],     unit: ranks}
+
+metrics:
+  # efficiency = throughput_samples_s / val_loss (fast AND accurate). Maximize.
+  primary: {name: efficiency, target: 185, direction: maximize}
+  scorer: scripts/score_candidates.py   # deterministic efficiency ranker, run in the sandbox
+
+subagents:
+  - {role: training, skill: vit-train, job: vit-train, default_count: 1}
+
+search:
+  strategy: llm   # the planner proposes the next search points; llm | bayesian | grid
