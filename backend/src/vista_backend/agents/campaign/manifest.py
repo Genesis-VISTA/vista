@@ -42,6 +42,9 @@ class SubagentSpec(BaseModel):
     job: str
     default_count: int = 1
     """ Default number of instances per candidate; a default, not a cap (the planner may fan out more). """
+    result_files: list[str] = Field(default_factory=lambda: ["results.json"])
+    """ Output files the subagent fetches from a finished job to parse its result. The monitor's
+    collector reads these (the convention is a single results.json the job writes). """
 
 
 class CampaignSearch(BaseModel):

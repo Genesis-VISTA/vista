@@ -3,12 +3,14 @@
 A reusable **planner + subagents** orchestration layer for VISTA. The goal is to build the
 *common usage pattern* once, domain-agnostically, and then add each scientific domain as a
 thin set of **skills** (VISTA's existing skill mechanism), with no backend changes. SPLASH
-(tritium-breeding molten-salt optimization) is the first instantiation; the alloy/HPC
-worker-pool case on `origin/subagent` is a second one that drops onto the same framework
-purely as skills.
+(tritium-breeding molten-salt optimization) is the first instantiation; **ViT-NAS** (Vision
+Transformer architecture/hyperparameter search) is a second, shipped purely as skills — proof
+the abstraction generalizes across very different domains (a tiered physics objective vs. a
+single training-efficiency score).
 
-> Status: design / planning. Target branch: `splash-planner`. See
-> [`splash-planner-playbook.md`](./splash-planner-playbook.md) for the SPLASH instantiation.
+> Status: SPLASH + ViT-NAS landed. See [`splash-planner-playbook.md`](./splash-planner-playbook.md)
+> for the SPLASH instantiation and the [Instantiations](#instantiations-worked-examples) section
+> below for how each domain maps onto the framework.
 
 ## Why a framework first
 
@@ -118,6 +120,37 @@ budget/cycle ceilings; cite job IDs/outputs for every reported number.
   submitted_at, last_polled_at. Durable replacement/backstop for the in-memory
   `_submitted_jobs` cache so a previously-submitted job stays pollable after a restart.
 
+## Instantiations (worked examples)
+
+Each domain is a planner skill (`campaign.yaml` + `SKILL.md` + a `scripts/` scorer) plus one
+sim skill + `hpc_jobs/<job>` bundle per subagent role — no backend code. Two live examples:
+
+| | **SPLASH** | **ViT-NAS** |
+|---|---|---|
+| Planner skill | `splash-planner` | `vit-nas-planner` |
+| Subagent roles | `neutronics` + `chemistry` (2, parallel per candidate) | `training` (1; planner fans out N candidates/cycle) |
+| Sim skills / jobs | `salt-neutronics-tbr`, `salt-chemistry-md` | `vit-train` (clones `climate-vit`, GPU) |
+| Variables | Li-6, temperature, Be conc, thickness | embed_dim, depth, heads, patch, lr, batch, tensor/context parallel |
+| Objective (scorer) | maximize TBR, density-gated, others advisory | maximize `efficiency = throughput_samples_s / val_loss` |
+| Candidate metrics | TBR, density | val_loss, throughput_samples_s |
+
+ViT-NAS shows the framework spans a different shape — a single worker role with planner-driven
+fan-out and a one-number efficiency objective, vs. SPLASH's multi-role tiered physics — with the
+domain confined entirely to skills. The default `vit-train` job trains the public `climate-vit`
+weather model on ERA5, but it's parameterized (`CLIMATEVIT_REPO_URL` / `CLIMATEVIT_DATA_ROOT`) so
+the same campaign tunes any ViT whose training logs a validation loss and a samples/sec line.
+
+Adding the second instantiation surfaced (and fixed) two generic gaps the mock domain hadn't
+exercised:
+
+- **Candidate → job arg encoding.** The planner now emits `script_args` as a single
+  shell-quoted compact-JSON token (`encode_candidate_args`); plain `json.dumps` was shredded by
+  the MCP submit tool's `shlex.join(shlex.split(...))`. Each job's `run_state_point.py` decodes
+  the candidate with `json.loads`.
+- **Result-file collection.** `SubagentSpec.result_files` (default `["results.json"]`) is now
+  threaded through `collect_job`, so the monitor's collector fetches the job's result file for
+  the parser instead of seeing only the job-status text.
+
 ## PR plan (stacked)
 
 **PR 1 — Generic framework (domain-agnostic, reviewable on its own).** ✅ Landed. Built as a
@@ -175,9 +208,16 @@ code; verified against the mock domain (no real MCP / LLM / HPC needed in tests)
    creation + plan edits go through the chat planner, not the UI.
 4. End-to-end smoke test (Playwright).
 
-**PR 4 (optional follow-on) — Alloy/HPC worker-pool instantiation.** Port the `origin/subagent`
+**PR 4 — ViT-NAS instantiation.** ✅ Landed. A second domain (Vision Transformer
+architecture/hyperparameter search) added purely as skills: the `vit-nas-planner` planner skill
++ the `vit-train` sim skill / HPC job (real `climate-vit` training). Proof the abstraction
+generalizes to a single-worker, efficiency-scored search. It needed only two small *generic*
+framework hardenings (candidate JSON-token encoding; manifest `result_files` collection) — see
+[Instantiations](#instantiations-worked-examples) — not domain code in the backend.
+
+**PR 5 (optional follow-on) — Alloy/HPC worker-pool instantiation.** Port the `origin/subagent`
 use case onto the framework purely as skills (a coordinator playbook skill + a proposer sim skill
-+ its HPC job). Proof that the abstraction generalizes; requires *no* core framework changes.
++ its HPC job). A third instantiation; requires *no* core framework changes.
 
 ## Decisions locked
 

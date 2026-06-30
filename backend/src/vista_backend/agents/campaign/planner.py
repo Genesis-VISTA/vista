@@ -120,11 +120,19 @@ class CampaignPlanner:
     async def collect_job(
         self, session: AsyncSession, *, job, files: list[str] | None = None
     ) -> ParsedResult:
-        """Route a finished job back to its role's subagent to parse + complete the step."""
+        """Route a finished job back to its role's subagent to parse + complete the step.
+
+        When `files` isn't given (the monitor's collector path), default to the role's
+        `result_files` from the manifest so the subagent fetches the job's result file(s)
+        for the parser — otherwise it would only see the job-status text, never results.json.
+        """
         step = await campaign_service.get_step(session, job.step_id)
         if step is None:
             raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
         subagent = self.subagents.get(step.kind)
         if subagent is None:
             raise ValueError(f"No subagent registered for role {step.kind!r}")
+        if files is None:
+            spec = self.manifest.subagent(step.kind)
+            files = list(spec.result_files) if spec else None
         return await subagent.collect(session, job=job, files=files)

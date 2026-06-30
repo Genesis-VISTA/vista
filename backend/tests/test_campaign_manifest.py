@@ -69,6 +69,20 @@ subagents:
     assert manifest.metrics.primary.direction == "maximize"
 
 
+def test_result_files_default_and_override(tmp_path):
+    text = """
+domain: d
+metrics:
+  primary: {name: SCORE}
+subagents:
+  - {role: a, skill: a-skill, job: a_job}
+  - {role: b, skill: b-skill, job: b_job, result_files: [out.json, metrics.csv]}
+"""
+    manifest = load_manifest(_write_manifest(tmp_path / "planner-skill", text))
+    assert manifest.subagent("a").result_files == ["results.json"]  # default
+    assert manifest.subagent("b").result_files == ["out.json", "metrics.csv"]
+
+
 def test_missing_manifest_raises(tmp_path):
     (tmp_path / "planner-skill").mkdir()
     with pytest.raises(FileNotFoundError):

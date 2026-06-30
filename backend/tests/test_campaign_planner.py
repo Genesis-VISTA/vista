@@ -202,6 +202,36 @@ async def test_collect_job_routes_to_role_subagent_and_completes_step(session, a
 
 
 @pytest.mark.anyio
+async def test_collect_job_defaults_to_manifest_result_files(session, alice):
+    # The monitor's collector calls collect_job without files; the planner must default to
+    # the role's result_files so the subagent fetches results.json for the parser.
+    run = await _make_run(session, alice)
+    captured: dict = {}
+
+    class CapturingHpc(FakeHpcTools):
+        async def fetch_outputs(self, *, job_id, files, cluster):
+            captured["files"] = files
+            return '{"metrics": {"SCORE": 1.2}}'
+
+    hpc = CapturingHpc()
+    manifest = _manifest()
+    subagents = build_subagents(
+        manifest, hpc=hpc, skills_dir="/unused",
+        parser_factory=lambda skill_dir, role: CallableResultParser(
+            lambda *, candidate, raw_status, raw_outputs: ParsedResult(ok=True, metrics={"raw": raw_outputs})
+        ),
+    )
+    planner = CampaignPlanner(manifest=manifest, subagents=subagents)
+    await planner.dispatch_candidate(session, run_id=run.id, user_id=alice.id, candidate={"x": 0.5}, cycle=0)
+
+    job = await campaign_service.get_job(session, "job-1")
+    parsed = await planner.collect_job(session, job=job)  # no files -> manifest default
+
+    assert captured["files"] == ["results.json"]
+    assert parsed.metrics["raw"] == '{"metrics": {"SCORE": 1.2}}'
+
+
+@pytest.mark.anyio
 async def test_collect_job_raises_for_unknown_role(session, alice):
     run = await _make_run(session, alice)
     planner = _planner(FakeHpcTools())
