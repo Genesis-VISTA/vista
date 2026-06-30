@@ -2,6 +2,9 @@
 
 No live LLM or MCP: the HPC boundary and the result parsers are injected.
 """
+import json
+import shlex
+
 import pytest
 
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools, parse_submit_summary
@@ -10,6 +13,7 @@ from vista_backend.agents.campaign.planner import (
     CampaignPlanner,
     build_planner_system_prompt,
     build_subagents,
+    encode_candidate_args,
 )
 from vista_backend.agents.campaign.subagent import (
     CallableResultParser,
@@ -38,6 +42,28 @@ subagents:
   - {role: alpha, skill: alpha-skill, job: alpha_job}
   - {role: beta, skill: beta-skill, job: beta_job}
 """
+
+
+# --- encode_candidate_args (the candidate -> job script_args contract) -----
+
+def _mcp_shlex_roundtrip(script_args: str) -> list[str]:
+    """Reproduce what a candidate's script_args survives end to end: the vista MCP submit
+    tool's `shlex.join(shlex.split(...))`, then the job shell splitting `"$@"` again."""
+    mcp_cmd = shlex.join(shlex.split(script_args))  # submit_job_mcp.py
+    return shlex.split(mcp_cmd)                      # the job script's argv
+
+
+def test_encode_candidate_args_survives_shlex_roundtrip_as_one_json_token():
+    candidate = {"embed_dim": 768, "lr": 0.0005, "tensor_parallel": 2, "context_parallel": 1}
+    argv = _mcp_shlex_roundtrip(encode_candidate_args(candidate))
+    # The whole candidate arrives as a single argv entry the wrapper can json.loads back.
+    assert len(argv) == 1
+    assert json.loads(argv[0]) == candidate
+
+
+def test_encode_candidate_args_none_for_empty_candidate():
+    assert encode_candidate_args(None) is None
+    assert encode_candidate_args({}) is None
 
 
 class FakeHpcTools:

@@ -12,6 +12,7 @@ these primitives — so this core is fully testable without an LLM.
 specialized by it; `build_subagents` builds one subagent per manifest role.
 """
 import json
+import shlex
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -66,6 +67,21 @@ def build_subagents(
     return subagents
 
 
+def encode_candidate_args(candidate: dict | None) -> str | None:
+    """Encode a candidate as the job script's `script_args` — a single shell token of JSON.
+
+    The candidate has to reach the job's `run_state_point.py` intact as ONE argv entry, but
+    it passes through the vista MCP submit tool's `shlex.join(shlex.split(script_args))`
+    round-trip first. Plain `json.dumps` doesn't survive that: its spaces split it into
+    separate tokens and shlex strips the inner double-quotes, so the job would receive
+    garbage like `{embed_dim:` `768,` instead of valid JSON. Compact JSON wrapped in a single
+    shell-quoted token round-trips cleanly, so the wrapper can just `json.loads(argv[-1])`.
+    """
+    if not candidate:
+        return None
+    return shlex.quote(json.dumps(candidate, separators=(",", ":"), sort_keys=True))
+
+
 class CampaignPlanner:
     """Manifest-driven delegation: candidate -> per-role steps + jobs; finished job -> collect."""
     def __init__(self, *, manifest: CampaignManifest, subagents: dict[str, SubAgent]):
@@ -93,7 +109,7 @@ class CampaignPlanner:
                 job=spec.job,
                 candidate=candidate,
                 cluster=cluster,
-                script_args=json.dumps(candidate) if candidate else None,
+                script_args=encode_candidate_args(candidate),
             )
             result = await subagent.dispatch(
                 session, step=step, user_id=user_id, order=order

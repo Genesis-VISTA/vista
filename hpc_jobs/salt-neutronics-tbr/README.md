@@ -27,21 +27,29 @@ Default time: 0:10:00 (clone + venv build + sub-second run)
 ## Script args (one flat state-point order)
 
 Passed through to `run_state_point.py`, which routes them to the repo's
-`salt_neutronics.cli tbr` subcommand:
+`salt_neutronics.cli tbr` subcommand. Two equivalent forms:
 
-- Composition (exactly one): `--bef2 P` (mol% BeF₂) | `--be-multiplier M`
+**Campaign wire format (preferred)** — a single JSON object, exactly what the campaign
+planner emits per candidate (`campaign.planner.encode_candidate_args`). Recognized keys:
+`bef2` (mol% BeF₂) or `be_multiplier`, `li6`/`li6_enrichment`, `nominal_bef2`,
+`allow_extrapolation`. Keys the v1 grid does not model (e.g. `temperature`,
+`blanket_thickness`, `be_concentration`) are reported and ignored:
+
+    submit_hpc_job(job="salt-neutronics-tbr", cluster="odo", duration="0:10:00",
+        script_args='{"bef2": 40, "li6_enrichment": 0.7}')
+
+**Explicit flags (manual calls)** — take precedence over the JSON:
+
+- Composition (at most one): `--bef2 P` (mol% BeF₂) | `--be-multiplier M`
+  (neither → eutectic FLiBe, beryllium multiplier 1.0)
 - `--li6 E`                 Li-6 enrichment atom fraction (default 0.075 ≈ natural)
 - `--nominal-bef2 P`        mol% BeF₂ that maps to beryllium multiplier 1.0 (default 33.33)
 - `--allow-extrapolation`   permit (cautious) extrapolation outside the scanned grid
 
+      script_args="--bef2 33.33 --li6 0.075"   # cluster="perlmutter" works identically
+
 Valid ranges (single-point queries outside are rejected unless `--allow-extrapolation`):
 BeF₂ 30–46.67 mol%, Li-6 enrichment 0.07–1.0.
-
-Example:
-
-    submit_hpc_job(job="salt-neutronics-tbr", cluster="odo", duration="0:10:00",
-        script_args="--bef2 33.33 --li6 0.075")
-    # cluster="perlmutter" works identically (NERSC CPU partition).
 
 ## Outputs (in $VISTA_OUT)
 
