@@ -121,14 +121,15 @@ class ContainerSandbox(Sandbox):
                     out, _ = await check_output(
                         runtime,
                         "inspect",
-                        "--format={{.State.Running}}",
+                        "--format={{.State.Status}}",
                         container_name,
                     )
                 except RuntimeError:
                     out = b""  # container doesn't exist yet
-                if out.strip() == b"true":
+                status = out.strip().decode()
+                if status == "running":
                     break
-                if out.strip() == b"false":
+                if status in ("exited", "dead"):
                     raise RuntimeError(f"container {container_name} exited immediately")
                 await asyncio.sleep(0.1)
         except BaseException:

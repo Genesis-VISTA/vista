@@ -1,0 +1,98 @@
+# Amortization analysis config (evaluation plan M9, experiments E10/E12a).
+#
+# Defines (1) the subsystem buckets used to attribute changed LOC, and
+# (2) per-application path sets from which app-introducing commits are
+# discovered mechanically (git log <branch> -- <paths>).
+#
+# Path globs must cover every historical repo layout:
+#   2026-01..02  src/vista/, clients/, skills/, experiments/
+#   2026-02..06  mcp-server/, ui/, skills/, hpc_jobs/
+#   2026-06..    backend/, mcp_servers/, ui/, hpc_jobs/, backend/.../db/skills/
+
+branch: main
+
+# A discovered commit counts as app-introducing only if at least this share
+# of its added LOC falls inside the app's paths. Commits below the threshold
+# (platform-wide refactors that touched app files in passing, e.g. "Store
+# skills in db") are reported separately as incidental, not counted.
+# Override per app with include_commits / exclude_commits (short SHAs).
+min_app_share: 0.25
+
+# Subsystem buckets, most specific first — a file belongs to the first
+# bucket whose glob matches. Files matching no bucket fall into "other"
+# (docs, data, build scripts, CI).
+subsystems:
+  skills:
+    - "skills/**"
+    - "backend/src/vista_backend/db/skills/**"
+  job_templates:
+    - "hpc_jobs/**"
+  security:
+    - "backend/src/vista_backend/vistaguard/**"
+  scheduler:
+    - "mcp_servers/vista_mcp_server/src/vista_mcp_server/agenthpc/**"
+    - "mcp-server/src/vista_mcp_server/agenthpc/**"
+    - "mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py"
+    - "mcp-server/src/vista_mcp_server/submit_job_mcp.py"
+    - "backend/src/vista_backend/agents/agenthpc_workers.py"
+  mcp_servers:
+    - "mcp_servers/**"
+    - "mcp-server/**"
+  ui:
+    - "ui/**"
+  runtime:
+    - "backend/**"
+    - "src/**"      # legacy pre-restructure layout
+    - "clients/**"  # legacy
+
+# Never counted as LOC (lockfiles, vendored data, binary stores).
+exclude:
+  - "**/uv.lock"
+  - "**/package-lock.json"
+  - "rag_db/**"
+  - "data/**"
+  - "**/*.bin"
+  - "**/*.sqlite3"
+  - "**/Molten_Salt_Thermophysical_Properties.*"
+
+apps:
+  salt:
+    description: >-
+      Molten-salt screening for fusion fuel cycles (paper §IV-B): four
+      skills (salt-analysis, salt-prediction, datacard-generation,
+      model-fine-tuning) plus the forge-tune job-library entry.
+    # Inferred introduction range — VERIFY:
+    #   9c277e4 2026-01-28  Add analyze salt script        (pre-platform prototype)
+    #   8d2f85c 2026-01-30  add prelim skill to analyze salt
+    #   f59be63 2026-03-11  prediction skills with UI integration
+    #   62d3cc5 2026-03-11  Add forge-tune job
+    #   51f4d4a 2026-03-26  add datacard creation skill
+    #   5c1c829 2026-03-26  add forge fine-tuning skill
+    #   7502d33 2026-03-31  add forge ft-ing job submission on frontier
+    paths:
+      - "skills/salt-analysis/**"
+      - "skills/salt-prediction/**"
+      - "skills/datacard-generation/**"
+      - "skills/model-fine-tuning/**"
+      - "backend/src/vista_backend/db/skills/salt-analysis/**"
+      - "backend/src/vista_backend/db/skills/salt-prediction/**"
+      - "backend/src/vista_backend/db/skills/datacard-generation/**"
+      - "backend/src/vista_backend/db/skills/model-fine-tuning/**"
+      - "hpc_jobs/forge-tune/**"
+      # App-specific code from the pre-platform era (counted as app, not
+      # platform, so early prototypes do not pollute the co-change signal):
+      - "src/vista/tools/salt_analysis.py"
+      - "clients/salt_analysis_agent.py"
+      - "experiments/analyze_salt.py"
+
+  alloy:
+    description: >-
+      Search-driven alloy design campaign (paper §IV-A): single
+      declarative alloy-design skill on the generalized platform.
+    # Inferred introduction range — VERIFY:
+    #   76adcef 2026-04-22  add alloy design skill
+    # (3550174 "add parallel mode to alloy design skill" lives on the
+    #  unmerged origin/subagent branch and is not counted until merged.)
+    paths:
+      - "skills/alloy-design/**"
+      - "backend/src/vista_backend/db/skills/alloy-design/**"

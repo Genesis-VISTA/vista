@@ -13,7 +13,13 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from pydantic import BaseModel, Field, Discriminator
-from pydantic_ai import Agent, RunContext, UsageLimits, RunUsage, AgentRunResultEvent
+from pydantic_ai import (
+    Agent,
+    RunContext,
+    UsageLimits,
+    RunUsage,
+    AgentRunResultEvent,
+)
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -41,6 +47,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
 from ..db.db import get_engine
+from ..metrics import get_recorder, run_id_var
 from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
@@ -55,6 +62,7 @@ from ..vistaguard.quarantine import (
     build_intent_extraction_agent,
     build_quarantine_agent,
 )
+from .eval_metrics import EvalMetricsCapability
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
 from .campaign.hpc_tools import McpHpcTools
@@ -243,6 +251,10 @@ class ProjectAgent:
         # that restriction. Though, once we implement sessions, we can scope the agent to each session and then locking
         # would be more reasonable.
         self._run_lock = asyncio.Lock()
+        # skill name -> allowed_tools pattern string, for tool->skill
+        # attribution on metric events (M11/E14). Filled by _setup_volumes
+        # from the same SkillTable rows that populate the skills volume.
+        self._skill_allowed_tools: dict[str, str] = {}
         self._cur_mcp_elicitation_callback: mcp.client.session.ElicitationFnT | None = (
             None
         )
@@ -343,6 +355,13 @@ class ProjectAgent:
             intent_extraction_agent=intent_extraction_agent,
             code_intent_extraction_agent=code_intent_extraction_agent,
         )
+        self._eval_metrics_capability = EvalMetricsCapability(
+            session_id=self.id,
+            project_id=str(self.project.id),
+            skills_loaded=lambda: list(self.project.skills),
+            attribute_skill=self._attribute_skill,
+        )
+        capabilities.append(self._eval_metrics_capability)
         # Human-in-the-loop approval for `requires_approval=True` tools
         # (VISTAGuard R6). Inert until such a tool is registered (G5 in
         # Phase 4); resolves via the existing resolve_elicitation surface.
@@ -464,19 +483,62 @@ class ProjectAgent:
         """
         Call an MCP tool by name, searching across all attached MCP servers.
 
-        Honors the project's `tools` filter. Returns the raw `CallToolResult`
-        envelope (does not unwrap or raise on `isError=True`).
+        Honors the project's `tools` filter. Used by the `/mcp/call` API for
+        user-triggered calls (and by the loadgen, M6). Carries the same
+        `vista` metadata the agent dispatcher injects, so HPC credentials and
+        metrics correlation reach the server; returns a `CallToolResult`
+        envelope (`isError=True` on tool failure rather than raising).
+
+        Bypasses the agent's capability hooks (VISTAGuard) by design — these
+        are explicit user actions, not model-driven tool calls.
         """
         if not self._tool_allowed(name):
             raise KeyError(f"Tool {name!r} not found on any MCP server")
+        metadata = self._build_vista_metadata(name)
         for server in self._mcp_servers:
             tools = await server.list_tools()
             if any(t.name == name for t in tools):
-                # TODO: This bypasses process_tool_call. That's probably fine for VistaGuard as these
-                # calls are user triggered. But will break job submission. Leaving for now as using
-                # metadata for job submission credentials is a temporary solution anyways
-                return await server._client.call_tool(name, arguments)
+                return await server._get_client().call_tool(
+                    name, arguments, meta=metadata
+                )
         raise KeyError(f"Tool {name!r} not found on any MCP server")
+
+    def _build_vista_metadata(self, name: str) -> dict[str, Any]:
+        """
+        Build the `vista` MCP request metadata for a tool call: project
+        sandbox paths always, per-user HPC credentials for HPC tools, and
+        (when metrics are on) the run/session correlation ids the server-side
+        probes join against (M3).
+
+        TODO Temporary scaffolding for getting per-user HPC credentials to the
+        MCP server via MCP metadata. Later we'll launch isolated, per-project
+        MCP server instances configured with the right env vars/headers, and
+        move project_paths off metadata too.
+        """
+        metadata: dict[str, Any] = {
+            "vista": {
+                "project_paths": {
+                    "skills_dir": str(self.skills_volume_dir),
+                    "output_dir": str(self.output_dir),
+                    "uploads_dir": str(self.uploads_dir),
+                },
+            },
+        }
+        HPC_TOOLS = {
+            "submit_hpc_job",
+            "get_hpc_job_status",
+            "get_hpc_job_outputs",
+            "list_hpc_jobs",
+            "cancel_hpc_job",
+        }
+        if name in HPC_TOOLS:
+            metadata["vista"]["user"] = self.user.model_dump(mode="json")
+        if get_recorder().enabled:
+            metadata["vista"]["metrics"] = {
+                "run_id": run_id_var.get(),
+                "session_id": self.id,
+            }
+        return metadata
 
     async def __aenter__(self):
         await self._setup_volumes()
@@ -512,6 +574,9 @@ class ProjectAgent:
                 )
             ).all()
         skill_dirs = {row.name: settings.data_dir / row.path for row in rows}
+        self._skill_allowed_tools = {
+            row.name: row.allowed_tools for row in rows if row.allowed_tools
+        }
 
         shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
         self.skills_volume_dir.mkdir()
@@ -526,6 +591,26 @@ class ProjectAgent:
         )
         await proc.wait()
 
+    def _attribute_skill(self, tool_name: str, args_blob: str | None) -> str | None:
+        """
+        Best-effort tool-call -> skill attribution (M11, powers E14). A call
+        belongs to a loaded skill when the call references the skill's files
+        in the sandbox (`/mnt/skills/<name>/...` — scripts invoked, SKILL.md
+        read), or when exactly one loaded skill declares the tool in its
+        `allowed_tools` patterns. Ambiguous calls stay unattributed: E14's
+        definition of "use" is deliberately conservative.
+        """
+        if args_blob:
+            for name in self.project.skills:
+                if f"/mnt/skills/{name}" in args_blob:
+                    return name
+        matches = [
+            name
+            for name, patterns in self._skill_allowed_tools.items()
+            if tool_allowed(tool_name, patterns.replace(",", " ").split())
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def _make_mcp_process_tool_call(self):
         async def process_tool_call(
             ctx: RunContext[Any],
@@ -533,33 +618,11 @@ class ProjectAgent:
             name: str,
             tool_args: dict[str, Any],
         ) -> ToolResult:
-            # TODO Temporary scaffolding for getting per-user HPC credentials to the MCP server, we set up the s3m
-            # creds via MCP metadata. Later we'll set up more generic MCP server configuration that supports 3rd party
-            # MCP servers. It will launch isolated MCP server instances per project, and the user can configure any
-            # environment vars/headers necessary.
-            # The project_paths should also be changed to use env vars or some other mechanism.
-            metadata: dict[str, Any] = {
-                "vista": {
-                    "project_paths": {
-                        "skills_dir": str(self.skills_volume_dir),
-                        "output_dir": str(self.output_dir),
-                        "uploads_dir": str(self.uploads_dir),
-                    },
-                },
-            }
-            HPC_TOOLS = {
-                "submit_hpc_job",
-                "get_hpc_job_status",
-                "get_hpc_job_outputs",
-                "list_hpc_jobs",
-                "cancel_hpc_job",
-            }
-            if name in HPC_TOOLS:
-                metadata["vista"]["user"] = self.user.model_dump(mode="json")
-
             # VISTAGuard no longer mediates here: gate enforcement runs
             # via the Agent's capability hooks (Phase 3.5). This callback
-            # only injects the per-call MCP metadata.
+            # only injects the per-call MCP metadata (credentials + metrics
+            # correlation), built by the shared helper.
+            metadata = self._build_vista_metadata(name)
             return await call_tool(name, tool_args, metadata)
 
         return process_tool_call
@@ -602,6 +665,7 @@ class ProjectAgent:
             except StreamClosedError:
                 # Merger already closed, the run finished before this notification.
                 return mcp.types.ElicitResult(action="cancel")
+            self._eval_metrics_capability.note_human_intervention()
 
             try:
                 return await asyncio.wait_for(future, timeout=5 * 60)
@@ -671,6 +735,7 @@ class ProjectAgent:
                 return ApprovalOutcome(
                     approved=False, message="Run finished before approval."
                 )
+            self._eval_metrics_capability.note_human_intervention()
 
             try:
                 result = await asyncio.wait_for(future, timeout=5 * 60)

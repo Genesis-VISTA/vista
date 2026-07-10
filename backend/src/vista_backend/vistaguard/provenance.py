@@ -309,6 +309,7 @@ class ProvenanceEmitter:
         gate: str,
         decision: GateDecision,
         context: GateContext | None = None,
+        duration_ms: float | None = None,
     ) -> ProvenanceEvent | None:
         """
         Record a gate's `GateDecision` for audit.
@@ -329,6 +330,11 @@ class ProvenanceEmitter:
                 can correlate without joining against a separate
                 scorer log. Accepting the context now keeps that
                 forward-compatible.
+            duration_ms: optional wall time of the check that produced
+                this decision (evaluation plan M4). Callers with gate
+                timing enabled pass it so the offline report
+                (`scripts/metrics_report.py`) can compute per-gate
+                overhead without joining against the metrics log.
 
         Returns:
             The `ProvenanceEvent` that was emitted, or None when
@@ -341,6 +347,8 @@ class ProvenanceEmitter:
             "gate": gate,
             "decision": _summarize_decision(decision),
         }
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
         if decision.capability_tag is not None:
             payload["capability_tag"] = _capability_tag_to_dict(decision.capability_tag)
         # Phase-0 context handling: the GateContext fields that are

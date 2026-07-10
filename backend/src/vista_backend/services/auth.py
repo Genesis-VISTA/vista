@@ -14,7 +14,14 @@ async def get_user(session: SessionDep, request: Request) -> UserPublicWithConfi
         raise HTTPException(
             status_code=501, detail="SSO authentication is not yet implemented"
         )
-    email = "vista-test-admin@americansciencecloud.org"
+    # Dev-only identity selection: the `X-Vista-User-Email` header picks an
+    # existing user, enabling local multi-tenant load testing (loadgen
+    # `--users`, evaluation plan E15). Unreachable in prod — the SSO 501
+    # above returns first — so it never weakens the production auth surface.
+    email = (
+        request.headers.get("X-Vista-User-Email")
+        or "vista-test-admin@americansciencecloud.org"
+    )
     user = await user_service.get_user_by_email_optional(session, email, user="system")
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")

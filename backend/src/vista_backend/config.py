@@ -7,6 +7,7 @@ from dotenv import load_dotenv, dotenv_values
 import logging
 from .utils.types import ResolvedPath, LogLevel
 from .vistaguard.config import VistaGuardSettings
+from .metrics import MetricsSettings
 
 
 class EmailSettings(BaseModel):
@@ -159,6 +160,15 @@ class Settings(BaseSettings):
     that the default behavior of `Settings` is unchanged when VISTAGuard
     is not configured. Override individual fields via
     `VISTA_BACKEND_VISTAGUARD__<FIELD>=...` env vars.
+    """
+
+    metrics: MetricsSettings = Field(default_factory=MetricsSettings)
+    """
+    Metrics / instrumentation configuration (evaluation plan M1). Defaults
+    to `level=off`, a byte-identical no-op. Override via
+    `VISTA_BACKEND_METRICS__<FIELD>=...` env vars, e.g.
+    `VISTA_BACKEND_METRICS__LEVEL=prod` for sampled production diagnostics
+    or `LEVEL=perf` for the paper benchmarks.
     """
 
 

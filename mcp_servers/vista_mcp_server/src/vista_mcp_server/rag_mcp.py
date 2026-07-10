@@ -34,6 +34,7 @@ from sentence_transformers import SentenceTransformer
 from .bm25 import BM25Okapi
 from .config import settings
 from .hybrid_search import RetrievalResult, merge_retrievals
+from .metrics import stage as metrics_stage
 
 
 # Filename of the BM25 corpus that `build_rag.py` writes alongside
@@ -411,11 +412,13 @@ async def rag_search(
         # Fall through to vector-only on hybrid degradation. We
         # log inside `_hybrid_retrieve` so the operator sees why.
 
-    query_embedding = _embed(query)
-    raw = handle.text_collection.query(
-        query_embeddings=[query_embedding],
-        n_results=n_results,
-    )
+    with metrics_stage("rag.embed", tool_name="rag_search"):
+        query_embedding = _embed(query)
+    with metrics_stage("rag.dense", tool_name="rag_search"):
+        raw = handle.text_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results,
+        )
 
     if not raw["documents"] or not raw["documents"][0]:
         return (
@@ -424,11 +427,12 @@ async def rag_search(
         )
 
     # Build response with citations
-    return _format_results(
-        handle,
-        documents=raw["documents"][0],
-        metadatas=raw["metadatas"][0],
-    )
+    with metrics_stage("rag.citation", tool_name="rag_search"):
+        return _format_results(
+            handle,
+            documents=raw["documents"][0],
+            metadatas=raw["metadatas"][0],
+        )
 
 
 def _hybrid_retrieve(
@@ -451,12 +455,14 @@ def _hybrid_retrieve(
     over_k = min(20, n_results * 4)
 
     # Vector retrieval -- ask ChromaDB for over-K candidates.
-    query_embedding = _embed(query)
-    raw = handle.text_collection.query(
-        query_embeddings=[query_embedding],
-        n_results=over_k,
-        include=["documents", "metadatas", "distances"],
-    )
+    with metrics_stage("rag.embed", tool_name="rag_search"):
+        query_embedding = _embed(query)
+    with metrics_stage("rag.dense", tool_name="rag_search"):
+        raw = handle.text_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=over_k,
+            include=["documents", "metadatas", "distances"],
+        )
     if not raw["documents"] or not raw["documents"][0]:
         return (
             f"No relevant passages found for the query in Knowledge Base "
@@ -466,7 +472,8 @@ def _hybrid_retrieve(
     vector_results = _chromadb_to_retrieval_results(raw)
 
     # BM25 retrieval over the same K.
-    bm25_hits = handle.bm25.query(query, top_k=over_k)
+    with metrics_stage("rag.bm25", tool_name="rag_search"):
+        bm25_hits = handle.bm25.query(query, top_k=over_k)
     # Look up each BM25 hit's metadata from chromadb so the merged
     # output's `metadata` matches what vector-only callers expect.
     bm25_results: list[RetrievalResult] = []
@@ -519,12 +526,13 @@ def _hybrid_retrieve(
                 for hit in bm25_hits
             ]
 
-    merged = merge_retrievals(
-        vector_results=vector_results,
-        bm25_results=bm25_results,
-        alpha=alpha,
-        top_k=n_results,
-    )
+    with metrics_stage("rag.fusion", tool_name="rag_search"):
+        merged = merge_retrievals(
+            vector_results=vector_results,
+            bm25_results=bm25_results,
+            alpha=alpha,
+            top_k=n_results,
+        )
 
     if not merged:
         return (
@@ -532,11 +540,12 @@ def _hybrid_retrieve(
             f"{handle.slug!r}."
         )
 
-    return _format_results(
-        handle,
-        documents=[r.document for r in merged],
-        metadatas=[r.metadata for r in merged],
-    )
+    with metrics_stage("rag.citation", tool_name="rag_search"):
+        return _format_results(
+            handle,
+            documents=[r.document for r in merged],
+            metadatas=[r.metadata for r in merged],
+        )
 
 
 def _chromadb_to_retrieval_results(
