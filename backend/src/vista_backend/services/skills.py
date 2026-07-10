@@ -1,6 +1,7 @@
 """
 Skills service.
 """
+
 # TODO: scope skills to a project; they are global entities for now.
 import logging
 import shutil
@@ -42,7 +43,7 @@ def build_skill_row(
     is_public: bool,
     now: str,
 ) -> SkillTable:
-    """ Build a SkillTable row, mirroring spec metadata from the parsed skill. """
+    """Build a SkillTable row, mirroring spec metadata from the parsed skill."""
     return SkillTable(
         name=skill.name,
         path=path,
@@ -64,7 +65,9 @@ async def list_skills(session: AsyncSession) -> list[SkillTable]:
 
 
 async def get_skill_optional(session: AsyncSession, name: str) -> SkillTable | None:
-    return (await session.exec(select(SkillTable).where(SkillTable.name == name))).first()
+    return (
+        await session.exec(select(SkillTable).where(SkillTable.name == name))
+    ).first()
 
 
 async def get_skill(session: AsyncSession, name: str) -> SkillTable:
@@ -75,7 +78,7 @@ async def get_skill(session: AsyncSession, name: str) -> SkillTable:
 
 
 async def get_skill_detail(session: AsyncSession, name: str) -> tuple[SkillTable, str]:
-    """ Return the row plus its SKILL.md body (read from disk). """
+    """Return the row plus its SKILL.md body (read from disk)."""
     skill = await get_skill(session, name)
     return skill, read_skill(settings.data_dir / skill.path).body
 
@@ -93,7 +96,9 @@ async def _insert_skill_row(session: AsyncSession, row: SkillTable) -> None:
         await session.rollback()
         shutil.rmtree(settings.data_dir / row.path, ignore_errors=True)
         if isinstance(e, IntegrityError):
-            raise HTTPException(status_code=409, detail=f"Name already in use: {row.name}")
+            raise HTTPException(
+                status_code=409, detail=f"Name already in use: {row.name}"
+            )
         raise
     await session.refresh(row)
 
@@ -140,16 +145,23 @@ async def import_skill(session: AsyncSession, url: str) -> SkillTable:
 
     if await get_skill_optional(session, skill.name) is not None:
         shutil.rmtree(settings.data_dir / path, ignore_errors=True)
-        raise HTTPException(status_code=409, detail=f"Name already in use: {skill.name}")
+        raise HTTPException(
+            status_code=409, detail=f"Name already in use: {skill.name}"
+        )
 
-    row = build_skill_row(skill, path=path, author=None, repo_url=url, is_public=False, now=now_iso())
+    row = build_skill_row(
+        skill, path=path, author=None, repo_url=url, is_public=False, now=now_iso()
+    )
     await _insert_skill_row(session, row)
     return row
 
 
-async def generate_draft(message_history: list[ModelMessage], hint: str | None) -> SkillDraft:
-    """ Draft a SKILL.md from a chat conversation. Persists nothing. """
+async def generate_draft(
+    message_history: list[ModelMessage], hint: str | None
+) -> SkillDraft:
+    """Draft a SKILL.md from a chat conversation. Persists nothing."""
     return await generate_skill_draft(message_history, hint)
+
 
 async def update_skill(
     session: AsyncSession,
@@ -159,7 +171,7 @@ async def update_skill(
     body: str | None = None,
 ) -> SkillTable:
     """
-    Partial update. 
+    Partial update.
     """
     skill = await get_skill(session, name)
     data = updates.model_dump(exclude_unset=True)
@@ -171,11 +183,19 @@ async def update_skill(
             raise HTTPException(status_code=422, detail=f"{field} cannot be null")
     if data.get("is_public") is False and skill.is_public:
         # Publish is one-way: once listed on the hub a skill can't be hidden again.
-        raise HTTPException(status_code=409, detail="Published skills cannot be unpublished.")
+        raise HTTPException(
+            status_code=409, detail="Published skills cannot be unpublished."
+        )
 
     spec_updates = {
         k: data[k]
-        for k in ("description", "license", "compatibility", "allowed_tools", "metadata")
+        for k in (
+            "description",
+            "license",
+            "compatibility",
+            "allowed_tools",
+            "metadata",
+        )
         if k in data
     }
     if body is not None:
@@ -234,7 +254,9 @@ async def delete_skill(session: AsyncSession, name: str) -> None:
     """
     skill = await get_skill(session, name)
     if skill.is_public:
-        raise HTTPException(status_code=409, detail="Published skills cannot be deleted.")
+        raise HTTPException(
+            status_code=409, detail="Published skills cannot be deleted."
+        )
     directory = settings.data_dir / skill.path
     await session.delete(skill)
     await session.commit()

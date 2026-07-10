@@ -13,6 +13,7 @@ fakes the planner), this drives the *real* wiring:
 Only the two true boundaries are faked: the MCP `invoke` (so no real HPC) and the sim-skill
 result parser (so no real LLM). Everything else is production code.
 """
+
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,10 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from vista_backend.agents.campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from vista_backend.agents.campaign.agent_tools import (
+    CampaignDriverDeps,
+    register_campaign_tools,
+)
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools
 from vista_backend.agents.campaign.manifest import load_manifest
 from vista_backend.agents.campaign.mcp_invoke import project_paths_for
@@ -35,7 +39,10 @@ from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
-from vista_backend.services.campaign_monitor import CampaignMonitor, resume_open_campaigns
+from vista_backend.services.campaign_monitor import (
+    CampaignMonitor,
+    resume_open_campaigns,
+)
 
 
 MANIFEST_YAML = """
@@ -49,7 +56,9 @@ subagents:
 
 
 def _fake_parser_factory(skill_dir, role):
-    return CallableResultParser(lambda **_: ParsedResult(ok=True, summary=role, metrics={"role": role}))
+    return CallableResultParser(
+        lambda **_: ParsedResult(ok=True, summary=role, metrics={"role": role})
+    )
 
 
 def _scripted_planner_llm():
@@ -58,7 +67,10 @@ def _scripted_planner_llm():
 
     def driver(messages, info: AgentInfo) -> ModelResponse:
         returns = [
-            p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)
+            p
+            for m in messages
+            for p in getattr(m, "parts", [])
+            if isinstance(p, ToolReturnPart)
         ]
         for r in returns:
             if r.tool_name == "start_campaign" and state["run_id"] is None:
@@ -66,28 +78,65 @@ def _scripted_planner_llm():
         step = len(returns)
         rid = state["run_id"]
         if step == 0:
-            return ModelResponse(parts=[ToolCallPart("start_campaign", {
-                "planner_skill": "mock-planner", "domain": "mockdomain", "title": "Live",
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "start_campaign",
+                        {
+                            "planner_skill": "mock-planner",
+                            "domain": "mockdomain",
+                            "title": "Live",
+                        },
+                    )
+                ]
+            )
         if step == 1:
-            return ModelResponse(parts=[ToolCallPart("set_campaign_spec", {
-                "run_id": rid, "spec": {"platform": "frontier"},
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "set_campaign_spec",
+                        {
+                            "run_id": rid,
+                            "spec": {"platform": "frontier"},
+                        },
+                    )
+                ]
+            )
         if step == 2:
-            return ModelResponse(parts=[ToolCallPart("save_campaign_plan", {
-                "run_id": rid, "plan": [{"step": 1, "text": "cycle 0"}],
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "save_campaign_plan",
+                        {
+                            "run_id": rid,
+                            "plan": [{"step": 1, "text": "cycle 0"}],
+                        },
+                    )
+                ]
+            )
         if step == 3:
-            return ModelResponse(parts=[ToolCallPart("dispatch_cycle", {
-                "run_id": rid, "candidates": [{"x": 0.7}], "cycle": 0, "cluster": "frontier",
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "dispatch_cycle",
+                        {
+                            "run_id": rid,
+                            "candidates": [{"x": 0.7}],
+                            "cycle": 0,
+                            "cluster": "frontier",
+                        },
+                    )
+                ]
+            )
         return ModelResponse(parts=[TextPart("Dispatched; awaiting HPC results.")])
 
     return FunctionModel(driver)
 
 
 @pytest.mark.anyio
-async def test_live_path_dispatch_then_monitor_resume(session, alice, tmp_path, monkeypatch):
+async def test_live_path_dispatch_then_monitor_resume(
+    session, alice, tmp_path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     project = ProjectTable(name="live-e2e")
@@ -121,15 +170,21 @@ async def test_live_path_dispatch_then_monitor_resume(session, alice, tmp_path, 
         paths = project_paths_for(run.session_id)
         manifest = load_manifest(Path(paths["skills_dir"]) / run.planner_skill)
         subagents = build_subagents(
-            manifest, hpc=McpHpcTools(the_invoke), skills_dir=paths["skills_dir"],
+            manifest,
+            hpc=McpHpcTools(the_invoke),
+            skills_dir=paths["skills_dir"],
             parser_factory=_fake_parser_factory,
         )
         return CampaignPlanner(manifest=manifest, subagents=subagents)
 
     progress: list[str] = []
     deps = CampaignDriverDeps(
-        project_id=project.id, user_id=alice.id, session_id=chat.id,
-        get_session=lambda: session, get_planner=get_planner, emit_progress=progress.append,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        get_session=lambda: session,
+        get_planner=get_planner,
+        emit_progress=progress.append,
     )
     agent = Agent(model=_scripted_planner_llm())
     register_campaign_tools(agent, deps)
@@ -161,7 +216,10 @@ async def test_live_path_dispatch_then_monitor_resume(session, alice, tmp_path, 
     async def planner_provider(s, j):
         # The production monitor path: reconstruct the planner per job from the DB + skill.
         return await build_planner_for_job(
-            s, j, invoke_builder=fake_invoke_builder, parser_factory=_fake_parser_factory
+            s,
+            j,
+            invoke_builder=fake_invoke_builder,
+            parser_factory=_fake_parser_factory,
         )
 
     monitor = CampaignMonitor(
@@ -177,7 +235,7 @@ async def test_live_path_dispatch_then_monitor_resume(session, alice, tmp_path, 
     assert {s.result["metrics"]["role"] for s in steps} == {"neutronics", "chemistry"}
     assert len(await campaign_service.list_open_jobs(session)) == 0
     assert len(emails) == 2
-    user_email = (await _user_email(session, alice))
+    user_email = await _user_email(session, alice)
     assert all(e["to"] == user_email for e in emails)
 
     # --- user confirms exit -> no longer resumable ------------------------

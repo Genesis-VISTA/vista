@@ -15,6 +15,7 @@ from MCP transport (credentials, Globus, etc., wired in the planner runtime) and
 any domain's output format. Tests inject fakes; the planner runtime injects the
 MCP-backed tools and a skill-built parser.
 """
+
 import inspect
 import uuid
 from typing import Any, Awaitable, Callable, Protocol
@@ -34,8 +35,10 @@ from ..skills import read_skill
 # Contracts
 # --------------------------------------------------------------------------- #
 
+
 class SubAgentOrder(BaseModel):
     """An order the planner hands to a subagent for one candidate."""
+
     job: str
     """ The `hpc_jobs/<name>` to submit (resolved from the campaign manifest's role→job binding). """
     candidate: dict[str, Any] | None = None
@@ -49,6 +52,7 @@ class SubAgentOrder(BaseModel):
 
 class SubmittedJobInfo(BaseModel):
     """What an HPC submission yields — enough to poll status and fetch outputs later."""
+
     job_id: str
     cluster: str
     log_path: str | None = None
@@ -66,6 +70,7 @@ class ParsedResult(BaseModel):
     metric values live in `metrics` (e.g. {"TBR": 1.18, "melting_point_c": 480});
     the domain's scorer (a planner-skill script) interprets them.
     """
+
     ok: bool
     summary: str = ""
     metrics: dict[str, Any] = Field(default_factory=dict)
@@ -73,18 +78,27 @@ class ParsedResult(BaseModel):
 
 class HpcTools(Protocol):
     """The HPC operations a subagent needs. Implemented over the MCP tools by the planner runtime."""
+
     async def submit(
-        self, *, job: str, cluster: str | None, node_count: int | None,
-        duration: str | None, script_args: str | None,
+        self,
+        *,
+        job: str,
+        cluster: str | None,
+        node_count: int | None,
+        duration: str | None,
+        script_args: str | None,
     ) -> SubmittedJobInfo: ...
 
     async def status(self, *, job_id: str, cluster: str) -> str: ...
 
-    async def fetch_outputs(self, *, job_id: str, files: list[str], cluster: str) -> str: ...
+    async def fetch_outputs(
+        self, *, job_id: str, files: list[str], cluster: str
+    ) -> str: ...
 
 
 class ResultParser(Protocol):
     """Turns a finished job's raw status/outputs into a structured `ParsedResult`."""
+
     async def parse(
         self, *, candidate: dict[str, Any] | None, raw_status: str, raw_outputs: str
     ) -> ParsedResult: ...
@@ -96,6 +110,7 @@ class CallableResultParser:
     Accepts either a sync function returning `ParsedResult` or an async one returning an
     awaitable of it.
     """
+
     def __init__(
         self,
         fn: Callable[..., ParsedResult | Awaitable[ParsedResult]],
@@ -105,7 +120,9 @@ class CallableResultParser:
     async def parse(
         self, *, candidate: dict[str, Any] | None, raw_status: str, raw_outputs: str
     ) -> ParsedResult:
-        result = self._fn(candidate=candidate, raw_status=raw_status, raw_outputs=raw_outputs)
+        result = self._fn(
+            candidate=candidate, raw_status=raw_status, raw_outputs=raw_outputs
+        )
         if inspect.isawaitable(result):
             result = await result
         return result
@@ -149,6 +166,7 @@ def build_parse_user_prompt(
 
 class AgentResultParser:
     """A `ResultParser` backed by a PydanticAI agent specialized by the sim skill."""
+
     def __init__(self, agent: Agent, system_prompt: str):
         self.agent = agent
         self.system_prompt = system_prompt
@@ -157,12 +175,16 @@ class AgentResultParser:
         self, *, candidate: dict[str, Any] | None, raw_status: str, raw_outputs: str
     ) -> ParsedResult:
         result = await self.agent.run(
-            build_parse_user_prompt(candidate=candidate, raw_status=raw_status, raw_outputs=raw_outputs)
+            build_parse_user_prompt(
+                candidate=candidate, raw_status=raw_status, raw_outputs=raw_outputs
+            )
         )
         return result.output
 
 
-def build_skill_parser(skill_dir, role: str, model: str | None = None) -> AgentResultParser:
+def build_skill_parser(
+    skill_dir, role: str, model: str | None = None
+) -> AgentResultParser:
     """Construct the LLM-backed parser for a role, specialized by its sim skill."""
     system_prompt = build_subagent_system_prompt(skill_dir, role)
     agent = Agent(
@@ -177,8 +199,10 @@ def build_skill_parser(skill_dir, role: str, model: str | None = None) -> AgentR
 # The subagent
 # --------------------------------------------------------------------------- #
 
+
 class SubAgent:
     """A specialist worker for one role (e.g. "neutronics"), driven by injected HPC tools + parser."""
+
     def __init__(self, *, role: str, hpc: HpcTools, parser: ResultParser):
         self.role = role
         self.hpc = hpc
@@ -210,7 +234,9 @@ class SubAgent:
             log_path=info.log_path,
             output_dir=info.output_dir,
         )
-        await campaign_service.set_step_status(session, step_id=step.id, status="dispatched")
+        await campaign_service.set_step_status(
+            session, step_id=step.id, status="dispatched"
+        )
         return DispatchResult(step_id=step.id, job_ids=[info.job_id])
 
     async def collect(
@@ -240,5 +266,7 @@ class SubAgent:
             status="completed" if parsed.ok else "failed",
             result=parsed.model_dump(mode="json"),
         )
-        await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
+        await campaign_service.update_job(
+            session, job_id=job.job_id, result_collected=True
+        )
         return parsed

@@ -238,6 +238,7 @@ def shutdown(*, wait: bool = True) -> None:
 # is configured, in which case we tell TextRAG to skip the LLM step.
 # ---------------------------------------------------------------------------
 
+
 def _parse_backend_model() -> tuple[str | None, str | None]:
     """
     Parse VISTA_BACKEND_MODEL (the canonical chat-agent config in
@@ -398,19 +399,23 @@ async def index_publications(
             return f"{name}=<empty>"
         return f"{name}=<set,len={len(v)}>"
 
-    env_snapshot = ", ".join(_env_shape(n) for n in (
-        "VISTA_BACKEND_MODEL",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "OPENAI_MODEL",
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_DEPLOYMENT_NAME",
-        "ENDPOINT_URL",
-        "DEPLOYMENT_NAME",
-    ))
+    env_snapshot = ", ".join(
+        _env_shape(n)
+        for n in (
+            "VISTA_BACKEND_MODEL",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "OPENAI_MODEL",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "ENDPOINT_URL",
+            "DEPLOYMENT_NAME",
+        )
+    )
     logger.warning(  # WARNING level so it's visible even with filtered loggers
-        "Indexer env snapshot for citation creds: %s", env_snapshot,
+        "Indexer env snapshot for citation creds: %s",
+        env_snapshot,
     )
 
     if extract_citations:
@@ -424,7 +429,8 @@ async def index_publications(
             "Each PDF will trigger an LLM call to extract title/authors/"
             "journal/year/DOI/abstract; watch for '→ LLM request' and "
             "'← LLM response' lines below.",
-            provider, model,
+            provider,
+            model,
         )
     else:
         # Tell the user exactly which env var combination would enable
@@ -440,13 +446,15 @@ async def index_publications(
             "(AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY + "
             "AZURE_OPENAI_DEPLOYMENT_NAME), or OPENAI_API_KEY "
             "(with optional OPENAI_BASE_URL and OPENAI_MODEL). "
-            "VISTA_BACKEND_MODEL=\"azure:<deployment>\" or "
-            "\"openai:<model>\" is also accepted as a fallback for the "
+            'VISTA_BACKEND_MODEL="azure:<deployment>" or '
+            '"openai:<model>" is also accepted as a fallback for the '
             "deployment/model name when the explicit env var is unset.",
         )
 
     # Defense-in-depth: filenames are basenames, no path traversal.
-    cleaned = [Path(f).name for f in filenames if f and Path(f).name not in ("", ".", "..")]
+    cleaned = [
+        Path(f).name for f in filenames if f and Path(f).name not in ("", ".", "..")
+    ]
     if not cleaned:
         return []
 
@@ -455,13 +463,16 @@ async def index_publications(
     rag_db_p.mkdir(parents=True, exist_ok=True)
 
     started_at = time.time()
-    _set_progress(rag_db_path, {
-        "phase": "loading_model",
-        "processed": 0,
-        "total": len(cleaned),
-        "current": None,
-        "started_at": started_at,
-    })
+    _set_progress(
+        rag_db_path,
+        {
+            "phase": "loading_model",
+            "processed": 0,
+            "total": len(cleaned),
+            "current": None,
+            "started_at": started_at,
+        },
+    )
 
     lock = _db_lock(rag_db_path)
     async with lock:
@@ -488,14 +499,16 @@ async def index_publications(
                 if not sqlite_file.is_file():
                     logger.info(
                         "Discarding cached TextRAG for %s: "
-                        "chroma.sqlite3 no longer on disk", cache_key,
+                        "chroma.sqlite3 no longer on disk",
+                        cache_key,
                     )
                     _text_rag_instances.pop(cache_key, None)
                 else:
                     # Re-stamp mutable fields. The wrapped chromadb
                     # client and the embedding model are reused.
                     logger.info(
-                        "Reusing cached TextRAG for %s", cache_key,
+                        "Reusing cached TextRAG for %s",
+                        cache_key,
                     )
                     cached.pdf_folder = str(pdfs_dir_p)
                     cached.extract_citations = extract_citations
@@ -534,14 +547,16 @@ async def index_publications(
         for i, filename in enumerate(cleaned):
             pdf_path = pdfs_dir_p / filename
             if not pdf_path.is_file():
-                results.append({
-                    "filename": filename,
-                    "status": "failed",
-                    "error": f"File not found: {pdf_path}",
-                    "chunk_count": 0,
-                    "citation": None,
-                    "citation_status": "disabled",
-                })
+                results.append(
+                    {
+                        "filename": filename,
+                        "status": "failed",
+                        "error": f"File not found: {pdf_path}",
+                        "chunk_count": 0,
+                        "citation": None,
+                        "citation_status": "disabled",
+                    }
+                )
                 continue
 
             # Per-paper progress callback. TextRAG.index_single_pdf
@@ -566,25 +581,34 @@ async def index_publications(
                         progress["chunk_processed"] = chunk_processed
                         progress["chunk_total"] = chunk_total
                     _set_progress(rag_db_path, progress)
+
                 return cb
 
             # Initial "starting" update for this paper.
-            _set_progress(rag_db_path, {
-                "phase": "indexing",
-                "sub_phase": "starting",
-                "processed": i,
-                "total": len(cleaned),
-                "current": filename,
-                "started_at": started_at,
-            })
+            _set_progress(
+                rag_db_path,
+                {
+                    "phase": "indexing",
+                    "sub_phase": "starting",
+                    "processed": i,
+                    "total": len(cleaned),
+                    "current": filename,
+                    "started_at": started_at,
+                },
+            )
 
             logger.info(
-                "── Paper %d/%d: %s ──", i + 1, len(cleaned), filename,
+                "── Paper %d/%d: %s ──",
+                i + 1,
+                len(cleaned),
+                filename,
             )
             try:
                 res = await loop.run_in_executor(
                     _executor,
-                    lambda p=pdf_path, c=make_cb(i, filename): rag.index_single_pdf(p, progress_cb=c),
+                    lambda p=pdf_path, c=make_cb(i, filename): rag.index_single_pdf(
+                        p, progress_cb=c
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Indexing raised for %s", filename)
@@ -615,18 +639,24 @@ async def index_publications(
                 cit_summary = f"citation={cit_status}"
             logger.info(
                 "── Paper %d/%d done: status=%s chunks=%d %s",
-                i + 1, len(cleaned), res.get("status", "?"),
-                chunk_count, cit_summary,
+                i + 1,
+                len(cleaned),
+                res.get("status", "?"),
+                chunk_count,
+                cit_summary,
             )
             results.append(res)
 
-    _set_progress(rag_db_path, {
-        "phase": "done",
-        "processed": len(cleaned),
-        "total": len(cleaned),
-        "current": None,
-        "started_at": started_at,
-    })
+    _set_progress(
+        rag_db_path,
+        {
+            "phase": "done",
+            "processed": len(cleaned),
+            "total": len(cleaned),
+            "current": None,
+            "started_at": started_at,
+        },
+    )
     # Clear shortly after to avoid the "done" state lingering forever;
     # the UI's next poll will see no progress and clear the bar.
     asyncio.create_task(_delayed_clear(rag_db_path, delay=2.0))

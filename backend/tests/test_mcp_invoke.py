@@ -1,4 +1,5 @@
 """Tests for the live-MCP invoke builder (metadata shaping + result coercion)."""
+
 import json
 import uuid
 

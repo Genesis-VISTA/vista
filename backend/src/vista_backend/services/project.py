@@ -16,13 +16,17 @@ from .project_agent import invalidate_agents
 from ._helpers import ServiceUser
 
 
-async def _is_member(session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID) -> bool:
-    row = (await session.exec(
-        select(ProjectMemberTable).where(
-            ProjectMemberTable.project_id == project_id,
-            ProjectMemberTable.user_id == user_id,
+async def _is_member(
+    session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    row = (
+        await session.exec(
+            select(ProjectMemberTable).where(
+                ProjectMemberTable.project_id == project_id,
+                ProjectMemberTable.user_id == user_id,
+            )
         )
-    )).first()
+    ).first()
     return row is not None
 
 
@@ -33,7 +37,9 @@ async def _ensure_project_access(
     if user == "system" or user.is_admin:
         return
     if not await _is_member(session, project.id, user.id):
-        raise HTTPException(status_code=403, detail="You do not have access to this project")
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this project"
+        )
 
 
 async def list_projects(session: AsyncSession, user: ServiceUser) -> list[ProjectTable]:
@@ -50,13 +56,17 @@ async def list_projects(session: AsyncSession, user: ServiceUser) -> list[Projec
 async def get_project_by_name_optional(
     session: AsyncSession, name: str, user: ServiceUser
 ) -> ProjectTable | None:
-    project = (await session.exec(select(ProjectTable).where(ProjectTable.name == name))).first()
+    project = (
+        await session.exec(select(ProjectTable).where(ProjectTable.name == name))
+    ).first()
     if project:
         await _ensure_project_access(session, project, user)
     return project
 
 
-async def get_project_by_name(session: AsyncSession, name: str, user: ServiceUser) -> ProjectTable:
+async def get_project_by_name(
+    session: AsyncSession, name: str, user: ServiceUser
+) -> ProjectTable:
     project = await get_project_by_name_optional(session, name, user)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -72,7 +82,9 @@ async def create_project(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail=f"A project named {payload.name!r} already exists.")
+        raise HTTPException(
+            status_code=409, detail=f"A project named {payload.name!r} already exists."
+        )
     if user != "system":
         session.add(ProjectMemberTable(project_id=new.id, user_id=user.id))
         await session.flush()
@@ -91,7 +103,9 @@ async def update_project(
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail=f"A project named {updates.name!r} already exists.")
+        raise HTTPException(
+            status_code=409, detail=f"A project named {updates.name!r} already exists."
+        )
     await session.refresh(project)
     invalidate_agents(session, project_id=project.id)
     return project
@@ -120,10 +134,14 @@ async def add_project_member(
     session: AsyncSession, name: str, target_user_email: str, user: ServiceUser
 ) -> None:
     project = await get_project_by_name(session, name, user)
-    target = await user_service.get_user_by_email(session, target_user_email, user="system")
+    target = await user_service.get_user_by_email(
+        session, target_user_email, user="system"
+    )
     session.add(ProjectMemberTable(project_id=project.id, user_id=target.id))
     try:
         await session.flush()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail="User is already a member of this project")
+        raise HTTPException(
+            status_code=409, detail="User is already a member of this project"
+        )

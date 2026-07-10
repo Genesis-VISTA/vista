@@ -11,6 +11,7 @@ these primitives — so this core is fully testable without an LLM.
 `build_planner_system_prompt` inlines the playbook skill so the planner agent is
 specialized by it; `build_subagents` builds one subagent per manifest role.
 """
+
 import json
 import uuid
 from pathlib import Path
@@ -58,7 +59,9 @@ def build_subagents(
     model: str | None = None,
 ) -> dict[str, SubAgent]:
     """Build one `SubAgent` per manifest role, each specialized by its sim skill's parser."""
-    factory = parser_factory or (lambda skill_dir, role: build_skill_parser(skill_dir, role, model))
+    factory = parser_factory or (
+        lambda skill_dir, role: build_skill_parser(skill_dir, role, model)
+    )
     subagents: dict[str, SubAgent] = {}
     for spec in manifest.subagents:
         parser = factory(Path(skills_dir) / spec.skill, spec.role)
@@ -68,6 +71,7 @@ def build_subagents(
 
 class CampaignPlanner:
     """Manifest-driven delegation: candidate -> per-role steps + jobs; finished job -> collect."""
+
     def __init__(self, *, manifest: CampaignManifest, subagents: dict[str, SubAgent]):
         self.manifest = manifest
         self.subagents = subagents

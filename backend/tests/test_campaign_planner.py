@@ -2,6 +2,7 @@
 
 No live LLM or MCP: the HPC boundary and the result parsers are injected.
 """
+
 import pytest
 
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools, parse_submit_summary
@@ -42,6 +43,7 @@ subagents:
 
 class FakeHpcTools:
     """Increments job ids so a candidate's two role-jobs get distinct PKs."""
+
     def __init__(self):
         self.n = 0
         self.submitted_jobs: list[str] = []
@@ -82,12 +84,16 @@ async def _make_run(session, alice):
     session.add(project)
     await session.flush()
     return await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
-        domain="testdomain", planner_skill="test-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        domain="testdomain",
+        planner_skill="test-planner",
     )
 
 
 # --- McpHpcTools -----------------------------------------------------------
+
 
 def test_parse_submit_summary():
     text = "job_id: 12345\ncluster: frontier\nnodes: 2\nduration: 1:00:00"
@@ -110,7 +116,13 @@ async def test_mcp_hpc_tools_submit_parses_and_status_passes_through():
         return f"raw output for {tool}"
 
     hpc = McpHpcTools(invoke)
-    info = await hpc.submit(job="neutronics", cluster="odo", node_count=1, duration=None, script_args="--x 1")
+    info = await hpc.submit(
+        job="neutronics",
+        cluster="odo",
+        node_count=1,
+        duration=None,
+        script_args="--x 1",
+    )
     assert info.job_id == "777"
     assert info.cluster == "odo"
     assert calls[0][1]["job"] == "neutronics"
@@ -122,19 +134,23 @@ async def test_mcp_hpc_tools_submit_parses_and_status_passes_through():
 
 # --- build_subagents -------------------------------------------------------
 
+
 def test_build_subagents_one_per_role():
     hpc = FakeHpcTools()
     subagents = build_subagents(
         _manifest(),
         hpc=hpc,
         skills_dir="/unused",
-        parser_factory=lambda skill_dir, role: CallableResultParser(lambda **_: ParsedResult(ok=True)),
+        parser_factory=lambda skill_dir, role: CallableResultParser(
+            lambda **_: ParsedResult(ok=True)
+        ),
     )
     assert set(subagents) == {"alpha", "beta"}
     assert subagents["alpha"].role == "alpha"
 
 
 # --- CampaignPlanner -------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_dispatch_candidate_creates_a_step_and_job_per_role(session, alice):
@@ -143,8 +159,12 @@ async def test_dispatch_candidate_creates_a_step_and_job_per_role(session, alice
     planner = _planner(hpc)
 
     job_ids = await planner.dispatch_candidate(
-        session, run_id=run.id, user_id=alice.id,
-        candidate={"x": 0.5}, cycle=0, cluster="frontier",
+        session,
+        run_id=run.id,
+        user_id=alice.id,
+        candidate={"x": 0.5},
+        cycle=0,
+        cluster="frontier",
     )
 
     assert sorted(job_ids) == ["job-1", "job-2"]
@@ -163,7 +183,11 @@ async def test_collect_job_routes_to_role_subagent_and_completes_step(session, a
     hpc = FakeHpcTools()
     planner = _planner(hpc)
     await planner.dispatch_candidate(
-        session, run_id=run.id, user_id=alice.id, candidate={"x": 0.5}, cycle=0,
+        session,
+        run_id=run.id,
+        user_id=alice.id,
+        candidate={"x": 0.5},
+        cycle=0,
     )
 
     job = await campaign_service.get_job(session, "job-1")
@@ -180,7 +204,9 @@ async def test_collect_job_raises_for_unknown_role(session, alice):
     run = await _make_run(session, alice)
     planner = _planner(FakeHpcTools())
     # A step whose kind has no registered subagent.
-    orphan = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="gamma")
+    orphan = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="gamma"
+    )
     job = await campaign_service.record_job(
         session, job_id="orphan-1", step_id=orphan.id, user_id=alice.id, cluster="odo"
     )
@@ -189,6 +215,7 @@ async def test_collect_job_raises_for_unknown_role(session, alice):
 
 
 # --- planner system prompt -------------------------------------------------
+
 
 def test_build_planner_system_prompt_inlines_playbook(tmp_path):
     skill_dir = tmp_path / "test-planner"

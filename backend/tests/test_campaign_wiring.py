@@ -1,4 +1,5 @@
 """Tests for the monitor<->MCP/planner wiring seams (parse, per-job invoke/planner, poll, collect)."""
+
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,12 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
         session, project_id=project.id, user_id=alice.id
     )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-        domain="testdomain", planner_skill=planner_skill,
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="testdomain",
+        planner_skill=planner_skill,
     )
     step = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="alpha", candidate={"x": 1}
@@ -67,6 +72,7 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
 
 # --- parse_job_state -------------------------------------------------------
 
+
 def test_parse_job_state_from_status_output():
     text = "JOB_ID=12345\nCLUSTER=frontier\nSTATE=COMPLETED\n\n--- LOGS ---\nTBR=1.18"
     assert parse_job_state(text) == "COMPLETED"
@@ -78,6 +84,7 @@ def test_parse_job_state_defaults_to_unknown():
 
 
 # --- build_invoke_for_job --------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
@@ -101,6 +108,7 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
 
 # --- build_status_poll -----------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alice):
     _project, _run, _step, job = await _make_run_step_job(session, alice)
@@ -123,8 +131,11 @@ async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alic
 
 # --- build_planner_for_job -------------------------------------------------
 
+
 @pytest.mark.anyio
-async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp_path, monkeypatch):
+async def test_build_planner_for_job_reconstructs_from_skill(
+    session, alice, tmp_path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     _project, run, _step, job = await _make_run_step_job(session, alice)
 
@@ -137,9 +148,12 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
         return ""
 
     planner = await build_planner_for_job(
-        session, job,
+        session,
+        job,
         invoke_builder=lambda user, paths: _noop_invoke,
-        parser_factory=lambda d, r: CallableResultParser(lambda **_: ParsedResult(ok=True)),
+        parser_factory=lambda d, r: CallableResultParser(
+            lambda **_: ParsedResult(ok=True)
+        ),
     )
 
     assert planner.manifest.roles == ["alpha", "beta"]
@@ -148,17 +162,22 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
 
 # --- build_collector -------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_build_collector_routes_to_run_planner(session, alice):
     manifest = CampaignManifest.model_validate(
         {
             "domain": "d",
             "metrics": {"primary": {"name": "SCORE"}},
-            "subagents": [{"role": "alpha", "skill": "alpha-skill", "job": "alpha_job"}],
+            "subagents": [
+                {"role": "alpha", "skill": "alpha-skill", "job": "alpha_job"}
+            ],
         }
     )
     subagents = build_subagents(
-        manifest, hpc=_FakeHpc(), skills_dir="/unused",
+        manifest,
+        hpc=_FakeHpc(),
+        skills_dir="/unused",
         parser_factory=lambda d, r: CallableResultParser(
             lambda **_: ParsedResult(ok=True, metrics={"SCORE": 9})
         ),

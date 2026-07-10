@@ -1,0 +1,151 @@
+# Vista CI Pipeline
+#
+# Stages:
+#   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
+#   test  — pytest (backend + dev_mcp_server)
+#
+# Python jobs use the official uv image and let uv manage the Python 3.14 install.
+# Node jobs use node:22-slim. All jobs run in parallel within each stage.
+
+stages:
+  - lint
+  - test
+
+default:
+  interruptible: true
+
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  UV_PYTHON_DOWNLOADS: "auto"
+
+# ─── Python image ───────────────────────────────────────────────────────────
+#
+# ghcr.io/astral-sh/uv:latest sets `uv` as its Docker ENTRYPOINT, which
+# prevents GitLab's runner from starting `sh` to execute job scripts.
+# Using the python3.14-bookworm-slim variant (Debian base with sh + Python 3.14
+# bundled) and clearing the entrypoint fixes this for all Python jobs.
+
+.python-image: &python-image
+  image:
+    name: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+    entrypoint: [""]
+
+# ─── Cache anchors ──────────────────────────────────────────────────────────
+
+.cache-uv-backend: &cache-uv-backend
+  cache:
+    key:
+      prefix: uv-backend
+      files:
+        - backend/uv.lock
+    paths:
+      - .uv-cache/
+      - backend/.venv/
+
+.cache-uv-dev-mcp: &cache-uv-dev-mcp
+  cache:
+    key:
+      prefix: uv-dev-mcp
+      files:
+        - mcp_servers/dev_mcp_server/uv.lock
+    paths:
+      - .uv-cache/
+      - mcp_servers/dev_mcp_server/.venv/
+
+.cache-npm-ui: &cache-npm-ui
+  cache:
+    key:
+      prefix: npm-ui
+      files:
+        - ui/package-lock.json
+    paths:
+      - ui/node_modules/
+
+# ─── Backend ────────────────────────────────────────────────────────────────
+
+backend:lint:
+  stage: lint
+  <<: [*python-image, *cache-uv-backend]
+  script:
+    - cd backend
+    # ruff is run via uvx so no project install is needed for this job
+    - uvx ruff check src/ tests/
+    - uvx ruff format --check src/ tests/
+
+backend:typecheck:
+  stage: lint
+  <<: [*python-image, *cache-uv-backend]
+  before_script:
+    # pyright's bundled Node.js binary requires libatomic, absent in bookworm-slim
+    - apt-get update -qq && apt-get install -y --no-install-recommends libatomic1
+  script:
+    - cd backend
+    # Install project deps so pyright can resolve imports
+    - uv sync --frozen
+    # --with pyright adds pyright temporarily without touching the lock file
+    - uv run --with pyright pyright src/
+  # advisory: pyright is newly introduced; pre-existing type errors should be
+  # addressed incrementally. See backend/pyrightconfig.json for scope/mode.
+  allow_failure: true
+
+backend:security:
+  stage: lint
+  <<: *python-image
+  script:
+    - cd backend
+    # bandit -ll reports only medium+ severity findings
+    - uvx bandit -r src/ -ll -q
+  # Treat as advisory — findings are reported but don't block the pipeline
+  allow_failure: true
+
+backend:test:
+  stage: test
+  <<: [*python-image, *cache-uv-backend]
+  script:
+    - cd backend
+    - uv sync --frozen --dev
+    - uv run pytest tests/ -v --tb=short
+
+# ─── dev_mcp_server ─────────────────────────────────────────────────────────
+
+dev-mcp:lint:
+  stage: lint
+  <<: [*python-image, *cache-uv-dev-mcp]
+  script:
+    - cd mcp_servers/dev_mcp_server
+    - uvx ruff check src/ tests/
+    - uvx ruff format --check src/ tests/
+
+dev-mcp:test:
+  stage: test
+  <<: [*python-image, *cache-uv-dev-mcp]
+  before_script:
+    # python-magic (dep of dev_mcp_server) requires the libmagic system library
+    - apt-get update -qq && apt-get install -y --no-install-recommends libmagic1
+  script:
+    - cd mcp_servers/dev_mcp_server
+    # pytest lives in [project.optional-dependencies] dev, not [dependency-groups]
+    - uv sync --frozen --extra dev
+    - uv run pytest tests/ -v --tb=short
+  # Some tests may require a running microsandbox container daemon
+  allow_failure: true
+
+# ─── UI ─────────────────────────────────────────────────────────────────────
+
+ui:lint:
+  stage: lint
+  image: node:22-slim
+  <<: *cache-npm-ui
+  script:
+    - cd ui
+    - npm ci --prefer-offline
+    - npm run lint
+
+ui:typecheck:
+  stage: lint
+  image: node:22-slim
+  <<: *cache-npm-ui
+  script:
+    - cd ui
+    - npm ci --prefer-offline
+    - npx tsc --noEmit

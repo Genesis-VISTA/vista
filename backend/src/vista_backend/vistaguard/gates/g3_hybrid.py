@@ -89,7 +89,7 @@ def inject_hybrid_args(
 ) -> dict[str, Any]:
     """
     Return a new args dict with `hybrid=True` and the configured
-    `alpha`. 
+    `alpha`.
     """
     return {**args, "hybrid": True, "alpha": alpha}
 
@@ -103,7 +103,7 @@ def inject_hybrid_args(
 class MirroredRetrievalResult:
     """
     Backend-side mirror of the MCP server's
-    `vista_mcp_server.hybrid_search.RetrievalResult`. 
+    `vista_mcp_server.hybrid_search.RetrievalResult`.
     """
 
     chunk_id: str

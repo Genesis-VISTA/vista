@@ -1,7 +1,10 @@
-import asyncio, json
+import asyncio
+import json
+
 
 async def check_output(*args, **kwargs):
-    proc = await asyncio.create_subprocess_exec(*args,
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         **kwargs,
@@ -11,9 +14,11 @@ async def check_output(*args, **kwargs):
         raise RuntimeError(f"cmd '{' '.join(args)}' failed: {stderr.decode()}")
     return stdout, stderr
 
+
 async def parse_output(*args, **kwargs):
-    """ Like check_output, but parses JSON. Returns None on error """
-    proc = await asyncio.create_subprocess_exec(*args,
+    """Like check_output, but parses JSON. Returns None on error"""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         **kwargs,

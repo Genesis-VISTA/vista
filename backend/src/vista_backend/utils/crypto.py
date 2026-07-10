@@ -2,14 +2,17 @@ from cryptography.fernet import Fernet
 from sqlalchemy.types import TypeDecorator, String
 import functools
 
+
 @functools.cache
 def get_fernet() -> Fernet:
     from ..config import settings
+
     return Fernet(settings.encryption_key.get_secret_value().encode())
 
 
 class EncryptedStr(TypeDecorator):
     """SQLAlchemy column type that transparently Fernet-encrypts on write and decrypts on read."""
+
     impl = String
     cache_ok = True
 

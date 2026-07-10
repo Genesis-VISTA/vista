@@ -12,6 +12,7 @@ spec via `set_campaign_spec`; plan approval, edits, and continue/exit decisions 
 conversationally. `dispatch_cycle` launches HPC work and returns immediately — the monitor
 emails the user and fills in results as jobs finish.
 """
+
 import uuid
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -35,6 +36,7 @@ def _noop(_msg: str) -> None:
 @dataclass
 class CampaignDriverDeps:
     """What the campaign tools need, injected so the driver isn't coupled to ProjectAgent."""
+
     project_id: uuid.UUID
     user_id: uuid.UUID
     session_id: uuid.UUID | None
@@ -66,11 +68,18 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             raise ModelRetry(f"Campaign {run_id_str} not found in this project.")
 
     @agent.tool_plain
-    async def start_campaign(planner_skill: str, domain: str, title: str | None = None) -> str:
+    async def start_campaign(
+        planner_skill: str, domain: str, title: str | None = None
+    ) -> str:
         """Begin a campaign. `planner_skill` and `domain` come from the active playbook skill."""
         run = await campaign_service.create_campaign(
-            _session(), project_id=deps.project_id, user_id=deps.user_id,
-            session_id=deps.session_id, domain=domain, planner_skill=planner_skill, title=title,
+            _session(),
+            project_id=deps.project_id,
+            user_id=deps.user_id,
+            session_id=deps.session_id,
+            domain=domain,
+            planner_skill=planner_skill,
+            title=title,
         )
         return (
             f"Started campaign. run_id={run.id} status={run.status}. "
@@ -82,7 +91,9 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         """Persist the agreed spec (variables, ranges, platform, targets, budget); moves to planning."""
         session = _session()
         run = await _require_run(session, run_id)
-        await campaign_service.update_campaign(session, run_id=run.id, spec=spec, status="planning")
+        await campaign_service.update_campaign(
+            session, run_id=run.id, spec=spec, status="planning"
+        )
         return f"Spec saved for {run.id} (status=planning). Draft a plan, get user approval, then save_campaign_plan."
 
     @agent.tool_plain
@@ -104,11 +115,17 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         all_jobs: list[str] = []
         for candidate in candidates:
             job_ids = await planner.dispatch_candidate(
-                session, run_id=run.id, user_id=deps.user_id,
-                candidate=candidate, cycle=cycle, cluster=cluster,
+                session,
+                run_id=run.id,
+                user_id=deps.user_id,
+                candidate=candidate,
+                cycle=cycle,
+                cluster=cluster,
             )
             all_jobs.extend(job_ids)
-            deps.emit_progress(f"Dispatched cycle {cycle} for {candidate}: jobs {', '.join(job_ids)}")
+            deps.emit_progress(
+                f"Dispatched cycle {cycle} for {candidate}: jobs {', '.join(job_ids)}"
+            )
         await campaign_service.set_status(session, run_id=run.id, status="running")
         return (
             f"Dispatched {len(all_jobs)} job(s) for cycle {cycle}: {', '.join(all_jobs)}. "
@@ -128,7 +145,9 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
                 f"  step {s.kind} cycle={s.cycle} status={s.status} result={'yes' if s.result else 'no'}"
             )
         for j in jobs:
-            lines.append(f"  job {j.job_id} {j.job_name} state={j.state} collected={j.result_collected}")
+            lines.append(
+                f"  job {j.job_id} {j.job_name} state={j.state} collected={j.result_collected}"
+            )
         return "\n".join(lines)
 
     @agent.tool_plain

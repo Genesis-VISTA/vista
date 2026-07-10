@@ -37,6 +37,7 @@ class GateDecision:
         decision without losing fields it doesn't touch.
         """
         from dataclasses import replace
+
         return replace(self, **changes)
 
 
@@ -90,7 +91,7 @@ class Gate(ABC):
         Run the fast-tier check.
 
         When `self.enabled` is False, returns an allow decision
-        without invoking subclass logic. 
+        without invoking subclass logic.
         """
         if not self.enabled:
             return GateDecision(
@@ -159,8 +160,10 @@ class Gate(ABC):
         if outcome.ok:
             return decision
         level = outcome.incident_level or 2
-        bumped = level if decision.incident_level is None else min(
-            decision.incident_level, level
+        bumped = (
+            level
+            if decision.incident_level is None
+            else min(decision.incident_level, level)
         )
         prefix = f"{decision.reason}; " if decision.reason else ""
         return decision.replace_with(

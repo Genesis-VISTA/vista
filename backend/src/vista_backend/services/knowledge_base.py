@@ -2,12 +2,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
-from ..db.schemas import KnowledgeBaseCreate, KnowledgeBaseTable, KnowledgeBaseUpdate, is_valid_slug
+from ..db.schemas import (
+    KnowledgeBaseCreate,
+    KnowledgeBaseTable,
+    KnowledgeBaseUpdate,
+    is_valid_slug,
+)
 from ..utils import indexer
 
 
@@ -19,10 +23,14 @@ async def list_kbs(session: AsyncSession) -> list[KnowledgeBaseTable]:
     return list((await session.exec(select(KnowledgeBaseTable))).all())
 
 
-async def get_kb_optional(session: AsyncSession, slug: str) -> KnowledgeBaseTable | None:
-    return (await session.exec(
-        select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == slug)
-    )).first()
+async def get_kb_optional(
+    session: AsyncSession, slug: str
+) -> KnowledgeBaseTable | None:
+    return (
+        await session.exec(
+            select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == slug)
+        )
+    ).first()
 
 
 async def get_kb(session: AsyncSession, slug: str) -> KnowledgeBaseTable:
@@ -32,7 +40,9 @@ async def get_kb(session: AsyncSession, slug: str) -> KnowledgeBaseTable:
     return kb
 
 
-async def create_kb(session: AsyncSession, payload: KnowledgeBaseCreate) -> KnowledgeBaseTable:
+async def create_kb(
+    session: AsyncSession, payload: KnowledgeBaseCreate
+) -> KnowledgeBaseTable:
     if not is_valid_slug(payload.slug):
         raise HTTPException(
             status_code=400,
@@ -43,7 +53,9 @@ async def create_kb(session: AsyncSession, payload: KnowledgeBaseCreate) -> Know
         )
     existing = await get_kb_optional(session, payload.slug)
     if existing is not None:
-        raise HTTPException(status_code=409, detail=f"Slug already in use: {payload.slug}")
+        raise HTTPException(
+            status_code=409, detail=f"Slug already in use: {payload.slug}"
+        )
 
     kb_dir = settings.knowledge_bases_dir / payload.slug
     pdfs_dir = kb_dir / "pdfs"
@@ -71,7 +83,9 @@ async def create_kb(session: AsyncSession, payload: KnowledgeBaseCreate) -> Know
     return row
 
 
-async def update_kb(session: AsyncSession, slug: str, updates: KnowledgeBaseUpdate) -> KnowledgeBaseTable:
+async def update_kb(
+    session: AsyncSession, slug: str, updates: KnowledgeBaseUpdate
+) -> KnowledgeBaseTable:
     kb = await get_kb(session, slug)
     data = updates.model_dump(exclude_unset=True)
     for key, value in data.items():

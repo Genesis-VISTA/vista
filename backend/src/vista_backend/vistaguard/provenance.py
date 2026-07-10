@@ -142,7 +142,8 @@ class FlowceptSink:
                 except Exception as exc:  # noqa: BLE001 - teardown must not raise
                     logger.warning(
                         "VISTAGuard: error stopping Flowcept controller (%s: %s)",
-                        type(exc).__name__, exc,
+                        type(exc).__name__,
+                        exc,
                     )
         self._flowcept = None
         self._db = None
@@ -239,14 +240,14 @@ class ProvenanceEmitter:
             )
 
         self._settings = settings
-        self._session_id = (
-            session_id if session_id is not None else uuid.uuid4().hex
-        )
+        self._session_id = session_id if session_id is not None else uuid.uuid4().hex
 
         # Resolve the log destination. Explicit constructor argument
         # wins, settings second, otherwise we fall back to the module
         # logger.
-        resolved_path = log_path if log_path is not None else settings.provenance_log_path
+        resolved_path = (
+            log_path if log_path is not None else settings.provenance_log_path
+        )
         self._log_path: Path | None = (
             Path(resolved_path) if resolved_path is not None else None
         )
@@ -341,9 +342,7 @@ class ProvenanceEmitter:
             "decision": _summarize_decision(decision),
         }
         if decision.capability_tag is not None:
-            payload["capability_tag"] = _capability_tag_to_dict(
-                decision.capability_tag
-            )
+            payload["capability_tag"] = _capability_tag_to_dict(decision.capability_tag)
         # Phase-0 context handling: the GateContext fields that are
         # safe to serialize (none of the registry / scorer / agent
         # references are JSON-compatible) come from the metadata
@@ -376,9 +375,7 @@ class ProvenanceEmitter:
             "reason": record.reason,
         }
         if record.capability_tag is not None:
-            payload["capability_tag"] = _capability_tag_to_dict(
-                record.capability_tag
-            )
+            payload["capability_tag"] = _capability_tag_to_dict(record.capability_tag)
         if record.metadata:
             payload["metadata"] = dict(record.metadata)
 
@@ -418,7 +415,8 @@ class ProvenanceEmitter:
                     "VISTAGuard: Flowcept emission failed (%s: %s); "
                     "falling back to the JSONL provenance log for the "
                     "rest of this session.",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
                 self._write_jsonl(event)
             self._last_event = event
@@ -439,7 +437,8 @@ class ProvenanceEmitter:
                 except Exception as exc:  # noqa: BLE001 - teardown must not raise
                     logger.warning(
                         "VISTAGuard: error closing provenance sink (%s: %s)",
-                        type(exc).__name__, exc,
+                        type(exc).__name__,
+                        exc,
                     )
 
     def _write_jsonl(self, event: ProvenanceEvent) -> None:
@@ -497,10 +496,7 @@ def _utc_now_iso() -> str:
     `isoformat()` of an aware datetime because Phase-7 broker
     consumers vary in how they parse the `+00:00` form.
     """
-    return (
-        datetime.now(tz=timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%S.%f")
-    )[:-3] + "Z"
+    return (datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f"))[:-3] + "Z"
 
 
 def _summarize_decision(decision: GateDecision) -> dict[str, Any]:

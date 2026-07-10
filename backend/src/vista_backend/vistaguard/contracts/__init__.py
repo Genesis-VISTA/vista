@@ -12,6 +12,7 @@ This package also contains non-Python contract data used by other gates
 (the `semgrep/` ruleset for G4 and `jailbreak_signatures.txt` for G1);
 those are read by path and are unaffected by this package's exports.
 """
+
 from __future__ import annotations
 
 from .base import (

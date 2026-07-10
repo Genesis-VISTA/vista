@@ -13,6 +13,7 @@ The loader is import-safe and idempotent: builtin modules import once and
 registration is keyed by contract name, so repeated calls (one per sidecar)
 do not duplicate contracts.
 """
+
 from __future__ import annotations
 
 import importlib

@@ -10,6 +10,7 @@ tool's already-unwrapped text result.
 `build_mcp_invoke` is the thin live wiring over the vista MCP server; `project_paths_for`
 reproduces the ProjectAgent sandbox-volume layout the HPC tools resolve log/output paths against.
 """
+
 import json
 import uuid
 from typing import Any, Awaitable, Callable
@@ -36,7 +37,9 @@ def project_paths_for(session_id: uuid.UUID) -> dict[str, str]:
     }
 
 
-def build_metadata(user: UserPublicWithConfig, project_paths: dict[str, str]) -> dict[str, Any]:
+def build_metadata(
+    user: UserPublicWithConfig, project_paths: dict[str, str]
+) -> dict[str, Any]:
     """The `{"vista": {"user", "project_paths"}}` metadata the vista MCP HPC tools read."""
     return {
         "vista": {
@@ -62,7 +65,9 @@ def build_invoke(
     return invoke
 
 
-def build_mcp_invoke(user: UserPublicWithConfig, project_paths: dict[str, str]) -> InvokeTool:
+def build_mcp_invoke(
+    user: UserPublicWithConfig, project_paths: dict[str, str]
+) -> InvokeTool:
     """Live `invoke` over the vista MCP server (direct_call_tool threads metadata + unwraps text)."""
     # Local import: agents.agents pulls in the full agent stack; keep it off module-load.
     from ..agents import get_vista_mcp_server

@@ -7,12 +7,20 @@ from pydantic import BaseModel, Field, TypeAdapter
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import ProjectAgentResult, ProjectAgentResultEvent, McpElicitationEvent
+from ..agents.agents import (
+    ProjectAgentResult,
+    ProjectAgentResultEvent,
+    McpElicitationEvent,
+)
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
-from ..services.project_agent import get_project_agent_key, project_agent_pool, register_elicitation
+from ..services.project_agent import (
+    get_project_agent_key,
+    project_agent_pool,
+    register_elicitation,
+)
 from ..services.auth import UserDep
 
 router = APIRouter()
@@ -28,6 +36,7 @@ class AgentRunRequest(BaseModel):
     https://pydantic.dev/docs/ai/core-concepts/messages/ for the message/part
     shape.
     """
+
     stream: bool = False
     """ If True, stream the response as Server-Sent Events. """
     user_prompt: str
@@ -37,9 +46,13 @@ class AgentRunRequest(BaseModel):
     message_history: list[ModelMessage] = Field(default_factory=list)
     """ Optional fallback history from older clients; backend session state wins when present. """
 
+
 @router.post("/projects/{project_name}/agent/run", response_model=ProjectAgentResult)
 async def agent_run(
-    project_name: str, body: AgentRunRequest, session: SessionDep, user: UserDep,
+    project_name: str,
+    body: AgentRunRequest,
+    session: SessionDep,
+    user: UserDep,
 ) -> ProjectAgentResult | Response:
     """
     Session-backed chat completion that runs the full agent loop for one turn.
@@ -79,6 +92,7 @@ async def agent_run(
     )
 
     if body.stream:
+
         async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
             async with project_agent_pool.get(agent_key) as agent:
                 async for event in agent.run_stream(
@@ -90,7 +104,10 @@ async def agent_run(
                     if isinstance(event, McpElicitationEvent):
                         register_elicitation(event.elicitation_id, agent)
                         # calling /projects/{project_name}/elicitation will resolve the elicitation request
-                    if isinstance(event, ProjectAgentResultEvent) and body.chat_session_id is not None:
+                    if (
+                        isinstance(event, ProjectAgentResultEvent)
+                        and body.chat_session_id is not None
+                    ):
                         await chat_session_service.append_message_history(
                             session,
                             project_id=project.id,

@@ -4,16 +4,17 @@ from typing import Literal
 from pathlib import Path
 
 
-Volume = tuple[Path | str, Path | str, Literal['r', 'w']]
+Volume = tuple[Path | str, Path | str, Literal["r", "w"]]
 
 # TODO: Maybe should simplify these awkward abstract classmethods with a abstract "SandboxSpawner"
 # class.
+
 
 class Sandbox(abc.ABC):
     @classmethod
     @abc.abstractmethod
     async def build(cls) -> None:
-        """ Pre-build or pull the sandbox image without spawning a sandbox instance. """
+        """Pre-build or pull the sandbox image without spawning a sandbox instance."""
 
     @classmethod
     @abc.abstractmethod
@@ -25,8 +26,12 @@ class Sandbox(abc.ABC):
 
     @abc.abstractmethod
     async def exec(
-        self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams: bool = False,
+        self,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        combine_streams: bool = False,
     ) -> asyncio.subprocess.Process:
         """
         Execute a command inside the sandbox.
@@ -57,14 +62,21 @@ class UnSandbox(Sandbox):
         return UnSandbox()
 
     async def exec(
-        self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams: bool = False,
+        self,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        combine_streams: bool = False,
     ) -> asyncio.subprocess.Process:
         return await asyncio.create_subprocess_exec(
-            command, *(args or []),
+            command,
+            *(args or []),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT if combine_streams else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT
+            if combine_streams
+            else asyncio.subprocess.PIPE,
             env=env,
             cwd=cwd,
         )

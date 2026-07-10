@@ -292,9 +292,7 @@ class IncidentManager:
         # Phase-0 issue; until it lands, callers leave
         # provenance=None and we no-op here. The hasattr check
         # makes the call resilient to phase ordering.
-        if self._provenance is not None and hasattr(
-            self._provenance, "emit_incident"
-        ):
+        if self._provenance is not None and hasattr(self._provenance, "emit_incident"):
             self._provenance.emit_incident(record_obj)
 
         # 4. Cache for `last_incident`.

@@ -105,7 +105,7 @@ def hybrid_split_salt_data(df, formula_col='formula',
     # Step 2: Add all single-sample formulas to training
     train_formulas_list.extend(single_sample_formulas)
     
-    print(f"Formula-level split:")
+    print("Formula-level split:")
     print(f"  Train formulas: {len(train_formulas_list)}")
     print(f"  Val formulas (unseen): {len(val_formulas_list)}")
     print(f"  Test formulas (unseen): {len(test_formulas_list)}")
@@ -162,10 +162,10 @@ def hybrid_split_salt_data(df, formula_col='formula',
     df_val = df_val.sample(frac=1, random_state=random_state).reset_index(drop=True)
     df_test = df_test.sample(frac=1, random_state=random_state).reset_index(drop=True)
     
-    print(f"\nComposition-level split for training formulas:")
+    print("\nComposition-level split for training formulas:")
     print(f"  Compositions moved to validation: {compositions_moved_to_val}")
     
-    print(f"\nFinal split sizes:")
+    print("\nFinal split sizes:")
     print(f"  Train: {len(df_train)} samples ({len(df_train)/len(df)*100:.1f}%)")
     print(f"  Val:   {len(df_val)} samples ({len(df_val)/len(df)*100:.1f}%)")
     print(f"  Test:  {len(df_test)} samples ({len(df_test)/len(df)*100:.1f}%)")
@@ -242,7 +242,7 @@ if __name__ == "__main__":
     val_formulas = set(df_val['formula'].unique())
     test_formulas = set(df_test['formula'].unique())
     
-    print(f"\nFormula overlap check:")
+    print("\nFormula overlap check:")
     print(f"  Train ∩ Test: {train_formulas & test_formulas} (should be empty for test formulas)")
     print(f"  Train ∩ Val:  {train_formulas & val_formulas} (may have overlap for composition interpolation)")
     print(f"  Val ∩ Test:   {val_formulas & test_formulas} (should be empty)")

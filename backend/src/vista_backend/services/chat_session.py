@@ -38,13 +38,15 @@ async def get_chat_session_optional(
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable | None:
     stmt = select(ChatSessionTable).where(
-            ChatSessionTable.project_id == project_id,
-            ChatSessionTable.user_id == user_id,
-        )
+        ChatSessionTable.project_id == project_id,
+        ChatSessionTable.user_id == user_id,
+    )
     if chat_session_id is not None:
         stmt = stmt.where(ChatSessionTable.id == chat_session_id)
     else:
-        stmt = stmt.order_by(desc(ChatSessionTable.updated_at), desc(ChatSessionTable.created_at))
+        stmt = stmt.order_by(
+            desc(ChatSessionTable.updated_at), desc(ChatSessionTable.created_at)
+        )
     return (await session.exec(stmt)).first()
 
 
@@ -114,7 +116,9 @@ async def get_or_create_chat_session(
             chat_session_id=chat_session_id,
         )
 
-    existing = await get_chat_session_optional(session, project_id=project_id, user_id=user_id)
+    existing = await get_chat_session_optional(
+        session, project_id=project_id, user_id=user_id
+    )
     if existing is not None:
         return existing
 
@@ -136,8 +140,12 @@ async def update_chat_session(
         chat_session_id=chat_session_id,
     )
     if updates.message_history is not None:
-        normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(updates.message_history)
-        row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(normalized_history, mode="json")
+        normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(
+            updates.message_history
+        )
+        row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(
+            normalized_history, mode="json"
+        )
     if updates.messages is not None:
         row.messages = [message.model_dump(mode="json") for message in updates.messages]
     if updates.latest_result is not None:
@@ -212,7 +220,9 @@ async def save_message_history(
         chat_session_id=chat_session_id,
     )
     normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(message_history)
-    row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(normalized_history, mode="json")
+    row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(
+        normalized_history, mode="json"
+    )
     row.updated_at = now_iso()
     session.add(row)
     await session.flush()

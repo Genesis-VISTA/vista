@@ -90,9 +90,10 @@ class VistaGuardApprovalCapability(AbstractCapability):
                 )
             except Exception as exc:  # noqa: BLE001 -- approval must fail closed
                 logger.warning(
-                    "VISTAGuard approval: request failed for %r (%s: %s); "
-                    "default-deny",
-                    call.tool_name, type(exc).__name__, exc,
+                    "VISTAGuard approval: request failed for %r (%s: %s); default-deny",
+                    call.tool_name,
+                    type(exc).__name__,
+                    exc,
                 )
                 approvals[call.tool_call_id] = ToolDenied(
                     message=f"Approval failed for {call.tool_name!r}; denied."

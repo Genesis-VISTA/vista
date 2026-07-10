@@ -1,4 +1,5 @@
 """Tests for vista_backend.utils.streams.StreamMerger."""
+
 import asyncio
 
 import pytest
@@ -44,6 +45,7 @@ async def test_auto_close_ends_when_streams_exhausted():
 @pytest.mark.anyio
 async def test_explicit_close_required_when_auto_close_false():
     async with StreamMerger[str](auto_close=False) as m:
+
         async def consume():
             return [x async for x in m]
 
@@ -116,6 +118,7 @@ async def test_add_stream_after_iteration_started():
 @pytest.mark.anyio
 async def test_add_stream_after_exhaustion_raises():
     """With auto_close=True, calling add_stream after all prior streams finished must raise."""
+
     async def quick():
         yield 1
 

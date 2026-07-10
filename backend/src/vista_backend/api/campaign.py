@@ -5,6 +5,7 @@ Campaigns are scoped under a project, so project membership (enforced by
 `project_service.get_project_by_name`) is the access boundary. Routes are thin; the
 logic + access checks live in `services/campaign.py` (tested at the service layer).
 """
+
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -69,7 +70,11 @@ async def get_campaign(
 
 @router.patch("/{project_name}/campaigns/{run_id}")
 async def patch_campaign(
-    project_name: str, run_id: uuid.UUID, body: CampaignUpdate, session: SessionDep, user: UserDep
+    project_name: str,
+    run_id: uuid.UUID,
+    body: CampaignUpdate,
+    session: SessionDep,
+    user: UserDep,
 ) -> CampaignRunPublic:
     project = await project_service.get_project_by_name(session, project_name, user)
     await _require_in_project(session, run_id, project.id)

@@ -1,6 +1,7 @@
 """
 Data models / schemas
 """
+
 import re
 import uuid
 from typing import Annotated as A, Any, Literal, Optional
@@ -19,7 +20,9 @@ class ProjectBase(SQLModel):
     system_prompt: str | None = None
     skills: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     """ List of skills available to this project """
-    knowledge_bases: A[list[str], Field(default_factory=list, sa_column=Column(JSON))] # TODO should make this a foreign key later
+    knowledge_bases: A[
+        list[str], Field(default_factory=list, sa_column=Column(JSON))
+    ]  # TODO should make this a foreign key later
     """
     Slugs of KnowledgeBases scoped to this project.
 
@@ -45,11 +48,11 @@ class ProjectBase(SQLModel):
     See pydantic_ai.UsageLimits for allowed values.
     """
 
-    @field_validator('usage_limits', mode='after')
+    @field_validator("usage_limits", mode="after")
     @classmethod
     def _validate_usage_limits(cls, value):
         ta = TypeAdapter(UsageLimits)
-        return ta.dump_python(ta.validate_python(value), mode = 'json')
+        return ta.dump_python(ta.validate_python(value), mode="json")
 
     # TODO:
     # - Allow adding more MCP servers
@@ -63,22 +66,27 @@ class ProjectBase(SQLModel):
     # - Should add limits on top of the configured Project usage_limits, and re-work how usage_limits is set up
     # - Projects need to have separate containers with different skills, upload dirs, etc.
 
+
 # "table" models don't validate, so we have separate table, create, and public models.
 # See https://sqlmodel.tiangolo.com/tutorial/fastapi/multiple-models/#the-herocreate-data-model
 # TODO: Not convinced I like SQLModel, might go back to plain SQLAlchemy
 
+
 class ProjectCreate(ProjectBase):
-    """ Project fields the user can set """
+    """Project fields the user can set"""
+
     pass
 
 
 class ProjectPublic(ProjectBase):
-    """ Project fields the user can read """
+    """Project fields the user can read"""
+
     id: uuid.UUID
 
 
 class ProjectTable(ProjectBase, table=True):
-    """ Project SQL model """
+    """Project SQL model"""
+
     __tablename__ = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
@@ -89,72 +97,14 @@ class ProjectMemberTable(SQLModel, table=True):
     `project_id`. The composite primary key makes a (project, user) pair
     unique, so a duplicate add raises IntegrityError.
     """
+
     __tablename__ = "project_member"
-    project_id: uuid.UUID = Field(foreign_key="project.id", primary_key=True, ondelete="CASCADE")
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", primary_key=True, ondelete="CASCADE")
-
-
-ChatMessageRole = Literal["user", "assistant", "system", "tool"]
-
-
-class ChatTranscriptMessage(BaseModel):
-    """
-    Minimal persisted chat bubble for the UI.
-    """
-    id: str
-    role: ChatMessageRole
-    content: str
-    intermediate: bool | None = None
-
-
-class ChatSessionBase(SQLModel):
-    """
-    Persisted chat state for a single conversation inside a project.
-    """
-    title: str = "New conversation"
-    message_history: A[list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))]
-    messages: A[list[ChatTranscriptMessage], Field(default_factory=list, sa_column=Column(JSON))]
-    latest_result: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
-
-
-class ChatSessionCreate(BaseModel):
-    title: str | None = None
-
-
-class ChatSessionUpdate(BaseModel):
-    title: str | None = None
-    message_history: list[dict[str, Any]] | None = None
-    messages: list[ChatTranscriptMessage] | None = None
-    latest_result: dict[str, Any] | None = None
-
-
-class ChatSessionSummary(BaseModel):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    project_id: uuid.UUID
-    title: str
-    created_at: str
-    updated_at: str
-
-
-class ChatSessionPublic(ChatSessionBase):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    project_id: uuid.UUID
-    created_at: str
-    updated_at: str
-
-
-class ChatSessionTable(ChatSessionBase, table=True):
-    __tablename__ = "chat_session"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
-    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
-    created_at: str = Field(default="")
-    updated_at: str = Field(default="")
-
-
+    project_id: uuid.UUID = Field(
+        foreign_key="project.id", primary_key=True, ondelete="CASCADE"
+    )
+    user_id: uuid.UUID = Field(
+        foreign_key="app_user.id", primary_key=True, ondelete="CASCADE"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -186,19 +136,19 @@ def is_valid_slug(slug: str) -> bool:
 
 PublicationIndexStatus = Literal[
     "unindexed",  # PDF on disk, never chunked
-    "queued",     # registered for indexing, indexer hasn't started this row yet
-    "indexing",   # indexer is actively working on this row
-    "indexed",    # text chunks (and possibly citation row) are in chroma
-    "failed",     # indexing was attempted and raised; see index_error
+    "queued",  # registered for indexing, indexer hasn't started this row yet
+    "indexing",  # indexer is actively working on this row
+    "indexed",  # text chunks (and possibly citation row) are in chroma
+    "failed",  # indexing was attempted and raised; see index_error
 ]
 
 
 PublicationCitationStatus = Literal[
-    "pending",    # citation extraction hasn't been attempted yet
+    "pending",  # citation extraction hasn't been attempted yet
     "extracted",  # LLM returned a parsed citation; metadata fields are populated
-    "skipped",    # the PDF was already in chroma; citation reused from prior run
-    "failed",     # LLM call ran but produced an error or unparseable output
-    "disabled",   # no LLM credentials configured, citation extraction is off
+    "skipped",  # the PDF was already in chroma; citation reused from prior run
+    "failed",  # LLM call ran but produced an error or unparseable output
+    "disabled",  # no LLM credentials configured, citation extraction is off
 ]
 
 
@@ -211,6 +161,7 @@ class Publication(BaseModel):
     with `None` fields. `filename` is the canonical identifier within
     the KB (relative to the KB's pdfs/ directory).
     """
+
     filename: str
     title: Optional[str] = None
     authors: Optional[list[str]] = None
@@ -251,9 +202,9 @@ class Publication(BaseModel):
 
 KnowledgeBaseBuildStatus = Literal[
     "pending",  # chroma collections empty / missing
-    "ready",    # collections populated; ready to serve search
-    "stale",    # new PDFs added since the last successful index
-    "failed",   # last indexing attempt raised
+    "ready",  # collections populated; ready to serve search
+    "stale",  # new PDFs added since the last successful index
+    "failed",  # last indexing attempt raised
 ]
 
 
@@ -261,6 +212,7 @@ class KnowledgeBaseBase(SQLModel):
     """
     Fields shared by all Knowledge Base model variants.
     """
+
     slug: str
     """ URL-safe identifier; immutable once created. """
 
@@ -286,10 +238,15 @@ class KnowledgeBaseBase(SQLModel):
     indexer finishes), vs being isolated to this KB only.
     """
 
-    publications: A[list[Publication], Field(default_factory=list, sa_column=Column(JSON))]
+    publications: A[
+        list[Publication], Field(default_factory=list, sa_column=Column(JSON))
+    ]
     build_status: A[
         KnowledgeBaseBuildStatus,
-        Field(default="pending", sa_column=Column(String, nullable=False, default="pending")),
+        Field(
+            default="pending",
+            sa_column=Column(String, nullable=False, default="pending"),
+        ),
     ]
     last_built_at: str | None = None
     """ ISO timestamp of the most recent successful indexer run. """
@@ -302,13 +259,15 @@ class KnowledgeBaseCreate(SQLModel):
     from the slug, and publications are populated by separate POSTs
     against /knowledge-bases/{slug}/publications.
     """
+
     slug: str
     name: str
     description: str | None = None
 
 
 class KnowledgeBaseUpdate(SQLModel):
-    """ Fields editable on an existing KB. """
+    """Fields editable on an existing KB."""
+
     name: str | None = None
     description: str | None = None
 
@@ -320,7 +279,8 @@ class KnowledgeBasePublic(KnowledgeBaseBase):
 
 
 class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
-    """ Knowledge Base SQL model. """
+    """Knowledge Base SQL model."""
+
     __tablename__ = "knowledge_base"
     __table_args__ = (UniqueConstraint("slug", name="uq_knowledge_base_slug"),)
 
@@ -338,6 +298,7 @@ class IndexProgress(BaseModel):
     over the wire as a sidecar on KB read responses; not persisted to
     the DB.
     """
+
     phase: Literal["loading_model", "indexing", "done"]
     sub_phase: Optional[Literal["starting", "citation", "chunks", "done"]] = None
     processed: int
@@ -351,7 +312,7 @@ class IndexProgress(BaseModel):
 # Note, this is different than the models in agents/skills.py. agents/skills.py only handles the
 # skills spec directly (https://agentskills.io/specification). This database model handles storing
 # to location on disk, and some ownership metadata, in addition to mirroring the Skill spec metadata
-# 
+#
 # TODO: Currently skills are still globably editable, and project just select a subset of skills.
 # We need to make skills scoped to a project, only editable by their creator, etc.
 
@@ -392,7 +353,8 @@ class SkillPublic(SkillBase):
 
 
 class SkillTable(SkillBase, table=True):
-    """ Skill SQL model. """
+    """Skill SQL model."""
+
     __tablename__ = "skill"
     __table_args__ = (UniqueConstraint("name", name="uq_skill_name"),)
 
@@ -409,6 +371,7 @@ class SkillUpdate(BaseModel):
     """
     Fields editable on an existing skill via PATCH.
     """
+
     description: str | None = None
     license: str | None = None
     compatibility: str | None = None
@@ -426,20 +389,31 @@ class UserBase(SQLModel):
 # Treat "" the same as None for the optional config fields so a cleared frontend
 # input doesn't end up as a non-null-but-empty token/account in the DB
 _USER_CONFIG_NULLABLE_FIELDS = (
-    "nersc_account", "nersc_remote_dir",
-    "odo_s3m_token", "frontier_s3m_token", "nersc_iri_token",
+    "nersc_account",
+    "nersc_remote_dir",
+    "frontier_account",
+    "frontier_remote_dir",
+    "s3m_token",
+    "nersc_iri_token",
+    "globus_token",
 )
-def _empty_str_to_none(v): return None if v == "" else v
+
+
+def _empty_str_to_none(v):
+    return None if v == "" else v
 
 
 class UserCreate(UserBase):
     email: str
     is_admin: bool = False
+    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
+    frontier_account: str | None = None
+    frontier_remote_dir: str | None = None
+    s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -449,11 +423,14 @@ class UserCreate(UserBase):
 
 class UserUpdate(UserBase):
     is_admin: bool | None = None
+    remote_hpc_jobs_dir: str | None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
+    frontier_account: str | None = None
+    frontier_remote_dir: str | None = None
+    s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -462,11 +439,14 @@ class UserUpdate(UserBase):
 
 
 class UserSelfUpdate(UserBase):
+    remote_hpc_jobs_dir: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
+    frontier_account: str | None = None
+    frontier_remote_dir: str | None = None
+    s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -481,15 +461,19 @@ class UserPublic(UserBase):
 
 
 class UserPublicWithConfig(UserBase):
-    """ Full user view for the authenticated user — includes decrypted token fields. """
+    """Full user view for the authenticated user — includes decrypted token fields."""
+
     id: uuid.UUID
     email: str
     is_admin: bool = False
+    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
+    frontier_account: str | None = None
+    frontier_remote_dir: str | None = None
+    s3m_token: str | None = None
     nersc_iri_token: str | None = None
+    globus_token: str | None = None
 
 
 class UserTable(SQLModel, table=True):
@@ -497,21 +481,123 @@ class UserTable(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     email: str = Field(unique=True)
     is_admin: bool = False
-
+    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+    """ Folder on the HPC cluster (Odo) where hpc_jobs will be copied. """
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None
     """ Absolute remote dir on the NERSC machine (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter. """
-    nersc_iri_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
+    frontier_account: str | None = None
+    """
+    OLCF project name used as the Slurm `--account` for Frontier submissions
+    (e.g. "chm243"). Must match the `project` claim on the user's S3M token,
+    since the IRI service submits Slurm jobs as <project>_auser. Required for
+    cluster="frontier".
+    """
+    frontier_remote_dir: str | None = None
+    """
+    Folder on Frontier where hpc_jobs will be copied (e.g.
+    /lustre/orion/<project>/proj-shared/vista). Required for cluster="frontier";
+    must be writable by the user's Frontier project (typically different from
+    the Odo proj-shared dir).
+    """
+    s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ Bearer token for S3M API authentication. Encrypted at rest. """
+    nersc_iri_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
     """
     Globus access token for NERSC IRI. Encrypted at rest. Expires ~48h.
     Refresh: python iri-api-get-globus-token-main/get_globus_token.py --refresh-only
     """
-    frontier_s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
-    """  Bearer token for S3M API authentication and access to the IRI API for Frontier """
+    globus_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Globus Transfer refresh token, used for Frontier file ops via the OLCF
+    DTN collection. Long-lived; the MCP server mints short-lived access
+    tokens from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
+    Encrypted at rest.
+    Obtain with: python OLCF-Globus-Transfer/get_olcf_token.py --force-login
+                       --session-domain sso.ccs.ornl.gov
+    Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
+    """
 
-    odo_s3m_token: str | None = Field(default=None, sa_column=Column(EncryptedStr, nullable=True))
-    """  Bearer token for S3M API authentication and access to the IRI API for odo """
+
+# ---------------------------------------------------------------------------
+# Chat sessions
+# ---------------------------------------------------------------------------
+
+ChatMessageRole = Literal["user", "assistant", "system", "tool"]
+
+
+class ChatTranscriptMessage(BaseModel):
+    """
+    Minimal persisted chat bubble for the UI.
+    """
+
+    id: str
+    role: ChatMessageRole
+    content: str
+    intermediate: bool | None = None
+
+
+class ChatSessionBase(SQLModel):
+    """
+    Persisted chat state for a single conversation inside a project.
+    """
+
+    title: str = "New conversation"
+    message_history: A[
+        list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    messages: A[
+        list[ChatTranscriptMessage], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    latest_result: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+
+
+class ChatSessionCreate(BaseModel):
+    title: str | None = None
+
+
+class ChatSessionUpdate(BaseModel):
+    title: str | None = None
+    message_history: list[dict[str, Any]] | None = None
+    messages: list[ChatTranscriptMessage] | None = None
+    latest_result: dict[str, Any] | None = None
+
+
+class ChatSessionSummary(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class ChatSessionPublic(ChatSessionBase):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    project_id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+
+class ChatSessionTable(ChatSessionBase, table=True):
+    __tablename__ = "chat_session"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -532,12 +618,12 @@ class UserTable(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 CampaignStatus = Literal[
-    "gathering",      # eliciting inputs from the user (Phase A)
-    "planning",       # drafting / awaiting plan approval (Phase B)
-    "running",        # a cycle's jobs are in flight (Phase C)
+    "gathering",  # eliciting inputs from the user (Phase A)
+    "planning",  # drafting / awaiting plan approval (Phase B)
+    "running",  # a cycle's jobs are in flight (Phase C)
     "awaiting_user",  # paused on a user decision (Phase D/E)
-    "converged",      # goal met (Phase G)
-    "exited",         # user-confirmed exit (Phase G)
+    "converged",  # goal met (Phase G)
+    "exited",  # user-confirmed exit (Phase G)
 ]
 
 
@@ -554,7 +640,10 @@ class CampaignRunBase(SQLModel):
     """ The editable, user-facing numbered plan (the source of truth the user can amend). """
     status: A[
         CampaignStatus,
-        Field(default="gathering", sa_column=Column(String, nullable=False, default="gathering")),
+        Field(
+            default="gathering",
+            sa_column=Column(String, nullable=False, default="gathering"),
+        ),
     ]
 
 
@@ -582,12 +671,12 @@ class CampaignRunTable(CampaignRunBase, table=True):
 
 
 CampaignStepStatus = Literal[
-    "pending",     # created, not yet dispatched
+    "pending",  # created, not yet dispatched
     "dispatched",  # order issued, job(s) submitted
-    "running",     # job(s) executing
-    "completed",   # result collected
-    "failed",      # the step's work failed
-    "cancelled",   # cancelled by the planner/user
+    "running",  # job(s) executing
+    "completed",  # result collected
+    "failed",  # the step's work failed
+    "cancelled",  # cancelled by the planner/user
 ]
 
 
@@ -596,15 +685,24 @@ class CampaignStepBase(SQLModel):
     """ Zero-based optimization cycle this step belongs to. """
     kind: str
     """ The subagent role (e.g. "neutronics", "chemistry") or "decision" for a planner decision. """
-    candidate: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
+    candidate: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
     """ The candidate composition/spec this step concerns; None for `decision` steps. """
     order_spec: A[dict[str, Any], Field(default_factory=dict, sa_column=Column(JSON))]
     """ The order given to the subagent (or the decision context). """
     status: A[
         CampaignStepStatus,
-        Field(default="pending", sa_column=Column(String, nullable=False, default="pending")),
+        Field(
+            default="pending",
+            sa_column=Column(String, nullable=False, default="pending"),
+        ),
     ]
-    result: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON, nullable=True))]
+    result: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
     """ The structured, parsed result (collected outputs / scores); None until completed. """
 
 
@@ -658,6 +756,7 @@ class HpcJobTable(HpcJobBase, table=True):
 
 class CampaignCreate(BaseModel):
     """Fields a user supplies to start a campaign (the project comes from the URL)."""
+
     domain: str
     planner_skill: str
     title: str | None = None
@@ -666,6 +765,7 @@ class CampaignCreate(BaseModel):
 
 class CampaignUpdate(BaseModel):
     """Fields editable on a campaign run via PATCH (omitted fields are left unchanged)."""
+
     title: str | None = None
     spec: dict[str, Any] | None = None
     plan: list[dict[str, Any]] | None = None
@@ -674,6 +774,7 @@ class CampaignUpdate(BaseModel):
 
 class CampaignStatePublic(BaseModel):
     """Full campaign state for the UI / resume: the run plus its steps and jobs."""
+
     run: CampaignRunPublic
     steps: list[CampaignStepPublic]
     jobs: list[HpcJobPublic]

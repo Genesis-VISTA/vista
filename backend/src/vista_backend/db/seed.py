@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import shutil
 import uuid
@@ -25,7 +24,8 @@ REPO_ROOT = Path(__file__).parents[4]
 
 
 class GitlabRepoClient:
-    """A client scoped to the vista-data repository API, authed with the gitlab token. """
+    """A client scoped to the vista-data repository API, authed with the gitlab token."""
+
     def __init__(self, domain: str, repo: str, token: str | None = None) -> None:
         self._client = httpx.AsyncClient(
             base_url=f"https://{domain}/api/v4/projects/{quote(repo, safe='')}/repository",
@@ -46,7 +46,9 @@ class GitlabRepoClient:
 
     async def download_file(self, repo_path: str, dest: Path) -> None:
         logging.info(f"Downloading {repo_path} to {dest}..")
-        resp = await self._get(f"/files/{quote(repo_path, safe='')}/raw", params={"ref": "main"})
+        resp = await self._get(
+            f"/files/{quote(repo_path, safe='')}/raw", params={"ref": "main"}
+        )
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(dest.name + ".part")
         tmp.write_bytes(resp.content)
@@ -58,7 +60,13 @@ class GitlabRepoClient:
         while page:
             resp = await self._get(
                 "/tree",
-                params={"path": repo_dir, "ref": "main", "recursive": "true", "per_page": 100, "page": page},
+                params={
+                    "path": repo_dir,
+                    "ref": "main",
+                    "recursive": "true",
+                    "per_page": 100,
+                    "page": page,
+                },
             )
             blobs.extend(entry for entry in resp.json() if entry["type"] == "blob")
             next_page = resp.headers.get("x-next-page")
@@ -90,18 +98,24 @@ async def _build_knowledge_base(kb_dir: Path):
     pdfs_dir = kb_dir / "pdfs"
     rag_db = kb_dir / "rag_db"
 
-    if (rag_db / 'chroma.sqlite3').exists():
+    if (rag_db / "chroma.sqlite3").exists():
         return
 
-    filenames = sorted(p.name for p in pdfs_dir.glob("**/*.pdf"))
-    logging.info(f"Embedding {len(filenames)} PDF(s) into the knowledge base at {rag_db}.")
+    filenames = sorted(p.name for p in pdfs_dir.glob("*.pdf"))
+    logging.info(
+        f"Embedding {len(filenames)} PDF(s) into the knowledge base at {rag_db}."
+    )
     results = await indexer.index_publications(
-        rag_db_path=str(rag_db), pdfs_dir=str(pdfs_dir), filenames=filenames,
+        rag_db_path=str(rag_db),
+        pdfs_dir=str(pdfs_dir),
+        filenames=filenames,
     )
 
     failed = [r.get("filename") for r in results if r.get("status") == "failed"]
     if failed:
-        logging.warning(f"Knowledge base: {len(failed)} PDF(s) failed to index: {failed}")
+        logging.warning(
+            f"Knowledge base: {len(failed)} PDF(s) failed to index: {failed}"
+        )
     logging.info(f"Knowledge base built at {rag_db}")
 
 
@@ -110,35 +124,54 @@ async def seed_db(engine: AsyncEngine) -> None:
     Seed the DB with default data on first run, and a no-op thereafter.
     """
     async with AsyncSession(engine) as session:
-        count = (await session.exec(select(func.count()).select_from(ProjectTable))).one()
+        count = (
+            await session.exec(select(func.count()).select_from(ProjectTable))
+        ).one()
         if count > 0:
-            return # Already seeded
+            return  # Already seeded
 
-    logging.info("Seeding database and data dir with initial data (this can take a bit)...")
+    logging.info(
+        "Seeding database and data dir with initial data (this can take a bit)..."
+    )
     molten_salt_kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
 
     if settings.vista_data_token:
-        ctx_manager = GitlabRepoClient("code.ornl.gov", "v28/vista-data", token=settings.vista_data_token)
+        ctx_manager = GitlabRepoClient(
+            "code.ornl.gov", "v28/vista-data", token=settings.vista_data_token
+        )
     else:
         ctx_manager = nullcontext()
-        logging.warning("No vista_data_token configured; skipping vista-data fetch: seeding only public data")
+        logging.warning(
+            "No vista_data_token configured; skipping vista-data fetch: seeding only public data"
+        )
     async with ctx_manager as vista_data_client, AsyncSession(engine) as session:
         if vista_data_client:
             # TODO This is not really where we should handle the hpc_jobs files, but it will work for now
-            job_mstdb_file = REPO_ROOT / 'hpc_jobs/forge-tune/Molten_Salt_Thermophysical_Properties.csv'
+            job_mstdb_file = (
+                REPO_ROOT
+                / "hpc_jobs/forge-tune/Molten_Salt_Thermophysical_Properties.csv"
+            )
             if not job_mstdb_file.exists():
-                await vista_data_client.download_file('mstdb/Molten_Salt_Thermophysical_Properties.csv', job_mstdb_file)
+                await vista_data_client.download_file(
+                    "mstdb/Molten_Salt_Thermophysical_Properties.csv", job_mstdb_file
+                )
             # download_dir is resumable (skips files already on disk)
-            await vista_data_client.download_dir("molten-salt-papers", molten_salt_kb_dir / "pdfs")
+            await vista_data_client.download_dir(
+                "molten-salt-papers", molten_salt_kb_dir / "pdfs"
+            )
             await _build_knowledge_base(molten_salt_kb_dir)
 
         SKILL_ASSETS = {
-            "model-fine-tuning": {"assets/Molten_Salt_Thermophysical_Properties.csv": "mstdb/Molten_Salt_Thermophysical_Properties.csv"},
-            "salt-analysis": {"assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json"},
+            "model-fine-tuning": {
+                "assets/Molten_Salt_Thermophysical_Properties.csv": "mstdb/Molten_Salt_Thermophysical_Properties.csv"
+            },
+            "salt-analysis": {
+                "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json"
+            },
             "salt-prediction": {
                 "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json",
                 "assets/elemental-properties.csv": "mstdb/elemental-properties.csv",
-            }
+            },
         }
         skipped_skills = set()
 
@@ -155,14 +188,16 @@ async def seed_db(engine: AsyncEngine) -> None:
             shutil.copytree(src, settings.data_dir / path, dirs_exist_ok=True)
 
             skill = read_skill(settings.data_dir / path)
-            session.add(build_skill_row(
-                skill,
-                path=path,
-                author="VISTA Team",
-                repo_url=None,
-                is_public=True,
-                now=now_iso(),
-            ))
+            session.add(
+                build_skill_row(
+                    skill,
+                    path=path,
+                    author="VISTA Team",
+                    repo_url=None,
+                    is_public=True,
+                    now=now_iso(),
+                )
+            )
 
         now = now_iso()
 
@@ -198,24 +233,26 @@ async def seed_db(engine: AsyncEngine) -> None:
         session.add_all(projects)
 
         if vista_data_client:
-            session.add(KnowledgeBaseTable(
-                id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
-                slug=molten_salt_kb_dir.name,
-                name="Molten Salt Papers",
-                description=(
-                    "Peer-reviewed publications on molten salt thermophysical properties, "
-                    "phase behavior, and tritium breeding. Shares its PDF folder and "
-                    "ChromaDB index with the MCP server's rag_search tool."
-                ),
-                pdfs_dir=str(molten_salt_kb_dir / "pdfs"),
-                rag_db_path=str(molten_salt_kb_dir / "rag_db"),
-                shared_with_mcp=True,
-                publications=[],
-                build_status="ready",
-                last_built_at=now,
-                created_at=now,
-                updated_at=now,
-            ))
+            session.add(
+                KnowledgeBaseTable(
+                    id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
+                    slug=molten_salt_kb_dir.name,
+                    name="Molten Salt Papers",
+                    description=(
+                        "Peer-reviewed publications on molten salt thermophysical properties, "
+                        "phase behavior, and tritium breeding. Shares its PDF folder and "
+                        "ChromaDB index with the MCP server's rag_search tool."
+                    ),
+                    pdfs_dir=str(molten_salt_kb_dir / "pdfs"),
+                    rag_db_path=str(molten_salt_kb_dir / "rag_db"),
+                    shared_with_mcp=True,
+                    publications=[],
+                    build_status="ready",
+                    last_built_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
         # Test users / memberships only outside prod.
         if settings.env != "prod":

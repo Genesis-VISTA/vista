@@ -1,4 +1,5 @@
-""" Utilities for managing async streams. """
+"""Utilities for managing async streams."""
+
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import Literal, Self
@@ -6,19 +7,24 @@ from typing import Literal, Self
 
 _State = Literal["pending", "running", "closed"]
 
+
 class _Sentinel:
     pass
+
 
 class _Error:
     def __init__(self, exc: Exception) -> None:
         self.exc = exc
 
+
 class _Value[T]:
     def __init__(self, value: T) -> None:
         self.value = value
 
+
 class StreamClosedError(RuntimeError):
     pass
+
 
 class StreamMerger[T]:
     """
@@ -64,25 +70,28 @@ class StreamMerger[T]:
     ) -> None:
         self._pending_streams: list[AsyncIterable[T]] = list(streams)
         self._queue: asyncio.Queue[_Value[T] | _Error | _Sentinel] = asyncio.Queue()
-        self._tasks: set[asyncio.Task[None]] = set() # starts the streams in background tasks
+        self._tasks: set[asyncio.Task[None]] = (
+            set()
+        )  # starts the streams in background tasks
         self._auto_close = auto_close
         self._state: _State = "pending"
         self._entered = False
 
     def _mark_closed(self) -> None:
-        """ Idempotent transition to 'closed'; queues a sentinel to wake any waiting consumer. """
+        """Idempotent transition to 'closed'; queues a sentinel to wake any waiting consumer."""
         if self._state == "closed":
             return
         self._state = "closed"
         self._queue.put_nowait(_Sentinel())
 
     def _check_auto_close(self) -> None:
-        """ Mark closed if auto_close is set and no drain tasks remain. """
+        """Mark closed if auto_close is set and no drain tasks remain."""
         if self._auto_close and not self._tasks:
             self._mark_closed()
 
     def _start_stream(self, stream: AsyncIterable[T]) -> None:
-        """ Starts a stream as a task putting entries onto the queue """
+        """Starts a stream as a task putting entries onto the queue"""
+
         async def drain_stream():
             try:
                 async for item in stream:
@@ -110,17 +119,17 @@ class StreamMerger[T]:
         elif self._state == "running":
             for stream in streams:
                 self._start_stream(stream)
-        else: # self._state == "closed"
+        else:  # self._state == "closed"
             raise StreamClosedError("StreamMerger is closed")
 
     def send(self, item: T) -> None:
-        """ Push an item into the merged stream directly. """
+        """Push an item into the merged stream directly."""
         if self._state == "closed":
             raise StreamClosedError("StreamMerger is closed")
         self._queue.put_nowait(_Value(item))
 
     async def aclose(self) -> None:
-        """ Cancel any in-flight stream tasks and end iteration. """
+        """Cancel any in-flight stream tasks and end iteration."""
         if self._state == "closed" and not self._tasks:
             return
         tasks = list(self._tasks)
@@ -135,7 +144,9 @@ class StreamMerger[T]:
 
     async def __aenter__(self) -> Self:
         if self._entered:
-            raise RuntimeError(f"StreamMerger cannot be re-entered (state: {self._state})")
+            raise RuntimeError(
+                f"StreamMerger cannot be re-entered (state: {self._state})"
+            )
         self._entered = True
         return self
 

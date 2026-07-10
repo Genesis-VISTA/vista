@@ -33,6 +33,7 @@ Authoring a contract::
                 return self.violated(claim, "density must be positive")
             return self.passed(claim)
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -52,6 +53,7 @@ def claim_type(claim: dict) -> str | None:
 @dataclass
 class ContractResult:
     """Outcome of running one contract against one claim."""
+
     ok: bool
     contract: str
     domain: str = ""

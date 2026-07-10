@@ -25,6 +25,7 @@ from .skills import router as skills_router
 from .files import router as files_router
 from .users import router as users_router
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
@@ -66,7 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="vista-backend",
     lifespan=lifespan,
-    dependencies=[Depends(get_user)], # Require login for all routes
+    dependencies=[Depends(get_user)],  # Require login for all routes
 )
 app.include_router(agent_router)
 app.include_router(campaign_router)

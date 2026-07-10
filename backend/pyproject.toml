@@ -47,6 +47,18 @@ artifacts = [
   "*.md",
 ]
 
+[tool.ruff]
+# Embedded skill scripts are user-facing templates, not application source
+exclude = ["src/vista_backend/db/skills"]
+
+[tool.pyright]
+include = ["src"]
+# Embedded skill scripts import deps (pandas, matplotlib) not in the project venv
+exclude = ["src/vista_backend/db/skills"]
+# Basic mode filters framework-generic false positives from SQLModel / pydantic-ai
+typeCheckingMode = "basic"
+pythonVersion = "3.14"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

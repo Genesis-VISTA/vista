@@ -132,7 +132,8 @@ class G1PromptCapability(VistaGuardCapability):
                 logger.warning(
                     "VISTAGuard G1 slow-tier failed (%s: %s); "
                     "falling back to fast-tier decision",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
                 slow = fast
 
@@ -182,11 +183,7 @@ class G1PromptCapability(VistaGuardCapability):
 
         messages = request_context.messages
         first = next(
-            (
-                (i, m)
-                for i, m in enumerate(messages)
-                if isinstance(m, ModelRequest)
-            ),
+            ((i, m) for i, m in enumerate(messages) if isinstance(m, ModelRequest)),
             None,
         )
         if first is None:
@@ -199,8 +196,7 @@ class G1PromptCapability(VistaGuardCapability):
             p
             for p in request.parts
             if not (
-                isinstance(p, SystemPromptPart)
-                and p.content.startswith(BANNER_PREFIX)
+                isinstance(p, SystemPromptPart) and p.content.startswith(BANNER_PREFIX)
             )
         ]
         banner = SystemPromptPart(content=self._banner_text())

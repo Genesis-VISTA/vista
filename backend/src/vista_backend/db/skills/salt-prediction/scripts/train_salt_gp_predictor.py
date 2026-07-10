@@ -445,7 +445,7 @@ def analyze_feature_importance(gp, scaler, X_test, y_test, feature_names, n_repe
     plt.tight_layout()
     plt.show()
 
-    print(f"\nTop 10 Most Important Features:")
+    print("\nTop 10 Most Important Features:")
     print(importance_df.head(10).to_string(index=False))
 
     return importance_df

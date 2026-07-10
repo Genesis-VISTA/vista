@@ -1,4 +1,5 @@
 """Tests for vista_backend.utils.ttl_pool.TTLPool."""
+
 import asyncio
 from datetime import timedelta
 
@@ -263,8 +264,9 @@ async def test_delete_while_held_defers_cleanup_until_release():
 
 @pytest.mark.anyio
 async def test_delete_missing_key_is_noop():
-    pool = TTLPool[str, str](timedelta(seconds=60), 10,
-                             lambda _k: asyncio.sleep(0, "v"), _noop_cleanup)
+    pool = TTLPool[str, str](
+        timedelta(seconds=60), 10, lambda _k: asyncio.sleep(0, "v"), _noop_cleanup
+    )
     pool.delete("missing")  # must not raise
     await pool.flush()
 

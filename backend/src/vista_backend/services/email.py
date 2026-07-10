@@ -6,6 +6,7 @@ When SMTP is not configured (`settings.email.is_configured` is False), `send_ema
 logs and returns False rather than raising — notification is never allowed to break
 the monitor loop.
 """
+
 import asyncio
 import logging
 import smtplib
@@ -43,7 +44,9 @@ async def send_email(*, to: str, subject: str, body: str) -> bool:
     """
     cfg = settings.email
     if not cfg.is_configured:
-        logger.info("Email not configured; skipping notification to %s (%r)", to, subject)
+        logger.info(
+            "Email not configured; skipping notification to %s (%r)", to, subject
+        )
         return False
     msg = build_message(to=to, subject=subject, body=body, from_addr=cfg.from_addr)
     try:

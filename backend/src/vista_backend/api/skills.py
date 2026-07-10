@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
@@ -13,14 +13,16 @@ router = APIRouter()
 
 
 class SkillCreate(Skill):
-    """ The full AgentSkills spec (`Skill`, incl. `body`) plus DB-only hub metadata. """
+    """The full AgentSkills spec (`Skill`, incl. `body`) plus DB-only hub metadata."""
+
     author: str | None = None
     repo_url: str | None = None
     is_public: bool = False
 
 
 class SkillDetail(SkillPublic):
-    """ A skill's stored metadata plus its SKILL.md body (read from disk). """
+    """A skill's stored metadata plus its SKILL.md body (read from disk)."""
+
     body: str
 
 
@@ -30,6 +32,7 @@ class SkillGenerateRequest(BaseModel):
     drafting logic. `message_history` uses PydanticAI's `ModelMessage` schema,
     same as `/projects/.../agent/run`.
     """
+
     message_history: list[ModelMessage] = Field(default_factory=list)
     hint: str | None = None
 
@@ -40,6 +43,7 @@ class SkillImportRequest(BaseModel):
     `https://github.com/<owner>/<repo>` or
     `https://github.com/<owner>/<repo>/tree/<ref>/<subpath>`.
     """
+
     url: str
 
 
@@ -47,16 +51,19 @@ class SkillPatch(SkillUpdate):
     """
     PATCH body
     """
+
     body: str | None = None
 
 
 def _detail(skill, body: str) -> SkillDetail:
-    return SkillDetail.model_validate(skill, from_attributes=True, update={"body": body})
+    return SkillDetail.model_validate(
+        skill, from_attributes=True, update={"body": body}
+    )
 
 
 @router.get("/skills")
 async def list_skills(session: SessionDep) -> list[SkillPublic]:
-    """ List skill metadata from the DB (no SKILL.md reads). """
+    """List skill metadata from the DB (no SKILL.md reads)."""
     rows = await skills_service.list_skills(session)
     return [SkillPublic.model_validate(row) for row in rows]
 
@@ -69,7 +76,7 @@ async def get_skill(name: str, session: SessionDep) -> SkillDetail:
 
 @router.post("/skills", status_code=201)
 async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail:
-    """ Create a new skill (private by default). """
+    """Create a new skill (private by default)."""
     skill = await skills_service.create_skill(
         session,
         spec=payload,
@@ -103,7 +110,9 @@ async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDe
 
 
 @router.patch("/skills/{name}")
-async def patch_skill(name: str, payload: SkillPatch, session: SessionDep) -> SkillDetail:
+async def patch_skill(
+    name: str, payload: SkillPatch, session: SessionDep
+) -> SkillDetail:
     skill = await skills_service.update_skill(session, name, payload, body=payload.body)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
@@ -111,5 +120,5 @@ async def patch_skill(name: str, payload: SkillPatch, session: SessionDep) -> Sk
 
 @router.delete("/skills/{name}", status_code=204)
 async def delete_skill(name: str, session: SessionDep) -> None:
-    """ Delete a skill """
+    """Delete a skill"""
     await skills_service.delete_skill(session, name)

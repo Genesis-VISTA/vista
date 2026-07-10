@@ -7,6 +7,7 @@ multi-step workflow as a reusable SKILL.md body plus suggested name and
 description. The result is returned uncommitted so the user can edit it before
 the actual `POST /skills` write.
 """
+
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
@@ -17,6 +18,7 @@ from ..config import settings
 
 class SkillDraft(BaseModel):
     """A draft skill produced by the LLM from a conversation."""
+
     name_suggestion: str
     """ Kebab-case slug suitable for the skill directory and frontmatter name. """
     description_suggestion: str
@@ -68,9 +70,8 @@ async def generate_skill_draft(
         system_prompt=_SYSTEM_PROMPT,
         output_type=SkillDraft,
     )
-    user_prompt = (
-        "Draft a SKILL.md from the conversation above."
-        + (f"\n\nUser hint: {hint.strip()}" if hint and hint.strip() else "")
+    user_prompt = "Draft a SKILL.md from the conversation above." + (
+        f"\n\nUser hint: {hint.strip()}" if hint and hint.strip() else ""
     )
     result = await agent.run(user_prompt, message_history=message_history)
     return result.output

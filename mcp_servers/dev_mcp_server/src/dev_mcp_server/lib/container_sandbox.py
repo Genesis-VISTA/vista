@@ -26,9 +26,12 @@ class ContainerSandbox(Sandbox):
     """
     Sandbox that runs commands inside a container managed by podman or docker.
     """
+
     runtime: str
 
-    def __init__(self, container_id: str, proc: asyncio.subprocess.Process, runtime: str):
+    def __init__(
+        self, container_id: str, proc: asyncio.subprocess.Process, runtime: str
+    ):
         self.container_id = container_id
         self.runtime = runtime
         # We keep the container run as an attached process with `--rm`. This makes sure that
@@ -50,7 +53,13 @@ class ContainerSandbox(Sandbox):
         if dockerfile:
             logging.info("Building sandbox image...")
             await check_output(
-                runtime, "build", "-t", image, "-f", str(dockerfile), str(Path(dockerfile).parent),
+                runtime,
+                "build",
+                "-t",
+                image,
+                "-f",
+                str(dockerfile),
+                str(Path(dockerfile).parent),
             )
         else:
             logging.info("Pulling sandbox image...")
@@ -78,12 +87,16 @@ class ContainerSandbox(Sandbox):
 
         container_name = f"vista-sandbox-{uuid.uuid4().hex[:12]}"
         run_args = [
-            runtime, "run",
-            "--rm", "-i", "--init",
-            "--name", container_name,
+            runtime,
+            "run",
+            "--rm",
+            "-i",
+            "--init",
+            "--name",
+            container_name,
         ]
         for src, dst, mode in volumes:
-            run_args += ["-v", f"{src}:{dst}" + (":ro" if mode == 'r' else '')]
+            run_args += ["-v", f"{src}:{dst}" + (":ro" if mode == "r" else "")]
         run_args += [f"--env={var}" for var in env.keys()]
         # `cat` with no args reads stdin forever and exits on EOF, making container
         # lifetime a direct consequence of the host-side pipe staying open.
@@ -101,10 +114,15 @@ class ContainerSandbox(Sandbox):
         try:
             while True:
                 if proc.returncode is not None:
-                    raise RuntimeError(f"{runtime} run exited with code {proc.returncode} before container started")
+                    raise RuntimeError(
+                        f"{runtime} run exited with code {proc.returncode} before container started"
+                    )
                 try:
                     out, _ = await check_output(
-                        runtime, "inspect", "--format={{.State.Running}}", container_name,
+                        runtime,
+                        "inspect",
+                        "--format={{.State.Running}}",
+                        container_name,
                     )
                 except RuntimeError:
                     out = b""  # container doesn't exist yet
@@ -118,15 +136,19 @@ class ContainerSandbox(Sandbox):
                 proc.stdin.close()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except (asyncio.TimeoutError, Exception):
+            except asyncio.TimeoutError, Exception:
                 pass
             raise
 
         return cls(container_id=container_name, proc=proc, runtime=runtime)
 
     async def exec(
-        self, command: str, args: list[str] | None = None,
-        env: dict[str, str] | None = None, cwd: str | None = None, combine_streams: bool = False,
+        self,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        combine_streams: bool = False,
     ) -> asyncio.subprocess.Process:
         env = env or {}
         cmd = [self.runtime, "exec", "-i"]
@@ -134,12 +156,14 @@ class ContainerSandbox(Sandbox):
             cmd += ["-w", cwd]
         cmd += [f"--env={var}={value}" for var, value in env.items()]
         cmd += [self.container_id, command]
-        cmd += (args or [])
+        cmd += args or []
         return await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT if combine_streams else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT
+            if combine_streams
+            else asyncio.subprocess.PIPE,
             env={**os.environ, **env},
         )
 

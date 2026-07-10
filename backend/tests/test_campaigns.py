@@ -1,4 +1,5 @@
 """CRUD + relationship tests for the campaign data model (CampaignRun / CampaignStep / HpcJob)."""
+
 import pytest
 from sqlmodel import select
 
@@ -48,7 +49,9 @@ async def test_create_and_read_campaign_run(session, alice):
     )
 
     reloaded = (
-        await session.exec(select(CampaignRunTable).where(CampaignRunTable.id == run.id))
+        await session.exec(
+            select(CampaignRunTable).where(CampaignRunTable.id == run.id)
+        )
     ).one()
 
     assert reloaded.domain == "splash"
@@ -82,7 +85,9 @@ async def test_campaign_status_transition(session, alice):
     await session.flush()
 
     reloaded = (
-        await session.exec(select(CampaignRunTable).where(CampaignRunTable.id == run.id))
+        await session.exec(
+            select(CampaignRunTable).where(CampaignRunTable.id == run.id)
+        )
     ).one()
     assert reloaded.status == "running"
 
@@ -128,7 +133,11 @@ async def test_hpc_job_linked_to_step(session, alice):
     project = await _make_project(session)
     run = await _make_run(session, project, alice)
     step = CampaignStepTable(
-        run_id=run.id, cycle=0, kind="neutronics", created_at=now_iso(), updated_at=now_iso()
+        run_id=run.id,
+        cycle=0,
+        kind="neutronics",
+        created_at=now_iso(),
+        updated_at=now_iso(),
     )
     session.add(step)
     await session.flush()
@@ -162,13 +171,21 @@ async def test_cascade_delete_run_removes_steps_and_jobs(session, alice):
     project = await _make_project(session)
     run = await _make_run(session, project, alice)
     step = CampaignStepTable(
-        run_id=run.id, cycle=0, kind="neutronics", created_at=now_iso(), updated_at=now_iso()
+        run_id=run.id,
+        cycle=0,
+        kind="neutronics",
+        created_at=now_iso(),
+        updated_at=now_iso(),
     )
     session.add(step)
     await session.flush()
     session.add(
         HpcJobTable(
-            job_id="999", step_id=step.id, user_id=alice.id, cluster="odo", submitted_at=now_iso()
+            job_id="999",
+            step_id=step.id,
+            user_id=alice.id,
+            cluster="odo",
+            submitted_at=now_iso(),
         )
     )
     await session.flush()
@@ -177,7 +194,9 @@ async def test_cascade_delete_run_removes_steps_and_jobs(session, alice):
     await session.flush()
 
     steps = (
-        await session.exec(select(CampaignStepTable).where(CampaignStepTable.run_id == run.id))
+        await session.exec(
+            select(CampaignStepTable).where(CampaignStepTable.run_id == run.id)
+        )
     ).all()
     jobs = (
         await session.exec(select(HpcJobTable).where(HpcJobTable.step_id == step.id))

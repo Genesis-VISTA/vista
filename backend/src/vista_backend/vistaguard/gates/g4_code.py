@@ -103,7 +103,7 @@ _BUNDLED_RULES_SUBPATH = "contracts/semgrep"
 def bundled_rules_dir() -> Path:
     """
     Return the absolute path to the package-bundled VISTAGuard
-    Semgrep rules. 
+    Semgrep rules.
     """
     return (Path(__file__).parent.parent / _BUNDLED_RULES_SUBPATH).resolve()
 
@@ -131,9 +131,7 @@ _LANGUAGE_BY_EXT: dict[str, str] = {
 }
 
 
-_VALID_SEMGREP_SEVERITIES: frozenset[str] = frozenset(
-    {"ERROR", "WARNING", "INFO"}
-)
+_VALID_SEMGREP_SEVERITIES: frozenset[str] = frozenset({"ERROR", "WARNING", "INFO"})
 
 
 # -----------------------------------------------------------------
@@ -193,9 +191,7 @@ class G4CodeGate(Gate):
         per_tool_overrides: Mapping[str, Sequence[str]] | None = None,
         semgrep_timeout: float = DEFAULT_SEMGREP_TIMEOUT_SECONDS,
         semgrep_executable: str = "semgrep",
-        scan_tools: frozenset[str] = frozenset(
-            {"run_bash", "create_file"}
-        ),
+        scan_tools: frozenset[str] = frozenset({"run_bash", "create_file"}),
         code_intent_extraction_agent: Any | None = None,
         code_intent_confidence_threshold: float = _DEFAULT_CODE_INTENT_CONFIDENCE_THRESHOLD,
         code_intent_self_consistency_samples: int = 1,
@@ -209,18 +205,14 @@ class G4CodeGate(Gate):
             if bundled_rules_dir is not None
             else globals()["bundled_rules_dir"]()
         )
-        self._per_tool_overrides: dict[str, Any] = dict(
-            per_tool_overrides or {}
-        )
+        self._per_tool_overrides: dict[str, Any] = dict(per_tool_overrides or {})
         self._semgrep_timeout = semgrep_timeout
         self._semgrep_executable = semgrep_executable
         self._scan_tools: frozenset[str] = scan_tools
 
         # Slow-tier configuration. The agent is supplied at
-        # construction by the sidecar 
-        self._code_intent_extraction_agent: Any | None = (
-            code_intent_extraction_agent
-        )
+        # construction by the sidecar
+        self._code_intent_extraction_agent: Any | None = code_intent_extraction_agent
         self._code_intent_confidence_threshold = code_intent_confidence_threshold
         self._code_intent_self_consistency_samples = max(
             1, int(code_intent_self_consistency_samples)
@@ -315,10 +307,7 @@ class G4CodeGate(Gate):
         except ValueError as exc:
             return GateDecision(
                 allow=False,
-                reason=(
-                    f"G4 malformed per-tool override for {tool_name!r}: "
-                    f"{exc}"
-                ),
+                reason=(f"G4 malformed per-tool override for {tool_name!r}: {exc}"),
                 incident_level=2,
             )
 
@@ -332,25 +321,20 @@ class G4CodeGate(Gate):
                 ),
             )
 
-        # Fast-tier is *only* the Semgrep layer. 
+        # Fast-tier is *only* the Semgrep layer.
         if not self._semgrep_enabled:
             return GateDecision(
                 allow=True,
-                reason=(
-                    f"G4: semgrep_enabled=False; fast-tier no-op on "
-                    f"{tool_name!r}"
-                ),
+                reason=(f"G4: semgrep_enabled=False; fast-tier no-op on {tool_name!r}"),
             )
 
         try:
-            findings = await self._run_semgrep(
-                extracted.code, extracted.language
-            )
-        except Exception as exc:  
+            findings = await self._run_semgrep(extracted.code, extracted.language)
+        except Exception as exc:
             logger.warning(
-                "VISTAGuard G4: semgrep invocation failed (%s: %s); "
-                "default-deny",
-                type(exc).__name__, exc,
+                "VISTAGuard G4: semgrep invocation failed (%s: %s); default-deny",
+                type(exc).__name__,
+                exc,
             )
             return GateDecision(
                 allow=False,
@@ -363,9 +347,7 @@ class G4CodeGate(Gate):
 
         # Filter out disabled rules.
         if disabled:
-            findings = [
-                f for f in findings if f.check_id not in disabled
-            ]
+            findings = [f for f in findings if f.check_id not in disabled]
 
         return self._decide_from_findings(tool_name, findings)
 
@@ -394,8 +376,7 @@ class G4CodeGate(Gate):
             primary = errors[0]
             other_ids = sorted({f.check_id for f in errors[1:]})
             reason_extra = (
-                f" (+{len(other_ids)} more: {other_ids[:4]})"
-                if other_ids else ""
+                f" (+{len(other_ids)} more: {other_ids[:4]})" if other_ids else ""
             )
             return GateDecision(
                 allow=False,
@@ -410,8 +391,7 @@ class G4CodeGate(Gate):
             primary = warnings[0]
             other_ids = sorted({f.check_id for f in warnings[1:]})
             reason_extra = (
-                f" (+{len(other_ids)} more: {other_ids[:4]})"
-                if other_ids else ""
+                f" (+{len(other_ids)} more: {other_ids[:4]})" if other_ids else ""
             )
             return GateDecision(
                 allow=True,
@@ -431,9 +411,7 @@ class G4CodeGate(Gate):
     # Per-tool override resolution
     # -----------------------------------------------------------------
 
-    def disabled_rules_for_tool(
-        self, tool_name: str
-    ) -> frozenset[str] | None:
+    def disabled_rules_for_tool(self, tool_name: str) -> frozenset[str] | None:
         """
         Public accessor: resolve the disabled rule IDs for
         ``tool_name``, raising ``ValueError`` on a malformed override.
@@ -444,9 +422,7 @@ class G4CodeGate(Gate):
         """
         return self._disabled_rules_for_tool(tool_name)
 
-    def _disabled_rules_for_tool(
-        self, tool_name: str
-    ) -> frozenset[str] | None:
+    def _disabled_rules_for_tool(self, tool_name: str) -> frozenset[str] | None:
         """
         Return the set of rule IDs disabled for ``tool_name``, or
         ``None`` if no override exists.
@@ -456,19 +432,15 @@ class G4CodeGate(Gate):
             return None
         if isinstance(raw, (str, bytes)):
             raise ValueError(
-                f"override must be a sequence of rule IDs, "
-                f"not {type(raw).__name__}"
+                f"override must be a sequence of rule IDs, not {type(raw).__name__}"
             )
         if not isinstance(raw, (list, tuple, set, frozenset)):
-            raise ValueError(
-                f"override must be a list/set; got {type(raw).__name__}"
-            )
+            raise ValueError(f"override must be a list/set; got {type(raw).__name__}")
         rules: set[str] = set()
         for entry in raw:
             if not isinstance(entry, str):
                 raise ValueError(
-                    f"override entries must be strings; got "
-                    f"{type(entry).__name__}"
+                    f"override entries must be strings; got {type(entry).__name__}"
                 )
             if not entry.startswith("vista-"):
                 raise ValueError(
@@ -622,9 +594,7 @@ class G4CodeGate(Gate):
     # Semgrep invocation
     # -----------------------------------------------------------------
 
-    async def _run_semgrep(
-        self, code: str, language: str
-    ) -> list[SemgrepFinding]:
+    async def _run_semgrep(self, code: str, language: str) -> list[SemgrepFinding]:
         """
         Invoke the semgrep CLI on ``code`` and parse the JSON
         output into ``SemgrepFinding`` objects.
@@ -638,7 +608,7 @@ class G4CodeGate(Gate):
             )
 
         # Write the code to a temp file so Semgrep can pick up the
-        # language from the suffix 
+        # language from the suffix
         suffix = _suffix_for_language(language)
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=suffix, delete=False, encoding="utf-8"
@@ -651,8 +621,10 @@ class G4CodeGate(Gate):
                 "--quiet",
                 "--json",
                 "--no-git-ignore",
-                "--config", self._semgrep_config,
-                "--config", str(self._bundled_rules_dir),
+                "--config",
+                self._semgrep_config,
+                "--config",
+                str(self._bundled_rules_dir),
                 tmp_path,
             ]
             proc = await asyncio.create_subprocess_exec(
@@ -823,9 +795,7 @@ def _detect_intent_mismatch(
     return False, ""
 
 
-def _extract_code(
-    tool_name: str, args: Mapping[str, Any]
-) -> ExtractedCode:
+def _extract_code(tool_name: str, args: Mapping[str, Any]) -> ExtractedCode:
     """
     Extract the code blob + language from a code-bearing tool call.
     """
@@ -834,7 +804,7 @@ def _extract_code(
         if not isinstance(command, str):
             return ExtractedCode(
                 scan=False,
-                reason=f"run_bash args lack a string `command`",
+                reason="run_bash args lack a string `command`",
             )
         return ExtractedCode(scan=True, code=command, language="bash")
 
@@ -844,12 +814,12 @@ def _extract_code(
         if not isinstance(content, str):
             return ExtractedCode(
                 scan=False,
-                reason=f"create_file args lack a string `content`",
+                reason="create_file args lack a string `content`",
             )
         if not isinstance(path, str):
             return ExtractedCode(
                 scan=False,
-                reason=f"create_file args lack a string `path`",
+                reason="create_file args lack a string `path`",
             )
         ext = "".join(Path(path).suffixes[-1:]).lower() if "." in path else ""
         language = _LANGUAGE_BY_EXT.get(ext)
@@ -885,9 +855,7 @@ def _suffix_for_language(language: str) -> str:
     return table.get(language, ".txt")
 
 
-def _parse_semgrep_results(
-    payload: Mapping[str, Any]
-) -> list[SemgrepFinding]:
+def _parse_semgrep_results(payload: Mapping[str, Any]) -> list[SemgrepFinding]:
     """
     Convert Semgrep's ``--json`` output into ``SemgrepFinding`` list.
 
@@ -916,9 +884,10 @@ def _parse_semgrep_results(
             end_line = int(end.get("line", start_line))
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
-                "VISTAGuard G4: skipping malformed semgrep finding "
-                "(%s: %s); entry=%r",
-                type(exc).__name__, exc, entry,
+                "VISTAGuard G4: skipping malformed semgrep finding (%s: %s); entry=%r",
+                type(exc).__name__,
+                exc,
+                entry,
             )
             continue
         out.append(

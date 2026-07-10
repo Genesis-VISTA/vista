@@ -14,8 +14,10 @@ field to render progress; an in-memory progress snapshot is also
 attached via `IndexProgress` for finer-grained feedback during a
 single paper's run.
 """
+
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import shutil
@@ -30,7 +32,6 @@ from fastapi.responses import FileResponse
 from ..config import settings
 from ..db.db import SessionDep, commit_with_retry, get_engine
 from ..db.schemas import (
-    IndexProgress,
     KnowledgeBaseCreate,
     KnowledgeBasePublic,
     KnowledgeBaseTable,
@@ -118,13 +119,15 @@ def _reconcile_with_disk(
     # New files on disk → stub publication.
     for name, size in on_disk.items():
         if name not in by_name:
-            pubs.append(Publication(
-                filename=name,
-                size=size,
-                added_at=now,
-                has_pdf=True,
-                index_status="unindexed",
-            ))
+            pubs.append(
+                Publication(
+                    filename=name,
+                    size=size,
+                    added_at=now,
+                    has_pdf=True,
+                    index_status="unindexed",
+                )
+            )
             changed = True
             continue
         # Existing publication: update size + has_pdf if they drift.
@@ -191,7 +194,8 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
     if pending is not None:
         logger.debug(
             "Skipping chroma read for %s: indexer pending (phase=%s)",
-            rag_db_path, pending.get("phase"),
+            rag_db_path,
+            pending.get("phase"),
         )
         return None
 
@@ -220,7 +224,9 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
         import chromadb
         from chromadb.config import Settings as ChromaSettings
     except ImportError:
-        logger.warning("chromadb not installed; cannot read citations from %s", rag_db_path)
+        logger.warning(
+            "chromadb not installed; cannot read citations from %s", rag_db_path
+        )
         return None
 
     try:
@@ -251,7 +257,9 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
     metas = list(result.get("metadatas") or [])
     # Filter to only dict-shaped rows with a `source` filename — anything
     # else is malformed and would just break the merge.
-    citations = [m for m in metas if isinstance(m, dict) and isinstance(m.get("source"), str)]
+    citations = [
+        m for m in metas if isinstance(m, dict) and isinstance(m.get("source"), str)
+    ]
     _CHROMA_CITATIONS_CACHE[cache_key] = citations
 
     # Don't let the cache grow unbounded — keep just the most recent
@@ -276,9 +284,19 @@ def _merge_chroma_metadata_into_pub(pub: Publication, meta: dict) -> bool:
     storing on the Publication.
     """
     import json as _json
+
     changed = False
-    for field in ("title", "abstract", "journal", "volume", "issue",
-                  "pages", "year", "doi", "publisher"):
+    for field in (
+        "title",
+        "abstract",
+        "journal",
+        "volume",
+        "issue",
+        "pages",
+        "year",
+        "doi",
+        "publisher",
+    ):
         if not getattr(pub, field, None):
             value = meta.get(field)
             if isinstance(value, str) and value.strip():
@@ -293,7 +311,7 @@ def _merge_chroma_metadata_into_pub(pub: Publication, meta: dict) -> bool:
                     if isinstance(parsed, list) and parsed:
                         setattr(pub, field, parsed)
                         changed = True
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             elif isinstance(value, list) and value:
                 setattr(pub, field, list(value))
@@ -379,9 +397,13 @@ async def _reconcile_with_chroma_async(
     a slow chroma open doesn't stall the rest of the API.
     """
     import asyncio
+
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        indexer._executor, _reconcile_with_chroma, rag_db_path, publications,
+        indexer._executor,
+        _reconcile_with_chroma,
+        rag_db_path,
+        publications,
     )
 
 
@@ -449,6 +471,7 @@ _persist_locks: dict[uuid.UUID, "asyncio.Lock"] = {}
 
 def _persist_lock_for(kb_id: uuid.UUID) -> "asyncio.Lock":
     import asyncio
+
     lock = _persist_locks.get(kb_id)
     if lock is None:
         lock = asyncio.Lock()
@@ -494,7 +517,8 @@ async def _drain_pending_persist(kb_id: uuid.UUID) -> None:
                     await session.rollback()
                     continue
                 await commit_with_retry(
-                    session, context=f"reconciler_persist:{kb_id}",
+                    session,
+                    context=f"reconciler_persist:{kb_id}",
                 )
 
 
@@ -530,6 +554,7 @@ def _schedule_persist(
 # CRUD
 # ---------------------------------------------------------------------------
 
+
 @router.get("")
 async def list_knowledge_bases(
     session: SessionDep,
@@ -550,20 +575,26 @@ async def list_knowledge_bases(
         # avoid. If anything changed, a background task on a fresh session
         # persists the result with retry.
         pubs_after_disk, changed_disk = _reconcile_with_disk(
-            row.pdfs_dir, row.publications,
+            row.pdfs_dir,
+            row.publications,
         )
         pubs_after_chroma, changed_chroma = await _reconcile_with_chroma_async(
-            row.rag_db_path, pubs_after_disk,
+            row.rag_db_path,
+            pubs_after_disk,
         )
         if changed_disk or changed_chroma:
             new_updated_at = _schedule_persist(
-                background_tasks, row, pubs_after_chroma,
-            )
-            out.append(_public_with_progress(
+                background_tasks,
                 row,
-                publications_override=pubs_after_chroma,
-                updated_at_override=new_updated_at,
-            ))
+                pubs_after_chroma,
+            )
+            out.append(
+                _public_with_progress(
+                    row,
+                    publications_override=pubs_after_chroma,
+                    updated_at_override=new_updated_at,
+                )
+            )
         else:
             out.append(_public_with_progress(row))
     out.sort(key=lambda kb: kb["slug"])
@@ -578,14 +609,18 @@ async def get_knowledge_base(
 ) -> dict[str, Any]:
     kb = await kb_service.get_kb(session, slug)
     pubs_after_disk, changed_disk = _reconcile_with_disk(
-        kb.pdfs_dir, kb.publications,
+        kb.pdfs_dir,
+        kb.publications,
     )
     pubs_after_chroma, changed_chroma = await _reconcile_with_chroma_async(
-        kb.rag_db_path, pubs_after_disk,
+        kb.rag_db_path,
+        pubs_after_disk,
     )
     if changed_disk or changed_chroma:
         new_updated_at = _schedule_persist(
-            background_tasks, kb, pubs_after_chroma,
+            background_tasks,
+            kb,
+            pubs_after_chroma,
         )
         return _public_with_progress(
             kb,
@@ -597,7 +632,8 @@ async def get_knowledge_base(
 
 @router.post("", status_code=201)
 async def create_knowledge_base(
-    payload: KnowledgeBaseCreate, session: SessionDep,
+    payload: KnowledgeBaseCreate,
+    session: SessionDep,
 ) -> dict[str, Any]:
     row = await kb_service.create_kb(session, payload)
     return _public_with_progress(row)
@@ -605,7 +641,9 @@ async def create_knowledge_base(
 
 @router.put("/{slug}")
 async def update_knowledge_base(
-    slug: str, updates: KnowledgeBaseUpdate, session: SessionDep,
+    slug: str,
+    updates: KnowledgeBaseUpdate,
+    session: SessionDep,
 ) -> dict[str, Any]:
     kb = await kb_service.update_kb(session, slug, updates)
     return _public_with_progress(kb)
@@ -653,8 +691,9 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
             continue
         if not _is_safe(target):
             logger.warning(
-                "Refusing to delete KB path outside knowledge_bases_dir: "
-                "%s (root=%s)", target, kb_root,
+                "Refusing to delete KB path outside knowledge_bases_dir: %s (root=%s)",
+                target,
+                kb_root,
             )
             continue
         try:
@@ -665,7 +704,9 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
             # mid-write). The user can re-run delete or clean up
             # by hand.
             logger.exception(
-                "Failed to remove %s while deleting KB %s", target, slug,
+                "Failed to remove %s while deleting KB %s",
+                target,
+                slug,
             )
 
     # Best effort: if both pdfs/ and rag_db/ lived under a parent
@@ -688,6 +729,7 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
 # ---------------------------------------------------------------------------
 # Publications
 # ---------------------------------------------------------------------------
+
 
 @router.post("/{slug}/publications", status_code=201)
 async def add_publications(
@@ -735,14 +777,16 @@ async def add_publications(
             saved = write_file_unique(pdfs_dir / safe, contents)
             final_name = saved.name
         existing_names.add(final_name)
-        pubs.append(Publication(
-            filename=final_name,
-            size=len(contents),
-            added_at=now,
-            has_pdf=True,
-            index_status="queued",
-            index_error=None,
-        ))
+        pubs.append(
+            Publication(
+                filename=final_name,
+                size=len(contents),
+                added_at=now,
+                has_pdf=True,
+                index_status="queued",
+                index_error=None,
+            )
+        )
         added_names.append(final_name)
 
     # Adding new PDFs invalidates any prior "ready" build state.
@@ -783,7 +827,9 @@ async def add_publications(
 
 @router.get("/{slug}/publications/{filename}")
 async def download_publication(
-    slug: str, filename: str, session: SessionDep,
+    slug: str,
+    filename: str,
+    session: SessionDep,
 ) -> FileResponse:
     kb = await kb_service.get_kb(session, slug)
     # Reject anything with path-separator chars; we look up by basename only.
@@ -801,7 +847,9 @@ async def download_publication(
 
 @router.delete("/{slug}/publications/{filename}", status_code=204)
 async def delete_publication(
-    slug: str, filename: str, session: SessionDep,
+    slug: str,
+    filename: str,
+    session: SessionDep,
 ) -> None:
     kb = await kb_service.get_kb(session, slug)
     if filename != Path(filename).name or filename in ("", ".", ".."):
@@ -829,6 +877,7 @@ async def delete_publication(
 # ---------------------------------------------------------------------------
 # Background task: run indexer, persist results
 # ---------------------------------------------------------------------------
+
 
 async def _run_indexer_and_persist(
     *,
@@ -956,13 +1005,15 @@ async def _run_indexer_and_persist(
         # the SQL row stays in "indexing" state until the next poll's
         # reconciler picks up the chroma citations.
         ok = await commit_with_retry(
-            session, context=f"indexer_persist:{kb_id}",
+            session,
+            context=f"indexer_persist:{kb_id}",
         )
         if not ok:
             logger.warning(
                 "Indexer persist for kb_id=%s gave up after retries; "
                 "chroma is up to date but vista.db will catch up on next "
-                "reconciler pass.", kb_id,
+                "reconciler pass.",
+                kb_id,
             )
 
 
@@ -977,8 +1028,15 @@ def _merge_citation_into_pub(pub: Publication, citation: dict) -> None:
     import json as _json
 
     for field in (
-        "title", "abstract", "journal", "volume", "issue",
-        "pages", "year", "doi", "publisher",
+        "title",
+        "abstract",
+        "journal",
+        "volume",
+        "issue",
+        "pages",
+        "year",
+        "doi",
+        "publisher",
     ):
         if not getattr(pub, field, None):
             value = citation.get(field)
@@ -993,7 +1051,7 @@ def _merge_citation_into_pub(pub: Publication, citation: dict) -> None:
                     parsed = _json.loads(value)
                     if isinstance(parsed, list):
                         setattr(pub, field, parsed)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             elif isinstance(value, list):
                 setattr(pub, field, list(value))

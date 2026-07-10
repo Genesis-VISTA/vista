@@ -26,7 +26,7 @@ class FileInfo(BaseModel):
 
 
 def _kind_dir(agent: ProjectAgent, kind: FileKind) -> Path:
-    """ Resolve the on-disk directory for a file kind on the given agent. """
+    """Resolve the on-disk directory for a file kind on the given agent."""
     return agent.uploads_volume_dir if kind == "uploads" else agent.output_volume_dir
 
 
@@ -36,18 +36,20 @@ def _sanitize_filename(name: str | None) -> str:
     path.
     """
     name = name or ""
-    cleaned = "/".join([
-        re.sub(r"[^A-Za-z0-9._-]", "_", Path(part).name)
-        for part in name.split("/")
-        if part and not re.fullmatch(r'\.+', part)
-    ])
+    cleaned = "/".join(
+        [
+            re.sub(r"[^A-Za-z0-9._-]", "_", Path(part).name)
+            for part in name.split("/")
+            if part and not re.fullmatch(r"\.+", part)
+        ]
+    )
     if not cleaned:
         cleaned = "upload.bin"
     return cleaned
 
 
 def _get_file(files_dir: Path, name: str) -> Path:
-    """ Return file path, checks for path traversal etc. and that it exists. """
+    """Return file path, checks for path traversal etc. and that it exists."""
     if _sanitize_filename(name) != name:
         raise HTTPException(status_code=404, detail="Not found")
     path = files_dir / name
@@ -60,7 +62,9 @@ async def list_files(
     session: AsyncSession, project_name: str, kind: FileKind, user: ServiceUser
 ) -> list[FileInfo]:
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         if not files_dir.exists():
@@ -72,12 +76,14 @@ async def list_files(
             if not file.is_file() or not path_is_under(files_dir, file):
                 continue
             stat = file.stat()
-            files.append(FileInfo(
-                name = file.relative_to(files_dir).as_posix(),
-                size = stat.st_size,
-                created = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
-                modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-            ))
+            files.append(
+                FileInfo(
+                    name=file.relative_to(files_dir).as_posix(),
+                    size=stat.st_size,
+                    created=datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
+                    modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                )
+            )
         files.sort(key=lambda f: f.modified, reverse=True)
         return files
 
@@ -88,7 +94,9 @@ async def save_uploads(
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     async with project_agent_pool.get(agent_key) as agent:
         uploads_dir = agent.uploads_volume_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +105,8 @@ async def save_uploads(
         for file in files:
             contents = await file.read()
             if len(contents) > settings.max_upload_size:
-                raise HTTPException(status_code=400,
+                raise HTTPException(
+                    status_code=400,
                     detail=f"File '{file.filename}' exceeds the {settings.max_upload_size.human_readable()} upload limit.",
                 )
             file_path = uploads_dir / _sanitize_filename(file.filename)
@@ -109,20 +118,32 @@ async def save_uploads(
 
 
 async def get_file_path(
-    session: AsyncSession, project_name: str, kind: FileKind, name: str, user: ServiceUser
+    session: AsyncSession,
+    project_name: str,
+    kind: FileKind,
+    name: str,
+    user: ServiceUser,
 ) -> Path:
-    """ Resolve a single file's path, raising 404 if it is missing or invalid. """
+    """Resolve a single file's path, raising 404 if it is missing or invalid."""
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     async with project_agent_pool.get(agent_key) as agent:
         return _get_file(_kind_dir(agent, kind), name)
 
 
 async def delete_file(
-    session: AsyncSession, project_name: str, kind: FileKind, name: str, user: ServiceUser
+    session: AsyncSession,
+    project_name: str,
+    kind: FileKind,
+    name: str,
+    user: ServiceUser,
 ) -> None:
     project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(session, project_id=project.id, user_id=user.id)
+    agent_key = await get_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         path = _get_file(files_dir, name)

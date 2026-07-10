@@ -1,7 +1,8 @@
 """Tests for the campaign.yaml manifest loader."""
+
 import pytest
 
-from vista_backend.agents.campaign.manifest import CampaignManifest, load_manifest
+from vista_backend.agents.campaign.manifest import load_manifest
 
 
 MANIFEST_YAML = """

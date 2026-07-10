@@ -22,6 +22,7 @@ scripts / references / assets) to the caller-provided destination directory.
 forced to `false` so imports land private (the user can publish them via the
 /skills tab).
 """
+
 import io
 import re
 import shutil
@@ -93,7 +94,9 @@ def parse_github_url(url: str) -> ParsedGithubUrl:
 
 def _api_request(url: str, accept: str = "application/json") -> bytes:
     """Send a GET to api.github.com with the optional auth token."""
-    req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "vista-backend"})
+    req = urllib.request.Request(
+        url, headers={"Accept": accept, "User-Agent": "vista-backend"}
+    )
     if settings.github_token:
         req.add_header("Authorization", f"Bearer {settings.github_token}")
     try:
@@ -114,9 +117,8 @@ def _api_request(url: str, accept: str = "application/json") -> bytes:
 
 def _resolve_default_branch(owner: str, repo: str) -> str:
     import json
-    payload = json.loads(
-        _api_request(f"https://api.github.com/repos/{owner}/{repo}")
-    )
+
+    payload = json.loads(_api_request(f"https://api.github.com/repos/{owner}/{repo}"))
     return payload.get("default_branch") or "main"
 
 
@@ -141,7 +143,9 @@ def _download_tarball(parsed: ParsedGithubUrl, dest_root: Path) -> Path:
             if top is None:
                 top = head
             elif head != top:
-                raise SkillImportError("Unexpected tarball layout (multiple top-level dirs).")
+                raise SkillImportError(
+                    "Unexpected tarball layout (multiple top-level dirs)."
+                )
         if top is None:
             raise SkillImportError("Empty tarball.")
         # Python 3.12+ requires an explicit filter argument; "data" disallows

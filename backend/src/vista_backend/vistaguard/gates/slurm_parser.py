@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # -----------------------------------------------------------------
@@ -211,7 +211,19 @@ _DASH_C_WRAPPERS: frozenset[str] = frozenset({"bash", "sh", "zsh", "dash", "ksh"
 # Interpreters that, when on the receiving end of a pipe, turn the
 # upstream producer into a code-execution sink.
 _SHELL_SINKS: frozenset[str] = frozenset(
-    {"bash", "sh", "zsh", "dash", "ksh", "python", "python2", "python3", "perl", "ruby", "node"}
+    {
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "python",
+        "python2",
+        "python3",
+        "perl",
+        "ruby",
+        "node",
+    }
 )
 
 _NET_BINARIES: frozenset[str] = frozenset(
@@ -480,9 +492,7 @@ _EVAL_SUBST_RE = re.compile(
 )
 
 
-def _detect_multistage(
-    raw: str, commands: list[ParsedCommand]
-) -> frozenset[str]:
+def _detect_multistage(raw: str, commands: list[ParsedCommand]) -> frozenset[str]:
     """
     Flag the three SciAgentBench B5.1 delivery structures.
 
@@ -499,9 +509,7 @@ def _detect_multistage(
         flags.add(MULTISTAGE_EVAL_SUBSTITUTION)
 
     has_download = any(c.binary in {"curl", "wget"} for c in commands)
-    runs_local = any(
-        _runs_local_binary(c) for c in commands
-    )
+    runs_local = any(_runs_local_binary(c) for c in commands)
     if has_download and runs_local:
         flags.add(MULTISTAGE_DOWNLOAD_EXEC)
 
@@ -516,7 +524,11 @@ def _runs_local_binary(command: ParsedCommand) -> bool:
     """
     for tok in command.argv:
         bare = tok.strip().strip("'\"")
-        if bare.startswith("./") or bare.startswith("/tmp/") or bare.startswith("/dev/shm/"):
+        if (
+            bare.startswith("./")
+            or bare.startswith("/tmp/")
+            or bare.startswith("/dev/shm/")
+        ):
             return True
     return False
 
@@ -732,7 +744,7 @@ def _build_directives(pairs: list[tuple[str, str]]) -> SbatchDirectives:
 def _safe_int(val: str, default: int | None) -> int | None:
     try:
         return int(val)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return default
 
 
@@ -845,9 +857,7 @@ def parse_slurm_script(raw: str) -> SlurmScript:
     )
 
 
-def _walk_commands(
-    text: str, out: list[ParsedCommand], depth: int
-) -> None:
+def _walk_commands(text: str, out: list[ParsedCommand], depth: int) -> None:
     """
     Recursively split ``text`` into commands, appending each as a
     :class:`ParsedCommand` to ``out``. Recurses into ``bash -c`` /
@@ -861,9 +871,7 @@ def _walk_commands(
         if not tokens:
             continue
         binary = _resolve_binary(tokens)
-        out.append(
-            ParsedCommand(binary=binary, argv=tuple(tokens), raw=segment)
-        )
+        out.append(ParsedCommand(binary=binary, argv=tuple(tokens), raw=segment))
 
         # Recurse into an embedded shell-script body.
         inner = _dash_c_body(tokens)

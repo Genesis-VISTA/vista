@@ -12,7 +12,9 @@ def _kind(message):
 
 
 @pytest.mark.anyio
-async def test_create_and_list_chat_sessions_support_multiple_per_project(session, alice):
+async def test_create_and_list_chat_sessions_support_multiple_per_project(
+    session, alice
+):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="session-project", description=None, system_prompt=None),
@@ -108,7 +110,9 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
 
 
 @pytest.mark.anyio
-async def test_update_chat_session_title_only_preserves_existing_history(session, alice):
+async def test_update_chat_session_title_only_preserves_existing_history(
+    session, alice
+):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="rename-project", description=None, system_prompt=None),
@@ -157,7 +161,9 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
 
 
 @pytest.mark.anyio
-async def test_effective_message_history_is_stateless_without_chat_session_id(session, alice):
+async def test_effective_message_history_is_stateless_without_chat_session_id(
+    session, alice
+):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="history-project", description=None, system_prompt=None),
@@ -256,7 +262,10 @@ async def test_append_message_history_extends_existing_session_history(session, 
         user_id=alice.id,
         chat_session_id=created.id,
     )
-    assert [message["kind"] for message in reloaded.message_history] == ["request", "response"]
+    assert [message["kind"] for message in reloaded.message_history] == [
+        "request",
+        "response",
+    ]
 
 
 @pytest.mark.anyio

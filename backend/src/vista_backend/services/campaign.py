@@ -7,6 +7,7 @@ agent logic. The planner runtime (commit 6), the monitor (commit 7), and the API
 usable from non-HTTP contexts (e.g. the background monitor); the API maps these to
 404s. Mutators touch `updated_at` and flush + refresh, mirroring chat_session.py.
 """
+
 import uuid
 
 from sqlmodel import col, select
@@ -41,6 +42,7 @@ _UNSET = object()
 # CampaignRun
 # --------------------------------------------------------------------------- #
 
+
 async def create_campaign(
     session: AsyncSession,
     *,
@@ -73,13 +75,19 @@ async def create_campaign(
     return run
 
 
-async def get_campaign(session: AsyncSession, run_id: uuid.UUID) -> CampaignRunTable | None:
+async def get_campaign(
+    session: AsyncSession, run_id: uuid.UUID
+) -> CampaignRunTable | None:
     return (
-        await session.exec(select(CampaignRunTable).where(CampaignRunTable.id == run_id))
+        await session.exec(
+            select(CampaignRunTable).where(CampaignRunTable.id == run_id)
+        )
     ).first()
 
 
-async def require_campaign(session: AsyncSession, run_id: uuid.UUID) -> CampaignRunTable:
+async def require_campaign(
+    session: AsyncSession, run_id: uuid.UUID
+) -> CampaignRunTable:
     run = await get_campaign(session, run_id)
     if run is None:
         raise ValueError(f"Campaign {run_id} not found")
@@ -181,6 +189,7 @@ async def save_plan(
 # CampaignStep
 # --------------------------------------------------------------------------- #
 
+
 async def add_step(
     session: AsyncSession,
     *,
@@ -208,9 +217,13 @@ async def add_step(
     return step
 
 
-async def get_step(session: AsyncSession, step_id: uuid.UUID) -> CampaignStepTable | None:
+async def get_step(
+    session: AsyncSession, step_id: uuid.UUID
+) -> CampaignStepTable | None:
     return (
-        await session.exec(select(CampaignStepTable).where(CampaignStepTable.id == step_id))
+        await session.exec(
+            select(CampaignStepTable).where(CampaignStepTable.id == step_id)
+        )
     ).first()
 
 
@@ -258,6 +271,7 @@ async def set_step_status(
 # HpcJob (the backend's record; complements the MCP server's own registry)
 # --------------------------------------------------------------------------- #
 
+
 async def record_job(
     session: AsyncSession,
     *,
@@ -299,7 +313,9 @@ async def list_jobs_for_step(
 ) -> list[HpcJobTable]:
     return list(
         (
-            await session.exec(select(HpcJobTable).where(HpcJobTable.step_id == step_id))
+            await session.exec(
+                select(HpcJobTable).where(HpcJobTable.step_id == step_id)
+            )
         ).all()
     )
 

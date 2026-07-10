@@ -15,6 +15,7 @@ so credentials and the planner are derived per job from the DB):
 The MCP `invoke` builder and the sim-skill parser factory are injected, so everything here
 is unit-testable with fakes; production uses `build_mcp_invoke` + the LLM skill parser.
 """
+
 import re
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -53,7 +54,9 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
         raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
     run = await campaign_service.require_campaign(session, step.run_id)
     if run.session_id is None:
-        raise ValueError(f"Campaign {run.id} has no session_id; cannot resolve its sandbox volume.")
+        raise ValueError(
+            f"Campaign {run.id} has no session_id; cannot resolve its sandbox volume."
+        )
     user_row = await session.get(UserTable, job.user_id)
     if user_row is None:
         raise ValueError(f"User {job.user_id} for job {job.job_id} not found")
@@ -63,7 +66,10 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
 
 
 async def build_invoke_for_job(
-    session: AsyncSession, job: HpcJobTable, *, invoke_builder: InvokeBuilder = build_mcp_invoke
+    session: AsyncSession,
+    job: HpcJobTable,
+    *,
+    invoke_builder: InvokeBuilder = build_mcp_invoke,
 ) -> InvokeTool:
     """The MCP `invoke` for a job, bound to its owning user's credentials + sandbox paths."""
     _run, user, paths = await _job_run_user_paths(session, job)
@@ -84,16 +90,23 @@ async def build_planner_for_job(
     manifest = load_manifest(Path(skills_dir) / run.planner_skill)
     hpc = McpHpcTools(invoke_builder(user, paths))
     subagents = build_subagents(
-        manifest, hpc=hpc, skills_dir=skills_dir, parser_factory=parser_factory, model=model
+        manifest,
+        hpc=hpc,
+        skills_dir=skills_dir,
+        parser_factory=parser_factory,
+        model=model,
     )
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 
 
 def build_status_poll(*, invoke_builder: InvokeBuilder = build_mcp_invoke):
     """Build a monitor `poll(session, job) -> (state, raw_status)`, deriving the invoke per job."""
+
     async def poll(session: AsyncSession, job: HpcJobTable) -> tuple[str, str]:
         invoke = await build_invoke_for_job(session, job, invoke_builder=invoke_builder)
-        text = await invoke("get_hpc_job_status", {"job_id": job.job_id, "cluster": job.cluster})
+        text = await invoke(
+            "get_hpc_job_status", {"job_id": job.job_id, "cluster": job.cluster}
+        )
         return parse_job_state(text), text
 
     return poll
@@ -101,6 +114,7 @@ def build_status_poll(*, invoke_builder: InvokeBuilder = build_mcp_invoke):
 
 def build_collector(planner_provider: PlannerProvider = build_planner_for_job):
     """Build a monitor `collect(session, job, raw_status)` that delegates to the run's planner."""
+
     async def collect(session: AsyncSession, job: HpcJobTable, raw_status: str) -> None:
         planner = await planner_provider(session, job)
         await planner.collect_job(session, job=job)

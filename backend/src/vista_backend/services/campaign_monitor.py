@@ -12,6 +12,7 @@ The two external boundaries — polling job status and collecting/parsing a fini
 — are injected, so the reconcile core is unit-testable without MCP or an LLM. The
 planner runtime supplies the real closures (commit 8); the app lifespan starts the loop.
 """
+
 import asyncio
 import logging
 from typing import Awaitable, Callable
@@ -30,8 +31,16 @@ logger = logging.getLogger("vista.campaign_monitor")
 # Normalized (upper-case) IRI/SLURM terminal states.
 _TERMINAL_SUCCESS = {"COMPLETED", "COMPLETE"}
 _TERMINAL_FAILURE = {
-    "FAILED", "CANCELLED", "CANCELED", "TIMEOUT", "NODE_FAIL",
-    "OUT_OF_MEMORY", "BOOT_FAIL", "DEADLINE", "PREEMPTED", "ERROR",
+    "FAILED",
+    "CANCELLED",
+    "CANCELED",
+    "TIMEOUT",
+    "NODE_FAIL",
+    "OUT_OF_MEMORY",
+    "BOOT_FAIL",
+    "DEADLINE",
+    "PREEMPTED",
+    "ERROR",
 }
 
 
@@ -78,7 +87,9 @@ SendEmailFn = Callable[..., Awaitable[bool]]
 
 
 class CampaignMonitor:
-    def __init__(self, *, poll: PollFn, collect: CollectFn, send_email: SendEmailFn | None = None):
+    def __init__(
+        self, *, poll: PollFn, collect: CollectFn, send_email: SendEmailFn | None = None
+    ):
         self._poll = poll
         self._collect = collect
         self._send_email = send_email or email_service.send_email
@@ -107,11 +118,15 @@ class CampaignMonitor:
             await self._collect(session, job, raw_status)
         else:
             await campaign_service.update_step(
-                session, step_id=job.step_id, status="failed",
+                session,
+                step_id=job.step_id,
+                status="failed",
                 result={"state": normalize_state(state)},
             )
         # The monitor owns "stop watching this job" regardless of the collector.
-        await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
+        await campaign_service.update_job(
+            session, job_id=job.job_id, result_collected=True
+        )
         await self._notify(session, job, state=state, ok=ok)
 
     async def _notify(
@@ -120,7 +135,9 @@ class CampaignMonitor:
         if job.notified:
             return
         step = await campaign_service.get_step(session, job.step_id)
-        run = await campaign_service.get_campaign(session, step.run_id) if step else None
+        run = (
+            await campaign_service.get_campaign(session, step.run_id) if step else None
+        )
         user = await session.get(UserTable, job.user_id)
         if run is None or user is None:
             return
@@ -142,7 +159,9 @@ class CampaignMonitor:
                     examined = await self.reconcile_once(session)
                     await session.commit()
                     if examined:
-                        logger.info("campaign monitor reconciled %d open job(s)", examined)
+                        logger.info(
+                            "campaign monitor reconciled %d open job(s)", examined
+                        )
             except Exception:  # noqa: BLE001 - keep the loop alive across transient failures
                 logger.exception("campaign monitor tick failed")
             try:

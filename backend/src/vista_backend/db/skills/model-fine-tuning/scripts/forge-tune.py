@@ -8,7 +8,9 @@ from torch.optim import Adam
 from tqdm import tqdm
 import pandas as pd
 import argparse
-import os, math, time
+import os
+import math
+import time
 from sklearn.model_selection import train_test_split
 
 
@@ -136,7 +138,7 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path, device):
 
     if scheduler is not None and checkpoint.get('scheduler_state_dict') is not None:
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        print(f"Loaded scheduler state")
+        print("Loaded scheduler state")
 
     epoch = checkpoint.get('epoch', 0)
     best_val_metric = checkpoint.get('best_val_metric', 0.0)
@@ -446,13 +448,13 @@ def train(model, train_data, val_data, tokenizer, learning_rate, epochs, batch_s
     if is_main_process():
         if use_cuda and memory_log['epoch']:
             pd.DataFrame(memory_log).to_csv(os.path.join(checkpoint_dir, 'gpu_memory_log.csv'), index=False)
-            print(f"GPU memory log saved.")
+            print("GPU memory log saved.")
             final_alloc, final_reserved, peak_alloc = get_gpu_memory_info(device)
             print(f"Final GPU Memory - Allocated: {final_alloc:.2f} MB, Peak: {peak_alloc:.2f} MB")
 
         if speed_log['epoch']:
             pd.DataFrame(speed_log).to_csv(os.path.join(checkpoint_dir, 'training_speed_log.csv'), index=False)
-            print(f"Speed log saved.")
+            print("Speed log saved.")
             print(f"Avg Epoch: {np.mean(speed_log['epoch_time_s']):.2f}s | "
                   f"Avg Throughput: {np.mean(speed_log['samples_per_sec']):.2f} samples/s | "
                   f"Avg Batch: {np.mean(speed_log['avg_batch_time_ms']):.2f} ms")
