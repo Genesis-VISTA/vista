@@ -1,11 +1,12 @@
 # Vista CI Pipeline
 #
 # Stages:
-#   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
+#   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit, helm chart
 #   test  — pytest (backend + dev_mcp_server)
 #
 # Python jobs use the official uv image and let uv manage the Python 3.14 install.
-# Node jobs use node:22-slim. All jobs run in parallel within each stage.
+# Node jobs use node:22-slim. Helm jobs use alpine/helm. All jobs run in parallel
+# within each stage.
 
 stages:
   - lint
@@ -149,3 +150,30 @@ ui:typecheck:
     - cd ui
     - npm ci --prefer-offline
     - npx tsc --noEmit
+
+# ─── Helm chart ─────────────────────────────────────────────────────────────
+
+chart:lint:
+  stage: lint
+  image:
+    name: alpine/helm:3.16.3
+    entrypoint: [""]
+  script:
+    - helm lint chart/
+    # Dev bootstrap: inline secrets + KVM privileged mode
+    - >
+      helm template vista chart/
+      --set appSecrets.create=true
+      --set appSecrets.openaiApiKey=test
+      --set kvm.enabled=true
+      > /dev/null
+    # Production path: ExternalSecrets + KVM disabled
+    - >
+      helm template vista chart/
+      --set appSecrets.create=false
+      --set appSecrets.externalSecret.enabled=true
+      --set appSecrets.externalSecret.secretsManagerPath=/amsc/dev/vista
+      --set oidc.externalSecret.enabled=true
+      --set oidc.externalSecret.secretsManagerPath=/amsc/dev/vista-oidc
+      --set kvm.enabled=false
+      > /dev/null

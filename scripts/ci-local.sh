@@ -8,6 +8,7 @@
 #   ./scripts/ci-local.sh backend          # lint + test backend
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test dev_mcp_server only
+#   ./scripts/ci-local.sh chart lint       # helm lint + template (dev + prod paths)
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI (UI has no tests; lint/typecheck only)
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
@@ -29,7 +30,7 @@ TARGETS=()
 ACTIONS=()
 
 usage() {
-  sed -n '2,18p' "$0" | sed -E 's/^# ?//'
+  sed -n '2,19p' "$0" | sed -E 's/^# ?//'
 }
 
 die() {
@@ -66,6 +67,10 @@ ensure_uv() {
 
 ensure_npm() {
   command -v npm >/dev/null 2>&1 || die "npm is required"
+}
+
+ensure_helm() {
+  command -v helm >/dev/null 2>&1 || die "helm is required (https://helm.sh/docs/intro/install/)"
 }
 
 backend_lint() {
@@ -145,6 +150,31 @@ ui_test() {
   echo "note: UI has no pytest/jest job in CI; use './scripts/ci-local.sh ui lint' for ESLint + tsc"
 }
 
+chart_lint() {
+  ensure_helm
+  log "chart:lint (helm lint + template)"
+  helm lint chart/
+  # Dev bootstrap: inline secrets + KVM privileged mode
+  helm template vista chart/ \
+    --set appSecrets.create=true \
+    --set appSecrets.openaiApiKey=test \
+    --set kvm.enabled=true \
+    > /dev/null
+  # Production path: ExternalSecrets + KVM disabled
+  helm template vista chart/ \
+    --set appSecrets.create=false \
+    --set appSecrets.externalSecret.enabled=true \
+    --set appSecrets.externalSecret.secretsManagerPath=/amsc/dev/vista \
+    --set oidc.externalSecret.enabled=true \
+    --set oidc.externalSecret.secretsManagerPath=/amsc/dev/vista-oidc \
+    --set kvm.enabled=false \
+    > /dev/null
+}
+
+chart_test() {
+  echo "note: chart has no test job in CI; use './scripts/ci-local.sh chart lint' for helm lint + template"
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -169,7 +199,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|all)
+    backend|ui|mcp|chart|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -251,6 +281,12 @@ if want_target ui && want_action lint; then
 fi
 if want_target ui && want_action test; then
   ui_test
+fi
+if want_target chart && want_action lint; then
+  run_section "chart lint" chart_lint
+fi
+if want_target chart && want_action test; then
+  chart_test
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then
