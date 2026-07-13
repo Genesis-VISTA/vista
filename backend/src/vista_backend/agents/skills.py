@@ -34,6 +34,7 @@ class SkillMetadata(BaseModel):
         compatibility: Compatibility information for the skill (optional)
         allowed_tools: Tool patterns the skill requires (optional, experimental)
         metadata: Key-value pairs for client-specific properties (optional).
+        author: Display name of the skill author (optional).
     """
 
     name: A[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
@@ -42,6 +43,7 @@ class SkillMetadata(BaseModel):
     compatibility: str | None = None
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
+    author: str | None = None
 
 
 class Skill(SkillMetadata):
@@ -146,6 +148,8 @@ def skill_to_markdown(skill: Skill) -> str:
         fm["allowed_tools"] = skill.allowed_tools
     if skill.metadata:
         fm["metadata"] = skill.metadata
+    if skill.author is not None:
+        fm["author"] = skill.author
 
     frontmatter_text = yaml.safe_dump(
         fm, sort_keys=False, allow_unicode=True, width=1000

@@ -224,15 +224,21 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
 
     - `odo_s3m_token` enables Odo.
     - `frontier_s3m_token` enables Frontier.
+    - `s3m_token` is the backend's current generic OLCF token field; it
+      supports explicit `cluster="odo"` / `cluster="frontier"` calls but
+      does not by itself disambiguate which OLCF cluster to prefer.
     - `nersc_iri_token` enables Perlmutter.
     """
-    configured: list[Cluster] = []
+    configured_set: set[Cluster] = set()
     if cfg.odo_s3m_token:
-        configured.append("odo")
+        configured_set.add("odo")
     if cfg.frontier_s3m_token:
-        configured.append("frontier")
+        configured_set.add("frontier")
+    if cfg.s3m_token:
+        configured_set.update({"odo", "frontier"})
     if cfg.nersc_iri_token:
-        configured.append("perlmutter")
+        configured_set.add("perlmutter")
+    configured = sorted(configured_set)
 
     if len(configured) == 1:
         return configured[0]

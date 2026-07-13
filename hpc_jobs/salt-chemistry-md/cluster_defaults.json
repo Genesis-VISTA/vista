@@ -1,0 +1,17 @@
+{
+  "frontier": {
+    "duration": 7200,
+    "resources": {
+      "node_count": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "SALTMD_ENV": "/lustre/orion/proj-shared/chm243/vista/openmm-torch-frontier",
+        "SALTMD_REPO_URL": "https://github.com/jqyin/salt-chemistry-skill",
+        "SALTMD_REPO_REF": "main"
+      }
+    }
+  }
+}
