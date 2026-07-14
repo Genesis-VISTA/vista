@@ -223,7 +223,10 @@ async def seed_db(engine: AsyncEngine) -> None:
                 name="molten-salt",
                 description="Molten salt thermophysical properties assistant — querying the MSTDB-TP database, plotting phase diagrams, and searching the literature corpus.",
                 system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(),
-                skills=sorted({"salt-analysis", "salt-chemistry-md"} - skipped_skills),
+                skills=sorted(
+                    {"salt-analysis", "salt-chemistry-md", "salt-neutronics-tbr"}
+                    - skipped_skills
+                ),
                 knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
                 # Allow everything except the alloy-design HPC toolchain.
                 tools=["*", "!agenthpc_*"],

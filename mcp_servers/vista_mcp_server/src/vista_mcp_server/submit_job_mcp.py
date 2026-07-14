@@ -625,7 +625,12 @@ async def _submit_perlmutter_job(
         iri_env["VISTA_PM_IMAGE"] = defaults.iri.image
     if defaults.iri.module is not None:
         iri_env["VISTA_PM_MODULE"] = defaults.iri.module
-    iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
+    # Perlmutter is GPU-first: surface GPUs-per-node so GPU job scripts (e.g. shifter)
+    # can read it. Skip it for CPU-partition jobs (constraint="cpu"); otherwise Slurm
+    # requests a gpu gres the CPU node can't satisfy and the step launch fails with
+    # "Invalid generic resource (gres) specification" before the job script runs.
+    if defaults.iri.constraint != "cpu":
+        iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
 
     stdout_template = f"{out_dir}/log-%j.out"
     stderr_template = f"{out_dir}/log-%j.err"
