@@ -5,6 +5,10 @@ and multi-tenancy metrics for VISTA using the built-in instrumentation. Run the
 phases in the order below; each section says what it produces, how to run it,
 and whether it needs a live LLM.
 
+For the broader testing roadmap (unit/integration milestones and planned
+nightly automation), see [docs/testing/README.md](./testing/README.md)
+(Milestone D wraps this runbook; it does not replace it).
+
 > **Two execution modes.** The deterministic load generator has a `tools` mode
 > (drives `/mcp/call`, **no LLM, no HPC credentials**) and an `agent` mode
 > (drives the full agent loop, **needs a configured `VISTA_BACKEND_MODEL` +

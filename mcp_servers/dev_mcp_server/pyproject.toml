@@ -28,3 +28,12 @@ artifacts = [
 
 [tool.uv]
 python-preference = "only-managed"
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: pure / hermetic unit tests",
+    "integration: multi-module hermetic tests (fakes OK)",
+    "live: needs configured model or external live services (opt-in)",
+    "sandbox: needs microsandbox / Docker daemon",
+    "hpc: needs real cluster credentials",
+]

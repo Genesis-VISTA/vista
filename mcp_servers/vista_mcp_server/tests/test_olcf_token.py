@@ -2,6 +2,7 @@
 Tests for the S3M token introspection gate (`lib/olcf_token`) and the
 project-based cluster gating in `submit_job_mcp._default_cluster`.
 """
+
 import asyncio
 
 import httpx
@@ -34,7 +35,8 @@ def mock_introspect(monkeypatch):
         state["calls"] += 1
         assert request.headers["Authorization"].startswith("Bearer ")
         return httpx.Response(
-            state["status_code"], json={"token": {"project": state["project"]}},
+            state["status_code"],
+            json={"token": {"project": state["project"]}},
         )
 
     real_client = httpx.AsyncClient
@@ -82,27 +84,36 @@ def test_get_project_missing_claim(mock_introspect):
 
 
 def test_require_project_match(mock_introspect):
-    asyncio.run(require_s3m_project(
-        "tok", "gen150-vista", cluster="odo", introspect_url=INTROSPECT_URL,
-    ))
+    asyncio.run(
+        require_s3m_project(
+            "tok",
+            "gen150-vista",
+            cluster="odo",
+            introspect_url=INTROSPECT_URL,
+        )
+    )
 
 
 def test_require_project_mismatch(mock_introspect):
     mock_introspect["project"] = "chm243"
     with pytest.raises(ToolError, match="'chm243'.*odo.*'gen150-vista'"):
-        asyncio.run(require_s3m_project(
-            "tok", "gen150-vista", cluster="odo", introspect_url=INTROSPECT_URL,
-        ))
+        asyncio.run(
+            require_s3m_project(
+                "tok",
+                "gen150-vista",
+                cluster="odo",
+                introspect_url=INTROSPECT_URL,
+            )
+        )
 
 
 class TestDefaultCluster:
-    """ Per-cluster-token routing in submit_job_mcp._default_cluster. """
+    """Per-cluster-token routing in submit_job_mcp._default_cluster."""
 
     @pytest.fixture
     def patched(self):
-        # submit_job_mcp imports lib.iri, which needs the amscrot SDK (a git
-        # dependency with C extensions) — skip in environments without it.
-        pytest.importorskip("amscrot")
+        # amscrot is lazy-imported inside IriClient; importing submit_job_mcp
+        # no longer requires the private SDK (hermetic CI installs without `hpc`).
         from vista_mcp_server import submit_job_mcp
         from vista_mcp_server.lib.user_config import UserConfig
 

@@ -3,7 +3,6 @@ name = "vista-mcp-server"
 version = "0.1.0"
 requires-python = "~=3.14.3"
 dependencies = [
-    "amscrot-py @ git+https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
     "asyncssh>=2.14",
     "chromadb>=0.5.0",
     "fastmcp>=3.1.1",
@@ -21,6 +20,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+]
+# Private AmSC IRI SDK (git). Required for live HPC submit; hermetic CI/tests
+# use FakeIriClient / dry-run and install without this extra.
+hpc = [
+    "amscrot-py @ git+https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
 ]
 
 [project.scripts]
@@ -41,3 +45,12 @@ artifacts = [
 
 [tool.uv]
 python-preference = "only-managed"
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: pure / hermetic unit tests",
+    "integration: multi-module hermetic tests (fakes OK)",
+    "live: needs configured model or external live services (opt-in)",
+    "sandbox: needs microsandbox / Docker daemon",
+    "hpc: needs real cluster credentials",
+]

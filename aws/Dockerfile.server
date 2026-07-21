@@ -34,7 +34,7 @@ RUN --mount=type=secret,id=gitlab_token,required=true,uid=1000 \
     GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0="url.https://oauth2:$(cat /run/secrets/gitlab_token)@gitlab.com/.insteadOf" \
     GIT_CONFIG_VALUE_0="https://gitlab.com/" \
-    sh -c 'cd mcp_servers/vista_mcp_server && uv sync --frozen --no-install-project'
+    sh -c 'cd mcp_servers/vista_mcp_server && uv sync --frozen --extra hpc --no-install-project'
 
 COPY --chown=ubuntu:ubuntu \
      mcp_servers/dev_mcp_server/pyproject.toml \
@@ -63,7 +63,7 @@ ENV VISTA_DEV_MCP_OCI_IMAGE_TAR=/app/aws/vista-sandbox.tar
 COPY --chown=ubuntu:ubuntu --exclude=aws/vista-sandbox.tar . .
 
 RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm run build
-RUN cd mcp_servers/vista_mcp_server && uv sync --frozen
+RUN cd mcp_servers/vista_mcp_server && uv sync --frozen --extra hpc
 RUN cd mcp_servers/dev_mcp_server && uv sync --frozen
 RUN cd backend && uv sync --frozen
 RUN cd ui && npm run build

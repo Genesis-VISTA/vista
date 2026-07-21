@@ -2,7 +2,7 @@
 #
 # Stages:
 #   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
-#   test  — pytest (backend + dev_mcp_server)
+#   test  — pytest (backend + vista_mcp_server + dev_mcp_server)
 #
 # Python jobs use the official uv image and let uv manage the Python 3.14 install.
 # Node jobs use node:22-slim. All jobs run in parallel within each stage.
@@ -51,6 +51,16 @@ variables:
     paths:
       - .uv-cache/
       - mcp_servers/dev_mcp_server/.venv/
+
+.cache-uv-vista-mcp: &cache-uv-vista-mcp
+  cache:
+    key:
+      prefix: uv-vista-mcp
+      files:
+        - mcp_servers/vista_mcp_server/uv.lock
+    paths:
+      - .uv-cache/
+      - mcp_servers/vista_mcp_server/.venv/
 
 .cache-npm-ui: &cache-npm-ui
   cache:
@@ -104,7 +114,30 @@ backend:test:
   script:
     - cd backend
     - uv sync --frozen --dev
-    - uv run pytest tests/ -v --tb=short
+    # Hermetic PR CI: exclude live / real-HPC / microsandbox-marked tests
+    - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
+
+# ─── vista_mcp_server ───────────────────────────────────────────────────────
+
+vista-mcp:lint:
+  stage: lint
+  <<: [*python-image, *cache-uv-vista-mcp]
+  script:
+    - cd mcp_servers/vista_mcp_server
+    # Lint new/owned test code only; src/ has pre-existing ruff debt tracked separately
+    - uvx ruff check tests/
+    - uvx ruff format --check tests/
+
+vista-mcp:test:
+  stage: test
+  <<: [*python-image, *cache-uv-vista-mcp]
+  # Required job — must NOT set allow_failure.
+  script:
+    - cd mcp_servers/vista_mcp_server
+    # Install without the private `hpc` extra (amscrot-py). CI job tokens cannot
+    # access amsc-isro-toolkit; hermetic tests use FakeIriClient / dry-run.
+    - uv sync --frozen --extra dev
+    - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
 
 # ─── dev_mcp_server ─────────────────────────────────────────────────────────
 
@@ -126,9 +159,9 @@ dev-mcp:test:
     - cd mcp_servers/dev_mcp_server
     # pytest lives in [project.optional-dependencies] dev, not [dependency-groups]
     - uv sync --frozen --extra dev
-    - uv run pytest tests/ -v --tb=short
-  # Some tests may require a running microsandbox container daemon
-  allow_failure: true
+    # Microsandbox/container tests are marked `sandbox` and excluded here (no
+    # docker/podman on the runner); the remaining unit tests are hermetic.
+    - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 

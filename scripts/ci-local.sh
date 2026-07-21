@@ -7,7 +7,7 @@
 #   ./scripts/ci-local.sh test             # test all targets
 #   ./scripts/ci-local.sh backend          # lint + test backend
 #   ./scripts/ci-local.sh ui lint          # lint UI only
-#   ./scripts/ci-local.sh mcp test         # test dev_mcp_server only
+#   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI (UI has no tests; lint/typecheck only)
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
@@ -91,18 +91,26 @@ backend_lint() {
   '
 }
 
+PYTEST_HERMETIC_MARKERS='not live and not hpc and not sandbox'
+
 backend_test() {
   ensure_uv
   log "backend:test"
   (
     cd "$REPO_ROOT/backend"
     uv sync --frozen --dev
-    uv run pytest tests/ -v --tb=short
+    uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
   )
 }
 
 mcp_lint() {
   ensure_uv
+  log "vista-mcp:lint (ruff tests/)"
+  (
+    cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
+    uvx ruff check tests/
+    uvx ruff format --check tests/
+  )
   log "dev-mcp:lint (ruff)"
   (
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
@@ -113,12 +121,20 @@ mcp_lint() {
 
 mcp_test() {
   ensure_uv
-  # Match CI: allow_failure unless --strict (microsandbox may be unavailable)
-  run_job "dev-mcp:test" 1 bash -c '
-    cd "'"$REPO_ROOT"'/mcp_servers/dev_mcp_server"
+  # Required (matches GitLab vista-mcp:test)
+  log "vista-mcp:test"
+  (
+    cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
     uv sync --frozen --extra dev
-    uv run pytest tests/ -v --tb=short
-  '
+    uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
+  )
+  # Required: container-dependent tests are marked `sandbox` and excluded here.
+  log "dev-mcp:test"
+  (
+    cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
+    uv sync --frozen --extra dev
+    uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
+  )
 }
 
 ui_lint() {

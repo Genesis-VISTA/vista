@@ -4274,7 +4274,6 @@ name = "vista-mcp-server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "amscrot-py" },
     { name = "asyncssh" },
     { name = "cachetools" },
     { name = "chromadb" },
@@ -4293,10 +4292,13 @@ dependencies = [
 dev = [
     { name = "pytest" },
 ]
+hpc = [
+    { name = "amscrot-py" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "amscrot-py", git = "https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" },
+    { name = "amscrot-py", marker = "extra == 'hpc'", git = "https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" },
     { name = "asyncssh", specifier = ">=2.14" },
     { name = "cachetools", specifier = ">=7.0.5" },
     { name = "chromadb", specifier = ">=0.5.0" },
@@ -4311,7 +4313,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=3.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "hpc"]
 
 [[package]]
 name = "warlock"

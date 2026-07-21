@@ -326,6 +326,7 @@ class TestFormatDirectoryListing:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.sandbox
 class TestViewPath:
     @pytest.fixture
     def anyio_backend(self):

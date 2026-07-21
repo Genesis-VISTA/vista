@@ -4,6 +4,7 @@ Tests for fault injection (evaluation plan M7) and the prod startup guard
 the inert-by-default contract, and that experiment flags are refused when
 VISTA_ENV=prod.
 """
+
 import pytest
 from fastmcp.exceptions import ToolError
 
@@ -32,6 +33,7 @@ def clock(monkeypatch):
 # Inert by default
 # ---------------------------------------------------------------------------
 
+
 def test_no_faults_by_default():
     for _ in range(100):
         faults.maybe_fail_submit()
@@ -42,6 +44,7 @@ def test_no_faults_by_default():
 # ---------------------------------------------------------------------------
 # Probabilistic faults
 # ---------------------------------------------------------------------------
+
 
 def test_submit_fail_certain(monkeypatch):
     monkeypatch.setattr(settings, "fault", FaultSettings(submit_fail_p=1.0))
@@ -72,6 +75,7 @@ def test_probability_rate_is_respected(monkeypatch):
 # Token expiry
 # ---------------------------------------------------------------------------
 
+
 def test_token_expiry_after_window(monkeypatch, clock):
     monkeypatch.setattr(settings, "fault", FaultSettings(token_expire_after_s=10.0))
     faults.check_token_expiry()  # first call: starts the clock, no raise
@@ -93,6 +97,7 @@ def test_token_expiry_disabled_when_zero(monkeypatch, clock):
 # Config + startup guard
 # ---------------------------------------------------------------------------
 
+
 def test_fault_env_parsing(monkeypatch):
     monkeypatch.setenv("VISTA_MCP_FAULT__SUBMIT_FAIL_P", "0.5")
     monkeypatch.setenv("VISTA_MCP_FAULT__TOKEN_EXPIRE_AFTER_S", "86400")
@@ -109,11 +114,14 @@ def test_guard_allows_experiment_flags_in_dev(monkeypatch):
     AppSettings().assert_experiment_flags_allowed()  # no raise
 
 
-@pytest.mark.parametrize("env_vars,expected", [
-    ({"VISTA_MCP_HPC_DRY_RUN": "true"}, "VISTA_MCP_HPC_DRY_RUN"),
-    ({"VISTA_MCP_HPC_QUEUE_DELAY_S": "300"}, "VISTA_MCP_HPC_QUEUE_DELAY_S"),
-    ({"VISTA_MCP_FAULT__STATUS_TIMEOUT_P": "0.1"}, "VISTA_MCP_FAULT__"),
-])
+@pytest.mark.parametrize(
+    "env_vars,expected",
+    [
+        ({"VISTA_MCP_HPC_DRY_RUN": "true"}, "VISTA_MCP_HPC_DRY_RUN"),
+        ({"VISTA_MCP_HPC_QUEUE_DELAY_S": "300"}, "VISTA_MCP_HPC_QUEUE_DELAY_S"),
+        ({"VISTA_MCP_FAULT__STATUS_TIMEOUT_P": "0.1"}, "VISTA_MCP_FAULT__"),
+    ],
+)
 def test_guard_refuses_experiment_flags_in_prod(monkeypatch, env_vars, expected):
     monkeypatch.setenv("VISTA_ENV", "prod")
     for k, v in env_vars.items():

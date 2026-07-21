@@ -3,6 +3,7 @@ Tests for the HPC dry-run (evaluation plan M6): synthetic submit/status
 state machine and the queue-delay behavior that powers E7b. No real
 cluster contact; wall-clock is driven through a patched `time.monotonic`.
 """
+
 import pytest
 
 import vista_mcp_server.dry_run as dry_run
@@ -41,6 +42,7 @@ def test_submit_returns_dry_job_id(monkeypatch, clock):
     assert dry_run.is_dry_job(job_id)
     # validate_job_id's charset ([\w-]+) must accept it.
     import re
+
     assert re.fullmatch(r"[\w-]+", job_id)
 
 
@@ -79,12 +81,26 @@ def test_per_job_queue_delay_snapshot(monkeypatch, clock):
     assert dry_run.state(slow) == "PENDING"
 
 
-def test_cancel(monkeypatch, clock):
+def test_cancel_all_clusters(monkeypatch, clock):
     monkeypatch.setattr(settings, "hpc_queue_delay_s", 300.0)
-    job_id = dry_run.record_submit("odo", "example", 1, 3600)
-    dry_run.cancel(job_id)
-    assert dry_run.state(job_id) == "CANCELLED"
-    assert "STATE=CANCELLED" in dry_run.status_text(job_id)
+    for cluster in ("odo", "frontier", "perlmutter"):
+        dry_run.reset()
+        job_id = dry_run.record_submit(cluster, "example", 1, 3600)
+        dry_run.cancel(job_id)
+        assert dry_run.state(job_id) == "CANCELLED"
+        assert "STATE=CANCELLED" in dry_run.status_text(job_id)
+
+
+def test_submit_perlmutter_and_frontier_complete(monkeypatch, clock):
+    monkeypatch.setattr(settings, "hpc_queue_delay_s", 0.0)
+    for cluster in ("perlmutter", "frontier"):
+        job_id = dry_run.record_submit(cluster, "example", nodes=1, duration_s=600)
+        assert job_id.startswith("dry-")
+        assert dry_run.state(job_id) == "COMPLETED"
+        text = dry_run.status_text(job_id)
+        assert "STATE=COMPLETED" in text
+        assert f"CLUSTER={cluster}" in text
+        assert "EXIT_CODE=0" in text
 
 
 def test_config_env(monkeypatch):

@@ -4,6 +4,7 @@ VISTA_MCP_METRICS__* settings, the off-is-a-no-op contract, the `stage()`
 probe, cross-process sampling consistency, and the tool-call middleware's
 correlation-id extraction from the backend's request metadata.
 """
+
 import hashlib
 import json
 from pathlib import Path
@@ -21,9 +22,13 @@ from vista_mcp_server.metrics import (
 )
 
 
-def make_recorder(tmp_path: Path, level: str = "perf", **kwargs) -> tuple[MetricsRecorder, Path]:
+def make_recorder(
+    tmp_path: Path, level: str = "perf", **kwargs
+) -> tuple[MetricsRecorder, Path]:
     log_path = tmp_path / "metrics.jsonl"
-    return MetricsRecorder(MetricsSettings(level=level, **kwargs), default_log_path=log_path), log_path
+    return MetricsRecorder(
+        MetricsSettings(level=level, **kwargs), default_log_path=log_path
+    ), log_path
 
 
 def read_events(log_path: Path) -> list[dict]:
@@ -35,6 +40,7 @@ def read_events(log_path: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Settings + gating
 # ---------------------------------------------------------------------------
+
 
 def test_settings_env_parsing(monkeypatch):
     monkeypatch.setenv("VISTA_MCP_METRICS__LEVEL", "perf")
@@ -77,12 +83,15 @@ def test_sampling_rule_matches_backend(tmp_path):
 # stage() probe
 # ---------------------------------------------------------------------------
 
+
 def test_stage_emits_with_correlation(tmp_path, monkeypatch):
     rec, log_path = make_recorder(tmp_path)
     monkeypatch.setattr(metrics_module, "_recorder", rec)
 
     with request_context("run-1", "proj-alice"):
-        with stage("hpc.submit", tool_name="submit_hpc_job", payload={"cluster": "odo"}):
+        with stage(
+            "hpc.submit", tool_name="submit_hpc_job", payload={"cluster": "odo"}
+        ):
             pass
     (event,) = read_events(log_path)
     assert event["event_type"] == "stage.hpc.submit"
@@ -107,6 +116,7 @@ def test_stage_records_errors_and_reraises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+
 
 def make_context(tool: str, vista_meta: dict | None):
     """Mimic the real middleware context: the request `_meta` is reached via

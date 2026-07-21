@@ -1,5 +1,10 @@
 """
-Live-path end-to-end test of the campaign framework over a mock domain.
+End-to-end test of the campaign framework over a mock domain (hermetic).
+
+Despite the historical filename, this is **not** a live-LLM / live-HPC test.
+It uses FunctionModel + a fake MCP invoke. Marked ``integration`` so it stays
+in hermetic PR CI. Opt-in ``live`` / ``hpc`` markers are reserved for Milestone D
+tests that need real credentials.
 
 Unlike test_campaign_e2e (which fakes the planner provider) and test_campaign_driver (which
 fakes the planner), this drives the *real* wiring:
@@ -43,6 +48,8 @@ from vista_backend.services.campaign_monitor import (
     CampaignMonitor,
     resume_open_campaigns,
 )
+
+pytestmark = pytest.mark.integration
 
 
 MANIFEST_YAML = """
