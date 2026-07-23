@@ -125,6 +125,7 @@ async def list_campaigns(
     *,
     project_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
     statuses: tuple[CampaignStatus, ...] | None = None,
 ) -> list[CampaignRunTable]:
     stmt = select(CampaignRunTable)
@@ -132,6 +133,8 @@ async def list_campaigns(
         stmt = stmt.where(CampaignRunTable.project_id == project_id)
     if user_id is not None:
         stmt = stmt.where(CampaignRunTable.user_id == user_id)
+    if session_id is not None:
+        stmt = stmt.where(CampaignRunTable.session_id == session_id)
     if statuses is not None:
         stmt = stmt.where(col(CampaignRunTable.status).in_(statuses))
     return list((await session.exec(stmt)).all())

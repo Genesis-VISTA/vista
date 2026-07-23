@@ -4,6 +4,7 @@ import pytest
 
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
+from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services.campaign_monitor import (
     CampaignMonitor,
     format_job_notification,
@@ -20,10 +21,14 @@ async def _make_job(
     project = ProjectTable(name=f"monitor-{job_id}")
     session.add(project)
     await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
         user_id=alice.id,
+        session_id=chat.id,
         domain="splash",
         planner_skill="splash-planner",
         title="FLiBe sweep",
@@ -173,6 +178,36 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
     await monitor.reconcile_once(session)
 
     assert emailer.sent == []  # notified flag already set; no duplicate email
+
+
+@pytest.mark.anyio
+async def test_monitor_abandons_orphaned_job(session, alice):
+    # Multi-session: deleting the conversation backing a campaign sets run.session_id NULL
+    # (FK SET NULL), detaching it from its sandbox. The monitor must abandon such jobs, not
+    # poll them forever.
+    run, step, job = await _make_job(session, alice)
+    await campaign_service.update_campaign(session, run_id=run.id, session_id=None)
+    emailer = _Emailer()
+
+    async def poll(_session, j):
+        raise AssertionError("orphaned job should not be polled")
+
+    async def collect(_session, j, raw):
+        raise AssertionError("orphaned job should not be collected")
+
+    monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
+    await monitor.reconcile_once(session)
+
+    refreshed_step = await campaign_service.get_step(session, step.id)
+    assert refreshed_step.status == "failed"
+    assert "abandoned" in refreshed_step.result
+    refreshed_job = await campaign_service.get_job(session, job.job_id)
+    assert refreshed_job.result_collected is True
+    assert emailer.sent == []
+    # No longer in the open set, so it won't be polled again.
+    assert job.job_id not in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
 
 
 @pytest.mark.anyio

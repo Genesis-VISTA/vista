@@ -154,7 +154,7 @@ async def test_live_path_dispatch_then_monitor_resume(
     )
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(chat.id)["skills_dir"])
+    skills_dir = Path(project_paths_for(project.id, alice.id)["skills_dir"])
     (skills_dir / "mock-planner").mkdir(parents=True)
     (skills_dir / "mock-planner" / "campaign.yaml").write_text(MANIFEST_YAML)
 
@@ -174,7 +174,7 @@ async def test_live_path_dispatch_then_monitor_resume(
 
     # Dispatch planner: the real construction (manifest from disk + McpHpcTools), fake invoke/parser.
     async def get_planner(_session, run) -> CampaignPlanner:
-        paths = project_paths_for(run.session_id)
+        paths = project_paths_for(run.project_id, run.user_id)
         manifest = load_manifest(Path(paths["skills_dir"]) / run.planner_skill)
         subagents = build_subagents(
             manifest,

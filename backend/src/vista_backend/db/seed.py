@@ -221,16 +221,28 @@ async def seed_db(engine: AsyncEngine) -> None:
             ProjectTable(
                 id=uuid.UUID("282531e7-1e05-4369-a339-9d1b4f20aa89"),
                 name="molten-salt",
-                description="Molten salt thermophysical properties assistant — querying the MSTDB-TP database, plotting phase diagrams, and searching the literature corpus.",
+                description=(
+                    "Molten salt thermophysical properties assistant — querying the MSTDB-TP "
+                    "database, plotting phase diagrams, and searching the literature corpus. Also "
+                    "runs the SPLASH tritium-breeding campaign (splash-planner): a multi-agent, "
+                    "human-in-the-loop optimization of a fusion molten-salt blanket composition "
+                    "(maximize TBR via salt-neutronics-tbr, gated on density via salt-chemistry-md)."
+                ),
                 system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(),
                 skills=sorted(
-                    {"salt-analysis", "salt-chemistry-md", "salt-neutronics-tbr"}
+                    {
+                        "salt-analysis",
+                        "salt-chemistry-md",
+                        "salt-neutronics-tbr",
+                        "splash-planner",
+                    }
                     - skipped_skills
                 ),
                 knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
-                # Allow everything except the alloy-design HPC toolchain.
+                # Allow everything except the alloy-design HPC toolchain (the SPLASH campaign
+                # dispatches + monitors HPC jobs through the standard HPC toolchain).
                 tools=["*", "!agenthpc_*"],
-                usage_limits=dict(request_limit=10),
+                usage_limits=dict(request_limit=100),
             ),
         ]
         session.add_all(projects)

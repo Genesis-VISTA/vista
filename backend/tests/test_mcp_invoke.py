@@ -5,22 +5,28 @@ import uuid
 
 import pytest
 
+from vista_backend.agents.agents import ProjectAgent
 from vista_backend.agents.campaign.mcp_invoke import (
     build_invoke,
     build_metadata,
     project_paths_for,
 )
-from vista_backend.config import settings
+from vista_backend.db.schemas import ProjectPublic, UserPublicWithConfig
 
 
-def test_project_paths_for_matches_volume_layout():
-    sid = uuid.uuid4()
-    paths = project_paths_for(sid)
-    root = settings.data_dir / "volumes" / f"{sid}"
+def test_project_paths_for_matches_project_agent():
+    """The monitor rebuilds job paths via project_paths_for; pin them to the agent's
+    actual volume dirs (the dispatch side) so the two can't drift and orphan job outputs."""
+    project = ProjectPublic(id=uuid.uuid4(), name="paths")
+    user = UserPublicWithConfig(id=uuid.uuid4(), email="x@ornl.gov")
+    session_id = uuid.uuid4()
+    agent = ProjectAgent(project, user, session_id)
+
+    paths = project_paths_for(project.id, user.id)
     assert paths == {
-        "skills_dir": str(root / "skills"),
-        "output_dir": str(root / "data" / "output"),
-        "uploads_dir": str(root / "data" / "uploads"),
+        "skills_dir": str(agent.skills_volume_dir),
+        "output_dir": str(agent.output_dir),
+        "uploads_dir": str(agent.uploads_dir),
     }
 
 

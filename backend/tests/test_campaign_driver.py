@@ -31,6 +31,7 @@ from vista_backend.agents.campaign.subagent import (
 )
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
+from vista_backend.services import chat_session as chat_session_service
 
 
 class _FakeHpc:
@@ -160,12 +161,15 @@ async def test_function_model_drives_full_campaign(session, alice):
     project = ProjectTable(name="driver-project")
     session.add(project)
     await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
 
     progress: list[str] = []
     deps = CampaignDriverDeps(
         project_id=project.id,
         user_id=alice.id,
-        session_id=None,
+        session_id=chat.id,
         get_session=lambda: session,
         get_planner=lambda _s, _run: _fake_planner_async(),
         emit_progress=progress.append,
@@ -182,6 +186,9 @@ async def test_function_model_drives_full_campaign(session, alice):
     assert len(runs) == 1
     run = runs[0]
     assert run.status == "exited"
+    assert (
+        run.session_id == chat.id
+    )  # campaign is tied to its conversation (multi-session)
     assert run.spec["tbr_target"] == 1.1
     assert run.plan[0]["text"] == "cycle 0"
 
@@ -249,3 +256,50 @@ async def test_tools_reject_run_from_another_project(session, alice, bob):
     await agent.run("status?")
     # The tool raised ModelRetry because the run isn't in alice's project.
     assert "not found in this project" in captured["retry"]
+
+
+@pytest.mark.anyio
+async def test_start_campaign_requires_a_chat_session(session, alice):
+    # Multi-session: a stateless run (session_id=None) can't host a durable, resumable campaign.
+    project = ProjectTable(name="stateless-driver")
+    session.add(project)
+    await session.flush()
+
+    captured = {}
+
+    def driver(messages, info: AgentInfo) -> ModelResponse:
+        retries = [
+            p
+            for m in messages
+            for p in getattr(m, "parts", [])
+            if isinstance(p, RetryPromptPart)
+        ]
+        if retries:
+            captured["retry"] = str(retries[-1].content)
+            return ModelResponse(parts=[TextPart("ok")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "start_campaign",
+                    {
+                        "planner_skill": "mock-planner",
+                        "domain": "mockdomain",
+                    },
+                )
+            ]
+        )
+
+    deps = CampaignDriverDeps(
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=None,
+        get_session=lambda: session,
+        get_planner=lambda _s, _r: _fake_planner_async(),
+    )
+    agent = Agent(model=FunctionModel(driver))
+    register_campaign_tools(agent, deps)
+
+    await agent.run("run a campaign")
+    assert "active conversation" in captured["retry"]
+    # No campaign was created in a stateless run.
+    assert await campaign_service.list_campaigns(session, project_id=project.id) == []

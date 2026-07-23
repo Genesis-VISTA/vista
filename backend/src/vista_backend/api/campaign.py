@@ -46,10 +46,15 @@ async def create_campaign(
 
 @router.get("/{project_name}/campaigns")
 async def list_campaigns(
-    project_name: str, session: SessionDep, user: UserDep
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
+    chat_session_id: uuid.UUID | None = None,
 ) -> list[CampaignRunPublic]:
     project = await project_service.get_project_by_name(session, project_name, user)
-    runs = await campaign_service.list_campaigns(session, project_id=project.id)
+    runs = await campaign_service.list_campaigns(
+        session, project_id=project.id, session_id=chat_session_id
+    )
     return [CampaignRunPublic.model_validate(r) for r in runs]
 
 

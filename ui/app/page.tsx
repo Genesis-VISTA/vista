@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
 import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
+import CampaignPanel from "@/components/CampaignPanel";
 import {
   SkillEditorModal,
   type SkillDraftFields,
@@ -1792,6 +1793,10 @@ export default function HomePage() {
           <div className="panel-title">Latest Output</div>
         </div>
         <div className="panel-body">
+          <CampaignPanel
+            projectName={activeProject?.name ?? null}
+            chatSessionId={activeChatSessionId}
+          />
           <div className="output-split" ref={outputSplitRef}>
             <div className="output-top">
               {!latestResult && <div className="chat-bubble">No figure yet.</div>}

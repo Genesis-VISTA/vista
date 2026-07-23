@@ -103,7 +103,7 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
     invoke = await build_invoke_for_job(session, job, invoke_builder=fake_builder)
     assert await invoke("get_hpc_job_status", {}) == "OK"
     assert captured["user"].email == alice.email
-    assert captured["paths"] == project_paths_for(run.session_id)
+    assert captured["paths"] == project_paths_for(run.project_id, run.user_id)
 
 
 # --- build_status_poll -----------------------------------------------------
@@ -140,7 +140,7 @@ async def test_build_planner_for_job_reconstructs_from_skill(
     _project, run, _step, job = await _make_run_step_job(session, alice)
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(run.session_id)["skills_dir"])
+    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
 
@@ -204,3 +204,62 @@ async def test_build_collector_routes_to_run_planner(session, alice):
     step = await campaign_service.get_step(session, job.step_id)
     assert step.status == "completed"
     assert step.result["metrics"]["SCORE"] == 9
+
+
+# --- multi-session isolation ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_two_sessions_in_one_project_share_the_project_volume(session, alice):
+    """Two campaigns in two conversations of the same project+user resolve to the SAME sandbox.
+
+    main keys the sandbox volume by (project, user), not by chat session, so conversations in a
+    project share it. session_id still drives orphan/resume decisions — just not the volume path.
+    """
+    project = ProjectTable(name="multi-session-iso")
+    session.add(project)
+    await session.flush()
+    chat_a = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    chat_b = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    assert chat_a.id != chat_b.id
+
+    async def _job_for(chat, job_id):
+        run = await campaign_service.create_campaign(
+            session,
+            project_id=project.id,
+            user_id=alice.id,
+            session_id=chat.id,
+            domain="d",
+            planner_skill="p",
+        )
+        step = await campaign_service.add_step(
+            session, run_id=run.id, cycle=0, kind="alpha"
+        )
+        return await campaign_service.record_job(
+            session, job_id=job_id, step_id=step.id, user_id=alice.id, cluster="odo"
+        )
+
+    job_a = await _job_for(chat_a, "job-a")
+    job_b = await _job_for(chat_b, "job-b")
+
+    seen_paths: list[dict] = []
+
+    def fake_builder(user, paths):
+        seen_paths.append(paths)
+
+        async def invoke(name, args):
+            return "OK"
+
+        return invoke
+
+    await build_invoke_for_job(session, job_a, invoke_builder=fake_builder)
+    await build_invoke_for_job(session, job_b, invoke_builder=fake_builder)
+
+    # Keyed by (project, user): both conversations resolve to the same project volume.
+    expected = project_paths_for(project.id, alice.id)
+    assert seen_paths[0] == expected
+    assert seen_paths[1] == expected

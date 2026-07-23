@@ -3045,3 +3045,54 @@ button.chat-bubble.intermediate.collapsed:hover {
   0%   { background-position: -50% 0; }
   100% { background-position: 150% 0; }
 }
+
+/* Campaign panel — read-only view of the active conversation's SPLASH campaign. */
+.campaign-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.campaign-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.campaign-title { font-weight: 600; }
+.campaign-head .button.ghost { margin-left: auto; }
+.campaign-status {
+  text-transform: capitalize;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+}
+.campaign-status-running { color: var(--brand); border-color: var(--brand); }
+.campaign-status-converged,
+.campaign-status-completed { color: #1a7f37; border-color: #1a7f37; }
+.campaign-status-failed { color: var(--danger); border-color: var(--danger); }
+.campaign-status-awaiting_user { color: #9a6700; border-color: #9a6700; }
+.campaign-plan {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  color: var(--muted);
+}
+.campaign-steps { display: flex; flex-direction: column; gap: 4px; }
+.campaign-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+.campaign-step-kind { font-weight: 500; }
+.campaign-job,
+.campaign-metrics { color: var(--muted); font-size: 12px; }
+.campaign-error { color: var(--danger); margin-top: 6px; }
+.campaign-note { color: var(--muted); font-size: 11px; margin-top: 8px; }

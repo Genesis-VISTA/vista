@@ -1,0 +1,21 @@
+# SPLASH campaign manifest (read by the multi-agent framework's load_manifest).
+# Defines the campaign entirely as skills: the design variables, the goal metric +
+# scorer, and the subagent roles bound to their simulation skills + HPC jobs.
+domain: splash
+
+variables:
+  - {name: li6_enrichment,    range: [0.075, 0.90], unit: fraction}
+  - {name: temperature,       range: [700, 1000],   unit: K}
+  - {name: be_concentration,  range: [0.0, 0.01],   unit: fraction}
+  - {name: blanket_thickness, range: [20, 80],      unit: cm}
+
+metrics:
+  primary: {name: TBR, target: 1.1, direction: maximize}
+  scorer: scripts/score_candidates.py   # deterministic tiered/viability scorer, run in the sandbox
+
+subagents:
+  - {role: neutronics, skill: salt-neutronics-tbr, job: salt-neutronics-tbr, default_count: 1}
+  - {role: chemistry,  skill: salt-chemistry-md,   job: salt-chemistry-md,   default_count: 1}
+
+search:
+  strategy: bayesian   # bayesian | grid | llm

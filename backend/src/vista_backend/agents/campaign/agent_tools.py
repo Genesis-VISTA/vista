@@ -72,6 +72,15 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         planner_skill: str, domain: str, title: str | None = None
     ) -> str:
         """Begin a campaign. `planner_skill` and `domain` come from the active playbook skill."""
+        if deps.session_id is None:
+            # A campaign must be tied to a chat session: that session's id keys the sandbox
+            # volume the monitor reconstructs the planner from, and is what lets the campaign
+            # resume after the long HPC wait. Stateless runs can't be durably resumed.
+            raise ModelRetry(
+                "A campaign needs an active conversation so it can be resumed and monitored "
+                "after its HPC jobs finish. Ask the user to start (or select) a conversation, "
+                "then start the campaign again."
+            )
         run = await campaign_service.create_campaign(
             _session(),
             project_id=deps.project_id,
