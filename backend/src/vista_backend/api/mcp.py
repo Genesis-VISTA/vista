@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
@@ -6,7 +7,11 @@ from pydantic import BaseModel
 
 from ..db.db import SessionDep
 from ..services import project as project_service
-from ..services.project_agent import project_agent_pool, resolve_elicitation
+from ..services.project_agent import (
+    get_project_agent_key,
+    project_agent_pool,
+    resolve_elicitation,
+)
 from ..services.auth import UserDep
 
 
@@ -15,10 +20,19 @@ router = APIRouter(tags=["mcp"])
 
 @router.get("/projects/{project_name}/mcp/tools")
 async def mcp_tools(
-    project_name: str, session: SessionDep, user: UserDep
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
+    chat_session_id: uuid.UUID | None = None,
 ) -> list[mcp.types.Tool]:
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    agent_key = await get_project_agent_key(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=chat_session_id,
+    )
+    async with project_agent_pool.get(agent_key) as agent:
         return await agent.list_tools()
 
 

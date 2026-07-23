@@ -20,6 +20,12 @@ export type PersistedChatSession = PersistedChatSessionSummary & {
   latest_result: ExecutionResult | null;
 };
 
+export class PersistedChatSessionError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 function activeChatSessionStorageKey(projectName: string): string {
   return `${ACTIVE_CHAT_SESSION_KEY_PREFIX}.${projectName}.v1`;
 }
@@ -128,7 +134,9 @@ export async function fetchPersistedChatSession(
     headers: { accept: "application/json" },
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(await extractError(res));
+  if (!res.ok) {
+    throw new PersistedChatSessionError(await extractError(res), res.status);
+  }
   return (await res.json()) as PersistedChatSession;
 }
 
