@@ -594,6 +594,10 @@ class G2ToolGate(Gate):
         if not text_fields:
             return decision
 
+        # Slow tier is a no-op without a quarantine (Q-LLM) agent configured.
+        if ctx.quarantine_agent is None:
+            return decision
+
         # Per-field Q-LLM Minimize.
         rewrites: dict[str, str] = {}
         sanitized_count = 0

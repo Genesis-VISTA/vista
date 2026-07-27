@@ -303,7 +303,7 @@ class ProjectAgent:
             if cb:
                 return await cb(ctx, call_tool, name, tool_args)
             else:
-                return await call_tool(name, tool_args, None)
+                return await call_tool(name, tool_args, metadata=None)
 
         async def log_handler(
             params: mcp.types.LoggingMessageNotificationParams,
@@ -377,7 +377,7 @@ class ProjectAgent:
         )
 
         @agent.system_prompt
-        def system_prompt(ctx: RunContext[str]) -> str:
+        def system_prompt(ctx: RunContext[None]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
             if self.project.system_prompt:
                 parts.append("## Project Information")
@@ -623,7 +623,7 @@ class ProjectAgent:
             # only injects the per-call MCP metadata (credentials + metrics
             # correlation), built by the shared helper.
             metadata = self._build_vista_metadata(name)
-            return await call_tool(name, tool_args, metadata)
+            return await call_tool(name, tool_args, metadata=metadata)
 
         return process_tool_call
 

@@ -45,7 +45,7 @@ async def list_uploads(
     project_name: str, session: SessionDep, user: UserDep
 ) -> list[UploadInfo]:
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    async with project_agent_pool.get((None, project.id, user.id)) as agent:
         uploads_dir = agent.uploads_dir
         if not uploads_dir.exists():
             return []
@@ -77,7 +77,7 @@ async def upload_files(
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    async with project_agent_pool.get((None, project.id, user.id)) as agent:
         uploads_dir = agent.uploads_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,7 +104,7 @@ async def download_upload(
     user: UserDep,
 ) -> Response:
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    async with project_agent_pool.get((None, project.id, user.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     return FileResponse(path, filename=path.name, content_disposition_type="attachment")
 
@@ -117,7 +117,7 @@ async def delete_upload(
     user: UserDep,
 ):
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    async with project_agent_pool.get((None, project.id, user.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     path.unlink()
     return {"ok": True}

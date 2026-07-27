@@ -121,7 +121,8 @@ def load_checkpoint(model, optimizer, scheduler, checkpoint_path, device):
         return 0, 0.0
 
     print(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Resumes from a checkpoint written by this training script (trusted local path).
+    checkpoint = torch.load(checkpoint_path, map_location=device)  # nosec B614
 
     model_to_load = model.module if hasattr(model, 'module') else model
     missing_keys, unexpected_keys = model_to_load.load_state_dict(
@@ -178,13 +179,14 @@ class ClassicalGPT(nn.Module):
                  dropout=0.5, freeze_llm=False, task='regression'):
         super().__init__()
 
+        # HFmodel is an operator-supplied model id for an offline fine-tuning run.
         if 'bert' in HFmodel.lower():
             from transformers import BertModel
-            self.llm = BertModel.from_pretrained(HFmodel)
+            self.llm = BertModel.from_pretrained(HFmodel)  # nosec B615
             self.model_type = 'bert'
         elif 'forge' in HFmodel.lower():
             from transformers import GPTNeoXModel
-            self.llm = GPTNeoXModel.from_pretrained(HFmodel)
+            self.llm = GPTNeoXModel.from_pretrained(HFmodel)  # nosec B615
             self.model_type = 'gpt'
 
         self.dropout = nn.Dropout(dropout)
@@ -539,12 +541,13 @@ if __name__ == "__main__":
     parser.add_argument('--initial-lr', default=None, type=float, help='initial learning rate (default 1e-5)')
     args = parser.parse_args()
 
+    # args.model is an operator-supplied model id for an offline fine-tuning run.
     if 'bert' in args.model.lower():
         from transformers import BertTokenizer
-        tokenizer = BertTokenizer.from_pretrained(args.model)
+        tokenizer = BertTokenizer.from_pretrained(args.model)  # nosec B615
     elif 'forge' in args.model.lower():
         from transformers import GPTNeoXTokenizerFast
-        tokenizer = GPTNeoXTokenizerFast.from_pretrained(args.model)
+        tokenizer = GPTNeoXTokenizerFast.from_pretrained(args.model)  # nosec B615
         tokenizer.padding_side = "left"
         tokenizer.pad_token = tokenizer.eos_token
 

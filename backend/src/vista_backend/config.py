@@ -41,9 +41,17 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+# Every `.env` from the filesystem root down to the cwd, nearest last so the
+# most-specific file wins. Shared between the pydantic-settings config and the
+# explicit `load_dotenv` pass below.
+_ENV_FILES: list[Path] = [
+    p / ".env" for p in reversed([Path.cwd(), *Path.cwd().parents])
+]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=[p / ".env" for p in reversed([Path.cwd(), *Path.cwd().parents])],
+        env_file=_ENV_FILES,
         extra="ignore",
         env_prefix="VISTA_BACKEND_",
         # Double underscore separates the parent field from the nested
@@ -172,7 +180,7 @@ class Settings(BaseSettings):
     """
 
 
-for env_file in reversed(Settings.model_config["env_file"]):
+for env_file in reversed(_ENV_FILES):
     if Path(env_file).exists():
         values = dotenv_values(env_file)
         logging.info(
@@ -180,7 +188,10 @@ for env_file in reversed(Settings.model_config["env_file"]):
         )
         load_dotenv(env_file, interpolate=False)
 
-settings = Settings()
+# BaseSettings populates required fields (model, database_url, encryption_key)
+# from env / dotenv sources; model_validate runs those sources without pyright
+# demanding they be passed as constructor arguments.
+settings = Settings.model_validate({})
 
 os.environ["HF_HOME"] = str(settings.data_dir / "huggingface")
 

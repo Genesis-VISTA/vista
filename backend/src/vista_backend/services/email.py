@@ -29,6 +29,8 @@ def build_message(*, to: str, subject: str, body: str, from_addr: str) -> EmailM
 
 def _smtp_send(msg: EmailMessage, cfg: EmailSettings) -> None:
     """Synchronous SMTP delivery; run off the event loop via asyncio.to_thread."""
+    if cfg.host is None:
+        raise RuntimeError("SMTP host is not configured")
     with smtplib.SMTP(cfg.host, cfg.port, timeout=30) as smtp:
         if cfg.use_tls:
             smtp.starttls()

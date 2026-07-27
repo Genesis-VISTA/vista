@@ -91,7 +91,10 @@ class FlowceptSink:
         # we record the operator-supplied endpoint on the controller so a
         # deployment can route both through the same value. Controller
         # construction kwargs are kept minimal and probed defensively.
-        self._flowcept = Flowcept(
+        # Flowcept is an optional, untyped dependency probed defensively; bind
+        # it through Any so its unstable constructor signature isn't type-checked.
+        flowcept_cls: Any = Flowcept
+        self._flowcept = flowcept_cls(
             workflow_name=self._workflow_name,
             workflow_id=self._session_id,
         )
@@ -262,8 +265,12 @@ class ProvenanceEmitter:
         if sink is not None:
             self._sink: Any | None = sink
         elif settings.flowcept_enabled:
+            if settings.flowcept_endpoint is None:
+                raise ValueError(
+                    "flowcept_enabled requires flowcept_endpoint to be set"
+                )
             self._sink = FlowceptSink(
-                settings.flowcept_endpoint,  # validated non-None above
+                settings.flowcept_endpoint,
                 session_id=self._session_id,
             )
         else:

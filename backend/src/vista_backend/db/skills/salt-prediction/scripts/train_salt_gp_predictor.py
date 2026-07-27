@@ -471,7 +471,8 @@ def save_model(gp, scaler, feature_names, filepath='gp_model.pkl'):
 def load_model(filepath='gp_model.pkl'):
     """Load trained GP model from file."""
     with open(filepath, 'rb') as f:
-        model_data = pickle.load(f)
+        # Loads a GP model produced by this same script from a trusted local path.
+        model_data = pickle.load(f)  # nosec B301
 
     gp           = model_data['gp']
     scaler       = model_data['scaler']

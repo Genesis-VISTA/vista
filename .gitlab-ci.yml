@@ -17,6 +17,12 @@ default:
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
   UV_PYTHON_DOWNLOADS: "auto"
+  # Pin lint/security/type-check tooling so `uvx` does not silently pull a new
+  # release that changes default rule sets (e.g. ruff 0.16 broadened defaults)
+  # and turns a previously-green pipeline red.
+  RUFF_VERSION: "0.15.7"
+  PYRIGHT_VERSION: "1.1.411"
+  BANDIT_VERSION: "1.9.4"
 
 # ─── Python image ───────────────────────────────────────────────────────────
 #
@@ -79,8 +85,8 @@ backend:lint:
   script:
     - cd backend
     # ruff is run via uvx so no project install is needed for this job
-    - uvx ruff check src/ tests/
-    - uvx ruff format --check src/ tests/
+    - uvx ruff@${RUFF_VERSION} check src/ tests/
+    - uvx ruff@${RUFF_VERSION} format --check src/ tests/
 
 backend:typecheck:
   stage: lint
@@ -93,10 +99,9 @@ backend:typecheck:
     # Install project deps so pyright can resolve imports
     - uv sync --frozen
     # --with pyright adds pyright temporarily without touching the lock file
-    - uv run --with pyright pyright src/
-  # advisory: pyright is newly introduced; pre-existing type errors should be
-  # addressed incrementally. See backend/pyrightconfig.json for scope/mode.
-  allow_failure: true
+    - uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
+  # The type-check baseline is clean (zero pyright errors), so this is a
+  # required gate: any new type regression fails the pipeline.
 
 backend:security:
   stage: lint
@@ -104,7 +109,7 @@ backend:security:
   script:
     - cd backend
     # bandit -ll reports only medium+ severity findings
-    - uvx bandit -r src/ -ll -q
+    - uvx bandit@${BANDIT_VERSION} -r src/ -ll -q
   # Treat as advisory — findings are reported but don't block the pipeline
   allow_failure: true
 
@@ -125,8 +130,8 @@ vista-mcp:lint:
   script:
     - cd mcp_servers/vista_mcp_server
     # Lint new/owned test code only; src/ has pre-existing ruff debt tracked separately
-    - uvx ruff check tests/
-    - uvx ruff format --check tests/
+    - uvx ruff@${RUFF_VERSION} check tests/
+    - uvx ruff@${RUFF_VERSION} format --check tests/
 
 vista-mcp:test:
   stage: test
@@ -146,8 +151,8 @@ dev-mcp:lint:
   <<: [*python-image, *cache-uv-dev-mcp]
   script:
     - cd mcp_servers/dev_mcp_server
-    - uvx ruff check src/ tests/
-    - uvx ruff format --check src/ tests/
+    - uvx ruff@${RUFF_VERSION} check src/ tests/
+    - uvx ruff@${RUFF_VERSION} format --check src/ tests/
 
 dev-mcp:test:
   stage: test

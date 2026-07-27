@@ -87,7 +87,7 @@ class ProjectPublic(ProjectBase):
 class ProjectTable(ProjectBase, table=True):
     """Project SQL model"""
 
-    __tablename__ = "project"
+    __tablename__: str = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
 
@@ -98,7 +98,7 @@ class ProjectMemberTable(SQLModel, table=True):
     unique, so a duplicate add raises IntegrityError.
     """
 
-    __tablename__ = "project_member"
+    __tablename__: str = "project_member"
     project_id: uuid.UUID = Field(
         foreign_key="project.id", primary_key=True, ondelete="CASCADE"
     )
@@ -281,7 +281,7 @@ class KnowledgeBasePublic(KnowledgeBaseBase):
 class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
     """Knowledge Base SQL model."""
 
-    __tablename__ = "knowledge_base"
+    __tablename__: str = "knowledge_base"
     __table_args__ = (UniqueConstraint("slug", name="uq_knowledge_base_slug"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -355,7 +355,7 @@ class SkillPublic(SkillBase):
 class SkillTable(SkillBase, table=True):
     """Skill SQL model."""
 
-    __tablename__ = "skill"
+    __tablename__: str = "skill"
     __table_args__ = (UniqueConstraint("name", name="uq_skill_name"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -477,7 +477,7 @@ class UserPublicWithConfig(UserBase):
 
 
 class UserTable(SQLModel, table=True):
-    __tablename__ = "app_user"
+    __tablename__: str = "app_user"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     email: str = Field(unique=True)
     is_admin: bool = False
@@ -591,7 +591,7 @@ class ChatSessionPublic(ChatSessionBase):
 
 
 class ChatSessionTable(ChatSessionBase, table=True):
-    __tablename__ = "chat_session"
+    __tablename__: str = "chat_session"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
@@ -657,7 +657,7 @@ class CampaignRunPublic(CampaignRunBase):
 
 
 class CampaignRunTable(CampaignRunBase, table=True):
-    __tablename__ = "campaign_run"
+    __tablename__: str = "campaign_run"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
@@ -714,7 +714,7 @@ class CampaignStepPublic(CampaignStepBase):
 
 
 class CampaignStepTable(CampaignStepBase, table=True):
-    __tablename__ = "campaign_step"
+    __tablename__: str = "campaign_step"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     run_id: uuid.UUID = Field(foreign_key="campaign_run.id", ondelete="CASCADE")
@@ -746,7 +746,7 @@ class HpcJobPublic(HpcJobBase):
 
 
 class HpcJobTable(HpcJobBase, table=True):
-    __tablename__ = "hpc_job"
+    __tablename__: str = "hpc_job"
 
     job_id: str = Field(primary_key=True)
     """ The HPC job id returned by submit_hpc_job; unique across clusters (matches the MCP registry key). """

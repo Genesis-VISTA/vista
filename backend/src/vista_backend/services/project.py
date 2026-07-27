@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import (
@@ -47,7 +47,10 @@ async def list_projects(session: AsyncSession, user: ServiceUser) -> list[Projec
         return list((await session.exec(select(ProjectTable))).all())
     stmt = (
         select(ProjectTable)
-        .join(ProjectMemberTable, ProjectMemberTable.project_id == ProjectTable.id)
+        .join(
+            ProjectMemberTable,
+            col(ProjectMemberTable.project_id) == col(ProjectTable.id),
+        )
         .where(ProjectMemberTable.user_id == user.id)
     )
     return list((await session.exec(stmt)).all())
@@ -124,7 +127,7 @@ async def list_project_members(
     project = await get_project_by_name(session, name, user)
     stmt = (
         select(UserTable)
-        .join(ProjectMemberTable, ProjectMemberTable.user_id == UserTable.id)
+        .join(ProjectMemberTable, col(ProjectMemberTable.user_id) == col(UserTable.id))
         .where(ProjectMemberTable.project_id == project.id)
     )
     return list((await session.exec(stmt)).all())

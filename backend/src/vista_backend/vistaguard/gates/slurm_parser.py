@@ -522,12 +522,14 @@ def _runs_local_binary(command: ParsedCommand) -> bool:
     a ``./relative`` or ``/tmp`` path, or ``chmod +x`` of one. This is
     the second half of the download-then-exec pattern.
     """
+    # These literals detect temp-dir execution patterns; they do not create
+    # temp files, so bandit's hardcoded-tmp checks (B108) are false positives.
     for tok in command.argv:
         bare = tok.strip().strip("'\"")
         if (
             bare.startswith("./")
-            or bare.startswith("/tmp/")
-            or bare.startswith("/dev/shm/")
+            or bare.startswith("/tmp/")  # nosec B108
+            or bare.startswith("/dev/shm/")  # nosec B108
         ):
             return True
     return False

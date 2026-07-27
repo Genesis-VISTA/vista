@@ -94,13 +94,16 @@ def parse_github_url(url: str) -> ParsedGithubUrl:
 
 def _api_request(url: str, accept: str = "application/json") -> bytes:
     """Send a GET to api.github.com with the optional auth token."""
+    if not url.startswith("https://"):
+        raise SkillImportError(f"Refusing to fetch non-HTTPS URL: {url}")
     req = urllib.request.Request(
         url, headers={"Accept": accept, "User-Agent": "vista-backend"}
     )
     if settings.github_token:
         req.add_header("Authorization", f"Bearer {settings.github_token}")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # URL scheme is restricted to https by the guard above.
+        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
             return resp.read()
     except urllib.error.HTTPError as e:
         if e.code == 404:

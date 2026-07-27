@@ -24,7 +24,7 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -506,7 +506,9 @@ async def _drain_pending_persist(kb_id: uuid.UUID) -> None:
                         # KB was deleted between the GET that scheduled
                         # this task and now. Nothing to persist.
                         continue
-                    kb.publications = publications
+                    # Stored as JSON dicts; the model type is for read-time API
+                    # serialization (Publication objects aren't JSON-serializable).
+                    kb.publications = cast(list[Publication], publications)
                     kb.updated_at = updated_at
                     session.add(kb)
                 except Exception:  # noqa: BLE001
@@ -792,7 +794,7 @@ async def add_publications(
     # Adding new PDFs invalidates any prior "ready" build state.
     new_build_status = "stale" if kb.build_status == "ready" else kb.build_status
 
-    kb.publications = [_publication_dict(p) for p in pubs]
+    kb.publications = cast(list[Publication], [_publication_dict(p) for p in pubs])
     kb.build_status = new_build_status
     kb.updated_at = now
     session.add(kb)
@@ -865,7 +867,7 @@ async def delete_publication(
     new_pubs = [p for p in pubs if p.filename != filename]
     if len(new_pubs) == len(pubs):
         raise HTTPException(status_code=404, detail="Publication not found.")
-    kb.publications = [_publication_dict(p) for p in new_pubs]
+    kb.publications = cast(list[Publication], [_publication_dict(p) for p in new_pubs])
     kb.updated_at = _now_iso()
     session.add(kb)
     # NB: this leaves the chroma rows behind. Deleting from chroma
@@ -977,7 +979,7 @@ async def _run_indexer_and_persist(
             # Clear any stale error from a previous failed attempt.
             pub.citation_error = None
 
-    merged_publications = [_publication_dict(p) for p in pubs]
+    merged_publications = cast(list[Publication], [_publication_dict(p) for p in pubs])
 
     # Second open: apply the merged result with a single tight UPDATE.
     # No reads here that might hold a SHARED lock and conflict with a

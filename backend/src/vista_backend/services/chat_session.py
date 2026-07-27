@@ -1,4 +1,5 @@
 import uuid
+from typing import cast
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter
@@ -6,7 +7,12 @@ from pydantic_ai.messages import ModelMessage
 from sqlmodel import desc, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import ChatSessionCreate, ChatSessionTable, ChatSessionUpdate
+from ..db.schemas import (
+    ChatSessionCreate,
+    ChatSessionTable,
+    ChatSessionUpdate,
+    ChatTranscriptMessage,
+)
 from ..utils.misc import now_iso
 
 
@@ -147,7 +153,11 @@ async def update_chat_session(
             normalized_history, mode="json"
         )
     if updates.messages is not None:
-        row.messages = [message.model_dump(mode="json") for message in updates.messages]
+        # Stored as JSON dicts; the model type is for read-time API serialization.
+        row.messages = cast(
+            list[ChatTranscriptMessage],
+            [message.model_dump(mode="json") for message in updates.messages],
+        )
     if updates.latest_result is not None:
         row.latest_result = updates.latest_result
     if updates.title is not None and updates.title.strip():

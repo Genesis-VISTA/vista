@@ -167,7 +167,7 @@ def build_parse_user_prompt(
 class AgentResultParser:
     """A `ResultParser` backed by a PydanticAI agent specialized by the sim skill."""
 
-    def __init__(self, agent: Agent, system_prompt: str):
+    def __init__(self, agent: Agent[None, ParsedResult], system_prompt: str):
         self.agent = agent
         self.system_prompt = system_prompt
 

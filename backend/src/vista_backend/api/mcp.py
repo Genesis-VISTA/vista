@@ -49,7 +49,7 @@ async def mcp_call(
     user: UserDep,
 ) -> mcp.types.CallToolResult:
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((project.id, user.id)) as agent:
+    async with project_agent_pool.get((None, project.id, user.id)) as agent:
         try:
             return await agent.call_tool(req.name, req.arguments)
         except Exception as exc:

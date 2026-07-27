@@ -8,7 +8,9 @@ usable from non-HTTP contexts (e.g. the background monitor); the API maps these 
 404s. Mutators touch `updated_at` and flush + refresh, mirroring chat_session.py.
 """
 
+import enum
 import uuid
+from typing import Any
 
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -35,7 +37,13 @@ RESUMABLE_STATUSES: tuple[CampaignStatus, ...] = (
 
 
 # Sentinel so update_* can distinguish "leave unchanged" from "set to None".
-_UNSET = object()
+# A single-member enum lets type checkers narrow `x is not _UNSET` back to the
+# real parameter type.
+class _Unset(enum.Enum):
+    UNSET = enum.auto()
+
+
+_UNSET = _Unset.UNSET
 
 
 # --------------------------------------------------------------------------- #
@@ -149,11 +157,11 @@ async def update_campaign(
     session: AsyncSession,
     *,
     run_id: uuid.UUID,
-    title=_UNSET,
-    spec=_UNSET,
-    plan=_UNSET,
-    status=_UNSET,
-    session_id=_UNSET,
+    title: str | None | _Unset = _UNSET,
+    spec: dict[str, Any] | _Unset = _UNSET,
+    plan: list[dict[str, Any]] | _Unset = _UNSET,
+    status: CampaignStatus | _Unset = _UNSET,
+    session_id: uuid.UUID | None | _Unset = _UNSET,
 ) -> CampaignRunTable:
     """Patch the provided fields on a run. Omitted fields are left unchanged."""
     run = await require_campaign(session, run_id)
@@ -211,6 +219,7 @@ async def add_step(
         candidate=candidate,
         order_spec=order_spec or {},
         status="pending",
+        result=None,
         created_at=now,
         updated_at=now,
     )
@@ -236,7 +245,9 @@ async def list_steps(
     stmt = select(CampaignStepTable).where(CampaignStepTable.run_id == run_id)
     if cycle is not None:
         stmt = stmt.where(CampaignStepTable.cycle == cycle)
-    stmt = stmt.order_by(CampaignStepTable.cycle, CampaignStepTable.created_at)
+    stmt = stmt.order_by(
+        col(CampaignStepTable.cycle), col(CampaignStepTable.created_at)
+    )
     return list((await session.exec(stmt)).all())
 
 
@@ -244,9 +255,9 @@ async def update_step(
     session: AsyncSession,
     *,
     step_id: uuid.UUID,
-    status=_UNSET,
-    result=_UNSET,
-    order_spec=_UNSET,
+    status: CampaignStepStatus | _Unset = _UNSET,
+    result: dict[str, Any] | None | _Unset = _UNSET,
+    order_spec: dict[str, Any] | _Unset = _UNSET,
 ) -> CampaignStepTable:
     step = await get_step(session, step_id)
     if step is None:
@@ -329,7 +340,7 @@ async def list_jobs_for_run(
     """All jobs across a run's steps (for the campaign-state / resume view)."""
     stmt = (
         select(HpcJobTable)
-        .join(CampaignStepTable, HpcJobTable.step_id == CampaignStepTable.id)
+        .join(CampaignStepTable, col(HpcJobTable.step_id) == col(CampaignStepTable.id))
         .where(CampaignStepTable.run_id == run_id)
     )
     return list((await session.exec(stmt)).all())
@@ -350,10 +361,10 @@ async def update_job(
     session: AsyncSession,
     *,
     job_id: str,
-    state=_UNSET,
-    last_polled_at=_UNSET,
-    notified=_UNSET,
-    result_collected=_UNSET,
+    state: str | _Unset = _UNSET,
+    last_polled_at: str | None | _Unset = _UNSET,
+    notified: bool | _Unset = _UNSET,
+    result_collected: bool | _Unset = _UNSET,
 ) -> HpcJobTable:
     job = await get_job(session, job_id)
     if job is None:
