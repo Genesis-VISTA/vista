@@ -6,7 +6,7 @@ Every PR runs existing `vista_mcp_server` unit tests. The curated `hpc_jobs/`
 catalog and the HPC submit path are validated **without** talking to a
 cluster (dry-run + fakes).
 
-**Status:** Implemented (this MR).
+**Status:** Merged to `main` in `5787935`.
 
 ## In scope
 

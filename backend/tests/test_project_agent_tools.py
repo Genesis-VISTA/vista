@@ -1,0 +1,190 @@
+"""
+Tool allow/deny filtering and per-call vista metadata (testing roadmap
+Milestone B).
+
+`_tool_allowed` decides which MCP tools a project can see, and
+`_build_vista_metadata` is what ships the caller's HPC credentials and volume
+paths to the MCP servers — both are security-relevant, so they get
+table-driven regression coverage here.
+"""
+
+import uuid
+
+import pytest
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo
+
+from harness import agent_under_test, make_project, make_user, scripted_model
+from vista_backend.agents.agents import ProjectAgent
+from vista_backend.config import settings
+from vista_backend.metrics import get_recorder
+
+pytestmark = pytest.mark.unit
+
+
+def _agent(project=None, user=None) -> ProjectAgent:
+    return ProjectAgent(project or make_project(), user or make_user(), uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# _tool_allowed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("patterns", "tool", "expected"),
+    [
+        # No allow patterns means allow everything.
+        ([], "run_bash", True),
+        (["*"], "run_bash", True),
+        # Explicit allow list.
+        (["run_bash"], "run_bash", True),
+        (["run_bash"], "create_file", False),
+        # Wildcards are fnmatch, not regex.
+        (["get_hpc_*"], "get_hpc_job_status", True),
+        (["get_hpc_*"], "submit_hpc_job", False),
+        # Deny wins over allow.
+        (["*", "!run_bash"], "run_bash", False),
+        (["run_bash", "!run_bash"], "run_bash", False),
+        (["*", "!submit_hpc_*"], "submit_hpc_job", False),
+        (["*", "!submit_hpc_*"], "get_hpc_job_status", True),
+        # A deny-only list still allows everything else.
+        (["!run_bash"], "create_file", True),
+        # Matching is case sensitive.
+        (["run_bash"], "RUN_BASH", False),
+    ],
+)
+def test_tool_allowed_patterns(patterns, tool, expected):
+    project = make_project(tools=patterns, knowledge_bases=["kb"])
+    assert _agent(project)._tool_allowed(tool) is expected
+
+
+def test_rag_search_denied_when_project_has_no_knowledge_bases():
+    """Without a KB there is nothing to search, so the tool is auto-denied."""
+    project = make_project(tools=["*"], knowledge_bases=[])
+    assert _agent(project)._tool_allowed("rag_search") is False
+
+
+def test_rag_search_allowed_when_project_has_a_knowledge_base():
+    project = make_project(tools=["*"], knowledge_bases=["msre-reports"])
+    assert _agent(project)._tool_allowed("rag_search") is True
+
+
+def test_explicit_rag_search_deny_survives_a_configured_knowledge_base():
+    project = make_project(tools=["*", "!rag_search"], knowledge_bases=["msre-reports"])
+    assert _agent(project)._tool_allowed("rag_search") is False
+
+
+# ---------------------------------------------------------------------------
+# _build_vista_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_vista_metadata_includes_project_paths():
+    agent = _agent()
+    paths = agent._build_vista_metadata("display_file")["vista"]["project_paths"]
+    assert paths == {
+        "skills_dir": str(agent.skills_volume_dir),
+        "output_dir": str(agent.output_dir),
+        "uploads_dir": str(agent.uploads_dir),
+    }
+
+
+def test_vista_metadata_paths_are_scoped_per_project_and_user():
+    """Volume paths key on (project, user) so one tenant cannot read another's."""
+    user = make_user()
+    a = _agent(make_project(), user)
+    b = _agent(make_project(), user)
+    assert a.volume_root != b.volume_root
+    assert (
+        a._build_vista_metadata("display_file")["vista"]["project_paths"]
+        != b._build_vista_metadata("display_file")["vista"]["project_paths"]
+    )
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "submit_hpc_job",
+        "get_hpc_job_status",
+        "get_hpc_job_outputs",
+        "list_hpc_jobs",
+        "cancel_hpc_job",
+    ],
+)
+def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
+    user = make_user(
+        s3m_token="s3m-secret",
+        nersc_iri_token="iri-secret",
+        frontier_account="chm243",
+    )
+    metadata = _agent(make_project(), user)._build_vista_metadata(tool)["vista"]["user"]
+    assert metadata["s3m_token"] == "s3m-secret"
+    assert metadata["nersc_iri_token"] == "iri-secret"
+    assert metadata["frontier_account"] == "chm243"
+    assert metadata["id"] == str(user.id)
+
+
+@pytest.mark.parametrize("tool", ["rag_search", "display_file", "run_bash"])
+def test_vista_metadata_withholds_credentials_from_non_hpc_tools(tool):
+    user = make_user(s3m_token="s3m-secret", nersc_iri_token="iri-secret")
+    metadata = _agent(make_project(), user)._build_vista_metadata(tool)
+    assert "user" not in metadata["vista"]
+    assert "s3m-secret" not in str(metadata)
+
+
+def test_vista_metadata_omits_metrics_when_the_recorder_is_off():
+    assert not get_recorder().enabled, "metrics recorder should default to off"
+    metadata = _agent()._build_vista_metadata("submit_hpc_job")
+    assert "metrics" not in metadata["vista"]
+
+
+# ---------------------------------------------------------------------------
+# The filter as the model sees it
+# ---------------------------------------------------------------------------
+
+
+def _tools_offered_to_model(project, user) -> list[str]:
+    seen: list[list[str]] = []
+
+    def driver(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([t.name for t in info.function_tools])
+        return ModelResponse(parts=[TextPart("ok")])
+
+    async def run() -> list[str]:
+        with agent_under_test(project, user, scripted_model(driver)) as (agent, _):
+            async for _ in agent.run_stream(user_prompt="hi"):
+                pass
+        return seen[0]
+
+    return run()
+
+
+@pytest.mark.anyio
+async def test_denied_tools_are_not_offered_to_the_model():
+    project = make_project(tools=["*", "!run_bash"], knowledge_bases=["kb"])
+    offered = await _tools_offered_to_model(project, make_user())
+    assert "run_bash" not in offered
+    assert "rag_search" in offered
+
+
+@pytest.mark.anyio
+async def test_allow_list_limits_the_tools_offered_to_the_model():
+    project = make_project(tools=["display_file"], knowledge_bases=["kb"])
+    offered = await _tools_offered_to_model(project, make_user())
+    assert "display_file" in offered
+    assert "rag_search" not in offered
+    assert "submit_hpc_job" not in offered
+
+
+@pytest.mark.anyio
+async def test_rag_search_is_hidden_from_the_model_without_a_knowledge_base():
+    project = make_project(tools=["*"], knowledge_bases=[])
+    offered = await _tools_offered_to_model(project, make_user())
+    assert "rag_search" not in offered
+    assert "submit_hpc_job" in offered
+
+
+def test_settings_model_is_the_hermetic_test_model():
+    """Guards the conftest default that keeps PR CI from needing an API key."""
+    assert settings.model == "test"

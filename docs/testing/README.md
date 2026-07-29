@@ -6,10 +6,15 @@ milestone doc has checklists, file targets, and acceptance criteria.
 
 | Milestone | Doc | Status |
 |-----------|-----|--------|
-| A — CI truth + HPC contracts | [milestone-a-ci-and-hpc.md](./milestone-a-ci-and-hpc.md) | Implemented |
-| B — ProjectAgent loop + API | [milestone-b-agent-loop.md](./milestone-b-agent-loop.md) | Planned |
-| C — Scientific tools | [milestone-c-scientific-tools.md](./milestone-c-scientific-tools.md) | Planned |
+| A — CI truth + HPC contracts | [milestone-a-ci-and-hpc.md](./milestone-a-ci-and-hpc.md) | Merged (`5787935`) |
+| B — ProjectAgent loop + API | [milestone-b-agent-loop.md](./milestone-b-agent-loop.md) | In review ([!102](https://gitlab.com/amsc2/genesis/vista/-/merge_requests/102)) |
+| C — Scientific tools | [milestone-c-scientific-tools.md](./milestone-c-scientific-tools.md) | Next |
 | D — Validation lane (nightly / live) | [milestone-d-validation-lane.md](./milestone-d-validation-lane.md) | Planned |
+
+Status vocabulary: **Merged** — on `main`; **In review** — MR open, not yet on
+`main`; **Next** — the milestone to pick up; **Planned** — scoped but not
+started. Update this table and the milestone doc's own `Status:` line in the
+same MR that changes a milestone's state.
 
 Operational metrics / load generation (not a substitute for unit tests):
 [evaluation-runbook.md](../evaluation-runbook.md).
@@ -45,6 +50,8 @@ flowchart TB
 - **Fake at boundaries** — mock IRI / Globus / LLM; keep catalog parsing,
   metadata injection, and HPC dry-run real.
 - **Reuse existing patterns**
+  - Agent harness (scripted LLM + fake MCP toolset + HTTP client) —
+    [`backend/tests/harness/`](../../backend/tests/harness/)
   - `FunctionModel` — [`backend/tests/test_campaign_driver.py`](../../backend/tests/test_campaign_driver.py)
   - Dry-run HPC — [`mcp_servers/vista_mcp_server/tests/test_dry_run.py`](../../mcp_servers/vista_mcp_server/tests/test_dry_run.py)
   - In-memory DB — [`backend/tests/conftest.py`](../../backend/tests/conftest.py)
@@ -55,6 +62,10 @@ flowchart TB
   Milestone C stabilizes it).
 
 ## Current coverage snapshot
+
+Rows tagged *(Milestone B)* land with
+[!102](https://gitlab.com/amsc2/genesis/vista/-/merge_requests/102) and are not
+on `main` yet; everything else is merged.
 
 | Area | Coverage today | In PR CI? |
 |------|----------------|-----------|
@@ -67,10 +78,12 @@ flowchart TB
 | Job catalog + JobSpec fakes (Milestone A) | Strong | Yes |
 | `dev_mcp` `view` path | Decent | Yes (`allow_failure`) |
 | Tenant isolation / canary | Exists | Yes |
-| ProjectAgent main chat path | Thin | Partial |
+| ProjectAgent main chat path (Milestone B) | Strong | Yes |
+| Agent HTTP/SSE contract + authz (Milestone B) | Strong | Yes |
+| MCP elicitation / tool-approval plumbing (Milestone B) | Decent | Yes |
 | IRI / Globus submit path (beyond dry-run) | JobSpec fakes (Odo/PM/Frontier) | Yes |
 | RAG | Thin | No |
-| Skills / project prompt assembly | Thin | No |
+| Skills / project prompt assembly | Prompt assembly covered; loading thin | Partial |
 | UI runtime | Lint + typecheck only | No |
 
 ## Local commands

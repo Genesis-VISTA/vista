@@ -41,6 +41,24 @@ log() {
   printf '\n==> %s\n' "$*"
 }
 
+ci_var() {
+  # ci_var <NAME> — read a top-level variable's value from .gitlab-ci.yml.
+  local name="$1" value
+  value="$(sed -nE "s/^[[:space:]]+${name}:[[:space:]]*\"?([^\"#[:space:]]+)\"?.*/\1/p" \
+    "$REPO_ROOT/.gitlab-ci.yml" | head -1)"
+  [[ -n "$value" ]] || die "could not read $name from .gitlab-ci.yml"
+  printf '%s' "$value"
+}
+
+# Pin lint tooling to the same versions CI uses, read from .gitlab-ci.yml so
+# there is a single source of truth. Without this, `uvx` resolves the latest
+# release locally and a pipeline that is green here goes red in CI (ruff 0.16
+# reformats code that 0.15 accepts).
+RUFF_VERSION="$(ci_var RUFF_VERSION)"
+PYRIGHT_VERSION="$(ci_var PYRIGHT_VERSION)"
+BANDIT_VERSION="$(ci_var BANDIT_VERSION)"
+export RUFF_VERSION PYRIGHT_VERSION BANDIT_VERSION
+
 run_job() {
   # run_job <name> <allow_failure 0|1> <command...>
   local name="$1"
@@ -70,24 +88,25 @@ ensure_npm() {
 
 backend_lint() {
   ensure_uv
-  log "backend:lint (ruff)"
+  log "backend:lint (ruff $RUFF_VERSION)"
   (
     cd "$REPO_ROOT/backend"
-    uvx ruff check src/ tests/
-    uvx ruff format --check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
   )
   if [[ "$FAST" == true ]]; then
     return 0
   fi
-  # Match CI: typecheck + security are advisory (allow_failure)
-  run_job "backend:typecheck" 1 bash -c '
+  # Match CI: typecheck is a required gate (the pyright baseline is clean);
+  # security is advisory (allow_failure).
+  run_job "backend:typecheck" 0 bash -c '
     cd "'"$REPO_ROOT"'/backend"
     uv sync --frozen
-    uv run --with pyright pyright src/
+    uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
   '
   run_job "backend:security" 1 bash -c '
     cd "'"$REPO_ROOT"'/backend"
-    uvx bandit -r src/ -ll -q
+    uvx "bandit@${BANDIT_VERSION}" -r src/ -ll -q
   '
 }
 
@@ -108,14 +127,14 @@ mcp_lint() {
   log "vista-mcp:lint (ruff tests/)"
   (
     cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
-    uvx ruff check tests/
-    uvx ruff format --check tests/
+    uvx "ruff@${RUFF_VERSION}" check tests/
+    uvx "ruff@${RUFF_VERSION}" format --check tests/
   )
   log "dev-mcp:lint (ruff)"
   (
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
-    uvx ruff check src/ tests/
-    uvx ruff format --check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
   )
 }
 

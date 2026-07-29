@@ -7,6 +7,9 @@ Formalize continuous validation **beyond** PR CI using the existing
 runs, dry-run HPC paths, fault recovery, and a minimal UI smoke. PR pipelines
 stay hermetic; live failures never block merges.
 
+**Status:** Planned — not started; blocked on C by preference, not hard
+dependency.
+
 ## In scope
 
 - Marker hygiene (`live` / `hpc`) + env-flag skip gates

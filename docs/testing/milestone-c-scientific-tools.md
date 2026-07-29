@@ -6,6 +6,10 @@ Non-LLM scientific tool paths and project wiring are validated hermetically:
 RAG retrieval, sandbox confinement, skill/project configuration, token
 encryption at rest, and thin UI lib unit tests.
 
+**Status:** Next — not started. Milestone B's harness
+([`backend/tests/harness/`](../../backend/tests/harness/)) is in review and is
+the intended starting point for the skill/project wiring assertions.
+
 ## In scope
 
 - Mini RAG fixture + `rag_search` tests
