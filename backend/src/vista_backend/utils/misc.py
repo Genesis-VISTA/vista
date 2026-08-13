@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import fnmatch
 
+
 def write_file_unique(path: Path | str, data: bytes) -> Path:
     """
     Write a new file, making sure the filename is unique. If it already exists, suffix it with -1,
@@ -22,6 +23,7 @@ def write_file_unique(path: Path | str, data: bytes) -> Path:
         except FileExistsError:
             i += 1
 
+
 def path_is_under(base: Path | str, target: Path | str) -> bool:
     base = Path(base).resolve()
     target = Path(target).resolve()
@@ -29,7 +31,7 @@ def path_is_under(base: Path | str, target: Path | str) -> bool:
 
 
 def json_dump_if(data: Any) -> str:
-    """ If data is a string, just return it. Otherwise jsonize it """
+    """If data is a string, just return it. Otherwise jsonize it"""
     if isinstance(data, str):
         return data
     else:
@@ -46,7 +48,7 @@ def tool_allowed(name: str, patterns: list[str]) -> bool:
     """
     allow_patterns = [p for p in patterns if not p.startswith("!")]
     if not allow_patterns:
-        allow_patterns = ['*']
+        allow_patterns = ["*"]
     deny_patterns = [p[1:] for p in patterns if p.startswith("!")]
 
     if not any(fnmatch.fnmatchcase(name, p) for p in allow_patterns):

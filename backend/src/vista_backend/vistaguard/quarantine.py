@@ -49,7 +49,7 @@ on `contains_instructions`. Disagreement triggers default-deny:
 `run_quarantine_with_self_consistency` returns a
 `QuarantineDecision` with `contains_instructions=True`,
 `suspicious_score=1.0`, and a reasoning string explaining the
-disagreement. 
+disagreement.
 
 The agreement check is on `contains_instructions` only -- the
 discrete classification is the load-bearing signal. The
@@ -435,8 +435,7 @@ async def run_intent_extraction_with_self_consistency(
             run_result = await agent.run(prompt)
         except Exception as exc:  # noqa: BLE001 -- intentional broad
             logger.warning(
-                "VISTAGuard intent-extraction run %d/%d failed "
-                "(%s: %s); default-deny",
+                "VISTAGuard intent-extraction run %d/%d failed (%s: %s); default-deny",
                 i + 1,
                 samples,
                 type(exc).__name__,
@@ -486,16 +485,16 @@ async def run_intent_extraction_with_self_consistency(
 # (quarantine, user-intent, code-intent) at the same model serving.
 
 CODE_INTENT_CATEGORIES: tuple[str, ...] = (
-    "compute",            # numeric / scientific computation
-    "data_read",          # reads local files or stdin
-    "data_write",         # writes local files
-    "data_transform",     # in-memory data manipulation
-    "network_io",         # outbound HTTP / sockets
-    "subprocess_exec",    # spawns child processes
+    "compute",  # numeric / scientific computation
+    "data_read",  # reads local files or stdin
+    "data_write",  # writes local files
+    "data_transform",  # in-memory data manipulation
+    "network_io",  # outbound HTTP / sockets
+    "subprocess_exec",  # spawns child processes
     "credential_access",  # reads secrets, tokens, key material
     "data_exfiltration",  # transfers data to non-allow-listed sinks
-    "file_io",            # generic filesystem activity
-    "import_only",        # imports a module without using it
+    "file_io",  # generic filesystem activity
+    "import_only",  # imports a module without using it
 )
 """
 Canonical vocabulary for ``CodeIntentExtraction.categories``. The
@@ -630,8 +629,7 @@ async def run_code_intent_extraction_with_self_consistency(
             run_result = await agent.run(prompt)
         except Exception as exc:  # noqa: BLE001 -- intentional broad
             logger.warning(
-                "VISTAGuard G4 code-intent run %d/%d failed "
-                "(%s: %s); default-deny",
+                "VISTAGuard G4 code-intent run %d/%d failed (%s: %s); default-deny",
                 i + 1,
                 samples,
                 type(exc).__name__,

@@ -1,4 +1,5 @@
 """Tests for the monitor<->MCP/planner wiring seams (parse, per-job invoke/planner, poll, collect)."""
+
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,12 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
         session, project_id=project.id, user_id=alice.id
     )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-        domain="testdomain", planner_skill=planner_skill,
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="testdomain",
+        planner_skill=planner_skill,
     )
     step = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="alpha", candidate={"x": 1}
@@ -67,6 +72,7 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
 
 # --- parse_job_state -------------------------------------------------------
 
+
 def test_parse_job_state_from_status_output():
     text = "JOB_ID=12345\nCLUSTER=frontier\nSTATE=COMPLETED\n\n--- LOGS ---\nTBR=1.18"
     assert parse_job_state(text) == "COMPLETED"
@@ -78,6 +84,7 @@ def test_parse_job_state_defaults_to_unknown():
 
 
 # --- build_invoke_for_job --------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
@@ -96,10 +103,11 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
     invoke = await build_invoke_for_job(session, job, invoke_builder=fake_builder)
     assert await invoke("get_hpc_job_status", {}) == "OK"
     assert captured["user"].email == alice.email
-    assert captured["paths"] == project_paths_for(run.session_id, run.project_id, run.user_id)
+    assert captured["paths"] == project_paths_for(run.project_id, run.user_id)
 
 
 # --- build_status_poll -----------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alice):
@@ -123,13 +131,16 @@ async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alic
 
 # --- build_planner_for_job -------------------------------------------------
 
+
 @pytest.mark.anyio
-async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp_path, monkeypatch):
+async def test_build_planner_for_job_reconstructs_from_skill(
+    session, alice, tmp_path, monkeypatch
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     _project, run, _step, job = await _make_run_step_job(session, alice)
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(run.session_id, run.project_id, run.user_id)["skills_dir"])
+    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
 
@@ -137,9 +148,12 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
         return ""
 
     planner = await build_planner_for_job(
-        session, job,
+        session,
+        job,
         invoke_builder=lambda user, paths: _noop_invoke,
-        parser_factory=lambda d, r: CallableResultParser(lambda **_: ParsedResult(ok=True)),
+        parser_factory=lambda d, r: CallableResultParser(
+            lambda **_: ParsedResult(ok=True)
+        ),
     )
 
     assert planner.manifest.roles == ["alpha", "beta"]
@@ -148,17 +162,22 @@ async def test_build_planner_for_job_reconstructs_from_skill(session, alice, tmp
 
 # --- build_collector -------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_build_collector_routes_to_run_planner(session, alice):
     manifest = CampaignManifest.model_validate(
         {
             "domain": "d",
             "metrics": {"primary": {"name": "SCORE"}},
-            "subagents": [{"role": "alpha", "skill": "alpha-skill", "job": "alpha_job"}],
+            "subagents": [
+                {"role": "alpha", "skill": "alpha-skill", "job": "alpha_job"}
+            ],
         }
     )
     subagents = build_subagents(
-        manifest, hpc=_FakeHpc(), skills_dir="/unused",
+        manifest,
+        hpc=_FakeHpc(),
+        skills_dir="/unused",
         parser_factory=lambda d, r: CallableResultParser(
             lambda **_: ParsedResult(ok=True, metrics={"SCORE": 9})
         ),
@@ -189,9 +208,14 @@ async def test_build_collector_routes_to_run_planner(session, alice):
 
 # --- multi-session isolation ----------------------------------------------
 
+
 @pytest.mark.anyio
-async def test_two_sessions_in_one_project_resolve_distinct_volumes(session, alice):
-    """Two campaigns in two conversations of the same project resolve to separate sandboxes."""
+async def test_two_sessions_in_one_project_share_the_project_volume(session, alice):
+    """Two campaigns in two conversations of the same project+user resolve to the SAME sandbox.
+
+    main keys the sandbox volume by (project, user), not by chat session, so conversations in a
+    project share it. session_id still drives orphan/resume decisions — just not the volume path.
+    """
     project = ProjectTable(name="multi-session-iso")
     session.add(project)
     await session.flush()
@@ -205,10 +229,16 @@ async def test_two_sessions_in_one_project_resolve_distinct_volumes(session, ali
 
     async def _job_for(chat, job_id):
         run = await campaign_service.create_campaign(
-            session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-            domain="d", planner_skill="p",
+            session,
+            project_id=project.id,
+            user_id=alice.id,
+            session_id=chat.id,
+            domain="d",
+            planner_skill="p",
         )
-        step = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="alpha")
+        step = await campaign_service.add_step(
+            session, run_id=run.id, cycle=0, kind="alpha"
+        )
         return await campaign_service.record_job(
             session, job_id=job_id, step_id=step.id, user_id=alice.id, cluster="odo"
         )
@@ -229,7 +259,7 @@ async def test_two_sessions_in_one_project_resolve_distinct_volumes(session, ali
     await build_invoke_for_job(session, job_a, invoke_builder=fake_builder)
     await build_invoke_for_job(session, job_b, invoke_builder=fake_builder)
 
-    assert seen_paths[0] == project_paths_for(chat_a.id, project.id, alice.id)
-    assert seen_paths[1] == project_paths_for(chat_b.id, project.id, alice.id)
-    # Distinct sandbox/skills volumes per session (output/uploads stay project x user).
-    assert seen_paths[0]["skills_dir"] != seen_paths[1]["skills_dir"]
+    # Keyed by (project, user): both conversations resolve to the same project volume.
+    expected = project_paths_for(project.id, alice.id)
+    assert seen_paths[0] == expected
+    assert seen_paths[1] == expected

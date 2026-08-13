@@ -122,17 +122,14 @@ class G4CodeCapability(VistaGuardCapability):
                 decision = await self.code_gate.check_fast(payload, gate_ctx)
         except TimeoutError:
             reason = (
-                f"G4 semgrep timed out after {timeout}s on "
-                f"{tool_name!r}; default-deny"
+                f"G4 semgrep timed out after {timeout}s on {tool_name!r}; default-deny"
             )
             self._record_incident(2, reason)
             raise SkipToolExecution(self._deny_message(tool_name, reason))
 
         if not decision.allow:
             self._record_incident(decision.incident_level or 2, decision.reason)
-            raise SkipToolExecution(
-                self._deny_message(tool_name, decision.reason)
-            )
+            raise SkipToolExecution(self._deny_message(tool_name, decision.reason))
 
         # WARNING-only allow path: record SEV3, pass args unchanged.
         if decision.incident_level is not None:
@@ -170,7 +167,8 @@ class G4CodeCapability(VistaGuardCapability):
                     logger.warning(
                         "VISTAGuard G4: dropping tool %r from the toolset; "
                         "malformed per-tool override (%s)",
-                        tool_def.name, exc,
+                        tool_def.name,
+                        exc,
                     )
                     continue
             kept.append(tool_def)
@@ -181,9 +179,7 @@ class G4CodeCapability(VistaGuardCapability):
     # -----------------------------------------------------------------
 
     def _record_incident(self, level: int, reason: str) -> None:
-        self.sidecar.incident_manager.record(
-            level=level, gate="G4", reason=reason
-        )
+        self.sidecar.incident_manager.record(level=level, gate="G4", reason=reason)
 
     @staticmethod
     def _deny_message(tool_name: str, reason: str) -> str:

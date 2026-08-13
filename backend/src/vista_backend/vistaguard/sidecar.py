@@ -31,7 +31,6 @@ from .gates.g2_tool import (
     HIGH_STAKES_FALLBACK,
     G2ToolGate,
     ToolMetadata,
-    discover_high_stakes_tools,
     discover_tool_metadata,
 )
 from .gates.g3_rag import (
@@ -107,7 +106,7 @@ class VistaGuardSidecar:
         # slow tiers consult this via `GateContext.contracts`.
         self._contracts = load_contract_library(settings.contracts_dir)
 
-        # G2 cached MCP-tool metadata. 
+        # G2 cached MCP-tool metadata.
         self._high_stakes_tools: frozenset[str] = HIGH_STAKES_FALLBACK
         self._tool_schemas: dict[str, dict[str, Any]] = {}
         self._high_stakes_tools_populated: bool = False
@@ -189,7 +188,7 @@ class VistaGuardSidecar:
     def tool_registry(self) -> ToolDescriptorRegistry:
         """
         ETDI descriptor registry holding startup-pinned hashes and
-        the operator-supplied manifest (if any). 
+        the operator-supplied manifest (if any).
         """
         return self._tool_registry
 
@@ -344,7 +343,10 @@ class VistaGuardSidecar:
             capabilities.append(G3RagCapability(self, g3, self._settings))
         g5 = self._gates.get("G5")
         if g5 is not None:
-            if isinstance(g5, G5HpcJobGate) and code_intent_extraction_agent is not None:
+            if (
+                isinstance(g5, G5HpcJobGate)
+                and code_intent_extraction_agent is not None
+            ):
                 # G4 and G5 share the code-intent Q-LLM (the prompt shape
                 # is "what is this code/job trying to do?").
                 g5.attach_code_intent_extraction_agent(code_intent_extraction_agent)
@@ -362,10 +364,10 @@ class VistaGuardSidecar:
         metadata = await discover_tool_metadata(mcp_url)
         self._high_stakes_tools = metadata.high_stakes
         self._tool_schemas = dict(metadata.schemas)
-        # `discovered` flag drives the populated state directly 
+        # `discovered` flag drives the populated state directly
         self._high_stakes_tools_populated = metadata.discovered
         # ETDI pinning: pin the startup descriptor hash for every
-        # discovered tool. 
+        # discovered tool.
         for tool_name, descriptor in metadata.descriptors.items():
             self._tool_registry.pin_startup(
                 tool_name,
@@ -373,7 +375,7 @@ class VistaGuardSidecar:
                 input_schema=descriptor.input_schema,
             )
         # Rebind any already-built G2 gate to the fresh snapshot so
-        # the gate's view of the world matches the sidecar's. 
+        # the gate's view of the world matches the sidecar's.
         g2 = self._gates.get("G2")
         if isinstance(g2, G2ToolGate):
             g2.rebind_metadata(
@@ -384,7 +386,7 @@ class VistaGuardSidecar:
 
     async def populate_high_stakes_tools(self, mcp_url: str) -> frozenset[str]:
         """
-        Refresh `high_stakes_tools` only. 
+        Refresh `high_stakes_tools` only.
         """
         metadata = await self.populate_tool_metadata(mcp_url)
         return metadata.high_stakes
@@ -400,7 +402,7 @@ class VistaGuardSidecar:
         gates: dict[str, Gate] = {}
         if self._settings.g1_enabled:
             # Operator-supplied signatures live at
-            # `<contracts_dir>/jailbreak_signatures.txt`. 
+            # `<contracts_dir>/jailbreak_signatures.txt`.
             override_path = (
                 Path(self._settings.contracts_dir) / JAILBREAK_SIGNATURES_FILENAME
             )
@@ -426,7 +428,6 @@ class VistaGuardSidecar:
                 tool_registry=self._tool_registry,
             )
         if self._settings.g3_enabled:
-
             gates["G3"] = G3RagGate(
                 enabled=True,
                 kb_sensitivity_tiers=self._g3_kb_policy.sensitivity_tiers,
@@ -479,7 +480,9 @@ class VistaGuardSidecar:
         if self._settings.g5_allocation_policy_path:
             policy_path = Path(self._settings.g5_allocation_policy_path)
         else:
-            policy_path = Path(self._settings.contracts_dir) / ALLOCATION_POLICY_FILENAME
+            policy_path = (
+                Path(self._settings.contracts_dir) / ALLOCATION_POLICY_FILENAME
+            )
         policy = load_allocation_policy(policy_path)
 
         # Settings-level ceilings fill in when the file supplies none.
@@ -494,9 +497,7 @@ class VistaGuardSidecar:
         # Operator-supplied additional mining IOCs augment the denylist.
         if self._settings.g5_binary_denylist:
             extra = {str(b).lower() for b in self._settings.g5_binary_denylist}
-            policy = replace(
-                policy, binary_denylist=policy.binary_denylist | extra
-            )
+            policy = replace(policy, binary_denylist=policy.binary_denylist | extra)
 
         return policy
 

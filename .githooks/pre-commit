@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Lint staged work before commit (mirrors CI lint jobs, fast mode).
+# Enable with: ./scripts/ci-local.sh install-hooks
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+exec "$REPO_ROOT/scripts/ci-local.sh" lint --fast

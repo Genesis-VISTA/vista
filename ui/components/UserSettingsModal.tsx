@@ -95,9 +95,9 @@ function UserSettingsForm({
 }) {
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
-  const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
-  const [frontierS3mToken, setFrontierS3mToken] = useState(user.frontier_s3m_token ?? "");
+  const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
+  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -111,9 +111,9 @@ function UserSettingsForm({
     > = [
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
-      ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
-      ["frontier_s3m_token", user.frontier_s3m_token ?? null, blankToNull(frontierS3mToken)],
+      ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
+      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -146,36 +146,35 @@ function UserSettingsForm({
       </div>
 
       <label className="project-modal-label">
-        Odo S3M token
+        S3M token
         <input
           className="input"
           type="password"
-          value={odoS3mToken}
-          onChange={(e) => setOdoS3mToken(e.target.value)}
+          value={s3mToken}
+          onChange={(e) => setS3mToken(e.target.value)}
           placeholder="Bearer token"
           autoComplete="off"
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI service on Odo (open enclave).
-          Required for cluster=&quot;odo&quot;. Stored encrypted at rest.
+          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.
         </span>
       </label>
 
       <label className="project-modal-label">
-        Frontier S3M token
+        Frontier Globus token
         <input
           className="input"
           type="password"
-          value={frontierS3mToken}
-          onChange={(e) => setFrontierS3mToken(e.target.value)}
-          placeholder="Bearer token"
+          value={globusToken}
+          onChange={(e) => setGlobusToken(e.target.value)}
+          placeholder="Refresh token"
           autoComplete="off"
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI service on Frontier (moderate
-          enclave). Required for cluster=&quot;frontier&quot;. Stored encrypted at rest.
+          Globus Transfer refresh token used for Frontier file operations.
+          Stored encrypted at rest.
         </span>
       </label>
 

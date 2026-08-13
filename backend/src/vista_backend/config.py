@@ -1,11 +1,13 @@
+import os
 from pathlib import Path
 from typing import Annotated as A, Literal
 from pydantic import BaseModel, Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
-import logging, os
+import logging
 from .utils.types import ResolvedPath, LogLevel
 from .vistaguard.config import VistaGuardSettings
+from .metrics import MetricsSettings
 
 
 class EmailSettings(BaseModel):
@@ -14,6 +16,7 @@ class EmailSettings(BaseModel):
     user when a long-queued HPC job completes). Disabled by default; when off, the
     email service is a logged no-op. Override via `VISTA_BACKEND_EMAIL__HOST=...` etc.
     """
+
     enabled: bool = False
     host: str | None = None
     port: int = 587
@@ -33,13 +36,22 @@ class CampaignSettings(BaseModel):
     HPC jobs) is opt-in; off by default so it doesn't poll the MCP server in dev/CI.
     Override via `VISTA_BACKEND_CAMPAIGNS__MONITOR_ENABLED=true` etc.
     """
+
     monitor_enabled: bool = False
     monitor_interval: float = 300.0
 
 
+# Every `.env` from the filesystem root down to the cwd, nearest last so the
+# most-specific file wins. Shared between the pydantic-settings config and the
+# explicit `load_dotenv` pass below.
+_ENV_FILES: list[Path] = [
+    p / ".env" for p in reversed([Path.cwd(), *Path.cwd().parents])
+]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=[p / '.env' for p in reversed([Path.cwd(), *Path.cwd().parents])],
+        env_file=_ENV_FILES,
         extra="ignore",
         env_prefix="VISTA_BACKEND_",
         # Double underscore separates the parent field from the nested
@@ -50,7 +62,7 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    env: A[Literal['dev', 'prod'], Field(validation_alias="VISTA_ENV")] = 'dev'
+    env: A[Literal["dev", "prod"], Field(validation_alias="VISTA_ENV")] = "dev"
 
     host: str = "127.0.0.1"
     port: int = 8001
@@ -65,16 +77,22 @@ class Settings(BaseSettings):
     other env vars to set for specific providers
     """
 
-    mcp_url: str = Field(default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL")
+    mcp_url: str = Field(
+        default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL"
+    )
     """ HTTP URL for the vista_mcp_server (HPC, RAG, display_file tools). """
 
-    mcp_servers_path: A[ResolvedPath, Field(validation_alias="VISTA_MCP_SERVERS_PATH")] = Path("../mcp_servers")
+    mcp_servers_path: A[
+        ResolvedPath, Field(validation_alias="VISTA_MCP_SERVERS_PATH")
+    ] = Path("../mcp_servers")
     """
     Path to the `mcp_servers/` directory in the repo. Used to locate per-agent STDIO
     MCP servers (e.g. `dev_mcp_server`) that the backend launches directly via `uv run`.
     """
 
-    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../data")
+    data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path(
+        "../data"
+    )
     """ Directory for data such as sandbox volumes and other created files """
 
     @property
@@ -96,14 +114,27 @@ class Settings(BaseSettings):
 
     database_url: A[
         str,
-        Field(default_factory=lambda data: f"sqlite+aiosqlite:///{(data['data_dir'] / 'vista.db').resolve()}"),
+        Field(
+            default_factory=lambda data: (
+                f"sqlite+aiosqlite:///{(data['data_dir'] / 'vista.db').resolve()}"
+            )
+        ),
     ]
     """ SQLAlchemy async database URL. Defaults to a local SQLite db via aiosqlite. """
 
     max_upload_size: ByteSize = ByteSize(20 * 1024 * 1024)
     """ Size in bytes """
 
-    encryption_key: A[SecretStr, Field(default_factory=lambda data: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' if data['env'] == 'dev' else None)]
+    encryption_key: A[
+        SecretStr,
+        Field(
+            default_factory=lambda data: (
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                if data["env"] == "dev"
+                else None
+            )
+        ),
+    ]
     """
     Fernet key for encrypting sensitive user token fields in the database.
 
@@ -139,19 +170,33 @@ class Settings(BaseSettings):
     `VISTA_BACKEND_VISTAGUARD__<FIELD>=...` env vars.
     """
 
+    metrics: MetricsSettings = Field(default_factory=MetricsSettings)
+    """
+    Metrics / instrumentation configuration (evaluation plan M1). Defaults
+    to `level=off`, a byte-identical no-op. Override via
+    `VISTA_BACKEND_METRICS__<FIELD>=...` env vars, e.g.
+    `VISTA_BACKEND_METRICS__LEVEL=prod` for sampled production diagnostics
+    or `LEVEL=perf` for the paper benchmarks.
+    """
 
-for env_file in reversed(Settings.model_config['env_file']):
+
+for env_file in reversed(_ENV_FILES):
     if Path(env_file).exists():
         values = dotenv_values(env_file)
-        logging.info(f"Loaded from {Path(env_file).resolve()}: {', '.join(values.keys())}")
+        logging.info(
+            f"Loaded from {Path(env_file).resolve()}: {', '.join(values.keys())}"
+        )
         load_dotenv(env_file, interpolate=False)
 
-settings = Settings()
+# BaseSettings populates required fields (model, database_url, encryption_key)
+# from env / dotenv sources; model_validate runs those sources without pyright
+# demanding they be passed as constructor arguments.
+settings = Settings.model_validate({})
 
-os.environ["HF_HOME"] = str(settings.data_dir / 'huggingface')
+os.environ["HF_HOME"] = str(settings.data_dir / "huggingface")
 
 logging.basicConfig(
     level=settings.log_level,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(levelname)s - %(message)s",
     force=True,
 )

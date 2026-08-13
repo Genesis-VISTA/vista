@@ -3,10 +3,12 @@ Gate ABC and decision/context dataclasses for VISTAGuard.
 
 """
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...metrics import get_recorder
 from ..capabilities import CapabilityRegistry, CapabilityTag
 from ..trust import TrustScorer
 
@@ -37,6 +39,7 @@ class GateDecision:
         decision without losing fields it doesn't touch.
         """
         from dataclasses import replace
+
         return replace(self, **changes)
 
 
@@ -90,14 +93,27 @@ class Gate(ABC):
         Run the fast-tier check.
 
         When `self.enabled` is False, returns an allow decision
-        without invoking subclass logic. 
+        without invoking subclass logic.
         """
         if not self.enabled:
             return GateDecision(
                 allow=True,
                 reason=f"gate {self.name} disabled",
             )
-        return await self._check_fast_when_enabled(payload, ctx)
+        # M4 gate timing: every gate's tiers run through this dispatch, so
+        # this is the one probe point for all of G1..G5 (E4). Inactive
+        # recorder -> no timing taken, behavior unchanged.
+        recorder = get_recorder()
+        started = time.monotonic() if recorder.active("perf", "gate_timing") else None
+        decision = await self._check_fast_when_enabled(payload, ctx)
+        if started is not None:
+            recorder.gate(
+                gate=self.name,
+                tier="fast",
+                duration_ms=(time.monotonic() - started) * 1000,
+                allow=decision.allow,
+            )
+        return decision
 
     async def check_slow(
         self,
@@ -111,12 +127,22 @@ class Gate(ABC):
         """
         if not self.enabled:
             return decision
+        recorder = get_recorder()
+        started = time.monotonic() if recorder.active("perf", "gate_timing") else None
         # The Q-LLM slow tier runs only when a quarantine agent is wired;
         # the contract-registry check needs no model, so it runs whenever
         # the gate is enabled (Phase 5).
         if ctx.quarantine_agent is not None:
             decision = await self._check_slow_when_enabled(payload, ctx, decision)
-        return self._apply_contract_checks(payload, ctx, decision)
+        decision = self._apply_contract_checks(payload, ctx, decision)
+        if started is not None:
+            recorder.gate(
+                gate=self.name,
+                tier="slow",
+                duration_ms=(time.monotonic() - started) * 1000,
+                allow=decision.allow,
+            )
+        return decision
 
     # -----------------------------------------------------------------
     # Slow-tier contract enforcement (Phase 5)
@@ -159,8 +185,10 @@ class Gate(ABC):
         if outcome.ok:
             return decision
         level = outcome.incident_level or 2
-        bumped = level if decision.incident_level is None else min(
-            decision.incident_level, level
+        bumped = (
+            level
+            if decision.incident_level is None
+            else min(decision.incident_level, level)
         )
         prefix = f"{decision.reason}; " if decision.reason else ""
         return decision.replace_with(

@@ -22,6 +22,8 @@ from .lib.globus import GlobusClient, create_globus_client
 from .lib.olcf_token import require_s3m_project
 from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
+from .metrics import stage as metrics_stage
+from . import dry_run, faults
 
 
 Cluster = Literal["odo", "perlmutter", "frontier"]
@@ -222,15 +224,21 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
 
     - `odo_s3m_token` enables Odo.
     - `frontier_s3m_token` enables Frontier.
+    - `s3m_token` is the backend's current generic OLCF token field; it
+      supports explicit `cluster="odo"` / `cluster="frontier"` calls but
+      does not by itself disambiguate which OLCF cluster to prefer.
     - `nersc_iri_token` enables Perlmutter.
     """
-    configured: list[Cluster] = []
+    configured_set: set[Cluster] = set()
     if cfg.odo_s3m_token:
-        configured.append("odo")
+        configured_set.add("odo")
     if cfg.frontier_s3m_token:
-        configured.append("frontier")
+        configured_set.add("frontier")
+    if cfg.s3m_token:
+        configured_set.update({"odo", "frontier"})
     if cfg.nersc_iri_token:
-        configured.append("perlmutter")
+        configured_set.add("perlmutter")
+    configured = sorted(configured_set)
 
     if len(configured) == 1:
         return configured[0]
@@ -306,23 +314,45 @@ async def submit_hpc_job(
         "perlmutter": f"{settings.nersc_machine} (NERSC)",
     }[cluster]
 
-    if cluster == "odo":
-        job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
-            cfg, job, node_count, duration_int, script_args,
-        )
-    elif cluster == "perlmutter":
-        job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
-            cfg, job, node_count, duration_int, script_args,
-        )
-    else:  # "frontier"
-        job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
-            cfg, job, node_count, duration_int, script_args,
-        )
+    # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a synthetic
+    # submit failure or an expired credential, surfaced as a tool error for
+    # the recovery path under test (E7a).
+    faults.check_token_expiry()
+    faults.maybe_fail_submit()
 
+    # M3 stage timing: the full submission round-trip (source upload + IRI
+    # submit) — the platform-attributable part of E3. Facility queue wait
+    # is observed separately via status polls (stage.hpc.status).
     # Record + persist so status/outputs survive an MCP-server restart (see _persist_submitted_jobs).
-    _record_submitted_job(
-        job_id, SubmittedJob(cluster=cluster, log_path=log_path, output_dir=output_dir)
-    )
+    with metrics_stage("hpc.submit", tool_name="submit_hpc_job",
+                       payload={"cluster": cluster, "job": job}):
+        if dry_run.enabled():
+            # M6 dry-run: synthetic submission, no S3M/IRI/Globus contact.
+            eff_nodes = node_count or 1
+            eff_duration = duration_int or 3600
+            job_id = dry_run.record_submit(cluster, job, eff_nodes, eff_duration)
+            _record_submitted_job(job_id, SubmittedJob(cluster=cluster))
+        elif cluster == "odo":
+            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
+                cfg, job, node_count, duration_int, script_args,
+            )
+            _record_submitted_job(
+                job_id, SubmittedJob(cluster="odo", log_path=log_path, output_dir=output_dir),
+            )
+        elif cluster == "perlmutter":
+            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
+                cfg, job, node_count, duration_int, script_args,
+            )
+            _record_submitted_job(
+                job_id, SubmittedJob(cluster="perlmutter", log_path=log_path, output_dir=output_dir),
+            )
+        else:  # "frontier"
+            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
+                cfg, job, node_count, duration_int, script_args,
+            )
+            _record_submitted_job(
+                job_id, SubmittedJob(cluster="frontier", log_path=log_path, output_dir=output_dir),
+            )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
     h, rem = divmod(eff_duration, 3600)
@@ -928,12 +958,23 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
     cfg = meta.user
     cluster = _resolve_cluster(cluster, cfg, job_id)
 
-    if cluster == "perlmutter":
-        return await _get_perlmutter_job_status(cfg, job_id)
-    # Odo/Frontier cache the log file to disk for the 30s TTL; need the per-agent
-    # output dir from project_paths to know where to land it.
-    host_output_dir = Path(meta.project_paths.require_output_dir())
-    return await _get_olcf_job_status(cfg, host_output_dir, job_id, cluster=cluster)
+    # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a poll
+    # timeout or an expired credential mid-campaign (E7a / E7b 24h case).
+    faults.check_token_expiry()
+    faults.maybe_timeout_status()
+
+    # M3 stage timing: status-poll round-trip per cluster (E3/E7b polling
+    # overhead).
+    with metrics_stage("hpc.status", tool_name="get_hpc_job_status",
+                       payload={"cluster": cluster}):
+        if dry_run.is_dry_job(job_id):
+            return dry_run.status_text(job_id)
+        if cluster == "perlmutter":
+            return await _get_perlmutter_job_status(cfg, job_id)
+        # Odo/Frontier cache the log file to disk for the 30s TTL; need the per-agent
+        # output dir from project_paths to know where to land it.
+        host_output_dir = Path(meta.project_paths.require_output_dir())
+        return await _get_olcf_job_status(cfg, host_output_dir, job_id, cluster=cluster)
 
 
 async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
@@ -1284,6 +1325,8 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
         Confirmation of the cancellation request.
     """
     job_id = validate_job_id(job_id)
+    if dry_run.is_dry_job(job_id):
+        return dry_run.cancel(job_id)
     cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg, job_id)
     if cluster == "perlmutter":

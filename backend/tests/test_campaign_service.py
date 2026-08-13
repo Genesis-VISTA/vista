@@ -1,4 +1,5 @@
 """Tests for the campaign service (run/step/job lifecycle over the campaign tables)."""
+
 import pytest
 
 from vista_backend.db.schemas import ProjectTable
@@ -75,7 +76,9 @@ async def test_list_campaigns_filters(session, alice, bob):
 async def test_status_transition_and_resumable_filter(session, alice):
     run = await _make_campaign(session, alice)
 
-    updated = await campaign_service.set_status(session, run_id=run.id, status="running")
+    updated = await campaign_service.set_status(
+        session, run_id=run.id, status="running"
+    )
     assert updated.status == "running"
     assert updated.updated_at >= run.created_at
 
@@ -126,13 +129,17 @@ async def test_update_step_raises_when_missing(session):
     import uuid
 
     with pytest.raises(ValueError):
-        await campaign_service.update_step(session, step_id=uuid.uuid4(), status="completed")
+        await campaign_service.update_step(
+            session, step_id=uuid.uuid4(), status="completed"
+        )
 
 
 @pytest.mark.anyio
 async def test_record_job_and_open_jobs_lifecycle(session, alice):
     run = await _make_campaign(session, alice)
-    step = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="neutronics")
+    step = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="neutronics"
+    )
 
     job = await campaign_service.record_job(
         session,
@@ -151,7 +158,9 @@ async def test_record_job_and_open_jobs_lifecycle(session, alice):
     assert [j.job_id for j in for_step] == ["job-100"]
 
     # Open until its outputs are collected.
-    assert "job-100" in {j.job_id for j in await campaign_service.list_open_jobs(session)}
+    assert "job-100" in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
 
     await campaign_service.update_job(
         session,

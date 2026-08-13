@@ -6,7 +6,7 @@ dependencies = [
     "fastmcp>=3.1.1",
     "pydantic-settings>=2.0",
     "python-magic>=0.4.27",
-    "microsandbox>=0.5.7",
+    "microsandbox==0.5.7",
 ]
 
 [project.optional-dependencies]
@@ -28,3 +28,12 @@ artifacts = [
 
 [tool.uv]
 python-preference = "only-managed"
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: pure / hermetic unit tests",
+    "integration: multi-module hermetic tests (fakes OK)",
+    "live: needs configured model or external live services (opt-in)",
+    "sandbox: needs microsandbox / Docker daemon",
+    "hpc: needs real cluster credentials",
+]

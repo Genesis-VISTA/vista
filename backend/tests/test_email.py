@@ -1,4 +1,5 @@
 """Tests for the best-effort email service."""
+
 import pytest
 
 from vista_backend.config import settings
@@ -7,7 +8,10 @@ from vista_backend.services import email as email_service
 
 def test_build_message_sets_headers_and_body():
     msg = email_service.build_message(
-        to="user@ornl.gov", subject="hi", body="line1\nline2", from_addr="vista@localhost"
+        to="user@ornl.gov",
+        subject="hi",
+        body="line1\nline2",
+        from_addr="vista@localhost",
     )
     assert msg["To"] == "user@ornl.gov"
     assert msg["From"] == "vista@localhost"
@@ -41,7 +45,9 @@ async def test_send_email_delivers_when_configured(monkeypatch):
         sent_messages.append((msg["To"], msg["Subject"]))
 
     monkeypatch.setattr(email_service, "_smtp_send", _capture)
-    sent = await email_service.send_email(to="user@ornl.gov", subject="done", body="body")
+    sent = await email_service.send_email(
+        to="user@ornl.gov", subject="done", body="body"
+    )
     assert sent is True
     assert sent_messages == [("user@ornl.gov", "done")]
 

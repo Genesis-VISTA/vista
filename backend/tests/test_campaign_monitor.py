@@ -1,4 +1,5 @@
 """Tests for the campaign monitor (poll -> advance -> notify), with poll/collect/email injected."""
+
 import pytest
 
 from vista_backend.db.schemas import ProjectTable
@@ -14,7 +15,9 @@ from vista_backend.services.campaign_monitor import (
 )
 
 
-async def _make_job(session, alice, *, kind="neutronics", job_id="job-1", notified=False):
+async def _make_job(
+    session, alice, *, kind="neutronics", job_id="job-1", notified=False
+):
     project = ProjectTable(name=f"monitor-{job_id}")
     session.add(project)
     await session.flush()
@@ -22,13 +25,22 @@ async def _make_job(session, alice, *, kind="neutronics", job_id="job-1", notifi
         session, project_id=project.id, user_id=alice.id
     )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-        domain="splash", planner_skill="splash-planner", title="FLiBe sweep",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="splash",
+        planner_skill="splash-planner",
+        title="FLiBe sweep",
     )
     step = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind=kind)
     job = await campaign_service.record_job(
-        session, job_id=job_id, step_id=step.id, user_id=alice.id,
-        cluster="frontier", job_name=kind,
+        session,
+        job_id=job_id,
+        step_id=step.id,
+        user_id=alice.id,
+        cluster="frontier",
+        job_name=kind,
     )
     if notified:
         await campaign_service.update_job(session, job_id=job_id, notified=True)
@@ -46,6 +58,7 @@ class _Emailer:
 
 # --- classification --------------------------------------------------------
 
+
 def test_state_classification():
     assert normalize_state(" completed ") == "COMPLETED"
     assert is_terminal("COMPLETED") and is_success("COMPLETED")
@@ -56,6 +69,7 @@ def test_state_classification():
 
 
 # --- reconcile -------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_pending_job_stays_open_and_unnotified(session, alice):
@@ -76,7 +90,9 @@ async def test_pending_job_stays_open_and_unnotified(session, alice):
     assert refreshed.result_collected is False
     assert refreshed.notified is False
     assert emailer.sent == []
-    assert job.job_id in {j.job_id for j in await campaign_service.list_open_jobs(session)}
+    assert job.job_id in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
 
 
 @pytest.mark.anyio
@@ -91,7 +107,10 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     async def collect(_session, j, raw):
         collected.append((j.job_id, raw))
         await campaign_service.update_step(
-            session, step_id=j.step_id, status="completed", result={"metrics": {"TBR": 1.18}}
+            session,
+            step_id=j.step_id,
+            status="completed",
+            result={"metrics": {"TBR": 1.18}},
         )
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
@@ -112,7 +131,9 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     assert emailer.sent[0]["to"] == (await _user_email(session, alice))
     assert "COMPLETED" in emailer.sent[0]["subject"]
 
-    assert job.job_id not in {j.job_id for j in await campaign_service.list_open_jobs(session)}
+    assert job.job_id not in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
 
 
 @pytest.mark.anyio
@@ -149,7 +170,9 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
         return "COMPLETED", ""
 
     async def collect(_session, j, raw):
-        await campaign_service.update_step(session, step_id=j.step_id, status="completed", result={})
+        await campaign_service.update_step(
+            session, step_id=j.step_id, status="completed", result={}
+        )
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
     await monitor.reconcile_once(session)
@@ -182,7 +205,9 @@ async def test_monitor_abandons_orphaned_job(session, alice):
     assert refreshed_job.result_collected is True
     assert emailer.sent == []
     # No longer in the open set, so it won't be polled again.
-    assert job.job_id not in {j.job_id for j in await campaign_service.list_open_jobs(session)}
+    assert job.job_id not in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
 
 
 @pytest.mark.anyio
@@ -198,10 +223,13 @@ async def test_resume_open_campaigns_lists_non_terminal(session, alice):
 
 # --- formatting ------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_format_job_notification(session, alice):
     run, step, job = await _make_job(session, alice)
-    subject, body = format_job_notification(run=run, job=job, state="COMPLETED", ok=True)
+    subject, body = format_job_notification(
+        run=run, job=job, state="COMPLETED", ok=True
+    )
     assert "FLiBe sweep" in subject
     assert "completed successfully" in body
     assert job.job_id in body

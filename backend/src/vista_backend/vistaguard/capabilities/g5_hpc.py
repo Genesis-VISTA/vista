@@ -199,9 +199,7 @@ class G5HpcCapability(VistaGuardCapability):
         if not decision.allow:
             self._record_incident(decision.incident_level or 2, decision.reason)
             self._mark_sticky_if_applicable(decision)
-            raise SkipToolExecution(
-                self._deny_message(tool_name, decision.reason)
-            )
+            raise SkipToolExecution(self._deny_message(tool_name, decision.reason))
         # Allow: record any non-fatal incident level and tag the script so
         # downstream chained-job analysis (slow tier) can find it.
         if decision.incident_level is not None:
@@ -213,9 +211,7 @@ class G5HpcCapability(VistaGuardCapability):
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
             return args
-        payload = extract_ssh_hpc_payload(
-            command, self.hpc_gate.policy.host_allow_list
-        )
+        payload = extract_ssh_hpc_payload(command, self.hpc_gate.policy.host_allow_list)
         if payload is None:
             # Not an HPC-bound SSH command. G5 leaves generic run_bash
             # inspection to G2 / G4.
@@ -227,9 +223,7 @@ class G5HpcCapability(VistaGuardCapability):
         if not decision.allow:
             self._record_incident(decision.incident_level or 2, decision.reason)
             self._mark_sticky_if_applicable(decision)
-            raise SkipToolExecution(
-                self._deny_message(RUN_BASH_TOOL, decision.reason)
-            )
+            raise SkipToolExecution(self._deny_message(RUN_BASH_TOOL, decision.reason))
         if decision.incident_level is not None:
             self._record_incident(decision.incident_level, decision.reason)
         self._tag_slurm_script(RUN_BASH_TOOL, payload)
@@ -360,13 +354,12 @@ class G5HpcCapability(VistaGuardCapability):
         if store is None:
             return
         try:
-            store[tool_call_id] = self.hpc_gate.fast_tier_metadata(
-                script, user_config
-            )
+            store[tool_call_id] = self.hpc_gate.fast_tier_metadata(script, user_config)
         except Exception as exc:  # noqa: BLE001 -- metadata is best-effort
             logger.warning(
                 "VISTAGuard G5: failed to build approval metadata (%s: %s)",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
 
     def _walk_dag(
@@ -427,9 +420,7 @@ class G5HpcCapability(VistaGuardCapability):
     # Script resolution
     # -----------------------------------------------------------------
 
-    def _resolve_submit_script(
-        self, tool_name: str, args: Mapping[str, Any]
-    ) -> str:
+    def _resolve_submit_script(self, tool_name: str, args: Mapping[str, Any]) -> str:
         """
         Resolve the SLURM script text for a job-tool call. See the module
         docstring for the resolution layers.
@@ -466,11 +457,14 @@ class G5HpcCapability(VistaGuardCapability):
             return None
         # Reject path-traversal job names; templates live one dir deep.
         if "/" in job or ".." in job or not job:
-            logger.warning(
-                "VISTAGuard G5: refusing to resolve unsafe job name %r", job
-            )
+            logger.warning("VISTAGuard G5: refusing to resolve unsafe job name %r", job)
             return None
-        for filename in ("job.odo.slurm", "job.slurm", "job.frontier.slurm", "job.perlmutter.slurm"):
+        for filename in (
+            "job.odo.slurm",
+            "job.slurm",
+            "job.frontier.slurm",
+            "job.perlmutter.slurm",
+        ):
             candidate = base / job / filename
             try:
                 if candidate.is_file():
@@ -478,7 +472,9 @@ class G5HpcCapability(VistaGuardCapability):
             except OSError as exc:
                 logger.warning(
                     "VISTAGuard G5: cannot read job template %s (%s: %s)",
-                    candidate, type(exc).__name__, exc,
+                    candidate,
+                    type(exc).__name__,
+                    exc,
                 )
         return None
 
@@ -547,7 +543,8 @@ class G5HpcCapability(VistaGuardCapability):
         except Exception as exc:  # noqa: BLE001 -- defensive on bad registry
             logger.warning(
                 "VISTAGuard G5: registry tag write failed (%s: %s)",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
 
     # -----------------------------------------------------------------
@@ -555,9 +552,7 @@ class G5HpcCapability(VistaGuardCapability):
     # -----------------------------------------------------------------
 
     def _record_incident(self, level: int, reason: str) -> None:
-        self.sidecar.incident_manager.record(
-            level=level, gate="G5", reason=reason
-        )
+        self.sidecar.incident_manager.record(level=level, gate="G5", reason=reason)
 
     def _mark_sticky_if_applicable(self, decision: GateDecision) -> None:
         """
@@ -565,7 +560,7 @@ class G5HpcCapability(VistaGuardCapability):
         trust scorer so the same session can't re-request it once the
         score recovers (the probe-then-strike mitigation). Maps the deny's
         ``g5_check`` to a documented sticky key; checks without a mapped key
-        are skipped. 
+        are skipped.
         """
         tag = decision.capability_tag
         if tag is None:

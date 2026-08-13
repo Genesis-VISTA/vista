@@ -22,6 +22,7 @@ router = APIRouter(tags=["vistaguard"])
 
 class VistaGuardCapabilityState(BaseModel):
     """Trust state for a single capability kind (e.g. a gate ``"G2"``)."""
+
     score: float
     """Posterior-mean trust for this capability, in [0, 1]."""
     tier: str
@@ -36,6 +37,7 @@ class VistaGuardCapabilityState(BaseModel):
 
 class VistaGuardStateResponse(BaseModel):
     """Per-capability trust scores and tiers for the caller's session."""
+
     score: float
     """Pooled trust score across all capabilities, in [0, 1]."""
     tier: str
@@ -55,6 +57,7 @@ class VistaGuardStateResponse(BaseModel):
 
 class VistaGuardReauthResponse(BaseModel):
     """Result of clearing sticky high-stakes lock-in after a user re-auth."""
+
     unlocked_capabilities: list[str]
     """Capability kinds whose sticky lock was lifted by this re-auth."""
 
@@ -64,7 +67,9 @@ class VistaGuardReauthResponse(BaseModel):
     response_model=VistaGuardStateResponse,
 )
 async def vistaguard_state(
-    project_name: str, session: SessionDep, user: UserDep,
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
 ) -> VistaGuardStateResponse:
     """
     Return the current VISTAGuard trust state for the caller's session:
@@ -79,7 +84,9 @@ async def vistaguard_state(
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
 
-    key = await find_live_project_agent_key(session, project_id=project.id, user_id=user.id)
+    key = await find_live_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     if key is not None:
         async with project_agent_pool.get(key) as agent:
             snapshot = agent.sidecar.trust_scorer.snapshot()
@@ -96,7 +103,9 @@ async def vistaguard_state(
     response_model=VistaGuardReauthResponse,
 )
 async def vistaguard_reauth(
-    project_name: str, session: SessionDep, user: UserDep,
+    project_name: str,
+    session: SessionDep,
+    user: UserDep,
 ) -> VistaGuardReauthResponse:
     """
     Clear sticky high-stakes lock-in for the caller's session after a
@@ -110,7 +119,9 @@ async def vistaguard_reauth(
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
 
-    key = await find_live_project_agent_key(session, project_id=project.id, user_id=user.id)
+    key = await find_live_project_agent_key(
+        session, project_id=project.id, user_id=user.id
+    )
     unlocked: tuple[str, ...] = ()
     if key is not None:
         async with project_agent_pool.get(key) as agent:

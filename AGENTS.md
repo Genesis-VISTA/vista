@@ -47,7 +47,22 @@ npm run dev
 ```
 
 ### Testing & Linting
+
+Testing roadmap (milestones A–D, VISTAGuard out of scope):
+[docs/testing/README.md](docs/testing/README.md).
+
+Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`; actions: `lint`, `test`):
 ```bash
+./scripts/ci-local.sh                  # all lint + test
+./scripts/ci-local.sh lint             # lint only
+./scripts/ci-local.sh backend test     # backend pytest only
+./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
+./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
+```
+
+Or run pieces directly:
+```bash
+cd mcp_servers/vista_mcp_server && uv run --extra dev pytest  # HPC/RAG MCP tests
 cd mcp_servers/dev_mcp_server && uv run pytest  # Sandbox/view tests
 cd ui && npm run lint                           # Frontend ESLint
 cd backend && uv run --extra dev pytest -vv     # Backend tests

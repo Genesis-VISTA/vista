@@ -29,7 +29,10 @@ async def list_chat_sessions(
         project_id=project.id,
         user_id=user.id,
     )
-    return [ChatSessionSummary.model_validate(row, from_attributes=True) for row in chat_sessions]
+    return [
+        ChatSessionSummary.model_validate(row, from_attributes=True)
+        for row in chat_sessions
+    ]
 
 
 @router.post("/{project_name}/chat-sessions", status_code=201)

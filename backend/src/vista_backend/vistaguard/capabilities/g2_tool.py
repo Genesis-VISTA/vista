@@ -165,9 +165,7 @@ class G2ToolCapability(VistaGuardCapability):
         decision = await gate.check_fast(payload, gate_ctx)
         if not decision.allow:
             self._record_incident(decision.incident_level or 2, decision.reason)
-            raise SkipToolExecution(
-                self._deny_message(tool_def.name, decision.reason)
-            )
+            raise SkipToolExecution(self._deny_message(tool_def.name, decision.reason))
 
         # Minimize on inputs (slow tier; no-op when the Q-LLM is absent).
         slow = await gate.check_slow(payload, gate_ctx, decision)
@@ -180,7 +178,8 @@ class G2ToolCapability(VistaGuardCapability):
                 )
             logger.info(
                 "VISTAGuard G2 Minimize rewrote args for %r: %s",
-                tool_def.name, slow.reason,
+                tool_def.name,
+                slow.reason,
             )
             return slow.rewritten_args
         return args
@@ -208,9 +207,7 @@ class G2ToolCapability(VistaGuardCapability):
             return result
         gate = self.tool_gate
         gate_ctx = self._gate_ctx()
-        decision = await gate.sanitize_output(
-            result, gate_ctx, tool_name=tool_def.name
-        )
+        decision = await gate.sanitize_output(result, gate_ctx, tool_name=tool_def.name)
 
         if not decision.allow:
             # High-confidence injection: do not forward the original
@@ -234,7 +231,8 @@ class G2ToolCapability(VistaGuardCapability):
             except Exception as exc:  # noqa: BLE001 -- defensive on bad registry
                 logger.warning(
                     "VISTAGuard G2: registry tag write failed (%s: %s)",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
         return returned
 
@@ -243,9 +241,7 @@ class G2ToolCapability(VistaGuardCapability):
     # -----------------------------------------------------------------
 
     def _record_incident(self, level: int, reason: str) -> None:
-        self.sidecar.incident_manager.record(
-            level=level, gate="G2", reason=reason
-        )
+        self.sidecar.incident_manager.record(level=level, gate="G2", reason=reason)
 
     @staticmethod
     def _deny_message(tool_name: str, reason: str) -> str:

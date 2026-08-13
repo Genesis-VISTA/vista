@@ -1,4 +1,5 @@
 """The seed creates a runnable `vit-nas` project wired to the planner + vit-train skills (offline)."""
+
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -37,7 +38,9 @@ async def test_seed_creates_vit_nas_project(tmp_path, monkeypatch):
 
     async with AsyncSession(engine) as session:
         vit_nas = (
-            await session.exec(select(ProjectTable).where(ProjectTable.name == "vit-nas"))
+            await session.exec(
+                select(ProjectTable).where(ProjectTable.name == "vit-nas")
+            )
         ).first()
         assert vit_nas is not None
         assert vit_nas.system_prompt and "efficiency" in vit_nas.system_prompt

@@ -96,7 +96,7 @@ _DEFAULT_SANITIZE_DENY_THRESHOLD: float = 0.7
 
 
 # Maximum size (in characters) of free-text fields the Minimize
-# layer scans. 
+# layer scans.
 _DEFAULT_MAX_MINIMIZE_FIELD_CHARS: int = 16_000
 
 
@@ -109,7 +109,7 @@ _DEFAULT_MAX_MINIMIZE_FIELD_CHARS: int = 16_000
 class ToolDescriptor:
     """
     The hashable subset of an MCP tool's metadata: name +
-    description + inputSchema. 
+    description + inputSchema.
     """
 
     name: str
@@ -144,10 +144,7 @@ def _is_high_stakes(tool: Any) -> bool:
     annotations = getattr(tool, "annotations", None)
     if annotations is None:
         return False
-    return (
-        annotations.destructiveHint is True
-        or annotations.openWorldHint is True
-    )
+    return annotations.destructiveHint is True or annotations.openWorldHint is True
 
 
 def _iter_string_values(value: Any) -> Any:
@@ -207,7 +204,7 @@ async def discover_tool_metadata(
         # against tools that ship an empty/None schema.
         schema = getattr(tool, "inputSchema", None) or {}
         schemas[tool.name] = dict(schema)
-        # Descriptor: the three fields ETDI hashes. 
+        # Descriptor: the three fields ETDI hashes.
         descriptors[tool.name] = ToolDescriptor(
             name=tool.name,
             description=getattr(tool, "description", None) or "",
@@ -237,7 +234,7 @@ async def discover_high_stakes_tools(
     timeout: float = 10.0,
 ) -> frozenset[str]:
     """
-    Return only the high-stakes tool set for the MCP server 
+    Return only the high-stakes tool set for the MCP server
     """
     metadata = await discover_tool_metadata(mcp_url, timeout=timeout)
     return metadata.high_stakes
@@ -449,7 +446,7 @@ class G2ToolGate(Gate):
         if tainted_ids:
             # When the tool call consumed tainted inputs, the
             # output's provenance records that fact so a Phase-5
-            # audit can trace the path. 
+            # audit can trace the path.
             provenance.append(
                 f"tool:{tool_name}<-(tainted_inputs:{','.join(sorted(tainted_ids)[:8])})"
             )
@@ -501,7 +498,7 @@ class G2ToolGate(Gate):
         # `Draft202012Validator(schema)` does not validate the
         # schema itself eagerly; an invalid schema only surfaces at
         # iter_errors time, sometimes as a non-SchemaError (e.g.,
-        # TypeError if `type` is the wrong shape). 
+        # TypeError if `type` is the wrong shape).
         try:
             jsonschema.Draft202012Validator.check_schema(schema)
         except jsonschema.SchemaError as exc:
@@ -512,11 +509,8 @@ class G2ToolGate(Gate):
 
         try:
             validator = jsonschema.Draft202012Validator(schema)
-            errors = sorted(
-                validator.iter_errors(args), key=lambda e: e.path
-            )
-        except Exception as exc:  
-            
+            errors = sorted(validator.iter_errors(args), key=lambda e: e.path)
+        except Exception as exc:
             return (
                 f"G2 schema: validator error against {tool_name!r} "
                 f"({type(exc).__name__}: {exc})"
@@ -554,9 +548,7 @@ class G2ToolGate(Gate):
             return tool_name in self._minimize_on
         return tool_name in self._high_stakes
 
-    def _free_text_fields(
-        self, args: dict[str, Any]
-    ) -> dict[str, str]:
+    def _free_text_fields(self, args: dict[str, Any]) -> dict[str, str]:
         """
         Return the (path, text) entries from `args` that look like
         free-text fields.
@@ -602,7 +594,11 @@ class G2ToolGate(Gate):
         if not text_fields:
             return decision
 
-        # Per-field Q-LLM Minimize. 
+        # Slow tier is a no-op without a quarantine (Q-LLM) agent configured.
+        if ctx.quarantine_agent is None:
+            return decision
+
+        # Per-field Q-LLM Minimize.
         rewrites: dict[str, str] = {}
         sanitized_count = 0
         for field_name, text in text_fields.items():
@@ -611,12 +607,10 @@ class G2ToolGate(Gate):
                 field_name=field_name,
                 text=text,
             )
-            q_decision: QuarantineDecision = (
-                await run_quarantine_with_self_consistency(
-                    ctx.quarantine_agent,
-                    prompt,
-                    samples=self._self_consistency_samples,
-                )
+            q_decision: QuarantineDecision = await run_quarantine_with_self_consistency(
+                ctx.quarantine_agent,
+                prompt,
+                samples=self._self_consistency_samples,
             )
             if q_decision.contains_instructions:
                 # The Q-LLM flagged sensitive content in this
@@ -708,19 +702,19 @@ class G2ToolGate(Gate):
             )
 
         threshold = (
-            deny_threshold if deny_threshold is not None else self._sanitize_deny_threshold
+            deny_threshold
+            if deny_threshold is not None
+            else self._sanitize_deny_threshold
         )
 
         prompt = _SANITIZE_PROMPT_TEMPLATE.format(
             tool_name=tool_name or "(unknown)",
             text=result_text,
         )
-        q_decision: QuarantineDecision = (
-            await run_quarantine_with_self_consistency(
-                ctx.quarantine_agent,
-                prompt,
-                samples=self._self_consistency_samples,
-            )
+        q_decision: QuarantineDecision = await run_quarantine_with_self_consistency(
+            ctx.quarantine_agent,
+            prompt,
+            samples=self._self_consistency_samples,
         )
 
         # High-confidence detection -> deny outright.
@@ -766,7 +760,7 @@ class G2ToolGate(Gate):
                 ),
             )
 
-        # No detection -> Q-LLM cleared the output. 
+        # No detection -> Q-LLM cleared the output.
         return GateDecision(
             allow=True,
             reason=(
@@ -797,7 +791,7 @@ class G2ToolGate(Gate):
         registered as tainted in `registry`.
         """
         tainted: set[str] = set()
-        # Dedup the strings before registry lookup 
+        # Dedup the strings before registry lookup
         for value in set(_iter_string_values(args)):
             tag = registry.get(value)
             if tag is not None and tag.taint:

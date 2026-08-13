@@ -4,6 +4,7 @@ The routes are thin wrappers over these (project membership is the access bounda
 enforced by project_service.get_project_by_name); the repo tests this logic at the
 service layer.
 """
+
 import uuid
 
 import pytest
@@ -29,12 +30,20 @@ async def test_list_campaigns_filters_by_chat_session(session, alice):
         session, project_id=project.id, user_id=alice.id
     )
     run_a = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat_a.id,
-        domain="splash", planner_skill="splash-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat_a.id,
+        domain="splash",
+        planner_skill="splash-planner",
     )
     await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat_b.id,
-        domain="splash", planner_skill="splash-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat_b.id,
+        domain="splash",
+        planner_skill="splash-planner",
     )
 
     only_a = await campaign_service.list_campaigns(
@@ -42,7 +51,9 @@ async def test_list_campaigns_filters_by_chat_session(session, alice):
     )
     assert [r.id for r in only_a] == [run_a.id]
     # Without the filter, both conversations' campaigns are returned.
-    assert len(await campaign_service.list_campaigns(session, project_id=project.id)) == 2
+    assert (
+        len(await campaign_service.list_campaigns(session, project_id=project.id)) == 2
+    )
 
 
 @pytest.mark.anyio
@@ -50,8 +61,11 @@ async def test_require_campaign_in_project_enforces_project_scope(session, alice
     project = await _project(session, alice)
     other = await _project(session, alice, name="other-project")
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
-        domain="splash", planner_skill="splash-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        domain="splash",
+        planner_skill="splash-planner",
     )
 
     found = await campaign_service.require_campaign_in_project(
@@ -89,12 +103,19 @@ async def test_list_campaigns_scoped_to_project(session, alice):
 async def test_patch_campaign_applies_only_set_fields(session, alice):
     project = await _project(session, alice)
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
-        domain="splash", planner_skill="splash-planner", title="orig", spec={"a": 1},
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        domain="splash",
+        planner_skill="splash-planner",
+        title="orig",
+        spec={"a": 1},
     )
 
     patched = await campaign_service.patch_campaign(
-        session, run_id=run.id, updates=CampaignUpdate(status="running", plan=[{"step": 1}]),
+        session,
+        run_id=run.id,
+        updates=CampaignUpdate(status="running", plan=[{"step": 1}]),
     )
     assert patched.status == "running"
     assert patched.plan == [{"step": 1}]
@@ -109,8 +130,12 @@ async def test_list_jobs_for_run_spans_steps(session, alice):
     run = await campaign_service.create_campaign(
         session, project_id=project.id, user_id=alice.id, domain="d", planner_skill="s"
     )
-    s1 = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="neutronics")
-    s2 = await campaign_service.add_step(session, run_id=run.id, cycle=0, kind="chemistry")
+    s1 = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="neutronics"
+    )
+    s2 = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="chemistry"
+    )
     await campaign_service.record_job(
         session, job_id="j1", step_id=s1.id, user_id=alice.id, cluster="odo"
     )

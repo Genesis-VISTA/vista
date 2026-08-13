@@ -100,7 +100,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -171,9 +171,7 @@ def hash_descriptor(descriptor: dict[str, Any]) -> str:
     dict.
 
     """
-    blob = json.dumps(
-        descriptor, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    blob = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
 
@@ -268,8 +266,7 @@ def load_manifest(path: Path) -> dict[str, str]:
     for tool_name, h in tools.items():
         if not isinstance(tool_name, str) or not isinstance(h, str):
             logger.warning(
-                "VISTAGuard ETDI: manifest %s has non-string entry "
-                "%r=%r; skipping",
+                "VISTAGuard ETDI: manifest %s has non-string entry %r=%r; skipping",
                 path,
                 tool_name,
                 h,
@@ -491,7 +488,7 @@ class ToolDescriptorRegistry:
     def snapshot_manifest(self) -> dict[str, str]:
         """
         Return `{tool_name: startup_hash}` for use by
-        `write_manifest`. 
+        `write_manifest`.
         """
         return dict(self._startup_hashes)
 

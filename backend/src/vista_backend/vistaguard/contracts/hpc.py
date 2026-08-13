@@ -35,6 +35,7 @@ Claim shapes::
     {"type": "hpc_output_path", "paths": ["~/.ssh/id_rsa"],
      "restricted_patterns": ["~/\\.ssh"]}
 """
+
 from __future__ import annotations
 
 import re
@@ -119,14 +120,16 @@ class HpcResourceCeilingContract(Contract):
         violations: list[str] = []
         if max_nodes is not None and nodes is not None and nodes > max_nodes:
             violations.append(f"nodes {nodes} > cap {max_nodes}")
-        if max_time is not None and time_seconds is not None and time_seconds > max_time:
+        if (
+            max_time is not None
+            and time_seconds is not None
+            and time_seconds > max_time
+        ):
             violations.append(f"time {time_seconds}s > cap {max_time}s")
         if max_gpus is not None and gpus is not None and gpus > max_gpus:
             violations.append(f"gpus {gpus} > cap {max_gpus}")
         if permitted and partition is not None and partition not in permitted:
-            violations.append(
-                f"partition {partition!r} not in {sorted(permitted)}"
-            )
+            violations.append(f"partition {partition!r} not in {sorted(permitted)}")
 
         if violations:
             return self.violated(

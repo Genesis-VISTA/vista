@@ -9,8 +9,14 @@ from .display_file_mcp import mcp as display_file_mcp
 from .submit_job_mcp import mcp as submit_job_mcp
 from .rag_mcp import mcp as rag_mcp
 from .agenthpc.mcp import mcp as agenthpc_mcp
+from .metrics import MetricsMiddleware, get_recorder
 
 mcp = FastMCP(name="VISTA MCP Server")
+
+# M3 server-side tool timing. Registered only when VISTA_MCP_METRICS__LEVEL
+# is set, so the default path gains no per-request hop at all.
+if get_recorder().enabled:
+    mcp.add_middleware(MetricsMiddleware())
 
 if "submit_job" not in settings.disable_servers:
     mcp.mount(submit_job_mcp)
@@ -28,6 +34,10 @@ if "omd" not in settings.disable_servers and settings.omd_api_key:
 
 
 def main(argv: list[str] | None = None):
+    # M7 startup guard: refuse experiment flags (dry-run / queue delay /
+    # faults) when VISTA_ENV=prod, so they can never be left on in production.
+    settings.assert_experiment_flags_allowed()
+
     parser = argparse.ArgumentParser(description="VISTA MCP Server")
     parser.add_argument("--transport", choices=["stdio", "http"], default="http")
     parser.add_argument("--host", default="127.0.0.1")

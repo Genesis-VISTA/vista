@@ -1,6 +1,7 @@
 """
 Utilities for the `view` MCP tool: binary detection, file formatting, and directory trees.
 """
+
 from pathlib import PurePosixPath
 import magic
 from .sandbox import Sandbox
@@ -11,10 +12,23 @@ LINE_LENGTH_LIMIT = 300
 
 # Directories whose contents are generated/vendored and should always be collapsed.
 NOISY_DIRS = {
-    'node_modules', '__pycache__', '.git', 'dist', 'build',
-    '.venv', 'venv', '.next', '.nuxt', 'coverage',
-    '.pytest_cache', '.mypy_cache', '.ruff_cache', 'target',
-    '.cache', 'vendor', '.tox',
+    "node_modules",
+    "__pycache__",
+    ".git",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    ".next",
+    ".nuxt",
+    "coverage",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "target",
+    ".cache",
+    "vendor",
+    ".tox",
 }
 
 
@@ -31,30 +45,30 @@ def _build_tree(paths: list[str], root: str) -> dict:
     """
     # Normalise: strip trailing slashes but keep '/' as-is so that
     # relative_to and path-joining work correctly for the filesystem root.
-    root = root.rstrip('/') or '/'
+    root = root.rstrip("/") or "/"
 
     # A path is a directory if any other path is directly under it.
     dir_set: set[str] = {root}
     for p in paths:
-        p = p.rstrip('/') or '/'
+        p = p.rstrip("/") or "/"
         parent = str(PurePosixPath(p).parent)
         if parent != p:
             dir_set.add(parent)
 
     def make_node(path: str, name: str) -> dict:
         return {
-            'name': name,
-            'path': path,
-            'is_dir': path in dir_set,
-            'children': {},
-            'truncated': False,
+            "name": name,
+            "path": path,
+            "is_dir": path in dir_set,
+            "children": {},
+            "truncated": False,
         }
 
     # PurePosixPath('/').name == '' so the root renders as '/' not '//'
     root_node = make_node(root, PurePosixPath(root).name)
 
     for path in sorted(paths):
-        path = path.rstrip('/') or '/'
+        path = path.rstrip("/") or "/"
         if path == root:
             continue
         try:
@@ -65,39 +79,39 @@ def _build_tree(paths: list[str], root: str) -> dict:
         parts = rel.parts
         node = root_node
         for i, part in enumerate(parts):
-            if part not in node['children']:
+            if part not in node["children"]:
                 # Use PurePosixPath to avoid double-slash when root == '/'
-                full_path = str(PurePosixPath(root) / '/'.join(parts[:i + 1]))
-                node['children'][part] = make_node(full_path, part)
-            node = node['children'][part]
+                full_path = str(PurePosixPath(root) / "/".join(parts[: i + 1]))
+                node["children"][part] = make_node(full_path, part)
+            node = node["children"][part]
 
     return root_node
 
 
 def _count_lines(node: dict) -> int:
     """Count how many output lines *node* would produce when rendered."""
-    if not node['is_dir']:
+    if not node["is_dir"]:
         return 1
-    if node['truncated']:
+    if node["truncated"]:
         return 2  # "dirname/" line + "  ..." line
-    return 1 + sum(_count_lines(c) for c in node['children'].values())
+    return 1 + sum(_count_lines(c) for c in node["children"].values())
 
 
 def _truncate_noisy(node: dict) -> None:
     """Collapse known generated/vendored directories in-place."""
-    for name, child in node['children'].items():
-        if child['is_dir'] and name in NOISY_DIRS:
-            child['children'] = {}
-            child['truncated'] = True
-        elif child['is_dir']:
+    for name, child in node["children"].items():
+        if child["is_dir"] and name in NOISY_DIRS:
+            child["children"] = {}
+            child["truncated"] = True
+        elif child["is_dir"]:
             _truncate_noisy(child)
 
 
 def _collect_truncatable_dirs(node: dict) -> list[dict]:
     """Collect all non-truncated subdirectory nodes (excluding root)."""
     result: list[dict] = []
-    for child in node['children'].values():
-        if child['is_dir'] and not child['truncated']:
+    for child in node["children"].values():
+        if child["is_dir"] and not child["truncated"]:
             result.append(child)
             result.extend(_collect_truncatable_dirs(child))
     return result
@@ -110,24 +124,24 @@ def _truncate_to_limit(root_node: dict) -> None:
         if not candidates:
             break
         largest = max(candidates, key=_count_lines)
-        largest['children'] = {}
-        largest['truncated'] = True
+        largest["children"] = {}
+        largest["truncated"] = True
 
 
 def _render_tree(node: dict, indent: int = 0) -> list[str]:
     """Recursively render a tree node to a list of display lines."""
-    prefix = '  ' * indent
-    name = node['name']
+    prefix = "  " * indent
+    name = node["name"]
 
-    if node['is_dir']:
+    if node["is_dir"]:
         lines = [f"{prefix}{name}/"]
-        if node['truncated']:
+        if node["truncated"]:
             lines.append(f"{prefix}  ...")
         else:
             # Directories first, then files; each group sorted alphabetically.
             children = sorted(
-                node['children'].items(),
-                key=lambda x: (not x[1]['is_dir'], x[0]),
+                node["children"].items(),
+                key=lambda x: (not x[1]["is_dir"], x[0]),
             )
             for _, child in children:
                 lines.extend(_render_tree(child, indent + 1))
@@ -163,12 +177,14 @@ def format_directory_listing(find_output: str, root: str) -> str:
     # Hard cap for the rare case where the root contains many flat files.
     if len(lines) > DIRECTORY_LINE_LIMIT:
         lines = lines[:DIRECTORY_LINE_LIMIT]
-        lines.append('...')
+        lines.append("...")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
-def format_file_content(content: bytes|str, line_range: tuple[int, int] | None = None) -> str:
+def format_file_content(
+    content: bytes | str, line_range: tuple[int, int] | None = None
+) -> str:
     """Format file content with line numbers, optional range selection, and truncation.
 
     Lines are 1-indexed.  Negative indices count from the end of the file
@@ -189,12 +205,12 @@ def format_file_content(content: bytes|str, line_range: tuple[int, int] | None =
     """
     if not isinstance(content, str):
         if not content:
-            return ''
-        if magic.from_buffer(content, mime=True).startswith('text/'):
-            content = content.decode('utf-8', errors='replace')
+            return ""
+        if magic.from_buffer(content, mime=True).startswith("text/"):
+            content = content.decode("utf-8", errors="replace")
         else:
             return "[binary file]"
-    
+
     lines = content.splitlines()
     total = len(lines)
 
@@ -218,14 +234,14 @@ def format_file_content(content: bytes|str, line_range: tuple[int, int] | None =
             )
 
         end = min(end, total)
-        selected = lines[start - 1:end]
+        selected = lines[start - 1 : end]
         offset = start
     else:
         selected = lines
         offset = 1
 
     if not selected:
-        return ''
+        return ""
 
     original_count = len(selected)
     was_truncated = original_count > TEXT_LINE_LIMIT
@@ -239,13 +255,13 @@ def format_file_content(content: bytes|str, line_range: tuple[int, int] | None =
     for i, line in enumerate(selected):
         line_num = offset + i
         if len(line) > LINE_LENGTH_LIMIT:
-            line = line[:LINE_LENGTH_LIMIT] + '...'
+            line = line[:LINE_LENGTH_LIMIT] + "..."
         result.append(f"{line_num:{width}d}\t{line}")
 
     if was_truncated:
         result.append(f"... ({TEXT_LINE_LIMIT} of {original_count} lines shown)")
 
-    return '\n'.join(result)
+    return "\n".join(result)
 
 
 async def view_path(

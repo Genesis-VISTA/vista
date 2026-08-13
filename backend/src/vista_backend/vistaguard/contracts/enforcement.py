@@ -17,6 +17,7 @@ A contract violation defaults to SEV2; a contract may escalate by putting
 contract uses SEV1). Gates translate the outcome into a `GateDecision`
 (base `Gate.check_slow`) or an incident record (the G3 capability).
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,7 @@ def extract_claims(text: str) -> list[dict]:
     for blob in _CLAIM_ENVELOPE.findall(text):
         try:
             obj = json.loads(blob.strip())
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             continue
         if isinstance(obj, dict):
             claims.append(obj)
@@ -108,13 +109,17 @@ def evaluate_claims(registry: ContractRegistry, claims) -> ContractCheckOutcome:
     return outcome
 
 
-def enforce(registry: ContractRegistry, claims, trust_scorer=None) -> ContractCheckOutcome:
+def enforce(
+    registry: ContractRegistry, claims, trust_scorer=None
+) -> ContractCheckOutcome:
     """`evaluate_claims`, then record the coverage/violation counts on the
     session trust scorer (when one is supplied) so the state API can
     surface domain-contract coverage."""
     outcome = evaluate_claims(registry, claims)
-    if trust_scorer is not None and outcome.checked and hasattr(
-        trust_scorer, "record_contract_check"
+    if (
+        trust_scorer is not None
+        and outcome.checked
+        and hasattr(trust_scorer, "record_contract_check")
     ):
         trust_scorer.record_contract_check(
             outcome.checked, outcome.covered, len(outcome.violations)

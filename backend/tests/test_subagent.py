@@ -2,6 +2,7 @@
 
 HPC tools and the result parser are injected, so these run with no real HPC, MCP, or LLM.
 """
+
 import pytest
 
 from vista_backend.agents.campaign.subagent import (
@@ -32,17 +33,23 @@ Read the line `TBR=<value>` from the job log and report it as the `TBR` metric.
 
 class FakeHpcTools:
     """In-memory HpcTools: records the submit call and returns canned status/outputs."""
+
     def __init__(self):
         self.submitted: dict | None = None
 
     async def submit(self, *, job, cluster, node_count, duration, script_args):
         self.submitted = {
-            "job": job, "cluster": cluster, "node_count": node_count,
-            "duration": duration, "script_args": script_args,
+            "job": job,
+            "cluster": cluster,
+            "node_count": node_count,
+            "duration": duration,
+            "script_args": script_args,
         }
         return SubmittedJobInfo(
-            job_id="job-1", cluster=cluster or "frontier",
-            log_path="/o/log-job-1.out", output_dir="/o/job-1",
+            job_id="job-1",
+            cluster=cluster or "frontier",
+            log_path="/o/log-job-1.out",
+            output_dir="/o/job-1",
         )
 
     async def status(self, *, job_id, cluster):
@@ -57,8 +64,11 @@ async def _make_run_and_step(session, alice, *, kind="neutronics"):
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id,
-        domain="splash", planner_skill="splash-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        domain="splash",
+        planner_skill="splash-planner",
     )
     step = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind=kind, candidate={"li6": 0.7}
@@ -77,7 +87,9 @@ async def test_dispatch_records_job_and_marks_step(session, alice):
         session,
         step=step,
         user_id=alice.id,
-        order=SubAgentOrder(job="neutronics", candidate={"li6": 0.7}, cluster="frontier"),
+        order=SubAgentOrder(
+            job="neutronics", candidate={"li6": 0.7}, cluster="frontier"
+        ),
     )
 
     assert result.job_ids == ["job-1"]
@@ -102,12 +114,18 @@ async def test_collect_parses_completes_step_and_marks_job(session, alice):
     async def parse(*, candidate, raw_status, raw_outputs):
         # Trivially extract TBR from the canned status to prove the candidate + raw text flow through.
         tbr = float(raw_status.split("TBR=")[1].split()[0])
-        return ParsedResult(ok=True, summary=f"li6={candidate['li6']}", metrics={"TBR": tbr})
+        return ParsedResult(
+            ok=True, summary=f"li6={candidate['li6']}", metrics={"TBR": tbr}
+        )
 
     agent = SubAgent(role="neutronics", hpc=hpc, parser=CallableResultParser(parse))
     await agent.dispatch(
-        session, step=step, user_id=alice.id,
-        order=SubAgentOrder(job="neutronics", candidate={"li6": 0.7}, cluster="frontier"),
+        session,
+        step=step,
+        user_id=alice.id,
+        order=SubAgentOrder(
+            job="neutronics", candidate={"li6": 0.7}, cluster="frontier"
+        ),
     )
     job = await campaign_service.get_job(session, "job-1")
 
@@ -131,10 +149,14 @@ async def test_collect_parses_completes_step_and_marks_job(session, alice):
 async def test_collect_marks_step_failed_when_parse_not_ok(session, alice):
     run, step = await _make_run_and_step(session, alice)
     hpc = FakeHpcTools()
-    parser = CallableResultParser(lambda **_: ParsedResult(ok=False, summary="no outputs"))
+    parser = CallableResultParser(
+        lambda **_: ParsedResult(ok=False, summary="no outputs")
+    )
     agent = SubAgent(role="neutronics", hpc=hpc, parser=parser)
     await agent.dispatch(
-        session, step=step, user_id=alice.id,
+        session,
+        step=step,
+        user_id=alice.id,
         order=SubAgentOrder(job="neutronics", cluster="odo"),
     )
     job = await campaign_service.get_job(session, "job-1")

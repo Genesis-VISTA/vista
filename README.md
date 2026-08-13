@@ -17,6 +17,12 @@
 - `./ui`
     - Frontend UI and agent loop that calls the tools in the MCP servers
 
+## Testing
+
+See [docs/testing/README.md](docs/testing/README.md) for the testing roadmap
+(milestones A–D: CI/HPC contracts, agent loop, scientific tools, nightly
+validation). Run local CI with `./scripts/ci-local.sh`.
+
 ## Prerequisites
 
 - Node.js 20+
@@ -34,8 +40,16 @@ On MacOS, you may need to install `libmagic` first as well:
 brew install libmagic
 ```
 
-To install the nersc dependencies, you need to be able to clone https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git
-If you cloned VISTA over HTTP this should already work. If you are cloning VISTA over SSH you need to run this to make it use SSH:
+To install the NERSC/OLCF IRI dependencies (`amscrot-py`), sync the optional
+`hpc` extra (needs access to
+https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git):
+
+```bash
+cd mcp_servers/vista_mcp_server && uv sync --extra hpc
+```
+
+`./scripts/build.sh` already includes `--extra hpc`. If you cloned VISTA over SSH
+you may need:
 ```bash
 git config --global url."ssh://git@gitlab.com/amsc2/".insteadOf "https://gitlab.com/amsc2/"
 ```

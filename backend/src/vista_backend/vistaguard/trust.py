@@ -28,7 +28,7 @@ configured thresholds (`TierPolicy`). The session-level tier
 (`current_tier`) is the *worst* tier across all capabilities, so a
 single breached boundary degrades the whole session.
 
-## Sticky high-stakes 
+## Sticky high-stakes
 
 A high-stakes violation ratchets a per-capability *floor* tier that the
 capability can never climb back above within the session, even if later
@@ -79,9 +79,9 @@ logger = logging.getLogger(__name__)
 # Phase 5 multiplies these by `trust_failure_scale` to turn them into
 # Beta failure mass.
 _VIOLATION_MAGNITUDE_BY_SEVERITY: dict[int, float] = {
-    3: 0.05,   # SEV3: informational; small dent
-    2: 0.15,   # SEV2: warning
-    1: 0.40,   # SEV1: severe
+    3: 0.05,  # SEV3: informational; small dent
+    2: 0.15,  # SEV2: warning
+    1: 0.40,  # SEV1: severe
 }
 
 _VALID_SEVERITIES = frozenset(_VIOLATION_MAGNITUDE_BY_SEVERITY.keys())
@@ -89,10 +89,10 @@ _VALID_SEVERITIES = frozenset(_VIOLATION_MAGNITUDE_BY_SEVERITY.keys())
 # Defaults for the Bayesian knobs. Read off `VistaGuardSettings` via
 # `getattr` so a deployment can override them without this module
 # requiring new config fields to exist.
-_DEFAULT_PRIOR_STRENGTH = 4.0       # pseudo-observations in the prior
-_DEFAULT_SUCCESS_WEIGHT = 1.0       # alpha mass per clean call
-_DEFAULT_FAILURE_SCALE = 5.0        # beta mass per unit of magnitude
-_DEFAULT_HIGH_STAKES_MULT = 2.0     # extra beta mass for high-stakes
+_DEFAULT_PRIOR_STRENGTH = 4.0  # pseudo-observations in the prior
+_DEFAULT_SUCCESS_WEIGHT = 1.0  # alpha mass per clean call
+_DEFAULT_FAILURE_SCALE = 5.0  # beta mass per unit of magnitude
+_DEFAULT_HIGH_STAKES_MULT = 2.0  # extra beta mass for high-stakes
 
 
 # Tier severity ordering (NORMAL is best, TERMINATED is worst). Used to
@@ -237,7 +237,9 @@ class TrustScorer:
         self._lock = RLock()
 
         self._initial = _clamp(float(getattr(settings, "initial_trust", 1.0)))
-        self._prior = float(getattr(settings, "trust_prior_strength", _DEFAULT_PRIOR_STRENGTH))
+        self._prior = float(
+            getattr(settings, "trust_prior_strength", _DEFAULT_PRIOR_STRENGTH)
+        )
         self._success_weight = float(
             getattr(settings, "trust_success_weight", _DEFAULT_SUCCESS_WEIGHT)
         )
@@ -444,8 +446,7 @@ class TrustScorer:
         """
         if severity not in _VALID_SEVERITIES:
             raise ValueError(
-                f"severity must be one of {sorted(_VALID_SEVERITIES)}; "
-                f"got {severity!r}"
+                f"severity must be one of {sorted(_VALID_SEVERITIES)}; got {severity!r}"
             )
         if not self._settings.enabled:
             logger.debug(
@@ -563,8 +564,7 @@ class TrustScorer:
         """
         if not self._settings.enabled:
             logger.debug(
-                "TrustScorer.notify_incident ignored (enabled=False): "
-                "level=%d gate=%s",
+                "TrustScorer.notify_incident ignored (enabled=False): level=%d gate=%s",
                 level,
                 gate,
             )

@@ -13,6 +13,7 @@ Like test_campaign_live_e2e (mock domain), but it exercises the shipped vit-nas 
 Faked boundaries only: the MCP invoke (a vit-train-style results.json per job) and the
 sim-skill parser (reads that results.json into metrics, as the real LLM parser would).
 """
+
 import importlib.util
 import json
 import shutil
@@ -24,13 +25,20 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from vista_backend.agents.campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from vista_backend.agents.campaign.agent_tools import (
+    CampaignDriverDeps,
+    register_campaign_tools,
+)
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools
 from vista_backend.agents.campaign.manifest import load_manifest
 from vista_backend.agents.campaign.mcp_invoke import project_paths_for
 from vista_backend.agents.campaign.planner import CampaignPlanner, build_subagents
 from vista_backend.agents.campaign.subagent import CallableResultParser, ParsedResult
-from vista_backend.agents.campaign.wiring import build_collector, build_planner_for_job, build_status_poll
+from vista_backend.agents.campaign.wiring import (
+    build_collector,
+    build_planner_for_job,
+    build_status_poll,
+)
 from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
@@ -41,19 +49,41 @@ _SKILL_SRC = Path(vista_backend.__file__).parent / "db" / "skills" / "vit-nas-pl
 
 # Two candidates -> job-1, job-2 (in dispatch order). job-1 is the more efficient config.
 CANDIDATES = [
-    {"embed_dim": 1024, "depth": 12, "num_heads": 8, "patch_size": 8,
-     "lr": 5e-4, "global_batch_size": 16, "tensor_parallel": 1, "context_parallel": 1},
-    {"embed_dim": 2048, "depth": 12, "num_heads": 16, "patch_size": 8,
-     "lr": 1e-4, "global_batch_size": 16, "tensor_parallel": 2, "context_parallel": 1},
+    {
+        "embed_dim": 1024,
+        "depth": 12,
+        "num_heads": 8,
+        "patch_size": 8,
+        "lr": 5e-4,
+        "global_batch_size": 16,
+        "tensor_parallel": 1,
+        "context_parallel": 1,
+    },
+    {
+        "embed_dim": 2048,
+        "depth": 12,
+        "num_heads": 16,
+        "patch_size": 8,
+        "lr": 1e-4,
+        "global_batch_size": 16,
+        "tensor_parallel": 2,
+        "context_parallel": 1,
+    },
 ]
 RESULTS_BY_JOB = {
-    "job-1": {"metrics": {"val_loss": 0.42, "throughput_samples_s": 85.0}},   # efficiency 202.4
-    "job-2": {"metrics": {"val_loss": 0.60, "throughput_samples_s": 100.0}},  # efficiency 166.7
+    "job-1": {
+        "metrics": {"val_loss": 0.42, "throughput_samples_s": 85.0}
+    },  # efficiency 202.4
+    "job-2": {
+        "metrics": {"val_loss": 0.60, "throughput_samples_s": 100.0}
+    },  # efficiency 166.7
 }
 
 
 def _load_scorer():
-    spec = importlib.util.spec_from_file_location("vit_scorer", _SKILL_SRC / "scripts" / "score_candidates.py")
+    spec = importlib.util.spec_from_file_location(
+        "vit_scorer", _SKILL_SRC / "scripts" / "score_candidates.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -61,11 +91,16 @@ def _load_scorer():
 
 def _vit_parser_factory(skill_dir, role):
     """Parse a vit-train results.json (the fetched output) into metrics — proving collect fetched it."""
+
     def parse(*, candidate, raw_status, raw_outputs):
         data = json.loads(raw_outputs)
         metrics = data.get("metrics", {})
-        ok = metrics.get("val_loss") is not None and metrics.get("throughput_samples_s") is not None
+        ok = (
+            metrics.get("val_loss") is not None
+            and metrics.get("throughput_samples_s") is not None
+        )
         return ParsedResult(ok=ok, summary=role, metrics=metrics)
+
     return CallableResultParser(parse)
 
 
@@ -74,28 +109,68 @@ def _scripted_planner_llm():
     state = {"run_id": None}
 
     def driver(messages, info: AgentInfo) -> ModelResponse:
-        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
+        returns = [
+            p
+            for m in messages
+            for p in getattr(m, "parts", [])
+            if isinstance(p, ToolReturnPart)
+        ]
         for r in returns:
             if r.tool_name == "start_campaign" and state["run_id"] is None:
                 state["run_id"] = str(r.content).split("run_id=")[1].split()[0]
         step = len(returns)
         rid = state["run_id"]
         if step == 0:
-            return ModelResponse(parts=[ToolCallPart("start_campaign", {
-                "planner_skill": "vit-nas-planner", "domain": "vit-nas", "title": "ViT-NAS",
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "start_campaign",
+                        {
+                            "planner_skill": "vit-nas-planner",
+                            "domain": "vit-nas",
+                            "title": "ViT-NAS",
+                        },
+                    )
+                ]
+            )
         if step == 1:
-            return ModelResponse(parts=[ToolCallPart("set_campaign_spec", {
-                "run_id": rid, "spec": {"platform": "frontier", "efficiency_target": 185},
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "set_campaign_spec",
+                        {
+                            "run_id": rid,
+                            "spec": {"platform": "frontier", "efficiency_target": 185},
+                        },
+                    )
+                ]
+            )
         if step == 2:
-            return ModelResponse(parts=[ToolCallPart("save_campaign_plan", {
-                "run_id": rid, "plan": [{"step": 1, "text": "cycle 0: two configs"}],
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "save_campaign_plan",
+                        {
+                            "run_id": rid,
+                            "plan": [{"step": 1, "text": "cycle 0: two configs"}],
+                        },
+                    )
+                ]
+            )
         if step == 3:
-            return ModelResponse(parts=[ToolCallPart("dispatch_cycle", {
-                "run_id": rid, "candidates": CANDIDATES, "cycle": 0, "cluster": "frontier",
-            })])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "dispatch_cycle",
+                        {
+                            "run_id": rid,
+                            "candidates": CANDIDATES,
+                            "cycle": 0,
+                            "cluster": "frontier",
+                        },
+                    )
+                ]
+            )
         return ModelResponse(parts=[TextPart("Dispatched; awaiting training results.")])
 
     return FunctionModel(driver)
@@ -112,8 +187,8 @@ async def test_vit_nas_dispatch_collect_score(session, alice, tmp_path, monkeypa
         session, project_id=project.id, user_id=alice.id
     )
 
-    # Materialize the REAL vit-nas-planner manifest in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(chat.id, project.id, alice.id)["skills_dir"])
+    # Materialize the REAL vit-nas-planner manifest in the project's volume skills dir.
+    skills_dir = Path(project_paths_for(project.id, alice.id)["skills_dir"])
     dst = skills_dir / "vit-nas-planner"
     dst.mkdir(parents=True)
     shutil.copy(_SKILL_SRC / "campaign.yaml", dst / "campaign.yaml")
@@ -134,17 +209,22 @@ async def test_vit_nas_dispatch_collect_score(session, alice, tmp_path, monkeypa
         return the_invoke
 
     async def get_planner(_session, run) -> CampaignPlanner:
-        paths = project_paths_for(run.session_id, run.project_id, run.user_id)
+        paths = project_paths_for(run.project_id, run.user_id)
         manifest = load_manifest(Path(paths["skills_dir"]) / run.planner_skill)
         subagents = build_subagents(
-            manifest, hpc=McpHpcTools(the_invoke), skills_dir=paths["skills_dir"],
+            manifest,
+            hpc=McpHpcTools(the_invoke),
+            skills_dir=paths["skills_dir"],
             parser_factory=_vit_parser_factory,
         )
         return CampaignPlanner(manifest=manifest, subagents=subagents)
 
     deps = CampaignDriverDeps(
-        project_id=project.id, user_id=alice.id, session_id=chat.id,
-        get_session=lambda: session, get_planner=get_planner,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        get_session=lambda: session,
+        get_planner=get_planner,
     )
     agent = Agent(model=_scripted_planner_llm())
     register_campaign_tools(agent, deps)
@@ -185,7 +265,7 @@ async def test_vit_nas_dispatch_collect_score(session, alice, tmp_path, monkeypa
         [{"params": s.candidate, "metrics": s.result["metrics"]} for s in steps],
         efficiency_target=185,
     )
-    assert round(scored["best"]["efficiency"], 1) == 202.4   # the val_loss=0.42 config
+    assert round(scored["best"]["efficiency"], 1) == 202.4  # the val_loss=0.42 config
     assert scored["best"]["metrics"]["val_loss"] == 0.42
     assert scored["target_met"] is True
     assert scored["infeasible"] == []

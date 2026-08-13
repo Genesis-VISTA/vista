@@ -1,4 +1,5 @@
 """Tests for the live-MCP invoke builder (metadata shaping + result coercion)."""
+
 import json
 import uuid
 
@@ -21,11 +22,11 @@ def test_project_paths_for_matches_project_agent():
     session_id = uuid.uuid4()
     agent = ProjectAgent(project, user, session_id)
 
-    paths = project_paths_for(session_id, project.id, user.id)
+    paths = project_paths_for(project.id, user.id)
     assert paths == {
         "skills_dir": str(agent.skills_volume_dir),
-        "output_dir": str(agent.output_volume_dir),
-        "uploads_dir": str(agent.uploads_volume_dir),
+        "output_dir": str(agent.output_dir),
+        "uploads_dir": str(agent.uploads_dir),
     }
 
 

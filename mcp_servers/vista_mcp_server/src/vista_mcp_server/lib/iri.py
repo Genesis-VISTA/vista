@@ -4,7 +4,12 @@ IRI client for job submission via the amscrot SDK.
 Used for both NERSC IRI (Perlmutter) and OLCF AmSC IRI (Frontier, moderate
 enclave). ``submit_job_mcp.py`` dispatches between Odo (S3M) and both IRI
 backends through this client.
+
+Amscrot is imported lazily so hermetic unit tests (FakeIriClient / dry-run /
+catalog) can run in CI without cloning the private ``amscrot-py`` package.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 from pathlib import Path
@@ -14,9 +19,20 @@ from pydantic import BaseModel
 
 from ..config import settings
 
-from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
-from amscrot.serviceclient import ServiceClient
-from amscrot.util.constants import Constants
+
+def _require_amscrot():
+    """Import amscrot on first real IRI use; fail with a clear error if missing."""
+    try:
+        from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
+        from amscrot.serviceclient import ServiceClient
+        from amscrot.util.constants import Constants
+    except ImportError as e:
+        raise ImportError(
+            "amscrot-py is required for live IRI/HPC submission. Install vista-mcp-server "
+            "dependencies with access to the private amsc-isro-toolkit git package "
+            "(see README). Hermetic tests should use FakeIriClient instead."
+        ) from e
+    return Job, JobServiceType, JobSpec, JobType, ServiceClient, Constants
 
 
 class IriResourceSpec(BaseModel):
@@ -66,6 +82,8 @@ class IriClient:
         self.api_endpoint = api_endpoint
         self.machine = machine
         self.profile = profile
+
+        _, _, _, _, ServiceClient, Constants = _require_amscrot()
 
         # Pass credentials in-memory; skips the ~/.amscrot/credentials.yml read.
         self._service_client = ServiceClient.create(
@@ -148,6 +166,7 @@ class IriClient:
         return await asyncio.to_thread(self._submit_job, spec, name)
 
     def _submit_job(self, spec: dict[str, Any], name: str) -> str:
+        Job, JobServiceType, JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
         job_spec = JobSpec(
             executable=spec.get("executable", "bash"),
             arguments=spec.get("arguments", []),
@@ -180,6 +199,7 @@ class IriClient:
         return await asyncio.to_thread(self._get_job_status, job_id)
 
     def _get_job_status(self, job_id: str) -> dict:
+        Job, JobServiceType, _JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
         job = Job(
             name="status-probe",
             type=JobType.COMPUTE,
@@ -194,6 +214,7 @@ class IriClient:
         await asyncio.to_thread(self._cancel_job, job_id)
 
     def _cancel_job(self, job_id: str) -> None:
+        Job, JobServiceType, _JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
         job = Job(
             name="cancel-probe",
             type=JobType.COMPUTE,

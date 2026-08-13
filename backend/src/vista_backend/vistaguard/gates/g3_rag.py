@@ -2,11 +2,11 @@
 G3 RAG/Memory gate -- the rag_search wiring helpers.
 
 This module is the parse/hash/tag layer the sidecar invokes after
-a `rag_search` tool call returns. 
+a `rag_search` tool call returns.
 
 The rest of G3 (fast-tier corpus checks, slow-tier Q-LLM scan,
 embedding-cluster anomaly detection) is shipped as separate helper
-modules (`gates/g3_anomaly.py`, `gates/g3_hybrid.py`) and 
+modules (`gates/g3_anomaly.py`, `gates/g3_hybrid.py`) and
 infrastructure (`quarantine.py`). The G3RagGate that *consumes*
 all of them is forthcoming.
 
@@ -104,15 +104,13 @@ logger = logging.getLogger(__name__)
 
 
 # Separator that `mcp-server/.../rag_mcp.py:_format_results` writes
-# between chunk blocks. 
+# between chunk blocks.
 _CHUNK_SEPARATOR = "\n\n" + "—" * 60 + "\n\n"
 
 
 # Header regex: `[N] source.ext, page P`. The page value can be
-# numeric or "?" 
-_HEADER_RE = re.compile(
-    r"^\[\d+\]\s+(?P<source>[^,]+),\s+page\s+(?P<page>\S+)"
-)
+# numeric or "?"
+_HEADER_RE = re.compile(r"^\[\d+\]\s+(?P<source>[^,]+),\s+page\s+(?P<page>\S+)")
 
 
 # A rag_search response that returned no chunks
@@ -210,9 +208,7 @@ def tag_rag_chunks(
     rag_source = f"rag:{kb_slug}"
     for chunk in chunks:
         chunk_hash = hash_chunk(chunk.text)
-        provenance = (
-            f"{rag_source}<-(source:{chunk.source_file},page:{chunk.page})",
-        )
+        provenance = (f"{rag_source}<-(source:{chunk.source_file},page:{chunk.page})",)
         tag = CapabilityTag(
             source=rag_source,
             sensitivity=SensitivityTier.OPEN,
@@ -225,7 +221,7 @@ def tag_rag_chunks(
                 "kb_slug": kb_slug,
             },
         )
-        
+
         registry.tag(chunk_hash, tag)
         registry.tag(chunk.text, tag)
     logger.info(
@@ -262,7 +258,6 @@ def tag_rag_chunks(
 #   downstream gates can route on it.
 
 
-
 _SANITIZE_CHUNK_PROMPT_TEMPLATE = """\
 You are reading a single chunk retrieved from a literature \
 knowledge base. The chunk is about to be returned to an AI \
@@ -292,7 +287,7 @@ Chunk text:
 
 
 # Placeholder text the slow tier inserts when a chunk is
-# quarantined (high-confidence detection). 
+# quarantined (high-confidence detection).
 _QUARANTINE_PLACEHOLDER_TEMPLATE = (
     "(chunk quarantined by VISTAGuard G3 slow-tier; "
     "Q-LLM flagged instruction-shaped content. "
@@ -301,7 +296,7 @@ _QUARANTINE_PLACEHOLDER_TEMPLATE = (
 
 
 # Default threshold above which the slow tier *quarantines* a
-# chunk (replaces with placeholder) 
+# chunk (replaces with placeholder)
 _DEFAULT_G3_DENY_THRESHOLD: float = 0.7
 
 
@@ -403,22 +398,22 @@ def tag_sanitized_rag_chunks(
 # distilled from the prompt-injection literature: Greshake et al.
 # arXiv 2302.12173 (indirect injection), Liu et al. arXiv 2306.05499
 # (DAN-family taxonomy), Perez & Ribeiro arXiv 2211.09527
-# (jailbreaking attempts). 
+# (jailbreaking attempts).
 
 DEFAULT_QUERY_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Greshake et al. 
+    # Greshake et al.
     re.compile(
         r"\bignore\s+(all\s+)?(previous|prior|preceding|above)\s+"
         r"(instructions?|prompts?|context|directives?)\b",
         re.IGNORECASE,
     ),
-    # Liu et al. 
+    # Liu et al.
     re.compile(
         r"\bfrom\s+now\s+on[,\s]+(you|assistant|the\s+(system|model))\s+",
         re.IGNORECASE,
     ),
     # DAN-mode family ("Do Anything Now"). Includes "developer mode",
-    # "jailbreak mode" variants. Liu et al. 
+    # "jailbreak mode" variants. Liu et al.
     re.compile(
         r"\b(DAN|developer|jailbreak|root|admin|debug|unrestricted)\s+mode\b",
         re.IGNORECASE,
@@ -449,12 +444,12 @@ DEFAULT_QUERY_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(unfiltered|uncensored|jailbroken|developer|admin)\b",
         re.IGNORECASE,
     ),
-    # "System:" / "User:" role-prefix injection at line start 
+    # "System:" / "User:" role-prefix injection at line start
     re.compile(
         r"(?m)^\s*(system|user|assistant)\s*[:>]\s*ignore",
         re.IGNORECASE,
     ),
-    # "Print your system prompt" / "reveal your instructions" 
+    # "Print your system prompt" / "reveal your instructions"
     re.compile(
         r"\b(print|reveal|show|output|display)\s+(your|the)\s+"
         r"(system\s+)?(prompt|instructions?|directives?)\b",
@@ -480,7 +475,7 @@ KB_POLICY_VERSION = 1
 @dataclass(frozen=True)
 class KbPolicy:
     """
-    Loaded corpus-policy. 
+    Loaded corpus-policy.
     """
 
     sensitivity_tiers: dict[str, SensitivityTier]
@@ -506,7 +501,9 @@ def load_kb_policy(path: Path) -> KbPolicy:
         logger.warning(
             "VISTAGuard G3: cannot read kb-policy file %s (%s: %s); "
             "proceeding without per-KB policy",
-            path, type(exc).__name__, exc,
+            path,
+            type(exc).__name__,
+            exc,
         )
         return KbPolicy(sensitivity_tiers={}, corpus_manifests={}, loaded_from=None)
 
@@ -516,7 +513,8 @@ def load_kb_policy(path: Path) -> KbPolicy:
         logger.warning(
             "VISTAGuard G3: kb-policy file %s is not valid JSON (%s); "
             "proceeding without per-KB policy",
-            path, exc,
+            path,
+            exc,
         )
         return KbPolicy(sensitivity_tiers={}, corpus_manifests={}, loaded_from=None)
 
@@ -524,7 +522,8 @@ def load_kb_policy(path: Path) -> KbPolicy:
         logger.warning(
             "VISTAGuard G3: kb-policy file %s has unexpected shape "
             "(version=%r expected %d); proceeding without per-KB policy",
-            path, data.get("version") if isinstance(data, dict) else None,
+            path,
+            data.get("version") if isinstance(data, dict) else None,
             KB_POLICY_VERSION,
         )
         return KbPolicy(sensitivity_tiers={}, corpus_manifests={}, loaded_from=None)
@@ -535,7 +534,8 @@ def load_kb_policy(path: Path) -> KbPolicy:
             logger.warning(
                 "VISTAGuard G3: skipping kb-policy entry with non-string "
                 "key/value: %r=%r",
-                slug, tier_str,
+                slug,
+                tier_str,
             )
             continue
         try:
@@ -544,7 +544,8 @@ def load_kb_policy(path: Path) -> KbPolicy:
             logger.warning(
                 "VISTAGuard G3: unknown sensitivity tier %r for KB %r; "
                 "expected one of %s",
-                tier_str, slug,
+                tier_str,
+                slug,
                 [t.value for t in SensitivityTier],
             )
 
@@ -554,7 +555,8 @@ def load_kb_policy(path: Path) -> KbPolicy:
             logger.warning(
                 "VISTAGuard G3: skipping kb-policy manifest entry "
                 "with non-string key/value: %r=%r",
-                slug, h,
+                slug,
+                h,
             )
             continue
         corpus_manifests[slug] = h.lower()
@@ -562,7 +564,9 @@ def load_kb_policy(path: Path) -> KbPolicy:
     logger.info(
         "VISTAGuard G3: loaded kb-policy from %s "
         "(%d sensitivity tier(s), %d manifest(s))",
-        path, len(sensitivity_tiers), len(corpus_manifests),
+        path,
+        len(sensitivity_tiers),
+        len(corpus_manifests),
     )
     return KbPolicy(
         sensitivity_tiers=sensitivity_tiers,
@@ -582,7 +586,7 @@ _SENSITIVE_TIERS: frozenset[SensitivityTier] = frozenset(
 )
 
 
-# Trust tiers permitted to access sensitive KBs. 
+# Trust tiers permitted to access sensitive KBs.
 _DEFAULT_SENSITIVE_KB_ALLOWED_TIERS: frozenset[TrustTier] = frozenset(
     {TrustTier.NORMAL}
 )
@@ -638,11 +642,9 @@ class G3RagGate(Gate):
         kb_sensitivity_tiers: Mapping[str, SensitivityTier] | None = None,
         corpus_manifests: Mapping[str, str] | None = None,
         kb_chunk_hashes: Mapping[str, str] | None = None,
-        sensitive_kb_allowed_tiers: frozenset[TrustTier]
-        | None = None,
+        sensitive_kb_allowed_tiers: frozenset[TrustTier] | None = None,
         query_injection_enabled: bool = True,
-        query_injection_patterns: tuple[re.Pattern[str], ...]
-        | None = None,
+        query_injection_patterns: tuple[re.Pattern[str], ...] | None = None,
         sanitize_deny_threshold: float = _DEFAULT_G3_DENY_THRESHOLD,
         self_consistency_samples: int = 1,
     ) -> None:
@@ -709,7 +711,7 @@ class G3RagGate(Gate):
     ) -> GateDecision:
         """
         Run allow-list -> sensitivity-tier -> query-injection ->
-        manifest-hash in order. 
+        manifest-hash in order.
         """
         if not isinstance(payload, dict):
             raise TypeError(
@@ -731,10 +733,7 @@ class G3RagGate(Gate):
         # filter is the primary defense -- a hit here means
         # either a programming error or an attempted bypass of
         # the upstream filter.
-        if (
-            self._kb_allow_list is not None
-            and kb_slug not in self._kb_allow_list
-        ):
+        if self._kb_allow_list is not None and kb_slug not in self._kb_allow_list:
             return GateDecision(
                 allow=False,
                 reason=(
@@ -803,10 +802,7 @@ class G3RagGate(Gate):
         # All checks passed.
         return GateDecision(
             allow=True,
-            reason=(
-                f"G3 fast-tier ok: kb_slug={kb_slug!r} "
-                f"tier={kb_tier.value}"
-            ),
+            reason=(f"G3 fast-tier ok: kb_slug={kb_slug!r} tier={kb_tier.value}"),
         )
 
     # -----------------------------------------------------------------
@@ -855,11 +851,7 @@ class G3RagGate(Gate):
         - `result_text` is empty or has no parseable chunks
           (e.g., the "No relevant passages" sentinel).
         """
-        if (
-            not self.enabled
-            or ctx.quarantine_agent is None
-            or not result_text
-        ):
+        if not self.enabled or ctx.quarantine_agent is None or not result_text:
             return GateDecision(
                 allow=True,
                 reason="G3 sanitize: pass-through (slow tier disabled or empty input)",
@@ -878,7 +870,7 @@ class G3RagGate(Gate):
             else self._sanitize_deny_threshold
         )
 
-        # Per-chunk Q-LLM scan. 
+        # Per-chunk Q-LLM scan.
         sanitized: list[SanitizedChunk] = []
         cleared_count = 0
         stripped_count = 0

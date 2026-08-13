@@ -17,8 +17,6 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
-from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm
 from collections import defaultdict
 from pathlib import Path
 import argparse
@@ -100,7 +98,7 @@ class SaltTPAnalyzer:
         print(f"{'='*60}")
         print(f"Total measurements: {stats['num_measurements']}")
         print(f"Number of compositions: {len(stats['compositions'])}")
-        print(f"\nProperty Ranges:")
+        print("\nProperty Ranges:")
         for prop, vals in stats['properties'].items():
             if vals['count'] > 0:
                 print(f"  {prop}:")

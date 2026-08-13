@@ -111,7 +111,8 @@ class G3RagCapability(VistaGuardCapability):
                 self._record_incident(decision.incident_level or 2, decision.reason)
                 logger.warning(
                     "VISTAGuard G3: rag_search denied (kb_slug=%r): %s",
-                    kb_slug, decision.reason,
+                    kb_slug,
+                    decision.reason,
                 )
                 # Surface the denial as the tool result (same `ERROR: `
                 # shape rag_mcp uses), so the agent can recover.
@@ -170,7 +171,8 @@ class G3RagCapability(VistaGuardCapability):
                 logger.warning(
                     "VISTAGuard G3 slow-tier failed (%s: %s); "
                     "falling back to fast-tier tag-only path",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
             else:
                 if slow.rewritten_result is not None:
@@ -184,7 +186,8 @@ class G3RagCapability(VistaGuardCapability):
             logger.warning(
                 "VISTAGuard G3: chunk tagging failed (%s: %s); "
                 "downstream taint-propagation may be incomplete",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
         return result
 
@@ -204,14 +207,10 @@ class G3RagCapability(VistaGuardCapability):
         outcome = enforce(registry, claims, self.sidecar.trust_scorer)
         if not outcome.ok:
             level = outcome.incident_level or 2
-            self._record_incident(
-                level, f"G3 contract violation -> {outcome.reason}"
-            )
+            self._record_incident(level, f"G3 contract violation -> {outcome.reason}")
 
     def _record_incident(self, level: int, reason: str) -> None:
-        self.sidecar.incident_manager.record(
-            level=level, gate="G3", reason=reason
-        )
+        self.sidecar.incident_manager.record(level=level, gate="G3", reason=reason)
 
 
 __all__ = ["G3RagCapability"]

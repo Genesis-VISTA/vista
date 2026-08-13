@@ -1,20 +1,65 @@
 import os, sys, functools, logging
 from fastmcp.exceptions import ToolError
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Annotated as A, Literal
 import getpass
 import uuid
 from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
+from .metrics import MetricsSettings
+
+
+class FaultSettings(BaseModel):
+    """
+    Fault-injection knobs (evaluation plan M7), read from env as
+    `VISTA_MCP_FAULT__<FIELD>`. Behavior-changing experiment flags (§2a
+    Group 3): the startup guard refuses any non-default value when
+    `VISTA_ENV=prod`. All default to inert. Power E7a (recovery rate by
+    fault type).
+    """
+
+    submit_fail_p: float = Field(default=0.0, ge=0.0, le=1.0)
+    """Probability an HPC submission fails with a synthetic error."""
+
+    status_timeout_p: float = Field(default=0.0, ge=0.0, le=1.0)
+    """Probability a status poll fails with a synthetic timeout."""
+
+    token_expire_after_s: float = 0.0
+    """When > 0, HPC tool calls fail with a simulated token-expiry error
+    once this many seconds have elapsed since the first HPC call in the
+    process — exercising the cross-token-expiry recovery path honestly
+    (paper §VI; E7b's 24 h case). 0 disables."""
+
+    def is_active(self) -> bool:
+        return bool(self.submit_fail_p or self.status_timeout_p or self.token_expire_after_s)
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="VISTA_MCP_",
         env_file=[p / '.env' for p in reversed([Path.cwd(), *Path.cwd().parents])],
         extra='ignore',
+        # Double underscore separates a nested sub-model's field name in env
+        # vars, so the MetricsSettings sub-model below is overridable as
+        # `VISTA_MCP_METRICS__LEVEL=...`. Flat top-level fields (no `__` in
+        # their env-var name) are unaffected.
+        env_nested_delimiter="__",
     )
+
+    env: A[Literal['dev', 'prod'], Field(validation_alias="VISTA_ENV")] = 'dev'
+    """
+    Deployment marker, shared with the backend (`VISTA_ENV`). When `prod`,
+    the startup guard (`assert_experiment_flags_allowed`) refuses the §2a
+    Group 3 experiment flags (dry-run, queue delay, faults) so they can
+    never be left on in production.
+    """
+
+    allowed_uris: list[str] = ["file://.*"]
+    """
+    List of regex patterns. A URI must match at least one to be allowed.
+    This is used to limit what files the display_file tool can render.
+    """
 
     # uri_map: dict[str, str] = {
     #     "file:///mnt/skills/": f"file://{Path('../../skills').resolve()}/",
@@ -173,6 +218,66 @@ class AppSettings(BaseSettings):
     rag_model: str = "google/embeddinggemma-300m"
 
     hf_token: A[str | None, Field(validation_alias="HF_TOKEN")] = None
+
+    metrics: MetricsSettings = Field(default_factory=MetricsSettings)
+    """
+    Metrics / instrumentation for the MCP server process (evaluation plan
+    M3), mirroring the backend's `VISTA_BACKEND_METRICS__*` knobs. Defaults
+    to `level=off` (byte-identical no-op). Override via
+    `VISTA_MCP_METRICS__<FIELD>=...` env vars.
+    """
+
+    # ----- Experiment flags (evaluation plan §2a Group 3) -----------------
+    # These change what the system *does* (not what it records), so they are
+    # deliberately NOT metrics levels and must never be reachable by raising a
+    # logging level. The M7 startup guard (step 9) refuses them when
+    # VISTA_ENV=prod.
+    hpc_dry_run: bool = False
+    """
+    When True, HPC job tools short-circuit S3M/IRI/Globus and return recorded
+    synthetic responses (evaluation plan M6). No real cluster contact, no
+    credentials required. Powers the E1/E6/E7b replay/concurrency/queue
+    experiments. Default off — production behavior is unchanged.
+    """
+
+    hpc_queue_delay_s: float = 0.0
+    """
+    Synthetic queue wait for dry-run jobs (seconds). A dry-run job reports
+    STATE=PENDING for this long after submission, then COMPLETED — letting
+    E7b sweep 5 min / 1 h / 24 h queue behavior (polling overhead, idle-state
+    memory, completion) without a real scheduler. Ignored unless
+    `hpc_dry_run` is True.
+    """
+
+    fault: FaultSettings = Field(default_factory=FaultSettings)
+    """
+    Fault-injection knobs (M7), overridable via `VISTA_MCP_FAULT__<FIELD>`.
+    Inert by default; refused in prod by the startup guard.
+    """
+
+    def assert_experiment_flags_allowed(self) -> None:
+        """
+        Startup guard (M7, §2a Group 3): refuse to run with any
+        behavior-changing experiment flag set when `VISTA_ENV=prod`. Called
+        from `server.main()` so a misconfigured production deployment fails
+        loudly at boot instead of silently faking jobs or injecting faults.
+        """
+        if self.env != 'prod':
+            return
+        offenders: list[str] = []
+        if self.hpc_dry_run:
+            offenders.append("VISTA_MCP_HPC_DRY_RUN")
+        if self.hpc_queue_delay_s:
+            offenders.append("VISTA_MCP_HPC_QUEUE_DELAY_S")
+        if self.fault.is_active():
+            offenders.append("VISTA_MCP_FAULT__*")
+        if offenders:
+            raise RuntimeError(
+                "Experiment flags are forbidden when VISTA_ENV=prod: "
+                f"{', '.join(offenders)}. These change what the system does "
+                "(synthetic jobs / injected faults) and must never run in "
+                "production. Unset them or run with VISTA_ENV=dev."
+            )
 
 
 settings = AppSettings()

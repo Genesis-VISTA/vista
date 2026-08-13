@@ -10,6 +10,7 @@ tool's already-unwrapped text result.
 `build_mcp_invoke` is the thin live wiring over the vista MCP server; `project_paths_for`
 reproduces the ProjectAgent sandbox-volume layout the HPC tools resolve log/output paths against.
 """
+
 import json
 import uuid
 from typing import Any, Awaitable, Callable
@@ -23,27 +24,27 @@ from .hpc_tools import InvokeTool
 CallToolFn = Callable[[str, dict, dict | None], Awaitable[Any]]
 
 
-def project_paths_for(
-    session_id: uuid.UUID, project_id: uuid.UUID, user_id: uuid.UUID
-) -> dict[str, str]:
+def project_paths_for(project_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, str]:
     """The sandbox-volume paths the HPC tools resolve log/output dirs against.
 
-    Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): the
-    sandbox/skills volume is keyed per chat session, while the output/uploads volumes are
-    keyed per project x user so files are reusable across a project's sessions. The monitor
-    rebuilds these paths from a job's DB row, so they must match what the dispatching agent
-    wrote — `test_project_paths_for_matches_project_agent` pins the two together.
+    Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): a single
+    per-(project, user) `volume_root = data_dir/volumes/{project_id}-{user_id}` holding the
+    skills volume plus `data/output` and `data/uploads` (shared across a user's chat sessions
+    in the project). The monitor rebuilds these paths from a job's DB row, so they must match
+    what the dispatching agent wrote — `test_project_paths_for_matches_project_agent` pins the
+    two together.
     """
-    volumes = settings.data_dir / "volumes"
-    proj_user = f"{project_id}-{user_id}"
+    volume_root = settings.data_dir / "volumes" / f"{project_id}-{user_id}"
     return {
-        "skills_dir": str(volumes / f"{session_id}" / "skills"),
-        "output_dir": str(volumes / proj_user / "output"),
-        "uploads_dir": str(volumes / proj_user / "uploads"),
+        "skills_dir": str(volume_root / "skills"),
+        "output_dir": str(volume_root / "data" / "output"),
+        "uploads_dir": str(volume_root / "data" / "uploads"),
     }
 
 
-def build_metadata(user: UserPublicWithConfig, project_paths: dict[str, str]) -> dict[str, Any]:
+def build_metadata(
+    user: UserPublicWithConfig, project_paths: dict[str, str]
+) -> dict[str, Any]:
     """The `{"vista": {"user", "project_paths"}}` metadata the vista MCP HPC tools read."""
     return {
         "vista": {
@@ -69,7 +70,9 @@ def build_invoke(
     return invoke
 
 
-def build_mcp_invoke(user: UserPublicWithConfig, project_paths: dict[str, str]) -> InvokeTool:
+def build_mcp_invoke(
+    user: UserPublicWithConfig, project_paths: dict[str, str]
+) -> InvokeTool:
     """Live `invoke` over the vista MCP server (direct_call_tool threads metadata + unwraps text)."""
     # Local import: agents.agents pulls in the full agent stack; keep it off module-load.
     from ..agents import get_vista_mcp_server

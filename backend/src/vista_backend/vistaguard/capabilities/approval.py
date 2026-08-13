@@ -34,6 +34,7 @@ from pydantic_ai.capabilities import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai import DeferredToolRequests, RunContext
+    from pydantic_ai.tools import DeferredToolApprovalResult
 
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ class VistaGuardApprovalCapability(AbstractCapability):
         if not requests.approvals:
             return None
 
-        approvals: dict[str, ToolApproved | ToolDenied] = {}
+        approvals: dict[str, DeferredToolApprovalResult | bool] = {}
         for call in requests.approvals:
             try:
                 outcome = await self._request_approval(
@@ -90,9 +91,10 @@ class VistaGuardApprovalCapability(AbstractCapability):
                 )
             except Exception as exc:  # noqa: BLE001 -- approval must fail closed
                 logger.warning(
-                    "VISTAGuard approval: request failed for %r (%s: %s); "
-                    "default-deny",
-                    call.tool_name, type(exc).__name__, exc,
+                    "VISTAGuard approval: request failed for %r (%s: %s); default-deny",
+                    call.tool_name,
+                    type(exc).__name__,
+                    exc,
                 )
                 approvals[call.tool_call_id] = ToolDenied(
                     message=f"Approval failed for {call.tool_name!r}; denied."

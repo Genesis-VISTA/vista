@@ -1,4 +1,5 @@
-"""The seed creates a runnable `splash` project wired to the planner + sim skills (offline)."""
+"""The SPLASH campaign is folded into the `molten-salt` project (not a separate project)."""
+
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -12,7 +13,7 @@ from vista_backend.db.seed import seed_db
 
 
 @pytest.mark.anyio
-async def test_seed_creates_splash_project(tmp_path, monkeypatch):
+async def test_seed_folds_splash_into_molten_salt(tmp_path, monkeypatch):
     # Seed offline (no data token -> no downloads) and into a throwaway data dir so the
     # skill copies / storage land under tmp_path rather than the real data volume.
     monkeypatch.setattr(settings, "data_dir", tmp_path)
@@ -36,19 +37,31 @@ async def test_seed_creates_splash_project(tmp_path, monkeypatch):
     await seed_db(engine)
 
     async with AsyncSession(engine) as session:
-        splash = (
-            await session.exec(select(ProjectTable).where(ProjectTable.name == "splash"))
+        # SPLASH is folded into molten-salt, not seeded as its own project.
+        assert (
+            await session.exec(
+                select(ProjectTable).where(ProjectTable.name == "splash")
+            )
+        ).first() is None
+
+        ms = (
+            await session.exec(
+                select(ProjectTable).where(ProjectTable.name == "molten-salt")
+            )
         ).first()
-        assert splash is not None
-        assert splash.system_prompt and "TBR" in splash.system_prompt
+        assert ms is not None
+        # The campaign planner + both sim skills are wired into molten-salt.
         assert {"splash-planner", "salt-neutronics-tbr", "salt-chemistry-md"}.issubset(
-            set(splash.skills)
+            set(ms.skills)
         )
-        # The HPC toolchain is allowed (campaign dispatches/monitors jobs).
-        assert "*" in splash.tools and "!submit_hpc_job" not in splash.tools
+        # The system prompt covers the campaign, and the HPC toolchain is allowed.
+        assert "SPLASH" in ms.system_prompt and "TBR" in ms.system_prompt
+        assert "*" in ms.tools and "!submit_hpc_job" not in ms.tools
 
         # The skills the project references are registered.
         skill_names = {s.name for s in (await session.exec(select(SkillTable))).all()}
-        assert {"splash-planner", "salt-neutronics-tbr", "salt-chemistry-md"}.issubset(skill_names)
+        assert {"splash-planner", "salt-neutronics-tbr", "salt-chemistry-md"}.issubset(
+            skill_names
+        )
 
     await engine.dispose()

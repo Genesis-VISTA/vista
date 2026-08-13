@@ -1,4 +1,5 @@
 """Validate the vit-nas-planner skill: its campaign.yaml manifest + the efficiency scorer."""
+
 import importlib.util
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def _load_scorer():
 
 # --- manifest --------------------------------------------------------------
 
+
 def test_campaign_manifest_is_valid():
     manifest = load_manifest(SKILL_DIR)
     assert manifest.domain == "vit-nas"
@@ -28,8 +30,14 @@ def test_campaign_manifest_is_valid():
     assert manifest.metrics.primary.direction == "maximize"
     assert manifest.metrics.scorer == "scripts/score_candidates.py"
     assert {v.name for v in manifest.variables} == {
-        "embed_dim", "depth", "num_heads", "patch_size",
-        "lr", "global_batch_size", "tensor_parallel", "context_parallel",
+        "embed_dim",
+        "depth",
+        "num_heads",
+        "patch_size",
+        "lr",
+        "global_batch_size",
+        "tensor_parallel",
+        "context_parallel",
     }
     # Single training role bound to the vit-train sim skill + HPC job.
     training = manifest.subagent("training")
@@ -38,6 +46,7 @@ def test_campaign_manifest_is_valid():
 
 
 # --- scorer ----------------------------------------------------------------
+
 
 def _cand(*, val_loss, throughput, **params):
     metrics = {}
@@ -52,9 +61,9 @@ def test_scorer_ranks_feasible_by_efficiency_and_reports_target():
     scorer = _load_scorer()
     result = scorer.score_candidates(
         [
-            _cand(val_loss=0.42, throughput=85.0, embed_dim=1024),   # 202.4
+            _cand(val_loss=0.42, throughput=85.0, embed_dim=1024),  # 202.4
             _cand(val_loss=0.60, throughput=100.0, embed_dim=2048),  # 166.7
-            _cand(val_loss=0.50, throughput=40.0, embed_dim=4096),   # 80.0
+            _cand(val_loss=0.50, throughput=40.0, embed_dim=4096),  # 80.0
         ],
         efficiency_target=185,
     )
@@ -67,7 +76,9 @@ def test_scorer_ranks_feasible_by_efficiency_and_reports_target():
 
 def test_scorer_target_not_met_when_best_below_target():
     scorer = _load_scorer()
-    result = scorer.score_candidates([_cand(val_loss=0.5, throughput=40.0)], efficiency_target=185)
+    result = scorer.score_candidates(
+        [_cand(val_loss=0.5, throughput=40.0)], efficiency_target=185
+    )
     assert result["target_met"] is False
     assert round(result["best"]["efficiency"], 1) == 80.0
 
@@ -77,9 +88,11 @@ def test_scorer_marks_missing_or_invalid_metrics_infeasible():
     result = scorer.score_candidates(
         [
             _cand(val_loss=None, throughput=80.0, embed_dim=768),  # missing val_loss
-            _cand(val_loss=0.4, throughput=None, embed_dim=384),   # missing throughput
-            _cand(val_loss=0.0, throughput=50.0, embed_dim=512),   # non-positive val_loss
-            _cand(val_loss=0.42, throughput=85.0, embed_dim=1024), # ok
+            _cand(val_loss=0.4, throughput=None, embed_dim=384),  # missing throughput
+            _cand(
+                val_loss=0.0, throughput=50.0, embed_dim=512
+            ),  # non-positive val_loss
+            _cand(val_loss=0.42, throughput=85.0, embed_dim=1024),  # ok
         ],
         efficiency_target=185,
     )

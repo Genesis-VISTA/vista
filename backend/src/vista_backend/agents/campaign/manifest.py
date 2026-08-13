@@ -7,6 +7,7 @@ scorer script the planner runs), and the subagent roles with their sim-skill and
 HPC-job bindings. The backend reads it to wire the planner + subagents; it adds no
 domain code of its own.
 """
+
 from pathlib import Path
 from typing import Literal
 
@@ -37,6 +38,7 @@ class CampaignMetrics(BaseModel):
 
 class SubagentSpec(BaseModel):
     """Binds a subagent role to the sim skill that specializes it and the HPC job it submits."""
+
     role: str
     skill: str
     job: str

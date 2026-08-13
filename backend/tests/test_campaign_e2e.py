@@ -9,6 +9,7 @@ email are faked) to prove the full loop:
     -> poll (PENDING then COMPLETED) -> collect -> email -> steps completed
     -> user confirms exit -> campaign no longer resumable
 """
+
 import pytest
 
 from vista_backend.agents.campaign.manifest import CampaignManifest
@@ -22,13 +23,18 @@ from vista_backend.agents.campaign.wiring import build_collector
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
-from vista_backend.services.campaign_monitor import CampaignMonitor, resume_open_campaigns
+from vista_backend.services.campaign_monitor import (
+    CampaignMonitor,
+    resume_open_campaigns,
+)
 
 
 MANIFEST = CampaignManifest.model_validate(
     {
         "domain": "mockdomain",
-        "metrics": {"primary": {"name": "score", "target": 1.0, "direction": "maximize"}},
+        "metrics": {
+            "primary": {"name": "score", "target": 1.0, "direction": "maximize"}
+        },
         "subagents": [
             {"role": "neutronics", "skill": "mock-neutronics", "job": "neutronics"},
             {"role": "chemistry", "skill": "mock-chemistry", "job": "chemistry"},
@@ -39,6 +45,7 @@ MANIFEST = CampaignManifest.model_validate(
 
 class FakeHpc:
     """Increments job ids so a candidate's two role-jobs get distinct PKs."""
+
     def __init__(self):
         self.n = 0
 
@@ -55,9 +62,12 @@ class FakeHpc:
 
 def _parser_factory(skill_dir, role):
     """Deterministic parser: derive a per-role metric from the candidate."""
+
     def parse(*, candidate, raw_status, raw_outputs):
         return ParsedResult(
-            ok=True, summary=role, metrics={"score": (candidate or {}).get("x", 0.0), "role": role}
+            ok=True,
+            summary=role,
+            metrics={"score": (candidate or {}).get("x", 0.0), "role": role},
         )
 
     return CallableResultParser(parse)
@@ -90,16 +100,28 @@ async def test_campaign_end_to_end(session, alice):
         session, project_id=project.id, user_id=alice.id
     )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-        domain="mockdomain", planner_skill="mock-planner", title="Mock sweep",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="mockdomain",
+        planner_skill="mock-planner",
+        title="Mock sweep",
     )
-    await campaign_service.save_plan(session, run_id=run.id, plan=[{"step": 1, "text": "cycle 0"}])
+    await campaign_service.save_plan(
+        session, run_id=run.id, plan=[{"step": 1, "text": "cycle 0"}]
+    )
     await campaign_service.set_status(session, run_id=run.id, status="running")
 
     # --- dispatch one candidate (both roles, in parallel) ------------------
     planner = _build_planner()
     job_ids = await planner.dispatch_candidate(
-        session, run_id=run.id, user_id=alice.id, candidate={"x": 0.7}, cycle=0, cluster="frontier",
+        session,
+        run_id=run.id,
+        user_id=alice.id,
+        candidate={"x": 0.7},
+        cycle=0,
+        cluster="frontier",
     )
     assert sorted(job_ids) == ["job-1", "job-2"]
     assert len(await campaign_service.list_open_jobs(session)) == 2
@@ -123,7 +145,10 @@ async def test_campaign_end_to_end(session, alice):
     await monitor.reconcile_once(session)
     assert len(await campaign_service.list_open_jobs(session)) == 2
     assert emailer.sent == []
-    assert all(s.status == "dispatched" for s in await campaign_service.list_steps(session, run_id=run.id))
+    assert all(
+        s.status == "dispatched"
+        for s in await campaign_service.list_steps(session, run_id=run.id)
+    )
 
     # Jobs finish; next tick collects, completes the steps, and emails the user.
     state_box["state"] = "COMPLETED"
@@ -136,7 +161,7 @@ async def test_campaign_end_to_end(session, alice):
 
     assert len(await campaign_service.list_open_jobs(session)) == 0
     assert len(emailer.sent) == 2
-    user_email = (await _user_email(session, alice))
+    user_email = await _user_email(session, alice)
     assert all(m["to"] == user_email for m in emailer.sent)
 
     # --- user confirms exit -> no longer resumable -------------------------

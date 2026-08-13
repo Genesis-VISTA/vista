@@ -1,4 +1,5 @@
 """Shared fixtures for backend tests: an in-memory DB session and seed users."""
+
 import os
 import uuid
 
@@ -43,7 +44,9 @@ async def session():
 
 
 async def _make_user(session: AsyncSession, *, is_admin: bool) -> UserPublicWithConfig:
-    row = UserTable(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", is_admin=is_admin)
+    row = UserTable(
+        id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", is_admin=is_admin
+    )
     session.add(row)
     await session.flush()
     return UserPublicWithConfig.model_validate(row)

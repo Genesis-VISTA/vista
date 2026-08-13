@@ -343,9 +343,9 @@ class AllocationPolicy:
         for name, limits in (data.get("allocations") or {}).items():
             if not isinstance(name, str) or not isinstance(limits, Mapping):
                 logger.warning(
-                    "VISTAGuard G5: skipping malformed allocation entry "
-                    "%r=%r",
-                    name, limits,
+                    "VISTAGuard G5: skipping malformed allocation entry %r=%r",
+                    name,
+                    limits,
                 )
                 continue
             allocations[name] = AllocationLimits.from_dict(limits)
@@ -356,9 +356,7 @@ class AllocationPolicy:
             if isinstance(b, str)
         }
         file_hosts = tuple(
-            str(h)
-            for h in (data.get("host_allow_list") or [])
-            if isinstance(h, str)
+            str(h) for h in (data.get("host_allow_list") or []) if isinstance(h, str)
         )
 
         return cls(
@@ -374,7 +372,7 @@ def _opt_int(value: Any) -> int | None:
         return None
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -429,9 +427,7 @@ class G5HpcJobGate(Gate):
             else AllocationPolicy.default()
         )
         self._binary_allow_list = (
-            frozenset(binary_allow_list)
-            if binary_allow_list is not None
-            else None
+            frozenset(binary_allow_list) if binary_allow_list is not None else None
         )
         self._mining_signatures = tuple(s.lower() for s in mining_signatures)
         self._sensitive_path_patterns = tuple(sensitive_path_patterns)
@@ -525,7 +521,8 @@ class G5HpcJobGate(Gate):
         except Exception as exc:  # pragma: no cover - parser is no-raise
             logger.warning(
                 "VISTAGuard G5: SLURM parse failed (%s: %s); default-deny",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
             return GateDecision(
                 allow=False,
@@ -749,9 +746,7 @@ class G5HpcJobGate(Gate):
                         f"{binary!r} matches a known mining IOC"
                     ),
                     incident_level=_SEV1,
-                    capability_tag=_sticky_tag(
-                        "mining_binary", {"binary": binary}
-                    ),
+                    capability_tag=_sticky_tag("mining_binary", {"binary": binary}),
                 )
 
         # Optional allow-list mode: when configured, any invoked binary
@@ -778,9 +773,7 @@ class G5HpcJobGate(Gate):
                         f"mining marker {sig!r}"
                     ),
                     incident_level=_SEV1,
-                    capability_tag=_sticky_tag(
-                        "mining_signature", {"signature": sig}
-                    ),
+                    capability_tag=_sticky_tag("mining_signature", {"signature": sig}),
                 )
         return None
 
@@ -831,9 +824,10 @@ class G5HpcJobGate(Gate):
     ) -> GateDecision | None:
         # The gate scans the parsed script for restricted-location hits;
         # the contract owns the verdict (SEV1 deny + sticky tag).
-        pattern, where = _first_pattern_hit(
-            script, self._sensitive_path_patterns
-        ) or (None, None)
+        pattern, where = _first_pattern_hit(script, self._sensitive_path_patterns) or (
+            None,
+            None,
+        )
         return self._decision_from_contract(
             "hpc_output_path_scoping",
             {"type": "hpc_output_path", "matched_pattern": pattern, "where": where},
@@ -856,9 +850,7 @@ class G5HpcJobGate(Gate):
                         f"non-allow-listed host {host!r}"
                     ),
                     incident_level=_SEV2,
-                    capability_tag=_sticky_tag(
-                        "network_egress", {"host": host}
-                    ),
+                    capability_tag=_sticky_tag("network_egress", {"host": host}),
                 )
         return None
 
@@ -1046,9 +1038,7 @@ class G5HpcJobGate(Gate):
         visited: set[str] = set()
         # Queue of (job_ref, depth). Seed from the root's dependencies.
         queue: list[tuple[str, int]] = [
-            (jid, 1)
-            for dep in script.directives.dependencies
-            for jid in dep.job_ids
+            (jid, 1) for dep in script.directives.dependencies for jid in dep.job_ids
         ]
         nodes_examined = 0
 
@@ -1061,7 +1051,8 @@ class G5HpcJobGate(Gate):
                 logger.warning(
                     "VISTAGuard G5: dependency walk hit max depth %d at "
                     "job %r; stopping descent",
-                    self._dag_max_depth, job_ref,
+                    self._dag_max_depth,
+                    job_ref,
                 )
                 continue
             if nodes_examined >= self._dag_max_nodes:
@@ -1116,7 +1107,7 @@ class G5HpcJobGate(Gate):
         return None
 
 
-# Slow-tier prompt: the input is a *resolved* SLURM job script. 
+# Slow-tier prompt: the input is a *resolved* SLURM job script.
 _JOB_INTENT_PROMPT_TEMPLATE = """\
 Tool: submit_hpc_job
 This is a resolved SLURM batch job script the agent is about to submit \
@@ -1135,7 +1126,7 @@ SLURM script:
 
 def _sticky_tag(check: str, extra: Mapping[str, Any]) -> CapabilityTag:
     """
-    Build the capability tag attached to a G5 deny. 
+    Build the capability tag attached to a G5 deny.
     """
     metadata: dict[str, Any] = {"sticky": True, "g5_check": check}
     metadata.update(extra)
@@ -1210,7 +1201,9 @@ def load_allocation_policy(path: Path) -> AllocationPolicy:
         logger.warning(
             "VISTAGuard G5: cannot read allocation-policy file %s "
             "(%s: %s); using bundled defaults",
-            path, type(exc).__name__, exc,
+            path,
+            type(exc).__name__,
+            exc,
         )
         return AllocationPolicy.default()
 
@@ -1220,7 +1213,8 @@ def load_allocation_policy(path: Path) -> AllocationPolicy:
         logger.warning(
             "VISTAGuard G5: allocation-policy file %s is not valid JSON "
             "(%s); using bundled defaults",
-            path, exc,
+            path,
+            exc,
         )
         return AllocationPolicy.default()
 
@@ -1230,7 +1224,8 @@ def load_allocation_policy(path: Path) -> AllocationPolicy:
         logger.warning(
             "VISTAGuard G5: allocation-policy file %s rejected (%s); "
             "using bundled defaults",
-            path, exc,
+            path,
+            exc,
         )
         return AllocationPolicy.default()
 

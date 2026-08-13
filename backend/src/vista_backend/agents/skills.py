@@ -3,6 +3,7 @@ AgentSkills spec implementation
 
 Basically a port of https://github.com/agentskills/agentskills/blob/main/skills-ref
 """
+
 import html
 from typing import Annotated as A
 from pathlib import Path
@@ -17,8 +18,10 @@ from ..utils.types import StrippedStr
 class SkillError(Exception):
     pass
 
+
 class ParseError(SkillError):
     pass
+
 
 class SkillMetadata(BaseModel):
     """
@@ -33,6 +36,7 @@ class SkillMetadata(BaseModel):
         metadata: Key-value pairs for client-specific properties (optional).
         author: Display name of the skill author (optional).
     """
+
     name: A[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
     description: StrippedStr
     license: str | None = None
@@ -46,7 +50,7 @@ class Skill(SkillMetadata):
     body: str
 
 
-def find_skill_md(skill_dir: Path|str) -> Path | None:
+def find_skill_md(skill_dir: Path | str) -> Path | None:
     """
     Find the SKILL.md file in a skill directory.
 
@@ -65,17 +69,17 @@ def find_skill_md(skill_dir: Path|str) -> Path | None:
     return None
 
 
-def find_skills(search_paths: Iterable[Path|str]) -> list[Path]:
+def find_skills(search_paths: Iterable[Path | str]) -> list[Path]:
     """
     Find all skills in the skill directories.
     """
     results: list[Path] = []
     for search_path in search_paths:
         search_path = Path(search_path).resolve()
-        if not search_path.is_dir(): # Ignore search_path dirs if they don't exist
+        if not search_path.is_dir():  # Ignore search_path dirs if they don't exist
             continue
         for entry in sorted(search_path.iterdir()):
-            if not entry.is_dir(): # Ignore non dirs under a skills folder
+            if not entry.is_dir():  # Ignore non dirs under a skills folder
                 continue
             if find_skill_md(entry) is not None:
                 results.append(entry)
@@ -105,11 +109,11 @@ def parse_skill(content: str) -> Skill:
     if not isinstance(frontmatter_dict, dict):
         raise ParseError("SKILL.md frontmatter must be a YAML mapping")
 
-    frontmatter_dict['body'] = body
+    frontmatter_dict["body"] = body
     return Skill.model_validate(frontmatter_dict)
 
 
-def read_skill(skill_dir: Path|str) -> Skill:
+def read_skill(skill_dir: Path | str) -> Skill:
     """
     Read skill properties from a directory's SKILL.md.
 
@@ -147,7 +151,9 @@ def skill_to_markdown(skill: Skill) -> str:
     if skill.author is not None:
         fm["author"] = skill.author
 
-    frontmatter_text = yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=1000)
+    frontmatter_text = yaml.safe_dump(
+        fm, sort_keys=False, allow_unicode=True, width=1000
+    )
     return f"---\n{frontmatter_text}---\n\n{skill.body.strip()}\n"
 
 
@@ -169,7 +175,10 @@ def write_skill(skill_dir: Path | str, skill: Skill) -> Skill:
     return read_skill(skill_dir)
 
 
-def to_prompt(skill_dirs: list[Path|str], path_mapping: dict[Path|str, Path|str]|None = None) -> str:
+def to_prompt(
+    skill_dirs: list[Path | str],
+    path_mapping: dict[Path | str, Path | str] | None = None,
+) -> str:
     """
     Generate the <available_skills> XML block for inclusion in agent prompts.
 
@@ -196,7 +205,9 @@ def to_prompt(skill_dirs: list[Path|str], path_mapping: dict[Path|str, Path|str]
     """
     if not skill_dirs:
         return ""
-    path_mapping = {Path(k).resolve(): Path(v).resolve() for k, v in (path_mapping or {}).items()}
+    path_mapping = {
+        Path(k).resolve(): Path(v).resolve() for k, v in (path_mapping or {}).items()
+    }
 
     # instructions for how to use skills for models not pretrained with them
     SKILL_INSTRUCTIONS = textwrap.dedent("""
@@ -222,13 +233,21 @@ def to_prompt(skill_dirs: list[Path|str], path_mapping: dict[Path|str, Path|str]
             if skill_md.is_relative_to(prefix):
                 skill_md = replacement / skill_md.relative_to(prefix)
                 break
-        lines.extend([
-            "<skill>",
-            "<name>", html.escape(skill.name), "</name>",
-            "<description>", html.escape(skill.description), "</description>",
-            "<location>", html.escape(str(skill_md)), "</location>",
-            "</skill>",
-        ])
+        lines.extend(
+            [
+                "<skill>",
+                "<name>",
+                html.escape(skill.name),
+                "</name>",
+                "<description>",
+                html.escape(skill.description),
+                "</description>",
+                "<location>",
+                html.escape(str(skill_md)),
+                "</location>",
+                "</skill>",
+            ]
+        )
     lines.append("</available_skills>")
 
     return "\n".join(lines)

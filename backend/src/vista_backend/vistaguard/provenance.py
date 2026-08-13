@@ -91,7 +91,10 @@ class FlowceptSink:
         # we record the operator-supplied endpoint on the controller so a
         # deployment can route both through the same value. Controller
         # construction kwargs are kept minimal and probed defensively.
-        self._flowcept = Flowcept(
+        # Flowcept is an optional, untyped dependency probed defensively; bind
+        # it through Any so its unstable constructor signature isn't type-checked.
+        flowcept_cls: Any = Flowcept
+        self._flowcept = flowcept_cls(
             workflow_name=self._workflow_name,
             workflow_id=self._session_id,
         )
@@ -142,7 +145,8 @@ class FlowceptSink:
                 except Exception as exc:  # noqa: BLE001 - teardown must not raise
                     logger.warning(
                         "VISTAGuard: error stopping Flowcept controller (%s: %s)",
-                        type(exc).__name__, exc,
+                        type(exc).__name__,
+                        exc,
                     )
         self._flowcept = None
         self._db = None
@@ -239,14 +243,14 @@ class ProvenanceEmitter:
             )
 
         self._settings = settings
-        self._session_id = (
-            session_id if session_id is not None else uuid.uuid4().hex
-        )
+        self._session_id = session_id if session_id is not None else uuid.uuid4().hex
 
         # Resolve the log destination. Explicit constructor argument
         # wins, settings second, otherwise we fall back to the module
         # logger.
-        resolved_path = log_path if log_path is not None else settings.provenance_log_path
+        resolved_path = (
+            log_path if log_path is not None else settings.provenance_log_path
+        )
         self._log_path: Path | None = (
             Path(resolved_path) if resolved_path is not None else None
         )
@@ -261,8 +265,12 @@ class ProvenanceEmitter:
         if sink is not None:
             self._sink: Any | None = sink
         elif settings.flowcept_enabled:
+            if settings.flowcept_endpoint is None:
+                raise ValueError(
+                    "flowcept_enabled requires flowcept_endpoint to be set"
+                )
             self._sink = FlowceptSink(
-                settings.flowcept_endpoint,  # validated non-None above
+                settings.flowcept_endpoint,
                 session_id=self._session_id,
             )
         else:
@@ -308,6 +316,7 @@ class ProvenanceEmitter:
         gate: str,
         decision: GateDecision,
         context: GateContext | None = None,
+        duration_ms: float | None = None,
     ) -> ProvenanceEvent | None:
         """
         Record a gate's `GateDecision` for audit.
@@ -328,6 +337,11 @@ class ProvenanceEmitter:
                 can correlate without joining against a separate
                 scorer log. Accepting the context now keeps that
                 forward-compatible.
+            duration_ms: optional wall time of the check that produced
+                this decision (evaluation plan M4). Callers with gate
+                timing enabled pass it so the offline report
+                (`scripts/metrics_report.py`) can compute per-gate
+                overhead without joining against the metrics log.
 
         Returns:
             The `ProvenanceEvent` that was emitted, or None when
@@ -340,10 +354,10 @@ class ProvenanceEmitter:
             "gate": gate,
             "decision": _summarize_decision(decision),
         }
+        if duration_ms is not None:
+            payload["duration_ms"] = duration_ms
         if decision.capability_tag is not None:
-            payload["capability_tag"] = _capability_tag_to_dict(
-                decision.capability_tag
-            )
+            payload["capability_tag"] = _capability_tag_to_dict(decision.capability_tag)
         # Phase-0 context handling: the GateContext fields that are
         # safe to serialize (none of the registry / scorer / agent
         # references are JSON-compatible) come from the metadata
@@ -376,9 +390,7 @@ class ProvenanceEmitter:
             "reason": record.reason,
         }
         if record.capability_tag is not None:
-            payload["capability_tag"] = _capability_tag_to_dict(
-                record.capability_tag
-            )
+            payload["capability_tag"] = _capability_tag_to_dict(record.capability_tag)
         if record.metadata:
             payload["metadata"] = dict(record.metadata)
 
@@ -418,7 +430,8 @@ class ProvenanceEmitter:
                     "VISTAGuard: Flowcept emission failed (%s: %s); "
                     "falling back to the JSONL provenance log for the "
                     "rest of this session.",
-                    type(exc).__name__, exc,
+                    type(exc).__name__,
+                    exc,
                 )
                 self._write_jsonl(event)
             self._last_event = event
@@ -439,7 +452,8 @@ class ProvenanceEmitter:
                 except Exception as exc:  # noqa: BLE001 - teardown must not raise
                     logger.warning(
                         "VISTAGuard: error closing provenance sink (%s: %s)",
-                        type(exc).__name__, exc,
+                        type(exc).__name__,
+                        exc,
                     )
 
     def _write_jsonl(self, event: ProvenanceEvent) -> None:
@@ -497,10 +511,7 @@ def _utc_now_iso() -> str:
     `isoformat()` of an aware datetime because Phase-7 broker
     consumers vary in how they parse the `+00:00` form.
     """
-    return (
-        datetime.now(tz=timezone.utc)
-        .strftime("%Y-%m-%dT%H:%M:%S.%f")
-    )[:-3] + "Z"
+    return (datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f"))[:-3] + "Z"
 
 
 def _summarize_decision(decision: GateDecision) -> dict[str, Any]:

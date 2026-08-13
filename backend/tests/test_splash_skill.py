@@ -1,4 +1,5 @@
 """Validate the splash-planner skill: its campaign.yaml manifest + the candidate scorer."""
+
 import importlib.util
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def _load_scorer():
 
 # --- manifest --------------------------------------------------------------
 
+
 def test_campaign_manifest_is_valid():
     manifest = load_manifest(SKILL_DIR)
     assert manifest.domain == "splash"
@@ -27,16 +29,25 @@ def test_campaign_manifest_is_valid():
     assert manifest.metrics.primary.target == 1.1
     assert manifest.metrics.scorer == "scripts/score_candidates.py"
     assert {v.name for v in manifest.variables} == {
-        "li6_enrichment", "temperature", "be_concentration", "blanket_thickness"
+        "li6_enrichment",
+        "temperature",
+        "be_concentration",
+        "blanket_thickness",
     }
     # Bound to the real simulation skills + HPC jobs.
     neutronics = manifest.subagent("neutronics")
-    assert neutronics.skill == "salt-neutronics-tbr" and neutronics.job == "salt-neutronics-tbr"
+    assert (
+        neutronics.skill == "salt-neutronics-tbr"
+        and neutronics.job == "salt-neutronics-tbr"
+    )
     chemistry = manifest.subagent("chemistry")
-    assert chemistry.skill == "salt-chemistry-md" and chemistry.job == "salt-chemistry-md"
+    assert (
+        chemistry.skill == "salt-chemistry-md" and chemistry.job == "salt-chemistry-md"
+    )
 
 
 # --- scorer ----------------------------------------------------------------
+
 
 def _candidate(li6, *, tbr, density=2.0, **advisory):
     """A v1 candidate: TBR (neutronics) + density (chemistry), plus optional advisory metrics."""
@@ -47,7 +58,11 @@ def _candidate(li6, *, tbr, density=2.0, **advisory):
 def test_scorer_ranks_feasible_by_tbr_and_reports_target():
     scorer = _load_scorer()
     result = scorer.score_candidates(
-        [_candidate(0.6, tbr=1.12), _candidate(0.8, tbr=1.20), _candidate(0.5, tbr=1.05)],
+        [
+            _candidate(0.6, tbr=1.12),
+            _candidate(0.8, tbr=1.20),
+            _candidate(0.5, tbr=1.05),
+        ],
         tbr_target=1.1,
     )
     assert [e["tbr"] for e in result["ranked"]] == [1.20, 1.12, 1.05]
@@ -61,16 +76,18 @@ def test_scorer_density_gate_filters_infeasible():
     scorer = _load_scorer()
     result = scorer.score_candidates(
         [
-            _candidate(0.9, tbr=1.30, density=3.1),   # density too high -> infeasible
+            _candidate(0.9, tbr=1.30, density=3.1),  # density too high -> infeasible
             _candidate(0.8, tbr=1.25, density=None),  # density missing -> infeasible
-            _candidate(0.6, tbr=1.12, density=2.0),   # in range -> feasible
+            _candidate(0.6, tbr=1.12, density=2.0),  # in range -> feasible
         ],
         tbr_target=1.1,
     )
     # The two highest-TBR candidates are gated out on density; the in-range one wins.
     assert result["best"]["tbr"] == 1.12
     assert len(result["infeasible"]) == 2
-    assert all("density_g_cm3" in r for cand in result["infeasible"] for r in cand["reasons"])
+    assert all(
+        "density_g_cm3" in r for cand in result["infeasible"] for r in cand["reasons"]
+    )
 
 
 def test_scorer_target_not_met_when_best_below_target():
@@ -98,9 +115,14 @@ def test_advisory_metrics_are_reported_not_gated():
 
 def test_all_advisory_unmodeled_when_only_tbr_and_density():
     scorer = _load_scorer()
-    result = scorer.score_candidates([_candidate(0.7, tbr=1.15, density=2.0)], tbr_target=1.1)
+    result = scorer.score_candidates(
+        [_candidate(0.7, tbr=1.15, density=2.0)], tbr_target=1.1
+    )
     assert set(result["advisory_unmodeled"]) == {
-        "melting_point_c", "boiling_point_c", "viscosity_mpa_s",
-        "thermal_conductivity_w_mk", "cp_kj_kgk",
+        "melting_point_c",
+        "boiling_point_c",
+        "viscosity_mpa_s",
+        "thermal_conductivity_w_mk",
+        "cp_kj_kgk",
     }
     assert result["best"]["advisory"] == []

@@ -13,6 +13,7 @@ The loader is import-safe and idempotent: builtin modules import once and
 registration is keyed by contract name, so repeated calls (one per sidecar)
 do not duplicate contracts.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -79,5 +80,5 @@ def load_contract_library(contracts_dir=None, project=None) -> ContractRegistry:
     if contracts_dir is not None and not isinstance(contracts_dir, (str, Path)):
         contracts_dir = getattr(contracts_dir, "contracts_dir", None)
     if contracts_dir:
-        _load_external(registry, contracts_dir)
+        _load_external(registry, str(contracts_dir))
     return registry

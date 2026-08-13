@@ -9,6 +9,7 @@ from ..services.auth import UserDep
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+
 @router.get("")
 async def list_projects(session: SessionDep, user: UserDep) -> list[ProjectPublic]:
     projects = await project_service.list_projects(session, user)
@@ -16,13 +17,17 @@ async def list_projects(session: SessionDep, user: UserDep) -> list[ProjectPubli
 
 
 @router.get("/{project_name}")
-async def get_project(project_name: str, session: SessionDep, user: UserDep) -> ProjectPublic:
+async def get_project(
+    project_name: str, session: SessionDep, user: UserDep
+) -> ProjectPublic:
     project = await project_service.get_project_by_name(session, project_name, user)
     return ProjectPublic.model_validate(project)
 
 
 @router.post("", status_code=201)
-async def create_project(payload: ProjectCreate, session: SessionDep, user: UserDep) -> ProjectPublic:
+async def create_project(
+    payload: ProjectCreate, session: SessionDep, user: UserDep
+) -> ProjectPublic:
     project = await project_service.create_project(session, payload, user)
     return ProjectPublic.model_validate(project)
 
@@ -41,7 +46,9 @@ async def delete_project(project_name: str, session: SessionDep, user: UserDep) 
 
 
 @router.get("/{project_name}/members")
-async def list_members(project_name: str, session: SessionDep, user: UserDep) -> list[UserPublic]:
+async def list_members(
+    project_name: str, session: SessionDep, user: UserDep
+) -> list[UserPublic]:
     members = await project_service.list_project_members(session, project_name, user)
     return [UserPublic.model_validate(m) for m in members]
 

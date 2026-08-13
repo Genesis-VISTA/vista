@@ -44,6 +44,7 @@ Claim shapes::
     {"type": "heat_capacity", "family": "flinak", "value": 1880.0,
                               "reference": 1880.0}            # J/(kg*K)
 """
+
 from __future__ import annotations
 
 import math
@@ -100,9 +101,9 @@ _HEAT_CAPACITY_REF: dict[str, float] = {
 
 # Very wide absolute sanity envelopes used when no family-specific data
 # applies (catch order-of-magnitude / unit errors only).
-_VISCOSITY_ABS_RANGE = (0.1, 200.0)        # mPa*s
+_VISCOSITY_ABS_RANGE = (0.1, 200.0)  # mPa*s
 _HEAT_CAPACITY_ABS_RANGE = (500.0, 3000.0)  # J/(kg*K)
-_TEMP_RANGE = (600.0, 1600.0)               # K, typical molten-salt window
+_TEMP_RANGE = (600.0, 1600.0)  # K, typical molten-salt window
 
 
 @register
@@ -128,7 +129,9 @@ class SaltDensityContract(Contract):
         family = str(claim.get("family", "")).lower()
         bounds = _DENSITY_BOUNDS.get(family)
         if bounds is None:
-            return self.passed(claim, note=f"no MSTDB-TP envelope for family {family!r}")
+            return self.passed(
+                claim, note=f"no MSTDB-TP envelope for family {family!r}"
+            )
 
         a_min, a_max, b_min, b_max = bounds
         A = claim.get("A")
@@ -146,7 +149,7 @@ class SaltDensityContract(Contract):
                 f"B={B} outside MSTDB-TP 95% CI [{b_min}, {b_max}] for {family}",
                 coefficient="B",
             )
-        if None not in (A, B, T, value):
+        if A is not None and B is not None and T is not None and value is not None:
             predicted = A - B * T
             tol = max(50.0, 0.05 * abs(predicted))  # 5% or 50 kg/m^3
             if abs(predicted - value) > tol:
@@ -205,7 +208,7 @@ class SaltViscosityContract(Contract):
                     f"Andrade B={B} K outside [{b_min}, {b_max}] for {family}",
                     coefficient="B",
                 )
-            if None not in (A, B, T):
+            if A is not None and B is not None and T is not None:
                 predicted = A * math.exp(B / T)  # mPa*s
                 tol = max(0.5, 0.25 * predicted)  # 25% or 0.5 mPa*s
                 if abs(predicted - value) > tol:

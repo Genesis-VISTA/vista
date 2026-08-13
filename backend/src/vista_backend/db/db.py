@@ -1,6 +1,7 @@
 """
 Database engine, session factory, and FastAPI session dependency.
 """
+
 import functools
 from pathlib import Path
 from typing import Annotated as A, AsyncIterator
@@ -49,7 +50,6 @@ def get_engine() -> AsyncEngine:
     idle connections after 1 hour as a defense against macOS aggressive
     fd reaping on long-idle processes.
     """
-    connect_args: dict = {}
     pool_kwargs: dict = {}
     if settings.database_url.startswith("sqlite"):
         pool_kwargs = {
@@ -82,9 +82,10 @@ def get_engine() -> AsyncEngine:
 async def init_db() -> None:
     """Create tables and seed defaults. Call once at app startup."""
     if settings.database_url.startswith("sqlite"):
-        Path(settings.database_url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(settings.database_url.split("///", 1)[-1]).parent.mkdir(
+            parents=True, exist_ok=True
+        )
     engine = get_engine()
-    from . import schemas # Import so all SQLModels are loaded
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
@@ -108,7 +109,10 @@ _COMMIT_RETRY_MAX = 2.0
 def _is_locked_error(exc: BaseException) -> bool:
     """True iff the OperationalError is the sqlite 'database is locked' case."""
     from sqlalchemy.exc import OperationalError
-    return isinstance(exc, OperationalError) and "database is locked" in str(exc).lower()
+
+    return (
+        isinstance(exc, OperationalError) and "database is locked" in str(exc).lower()
+    )
 
 
 async def commit_with_retry(session: AsyncSession, *, context: str = "") -> bool:
@@ -147,7 +151,8 @@ async def commit_with_retry(session: AsyncSession, *, context: str = "") -> bool
                 return False
             logger.debug(
                 "Commit retry %d/%d%s after lock contention; sleeping %.2fs",
-                attempt, _COMMIT_RETRY_ATTEMPTS,
+                attempt,
+                _COMMIT_RETRY_ATTEMPTS,
                 f" ({context})" if context else "",
                 delay,
             )
@@ -156,7 +161,9 @@ async def commit_with_retry(session: AsyncSession, *, context: str = "") -> bool
     return False
 
 
-async def _get_session(engine: A[AsyncEngine, Depends(get_engine)]) -> AsyncIterator[AsyncSession]:
+async def _get_session(
+    engine: A[AsyncEngine, Depends(get_engine)],
+) -> AsyncIterator[AsyncSession]:
     async with AsyncSession(engine) as session:
         try:
             yield session
@@ -168,12 +175,16 @@ async def _get_session(engine: A[AsyncEngine, Depends(get_engine)]) -> AsyncIter
                 # rollback in the except branch below is consistent with
                 # what commit_with_retry already did.)
                 from sqlalchemy.exc import OperationalError
+
                 raise OperationalError(
-                    "commit deferred: database is locked", None, Exception(),
+                    "commit deferred: database is locked",
+                    None,
+                    Exception(),
                 )
         except Exception:
             await session.rollback()
             raise
+
 
 SessionDep = A[AsyncSession, Depends(_get_session)]
 """

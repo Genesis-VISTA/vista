@@ -95,8 +95,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -178,7 +177,7 @@ def detect_embedding_anomalies(
     distribution_std = float(np.std(mean_distances, ddof=0))
 
     if not math.isfinite(distribution_std) or distribution_std == 0.0:
-        # All chunks have identical mean distance 
+        # All chunks have identical mean distance
         return AnomalyResult(
             flagged_indices=(),
             z_scores=tuple(math.nan for _ in range(n)),
@@ -263,9 +262,7 @@ def _coerce_embeddings(
             f"embeddings must be 2-D; got {array.ndim}-D with shape {array.shape}"
         )
     if not np.issubdtype(array.dtype, np.floating):
-        raise ValueError(
-            f"embeddings must be numeric; got dtype {array.dtype}"
-        )
+        raise ValueError(f"embeddings must be numeric; got dtype {array.dtype}")
 
     return array
 

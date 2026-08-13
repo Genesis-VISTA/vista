@@ -178,7 +178,9 @@ def load_jailbreak_signatures(
         logger.warning(
             "VISTAGuard G1: cannot read jailbreak-signatures file %s "
             "(%s: %s); loading empty pattern set",
-            path, type(exc).__name__, exc,
+            path,
+            type(exc).__name__,
+            exc,
         )
         return ()
 
@@ -193,11 +195,15 @@ def load_jailbreak_signatures(
             logger.warning(
                 "VISTAGuard G1: signatures file %s line %d failed to "
                 "compile (%s); skipping pattern %r",
-                path, lineno, exc, line,
+                path,
+                lineno,
+                exc,
+                line,
             )
     logger.info(
         "VISTAGuard G1: loaded %d jailbreak signature(s) from %s",
-        len(compiled), path,
+        len(compiled),
+        path,
     )
     return tuple(compiled)
 
@@ -240,9 +246,7 @@ PII_PATTERNS: dict[str, re.Pattern[str]] = {
     # the common formatted-credit-card layouts (Visa, Mastercard,
     # Amex). The match doesn't run Luhn validation; the goal is to
     # flag, not to forensically classify, so a near-miss is fine.
-    "credit_card": re.compile(
-        r"\b(?:\d[ -]?){13,19}\b"
-    ),
+    "credit_card": re.compile(r"\b(?:\d[ -]?){13,19}\b"),
 }
 
 
@@ -254,6 +258,7 @@ PII_PATTERNS: dict[str, re.Pattern[str]] = {
 @dataclass(frozen=True)
 class _PiiHit:
     """Internal record of a single PII detection."""
+
     kind: str
     span: tuple[int, int]
 
@@ -336,7 +341,7 @@ class G1PromptGate(Gate):
     def attach_intent_extraction_agent(self, agent: Any) -> None:
         """
         Store the PydanticAI intent-extraction Agent for the
-        slow-tier path. 
+        slow-tier path.
         """
         self._intent_extraction_agent = agent
 
@@ -419,10 +424,7 @@ class G1PromptGate(Gate):
         if matched is not None:
             return GateDecision(
                 allow=False,
-                reason=(
-                    f"G1 jailbreak: prompt matches pattern "
-                    f"{matched.pattern!r}"
-                ),
+                reason=(f"G1 jailbreak: prompt matches pattern {matched.pattern!r}"),
                 incident_level=2,
             )
 
@@ -435,9 +437,7 @@ class G1PromptGate(Gate):
         pii_kinds = sorted({hit.kind for hit in pii_hits})
 
         # Build the capability tag for the allowed prompt.
-        sensitivity = (
-            SensitivityTier.CUI if cui_detected else SensitivityTier.OPEN
-        )
+        sensitivity = SensitivityTier.CUI if cui_detected else SensitivityTier.OPEN
         metadata: dict[str, Any] = {
             "cui_detected": cui_detected,
             "pii_detected": bool(pii_hits),
@@ -464,7 +464,8 @@ class G1PromptGate(Gate):
             logger.warning(
                 "VISTAGuard G1: registry tag write failed (%s: %s); "
                 "downstream taint-propagation may be incomplete",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
 
         # Choose the incident level for the allow path. CUI is more
@@ -472,9 +473,7 @@ class G1PromptGate(Gate):
         # are SEV3 (informational) per the AC. We surface SEV3 when
         # either signal fires so the sidecar/incident manager can
         # log it; a clean prompt carries None.
-        incident_level: int | None = (
-            3 if (cui_detected or pii_hits) else None
-        )
+        incident_level: int | None = 3 if (cui_detected or pii_hits) else None
 
         reason_parts = ["G1 fast-tier ok"]
         if cui_detected:
@@ -635,12 +634,10 @@ class G1PromptGate(Gate):
         if not isinstance(user_prompt, str):
             return decision
 
-        intent: IntentExtraction = (
-            await run_intent_extraction_with_self_consistency(
-                self._intent_extraction_agent,
-                user_prompt,
-                samples=self._intent_self_consistency_samples,
-            )
+        intent: IntentExtraction = await run_intent_extraction_with_self_consistency(
+            self._intent_extraction_agent,
+            user_prompt,
+            samples=self._intent_self_consistency_samples,
         )
 
         # ----- Low-confidence path -> SEV2 default-deny -----------
@@ -704,7 +701,7 @@ class G1PromptGate(Gate):
         ctx: GateContext,
         decision: GateDecision,
     ) -> GateDecision:
-        
+
         return await self.extract_intent(payload, ctx, decision)
 
     def _refresh_prompt_tag(
@@ -718,7 +715,7 @@ class G1PromptGate(Gate):
         """
         Compose a new ``CapabilityTag`` for the user prompt that
         carries the extracted intent in metadata and updates the
-        ``dual_use`` field. 
+        ``dual_use`` field.
         """
         if base_tag is None:
             base_tag = CapabilityTag(
@@ -758,7 +755,8 @@ class G1PromptGate(Gate):
                 "VISTAGuard G1 slow-tier: registry tag write failed "
                 "(%s: %s); downstream taint-propagation may not see "
                 "the extracted intent",
-                type(exc).__name__, exc,
+                type(exc).__name__,
+                exc,
             )
         return new_tag
 

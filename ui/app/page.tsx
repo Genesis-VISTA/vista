@@ -21,6 +21,7 @@ import {
   fetchPersistedChatSession,
   listPersistedChatSessions,
   notifyActiveChatSessionChanged,
+  PersistedChatSessionError,
   renamePersistedChatSession,
   savePersistedChatSession,
   type PersistedChatSessionSummary,
@@ -300,8 +301,12 @@ export default function HomePage() {
           messageHistory: restoredHistory,
           latestResult: restoredLatestResult,
         });
-      } catch {
+      } catch (error) {
         if (cancelled) return;
+        if (error instanceof PersistedChatSessionError && error.status === 404) {
+          writeActiveChatSessionId(projectName, null);
+          notifyActiveChatSessionChanged();
+        }
         setActiveChatSessionTitle(null);
         setMessages([]);
         setMessageHistory([]);

@@ -3,6 +3,7 @@
 The registry survives an MCP-server restart so a previously-submitted job stays
 pollable (its rendered log/output paths can't be recomputed after the fact).
 """
+
 from vista_mcp_server import submit_job_mcp as m
 from vista_mcp_server.submit_job_mcp import (
     SubmittedJob,
@@ -16,7 +17,9 @@ from vista_mcp_server.submit_job_mcp import (
 
 def test_serialize_deserialize_round_trip():
     jobs = {
-        "123": SubmittedJob(cluster="frontier", log_path="/o/log-123.out", output_dir="/o/123"),
+        "123": SubmittedJob(
+            cluster="frontier", log_path="/o/log-123.out", output_dir="/o/123"
+        ),
         "456": SubmittedJob(cluster="perlmutter", log_path=None, output_dir=None),
     }
     restored = _deserialize_jobs(_serialize_jobs(jobs))
@@ -32,7 +35,11 @@ def test_persist_then_load_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(
         m,
         "_submitted_jobs",
-        {"789": SubmittedJob(cluster="odo", log_path="/o/log-789.out", output_dir="/o/789")},
+        {
+            "789": SubmittedJob(
+                cluster="odo", log_path="/o/log-789.out", output_dir="/o/789"
+            )
+        },
     )
     _persist_submitted_jobs(path)
 
