@@ -126,3 +126,39 @@ def test_all_advisory_unmodeled_when_only_tbr_and_density():
         "cp_kj_kgk",
     }
     assert result["best"]["advisory"] == []
+
+
+# --- radiation shielding gate ---------------------------------------------- #
+
+
+def test_shielding_gate_rejects_over_limit():
+    scorer = _load_scorer()
+    result = scorer.score_candidates(
+        [
+            # Highest TBR, but the magnet flux at 1 m exceeds 1e12 -> rejected on shielding.
+            _candidate(0.8, tbr=1.30, shielding_flux_n_per_cm2_s=5e12),
+            _candidate(0.6, tbr=1.15, shielding_flux_n_per_cm2_s=2e11),
+        ],
+        tbr_target=1.1,
+    )
+    assert result["best"]["tbr"] == 1.15  # the higher-TBR candidate was rejected
+    assert result["best"]["shielding"]["verdict"] == "acceptable"
+    assert len(result["infeasible"]) == 1
+    assert "shielding" in result["infeasible"][0]["reasons"][0]
+
+
+def test_shielding_preferred_and_missing_are_not_rejected():
+    scorer = _load_scorer()
+    result = scorer.score_candidates(
+        [
+            _candidate(
+                0.9, tbr=1.20, shielding_flux_n_per_cm2_s=5e9
+            ),  # <=1e10 -> preferred
+            _candidate(0.7, tbr=1.10),  # no shielding metric -> not gated
+        ],
+        tbr_target=1.1,
+    )
+    assert result["infeasible"] == []
+    verdicts = {e["tbr"]: e["shielding"]["verdict"] for e in result["ranked"]}
+    assert verdicts[1.20] == "preferred"
+    assert verdicts[1.10] == "not_evaluated"

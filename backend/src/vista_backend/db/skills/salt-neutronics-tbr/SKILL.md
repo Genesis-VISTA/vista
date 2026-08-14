@@ -193,10 +193,18 @@ operations a subagent performs:
   ```json
   {"tbr": <float>, "is_extrapolated": <bool>,
    "bef2_mol_percent": <float>, "li6_enrichment": <float>,
-   "beryllium_multiplier": <float>, "lif_mol_percent": <float>}
+   "beryllium_multiplier": <float>, "lif_mol_percent": <float>,
+   "shielding_flux_n_per_cm2_s": <float>}
   ```
   If `provenance.is_extrapolated` is true, flag the point as not backed by a Shift run
   rather than reporting it as a simulated value.
+
+  **Also extract the magnet radiation-shielding flux** into `shielding_flux_n_per_cm2_s`,
+  reading it from the report's `shielding.magnet_flux_n_per_cm2_s` (the neutron flux reaching
+  the superconducting magnets behind a 1 m blanket, n/cm²·s). The planner's scorer treats this
+  as a **hard gate**: a candidate whose flux exceeds **1e12** is rejected (shielding too weak);
+  **≤ 1e10** is the preferred long-magnet-life target. Report it alongside the TBR so the scorer
+  can apply the gate.
 
 Subagents do not talk to each other; the planner and durable campaign state coordinate
 them. To screen a grid, the planner issues N orders (one per (composition, Li-6)) and

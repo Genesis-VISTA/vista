@@ -9,12 +9,18 @@ The planner runs this in the sandbox over the cycle's collected results:
 Input JSON: {"tbr_target": 1.1, "candidates": [{"params": {...}, "metrics": {...}}, ...]}
 
 v1 metric keys actually produced by the simulations:
-    TBR            — salt-neutronics-tbr (neutronics)
-    density_g_cm3  — salt-chemistry-md  (chemistry; from results.json density.density_g_cm3)
+    TBR                         — salt-neutronics-tbr (neutronics)
+    shielding_flux_n_per_cm2_s  — salt-neutronics-tbr (neutronics; magnet flux at a 1 m blanket,
+                                  from the tbr results.json `shielding.magnet_flux_n_per_cm2_s`)
+    density_g_cm3               — salt-chemistry-md  (chemistry; from results.json density.density_g_cm3)
 
 Scoring (v1):
   - Primary (ranked): maximize TBR (target > tbr_target).
   - Hard viability gate (scored): density_g_cm3 in [1.8, 2.5]. Missing or out-of-range -> infeasible.
+  - Hard shielding gate (scored): magnet radiation flux at 1 m must be <= 1e12 n/cm²·s, else the
+    blanket shields the superconducting magnets too weakly -> reject. <= 1e10 is the preferred
+    (long magnet-life) target, reported but not required. A missing flux is NOT gated (reported as
+    not-evaluated) so candidates aren't dropped when the neutronics job didn't surface shielding.
   - Advisory only (never gates or ranks): melting/boiling point, viscosity, thermal conductivity,
     Cp. Reported when present; v1 sims don't compute them, so they're listed as unmodeled.
 """
@@ -28,6 +34,13 @@ DEFAULT_TBR_TARGET = 1.1
 
 # Hard, sim-backed viability gate (the only chemistry constraint v1 can actually evaluate).
 DENSITY_MIN_G_CM3, DENSITY_MAX_G_CM3 = 1.8, 2.5
+
+# Hard, sim-backed magnet radiation-shielding gate (neutronics). Flux (n/cm²·s) reaching the
+# superconducting magnets behind a 1 m blanket: above the reject limit the fast-neutron dose
+# damages them over the plant lifetime; the preferred limit is the long-magnet-life target.
+SHIELDING_METRIC_KEY = "shielding_flux_n_per_cm2_s"
+SHIELDING_REJECT_ABOVE = 1.0e12
+SHIELDING_PREFERRED_AT_OR_BELOW = 1.0e10
 
 # Advisory criteria (from the scientific playbook / evaluation-metrics.txt): (key, target, predicate).
 # Reported, never gating or ranking — v1 simulations don't compute most of them.
@@ -48,6 +61,35 @@ def density_gate_failure(metrics: dict) -> str | None:
     if not (DENSITY_MIN_G_CM3 <= density <= DENSITY_MAX_G_CM3):
         return f"density_g_cm3={density} not in [{DENSITY_MIN_G_CM3}, {DENSITY_MAX_G_CM3}]"
     return None
+
+
+def shielding_gate_failure(metrics: dict) -> str | None:
+    """Return a reason string if the magnet-shielding hard gate fails, else None.
+
+    Only rejects when a flux is present and exceeds the reject limit; a missing value is not
+    gated (see `shielding_status`) so candidates aren't dropped when the neutronics job/parser
+    didn't surface shielding.
+    """
+    flux = metrics.get(SHIELDING_METRIC_KEY)
+    if flux is None:
+        return None
+    if flux > SHIELDING_REJECT_ABOVE:
+        return f"{SHIELDING_METRIC_KEY}={flux:.3e} > {SHIELDING_REJECT_ABOVE:.0e} (magnet shielding too weak)"
+    return None
+
+
+def shielding_status(metrics: dict) -> dict:
+    """Report the magnet shielding flux + verdict for a candidate (never gates here)."""
+    flux = metrics.get(SHIELDING_METRIC_KEY)
+    if flux is None:
+        return {"flux_n_per_cm2_s": None, "verdict": "not_evaluated"}
+    if flux > SHIELDING_REJECT_ABOVE:
+        verdict = "reject"
+    elif flux <= SHIELDING_PREFERRED_AT_OR_BELOW:
+        verdict = "preferred"
+    else:
+        verdict = "acceptable"
+    return {"flux_n_per_cm2_s": flux, "verdict": verdict}
 
 
 def advisory_checks(metrics: dict) -> list[dict]:
@@ -73,11 +115,16 @@ def score_candidates(candidates: list[dict], *, tbr_target: float = DEFAULT_TBR_
             "params": candidate.get("params"),
             "metrics": metrics,
             "tbr": metrics.get("TBR"),
+            "shielding": shielding_status(metrics),
             "advisory": checks,
         }
-        reason = density_gate_failure(metrics)
-        if reason:
-            infeasible.append({**entry, "reasons": [reason]})
+        reasons = [
+            r
+            for r in (density_gate_failure(metrics), shielding_gate_failure(metrics))
+            if r is not None
+        ]
+        if reasons:
+            infeasible.append({**entry, "reasons": reasons})
         else:
             feasible.append(entry)
 
