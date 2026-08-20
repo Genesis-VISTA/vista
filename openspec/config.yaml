@@ -1,0 +1,40 @@
+schema: spec-driven
+
+context: |
+  VISTA (Visual Intelligence for Scientific & Tooling Assistant) is a scientific
+  assistant for molten salt thermophysical properties. Stack:
+  - Backend: Python / PydanticAI / FastAPI (`backend/`)
+  - UI: Next.js App Router (`ui/`) — read `ui/node_modules/next/dist/docs/` before Next.js work
+  - MCP: `vista_mcp_server` (HPC, RAG, display_file) and `dev_mcp_server` (sandbox)
+  - Package managers: uv (Python), npm (UI)
+  - CI: GitLab CI mirrored by `./scripts/ci-local.sh`
+  - Commits: conventional commits (feat, fix, chore, docs, refactor, test, ci)
+
+  Testing principles (see openspec/specs/testing-ci):
+  - Hermetic PR CI — no AmSC API keys, Globus, or real Slurm required to merge
+  - Fake at boundaries — mock IRI / Globus / LLM; keep catalog parsing and HPC dry-run real
+  - Pytest markers: unit, integration, live, sandbox, hpc
+  - Default PR filter: `not live and not hpc and not sandbox`
+  - VISTAGuard (gates G1–G7, Q-LLM, red-team) is out of scope for the testing roadmap
+
+  Patterns to reuse:
+  - FunctionModel — backend/tests/test_campaign_driver.py
+  - Dry-run HPC — mcp_servers/vista_mcp_server/tests/test_dry_run.py
+  - In-memory DB — backend/tests/conftest.py
+  - Live eval ops — docs/evaluation-runbook.md
+
+  Canonical requirements: openspec/specs/ and openspec/changes/
+
+rules:
+  proposal:
+    - Keep proposals under 500 words
+    - Always include a Non-goals note (especially: no VISTAGuard unless explicitly requested)
+    - Link related openspec specs/changes when converting roadmap work
+  specs:
+    - Use SHALL/MUST for normative requirements
+    - Every requirement needs at least one #### Scenario with WHEN/THEN
+    - Prefer hermetic, marker-gated scenarios for tests that need secrets
+  tasks:
+    - One milestone / focused MR per change when possible
+    - Mark tasks that must stay out of PR CI (live/hpc/sandbox) explicitly
+    - Reference concrete test file paths when known

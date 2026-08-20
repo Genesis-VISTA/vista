@@ -19,9 +19,10 @@
 
 ## Testing
 
-See [docs/testing/README.md](docs/testing/README.md) for the testing roadmap
-(milestones A–D: CI/HPC contracts, agent loop, scientific tools, nightly
-validation). Run local CI with `./scripts/ci-local.sh`.
+The testing roadmap (milestones A–D) lives in OpenSpec — canonical requirements
+are in [`openspec/specs/`](openspec/specs/), with open changes under
+[`openspec/changes/`](openspec/changes/). Run local CI with
+`./scripts/ci-local.sh`.
 
 ## Prerequisites
 

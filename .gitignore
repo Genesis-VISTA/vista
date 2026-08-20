@@ -4,7 +4,7 @@ aws/vista-sandbox.tar.digest
 
 /data/**
 
-# Cursor editor workspace/config
+# Cursor editor workspace/config (commands symlink, skills, etc.) — not committed
 .cursor/
 
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,python,git,linux,macos,windows

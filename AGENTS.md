@@ -6,6 +6,39 @@ This file provides guidance to AI Agents when working with code in this reposito
 
 VISTA (Visual Intelligence for Scientific & Tooling Assistant) is a scientific assistant for molten salt thermophysical properties. It provides an "Agent as a Service" API, and a Agentic chat-bot UI.
 
+## OpenSpec
+
+Spec-driven changes live under [`openspec/`](openspec/). Main specs are in
+`openspec/specs/`; active proposals are in `openspec/changes/`.
+
+In agent chat (not the terminal):
+
+- `/opsx:explore` — think through a change before committing to artifacts
+- `/opsx:propose` — draft proposal, delta specs, design, and tasks
+- `/opsx:apply` — implement an open change’s `tasks.md`
+- `/opsx:archive` — merge delta specs into main specs after the change ships
+
+These commands and their skills are committed under `.claude/` (Claude Code is the
+default). For Cursor, install the opsx commands **globally** so they work in every
+project (not just this repo) — Cursor uses flat command names like `/opsx-apply`:
+
+```bash
+tmp=$(mktemp -d) && (cd "$tmp" && openspec init --tools cursor --force) \
+  && mkdir -p ~/.cursor/commands ~/.cursor/skills \
+  && cp "$tmp"/.cursor/commands/opsx-*.md ~/.cursor/commands/ \
+  && cp -R "$tmp"/.cursor/skills/openspec-* ~/.cursor/skills/ && rm -rf "$tmp"
+```
+
+(Cursor already reads skills from `.claude/skills/` inside this repo; the global
+copy just makes them available everywhere too.)
+
+CLI helpers: `openspec list`, `openspec list --specs`, `openspec validate --all`,
+`openspec show <name>`. Project context is in `openspec/config.yaml`.
+
+Testing roadmap requirements are OpenSpec-first — canonical specs are in
+[`openspec/specs/`](openspec/specs/) and open changes under
+[`openspec/changes/`](openspec/changes/).
+
 ## Common Commands
 
 ### Full Development Setup
@@ -48,8 +81,8 @@ npm run dev
 
 ### Testing & Linting
 
-Testing roadmap (milestones A–D, VISTAGuard out of scope):
-[docs/testing/README.md](docs/testing/README.md).
+Testing roadmap (milestones A–D, VISTAGuard out of scope): canonical specs in
+`openspec/specs/` and open changes `openspec/changes/milestone-*`.
 
 Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`; actions: `lint`, `test`):
 ```bash

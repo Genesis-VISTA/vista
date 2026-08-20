@@ -6,8 +6,9 @@ phases in the order below; each section says what it produces, how to run it,
 and whether it needs a live LLM.
 
 For the broader testing roadmap (unit/integration milestones and planned
-nightly automation), see [docs/testing/README.md](./testing/README.md)
-(Milestone D wraps this runbook; it does not replace it).
+nightly automation), see the OpenSpec sources in [`openspec/specs/`](../openspec/specs/)
+and [`openspec/changes/`](../openspec/changes/) (Milestone D wraps this runbook;
+it does not replace it).
 
 > **Two execution modes.** The deterministic load generator has a `tools` mode
 > (drives `/mcp/call`, **no LLM, no HPC credentials**) and an `agent` mode
