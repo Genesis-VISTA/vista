@@ -1,15 +1,15 @@
 ## 1. Crypto
 
-- [ ] 1.1 Add `backend/tests/test_crypto.py` Fernet round-trip for column type encrypt/decrypt
-- [ ] 1.2 Assert HPC token fields stored encrypted at rest (raw DB ≠ plaintext; ORM returns plaintext)
-- [ ] 1.3 Fixture sets ephemeral `VISTA_BACKEND_ENCRYPTION_KEY` in conftest if needed
+- [x] 1.1 Add `backend/tests/test_crypto.py` Fernet round-trip for column type encrypt/decrypt
+- [x] 1.2 Assert HPC token fields (S3M / NERSC IRI / Globus) stored encrypted at rest (raw DB ≠ plaintext; ORM returns plaintext)
+- [x] 1.3 Fixture sets ephemeral `VISTA_BACKEND_ENCRYPTION_KEY` and clears `get_fernet` cache
 
 ## 2. Skills / seed projects
 
-- [ ] 2.1 Add skills prompt tests (SKILL.md load + skills block in system prompt; prefer B harness)
-- [ ] 2.2 Assert missing/unknown skill slug → clear error at agent build or run setup
-- [ ] 2.3 Assert project `tools` / `skills` / `knowledge_bases` change tool list and prompt
-- [ ] 2.4 Add seed snapshot tests for `alloy-design` and `molten-salt` against `seed.py` / `defaults.py`
+- [x] 2.1 Add skills prompt tests (SKILL.md load + skills block in system prompt; use B harness)
+- [x] 2.2 Assert missing/unknown skill slug → skipped with a warning (current production behavior — do not invent a hard error)
+- [x] 2.3 Assert project `tools` / `skills` / `knowledge_bases` change tool list and prompt
+- [x] 2.4 Add seed snapshot tests for `alloy-design` and `molten-salt` against `seed.py` (there is no `defaults.py` — seed data lives inline)
 
 ## 3. RAG
 
@@ -20,11 +20,14 @@
 
 ## 4. Sandbox (`dev_mcp_server`)
 
-- [ ] 4.1 Test `create_file` path confinement outside allowed roots
-- [ ] 4.2 Test escape attempts (`../`, absolute paths outside volume) fail
-- [ ] 4.3 Unit-test `run_bash` arg/cwd confinement via fake executor (PR CI)
-- [ ] 4.4 Mark real microsandbox integration `@pytest.mark.sandbox` and leave `allow_failure` until reliable
-- [ ] 4.5 Extend `backend/tests/security/test_tenant_isolation.py` for cross-session volume isolation
+Committed approach (1a): there is no application-level path jail today —
+`create_file` / `view` / `run_bash` pass paths straight to the guest; the
+security boundary is the volume mount. Do **not** invent a path-jail feature.
+
+- [ ] 4.1 Unit-test volume-mount wiring (`VISTA_DEV_MCP_VOLUMES` → sandbox spawn args) without a live daemon
+- [ ] 4.2 Document in the test module that the VM/mount is the security boundary
+- [ ] 4.3 Escape attempts against a **real** container marked `@pytest.mark.sandbox` and left `allow_failure` until the daemon is reliable
+- [ ] 4.4 Extend `backend/tests/security/test_tenant_isolation.py` for cross-session volume isolation where cheap
 
 ## 5. UI Vitest + CI
 
@@ -36,6 +39,12 @@
 ## 6. Acceptance
 
 - [ ] 6.1 Confirm RAG + skills/seed + crypto green in PR CI
-- [ ] 6.2 Confirm sandbox unit subset green without live microsandbox
+- [ ] 6.2 Confirm sandbox volume-boundary unit subset green without live microsandbox
 - [ ] 6.3 Confirm `ui:test` runs Vitest for `ui/lib`
 - [ ] 6.4 Confirm no VISTAGuard / G3 policy tests
+
+## Sequencing (three MRs)
+
+1. **MR 1 — backend:** crypto + skills/seed snapshots (this MR)
+2. **MR 2 — MCP:** RAG (pure BM25/hybrid + tiny Chroma fixture, no HF download) + sandbox volume-boundary tests (1a)
+3. **MR 3 — UI:** Vitest for `ui/lib/*` + `ui:test` CI job

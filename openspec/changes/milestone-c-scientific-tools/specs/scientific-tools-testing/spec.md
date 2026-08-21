@@ -21,43 +21,30 @@ Face models.
 - **WHEN** the fixture corpus is empty
 - **THEN** tests SHALL document and assert the empty-corpus behavior
 
-### Requirement: Sandbox path confinement
+### Requirement: Sandbox volume-mount boundary
 
-`dev_mcp_server` tests SHALL prove `create_file` and related paths cannot escape
-allowed roots (including `../` and absolute paths outside the volume).
+`dev_mcp_server` tests SHALL prove the volume-mount security boundary that
+exists today (`VISTA_DEV_MCP_VOLUMES` → sandbox spawn args). Tests MUST NOT
+invent an application-level path jail; `create_file` / `view` / `run_bash` pass
+paths to the guest and confinement is the mount into the microsandbox/container.
 
-#### Scenario: Write outside allowed roots fails
+#### Scenario: Volume-mount wiring unit-tested hermetically
 
-- **WHEN** `create_file` targets a path outside allowed roots
-- **THEN** the operation SHALL fail
+- **WHEN** PR CI runs `dev_mcp_server` volume-mount wiring tests
+- **THEN** tests SHALL assert spawn args reflect configured volumes without a live daemon
+- **AND** the test module SHALL document that the VM/mount is the security boundary
 
-#### Scenario: Escape attempts fail
+#### Scenario: Live escape attempts stay opt-in
 
-- **WHEN** a path uses `../` or an absolute path outside the volume
-- **THEN** the operation SHALL fail
-
-### Requirement: Run bash policy with fake executor in PR CI
-
-PR CI SHALL unit-test `run_bash` arg/cwd confinement against a fake executor
-interface. Real microsandbox integration SHALL be marked `@pytest.mark.sandbox`
-and MAY remain `allow_failure` until the daemon is reliable.
-
-#### Scenario: Fake executor confinement in hermetic CI
-
-- **WHEN** PR CI runs `dev_mcp_server` tests with `not sandbox`
-- **THEN** fake-executor confinement tests SHALL pass without a live microsandbox
-
-#### Scenario: Live microsandbox stays opt-in
-
-- **WHEN** real microsandbox integration tests exist
-- **THEN** they MUST be marked `sandbox`
+- **WHEN** escape attempts are exercised against a real container
+- **THEN** those tests MUST be marked `@pytest.mark.sandbox`
 - **AND** they MUST NOT be required for merge while advisory
 
 ### Requirement: Cross-session volume isolation
 
 Tenant / volume isolation coverage SHALL extend existing
 `backend/tests/security/test_tenant_isolation.py` patterns for cross-session
-isolation relevant to sandbox volumes.
+isolation relevant to sandbox volumes where cheap.
 
 #### Scenario: Sessions cannot access another session volume
 
@@ -66,24 +53,26 @@ isolation relevant to sandbox volumes.
 
 ### Requirement: Skills and project wiring tests
 
-Tests SHALL assert SKILL.md load, skills block in the agent system prompt, clear
-errors for unknown skill slugs, and that project `tools` / `skills` /
-`knowledge_bases` change the tool list and prompt (prefer Milestone B harness).
+Tests SHALL assert SKILL.md load, skills block in the agent system prompt, that
+unknown skill slugs are skipped with a warning (current production behavior),
+and that project `tools` / `skills` / `knowledge_bases` change the tool list and
+prompt (prefer Milestone B harness).
 
 #### Scenario: Skill appears in system prompt
 
 - **WHEN** a project lists a valid skill
 - **THEN** the assembled agent system prompt SHALL include that skill's block
 
-#### Scenario: Unknown skill slug fails clearly
+#### Scenario: Unknown skill slug warns and skips
 
 - **WHEN** agent build or run setup references an unknown skill slug
-- **THEN** the system SHALL raise or return a clear error
+- **THEN** the system SHALL warn and skip that skill (not invent a hard error)
 
 ### Requirement: Seed project snapshots
 
 Seed projects `alloy-design` and `molten-salt` SHALL have snapshot assertions
-for expected skill slugs and tool patterns against `seed.py` / `defaults.py`.
+for expected skill slugs and tool patterns against `seed.py` (seed data lives
+inline; there is no `defaults.py`).
 
 #### Scenario: Seed projects match expected wiring
 
@@ -94,7 +83,8 @@ for expected skill slugs and tool patterns against `seed.py` / `defaults.py`.
 
 Sensitive user HPC token fields SHALL round-trip through Fernet encryption:
 raw DB bytes ≠ plaintext; ORM read returns plaintext. Tests SHALL set
-`VISTA_BACKEND_ENCRYPTION_KEY` via fixture (ephemeral key allowed).
+`VISTA_BACKEND_ENCRYPTION_KEY` via fixture (ephemeral key allowed) and clear
+`get_fernet`'s cache after patching settings.
 
 #### Scenario: Encrypt decrypt round-trip
 
