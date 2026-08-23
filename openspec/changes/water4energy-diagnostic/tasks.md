@@ -32,20 +32,23 @@
 
 ## 3. SKILL.md
 
-- [ ] 3.1 Create `backend/src/vista_backend/db/skills/water4energy-diagnostic/SKILL.md`
+- [x] 3.1 Create `backend/src/vista_backend/db/skills/water4energy-diagnostic/SKILL.md`
       with valid frontmatter (kebab-case `name`, trigger-rich `description`,
-      `metadata.version`/`tags`, `license`, `author`)
-- [ ] 3.2 Document the workflow: submit → poll → `get_hpc_job_outputs` →
+      `metadata.version`/`tags`, `author`). `license` is deliberately omitted:
+      the upstream repo ships no LICENSE and states no terms, so asserting one
+      would be a fabrication
+- [x] 3.2 Document the workflow: submit → poll → `get_hpc_job_outputs` →
       `display_file` each figure → interpret from `results.json`
-- [ ] 3.3 Document the `script_args` contract (`--resolution`, `--dpi`, and the
-      pass-through shape that a future generalization patch will extend)
-- [ ] 3.4 Write the interpretation section: reference values for a healthy run,
+- [x] 3.3 Document the `script_args` contract (`--resolution`, `--dpi`,
+      `--checksum-inputs`) plus the "never compare across resolutions" rule
+- [x] 3.4 Write the interpretation section: reference values for a healthy run,
       why TVA precipitation `r ≈ 0.53` is expected (20 grid cells + interpolation
       smoothing), why temperature nRMSE is omitted (Celsius/Kelvin zero-point),
       and the "small differences normal, large differences not" rule
-- [ ] 3.5 Write guardrails: never report figures without the metrics that back
+- [x] 3.5 Write guardrails: never report figures without the metrics that back
       them; cite `job_id`; flag rather than hide a failed preflight; state the
-      cold-run `duration="00:30:00"` guidance
+      cold-run `duration="00:30:00"` guidance; never invent the figure-only
+      metrics; do not call the TVA service area a watershed
 
 ## 4. Wiring
 
