@@ -18,15 +18,17 @@
 
 ## 2. Structured metrics
 
-- [ ] 2.1 Capture the real Frontier stdout as a test fixture under
-      `mcp_servers/vista_mcp_server/tests/fixtures/` or alongside the backend test
-- [ ] 2.2 Implement stdout → `results.json` parsing in `run_diagnostic.py`;
+- [x] 2.1 Capture the real Frontier stdout as a test fixture (lands in task group 5
+      with the parser tests; the format is pinned from `FRONTIER_TEST_REPORT.md` and
+      upstream's print statements)
+- [x] 2.2 Implement stdout → `results.json` parsing in `run_diagnostic.py`;
       fail loudly on an unmatched metric rather than emitting nulls
-- [ ] 2.3 Define the `results.json` schema: per-variable global + regional `r`,
-      RMSE, bias, means, σ-ratio; plus provenance (repo SHA, input paths +
-      checksums, resolution, package versions, wall time)
-- [ ] 2.4 Document the schema in the job README and note the future upstream
-      `--json-out` preference path
+- [x] 2.3 Define the `results.json` schema: per-variable `units` plus global and
+      regional `correlation` / `rmse` / `bias` (all the printed summary carries —
+      see design decision 5), plus provenance (repo SHA, input paths + optional
+      checksums, resolution, package versions, wall time, hostname, Slurm job id)
+- [x] 2.4 Document the schema in the job README, including the figure-only metrics
+      limitation and what a future upstream `--json-out` would add
 
 ## 3. SKILL.md
 

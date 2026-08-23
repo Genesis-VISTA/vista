@@ -1,0 +1,18 @@
+{
+  "frontier": {
+    "duration": 600,
+    "resources": {
+      "node_count": 1
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "W4E_DATA_DIR": "/lustre/orion/lrn105/proj-shared/wangd/water4energy/Diagnostics",
+        "W4E_ENV": "/lustre/orion/chm243/proj-shared/vista/envs/water4energy-diagnostic",
+        "W4E_REPO_URL": "https://github.com/daliwang/water4energy_diagnostic",
+        "W4E_REPO_REF": "main",
+        "W4E_PYTHON_MODULE": "cray-python/3.11.7"
+      }
+    }
+  }
+}

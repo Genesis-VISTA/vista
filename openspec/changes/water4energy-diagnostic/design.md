@@ -78,14 +78,22 @@ its **inputs are pre-staged and read-only**, and it is **CPU-only and tiny**.
    Inputs are opened read-only and never written.
 
 5. **`results.json` is produced by the wrapper, not by patching the science code.**
-   `run_diagnostic.py` invokes `plot_e3sm_era5.py` and parses its stdout metrics
-   into a stable schema (per-variable global + regional `r`, RMSE, bias, means,
-   σ-ratio, plus provenance: repo SHA, input paths and checksums, resolution,
-   package versions, wall time).
-   Rationale: scope decision (a) keeps the upstream repo read-only in v1, so the
-   VISTA output contract belongs to the wrapper. When generalization lands
-   upstream, add `--json-out` there and have the wrapper prefer it over parsing —
-   the schema does not change.
+   `run_diagnostic.py` invokes `plot_e3sm_era5.py` unmodified and parses its
+   printed summary into a stable schema, plus provenance (repo SHA, input paths
+   and optional checksums, resolution, package versions, wall time, hostname,
+   Slurm job id).
+   Rationale: nobody on this side can land a PR on
+   `daliwang/water4energy_diagnostic`, so the upstream program is a fixed
+   dependency and the VISTA output contract belongs entirely to the wrapper.
+
+   **Consequence, accepted deliberately:** the printed summary carries only
+   `correlation`, `rmse`, and `bias` per variable per scope. Upstream's
+   `weighted_performance_metrics` also computes the ERA5/E3SM means, the
+   percent-normalized RMSE and relative bias, the σ ratio, and the cell counts —
+   but those are rendered into the figure's metrics-table panel and never printed,
+   so they are **not machine-readable**. The schema is shaped to absorb them
+   without a version bump should a `--json-out` flag ever land upstream.
+   A partial parse is a hard failure, never a `results.json` full of nulls.
 
 6. **Offline-safe plotting.** Pass `--cartopy-data <clone>/cartopy_data` (the
    bundled Natural Earth 110 m coastline), `MPLBACKEND=Agg`, and `MPLCONFIGDIR`
@@ -114,7 +122,13 @@ its **inputs are pre-staged and read-only**, and it is **CPU-only and tiny**.
   decision 4 makes a future break a one-line, clearly-diagnosed fix.
 - **Stdout parsing is brittle to upstream format drift.** Mitigation: the parser
   fails loudly on an unmatched metric rather than emitting nulls, and the fixture
-  test pins the format that shipped.
+  test pins the format that shipped. There is no second source to fall back to —
+  upstream is not ours to change — so drift means a failed job and a one-line
+  regex fix, which is the intended trade.
+- **Interpretation guidance is limited to r / RMSE / bias.** The σ ratio and
+  nRMSE that a reviewer would naturally reach for are figure-only (decision 5), so
+  SKILL.md must reason from the three machine-readable metrics and point at the
+  figure for the rest.
 - **Repo drift.** `W4E_REPO_REF` defaults to `main`; pin a SHA if reproducibility
   matters more than freshness.
 - **Reference-value regression can't run in CI** (needs 1.25 GB of inputs). Caught
