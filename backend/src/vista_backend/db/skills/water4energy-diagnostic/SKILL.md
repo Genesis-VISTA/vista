@@ -80,8 +80,37 @@ submit_hpc_job(
 > `duration="00:30:00"`. Later runs reuse the cached environment and fit inside 10
 > minutes comfortably.
 
-**2. Poll** with `get_hpc_job_status(job_id)` until it completes. Compute is ~40 s;
-essentially all elapsed time is queue wait.
+**2. Poll — slowly.** Tell the user the `job_id` first, so they can walk away and ask
+later instead of watching you poll. Then loop:
+
+```text
+get_hpc_job_status(job_id)
+  -> COMPLETED / FAILED / CANCELED : stop
+  -> anything else                 : run_bash "sleep 45", then poll again
+```
+
+**Never poll back-to-back without the `sleep 45` in between.** Three reasons, in order
+of how much they cost:
+
+1. Frontier logs are cached server-side for **30 s** (`_LOG_CACHE_TTL_S`). A poll inside
+   that window skips the remote fetch entirely and hands you **byte-identical** output.
+   Polling faster than 30 s cannot surface new information — it only burns tokens.
+2. This job is ~40 s of compute behind an unbounded `batch` queue wait. The queue is the
+   long pole; nothing changes second to second.
+3. The project's `request_limit` is shared by every tool call in the conversation. A
+   runaway poll loop can exhaust it before the job even starts, and then you cannot
+   fetch the results you waited for.
+
+Use `sleep 45` — it clears the 30 s cache TTL and stays under the 60 s sandbox tool
+timeout. While the state is `PENDING` or `QUEUED` nothing is happening yet, so prefer
+two or three sleeps between polls rather than one.
+
+**Stop after ~20 polls** (~15 min of waiting). Do not loop forever: report the state and
+the `job_id`, and tell the user to ask again later. A long queue wait is not a failure,
+and silently polling for an hour is worse than handing control back.
+
+Do not narrate every poll. One line when the state changes is enough; a wall of
+identical "still queued" messages is noise.
 
 **3. Fetch** the metrics and the figures:
 

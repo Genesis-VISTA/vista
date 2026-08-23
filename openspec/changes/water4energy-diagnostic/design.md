@@ -67,15 +67,17 @@ its **inputs are pre-staged and read-only**, and it is **CPU-only and tiny**.
    code at all.
 
 4. **Inputs referenced by env var, with a preflight check.**
-   `W4E_DATA_DIR` in `cluster_defaults.json`, defaulting to
-   `/lustre/orion/lrn105/proj-shared/wangd/water4energy/Diagnostics`. The wrapper
+   `W4E_DATA_DIR` in `cluster_defaults.json`, pointing at
+   `/lustre/orion/lrn105/world-shared/wangd/water4energy_diagnostic`. The wrapper
    stats the three inputs before doing any work and fails with an actionable
    message naming the missing path.
    Rationale: VISTA's Frontier jobs charge the shared `chm243` account and run as
-   a shared service identity, not as an `lrn105` member. Read access has been
-   confirmed, but if the group permission ever changes, this must surface as one
-   clear line — not a cartopy traceback — and the fix must be one config edit.
-   Inputs are opened read-only and never written.
+   a shared service identity, not as an `lrn105` member. Staging the climatologies
+   under `world-shared` rather than `proj-shared` removes the cross-project read
+   question entirely instead of relying on group permissions holding. If the path
+   ever moves, this must still surface as one clear line — not a cartopy traceback
+   — and the fix must be one config edit. Inputs are opened read-only and never
+   written.
 
 5. **`results.json` is produced by the wrapper, not by patching the science code.**
    `run_diagnostic.py` invokes `plot_e3sm_era5.py` unmodified and parses its

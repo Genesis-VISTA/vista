@@ -52,12 +52,17 @@
 
 ## 4. Wiring
 
-- [ ] 4.1 Add `backend/src/vista_backend/db/system_prompts/water4energy.md`
-- [ ] 4.2 Add the `water4energy` project to `db/seed.py` with a fixed UUID,
-      `skills: ["water4energy-diagnostic"]`, and a tool allowlist that keeps the
-      HPC toolchain and excludes `agenthpc_*`
-- [ ] 4.3 Confirm the skill is picked up by the `SKILLS_SRC` loop with no
+- [x] 4.1 Add `backend/src/vista_backend/db/system_prompts/water4energy.md`
+- [x] 4.2 Add the `water4energy` project to `db/seed.py` with a fixed UUID
+      (`e0468a13-50ae-41e3-a8f9-e461b4b4bc3c`), `skills: ["water4energy-diagnostic"]`,
+      and `tools=["*", "!agenthpc_*"]` — `rag_search` is denied automatically
+      because the project has no knowledge bases
+- [x] 4.3 Confirm the skill is picked up by the `SKILLS_SRC` loop with no
       `SKILL_ASSETS` entry (no vista-data assets needed → never `skipped_skills`)
+- [x] 4.4 Campaign tools (`start_campaign` … `finish_campaign`) are registered
+      directly on the agent by `register_campaign_tools`, so `project.tools`
+      cannot gate them. The system prompt tells the agent this project runs no
+      campaign; do not attempt to filter them via patterns
 
 ## 5. Offline tests
 
