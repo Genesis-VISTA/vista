@@ -92,10 +92,10 @@ def test_vista_metadata_includes_project_paths():
 
 def test_vista_metadata_carries_a_uri_map_for_display_file():
     """
-    Without this map `display_file` has nothing to resolve a sandbox path
-    against, so it refuses every one of them and a plot the agent has just
-    written cannot be shown. The templates are the UI's file routes, because
-    the browser is what fetches the result.
+    Without this map `display_file` has nothing to resolve a path against, so it
+    refuses every one of them and a plot the agent has just written cannot be
+    shown. The templates are the UI's file routes, because the browser is what
+    fetches the result.
 
     That these templates actually resolve is pinned in the MCP server's own
     suite (`test_display_file.py`), which is where `resolve_uri` lives — the
@@ -103,28 +103,52 @@ def test_vista_metadata_carries_a_uri_map_for_display_file():
     """
     agent = _agent(make_project(name="molten salt"))
     uri_map = agent._build_vista_metadata("display_file")["vista"]["uri_map"]
-    assert uri_map == {
-        "file:///mnt/data/output/{path}": (
-            "/api/files/outputs/{path}?project_name=molten%20salt"
-        ),
-        "file:///mnt/data/uploads/{path}": (
-            "/api/files/uploads/{path}?project_name=molten%20salt"
-        ),
-    }
+
+    # The sandbox paths are the ones the agent actually sees: get_hpc_job_outputs
+    # and the dev sandbox both hand back /mnt/data/... paths.
+    assert uri_map["file:///mnt/data/output/{path}"] == (
+        "/api/files/outputs/{path}?project_name=molten%20salt"
+    )
+    assert uri_map["file:///mnt/data/uploads/{path}"] == (
+        "/api/files/uploads/{path}?project_name=molten%20salt"
+    )
+    # Host volume paths map too, so a tool reporting a host path still renders.
+    assert uri_map[f"file://{agent.output_dir}/{{path}}"] == (
+        "/api/files/outputs/{path}?project_name=molten%20salt"
+    )
+    assert uri_map[f"file://{agent.uploads_dir}/{{path}}"] == (
+        "/api/files/uploads/{path}?project_name=molten%20salt"
+    )
 
 
 def test_vista_metadata_maps_sandbox_files_to_project_download_urls():
     project = make_project(name="molten salt/analysis")
     uri_map = _agent(project)._build_vista_metadata("display_file")["vista"]["uri_map"]
 
-    assert uri_map == {
-        "file:///mnt/data/output/{path}": (
-            "/api/files/outputs/{path}?project_name=molten%20salt%2Fanalysis"
-        ),
-        "file:///mnt/data/uploads/{path}": (
-            "/api/files/uploads/{path}?project_name=molten%20salt%2Fanalysis"
-        ),
-    }
+    assert uri_map["file:///mnt/data/output/{path}"] == (
+        "/api/files/outputs/{path}?project_name=molten%20salt%2Fanalysis"
+    )
+    assert uri_map["file:///mnt/data/uploads/{path}"] == (
+        "/api/files/uploads/{path}?project_name=molten%20salt%2Fanalysis"
+    )
+
+
+def test_vista_metadata_uri_map_targets_are_relative_and_project_scoped():
+    """
+    Targets stay UI-relative so the backend never needs its external origin, and
+    each carries its own project_name — one project's map cannot serve another's
+    files.
+    """
+    a = _agent(make_project(name="water4energy"))
+    b = _agent(make_project(name="molten-salt"))
+    a_map = a._build_vista_metadata("display_file")["vista"]["uri_map"]
+    b_map = b._build_vista_metadata("display_file")["vista"]["uri_map"]
+
+    for target in a_map.values():
+        assert target.startswith("/api/files/"), target
+        assert "project_name=water4energy" in target
+    sandbox_key = "file:///mnt/data/output/{path}"
+    assert a_map[sandbox_key] != b_map[sandbox_key]
 
 
 def test_vista_metadata_paths_are_scoped_per_project_and_user():

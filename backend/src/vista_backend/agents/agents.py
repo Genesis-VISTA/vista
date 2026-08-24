@@ -542,7 +542,29 @@ class ProjectAgent:
         MCP server instances configured with the right env vars/headers, and
         move project_paths off metadata too.
         """
+        # `display_file` turns a path into something the browser can fetch.
+        # Without this map it has nothing to resolve against and refuses every
+        # path, which is why a plot the agent had just written could not be shown.
+        #
+        # The agent normally only sees sandbox-side paths (`get_hpc_job_outputs`
+        # and the dev sandbox both return `/mnt/data/...`), but the host volume
+        # paths are mapped too, so a tool that reports a host path still renders.
+        #
+        # These are the UI's own file routes, not the backend's: the browser only
+        # ever talks to the Next app, which proxies through to
+        # `/projects/{name}/{kind}/{path}`. The `{path}` placeholder is filled in
+        # by the MCP server.
         project_name = quote(self.project.name, safe="")
+        uri_map = {
+            f"file://{prefix}/{{path}}": (
+                f"/api/files/{kind}/{{path}}?project_name={project_name}"
+            )
+            for kind, sandbox, host in (
+                ("outputs", "/mnt/data/output", self.output_dir),
+                ("uploads", "/mnt/data/uploads", self.uploads_dir),
+            )
+            for prefix in (sandbox, str(host).rstrip("/"))
+        }
         metadata: dict[str, Any] = {
             "vista": {
                 "project_paths": {
@@ -550,23 +572,7 @@ class ProjectAgent:
                     "output_dir": str(self.output_dir),
                     "uploads_dir": str(self.uploads_dir),
                 },
-                # `display_file` turns a path inside the sandbox into something
-                # the browser can fetch. Without this map it has nothing to
-                # resolve against and refuses every path, which is why a plot
-                # the agent had just written could not be shown.
-                #
-                # These are the UI's own file routes, not the backend's: the
-                # browser only ever talks to the Next app, which proxies
-                # through to `/projects/{name}/{kind}/{path}`. The `{path}`
-                # placeholder is filled in by the MCP server.
-                "uri_map": {
-                    "file:///mnt/data/output/{path}": (
-                        f"/api/files/outputs/{{path}}?project_name={project_name}"
-                    ),
-                    "file:///mnt/data/uploads/{path}": (
-                        f"/api/files/uploads/{{path}}?project_name={project_name}"
-                    ),
-                },
+                "uri_map": uri_map,
             },
         }
         HPC_TOOLS = {
