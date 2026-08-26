@@ -66,18 +66,29 @@
 
 ## 5. Offline tests
 
-- [ ] 5.1 `backend/tests/test_water4energy_skill.py`: `SKILL.md` parses via
-      `read_skill`, name/description/frontmatter assertions, required sections present
-- [ ] 5.2 Assert `cluster_defaults.json` validates as `ClusterDefaults`, is
-      Frontier-only, `duration == 600`, `node_count == 1`
-- [ ] 5.3 Test `script_args` → wrapper argv mapping and the preflight failure message
-- [ ] 5.4 Test stdout → `results.json` parsing against the task-2.1 fixture,
-      including the loud-failure path on malformed input
-- [ ] 5.5 Extend the seed snapshot test for the `water4energy` project
-- [ ] 5.6 Confirm the existing `hpc_jobs/` catalog contract tests pass over the new
-      entry, and `./scripts/ci-local.sh` is green
-- [ ] 5.7 No `live` / `hpc` / `sandbox` marked tests added — nothing in this change
-      may require Frontier, Globus, or an S3M token to merge
+- [x] 5.1 `backend/tests/test_water4energy_skill.py` (54 tests): `SKILL.md` parses via
+      `read_skill`, frontmatter + trigger-term + required-section assertions,
+      serializer round-trip, and pins on the interpretation guidance, the polling
+      cadence, and the figure-only-metrics caveat
+- [x] 5.2 `mcp_servers/vista_mcp_server/tests/test_water4energy_job.py` (19 tests):
+      `cluster_defaults.json` validates as `ClusterDefaults`, Frontier-only,
+      `duration == 600`, `node_count == 1`, 1-rank, `queue_name == "batch"`, declared
+      env keys, and no `#SBATCH` directives. Lives on the MCP side because
+      `ClusterDefaults` is not importable from the backend venv
+- [x] 5.3 `script_args` → wrapper argv mapping, absolute-path resolution, and both
+      preflight failure messages (unreadable data dir, missing climatology)
+- [x] 5.4 stdout → `results.json` against the verified Frontier summary as the
+      fixture, plus three loud-failure cases and the provenance/checksum paths
+- [x] 5.5 Seed snapshot for the `water4energy` project (stable id, skills, tools,
+      usage limits, system prompt) + agent-prompt wiring tests carried over from the
+      step-4 probe, including the campaign-tools arrangement from task 4.4
+- [x] 5.6 `./scripts/ci-local.sh` green: backend 332, vista-mcp 90, dev-mcp 36,
+      UI lint clean (2 pre-existing `<img>` warnings)
+- [x] 5.7 No `live` / `hpc` / `sandbox` markers added; both files verified to run
+      under the CI hermetic filter
+- [x] 5.8 Mutation-checked the three assertions that matter most: removing the poll
+      cadence, dropping `uri_map`, and silencing the partial-parse failure each turn
+      the suite red
 
 ## 6. Manual Frontier validation (out of CI)
 
