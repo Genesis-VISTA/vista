@@ -77,12 +77,13 @@ command's stderr onto the host's *stdout*.
 
 ## 9. UI (MR 7)
 
-- [ ] 9.1 Read `ui/node_modules/next/dist/docs/` before writing any Next.js (AGENTS.md)
-- [ ] 9.2 Debate thread view rendering the host-stamped / agent-claimed boundary
-- [ ] 9.3 Role badges, kind chips, vote tallies, attachment links
-- [ ] 9.4 Live SSE + human post box + close control
-- [ ] 9.5 Verdict panel for the Referee's ranked hypothesis
-- [ ] 9.6 Vitest for new `ui/lib` helpers; `npm run lint` clean
+- [x] 9.1 Read `ui/node_modules/next/dist/docs/` before writing any Next.js (AGENTS.md)
+- [x] 9.2 Debate thread view rendering the host-stamped / agent-claimed boundary
+- [x] 9.3 Role badges, kind chips, vote tallies, attachment links
+- [x] 9.4 Live SSE + human post box + close control
+- [x] 9.5 Verdict panel for the Referee's ranked hypothesis
+- [x] 9.6 `npm run lint` clean + `tsc --noEmit` clean; page verified rendering in a browser against a stub backend
+- [ ] 9.7 Vitest for `ui/lib/debates.ts` (`debateRoleOf`) — **deferred to `milestone-c-scientific-tools` §5**, which owns introducing Vitest and the `ui:test` CI job. Adding a second test-runner setup here would collide with that open change.
 
 ## 10. HPC in the loop (MR 8 — separable)
 

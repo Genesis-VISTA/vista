@@ -4012,3 +4012,392 @@ button.chat-bubble.intermediate.collapsed:hover {
 .nav-rail-entry.project-child.active .nav-rail-icon {
   color: var(--surface);
 }
+
+/* ---------------------------------------------------------------------- */
+/*  Agent forum (debates)                                                  */
+/*                                                                         */
+/*  The visual job here is one thing: keep what the h5i host stamped        */
+/*  separate from what an agent claimed. The stamp line sits above a rule,  */
+/*  the claimed body sits behind a `│` fence below it, and nothing in the   */
+/*  styling lets the second borrow the authority of the first.              */
+/* ---------------------------------------------------------------------- */
+
+.debate-page {
+  padding: 24px 28px 64px;
+  max-width: 1180px;
+  margin: 0 auto;
+  color: var(--ink);
+}
+
+.debate-page__header h1 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 4px;
+}
+
+.debate-page__lede {
+  color: var(--muted);
+  max-width: 68ch;
+  margin: 0 0 20px;
+}
+
+.debate-error {
+  background: #fdecea;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+/* Opening a debate */
+
+.debate-open {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+  display: grid;
+  gap: 10px;
+}
+
+.debate-open h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.debate-open label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.debate-open__hint {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.debate-open input,
+.debate-open textarea,
+.debate-say textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.debate-open__rounds input {
+  width: 90px;
+}
+
+.debate-open button,
+.debate-say button,
+.debate-detail__head button {
+  justify-self: start;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.debate-open button:disabled,
+.debate-say button:disabled,
+.debate-detail__head button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debate-detail__head button {
+  background: transparent;
+  color: var(--brand-2);
+  border-color: var(--brand-2);
+}
+
+/* Layout */
+
+.debate-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .debate-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.debate-list {
+  display: grid;
+  gap: 6px;
+}
+
+.debate-list__item {
+  text-align: left;
+  font: inherit;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.debate-list__item--active {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+
+.debate-list__topic {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.debate-list__status,
+.debate-detail__status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.debate-detail__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.debate-detail__head h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1.15rem;
+  margin: 0;
+  flex: 1 1 320px;
+}
+
+/* Who is on the forum, and under what confinement */
+
+.debate-roster {
+  list-style: none;
+  padding: 10px 12px;
+  margin: 0 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: grid;
+  gap: 3px;
+}
+
+.debate-roster strong {
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+.debate-roster__box {
+  font-family: "Roboto Mono", monospace;
+}
+
+.debate-roster__revoked {
+  margin-left: 6px;
+  color: var(--brand-2);
+}
+
+/* The thread */
+
+.debate-thread {
+  display: grid;
+  gap: 14px;
+}
+
+.debate-thread__note,
+.debate-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0 0 4px;
+  max-width: 70ch;
+}
+
+.debate-post {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 10px 14px 12px;
+}
+
+.debate-post--human {
+  background: var(--panel);
+}
+
+/* Above the rule: the host's stamp. Nothing here came from the poster. */
+.debate-post__stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding-bottom: 6px;
+}
+
+.debate-post__kind {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.debate-post__sender {
+  font-weight: 600;
+  color: var(--ink);
+  font-family: "Roboto Mono", monospace;
+}
+
+.debate-post__role {
+  text-transform: capitalize;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: var(--panel);
+}
+
+.debate-post__votes {
+  color: #0b6b53;
+  font-weight: 600;
+}
+
+.debate-post__lane {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: "Roboto Mono", monospace;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.debate-post__denied {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0 0 8px;
+}
+
+.debate-post__reply-to {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+/* Below the fence: what the agent claimed. */
+.debate-post__body {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.debate-post__body > :first-child {
+  margin-top: 0;
+}
+
+.debate-post__body > :last-child {
+  margin-bottom: 0;
+}
+
+.debate-post__body code {
+  font-family: "Roboto Mono", monospace;
+  font-size: 0.85em;
+}
+
+/* The verdict */
+
+.debate-verdict {
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+
+.debate-verdict--none {
+  border-color: var(--line);
+}
+
+.debate-verdict h3 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 10px;
+}
+
+.debate-verdict__list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.debate-verdict__claim {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.debate-verdict__mechanism {
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta dt {
+  color: var(--muted);
+}
+
+.debate-verdict__meta dd {
+  margin: 0;
+}
+
+.debate-verdict__label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 2px;
+}
+
+.debate-verdict__rationale {
+  margin: 14px 0 0;
+}
+
+.debate-verdict__unresolved {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* Joining in */
+
+.debate-say {
+  margin-top: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.debate-say label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
