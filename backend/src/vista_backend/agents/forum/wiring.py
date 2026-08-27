@@ -62,13 +62,18 @@ def build_grounding(client: ForumClient) -> Grounding:
     )
 
 
-def build_orchestrator(*, on_post=None) -> DebateOrchestrator:
+async def _commit(session: AsyncSession) -> None:
+    await session.commit()
+
+
+def build_orchestrator(*, on_post=None, checkpoint=None) -> DebateOrchestrator:
     client = build_client()
     grounding = build_grounding(client)
     return DebateOrchestrator(
         client=client,
         roles=RoleAgents(toolsets=_toolsets(grounding)),
         on_post=on_post,
+        checkpoint=checkpoint,
     )
 
 
@@ -90,7 +95,10 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
     async with AsyncSession(get_engine()) as session:
         try:
             run = await debate_service.require_debate(session, run_id)
-            await build_orchestrator().run(session, run)
+            # Checkpoint per round: a reader on another session — the event
+            # stream, another worker — sees nothing of an uncommitted debate,
+            # so without this the live view only goes live once it is over.
+            await build_orchestrator(checkpoint=_commit).run(session, run)
             await session.commit()
         except Exception:
             logger.exception("debate %s failed", run_id)

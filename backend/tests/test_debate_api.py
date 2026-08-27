@@ -415,3 +415,81 @@ async def test_the_stream_emits_posts_that_arrive_while_it_is_open(
     assert kinds == ["TASK", "PROPOSAL"], "the later post reached a connected client"
     assert events[-1][0] == "status"
     assert json.loads(events[-1][1])["status"] == "closed"
+
+
+# --------------------------------------------------------------------------- #
+# Opening a debate
+#
+# This route had no test, and it was the one that broke in production:
+# `commit()` expires the ORM object, so reading `run.id` afterwards tried to
+# refresh it and died with MissingGreenlet. Both tests below fail against that
+# version.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_opening_a_debate_returns_the_run(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    from vista_backend.api import debate as debate_api
+
+    spawned: list[uuid.UUID] = []
+
+    async def fake_task(run_id):
+        spawned.append(run_id)
+
+    monkeypatch.setattr(debate_api, "run_debate_task", fake_task)
+
+    project = await _project(session, alice)
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates",
+        json={"topic": "why does the knee move?", "framing": "1 bar", "rounds": 2},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["topic"] == "why does the knee move?"
+    assert body["rounds"] == 2
+    assert body["status"] == "debating"
+    assert body["thread_id"], "the forum thread has to exist before the response"
+
+    # The task is scheduled, not run inline; one tick lets its body start.
+    await asyncio.sleep(0)
+    assert spawned == [uuid.UUID(body["id"])], "the argument is handed to a task"
+
+
+@pytest.mark.anyio
+async def test_opening_a_debate_attaches_the_whole_roster(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    from vista_backend.api import debate as debate_api
+
+    async def fake_task(run_id):
+        return None
+
+    monkeypatch.setattr(debate_api, "run_debate_task", fake_task)
+
+    project = await _project(session, alice)
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates", json={"topic": "t", "rounds": 1}
+    )
+    assert resp.status_code == 200, resp.text
+    run_id = uuid.UUID(resp.json()["id"])
+
+    rows = await debate_service.list_participants(session, run_id=run_id)
+    assert {r.debate_role for r in rows} == {"proposer", "reviewer", "referee"}
+    assert all(r.policy_digest for r in rows)
+
+
+@pytest.mark.anyio
+async def test_opening_a_debate_is_503_when_the_forum_is_off(
+    app_client, session, alice, monkeypatch
+):
+    """A deployment without h5i should say so, not fail deep in a subprocess."""
+    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=False))
+    project = await _project(session, alice)
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates", json={"topic": "t"}
+    )
+    assert resp.status_code == 503

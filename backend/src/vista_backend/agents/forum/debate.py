@@ -57,6 +57,19 @@ ROSTER: dict[DebateRole, ParticipantRole] = {
 PostHook = Callable[[Post], Awaitable[None]]
 """Called as each post lands. The API's change feed hangs off this."""
 
+Checkpoint = Callable[[AsyncSession], Awaitable[None]]
+"""
+Make the debate's progress so far durable.
+
+A debate takes minutes and writes as it goes. Left in one transaction until the
+end, none of it is visible to anything reading through another session — which
+is every reader that matters: the event stream, another worker, a `GET` while it
+runs. The live view would only go live once the debate was over.
+
+Injected rather than assumed, because the orchestrator does not otherwise own
+transaction boundaries: tests share one session and pass nothing.
+"""
+
 
 class DebateOrchestrator:
     """
@@ -72,10 +85,12 @@ class DebateOrchestrator:
         client: ForumClient,
         roles: RoleAgents | None = None,
         on_post: PostHook | None = None,
+        checkpoint: Checkpoint | None = None,
     ) -> None:
         self.client = client
         self.roles = roles or RoleAgents()
         self.on_post = on_post
+        self.checkpoint = checkpoint
 
     # -- setup ------------------------------------------------------------- #
 
@@ -121,10 +136,10 @@ class DebateOrchestrator:
         )
 
     async def _participants(
-        self, session: AsyncSession, run: DebateRunTable
+        self, session: AsyncSession, run_id: uuid.UUID
     ) -> dict[DebateRole, Participant]:
         """Rebuild the client's view of the roster from what was recorded."""
-        rows = await debate_service.list_participants(session, run_id=run.id)
+        rows = await debate_service.list_participants(session, run_id=run_id)
         roster: dict[DebateRole, Participant] = {}
         for row in rows:
             roster[row.debate_role] = Participant(  # type: ignore[index]
@@ -146,20 +161,28 @@ class DebateOrchestrator:
         can land between any two calls — the human is not waiting for a round
         boundary — and every one of those points means the same thing.
         """
-        roster = await self._participants(session, run)
+        # The loop spans checkpoints, and a checkpoint commits — which expires
+        # every ORM object this session is holding. So the run is carried as an
+        # id and re-read each time round; holding the row across a commit and
+        # then reading `rounds_done` off it is sync IO in an async session, which
+        # fails as MissingGreenlet rather than as anything that names the cause.
+        run_id = run.id
+        roster = await self._participants(session, run_id)
         try:
-            while run.rounds_done < run.rounds:
-                run = await self.run_round(session, run, roster)
-            run = await self.conclude(session, run, roster)
+            while True:
+                run = await debate_service.require_debate(session, run_id)
+                if run.rounds_done >= run.rounds:
+                    break
+                await self.run_round(session, run, roster)
+            await self.conclude(session, run, roster)
         except ThreadClosed:
-            logger.info("debate %s: the human closed the thread", run.id)
-            run = await self._sync(session, run)
-            run = await debate_service.set_status(
-                session, run_id=run.id, status="closed"
-            )
+            logger.info("debate %s: the human closed the thread", run_id)
+            await self._sync(session, run_id)
+            await debate_service.set_status(session, run_id=run_id, status="closed")
+            await self._checkpoint(session)
         finally:
-            await self._retire(session, run, roster)
-        return run
+            await self._retire(session, run_id, roster)
+        return await debate_service.require_debate(session, run_id)
 
     async def run_round(
         self,
@@ -174,6 +197,7 @@ class DebateOrchestrator:
         previous one, so anything that arrived in between — the human's
         interjection, a vote — is in front of the role when it speaks.
         """
+        run_id = run.id
         index = run.rounds_done
 
         propose_deps = _deps(run, index, roster["proposer"])
@@ -208,9 +232,11 @@ class DebateOrchestrator:
                 deps=review_deps,
             )
 
-        return await debate_service.update_debate(
-            session, run_id=run.id, rounds_done=index + 1
+        await debate_service.update_debate(
+            session, run_id=run_id, rounds_done=index + 1
         )
+        await self._checkpoint(session)
+        return await debate_service.require_debate(session, run_id)
 
     async def conclude(
         self,
@@ -219,6 +245,7 @@ class DebateOrchestrator:
         roster: dict[DebateRole, Participant],
     ) -> DebateRunTable:
         """The Referee rules on what the thread produced."""
+        run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
         deps = _deps(run, run.rounds_done, roster["referee"])
         verdict = await self.roles.rule(deps, thread)
@@ -231,9 +258,11 @@ class DebateOrchestrator:
             round_index=None,
             deps=deps,
         )
-        return await debate_service.record_verdict(
-            session, run_id=run.id, verdict=verdict.model_dump()
+        await debate_service.record_verdict(
+            session, run_id=run_id, verdict=verdict.model_dump()
         )
+        await self._checkpoint(session)
+        return await debate_service.require_debate(session, run_id)
 
     # -- plumbing ---------------------------------------------------------- #
 
@@ -284,6 +313,15 @@ class DebateOrchestrator:
             logger.warning("debate: could not stage receipts", exc_info=True)
             return None
 
+    async def _checkpoint(self, session: AsyncSession) -> None:
+        """Make progress durable, if the caller gave us a way to. Never fatal."""
+        if self.checkpoint is None:
+            return
+        try:
+            await self.checkpoint(session)
+        except Exception:  # noqa: BLE001 — a failed checkpoint must not end the debate
+            logger.warning("debate: could not checkpoint progress", exc_info=True)
+
     async def _sync_thread(
         self, session: AsyncSession, run: DebateRunTable, *, round_index: int | None
     ) -> Thread:
@@ -294,7 +332,7 @@ class DebateOrchestrator:
         )
         return thread
 
-    async def _sync(self, session: AsyncSession, run: DebateRunTable) -> DebateRunTable:
+    async def _sync(self, session: AsyncSession, run_id: uuid.UUID) -> None:
         """
         Project whatever the thread ended up holding.
 
@@ -303,15 +341,15 @@ class DebateOrchestrator:
         agents last managed to say.
         """
         try:
+            run = await debate_service.require_debate(session, run_id)
             await self._sync_thread(session, run, round_index=None)
         except Exception:  # noqa: BLE001 — a failed final read must not mask the close
-            logger.warning("debate %s: could not read the closed thread", run.id)
-        return run
+            logger.warning("debate %s: could not read the closed thread", run_id)
 
     async def _retire(
         self,
         session: AsyncSession,
-        run: DebateRunTable,
+        run_id: uuid.UUID,
         roster: dict[DebateRole, Participant],
     ) -> None:
         """
@@ -321,14 +359,14 @@ class DebateOrchestrator:
         next, not what was said. Best effort, and never allowed to fail a debate
         that has already reached its conclusion.
         """
-        pending = await open_simulations(session, debate_run_id=run.id)
+        pending = await open_simulations(session, debate_run_id=run_id)
         if pending:
             # A revoked participant cannot post, and a commissioned job's result
             # has to come back under the identity that asked for it. The
             # collector retires the roster once the last job is in.
             logger.info(
                 "debate %s: keeping the roster attached for %d job(s) still running",
-                run.id,
+                run_id,
                 len(pending),
             )
             return
@@ -337,11 +375,11 @@ class DebateOrchestrator:
             try:
                 await self.client.remove_participant(participant)
                 await debate_service.deactivate_participant(
-                    session, run_id=run.id, identity=participant.identity
+                    session, run_id=run_id, identity=participant.identity
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "debate %s: could not retire %s", run.id, role, exc_info=True
+                    "debate %s: could not retire %s", run_id, role, exc_info=True
                 )
 
 

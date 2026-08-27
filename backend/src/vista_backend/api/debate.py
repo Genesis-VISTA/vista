@@ -52,6 +52,23 @@ def stream_session_factory() -> AsyncSession:
     return AsyncSession(get_engine())
 
 
+_BACKGROUND: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    """
+    Run a debate in the background, holding a reference to its task.
+
+    asyncio keeps only a weak reference to a running task, so a task nobody
+    holds can be garbage-collected mid-run. Debates take minutes; dropping one
+    would look like a debate that silently stopped arguing.
+    """
+    task = asyncio.create_task(coro)
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    return task
+
+
 STREAM_POLL_SECONDS = 1.0
 """
 How often the event stream looks for new posts.
@@ -111,11 +128,18 @@ async def open_debate(
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
+    # Read everything off the ORM object *before* committing. `commit()` expires
+    # it, so a later attribute access tries to refresh it — which is async IO in
+    # a context that cannot await, and fails with MissingGreenlet rather than
+    # anything that names the real problem.
+    run_id = run.id
+    payload = DebateRunPublic.model_validate(run)
+
     # Commit before handing the run to a task with its own session, or that task
     # would look for a run this one has not written yet.
     await session.commit()
-    asyncio.create_task(run_debate_task(run.id))
-    return DebateRunPublic.model_validate(run)
+    _spawn(run_debate_task(run_id))
+    return payload
 
 
 @router.get("/{project_name}/debates")

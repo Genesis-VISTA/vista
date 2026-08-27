@@ -10,6 +10,7 @@ Follows the shape of `test_campaign_driver.py`: script the model, drive the real
 runtime, assert the state transitions.
 """
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -84,7 +85,7 @@ def client(tmp_path) -> ForumClient:
 
 
 async def _project(session):
-    project = ProjectTable(name="debate-driver")
+    project = ProjectTable(name=f"debate-driver-{uuid.uuid4().hex[:8]}")
     session.add(project)
     await session.flush()
     return project
@@ -202,7 +203,7 @@ async def test_a_human_post_reaches_the_next_round(client, session, alice):
     orch, run = await _start(client, session, alice, roles=roles, rounds=2)
 
     # Round one, then the human interrupts, then round two.
-    roster = await orch._participants(session, run)  # noqa: SLF001
+    roster = await orch._participants(session, run.id)  # noqa: SLF001
     run = await orch.run_round(session, run, roster)
     await client.post_as_human(run.thread_id, "ignore pressure effects entirely")
     run = await orch.run_round(session, run, roster)
@@ -314,3 +315,127 @@ async def test_the_projection_matches_the_forum(client, session, alice):
         session, run_id=run.id, include_votes=True
     )
     assert {p.id for p in thread.posts} == {p.post_id for p in projected}
+
+
+# --------------------------------------------------------------------------- #
+# Checkpointing
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_progress_is_checkpointed_every_round(client, session, alice):
+    """
+    A debate runs for minutes in one background session. Everything that reads it
+    meanwhile — the event stream, a GET, another worker — reads through a
+    different session, and an uncommitted transaction is invisible to all of
+    them, so the live view would only go live once the debate was over.
+
+    The contract is asserted here rather than by opening a second session and
+    looking: the test database is an in-memory SQLite on a `StaticPool`, so every
+    session shares one connection and one transaction. A second session there
+    sees uncommitted rows regardless, which would make such a test pass whether
+    or not the checkpoint existed.
+    """
+    checkpoints: list[int] = []
+
+    async def spy(_session):
+        checkpoints.append(len(checkpoints))
+
+    project = await _project(session)
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=spy)
+    run = await orch.start(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="why does the knee move?",
+        rounds=3,
+    )
+    await orch.run(session, run)
+
+    # Three rounds plus the verdict: progress is durable before the next round
+    # starts, not only when the whole argument is over.
+    assert len(checkpoints) == 4
+
+
+@pytest.mark.anyio
+async def test_a_failing_checkpoint_does_not_end_the_debate(client, session, alice):
+    """Losing durability is bad; losing the argument as well would be worse."""
+    calls = {"n": 0}
+
+    async def flaky(_session):
+        calls["n"] += 1
+        raise RuntimeError("disk full")
+
+    project = await _project(session)
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=flaky)
+    run = await orch.start(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="t",
+        rounds=2,
+    )
+    run = await orch.run(session, run)
+
+    assert calls["n"] > 0
+    assert run.status == "converged", "the debate still reached a verdict"
+
+
+@pytest.mark.anyio
+async def test_the_orchestrator_survives_its_own_checkpoints(client, session, alice):
+    """
+    A commit expires every ORM object the session holds, so a loop that carried
+    the run row across one would read `rounds_done` off an expired object — sync
+    IO in an async session, which fails as MissingGreenlet. The loop carries an
+    id and re-reads instead; this is what proves it.
+    """
+
+    async def real_commit(s):
+        await s.commit()
+
+    project = await _project(session)
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=real_commit)
+    run = await orch.start(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="t",
+        rounds=2,
+    )
+    run = await orch.run(session, run)
+
+    assert run.rounds_done == 2
+    assert run.status == "converged"
+
+
+@pytest.mark.anyio
+async def test_run_round_returns_a_run_the_caller_can_still_use(client, session, alice):
+    """
+    A round ends by checkpointing, and a checkpoint commits — which expires every
+    object the session holds, including the row the round was about. So the round
+    has to hand back a re-read row, not the one it just invalidated.
+
+    `run()` happens to re-read at the top of its loop, so it would survive either
+    way; this pins the contract for every other caller, which is where the
+    original MissingGreenlet came from.
+    """
+
+    async def real_commit(s):
+        await s.commit()
+
+    project = await _project(session)
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=real_commit)
+    run = await orch.start(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="t",
+        rounds=2,
+    )
+    roster = await orch._participants(session, run.id)  # noqa: SLF001
+
+    run = await orch.run_round(session, run, roster)
+    # Reading the returned row must not need a refresh the caller cannot await.
+    assert run.rounds_done == 1
+    run = await orch.run_round(session, run, roster)
+    assert run.rounds_done == 2

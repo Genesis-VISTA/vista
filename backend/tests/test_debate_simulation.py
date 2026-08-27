@@ -294,8 +294,8 @@ async def test_a_role_with_work_in_flight_is_not_retired(client, session, alice)
     await _commission(client, session, alice, run, participant)
 
     orch = DebateOrchestrator(client=client, roles=RoleAgents())
-    roster = await orch._participants(session, run)  # noqa: SLF001
-    await orch._retire(session, run, roster)  # noqa: SLF001
+    roster = await orch._participants(session, run.id)  # noqa: SLF001
+    await orch._retire(session, run.id, roster)  # noqa: SLF001
 
     rows = await debate_service.list_participants(session, run_id=run.id)
     assert all(row.active for row in rows), "the roster stays until the job is in"
