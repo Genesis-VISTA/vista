@@ -19,16 +19,21 @@ starts. Sections 1–2 are landed by the Step 0/1 commit.
 
 ## 3. Forum client (MR 1)
 
-- [ ] 3.1 `ForumSettings` in `config.py`: binary, forum root, profile, tier, egress allowlist, timeout, `enabled`
-- [ ] 3.2 `services/h5i_forum.py`: async `create_subprocess_exec` wrapper, argument lists only
-- [ ] 3.3 Pydantic models for thread / post / participant / vouch lane; kind enum
-- [ ] 3.4 Local kind validation before spawn (spec: unknown kind rejected)
-- [ ] 3.5 Confirm-by-reading after every post; surface a dropped post as failure
-- [ ] 3.6 Attachment staging into the box work dir + relative-name attach
-- [ ] 3.7 Per-role lock around read-then-vote; `post --reply-to` everywhere
-- [ ] 3.8 Participant setup/teardown: `box create` → `forum attach` → `revoke` + `box rm`
-- [ ] 3.9 Fake `h5i` shim + fixtures recorded from the contract doc
-- [ ] 3.10 `backend/tests/test_h5i_forum.py` — hermetic; real-binary tests marked `live`
+- [x] 3.1 `ForumSettings` in `config.py`: binary, forum root, profile, tier, egress allowlist, timeout, `enabled`
+- [x] 3.2 `services/h5i_forum.py`: async `create_subprocess_exec` wrapper, argument lists only
+- [x] 3.3 Pydantic models for thread / post / participant / vouch lane; kind enum
+- [x] 3.4 Local kind validation before spawn (spec: unknown kind rejected)
+- [x] 3.5 Confirm-by-reading after every post; surface a dropped post as failure
+- [x] 3.6 Attachment staging into the box work dir + relative-name attach
+- [x] 3.7 Per-role lock around read-then-vote; `post --reply-to` everywhere
+- [x] 3.8 Participant setup/teardown: `box create` → `forum attach` → `revoke` + `box rm`
+- [x] 3.9 Fake `h5i` shim + fixtures recorded from the contract doc
+- [x] 3.10 `backend/tests/test_h5i_forum.py` — hermetic; `test_h5i_forum_live.py` marked `live` and verified against real h5i v0.3.8
+
+Two contract details were found only by running MR 1's live suite, and are now
+in `docs/h5i-forum-contract.md` §2.1–2.2: `box run … -- <cmd>` needs the h5i
+binary named explicitly (else execvp, exit 71), and `box run` relays the inner
+command's stderr onto the host's *stdout*.
 
 ## 4. Persistence (MR 2)
 

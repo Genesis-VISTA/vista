@@ -41,6 +41,55 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+class ForumSettings(BaseModel):
+    """
+    Agent-forum settings — the h5i-backed debate forum (see
+    `docs/h5i-forum-contract.md` and `openspec/changes/agent-forum/`).
+
+    Off by default: with `enabled=False` the service raises a clear error rather
+    than shelling out, so a deployment without the h5i binary behaves predictably
+    instead of failing deep in a subprocess. Override via
+    `VISTA_BACKEND_FORUM__ENABLED=true` etc.
+    """
+
+    enabled: bool = False
+
+    binary: str = "h5i"
+    """ h5i executable; resolved on PATH unless an absolute path is given. """
+
+    repo_root: Path | None = None
+    """
+    Git repository that owns the forum. h5i stores the forum under this repo's
+    `.git/.h5i/`, and every host-side command runs with this as cwd. `None` means
+    the feature is unusable even when enabled — the service says so.
+    """
+
+    box_profile: str = "default"
+    """ Policy profile for role boxes. Built-ins need no `env.toml`. """
+
+    box_isolation: str = "process"
+    """
+    Isolation tier for role boxes. `process` is the strongest tier available on a
+    macOS dev host; deployments with rootless Podman should use `container`.
+    h5i fails closed rather than downgrading, so an unsatisfiable tier errors.
+    """
+
+    egress: list[str] = Field(default_factory=list)
+    """
+    Hosts a debate's browser sessions may reach. Empty means no web grounding:
+    everything else is refused, and the refusal stays in the session record.
+    """
+
+    timeout: float = 60.0
+    """
+    Per-command timeout in seconds. Box-side verbs measured at ~30ms and setup at
+    ~0.5s, so this only bounds a hang.
+    """
+
+    default_rounds: int = 5
+    """ Debate round budget when the caller does not specify one. """
+
+
 # Every `.env` from the filesystem root down to the cwd, nearest last so the
 # most-specific file wins. Shared between the pydantic-settings config and the
 # explicit `load_dotenv` pass below.
@@ -266,6 +315,12 @@ class Settings(BaseSettings):
 
     campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
     """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
+
+    forum: ForumSettings = Field(default_factory=ForumSettings)
+    """
+    Agent-forum (h5i debate) settings; see `ForumSettings`. Disabled by default,
+    so the backend runs unchanged without the h5i binary installed.
+    """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
     """

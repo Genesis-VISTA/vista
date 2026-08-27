@@ -1,0 +1,173 @@
+"""
+The forum client against a real h5i binary.
+
+Marked `live` and excluded from the default PR filter: it needs h5i installed and
+it creates real boxes, which means a real sandbox tier on the host.
+
+Its job is to keep `tests/fixtures/fake_h5i.py` honest. The hermetic suite is
+only worth as much as the fake's fidelity, and a fake that drifts from the tool
+turns green tests into a story about itself. This module asserts the same
+behaviours through the real thing, so drift shows up here rather than in
+production. Run it whenever h5i is upgraded, and re-record the fake if it fails.
+
+    uv run --extra dev pytest tests/test_h5i_forum_live.py -m live
+"""
+
+import shutil
+import subprocess
+
+import pytest
+
+from vista_backend.config import ForumSettings
+from vista_backend.services.h5i_forum import (
+    ForumClient,
+    ParticipantRole,
+    PostKind,
+    ThreadClosed,
+)
+
+
+pytestmark = [pytest.mark.live, pytest.mark.anyio]
+
+
+H5I = shutil.which("h5i")
+
+
+@pytest.fixture
+def live_client(tmp_path):
+    if H5I is None:
+        pytest.skip("h5i is not installed")
+
+    # h5i stores a forum under a git repo, so the fixture needs a real one.
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    for key, value in (("user.email", "test@local"), ("user.name", "test")):
+        subprocess.run(["git", "-C", str(tmp_path), "config", key, value], check=True)
+    (tmp_path / "README.md").write_text("live forum test\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "init"], check=True)
+
+    client = ForumClient(
+        ForumSettings(
+            enabled=True,
+            binary=H5I,
+            repo_root=tmp_path,
+            box_isolation="process",
+            timeout=120.0,
+        )
+    )
+    yield client
+
+
+async def test_real_forum_round_trip(live_client):
+    """
+    The whole contract in one pass, against the real tool.
+
+    Each assertion here mirrors one the hermetic suite makes against the fake.
+    """
+    client = live_client
+    thread_id = await client.create_thread(
+        "live: which mechanism explains the knee?", body="Debate it."
+    )
+
+    proposer = await client.create_participant(
+        box_slug="proposer", identity="vista-proposer", role=ParticipantRole.WORKER
+    )
+    reviewer = await client.create_participant(
+        box_slug="reviewer", identity="vista-reviewer", role=ParticipantRole.REVIEWER
+    )
+    try:
+        # Distinct, host-stamped identities — the reason for the box relay.
+        proposal = await client.post_as(
+            proposer,
+            thread_id,
+            "network rigidity sets the knee",
+            kind=PostKind.PROPOSAL,
+        )
+        assert proposal.sender == "vista-proposer"
+        assert proposal.role == "worker"
+        assert proposal.box_id and proposal.policy_digest
+
+        rebuttal = await client.post_as(
+            reviewer,
+            thread_id,
+            "that predicts shear dependence nobody measured",
+            kind=PostKind.RISK,
+            reply_to=proposal.id,
+        )
+        assert rebuttal.sender == "vista-reviewer"
+        assert rebuttal.reply_to == proposal.id
+
+        # The human joins their own debate, as themselves.
+        human = await client.post_as_human(thread_id, "constrain to 1 bar")
+        assert human.sender == "human"
+
+        # A vote lands mid-thread, then a post after it: the position the client
+        # computes has to skip the vote.
+        await client.vote(reviewer, thread_id, proposal.id)
+        finding = await client.post_as(
+            proposer, thread_id, "Cantor 2019 puts it at 803K", kind=PostKind.FINDING
+        )
+        await client.vote(reviewer, thread_id, finding.id)
+
+        thread = await client.read_thread(thread_id)
+        assert thread.tally(proposal.id) == 1
+        assert thread.tally(finding.id) == 1
+        assert thread.lane(proposal.id) == "host-observed"
+
+        # An attachment staged in the box's work dir survives the round trip.
+        name = await client.stage_attachment(
+            proposer, "cite.txt", "source: https://example.org/cantor2019\n"
+        )
+        cited = await client.post_as(
+            proposer,
+            thread_id,
+            "receipt attached",
+            kind=PostKind.FINDING,
+            attachment=name,
+        )
+        assert cited.attachments
+
+        # The human's stop button, enforced by h5i.
+        await client.close_thread(thread_id)
+        with pytest.raises(ThreadClosed):
+            await client.post_as(proposer, thread_id, "one more", kind=PostKind.FINDING)
+
+        closed = await client.read_thread(thread_id)
+        assert closed.is_closed
+    finally:
+        await client.remove_participant(proposer)
+        await client.remove_participant(reviewer)
+
+
+async def test_real_h5i_drops_an_unknown_kind(live_client):
+    """
+    Pin the surprise the client is built around.
+
+    If a future h5i starts rejecting an unknown kind outright, this fails and the
+    confirm-by-reading logic can be reconsidered. Until then it is load-bearing.
+    """
+    client = live_client
+    thread_id = await client.create_thread("live: kind validation", body="framing")
+    proposer = await client.create_participant(
+        box_slug="proposer", identity="vista-proposer", role=ParticipantRole.WORKER
+    )
+    try:
+        code, out, _ = await client._run_in_box(
+            "proposer",
+            "forum",
+            "post",
+            thread_id,
+            "--kind",
+            "VERDICT",
+            "this should vanish",
+            check=False,
+        )
+        assert code == 0, "h5i still exits 0 for an unknown kind"
+        assert "staged" in out, "h5i still reports success for an unknown kind"
+
+        thread = await client.read_thread(thread_id)
+        assert "VERDICT" not in [p.kind for p in thread.posts], (
+            "h5i now publishes unknown kinds — revisit POSTABLE_KINDS"
+        )
+    finally:
+        await client.remove_participant(proposer)
