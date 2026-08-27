@@ -38,6 +38,7 @@ from ...services.h5i_forum import (
     ThreadClosed,
 )
 from .roles import DebateDeps, DebateRole, RoleAgents
+from .simulation import open_simulations
 
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,18 @@ class DebateOrchestrator:
         next, not what was said. Best effort, and never allowed to fail a debate
         that has already reached its conclusion.
         """
+        pending = await open_simulations(session, debate_run_id=run.id)
+        if pending:
+            # A revoked participant cannot post, and a commissioned job's result
+            # has to come back under the identity that asked for it. The
+            # collector retires the roster once the last job is in.
+            logger.info(
+                "debate %s: keeping the roster attached for %d job(s) still running",
+                run.id,
+                len(pending),
+            )
+            return
+
         for role, participant in roster.items():
             try:
                 await self.client.remove_participant(participant)

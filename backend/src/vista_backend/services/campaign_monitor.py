@@ -19,6 +19,7 @@ from typing import Awaitable, Callable
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..agents.forum.simulation import DEBATE_DOMAIN
 from ..db.schemas import CampaignRunTable, HpcJobTable, UserTable
 from ..services import campaign as campaign_service
 from ..services import email as email_service
@@ -150,12 +151,28 @@ class CampaignMonitor:
         await self._notify(session, job, state=state, ok=ok)
 
     async def _is_orphaned(self, session: AsyncSession, job: HpcJobTable) -> bool:
-        """A job is orphaned if its step/run is gone or the run lost its chat session."""
+        """
+        A job is orphaned when nothing can act on its result any more.
+
+        For a campaign that means losing its chat session: `CampaignRun.session_id`
+        goes NULL when the conversation is deleted (FK SET NULL), and the planner
+        and sandbox cannot be reconstructed without it, so polling forever would
+        achieve nothing.
+
+        A debate-commissioned job is the exception, and not a special case bolted
+        on: it never had a chat session, because its result goes back to a forum
+        thread rather than to a conversation. Applying the campaign rule to it
+        would abandon every such job on its first poll.
+        """
         step = await campaign_service.get_step(session, job.step_id)
         if step is None:
             return True
         run = await campaign_service.get_campaign(session, step.run_id)
-        return run is None or run.session_id is None
+        if run is None:
+            return True
+        if run.domain == DEBATE_DOMAIN:
+            return False
+        return run.session_id is None
 
     async def _notify(
         self, session: AsyncSession, job: HpcJobTable, *, state: str, ok: bool

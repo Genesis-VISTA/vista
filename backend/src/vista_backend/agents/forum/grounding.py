@@ -31,6 +31,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from ...config import ForumSettings, settings
 from ...services.h5i_forum import ForumClient, Participant
 from .roles import DebateDeps, DebateRole, Toolsets
+from .simulation import SimulationCommissioner
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class Grounding:
     uploads: UploadReader | None = None
     forum: ForumClient | None = None
     browser: WebReader | None = None
+    simulation: SimulationCommissioner | None = None
 
 
 def fence(source: str, body: str) -> str:
@@ -292,6 +294,46 @@ def build_toolset(
             return fence(url, text)
 
         toolset.add_function(read_web_page)
+        granted = True
+
+    if grounding.simulation is not None and role in ("proposer", "reviewer"):
+
+        async def commission_simulation(
+            ctx: RunContext[DebateDeps],
+            job: str,
+            prediction: str,
+            cluster: str | None = None,
+            script_args: str | None = None,
+        ) -> str:
+            """
+            Run a simulation to test one specific prediction from this debate.
+
+            Use it to settle a disagreement that argument cannot: name the
+            prediction under test and the `hpc_jobs/<name>` that would test it.
+            The job takes far longer than a round, so this does not answer you
+            now — the result is posted onto the thread under your identity when
+            it finishes, whether or not the debate is still running.
+            """
+            assert grounding.simulation is not None
+            if ctx.deps.participant is None:
+                return "Simulations are unavailable: this turn has no identity to run under."
+            try:
+                job_id = await grounding.simulation(
+                    participant=ctx.deps.participant,
+                    job=job,
+                    prediction=prediction,
+                    cluster=cluster,
+                    script_args=script_args,
+                )
+            except Exception as exc:  # noqa: BLE001 — a refused job is an answer
+                return f"The simulation could not be started: {exc}"
+            return (
+                f"Submitted {job} as job {job_id} to test “{prediction}”. "
+                "The result will be posted to this thread when it finishes; do "
+                "not wait for it."
+            )
+
+        toolset.add_function(commission_simulation)
         granted = True
 
     if grounding.forum is not None:

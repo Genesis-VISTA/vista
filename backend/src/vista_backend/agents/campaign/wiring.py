@@ -26,7 +26,10 @@ from pydantic_ai.models import Model
 
 from ...db.schemas import HpcJobTable, UserPublicWithConfig, UserTable
 from ...services import campaign as campaign_service
-from ...services.campaign_monitor import CampaignMonitor
+from ..forum import simulation
+from ..forum.simulation import DEBATE_DOMAIN
+from ..forum.wiring import build_client as build_forum_client
+from ...services.campaign_monitor import CampaignMonitor, is_success
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
 from .mcp_invoke import build_mcp_invoke, project_paths_for
@@ -134,6 +137,42 @@ def build_collector(planner_provider: PlannerProvider = build_planner_for_job):
     return collect
 
 
+def build_debate_aware_collector(
+    planner_provider: PlannerProvider = build_planner_for_job,
+):
+    """
+    A collector that routes a finished job to whoever commissioned it.
+
+    A debate-commissioned job has no planner and no chat session — its result
+    goes back to a forum thread, posted under the identity that asked for it.
+    Everything else is an ordinary campaign step and goes to its planner as before.
+    """
+    campaign_collect = build_collector(planner_provider)
+
+    async def collect(session: AsyncSession, job: HpcJobTable, raw_status: str) -> None:
+        step = await campaign_service.get_step(session, job.step_id)
+        run = (
+            await campaign_service.get_campaign(session, step.run_id) if step else None
+        )
+        if run is not None and run.domain == DEBATE_DOMAIN:
+            client = build_forum_client()
+            await simulation.post_result(
+                session,
+                client,
+                job,
+                state=parse_job_state(raw_status),
+                ok=is_success(parse_job_state(raw_status)),
+                outputs=raw_status,
+            )
+            await simulation.reap_after_collection(session, client, job)
+            return
+        await campaign_collect(session, job, raw_status)
+
+    return collect
+
+
 def build_default_monitor() -> CampaignMonitor:
     """The production monitor: poll job status + collect results via the live MCP/planner wiring."""
-    return CampaignMonitor(poll=build_status_poll(), collect=build_collector())
+    return CampaignMonitor(
+        poll=build_status_poll(), collect=build_debate_aware_collector()
+    )

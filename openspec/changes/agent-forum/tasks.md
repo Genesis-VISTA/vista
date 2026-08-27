@@ -87,9 +87,12 @@ command's stderr onto the host's *stdout*.
 
 ## 10. HPC in the loop (MR 8 — separable)
 
-- [ ] 10.1 Referee/Reviewer may commission a campaign run to test a prediction
-- [ ] 10.2 Finished job posts back as `FINDING` with a `test-report` attachment
-- [ ] 10.3 Marked `hpc`; excluded from the default PR filter
+- [x] 10.1 Proposer/Reviewer may commission a job to test a prediction (the Referee may not — it rules, it does not gather evidence)
+- [x] 10.2 Finished job posts back as `FINDING` with a `test-report` attachment, under the commissioning identity
+- [x] 10.3 Hermetic tests (fake HPC + fake h5i) run in PR CI; nothing here needs a cluster
+- [x] 10.4 Monitor orphan rule exempts debate-domain runs (they never have a chat session)
+- [x] 10.5 Roster stays attached while jobs are in flight; collector reaps it afterwards
+- [ ] 10.6 End-to-end against a real cluster — **not run**: needs `hpc` credentials this host does not have
 
 ## 11. Close out
 
