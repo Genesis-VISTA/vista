@@ -61,11 +61,11 @@ command's stderr onto the host's *stdout*.
 
 ## 7. Grounding (MR 5)
 
-- [ ] 7.1 Per-role tool grants: RAG/KBs, salt-chemistry + neutronics skills
-- [ ] 7.2 Prior closed threads on the same forum as readable context
-- [ ] 7.3 User-uploaded papers via the existing uploads/files service
-- [ ] 7.4 `h5i browser` reads under an egress allowlist; receipt attached to the citing post
-- [ ] 7.5 Assert a refused fetch stays visible in the record
+- [x] 7.1 Per-role tool grants: RAG/KBs, salt-chemistry + neutronics skills
+- [x] 7.2 Prior closed threads on the same forum as readable context
+- [x] 7.3 User-uploaded papers via the existing uploads/files service
+- [x] 7.4 `h5i browser` reads under an egress allowlist; receipt attached to the citing post — **refuses to run below `container`/`microvm`**, because the allowlist does not bind at lower tiers (contract §5.1)
+- [ ] 7.5 Assert a refused fetch stays visible in the record — **blocked on this host**: no `container`/`microvm` tier (no rootless Podman), and the h5i engine's HTTPS fails here, so a real allowlist refusal cannot be observed. Hermetic tests cover the refusal path; verify on a Linux host with Podman.
 
 ## 8. API (MR 6)
 

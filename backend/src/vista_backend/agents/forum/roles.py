@@ -17,14 +17,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Sequence, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model, infer_model
+from pydantic_ai.toolsets import AgentToolset
 
 from ...config import settings
-from ...services.h5i_forum import HUMAN_SENDER, PostKind, Thread
+from ...services.h5i_forum import HUMAN_SENDER, Participant, PostKind, Thread
 
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -199,6 +200,23 @@ class DebateDeps:
     project_id: str | None = None
     knowledge_bases: list[str] = field(default_factory=list)
 
+    participant: Participant | None = None
+    """
+    The forum identity this turn speaks as.
+
+    Tools need it: a boxed browser read runs `--in` this role's box, so the fetch
+    is confined by the same policy the role's posts are stamped with.
+    """
+
+    receipts: list[tuple[str, str]] = field(default_factory=list)
+    """
+    `(url, receipt)` for every fetch this turn made, appended by the tools.
+
+    The orchestrator drains it after the run and attaches it to the post, which
+    is what makes a citation checkable: the fetch that produced it is in the
+    record, and so is a refusal.
+    """
+
 
 def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
     """
@@ -247,24 +265,32 @@ def _situation(deps: DebateDeps, thread: Thread) -> str:
 # --------------------------------------------------------------------------- #
 
 
+OutputT = TypeVar("OutputT", bound=BaseModel)
+
+ROLE_OUTPUTS: dict[DebateRole, type[BaseModel]] = {
+    "proposer": Hypothesis,
+    "reviewer": Critique,
+    "referee": Verdict,
+}
+"""What each role is required to produce."""
+
+Toolsets = Sequence[AgentToolset[DebateDeps]]
+
+
 def build_agent(
     role: DebateRole,
+    output_type: type[OutputT],
     *,
     model: str | Model | None = None,
-    toolsets: Sequence[object] | None = None,
-) -> Agent:
+    toolsets: Toolsets | None = None,
+) -> Agent[DebateDeps, OutputT]:
     """
     Build one role's agent.
 
-    `toolsets` is threaded through unused for now so that grounding can be
-    attached per role later — the Reviewer and the Proposer should not
-    necessarily see the same tools — without changing this signature.
+    `output_type` is a parameter rather than looked up from `role` so the return
+    type stays specific: a caller gets an `Agent[DebateDeps, Hypothesis]`, not an
+    agent that might return any of the three.
     """
-    output_type: type[BaseModel] = {
-        "proposer": Hypothesis,
-        "reviewer": Critique,
-        "referee": Verdict,
-    }[role]
     return Agent(
         model=infer_model(model or settings.model),
         deps_type=DebateDeps,
@@ -288,7 +314,7 @@ class RoleAgents:
         *,
         model: str | Model | None = None,
         models: dict[DebateRole, str | Model] | None = None,
-        toolsets: dict[DebateRole, Sequence[object]] | None = None,
+        toolsets: dict[DebateRole, Toolsets] | None = None,
     ) -> None:
         """
         `models` sets the model per role, falling back to `model`.
@@ -299,18 +325,21 @@ class RoleAgents:
         """
         tools = toolsets or {}
         per_role = models or {}
-        self.proposer = build_agent(
+        self.proposer: Agent[DebateDeps, Hypothesis] = build_agent(
             "proposer",
+            Hypothesis,
             model=per_role.get("proposer", model),
             toolsets=tools.get("proposer"),
         )
-        self.reviewer = build_agent(
+        self.reviewer: Agent[DebateDeps, Critique] = build_agent(
             "reviewer",
+            Critique,
             model=per_role.get("reviewer", model),
             toolsets=tools.get("reviewer"),
         )
-        self.referee = build_agent(
+        self.referee: Agent[DebateDeps, Verdict] = build_agent(
             "referee",
+            Verdict,
             model=per_role.get("referee", model),
             toolsets=tools.get("referee"),
         )
@@ -355,6 +384,8 @@ __all__ = [
     "RankedHypothesis",
     "RoleAgents",
     "Verdict",
+    "ROLE_OUTPUTS",
+    "Toolsets",
     "build_agent",
     "render_transcript",
     "HUMAN_SENDER",

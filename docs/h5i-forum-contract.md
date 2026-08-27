@@ -259,6 +259,50 @@ with a host-stamped `CLOSED` post. So "the human may end the debate at any time"
 is enforced by h5i, not by the orchestrator: the round loop must simply handle
 the exit-1 and stop.
 
+## 5.1 The browser, and where its allowlist actually holds
+
+`h5i browser read <url>` is the only browser shape that can carry an egress
+allowlist enforced outside the engine; a session is resident and the enforcing
+tier cannot hold a resident process. `--in <box>` runs the read inside a box
+whose profile carries the allowlist. `--json` returns
+`{ok, url, title, text, snapshot, confinement:{kind}}`, and the confinement is
+printed with every result.
+
+Two measured limits on this host, both of which change what the feature may claim:
+
+**The egress allowlist is not enforced on macOS.** A box created from
+
+```toml
+[profile.debate]
+isolation = "supervised"
+[profile.debate.net]
+mode   = "host"
+egress = ["example.com"]
+```
+
+reports `isolation=supervised` and `egress : example.com`, and then reads
+`http://www.iana.org/` successfully. `net.mode=Host` means the host's network,
+and the nftables egress allowlist the supervised tier promises is a Linux
+facility — `box probe` here reports `container = none`, `microvm = none`.
+
+h5i does flag some of this: `box status` prints `mem/procs/wall` as
+"declared, NOT enforced at the supervised tier on this host (Darwin has no
+cgroups)". It does **not** carry that warning for `egress`, so a profile with an
+allowlist looks enforced when it is not. **Treat an allowlist as real only at the
+`container` or `microvm` tier.** VISTA therefore refuses web grounding unless the
+configured tier is one of those, rather than trusting a list that does not bind.
+
+**HTTPS fails on this host.** `h5i browser read https://…` returns
+`could not open …: error sending request`, for every host tried, sandboxed or
+not, while `curl` to the same URL returns 200 and `h5i browser read http://…`
+works completely. So the engine's TLS is broken in this environment, not its
+networking. Local files work when given an **absolute** path; a relative path
+fails, because the engine's cwd is not the caller's.
+
+Consequence: the web-grounding path can be exercised over `http://` here, but no
+real literature source is plain HTTP, so it is not usable on this machine and its
+allowlist would not bind even if it were.
+
 ## 6. Liveness
 
 `h5i forum wait [--timeout N]` (default 540s) blocks until the box's inbox moves.

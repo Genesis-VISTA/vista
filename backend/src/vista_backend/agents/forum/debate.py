@@ -124,16 +124,16 @@ class DebateOrchestrator:
     ) -> dict[DebateRole, Participant]:
         """Rebuild the client's view of the roster from what was recorded."""
         rows = await debate_service.list_participants(session, run_id=run.id)
-        return {
-            row.debate_role: Participant(
+        roster: dict[DebateRole, Participant] = {}
+        for row in rows:
+            roster[row.debate_role] = Participant(  # type: ignore[index]
                 identity=row.identity,
                 role=ParticipantRole(row.forum_role),
                 box_slug=row.box_slug,
                 box_id=row.box_id,
                 policy_digest=row.policy_digest,
             )
-            for row in rows
-        }
+        return roster
 
     # -- the loop ---------------------------------------------------------- #
 
@@ -174,10 +174,10 @@ class DebateOrchestrator:
         interjection, a vote — is in front of the role when it speaks.
         """
         index = run.rounds_done
-        deps = _deps(run, index)
 
+        propose_deps = _deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
-        hypothesis = await self.roles.propose(deps, thread)
+        hypothesis = await self.roles.propose(propose_deps, thread)
         proposal = await self._post(
             session,
             run,
@@ -185,10 +185,12 @@ class DebateOrchestrator:
             hypothesis.to_post_body(),
             kind=PostKind.PROPOSAL,
             round_index=index,
+            deps=propose_deps,
         )
 
+        review_deps = _deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
-        critique = await self.roles.review(deps, thread)
+        critique = await self.roles.review(review_deps, thread)
         if critique.stance == "concede":
             # Agreement is a vote, not a post. Saying "I agree" as a post costs
             # every later reader a turn and adds nothing to the record.
@@ -202,6 +204,7 @@ class DebateOrchestrator:
                 kind=critique.post_kind,
                 reply_to=proposal.id,
                 round_index=index,
+                deps=review_deps,
             )
 
         return await debate_service.update_debate(
@@ -216,7 +219,8 @@ class DebateOrchestrator:
     ) -> DebateRunTable:
         """The Referee rules on what the thread produced."""
         thread = await self._sync_thread(session, run, round_index=None)
-        verdict = await self.roles.rule(_deps(run, run.rounds_done), thread)
+        deps = _deps(run, run.rounds_done, roster["referee"])
+        verdict = await self.roles.rule(deps, thread)
         await self._post(
             session,
             run,
@@ -224,6 +228,7 @@ class DebateOrchestrator:
             verdict.to_post_body(),
             kind=PostKind.DONE,
             round_index=None,
+            deps=deps,
         )
         return await debate_service.record_verdict(
             session, run_id=run.id, verdict=verdict.model_dump()
@@ -241,14 +246,42 @@ class DebateOrchestrator:
         kind: PostKind,
         reply_to: str | None = None,
         round_index: int | None = None,
+        deps: DebateDeps | None = None,
     ) -> Post:
+        attachment = await self._stage_receipts(participant, deps)
         post = await self.client.post_as(
-            participant, run.thread_id, body, kind=kind, reply_to=reply_to
+            participant,
+            run.thread_id,
+            body,
+            kind=kind,
+            reply_to=reply_to,
+            attachment=attachment,
         )
         await self._sync_thread(session, run, round_index=round_index)
         if self.on_post is not None:
             await self.on_post(post)
         return post
+
+    async def _stage_receipts(
+        self, participant: Participant, deps: DebateDeps | None
+    ) -> str | None:
+        """
+        Turn this turn's fetch receipts into an attachment on the post.
+
+        h5i takes one attachment per post, so several fetches become one file.
+        A refused fetch has a receipt too, and it is kept for the same reason a
+        successful one is: what the debate could not reach is part of the record.
+        """
+        if deps is None or not deps.receipts:
+            return None
+        body = "\n\n".join(receipt for _, receipt in deps.receipts)
+        try:
+            return await self.client.stage_attachment(
+                participant, "citations.json", body
+            )
+        except Exception:  # noqa: BLE001 — a citation must never lose the post
+            logger.warning("debate: could not stage receipts", exc_info=True)
+            return None
 
     async def _sync_thread(
         self, session: AsyncSession, run: DebateRunTable, *, round_index: int | None
@@ -299,11 +332,21 @@ class DebateOrchestrator:
                 )
 
 
-def _deps(run: DebateRunTable, round_index: int) -> DebateDeps:
+def _deps(
+    run: DebateRunTable, round_index: int, participant: Participant | None = None
+) -> DebateDeps:
+    """
+    Fresh deps for one turn.
+
+    Built per turn rather than per debate because `receipts` accumulates during a
+    run and is drained onto that turn's post — sharing one object across turns
+    would attach round one's citations to round four's post.
+    """
     return DebateDeps(
         topic=run.topic,
         framing=run.framing,
         round_index=round_index,
         rounds=run.rounds,
         project_id=str(run.project_id),
+        participant=participant,
     )
