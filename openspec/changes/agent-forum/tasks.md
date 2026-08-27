@@ -69,11 +69,11 @@ command's stderr onto the host's *stdout*.
 
 ## 8. API (MR 6)
 
-- [ ] 8.1 `api/debate.py` at `/projects/{name}/debates` — create, list, get, close
-- [ ] 8.2 Human-post endpoint (host-side post, attributed `human`)
-- [ ] 8.3 SSE stream for live posts
-- [ ] 8.4 Register router in `api/api.py`; project membership as the access boundary
-- [ ] 8.5 Route tests
+- [x] 8.1 `api/debate.py` at `/projects/{name}/debates` — create, list, get, close
+- [x] 8.2 Human-post endpoint (host-side post, attributed `human`)
+- [x] 8.3 SSE stream for live posts
+- [x] 8.4 Register router in `api/api.py`; project membership as the access boundary
+- [x] 8.5 Route tests
 
 ## 9. UI (MR 7)
 

@@ -59,8 +59,15 @@ def _no_inherited_vista_data(monkeypatch):
 
 
 @pytest.fixture
-async def session():
-    """A fresh in-memory SQLite DB with all tables created, shared across the test."""
+async def engine():
+    """
+    The in-memory engine behind `session`.
+
+    Exposed separately so a test can open a *second* session on the same
+    database — which anything testing concurrent readers and writers needs, since
+    two sessions on one connection would just share a transaction and never see
+    each other's commits.
+    """
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         connect_args={"check_same_thread": False},
@@ -76,9 +83,15 @@ async def session():
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(engine):
+    """A fresh in-memory SQLite DB with all tables created, shared across the test."""
     async with AsyncSession(engine) as s:
         yield s
-    await engine.dispose()
 
 
 async def _make_user(session: AsyncSession, *, is_admin: bool) -> UserPublicWithConfig:

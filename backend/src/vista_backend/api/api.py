@@ -18,6 +18,7 @@ from ..services.auth import get_user
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
+from .debate import router as debate_router
 from .chat_sessions import router as chat_sessions_router
 from .files import router as files_router
 from .knowledge_bases import router as knowledge_bases_router
@@ -93,6 +94,7 @@ async def _missing_inference_credential(
 
 app.include_router(agent_router)
 app.include_router(campaign_router)
+app.include_router(debate_router)
 app.include_router(chat_sessions_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)
