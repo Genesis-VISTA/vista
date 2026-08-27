@@ -21,7 +21,7 @@ from typing import Literal, Sequence
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
-from pydantic_ai.models import infer_model
+from pydantic_ai.models import Model, infer_model
 
 from ...config import settings
 from ...services.h5i_forum import HUMAN_SENDER, PostKind, Thread
@@ -250,7 +250,7 @@ def _situation(deps: DebateDeps, thread: Thread) -> str:
 def build_agent(
     role: DebateRole,
     *,
-    model: str | None = None,
+    model: str | Model | None = None,
     toolsets: Sequence[object] | None = None,
 ) -> Agent:
     """
@@ -286,18 +286,33 @@ class RoleAgents:
     def __init__(
         self,
         *,
-        model: str | None = None,
+        model: str | Model | None = None,
+        models: dict[DebateRole, str | Model] | None = None,
         toolsets: dict[DebateRole, Sequence[object]] | None = None,
     ) -> None:
+        """
+        `models` sets the model per role, falling back to `model`.
+
+        Per-role choice is a real want in both directions: the Referee's job is
+        the hardest one here and may deserve a stronger model, and tests give
+        each role its own scripted model.
+        """
         tools = toolsets or {}
+        per_role = models or {}
         self.proposer = build_agent(
-            "proposer", model=model, toolsets=tools.get("proposer")
+            "proposer",
+            model=per_role.get("proposer", model),
+            toolsets=tools.get("proposer"),
         )
         self.reviewer = build_agent(
-            "reviewer", model=model, toolsets=tools.get("reviewer")
+            "reviewer",
+            model=per_role.get("reviewer", model),
+            toolsets=tools.get("reviewer"),
         )
         self.referee = build_agent(
-            "referee", model=model, toolsets=tools.get("referee")
+            "referee",
+            model=per_role.get("referee", model),
+            toolsets=tools.get("referee"),
         )
 
     async def propose(self, deps: DebateDeps, thread: Thread) -> Hypothesis:

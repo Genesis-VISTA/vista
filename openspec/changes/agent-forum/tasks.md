@@ -53,11 +53,11 @@ command's stderr onto the host's *stdout*.
 
 ## 6. Orchestrator (MR 4)
 
-- [ ] 6.1 `agents/forum/debate.py` round loop, budget default 5, client + agents injected
-- [ ] 6.2 Referee `DONE` verdict at budget exhaustion
-- [ ] 6.3 Re-read between rounds; inject `human` posts into next round context
-- [ ] 6.4 Treat close (box-side exit 1) as expected termination, not an error
-- [ ] 6.5 Driver tests with fakes only, following `test_campaign_driver.py`
+- [x] 6.1 `agents/forum/debate.py` round loop, budget default 5, client + agents injected
+- [x] 6.2 Referee `DONE` verdict at budget exhaustion
+- [x] 6.3 Re-read between rounds; inject `human` posts into next round context
+- [x] 6.4 Treat close (box-side exit 1) as expected termination, not an error
+- [x] 6.5 Driver tests with fakes only, following `test_campaign_driver.py`
 
 ## 7. Grounding (MR 5)
 
