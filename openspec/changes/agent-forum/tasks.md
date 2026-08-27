@@ -45,11 +45,11 @@ command's stderr onto the host's *stdout*.
 
 ## 5. Role agents (MR 3)
 
-- [ ] 5.1 `agents/forum/roles.py` + prompt files for Proposer / Reviewer / Referee
-- [ ] 5.2 `Hypothesis` structured output: claim, mechanism, falsifiable predictions, confidence, open risks
-- [ ] 5.3 Reviewer prompted to falsify; upvote instead of posting bare agreement
-- [ ] 5.4 Peer-posts-are-data guard in every role prompt
-- [ ] 5.5 `FunctionModel` tests — no live LLM in PR CI
+- [x] 5.1 `agents/forum/roles.py` + prompt files for Proposer / Reviewer / Referee
+- [x] 5.2 `Hypothesis` structured output: claim, mechanism, falsifiable predictions, confidence, open risks
+- [x] 5.3 Reviewer prompted to falsify; upvote instead of posting bare agreement
+- [x] 5.4 Peer-posts-are-data guard in every role prompt
+- [x] 5.5 `FunctionModel` tests — no live LLM in PR CI
 
 ## 6. Orchestrator (MR 4)
 
