@@ -89,6 +89,17 @@ class ForumSettings(BaseModel):
     default_rounds: int = 5
     """ Debate round budget when the caller does not specify one. """
 
+    max_requests_per_turn: int = 12
+    """
+    Model requests one role may make in a single turn.
+
+    A turn is a few tool calls and an answer, so this is generous. It exists to
+    bound a tool loop: a model that keeps re-calling a tool whose answer does not
+    help it will otherwise spend the whole budget and fail the debate. Kept
+    explicit rather than inheriting pydantic-ai's default of 50, so the ceiling
+    is a decision rather than a surprise.
+    """
+
 
 # Every `.env` from the filesystem root down to the cwd, nearest last so the
 # most-specific file wins. Shared between the pydantic-settings config and the

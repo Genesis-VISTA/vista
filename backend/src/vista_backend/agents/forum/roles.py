@@ -22,6 +22,7 @@ from typing import Literal, Sequence, TypeVar
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model, infer_model
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.toolsets import AgentToolset
 
 from ...config import settings
@@ -325,6 +326,10 @@ class RoleAgents:
         """
         tools = toolsets or {}
         per_role = models or {}
+        # A deliberate ceiling per turn. Without one, pydantic-ai's default of 50
+        # applies and a role that gets stuck re-calling a tool spends every
+        # request before failing — taking the whole debate with it.
+        self.limits = UsageLimits(request_limit=settings.forum.max_requests_per_turn)
         self.proposer: Agent[DebateDeps, Hypothesis] = build_agent(
             "proposer",
             Hypothesis,
@@ -354,7 +359,7 @@ class RoleAgents:
             )
         else:
             prompt += "\n\nPropose the best hypothesis you can for this topic."
-        result = await self.proposer.run(prompt, deps=deps)
+        result = await self.proposer.run(prompt, deps=deps, usage_limits=self.limits)
         return result.output
 
     async def review(self, deps: DebateDeps, thread: Thread) -> Critique:
@@ -363,7 +368,7 @@ class RoleAgents:
             "genuinely cannot — conceding is a real outcome, and inventing an "
             "objection to look rigorous is worse than agreeing."
         )
-        result = await self.reviewer.run(prompt, deps=deps)
+        result = await self.reviewer.run(prompt, deps=deps, usage_limits=self.limits)
         return result.output
 
     async def rule(self, deps: DebateDeps, thread: Thread) -> Verdict:
@@ -372,7 +377,7 @@ class RoleAgents:
             "hypothesis's standing is. Do not report agreement the thread did "
             "not reach."
         )
-        result = await self.referee.run(prompt, deps=deps)
+        result = await self.referee.run(prompt, deps=deps, usage_limits=self.limits)
         return result.output
 
 

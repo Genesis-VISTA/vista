@@ -4023,10 +4023,18 @@ button.chat-bubble.intermediate.collapsed:hover {
 /* ---------------------------------------------------------------------- */
 
 .debate-page {
+  /* `.app-content` is `height: 100vh; overflow: hidden`, so every page owns its
+     own scrolling. Without this the thread simply runs off the bottom of the
+     viewport with no way to reach it. */
+  height: 100%;
+  overflow-y: auto;
   padding: 24px 28px 64px;
-  max-width: 1180px;
-  margin: 0 auto;
   color: var(--ink);
+}
+
+.debate-page > * {
+  max-width: 1180px;
+  margin-inline: auto;
 }
 
 .debate-page__header h1 {

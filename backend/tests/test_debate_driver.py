@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vista_backend.agents.forum.debate import DebateOrchestrator
@@ -439,3 +440,92 @@ async def test_run_round_returns_a_run_the_caller_can_still_use(client, session,
     assert run.rounds_done == 1
     run = await orch.run_round(session, run, roster)
     assert run.rounds_done == 2
+
+
+# --------------------------------------------------------------------------- #
+# Running out of budget
+# --------------------------------------------------------------------------- #
+
+
+def _exhausted() -> FunctionModel:
+    """
+    A model whose run has run out of requests.
+
+    Raised directly rather than simulated with a tool loop: a fake that keeps
+    making the same tool call trips pydantic-ai's per-tool retry guard first, so
+    the test would exercise a different failure than the one it is about.
+    """
+
+    def respond(messages, info: AgentInfo) -> ModelResponse:
+        raise UsageLimitExceeded(
+            "The next request would exceed the request_limit of 12"
+        )
+
+    return FunctionModel(respond)
+
+
+def _looping_roles(**overrides) -> RoleAgents:
+    models = {
+        "proposer": scripted(HYPOTHESIS),
+        "reviewer": scripted(REFUTE),
+        "referee": scripted(VERDICT),
+    }
+    models.update(overrides)
+    return RoleAgents(models=models)
+
+
+def test_a_role_turn_carries_an_explicit_request_ceiling():
+    """
+    Inheriting pydantic-ai's default of 50 is how one stuck role spends a whole
+    debate's budget before anyone notices. The ceiling is ours to choose.
+    """
+    from vista_backend.config import settings
+
+    roles = RoleAgents()
+    assert roles.limits.request_limit == settings.forum.max_requests_per_turn
+    assert roles.limits.request_limit < 50
+
+
+@pytest.mark.anyio
+async def test_a_role_that_burns_its_budget_does_not_kill_the_debate(
+    client, session, alice
+):
+    """
+    A role stuck in a tool loop used to take the whole debate down with an
+    unhandled UsageLimitExceeded. The round is lost; the debate is not.
+    """
+    roles = _looping_roles(proposer=_exhausted())
+    orch, run = await _start(client, session, alice, roles=roles, rounds=2)
+    run = await orch.run(session, run)
+
+    assert run.status == "converged", "the referee still ruled"
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert PostKind.BLOCKED in kinds, "the thread says why the round produced nothing"
+    assert PostKind.DONE in kinds
+
+
+@pytest.mark.anyio
+async def test_the_blocked_note_says_it_is_not_a_conclusion(client, session, alice):
+    """
+    Silence from a role reads as agreement. It has to be labelled as a budget
+    limit, or the Referee weighs an absence as if it were a concession.
+    """
+    roles = _looping_roles(reviewer=_exhausted())
+    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    run = await orch.run(session, run)
+
+    posts = await debate_service.list_posts(session, run_id=run.id)
+    blocked = next(p for p in posts if p.kind == PostKind.BLOCKED)
+    assert "not a conclusion" in blocked.body
+    assert blocked.sender.startswith("vista-reviewer-")
+
+
+@pytest.mark.anyio
+async def test_a_referee_that_runs_out_leaves_no_verdict(client, session, alice):
+    """A fabricated verdict would be worse than none; the run is marked failed."""
+    roles = _looping_roles(referee=_exhausted())
+    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    run = await orch.run(session, run)
+
+    assert run.status == "failed"
+    assert run.verdict is None

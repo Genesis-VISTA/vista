@@ -23,6 +23,7 @@ import logging
 import uuid
 from typing import Awaitable, Callable
 
+from pydantic_ai.exceptions import UsageLimitExceeded
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
@@ -202,7 +203,17 @@ class DebateOrchestrator:
 
         propose_deps = _deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
-        hypothesis = await self.roles.propose(propose_deps, thread)
+        try:
+            hypothesis = await self.roles.propose(propose_deps, thread)
+        except UsageLimitExceeded as exc:
+            # The round produced nothing, but the thread should say so rather
+            # than the debate ending in a traceback nobody on the forum can see.
+            await self._blocked(session, run, roster["proposer"], index, exc)
+            await debate_service.update_debate(
+                session, run_id=run_id, rounds_done=index + 1
+            )
+            await self._checkpoint(session)
+            return await debate_service.require_debate(session, run_id)
         proposal = await self._post(
             session,
             run,
@@ -215,8 +226,17 @@ class DebateOrchestrator:
 
         review_deps = _deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
-        critique = await self.roles.review(review_deps, thread)
-        if critique.stance == "concede":
+        try:
+            critique = await self.roles.review(review_deps, thread)
+        except UsageLimitExceeded as exc:
+            # An unanswered proposal is a worse record than an answered one, but
+            # it is a true one, and the next round still has something to argue.
+            await self._blocked(session, run, roster["reviewer"], index, exc)
+            critique = None
+
+        if critique is None:
+            pass
+        elif critique.stance == "concede":
             # Agreement is a vote, not a post. Saying "I agree" as a post costs
             # every later reader a turn and adds nothing to the record.
             await self.client.vote(roster["reviewer"], run.thread_id, proposal.id)
@@ -248,7 +268,14 @@ class DebateOrchestrator:
         run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
         deps = _deps(run, run.rounds_done, roster["referee"])
-        verdict = await self.roles.rule(deps, thread)
+        try:
+            verdict = await self.roles.rule(deps, thread)
+        except UsageLimitExceeded as exc:
+            # No verdict is an honest outcome; a fabricated one is not.
+            await self._blocked(session, run, roster["referee"], None, exc)
+            await debate_service.set_status(session, run_id=run_id, status="failed")
+            await self._checkpoint(session)
+            return await debate_service.require_debate(session, run_id)
         await self._post(
             session,
             run,
@@ -312,6 +339,37 @@ class DebateOrchestrator:
         except Exception:  # noqa: BLE001 — a citation must never lose the post
             logger.warning("debate: could not stage receipts", exc_info=True)
             return None
+
+    async def _blocked(
+        self,
+        session: AsyncSession,
+        run: DebateRunTable,
+        participant: Participant,
+        round_index: int | None,
+        exc: Exception,
+    ) -> None:
+        """
+        Record on the thread that a role ran out of budget mid-turn.
+
+        `BLOCKED` is h5i's kind for exactly this: the agent could not finish, and
+        a reader needs to know that rather than inferring silence. Best effort —
+        a debate already in trouble must not also fail on its own error report.
+        """
+        try:
+            await self._post(
+                session,
+                run,
+                participant,
+                f"I could not finish this turn: {exc}. "
+                "This is a budget limit, not a conclusion — nothing here should "
+                "be read as agreement or as a finding.",
+                kind=PostKind.BLOCKED,
+                round_index=round_index,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "debate %s: could not post a BLOCKED note", run.id, exc_info=True
+            )
 
     async def _checkpoint(self, session: AsyncSession) -> None:
         """Make progress durable, if the caller gave us a way to. Never fatal."""

@@ -51,14 +51,23 @@ def build_grounding(client: ForumClient) -> Grounding:
     What a debate may look at.
 
     The knowledge-base search is left unwired here: `rag_search` needs a live MCP
-    connection and per-user metadata, which the API supplies per run. Web reads
-    are constructed but refuse themselves unless the configured tier actually
-    enforces the egress allowlist — see `WebReader`.
+    connection and per-user metadata, which the API supplies per run.
+
+    Web reads are granted only where they can actually work. `WebReader` refuses
+    itself when the configured tier does not enforce the egress allowlist, and
+    handing a model a tool that can only return a refusal is an invitation to
+    call it again — which is exactly how a role burns its whole request budget
+    on one turn and the debate dies with a usage-limit error.
     """
+    browser = WebReader(client)
+    if browser.refusal is not None:
+        logger.info("debate: web grounding is off — %s", browser.refusal)
+        browser = None
+
     return Grounding(
         skills=_read_skill_body,
         forum=client,
-        browser=WebReader(client),
+        browser=browser,
     )
 
 
