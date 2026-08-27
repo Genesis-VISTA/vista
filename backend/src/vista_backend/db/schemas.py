@@ -871,3 +871,171 @@ class CampaignStatePublic(BaseModel):
     run: CampaignRunPublic
     steps: list[CampaignStepPublic]
     jobs: list[HpcJobPublic]
+
+
+# ---------------------------------------------------------------------------
+# Agent forum (multi-agent debate)
+#
+# A debate is one h5i forum thread on a human-given topic, argued by role agents
+# (proposer / reviewer / referee) until a round budget is spent or the human
+# closes it. See docs/h5i-forum-contract.md and openspec/changes/agent-forum/.
+#
+# The forum's git store is the source of truth for what was said. These tables
+# are a *projection* of it, rebuildable from `h5i forum read --json`, and exist
+# for the things git cannot cheaply do: list a user's debates, scope them to a
+# project, and feed a change stream to the UI.
+#
+#   DebateRun         — the thread: topic, round budget, status, verdict.
+#   DebateParticipant — a role on the forum: its identity, box, and policy.
+#   DebatePost        — one post, keeping host-stamped and agent-claimed apart.
+# ---------------------------------------------------------------------------
+
+DebateStatus = Literal[
+    "setting_up",  # thread created, participants being attached
+    "debating",  # rounds in flight
+    "converged",  # round budget spent, referee posted a verdict
+    "closed",  # the human ended it early (h5i closed the thread)
+    "failed",  # the run could not continue
+]
+
+
+class DebateRunBase(SQLModel):
+    topic: str
+    """ The human's question, and the thread's title. """
+    framing: str | None = None
+    """ Any extra context the human gave; becomes the thread's first (TASK) post. """
+    thread_id: str
+    """ h5i's thread id. The join key back to the forum, which owns the real record. """
+    rounds: int = 5
+    """ Round budget. Each round is one proposal and the reviewer's answer to it. """
+    rounds_done: int = 0
+    status: A[
+        DebateStatus,
+        Field(
+            default="setting_up",
+            sa_column=Column(String, nullable=False, default="setting_up"),
+        ),
+    ]
+    verdict: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """
+    The referee's ranked hypothesis: claim, mechanism, falsifiable predictions,
+    confidence, open risks. None until the debate reaches a verdict — a debate
+    the human closes early may never have one, which is a real outcome and not
+    a failure.
+    """
+
+
+class DebateRunPublic(DebateRunBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    user_id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+
+class DebateRunTable(DebateRunBase, table=True):
+    __tablename__: str = "debate_run"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class DebateParticipantBase(SQLModel):
+    identity: str
+    """ The forum identity, e.g. `vista-proposer`. The host stamps this on every post. """
+    debate_role: str
+    """ The scientific role: proposer, reviewer, referee. VISTA's vocabulary, not h5i's. """
+    forum_role: str
+    """ h5i's role — worker, reviewer or observer. Its vocabulary is fixed and small. """
+    box_slug: str
+    box_id: str
+    """ h5i's full box id, e.g. `env/human/proposer`. """
+    policy_digest: str | None = None
+    """ The confinement this role was attached under, recorded so a reader can check it. """
+    active: bool = True
+    """ False once revoked. Its posts stay, attributed — revocation is not deletion. """
+
+
+class DebateParticipantPublic(DebateParticipantBase):
+    id: uuid.UUID
+    run_id: uuid.UUID
+
+
+class DebateParticipantTable(DebateParticipantBase, table=True):
+    __tablename__: str = "debate_participant"
+    __table_args__ = (UniqueConstraint("run_id", "identity"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
+
+
+class DebatePostBase(SQLModel):
+    post_id: str
+    """ h5i's post id. Unique within a thread and stable across reads. """
+    kind: str
+    """ PROPOSAL, RISK, FINDING, ASK, DONE, TASK, CLOSED, UPVOTE, ... """
+    body: str
+    """
+    The only agent-authored field on this row. Everything else was stamped by the
+    host. Anything rendering a post has to keep that boundary visible, which is
+    why the two are not mixed into one blob here.
+    """
+    sender: str
+    """ Host-stamped forum identity, or `human`. """
+    forum_role: str
+    """ Host-stamped role. """
+    box_id: str | None = None
+    policy_digest: str | None = None
+    origin: str | None = None
+    reply_to: str | None = None
+    ts: str
+    """ h5i's timestamp for the post, not the time we projected it. """
+    vouch_lane: str | None = None
+    """
+    `host-observed`, `engine-claimed`, or None.
+
+    A separate column on purpose: h5i never merges what it saw with what a box
+    claimed, and folding the lane into the post row would erase a distinction the
+    tool deliberately maintains. A reader is entitled to know which they have.
+    """
+    denied: str | None = None
+    """ A host-recorded refusal. Read the post as evidence, not as a contribution. """
+    votes: int = 0
+    """ Net tally, projected for display. h5i's own score applies the vote policy. """
+    round_index: int | None = None
+    """ Which debate round produced this; None for the human's and h5i's own posts. """
+
+
+class DebatePostPublic(DebatePostBase):
+    id: uuid.UUID
+    run_id: uuid.UUID
+
+
+class DebatePostTable(DebatePostBase, table=True):
+    __tablename__: str = "debate_post"
+    __table_args__ = (UniqueConstraint("run_id", "post_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
+
+
+class DebateCreate(BaseModel):
+    """Fields a user supplies to open a debate (the project comes from the URL)."""
+
+    topic: str
+    framing: str | None = None
+    rounds: int | None = None
+
+
+class DebateStatePublic(BaseModel):
+    """Full debate state for the UI: the run, who is on it, and what was said."""
+
+    run: DebateRunPublic
+    participants: list[DebateParticipantPublic]
+    posts: list[DebatePostPublic]

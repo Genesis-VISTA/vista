@@ -37,11 +37,11 @@ command's stderr onto the host's *stdout*.
 
 ## 4. Persistence (MR 2)
 
-- [ ] 4.1 `DebateRunTable` / `DebateParticipantTable` / `DebatePostTable` in `db/schemas.py`
-- [ ] 4.2 Keep `vouch` lane a distinct column — do not merge into the post row
-- [ ] 4.3 `services/debate.py` mirroring `services/campaign.py` (ValueError, not HTTP)
-- [ ] 4.4 Projection from `forum read --json`, idempotent on replay
-- [ ] 4.5 Tests on the in-memory DB fixture (`backend/tests/conftest.py`)
+- [x] 4.1 `DebateRunTable` / `DebateParticipantTable` / `DebatePostTable` in `db/schemas.py`
+- [x] 4.2 Keep `vouch` lane a distinct column — do not merge into the post row
+- [x] 4.3 `services/debate.py` mirroring `services/campaign.py` (ValueError, not HTTP)
+- [x] 4.4 Projection from `forum read --json`, idempotent on replay
+- [x] 4.5 Tests on the in-memory DB fixture (`backend/tests/conftest.py`)
 
 ## 5. Role agents (MR 3)
 

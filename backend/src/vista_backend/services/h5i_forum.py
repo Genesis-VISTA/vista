@@ -88,6 +88,16 @@ between a typo and a post that reports success and never exists.
 VOTE_KINDS: frozenset[PostKind] = frozenset({PostKind.UPVOTE, PostKind.DOWNVOTE})
 
 
+HUMAN_SENDER = "human"
+"""
+What the host stamps on its own posts.
+
+Hardcoded in h5i (`host_identity()`), and deliberately not `$H5I_AGENT`: that
+variable names an agent runtime, and reading it there would let an exported shell
+variable rename the operator.
+"""
+
+
 class ParticipantRole(StrEnum):
     """
     h5i's role vocabulary, which is fixed and small.
@@ -193,6 +203,17 @@ class Post(BaseModel):
     def agent_authored(self) -> bool:
         """False for host-generated posts (TASK, CLOSED) — nobody claimed those."""
         return self.kind not in (PostKind.TASK, PostKind.CLOSED)
+
+    @property
+    def from_human(self) -> bool:
+        """
+        True for anything the operator is responsible for.
+
+        Distinct from `agent_authored`, which asks whether *anyone* claimed the
+        text: a human's `ASK` is claimed by a person, so it is agent_authored in
+        that sense and still not an agent's work.
+        """
+        return self.sender == HUMAN_SENDER
 
 
 class ThreadHeader(BaseModel):
