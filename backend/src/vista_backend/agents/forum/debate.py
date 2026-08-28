@@ -87,11 +87,15 @@ class DebateOrchestrator:
         roles: RoleAgents | None = None,
         on_post: PostHook | None = None,
         checkpoint: Checkpoint | None = None,
+        available_jobs: list[str] | None = None,
+        available_clusters: list[str] | None = None,
     ) -> None:
         self.client = client
         self.roles = roles or RoleAgents()
         self.on_post = on_post
         self.checkpoint = checkpoint
+        self.available_jobs = available_jobs or []
+        self.available_clusters = available_clusters or []
 
     # -- setup ------------------------------------------------------------- #
 
@@ -205,7 +209,7 @@ class DebateOrchestrator:
         run_id = run.id
         index = run.rounds_done
 
-        propose_deps = _deps(run, index, roster["proposer"])
+        propose_deps = self._turn_deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
         try:
             hypothesis = await self.roles.propose(propose_deps, thread)
@@ -228,7 +232,7 @@ class DebateOrchestrator:
             deps=propose_deps,
         )
 
-        review_deps = _deps(run, index, roster["reviewer"])
+        review_deps = self._turn_deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
         try:
             critique = await self.roles.review(review_deps, thread)
@@ -271,7 +275,7 @@ class DebateOrchestrator:
         """The Referee rules on what the thread produced."""
         run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
-        deps = _deps(run, run.rounds_done, roster["referee"])
+        deps = self._turn_deps(run, run.rounds_done, roster["referee"])
         try:
             verdict = await self.roles.rule(deps, thread)
         except UsageLimitExceeded as exc:
@@ -388,6 +392,15 @@ class DebateOrchestrator:
             logger.warning(
                 "debate %s: could not post a BLOCKED note", run.id, exc_info=True
             )
+
+    def _turn_deps(
+        self, run: DebateRunTable, round_index: int, participant: Participant
+    ) -> DebateDeps:
+        """Deps for one turn, including what this debate is allowed to run."""
+        deps = _deps(run, round_index, participant)
+        deps.available_jobs = self.available_jobs
+        deps.available_clusters = self.available_clusters
+        return deps
 
     async def _checkpoint(self, session: AsyncSession) -> None:
         """Make progress durable, if the caller gave us a way to. Never fatal."""

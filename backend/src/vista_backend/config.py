@@ -89,6 +89,15 @@ class ForumSettings(BaseModel):
     default_rounds: int = 5
     """ Debate round budget when the caller does not specify one. """
 
+    max_simulations: int = 2
+    """
+    HPC jobs one debate may commission, in total.
+
+    A debate should test its sharpest prediction, not everything it wonders
+    about. Past the cap the tool refuses and says so on the thread, so the limit
+    is visible in the record rather than silently shaping the argument.
+    """
+
     max_requests_per_turn: int = 12
     """
     Model requests one role may make in a single turn.
@@ -198,6 +207,17 @@ class Settings(BaseSettings):
         "../data"
     )
     """ Directory for data such as sandbox volumes and other created files """
+
+    hpc_jobs_dir: A[ResolvedPath, Field(validation_alias="VISTA_HPC_JOBS_DIR")] = Path(
+        "../hpc_jobs"
+    )
+    """
+    The `hpc_jobs/` catalog, used to check a job exists before it is submitted.
+
+    The MCP server remains the authority on what actually runs; this is read only
+    so a debate can refuse a job name that is not there, with a message the agent
+    can act on, instead of spending a submission to find out.
+    """
 
     @property
     def knowledge_bases_dir(self) -> Path:

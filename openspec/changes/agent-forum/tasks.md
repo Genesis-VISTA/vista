@@ -92,6 +92,7 @@ command's stderr onto the host's *stdout*.
 - [x] 10.3 Hermetic tests (fake HPC + fake h5i) run in PR CI; nothing here needs a cluster
 - [x] 10.4 Monitor orphan rule exempts debate-domain runs (they never have a chat session)
 - [x] 10.5 Roster stays attached while jobs are in flight; collector reaps it afterwards
+- [x] 10.7 HPC wired live: allowlist = project skills ∩ `hpc_jobs/`, clusters from the opener's credentials, cap of 2 per debate, tool ungranted when either is empty
 - [ ] 10.6 End-to-end against a real cluster — **not run**: needs `hpc` credentials this host does not have
 
 ## 11. Close out

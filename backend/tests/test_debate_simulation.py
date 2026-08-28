@@ -28,10 +28,22 @@ from vista_backend.config import ForumSettings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import debate as debate_service
-from vista_backend.services.h5i_forum import ForumClient, ParticipantRole
+from vista_backend.services.h5i_forum import (
+    ForumClient,
+    Participant,
+    ParticipantRole,
+)
 
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
+
+PARTICIPANT = Participant(
+    identity="vista-reviewer",
+    role=ParticipantRole.REVIEWER,
+    box_slug="reviewer",
+    box_id="env/human/reviewer",
+    policy_digest="16f7e744",
+)
 
 
 class FakeHpc:
@@ -42,9 +54,13 @@ class FakeHpc:
         self.submitted: list[dict] = []
 
     async def submit(self, *, job, cluster, node_count, duration, script_args):
+        # Each submission gets its own id, as a real cluster gives one. Returning
+        # a constant made two submissions collide on `hpc_job.job_id`, which is a
+        # property of the fake rather than of anything under test.
         self.submitted.append({"job": job, "script_args": script_args})
+        n = len(self.submitted)
         return SubmittedJobInfo(
-            job_id=self.job_id,
+            job_id=self.job_id if n == 1 else f"{self.job_id}-{n}",
             cluster=cluster or "odo",
             log_path="/logs/x.out",
             output_dir="/out",
@@ -499,3 +515,272 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, a
     collect = wiring.build_debate_aware_collector(provider)
     await collect(session, job, "STATE=COMPLETED")
     assert seen == ["j7"]
+
+
+# --------------------------------------------------------------------------- #
+# What a debate is allowed to run
+# --------------------------------------------------------------------------- #
+
+
+def test_runnable_jobs_are_the_projects_own_skills(tmp_path):
+    """
+    A debate is scoped to a project, so its simulations are the project's loaded
+    skills — there is no separate allowlist to drift out of sync with what the
+    project is actually for.
+    """
+    for name in ("salt-neutronics-tbr", "salt-chemistry-md", "forge-tune"):
+        (tmp_path / name).mkdir()
+
+    assert simulation.runnable_jobs(
+        ["salt-neutronics-tbr", "salt-chemistry-md"], tmp_path
+    ) == ["salt-chemistry-md", "salt-neutronics-tbr"]
+
+
+def test_a_job_the_project_has_not_loaded_is_not_runnable(tmp_path):
+    """`forge-tune` exists in the catalog; a salt project still may not run it."""
+    for name in ("salt-neutronics-tbr", "forge-tune"):
+        (tmp_path / name).mkdir()
+    assert simulation.runnable_jobs(["salt-neutronics-tbr"], tmp_path) == [
+        "salt-neutronics-tbr"
+    ]
+
+
+def test_a_planner_skill_contributes_no_job(tmp_path):
+    """
+    `splash-planner` is a planner, not a simulation, and has no job directory —
+    so it drops out by the same rule rather than needing a special case.
+    """
+    (tmp_path / "salt-chemistry-md").mkdir()
+    assert simulation.runnable_jobs(
+        ["splash-planner", "salt-chemistry-md"], tmp_path
+    ) == ["salt-chemistry-md"]
+
+
+def test_a_project_with_no_simulation_skills_can_run_nothing(tmp_path):
+    (tmp_path / "salt-chemistry-md").mkdir()
+    assert simulation.runnable_jobs(["salt-prediction"], tmp_path) == []
+    assert simulation.runnable_jobs([], tmp_path) == []
+
+
+def test_a_missing_catalog_is_not_a_crash(tmp_path):
+    assert simulation.runnable_jobs(["salt-chemistry-md"], tmp_path / "nope") == []
+
+
+# --------------------------------------------------------------------------- #
+# Credentials decide which clusters exist
+# --------------------------------------------------------------------------- #
+
+
+class _User:
+    def __init__(self, **kw):
+        self.s3m_token = kw.get("s3m_token")
+        self.nersc_iri_token = kw.get("nersc_iri_token")
+
+
+def test_the_olcf_token_unlocks_both_olcf_machines():
+    assert simulation.clusters_for(_User(s3m_token="t")) == ["frontier", "odo"]
+
+
+def test_the_nersc_token_unlocks_perlmutter():
+    assert simulation.clusters_for(_User(nersc_iri_token="t")) == ["perlmutter"]
+
+
+def test_no_tokens_means_no_clusters():
+    """
+    Which is why the tool is not granted at all in that case: a model handed a
+    tool that can only fail keeps calling it until its request budget is gone.
+    """
+    assert simulation.clusters_for(_User()) == []
+
+
+# --------------------------------------------------------------------------- #
+# The budget
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_commissioned_count_includes_finished_jobs(client, session, alice):
+    """
+    The cap is on what a debate may spend, and a finished job still spent it —
+    counting only the open ones would let a debate submit without limit as long
+    as it waited.
+    """
+    run, participant = await _debate(client, session, alice)
+    first = await _commission(client, session, alice, run, participant, FakeHpc("a"))
+    await _commission(client, session, alice, run, participant, FakeHpc("b"))
+
+    await campaign_service.update_job(
+        session, job_id=first.job_id, result_collected=True, state="COMPLETED"
+    )
+
+    assert await open_simulations(session, debate_run_id=run.id) != []
+    assert await simulation.commissioned_count(session, debate_run_id=run.id) == 2
+
+
+@pytest.mark.anyio
+async def test_commissioned_count_is_scoped_to_one_debate(client, session, alice):
+    first, p1 = await _debate(client, session, alice)
+    await _commission(client, session, alice, first, p1, FakeHpc("a"))
+    second, _ = await _debate(client, session, alice)
+
+    assert await simulation.commissioned_count(session, debate_run_id=first.id) == 1
+    assert await simulation.commissioned_count(session, debate_run_id=second.id) == 0
+
+
+# --------------------------------------------------------------------------- #
+# The live wiring
+# --------------------------------------------------------------------------- #
+
+
+async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
+    """A debate whose project and opener are set up for `build_simulation`."""
+    from vista_backend.agents.forum import wiring
+    from vista_backend.config import settings as app_settings
+    from vista_backend.db.schemas import UserTable
+
+    for name in ("salt-neutronics-tbr", "salt-chemistry-md", "forge-tune"):
+        (tmp_path / name).mkdir(exist_ok=True)
+    monkeypatch.setattr(app_settings, "hpc_jobs_dir", tmp_path)
+
+    user = await session.get(UserTable, alice.id)
+    for field, value in tokens.items():
+        setattr(user, field, value)
+    session.add(user)
+
+    project = ProjectTable(name=f"wired-{uuid.uuid4().hex[:8]}", skills=skills)
+    session.add(project)
+    await session.flush()
+
+    run = await debate_service.create_debate(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="t",
+        thread_id="t1",
+        rounds=1,
+    )
+    # The MCP boundary is the one thing a test cannot have.
+    monkeypatch.setattr(wiring, "build_mcp_invoke", lambda user, paths: None)
+    monkeypatch.setattr(wiring, "McpHpcTools", lambda invoke: FakeHpc())
+    return wiring, run
+
+
+@pytest.mark.anyio
+async def test_the_tool_is_wired_when_the_project_and_user_allow_it(
+    session, alice, monkeypatch, tmp_path
+):
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr", "splash-planner"],
+        tokens={"s3m_token": "tok"},
+    )
+    commissioner, jobs, clusters = await wiring.build_simulation(session, run)
+
+    assert commissioner is not None
+    assert jobs == ["salt-neutronics-tbr"], "the planner skill contributes no job"
+    assert clusters == ["frontier", "odo"]
+
+
+@pytest.mark.anyio
+async def test_no_tool_without_credentials(session, alice, monkeypatch, tmp_path):
+    """Never grant a tool that can only fail — the lesson from the usage-limit bug."""
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": None, "nersc_iri_token": None},
+    )
+    commissioner, jobs, clusters = await wiring.build_simulation(session, run)
+    assert commissioner is None and jobs == [] and clusters == []
+
+
+@pytest.mark.anyio
+async def test_no_tool_when_the_project_has_no_simulation_skills(
+    session, alice, monkeypatch, tmp_path
+):
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-prediction"],
+        tokens={"s3m_token": "tok"},
+    )
+    commissioner, _, _ = await wiring.build_simulation(session, run)
+    assert commissioner is None
+
+
+@pytest.mark.anyio
+async def test_the_commissioner_refuses_a_job_outside_the_project(
+    session, alice, monkeypatch, tmp_path
+):
+    """`forge-tune` is in the catalog; a salt project still may not reach it."""
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": "tok"},
+    )
+    commissioner, _, _ = await wiring.build_simulation(session, run)
+
+    with pytest.raises(ValueError, match="not runnable in this project"):
+        await commissioner(participant=PARTICIPANT, job="forge-tune", prediction="p")
+
+
+@pytest.mark.anyio
+async def test_the_commissioner_refuses_a_cluster_without_credentials(
+    session, alice, monkeypatch, tmp_path
+):
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": "tok", "nersc_iri_token": None},
+    )
+    commissioner, _, _ = await wiring.build_simulation(session, run)
+
+    with pytest.raises(ValueError, match="no credentials for 'perlmutter'"):
+        await commissioner(
+            participant=PARTICIPANT,
+            job="salt-neutronics-tbr",
+            prediction="p",
+            cluster="perlmutter",
+        )
+
+
+@pytest.mark.anyio
+async def test_the_budget_stops_a_third_simulation(
+    session, alice, monkeypatch, tmp_path
+):
+    """Two per debate: test the sharpest prediction, not everything it wonders about."""
+    from vista_backend.config import settings as app_settings
+
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": "tok"},
+    )
+    assert app_settings.forum.max_simulations == 2
+    commissioner, _, _ = await wiring.build_simulation(session, run)
+
+    for _ in range(2):
+        await commissioner(
+            participant=PARTICIPANT, job="salt-neutronics-tbr", prediction="p"
+        )
+
+    with pytest.raises(ValueError, match="already commissioned 2 of 2"):
+        await commissioner(
+            participant=PARTICIPANT, job="salt-neutronics-tbr", prediction="p"
+        )

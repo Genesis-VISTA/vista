@@ -222,6 +222,18 @@ class DebateDeps:
     project_id: str | None = None
     knowledge_bases: list[str] = field(default_factory=list)
 
+    available_jobs: list[str] = field(default_factory=list)
+    """
+    Simulations this debate may commission, from the project's loaded skills.
+
+    Told to the role in its prompt rather than left to guess: a model inventing a
+    job name spends a turn discovering it was wrong, and the names are not
+    something it could know.
+    """
+
+    available_clusters: list[str] = field(default_factory=list)
+    """Clusters the opener has credentials for. Same reasoning."""
+
     participant: Participant | None = None
     """
     The forum identity this turn speaks as.
@@ -273,6 +285,13 @@ def _situation(deps: DebateDeps, thread: Thread) -> str:
     ]
     if deps.framing:
         header.append(f"\nThe human added: {deps.framing}")
+
+    if deps.available_jobs:
+        header.append(
+            f"\nSimulations you may commission: {', '.join(deps.available_jobs)}"
+            f" — on {' or '.join(deps.available_clusters)}."
+            " Use one only to settle a prediction argument cannot."
+        )
 
     transcript = render_transcript(thread)
     if transcript:

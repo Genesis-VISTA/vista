@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, Protocol
 
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -48,6 +49,59 @@ DEBATE_DOMAIN = "debate"
 Also the flag the monitor's orphan rule reads: a debate campaign legitimately has
 no chat session, and without this it would be abandoned on its first poll.
 """
+
+
+# Which cluster each backend credential unlocks. `s3m_token` is the generic OLCF
+# token and covers both OLCF machines; NERSC is a separate credential. Mirrors
+# `submit_job_mcp.configured_clusters`, and the two must not drift — a debate
+# that offers a cluster the user cannot reach wastes a submission.
+CLUSTER_CREDENTIALS: dict[str, tuple[str, ...]] = {
+    "odo": ("s3m_token",),
+    "frontier": ("s3m_token",),
+    "perlmutter": ("nersc_iri_token",),
+}
+
+
+def clusters_for(user: Any) -> list[str]:
+    """The clusters this user actually has credentials for."""
+    return sorted(
+        cluster
+        for cluster, fields in CLUSTER_CREDENTIALS.items()
+        if any(getattr(user, field, None) for field in fields)
+    )
+
+
+def runnable_jobs(project_skills: list[str], catalog: Path) -> list[str]:
+    """
+    The jobs a debate in this project may submit.
+
+    A debate is scoped to a project, so its simulations are the project's own
+    loaded skills — no separate allowlist to keep in sync with what the project
+    is actually for. A simulation skill is bound to the job of the same name (the
+    convention `campaign.yaml` also encodes as `skill: x, job: x`), so a skill
+    with no matching job directory contributes nothing. That is how a planner
+    skill like `splash-planner` stays out of this list without special-casing.
+    """
+    if not catalog.is_dir():
+        return []
+    available = {p.name for p in catalog.iterdir() if p.is_dir()}
+    return sorted(set(project_skills) & available)
+
+
+async def commissioned_count(session: AsyncSession, *, debate_run_id: uuid.UUID) -> int:
+    """
+    How many jobs this debate has commissioned, finished or not.
+
+    Counts every one, not just the ones still running: the cap is on how much a
+    debate may spend, and a job that already completed still spent it.
+    """
+    runs = await campaign_service.list_campaigns(session)
+    wanted = str(debate_run_id)
+    return sum(
+        1
+        for run in runs
+        if run.domain == DEBATE_DOMAIN and run.spec.get("debate_run_id") == wanted
+    )
 
 
 class SimulationCommissioner(Protocol):
