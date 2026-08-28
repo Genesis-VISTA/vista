@@ -195,7 +195,7 @@ async def test_the_tool_reports_a_refusal_instead_of_failing_the_turn(tmp_path):
     deps = DebateDeps(topic="t", participant=PARTICIPANT)
     out = await _call(tool, deps, url="http://example.com/")
     assert "disabled here" in out
-    assert deps.receipts == [], "a refused fetch produces no citation"
+    assert deps.tool_calls == [], "a refused fetch produces no citation"
 
 
 async def _call(tool, deps, **kwargs):
@@ -360,3 +360,85 @@ def _empty_thread():
             "vouch": [],
         }
     )
+
+
+# --------------------------------------------------------------------------- #
+# Provenance
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_every_tool_records_that_it_was_used(tmp_path):
+    """
+    Without this, a post that consulted the corpus and a post that did not look
+    identical on the thread — which is the wrong property for a system whose
+    output is meant to be checkable.
+    """
+    from vista_backend.agents.forum.roles import DebateDeps
+
+    toolset = build_toolset(
+        "proposer",
+        Grounding(rag=_rag, skills=_skill, uploads=_upload),
+    )
+    assert toolset is not None
+    deps = DebateDeps(topic="t", knowledge_bases=["msds"], participant=PARTICIPANT)
+
+    await _call(toolset.tools["search_literature"], deps, query="knee temperature")
+    await _call(toolset.tools["read_domain_guidance"], deps, skill="salt-chemistry")
+    await _call(toolset.tools["read_attached_paper"], deps, name="cantor2019.pdf")
+
+    assert [(c.tool, c.detail) for c in deps.tool_calls] == [
+        ("search_literature", "knee temperature — msds"),
+        ("read_domain_guidance", "salt-chemistry"),
+        ("read_attached_paper", "cantor2019.pdf"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_web_read_records_both_the_call_and_its_receipt(tmp_path, monkeypatch):
+    """The name is for the reader; the receipt is what makes the citation checkable."""
+    import json as _json
+
+    from vista_backend.agents.forum.roles import DebateDeps
+
+    config = _settings(tmp_path, egress=["example.com"], box_isolation="container")
+    client = ForumClient(config)
+
+    async def fake_run(*args, check=True):
+        return (
+            0,
+            _json.dumps({"ok": True, "url": "http://example.com/", "text": "hi"}),
+            "",
+        )
+
+    monkeypatch.setattr(client, "_run", fake_run)
+    toolset = build_toolset("proposer", Grounding(browser=WebReader(client, config)))
+    assert toolset is not None
+    deps = DebateDeps(topic="t", participant=PARTICIPANT)
+
+    await _call(toolset.tools["read_web_page"], deps, url="http://example.com/")
+
+    (call,) = deps.tool_calls
+    assert call.tool == "read_web_page"
+    assert call.detail == "http://example.com/"
+    assert call.receipt and _json.loads(call.receipt)["ok"] is True
+
+
+def test_grants_are_recorded_per_role():
+    """
+    "Used no tools" and "had no tools" look the same on a thread and mean very
+    different things; only the second is a configuration problem.
+    """
+    from vista_backend.agents.forum.roles import RoleAgents
+
+    roles = RoleAgents(toolsets=build_toolsets(Grounding(rag=_rag, skills=_skill)))
+    assert "read_domain_guidance" in roles.granted["proposer"]
+    assert "search_literature" in roles.granted["reviewer"]
+    assert roles.granted["referee"] == [], "the referee rules; it does not gather"
+
+
+def test_a_debate_with_no_sources_grants_nothing():
+    from vista_backend.agents.forum.roles import RoleAgents
+
+    roles = RoleAgents(toolsets=build_toolsets(Grounding()))
+    assert roles.granted == {"proposer": [], "reviewer": [], "referee": []}

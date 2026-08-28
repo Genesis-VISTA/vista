@@ -47,7 +47,12 @@ export type DebateParticipant = {
   box_id: string;
   policy_digest: string | null;
   active: boolean;
+  /** What this role was allowed to use. Empty means it had nothing to reach for. */
+  granted_tools: string[];
 };
+
+/** One tool an agent called while producing a post. */
+export type ToolUse = { tool: string; detail: string };
 
 export type DebatePost = {
   id: string;
@@ -67,6 +72,14 @@ export type DebatePost = {
   denied: string | null;
   votes: number;
   round_index: number | null;
+  /**
+   * The tools the agent called for this post.
+   *
+   * Empty on an agent's post is meaningful, not missing: it says the claim rests
+   * on the model alone. The UI has to show that, or a grounded claim and an
+   * asserted one look the same.
+   */
+  tools_used: ToolUse[];
 };
 
 export type Hypothesis = {

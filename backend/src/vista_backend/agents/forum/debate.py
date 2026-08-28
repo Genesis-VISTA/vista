@@ -129,7 +129,11 @@ class DebateOrchestrator:
                 box_slug=slug, identity=f"vista-{slug}", role=forum_role
             )
             await debate_service.add_participant(
-                session, run_id=run.id, participant=participant, debate_role=role
+                session,
+                run_id=run.id,
+                participant=participant,
+                debate_role=role,
+                granted_tools=self.roles.granted.get(role, []),
             )
 
         return await debate_service.set_status(
@@ -315,6 +319,19 @@ class DebateOrchestrator:
             attachment=attachment,
         )
         await self._sync_thread(session, run, round_index=round_index)
+        if deps is not None:
+            # After the projection: the row has to exist before provenance can be
+            # written onto it. The forum knows what was said; how the agent got
+            # there is ours to record.
+            await debate_service.record_post_tools(
+                session,
+                run_id=run.id,
+                post_id=post.id,
+                tools=[
+                    {"tool": call.tool, "detail": call.detail}
+                    for call in deps.tool_calls
+                ],
+            )
         if self.on_post is not None:
             await self.on_post(post)
         return post
@@ -329,9 +346,10 @@ class DebateOrchestrator:
         A refused fetch has a receipt too, and it is kept for the same reason a
         successful one is: what the debate could not reach is part of the record.
         """
-        if deps is None or not deps.receipts:
+        receipts = [c.receipt for c in deps.tool_calls if c.receipt] if deps else []
+        if not receipts:
             return None
-        body = "\n\n".join(receipt for _, receipt in deps.receipts)
+        body = "\n\n".join(receipts)
         try:
             return await self.client.stage_attachment(
                 participant, "citations.json", body

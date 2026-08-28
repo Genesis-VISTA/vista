@@ -960,6 +960,14 @@ class DebateParticipantBase(SQLModel):
     """ The confinement this role was attached under, recorded so a reader can check it. """
     active: bool = True
     """ False once revoked. Its posts stay, attributed — revocation is not deletion. """
+    granted_tools: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
+    """
+    The tools this role was allowed to use.
+
+    Recorded because "this post used no tools" and "this role had no tools" look
+    identical on a thread and mean very different things — the second is a
+    configuration problem, and without this there is no way to see it.
+    """
 
 
 class DebateParticipantPublic(DebateParticipantBase):
@@ -1010,6 +1018,16 @@ class DebatePostBase(SQLModel):
     """ Net tally, projected for display. h5i's own score applies the vote policy. """
     round_index: int | None = None
     """ Which debate round produced this; None for the human's and h5i's own posts. """
+    tools_used: A[
+        list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    """
+    The tools the agent called while producing this post: `{tool, detail}` each.
+
+    This is what separates a grounded claim from an asserted one. An empty list
+    on an agent's post is meaningful — it says the claim rests on the model
+    alone.
+    """
 
 
 class DebatePostPublic(DebatePostBase):

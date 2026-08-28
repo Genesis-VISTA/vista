@@ -4414,3 +4414,52 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 0.85rem;
   font-weight: 500;
 }
+
+/* Provenance: what an agent consulted before it wrote a post. */
+
+.debate-post__grounding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.debate-post__grounding--none {
+  font-style: italic;
+}
+
+.debate-post__grounding-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.debate-post__tool {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  background: var(--panel);
+  font-family: "Roboto Mono", monospace;
+  color: var(--ink);
+}
+
+.debate-post__tool-detail {
+  font-family: Roboto, sans-serif;
+  color: var(--muted);
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debate-roster__tools {
+  margin-left: 8px;
+  font-style: italic;
+}

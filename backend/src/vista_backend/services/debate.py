@@ -184,6 +184,7 @@ async def add_participant(
     run_id: uuid.UUID,
     participant: Participant,
     debate_role: str,
+    granted_tools: list[str] | None = None,
 ) -> DebateParticipantTable:
     """
     Record a role that has been attached to the forum.
@@ -201,6 +202,7 @@ async def add_participant(
         box_id=participant.box_id,
         policy_digest=participant.policy_digest,
         active=True,
+        granted_tools=granted_tools or [],
     )
     session.add(row)
     await session.flush()
@@ -259,6 +261,37 @@ async def list_posts(
         stmt = stmt.where(col(DebatePostTable.kind).not_in(("UPVOTE", "DOWNVOTE")))
     stmt = stmt.order_by(col(DebatePostTable.ts), col(DebatePostTable.post_id))
     return list(await session.exec(stmt))
+
+
+async def record_post_tools(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    post_id: str,
+    tools: list[dict[str, Any]],
+) -> None:
+    """
+    Attach tool provenance to a post the projection already created.
+
+    Separate from `project_thread` because the forum does not carry it: h5i knows
+    what was said, not how the agent arrived at it. That half of the record is
+    ours, and it is written here rather than inferred later.
+    """
+    if not tools:
+        return
+    row = (
+        await session.exec(
+            select(DebatePostTable).where(
+                DebatePostTable.run_id == run_id,
+                DebatePostTable.post_id == post_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return
+    row.tools_used = tools
+    session.add(row)
+    await session.flush()
 
 
 async def project_thread(

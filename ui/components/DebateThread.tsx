@@ -90,6 +90,40 @@ function Lane({ post }: { post: DebatePost }) {
   );
 }
 
+/**
+ * What the agent consulted before writing this.
+ *
+ * Rendered on every agent post including the empty case, because "used nothing"
+ * is the fact a reader most needs and the one that is invisible by default: a
+ * claim grounded in the corpus and a claim from the model alone are otherwise
+ * indistinguishable.
+ */
+function Grounded({ post }: { post: DebatePost }) {
+  const isHuman = post.sender === "human";
+  const machineWritten = post.kind === "TASK" || post.kind === "CLOSED";
+  if (isHuman || machineWritten) return null;
+
+  if (post.tools_used.length === 0) {
+    return (
+      <p className="debate-post__grounding debate-post__grounding--none">
+        No sources consulted — this rests on the model alone.
+      </p>
+    );
+  }
+
+  return (
+    <p className="debate-post__grounding">
+      <span className="debate-post__grounding-label">Consulted</span>
+      {post.tools_used.map((use, i) => (
+        <span key={i} className="debate-post__tool" title={use.detail}>
+          {use.tool}
+          <span className="debate-post__tool-detail">{use.detail}</span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function DebatePostCard({
   post,
   repliedTo,
@@ -123,6 +157,8 @@ export function DebatePostCard({
       <div className="debate-post__body">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.body}</ReactMarkdown>
       </div>
+
+      <Grounded post={post} />
     </article>
   );
 }

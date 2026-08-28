@@ -529,3 +529,86 @@ async def test_a_referee_that_runs_out_leaves_no_verdict(client, session, alice)
 
     assert run.status == "failed"
     assert run.verdict is None
+
+
+# --------------------------------------------------------------------------- #
+# Provenance reaching the record
+# --------------------------------------------------------------------------- #
+
+
+def _tool_using_proposer() -> FunctionModel:
+    """Consults a skill once, then answers."""
+    state = {"done": False}
+
+    def respond(messages, info: AgentInfo) -> ModelResponse:
+        if not state["done"]:
+            state["done"] = True
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("read_domain_guidance", {"skill": "salt-chemistry"})
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
+        )
+
+    return FunctionModel(respond)
+
+
+@pytest.mark.anyio
+async def test_a_posts_provenance_reaches_the_record(client, session, alice):
+    """
+    The whole point: a reader can tell which claims were grounded. The forum
+    carries what was said; how the agent got there is recorded on our side.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
+
+    async def skill(name):
+        return "salt chemistry says the knee is structural"
+
+    roles = RoleAgents(
+        models={
+            "proposer": _tool_using_proposer(),
+            "reviewer": scripted(REFUTE),
+            "referee": scripted(VERDICT),
+        },
+        toolsets=build_toolsets(Grounding(skills=skill)),
+    )
+    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    run = await orch.run(session, run)
+
+    posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
+    proposal = posts[PostKind.PROPOSAL]
+    assert proposal.tools_used == [
+        {"tool": "read_domain_guidance", "detail": "salt-chemistry"}
+    ]
+
+    # The Reviewer answered from the thread alone, and the record says so rather
+    # than leaving it ambiguous.
+    assert posts[PostKind.RISK].tools_used == []
+
+
+@pytest.mark.anyio
+async def test_each_role_records_what_it_was_allowed_to_use(client, session, alice):
+    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
+
+    async def skill(name):
+        return "body"
+
+    roles = RoleAgents(
+        models={
+            "proposer": scripted(HYPOTHESIS),
+            "reviewer": scripted(REFUTE),
+            "referee": scripted(VERDICT),
+        },
+        toolsets=build_toolsets(Grounding(skills=skill)),
+    )
+    _, run = await _start(client, session, alice, roles=roles, rounds=1)
+
+    by_role = {
+        r.debate_role: r.granted_tools
+        for r in await debate_service.list_participants(session, run_id=run.id)
+    }
+    assert by_role["proposer"] == ["read_domain_guidance"]
+    assert by_role["reviewer"] == []
+    assert by_role["referee"] == []

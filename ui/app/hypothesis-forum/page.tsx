@@ -314,6 +314,11 @@ function DebatesPage() {
                     {!participant.active && (
                       <span className="debate-roster__revoked">revoked</span>
                     )}
+                    <span className="debate-roster__tools">
+                      {participant.granted_tools.length > 0
+                        ? `may use: ${participant.granted_tools.join(", ")}`
+                        : "no tools granted"}
+                    </span>
                   </li>
                 ))}
               </ul>

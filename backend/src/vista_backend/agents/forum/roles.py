@@ -185,6 +185,27 @@ class Verdict(BaseModel):
 
 
 @dataclass
+class ToolCall:
+    """
+    One tool a role reached for during a turn.
+
+    Recorded so a reader can tell a grounded claim from an asserted one. Without
+    it a post that consulted the corpus and a post that did not look identical,
+    which is the wrong thing for a system whose output is meant to be checkable.
+    """
+
+    tool: str
+    detail: str
+    """Short and human-readable: the query, the skill name, the URL."""
+
+    receipt: str | None = None
+    """
+    The full record, when there is one worth attaching — a fetch's confinement,
+    a job's report. Attached to the post; `detail` is what the UI shows.
+    """
+
+
+@dataclass
 class DebateDeps:
     """
     Injected context for one role's turn.
@@ -209,13 +230,13 @@ class DebateDeps:
     is confined by the same policy the role's posts are stamped with.
     """
 
-    receipts: list[tuple[str, str]] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     """
-    `(url, receipt)` for every fetch this turn made, appended by the tools.
+    Every tool this turn used, appended by the tools themselves.
 
-    The orchestrator drains it after the run and attaches it to the post, which
-    is what makes a citation checkable: the fetch that produced it is in the
-    record, and so is a refusal.
+    The orchestrator drains it onto the post: the names become the post's
+    provenance, and any receipts become its attachment. A turn that used nothing
+    leaves an empty list, and that absence is itself the useful signal.
     """
 
 
@@ -326,6 +347,18 @@ class RoleAgents:
         """
         tools = toolsets or {}
         per_role = models or {}
+
+        # What each role *may* use. Recorded because "this post used no tools"
+        # and "this role had no tools" are different facts, and only the second
+        # one is a configuration problem.
+        self.granted: dict[DebateRole, list[str]] = {
+            role: sorted(
+                name
+                for toolset in tools.get(role, ())
+                for name in getattr(toolset, "tools", {})
+            )
+            for role in ("proposer", "reviewer", "referee")
+        }
         # A deliberate ceiling per turn. Without one, pydantic-ai's default of 50
         # applies and a role that gets stuck re-calling a tool spends every
         # request before failing — taking the whole debate with it.
@@ -383,6 +416,7 @@ class RoleAgents:
 
 __all__ = [
     "Critique",
+    "ToolCall",
     "DebateDeps",
     "DebateRole",
     "Hypothesis",

@@ -30,7 +30,7 @@ from pydantic_ai.toolsets import FunctionToolset
 
 from ...config import ForumSettings, settings
 from ...services.h5i_forum import ForumClient, Participant
-from .roles import DebateDeps, DebateRole, Toolsets
+from .roles import DebateDeps, DebateRole, ToolCall, Toolsets
 from .simulation import SimulationCommissioner
 
 
@@ -237,10 +237,11 @@ def build_toolset(
             slug = kb_slug or (
                 ctx.deps.knowledge_bases[0] if ctx.deps.knowledge_bases else None
             )
-            return fence(
-                f"knowledge base {slug or 'default'}",
-                await grounding.rag(query, slug, 5),
+            passages = await grounding.rag(query, slug, 5)
+            ctx.deps.tool_calls.append(
+                ToolCall("search_literature", f"{query} — {slug or 'default'}")
             )
+            return fence(f"knowledge base {slug or 'default'}", passages)
 
         toolset.add_function(search_literature)
         granted = True
@@ -253,7 +254,9 @@ def build_toolset(
             established treatment of a system before proposing about it.
             """
             assert grounding.skills is not None
-            return fence(f"skill {skill}", await grounding.skills(skill))
+            body = await grounding.skills(skill)
+            ctx.deps.tool_calls.append(ToolCall("read_domain_guidance", skill))
+            return fence(f"skill {skill}", body)
 
         toolset.add_function(read_domain_guidance)
         granted = True
@@ -268,7 +271,11 @@ def build_toolset(
             no name to list what is attached.
             """
             assert grounding.uploads is not None
-            return fence(f"attachment {name or 'index'}", await grounding.uploads(name))
+            body = await grounding.uploads(name)
+            ctx.deps.tool_calls.append(
+                ToolCall("read_attached_paper", name or "(index)")
+            )
+            return fence(f"attachment {name or 'index'}", body)
 
         toolset.add_function(read_attached_paper)
         granted = True
@@ -290,7 +297,7 @@ def build_toolset(
                 text, receipt = await grounding.browser.read(ctx.deps.participant, url)
             except PermissionError as exc:
                 return f"Web reads are disabled here: {exc}"
-            ctx.deps.receipts.append((url, receipt))
+            ctx.deps.tool_calls.append(ToolCall("read_web_page", url, receipt=receipt))
             return fence(url, text)
 
         toolset.add_function(read_web_page)
@@ -327,6 +334,9 @@ def build_toolset(
                 )
             except Exception as exc:  # noqa: BLE001 — a refused job is an answer
                 return f"The simulation could not be started: {exc}"
+            ctx.deps.tool_calls.append(
+                ToolCall("commission_simulation", f"{job} → {prediction}")
+            )
             return (
                 f"Submitted {job} as job {job_id} to test “{prediction}”. "
                 "The result will be posted to this thread when it finishes; do "
@@ -344,9 +354,9 @@ def build_toolset(
             already argued and rejected is not proposed again as if it were new.
             """
             assert grounding.forum is not None
-            return fence(
-                "prior debates", await _summarise_prior(grounding.forum, about)
-            )
+            found = await _summarise_prior(grounding.forum, about)
+            ctx.deps.tool_calls.append(ToolCall("prior_debates", about))
+            return fence("prior debates", found)
 
         toolset.add_function(prior_debates)
         granted = True
