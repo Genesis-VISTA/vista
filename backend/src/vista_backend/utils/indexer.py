@@ -358,8 +358,8 @@ async def index_publications(
 ) -> list[dict[str, Any]]:
     """
     Index a list of PDFs into the rag_db at `rag_db_path`. PDFs are
-    resolved against `pdfs_dir` (basenames only — `..` and `/` are
-    stripped). Returns a list of result dicts shaped like
+    resolved against `pdfs_dir` (relative paths allowed; `..` is rejected).
+    Returns a list of result dicts shaped like
     `TextRAG.index_single_pdf`:
 
         {
@@ -451,14 +451,21 @@ async def index_publications(
             "deployment/model name when the explicit env var is unset.",
         )
 
-    # Defense-in-depth: filenames are basenames, no path traversal.
-    cleaned = [
-        Path(f).name for f in filenames if f and Path(f).name not in ("", ".", "..")
-    ]
+    # Defense-in-depth: paths must stay under pdfs_dir (no traversal).
+    pdfs_dir_p = Path(pdfs_dir).resolve()
+    cleaned: list[str] = []
+    for f in filenames:
+        if not f:
+            continue
+        rel = Path(f)
+        if ".." in rel.parts or rel.name in ("", ".", ".."):
+            continue
+        pdf_path = (pdfs_dir_p / rel).resolve()
+        if not pdf_path.is_relative_to(pdfs_dir_p):
+            continue
+        cleaned.append(str(rel).replace("\\", "/"))
     if not cleaned:
         return []
-
-    pdfs_dir_p = Path(pdfs_dir).resolve()
     rag_db_p = Path(rag_db_path).resolve()
     rag_db_p.mkdir(parents=True, exist_ok=True)
 
