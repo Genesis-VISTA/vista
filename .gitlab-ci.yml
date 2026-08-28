@@ -2,7 +2,8 @@
 #
 # Stages:
 #   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
-#   test  — pytest (backend + vista_mcp_server + dev_mcp_server)
+#   test  — pytest (backend + vista_mcp_server + dev_mcp_server); each job
+#           publishes a JUnit XML report so pipelines/MRs show per-test results
 #
 # Python jobs use the official uv image and let uv manage the Python 3.14 install.
 # Node jobs use node:22-slim. All jobs run in parallel within each stage.
@@ -121,6 +122,12 @@ backend:test:
     - uv sync --frozen --dev
     # Hermetic PR CI: exclude live / real-HPC / microsandbox-marked tests
     - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
+      --junitxml=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: backend/junit.xml
+    expire_in: 1 week
 
 # ─── vista_mcp_server ───────────────────────────────────────────────────────
 
@@ -143,6 +150,12 @@ vista-mcp:test:
     # access amsc-isro-toolkit; hermetic tests use FakeIriClient / dry-run.
     - uv sync --frozen --extra dev
     - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
+      --junitxml=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: mcp_servers/vista_mcp_server/junit.xml
+    expire_in: 1 week
 
 # ─── dev_mcp_server ─────────────────────────────────────────────────────────
 
@@ -167,6 +180,12 @@ dev-mcp:test:
     # Microsandbox/container tests are marked `sandbox` and excluded here (no
     # docker/podman on the runner); the remaining unit tests are hermetic.
     - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
+      --junitxml=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: mcp_servers/dev_mcp_server/junit.xml
+    expire_in: 1 week
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
