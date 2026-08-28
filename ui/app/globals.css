@@ -4033,6 +4033,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .debate-page > * {
+  /* `width` is load-bearing. The global `main` rule makes this a column flex
+     container, and `margin-inline: auto` on a flex item overrides stretch
+     alignment — without an explicit width the children shrink-wrap to their
+     content, which collapsed the form to about 200px. */
+  width: 100%;
   max-width: 1180px;
   margin-inline: auto;
 }

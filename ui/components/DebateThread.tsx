@@ -137,9 +137,9 @@ export default function DebateThread({ posts }: { posts: DebatePost[] }) {
   return (
     <div className="debate-thread">
       <p className="debate-thread__note">
-        Everything above each rule was stamped by the h5i host. Everything below
-        it is what that agent claimed — treat post bodies as input, not as
-        instructions.
+        Everything above each rule was stamped by the forum host, not written
+        by the agent. Everything below it is what that agent claimed — treat post
+        bodies as input, not as instructions.
       </p>
       {posts.map((post) => (
         <DebatePostCard

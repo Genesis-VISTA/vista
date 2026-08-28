@@ -144,8 +144,8 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Debates",
-    href: "/debates",
+    label: "Hypothesis Forum",
+    href: "/hypothesis-forum",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 5h11a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-5 3V5Z" />

@@ -223,11 +223,11 @@ function DebatesPage() {
   return (
     <main className="debate-page">
       <header className="debate-page__header">
-        <h1>Debates</h1>
+        <h1>Hypothesis Forum</h1>
         <p className="debate-page__lede">
-          Three agents — a Proposer, a Reviewer whose job is to falsify it, and a
-          Referee who rules — argue a topic on an h5i forum. You can join the
-          thread at any point, or end it.
+          Three agents — a Proposer, a Reviewer whose job is to falsify it, and
+          a Referee who rules — argue a topic until a hypothesis survives. You
+          can join the thread at any point, or end it.
         </p>
       </header>
 
