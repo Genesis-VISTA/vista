@@ -353,8 +353,14 @@ async def project_thread(
             # and h5i's own bookkeeping happen alongside it, not inside it, so
             # stamping them with a round would credit the debate with words it
             # did not produce.
+            # A round is our agents' work. The operator's interjections, h5i's
+            # own bookkeeping, and anything a peer pushed over the remote all
+            # happen alongside it rather than inside it.
             round_index=(
-                None if (post.from_human or not post.agent_authored) else round_index
+                round_index
+                if (thread.is_observed(post) and not post.claims_human)
+                and post.agent_authored
+                else None
             ),
         )
         session.add(row)

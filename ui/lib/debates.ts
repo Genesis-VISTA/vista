@@ -51,6 +51,30 @@ export type DebateParticipant = {
   granted_tools: string[];
 };
 
+/**
+ * How much the host actually knows about where a post came from.
+ *
+ * Only `host-observed` means this host watched it happen. On the other two the
+ * `sender`, `forum_role` and `origin` are whatever the *remote* host stamped —
+ * that peer's account of itself, unsigned, and not proof of anything.
+ */
+export type VouchLane = "host-observed" | "peer-claimed" | "unattributed";
+
+export function isObserved(post: DebatePost): boolean {
+  return post.vouch_lane === "host-observed";
+}
+
+/**
+ * The operator, decided by the lane and not by the sender string.
+ *
+ * Every h5i host stamps its own operator's posts as `human`, so on a shared
+ * forum an external participant's comment arrives as `human` too. Checking the
+ * name alone would present a stranger as the person who owns the thread.
+ */
+export function isOperator(post: DebatePost): boolean {
+  return post.sender === "human" && isObserved(post);
+}
+
 /** One tool an agent called while producing a post. */
 export type ToolUse = { tool: string; detail: string };
 
@@ -175,10 +199,15 @@ export function isActive(status: DebateStatus): boolean {
  * The scientific role behind a forum identity (`vista-proposer-1a2b` → proposer).
  *
  * h5i's own role vocabulary is only worker/reviewer/observer, so the meaningful
- * role travels in the identity — which the host also stamps, so reading it here
- * is reading host-stamped data, not an agent's claim about itself.
+ * role travels in the identity. That is host-stamped data only for a post this
+ * host observed; for anything that arrived over a remote it is the peer's own
+ * claim, so this returns null there rather than dressing it as a role.
  */
-export function debateRoleOf(sender: string): string | null {
-  const match = /^vista-(proposer|reviewer|referee)\b/.exec(sender);
+export function debateRoleOf(post: DebatePost): string | null {
+  // Only for posts this host observed. The identity travels in the sender name,
+  // which a remote peer controls completely — so on anything else this would
+  // render an outsider with one of our role badges.
+  if (!isObserved(post)) return null;
+  const match = /^vista-(proposer|reviewer|referee)\b/.exec(post.sender);
   return match ? match[1] : null;
 }

@@ -4463,3 +4463,30 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-left: 8px;
   font-style: italic;
 }
+
+/* A post that arrived over the remote: its identity is claimed, not observed. */
+
+.debate-post--claimed {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--panel-2),
+    var(--panel-2) 12px,
+    var(--panel) 12px,
+    var(--panel) 24px
+  );
+}
+
+.debate-post__unverified {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__lane--claimed {
+  color: var(--brand-2);
+}

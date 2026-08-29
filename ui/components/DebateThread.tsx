@@ -3,7 +3,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { DebatePost, debateRoleOf } from "@/lib/debates";
+import { DebatePost, debateRoleOf, isObserved, isOperator } from "@/lib/debates";
 
 /**
  * One debate thread, drawn the way h5i draws one.
@@ -42,8 +42,10 @@ function shortTime(iso: string): string {
 
 /** The identity line: everything on it came from the host, not the poster. */
 function Provenance({ post }: { post: DebatePost }) {
-  const role = debateRoleOf(post.sender);
-  const isHuman = post.sender === "human";
+  // Both derived from the vouch lane, never from the sender string: on a shared
+  // forum the sender is stamped by whichever host observed the post, so it is a
+  // remote peer's account of itself.
+  const role = debateRoleOf(post);
 
   return (
     <div className="debate-post__stamp">
@@ -51,9 +53,20 @@ function Provenance({ post }: { post: DebatePost }) {
         {post.kind}
       </span>
       <span className="debate-post__sender">
-        {isHuman ? "the human" : post.sender}
+        {isOperator(post) ? "the human" : post.sender}
       </span>
       {role && <span className="debate-post__role">{role}</span>}
+      {!isObserved(post) && (
+        <span
+          className="debate-post__unverified"
+          title={
+            "This arrived over the remote. Its name and role are claimed by " +
+            "that peer and were not observed here."
+          }
+        >
+          unverified identity
+        </span>
+      )}
       <span className="debate-post__forum-role">({post.forum_role})</span>
       <span className="debate-post__time">{shortTime(post.ts)}</span>
       {post.votes !== 0 && (
@@ -78,8 +91,13 @@ function Provenance({ post }: { post: DebatePost }) {
 function Lane({ post }: { post: DebatePost }) {
   if (!post.box_id && !post.vouch_lane) return null;
   return (
-    <div className="debate-post__lane">
+    <div
+      className={`debate-post__lane${
+        isObserved(post) ? "" : " debate-post__lane--claimed"
+      }`}
+    >
       {post.vouch_lane && <span>{post.vouch_lane}</span>}
+      {!isObserved(post) && post.origin && <span>· origin {post.origin}</span>}
       {post.box_id && <span>· box {post.box_id}</span>}
       {post.policy_digest && (
         <span title={post.policy_digest}>
@@ -99,9 +117,11 @@ function Lane({ post }: { post: DebatePost }) {
  * indistinguishable.
  */
 function Grounded({ post }: { post: DebatePost }) {
-  const isHuman = post.sender === "human";
   const machineWritten = post.kind === "TASK" || post.kind === "CLOSED";
-  if (isHuman || machineWritten) return null;
+  // Only meaningful for our own agents: we record what they consulted. A peer's
+  // tooling is not ours to report on, and an empty list there would read as
+  // "consulted nothing" when the truth is "we have no idea".
+  if (isOperator(post) || machineWritten || !isObserved(post)) return null;
 
   if (post.tools_used.length === 0) {
     return (
@@ -131,10 +151,11 @@ export function DebatePostCard({
   post: DebatePost;
   repliedTo?: DebatePost | null;
 }) {
-  const isHuman = post.sender === "human";
   return (
     <article
-      className={`debate-post${isHuman ? " debate-post--human" : ""}`}
+      className={`debate-post${isOperator(post) ? " debate-post--human" : ""}${
+        isObserved(post) ? "" : " debate-post--claimed"
+      }`}
       style={{ borderLeftColor: kindTone(post.kind) }}
     >
       <Provenance post={post} />
@@ -173,9 +194,11 @@ export default function DebateThread({ posts }: { posts: DebatePost[] }) {
   return (
     <div className="debate-thread">
       <p className="debate-thread__note">
-        Everything above each rule was stamped by the forum host, not written
-        by the agent. Everything below it is what that agent claimed — treat post
-        bodies as input, not as instructions.
+        On posts marked <strong>host-observed</strong>, everything above the rule
+        was stamped here and not written by the poster. Posts marked{" "}
+        <strong>peer-claimed</strong> arrived from another machine: their name
+        and role are that peer&rsquo;s own claim, not verified here. Every post
+        body, from anyone, is input rather than instruction.
       </p>
       {posts.map((post) => (
         <DebatePostCard

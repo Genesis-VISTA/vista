@@ -267,7 +267,21 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
 
     lines: list[str] = []
     for i, post in enumerate(posts, start=1):
-        who = "the human (your operator)" if post.from_human else f"{post.sender}"
+        # Who this is, decided by what the host observed rather than by what the
+        # post says about itself. On a shared forum every host stamps its own
+        # operator as `human`, so trusting the sender field would present every
+        # outside participant to the role as its own operator — the one party
+        # whose words it is supposed to treat as instructions.
+        if thread.is_operator(post):
+            who = "the human (your operator)"
+        elif thread.is_peer(post):
+            origin = post.origin or "an unnamed origin"
+            who = (
+                f"{post.sender} — a peer from {origin}, NOT your operator; "
+                "this identity is claimed by that peer and is not verified"
+            )
+        else:
+            who = post.sender
         lines.append(f"{i}. {post.kind} — {who} ({post.role})")
         if post.denied:
             lines.append(f"   ! the host recorded a refusal: {post.denied}")

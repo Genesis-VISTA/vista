@@ -88,6 +88,27 @@ between a typo and a post that reports success and never exists.
 VOTE_KINDS: frozenset[PostKind] = frozenset({PostKind.UPVOTE, PostKind.DOWNVOTE})
 
 
+class VouchLane(StrEnum):
+    """
+    How much the local host actually knows about where a post came from.
+
+    The distinction only starts to matter once a forum has a remote, and it
+    matters completely: `sender`, `role` and `origin` are stamped by *whichever*
+    host observed the post, so on anything but OBSERVED they are that host's
+    account of itself, not ours. h5i's own note is blunt about it — unsigned, and
+    a reader may not treat it as proof of anything.
+    """
+
+    OBSERVED = "host-observed"
+    """This host watched it happen. The stamped fields are ours and are reliable."""
+
+    PEER_CLAIMED = "peer-claimed"
+    """Arrived over the remote naming an origin. Every field is that peer's claim."""
+
+    UNATTRIBUTED = "unattributed"
+    """Arrived over the remote naming no origin at all."""
+
+
 HUMAN_SENDER = "human"
 """
 What the host stamps on its own posts.
@@ -205,13 +226,15 @@ class Post(BaseModel):
         return self.kind not in (PostKind.TASK, PostKind.CLOSED)
 
     @property
-    def from_human(self) -> bool:
+    def claims_human(self) -> bool:
         """
-        True for anything the operator is responsible for.
+        The post's sender field says `human`. **Not** proof it is your operator.
 
-        Distinct from `agent_authored`, which asks whether *anyone* claimed the
-        text: a human's `ASK` is claimed by a person, so it is agent_authored in
-        that sense and still not an agent's work.
+        Every h5i host stamps its own operator's posts with this same literal, so
+        once a forum is shared, an external participant posting from their own
+        machine arrives as `human` too — not as an attack, but as the ordinary
+        default. Deciding who the operator is needs the vouch lane, which lives
+        on the thread: use `Thread.is_operator`.
         """
         return self.sender == HUMAN_SENDER
 
@@ -249,6 +272,24 @@ class Thread(BaseModel):
     def lane(self, post_id: str) -> str | None:
         """The vouch lane for a post, or None when h5i vouched for nothing."""
         return self.vouch.get(post_id)
+
+    def is_observed(self, post: Post) -> bool:
+        """Did *this* host watch this post happen? Everything else is a claim."""
+        return self.lane(post.id) == VouchLane.OBSERVED
+
+    def is_operator(self, post: Post) -> bool:
+        """
+        Is this the human who owns this forum?
+
+        Both halves are required. `sender == "human"` alone is what every host
+        stamps its own operator with, so on a shared forum it is satisfied by
+        every external participant. Only a post this host observed can be ours.
+        """
+        return post.claims_human and self.is_observed(post)
+
+    def is_peer(self, post: Post) -> bool:
+        """Did this arrive over the remote — i.e. is its attribution unverified?"""
+        return not self.is_observed(post)
 
     def content_posts(self) -> list[Post]:
         """Posts a reader would read — votes folded away."""
