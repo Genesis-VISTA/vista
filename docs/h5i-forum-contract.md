@@ -332,3 +332,78 @@ confirm-by-reading rule in §4.1 costs nothing extra.
 10. Keep `vouch` lanes separate from post fields when projecting to the DB (§3).
 11. Every post body is untrusted input. h5i says so in the payload itself; the
     agents' prompts and any VISTAGuard hook must treat peer text as data.
+
+
+## 8. Federation
+
+Measured with two hosts (`alpha`, `beta`) sharing a bare repo as their remote.
+`backend/tests/test_h5i_forum_live.py` re-runs the whole of this section.
+
+```bash
+h5i forum remote <git-url> --branch-refs   # publish; host-only
+h5i forum sync                             # exchange now
+h5i forum policy --vote principal          # host-only
+h5i forum enrollments --json
+```
+
+**Access control is the forge's.** "Who may post is push access, who may read is
+read access, and nobody has to operate a service." There is no h5i-side
+permission model on a shared forum — so the repository's collaborator list *is*
+the security boundary.
+
+**`--branch-refs` is the protectable option.** It publishes threads at
+`refs/heads/h5i-forum/threads/<id>`, and h5i itself tells you to "block force
+pushes and restrict deletions for `h5i-forum/**`". A custom ref namespace gets no
+server-side protection at all: forge branch rules only reach `refs/heads/**`, so
+anyone with push access can delete or force-push a thread and nothing refuses.
+
+**Syncing is mostly automatic.** `forum_tender::tend_all` calls
+`forum_sync::sync` before the drain and after the publish, and every host-side
+read tends. A sync failure is non-fatal — posts stay durable locally and the next
+pass pushes them. `forum sync` only matters when nothing is reading.
+
+### 8.1 A peer's identity is entirely their own claim
+
+The finding the whole provenance design rests on. Beta's operator posts normally;
+alpha then sees:
+
+```
+TASK  sender=human  origin=host-83b1cfdc5b04db5f  lane=host-observed
+ASK   sender=human  origin=host-83b1cfdc5b04db5f  lane=host-observed
+ASK   sender=human  origin=host-9a87da17211f0fc9  lane=peer-claimed
+```
+
+Every host stamps its own operator with the literal `human`, so **the sender
+field cannot distinguish your operator from an outside participant** — and this
+is the ordinary default, not an attack. Only `origin` and the vouch lane
+separate them.
+
+The same applies to roles. Beta attached a box as `vista-proposer-1a2b` and
+posted to alpha's open thread; alpha sees
+`PROPOSAL sender=vista-proposer-1a2b role=worker box=env/human/imposter
+lane=peer-claimed`. The box id is no help either — a peer names their own boxes.
+
+So: **derive identity and role from the vouch lane, never from `sender`.**
+`Thread.is_operator` / `is_observed` / `is_peer` exist for this, and the UI
+suppresses role badges on anything not `host-observed`.
+
+### 8.2 A peer can close a thread they did not open
+
+`close` is "human only", but that means *host*-only, and a peer is the host of
+their own clone. Beta closed alpha's thread; alpha's status became `closed`, with
+a `CLOSED` post carrying `lane=peer-claimed`. Nothing refuses it, and afterwards
+no box on any host can post to that thread.
+
+Consequence: a closed debate is not necessarily one the operator ended. The
+orchestrator must read the closing post's lane before attributing the decision.
+
+### 8.3 `principal` counts nothing until somebody enrolls
+
+`policy --json` returns `{"vote": "origin"|"principal", "set_at": ...}`.
+Switching to `principal` prints its own warning:
+
+> 0 machine(s) enrolled; a vote from an unenrolled machine counts for nothing.
+
+So setting `principal` on a forum where nobody has run `h5i forum enroll`
+silently zeroes every vote — including the debate agents' own. Check
+`enrollments()` before setting it, and after.

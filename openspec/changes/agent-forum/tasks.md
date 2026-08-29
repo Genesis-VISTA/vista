@@ -113,6 +113,7 @@ command's stderr onto the host's *stdout*.
 - [x] 12.5 Outside person vs outside agent distinguished in the transcript; Referee told
       to rank reasoning and not claimed identity
 - [x] 12.6 Peer votes counted and displayed apart from this forum's own
-- [ ] 12.7 Publish the repo: dedicated GitHub repo, `forum remote --branch-refs`,
-      branch protection on `h5i-forum/**`, `policy --vote principal` once participants enroll
+- [x] 12.7 Hosting runbook (`docs/hypothesis-forum-hosting.md`) + `ensure_federation`
+      applying `remote_url` / `vote_policy` at startup, with the reachability check
+      and the unenrolled-principal guard
 - [ ] 12.8 Verify against a real remote (GitHub), not a local bare repo

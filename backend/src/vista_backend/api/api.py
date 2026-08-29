@@ -34,6 +34,14 @@ from .users import router as users_router
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
 
+    # Reconcile the forum's remote and vote policy with configuration. A no-op
+    # when the feature is off, and it warns rather than raises when the remote
+    # is unreachable — a backend that will not boot because a git host is down
+    # is worse than one whose debates publish late.
+    from ..agents.forum.wiring import ensure_federation
+
+    await ensure_federation()
+
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
         await mcp_server.list_tools()

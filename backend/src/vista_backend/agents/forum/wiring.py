@@ -31,6 +31,7 @@ from . import simulation
 from .debate import DebateOrchestrator
 from .grounding import Grounding, WebReader
 from .roles import RoleAgents
+from ...services.h5i_forum import VotePolicy
 from .simulation import (
     SimulationCommissioner,
     clusters_for,
@@ -84,6 +85,66 @@ def build_grounding(client: ForumClient) -> Grounding:
         forum=client,
         browser=browser,
     )
+
+
+async def ensure_federation(client: ForumClient | None = None) -> None:
+    """
+    Bring the forum's remote and vote policy in line with configuration.
+
+    Both live in the forum's own store rather than in our settings, so this
+    reconciles rather than sets: it is safe to run on every boot and does nothing
+    when they already agree.
+
+    Applying the remote is checked with a `sync`, because `forum remote` accepts
+    any string — a typo is not discovered until something tries to reach it, and
+    a debate silently publishing nowhere is worse than a loud startup warning.
+
+    The vote policy is only tightened once it would mean something. `principal`
+    counts one vote per enrolled account and *nothing* from an unenrolled
+    machine, so setting it on a forum where nobody has run `h5i forum enroll`
+    silently zeroes every vote, our own agents' included.
+    """
+    config = settings.forum
+    if not config.enabled or config.repo_root is None:
+        return
+    client = client or build_client()
+
+    if config.remote_url:
+        try:
+            current = await client.remote()
+            if config.remote_url not in current:
+                await client.set_remote(config.remote_url)
+                logger.info("forum: publishing to %s", config.remote_url)
+            result = await client.sync()
+            logger.info(
+                "forum: remote reachable (%d pulled, %d pushed)",
+                result.pulled,
+                result.pushed,
+            )
+        except Exception:  # noqa: BLE001 — an unreachable remote must not stop boot
+            logger.warning(
+                "forum: could not reach %s — debates will run locally and publish "
+                "nothing until it is fixed",
+                config.remote_url,
+                exc_info=True,
+            )
+
+    if config.vote_policy:
+        try:
+            wanted = VotePolicy(config.vote_policy)
+            if await client.vote_policy() == wanted:
+                return
+            if wanted is VotePolicy.PRINCIPAL and not await client.enrollments():
+                logger.warning(
+                    "forum: leaving the vote policy alone — `principal` counts "
+                    "nothing from an unenrolled machine, and nobody has run "
+                    "`h5i forum enroll` yet, so every vote would be discarded"
+                )
+                return
+            await client.set_vote_policy(wanted)
+            logger.info("forum: vote policy is now %s", wanted)
+        except Exception:  # noqa: BLE001
+            logger.warning("forum: could not set the vote policy", exc_info=True)
 
 
 async def _commit(session: AsyncSession) -> None:
