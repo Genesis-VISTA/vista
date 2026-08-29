@@ -181,6 +181,44 @@ def forum(args: list[str], identity: str | None, box_id: str | None) -> None:
         print(f"✔ thread {thread['header']['id']} closed")
         return
 
+    if cmd == "remote":
+        if boxed:
+            die("refused: `remote` is the human's")
+        url = next((a for a in rest if not a.startswith("--")), None)
+        if url:
+            state["remote"] = {"url": url, "branch_refs": "--branch-refs" in rest}
+            save(state)
+        cfg = state.get("remote") or {}
+        print(f"✔ forum publishes to {cfg.get('url', '(local)')}")
+        if cfg.get("branch_refs"):
+            print("  refs     refs/heads/h5i-forum/threads/<id>  (branches)")
+        return
+
+    if cmd == "sync":
+        # The fake has no peer to exchange with; the shape is what callers parse.
+        print("✔ synced — 0 pulled, 0 pushed")
+        return
+
+    if cmd == "policy":
+        as_json = flag(rest, "--json")
+        vote = opt(rest, "--vote")
+        if vote is not None:
+            if boxed:
+                die("refused: setting the policy is the human's")
+            state["policy"] = {"vote": vote, "set_at": "2026-08-29T00:00:00Z"}
+            save(state)
+            print(f"✔ vote policy is now {vote}")
+            return
+        policy = state.get("policy") or {"vote": "origin", "set_at": ""}
+        print(json.dumps(policy, indent=2) if as_json else f"vote {policy['vote']}")
+        return
+
+    if cmd == "enrollments":
+        flag(rest, "--json")
+        flag(rest, "--verify")
+        print(json.dumps(state.get("enrollments", []), indent=2))
+        return
+
     if cmd == "list":
         want_all = flag(rest, "--all")
         as_json = flag(rest, "--json")

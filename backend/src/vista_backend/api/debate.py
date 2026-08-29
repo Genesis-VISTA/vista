@@ -13,6 +13,7 @@ nobody could sensibly time out.
 """
 
 import asyncio
+import logging
 import uuid
 from typing import AsyncIterator
 
@@ -35,6 +36,8 @@ from ..services.auth import UserDep
 from ..services.h5i_forum import POSTABLE_KINDS, ForumDisabled, PostKind
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["debates"])
 
@@ -67,6 +70,53 @@ def _spawn(coro) -> asyncio.Task:
     _BACKGROUND.add(task)
     task.add_done_callback(_BACKGROUND.discard)
     return task
+
+
+FORUM_REFRESH_SECONDS = 10.0
+"""
+How often a watched debate is re-read from the forum itself.
+
+Much slower than the DB poll below, and deliberately. A forum read spawns a
+subprocess and, on a shared remote, a git fetch — cheap locally, not free across
+a network. Our own agents' posts reach the projection through the debate task
+without any of this; the refresh is what makes a *peer's* comment appear, and ten
+seconds is fast enough for a human conversation.
+"""
+
+
+_last_refresh: dict[str, float] = {}
+_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _maybe_refresh(session: AsyncSession, run) -> bool:
+    """
+    Re-read one debate from the forum, at most once per interval across all viewers.
+
+    Both halves matter with several people watching a debate: the lock stops
+    concurrent fetches of the same thread, and the timestamp stops the queue
+    behind it from each doing the fetch again the moment it is released.
+
+    Returns whether it committed, because a commit expires every object the
+    session holds — the caller's `run` included — and reading a field off it
+    afterwards is async IO in a context that cannot await.
+    """
+    key, run_id = run.thread_id, run.id
+    lock = _refresh_locks.setdefault(key, asyncio.Lock())
+    if lock.locked():
+        return False
+    async with lock:
+        now = asyncio.get_running_loop().time()
+        if now - _last_refresh.get(key, 0.0) < FORUM_REFRESH_SECONDS:
+            return False
+        _last_refresh[key] = now
+        try:
+            await debate_service.refresh_from_forum(session, build_client(), run)
+            await session.commit()
+            return True
+        except Exception:  # noqa: BLE001 — a stream must survive a bad fetch
+            logger.warning("debate %s: forum refresh failed", run_id, exc_info=True)
+            await session.rollback()
+            return False
 
 
 STREAM_POLL_SECONDS = 1.0
@@ -265,6 +315,11 @@ async def debate_events(
                 run = await debate_service.require_debate_in_project(
                     stream_session, run_id=run_id, project_id=project_id
                 )
+                # Peers publish to the remote, not to us. Something has to look.
+                if await _maybe_refresh(stream_session, run):
+                    run = await debate_service.require_debate_in_project(
+                        stream_session, run_id=run_id, project_id=project_id
+                    )
                 posts = await debate_service.list_posts(stream_session, run_id=run_id)
                 for post in posts:
                     if post.post_id in seen:

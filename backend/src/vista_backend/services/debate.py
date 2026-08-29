@@ -21,6 +21,8 @@ from typing import Any
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from pydantic import BaseModel, Field
+
 from ..db.schemas import (
     DebateParticipantTable,
     DebatePostTable,
@@ -28,7 +30,7 @@ from ..db.schemas import (
     DebateStatus,
 )
 from ..utils.misc import now_iso
-from .h5i_forum import Participant, Thread
+from .h5i_forum import ForumClient, Participant, Thread
 
 
 # Statuses a debate can still make progress from. "converged", "closed" and
@@ -261,6 +263,57 @@ async def list_posts(
         stmt = stmt.where(col(DebatePostTable.kind).not_in(("UPVOTE", "DOWNVOTE")))
     stmt = stmt.order_by(col(DebatePostTable.ts), col(DebatePostTable.post_id))
     return list(await session.exec(stmt))
+
+
+class Refresh(BaseModel):
+    """What one look at the forum turned up."""
+
+    new_posts: list[str] = Field(default_factory=list)
+    """Post ids seen for the first time — ours and peers' alike."""
+
+    closed_remotely: bool = False
+    """The forum says closed while our record still said otherwise."""
+
+
+async def refresh_from_forum(
+    session: AsyncSession, client: "ForumClient", run: DebateRunTable
+) -> Refresh:
+    """
+    Re-read a debate's thread and fold anything new into the projection.
+
+    The reason this exists: h5i syncs with the remote on every host-side read, so
+    while a debate is arguing its own reads keep it current for free. Between
+    rounds, and after it ends, nothing reads — and a peer's comment would sit on
+    the remote unseen. Whatever is watching a debate has to do the reading.
+
+    Also reconciles closure. A peer with push access can close a thread they did
+    not open (contract §8.2), so the forum's status can move without anything
+    here deciding it did.
+    """
+    thread = await client.read_thread(run.thread_id)
+    created = await project_thread(session, run_id=run.id, thread=thread)
+
+    closed_remotely = thread.is_closed and run.status in ACTIVE_STATUSES
+    if closed_remotely:
+        await set_status(session, run_id=run.id, status="closed")
+
+    return Refresh(
+        new_posts=[row.post_id for row in created], closed_remotely=closed_remotely
+    )
+
+
+def closed_by(posts: list[DebatePostTable]) -> str | None:
+    """
+    Who ended this debate: `"operator"`, `"peer"`, or None if it is not closed.
+
+    Derived from the CLOSED post's vouch lane rather than stored, because that is
+    where the fact actually lives — and because labelling every closure "ended
+    early" would credit the operator with a decision a peer may have made.
+    """
+    closing = next((p for p in reversed(posts) if p.kind == "CLOSED"), None)
+    if closing is None:
+        return None
+    return "operator" if closing.vouch_lane == "host-observed" else "peer"
 
 
 async def record_post_tools(

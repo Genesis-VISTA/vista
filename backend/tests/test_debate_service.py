@@ -7,6 +7,8 @@ instead of duplicating, that a late vote reaches an old post, and that the
 host-stamped and agent-claimed halves stay apart on the way in.
 """
 
+import uuid
+
 import pytest
 
 from vista_backend.db.schemas import ProjectTable
@@ -359,3 +361,140 @@ async def test_posts_are_ordered_by_forum_timestamp(session, alice):
         "second",
         "third",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Refreshing from the forum
+#
+# Our own agents' posts reach the projection through the debate task. A peer's
+# do not: they are published to the remote, and something here has to look.
+# --------------------------------------------------------------------------- #
+
+
+FAKE = __import__("pathlib").Path(__file__).parent / "fixtures" / "fake_h5i.py"
+
+
+@pytest.fixture
+def forum_client(tmp_path):
+    from vista_backend.config import ForumSettings
+    from vista_backend.services.h5i_forum import ForumClient
+
+    (tmp_path / ".git" / ".h5i").mkdir(parents=True)
+    return ForumClient(
+        ForumSettings(enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0),
+        confirm_delay=0.0,
+    )
+
+
+async def _live_run(session, alice, client, *, topic="does the knee move?"):
+    project = ProjectTable(name=f"refresh-{uuid.uuid4().hex[:8]}")
+    session.add(project)
+    await session.flush()
+    thread_id = await client.create_thread(topic, body="Debate it.")
+    return await debate_service.create_debate(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic=topic,
+        thread_id=thread_id,
+        rounds=2,
+    )
+
+
+@pytest.mark.anyio
+async def test_a_refresh_picks_up_a_post_made_outside_the_debate(
+    session, alice, forum_client
+):
+    run = await _live_run(session, alice, forum_client)
+    await debate_service.set_status(session, run_id=run.id, status="debating")
+    await debate_service.refresh_from_forum(session, forum_client, run)
+
+    # Something arrives on the thread with nothing on our side reading it.
+    await forum_client.post_as_human(run.thread_id, "a comment from elsewhere")
+
+    before = await debate_service.list_posts(session, run_id=run.id)
+    result = await debate_service.refresh_from_forum(session, forum_client, run)
+    after = await debate_service.list_posts(session, run_id=run.id)
+
+    assert len(result.new_posts) == 1
+    assert len(after) == len(before) + 1
+    assert "a comment from elsewhere" in [p.body for p in after]
+
+
+@pytest.mark.anyio
+async def test_a_refresh_is_idempotent(session, alice, forum_client):
+    run = await _live_run(session, alice, forum_client)
+    first = await debate_service.refresh_from_forum(session, forum_client, run)
+    second = await debate_service.refresh_from_forum(session, forum_client, run)
+
+    assert first.new_posts and second.new_posts == []
+
+
+@pytest.mark.anyio
+async def test_a_refresh_notices_the_thread_was_closed_elsewhere(
+    session, alice, forum_client
+):
+    """
+    A peer with push access can close a thread they did not open (contract §8.2),
+    so the forum's status can move without anything here deciding it did.
+    """
+    run = await _live_run(session, alice, forum_client)
+    await debate_service.set_status(session, run_id=run.id, status="debating")
+    await forum_client.close_thread(run.thread_id)
+
+    result = await debate_service.refresh_from_forum(session, forum_client, run)
+
+    assert result.closed_remotely
+    assert (await debate_service.require_debate(session, run.id)).status == "closed"
+
+
+@pytest.mark.anyio
+async def test_a_run_that_already_ended_is_not_reclosed(session, alice, forum_client):
+    run = await _live_run(session, alice, forum_client)
+    await debate_service.record_verdict(session, run_id=run.id, verdict={"r": 1})
+    await forum_client.close_thread(run.thread_id)
+
+    result = await debate_service.refresh_from_forum(session, forum_client, run)
+
+    assert not result.closed_remotely, "converged is terminal; closure does not undo it"
+    assert (await debate_service.require_debate(session, run.id)).status == "converged"
+
+
+# --------------------------------------------------------------------------- #
+# Who ended it
+# --------------------------------------------------------------------------- #
+
+
+def _closed_post(lane: str):
+    from vista_backend.db.schemas import DebatePostTable
+
+    return DebatePostTable(
+        run_id=uuid.uuid4(),
+        post_id="c1",
+        kind="CLOSED",
+        body="closed",
+        sender="human",
+        forum_role="human",
+        ts="2026-08-29T00:00:00Z",
+        vouch_lane=lane,
+        votes=0,
+        tools_used=[],
+    )
+
+
+def test_an_open_debate_has_no_closer():
+    assert debate_service.closed_by([]) is None
+
+
+def test_our_own_closure_is_attributed_to_the_operator():
+    assert debate_service.closed_by([_closed_post("host-observed")]) == "operator"
+
+
+def test_a_peers_closure_is_not_credited_to_the_operator():
+    """
+    Both arrive with `sender == "human"`, because every host stamps its own
+    operator that way. Calling a peer's closure "ended early" would tell the
+    reader you made a decision somebody else made.
+    """
+    assert debate_service.closed_by([_closed_post("peer-claimed")]) == "peer"
+    assert debate_service.closed_by([_closed_post("unattributed")]) == "peer"

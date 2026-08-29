@@ -89,6 +89,26 @@ class ForumSettings(BaseModel):
     default_rounds: int = 5
     """ Debate round budget when the caller does not specify one. """
 
+    remote_url: str | None = None
+    """
+    Git URL the forum publishes to. `None` keeps it on this machine.
+
+    Once set, push access to that repository is the whole authorization model:
+    anyone who can push can post under any identity they like. h5i's honesty is
+    in labelling those posts `peer-claimed`, not in preventing them — so the
+    repository's collaborator list is the security boundary.
+    """
+
+    vote_policy: str | None = None
+    """
+    `origin` (per machine) or `principal` (per enrolled forge account).
+
+    `None` leaves whatever the forum already has. Setting `principal` before
+    participants run `h5i forum enroll` makes every vote count for nothing,
+    including our own agents' — so it is applied only alongside a check that
+    somebody is enrolled.
+    """
+
     max_simulations: int = 2
     """
     HPC jobs one debate may commission, in total.

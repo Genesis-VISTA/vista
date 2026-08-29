@@ -9,6 +9,7 @@ import {
   DebateRun,
   DebateState,
   closeDebate,
+  closedBy,
   fetchDebate,
   isActive,
   listDebates,
@@ -24,6 +25,18 @@ const STATUS_LABEL: Record<DebateRun["status"], string> = {
   closed: "Ended early",
   failed: "Failed",
 };
+
+/**
+ * The run's status, said accurately.
+ *
+ * "Ended early" reads as *you* ended it. On a shared forum anyone with push
+ * access can close a thread they did not open, so who closed it has to come from
+ * the record rather than from the status alone.
+ */
+function statusLabel(run: DebateRun, posts: DebatePost[]): string {
+  if (run.status !== "closed") return STATUS_LABEL[run.status];
+  return closedBy(posts) === "peer" ? "Ended by a peer" : "Ended early";
+}
 
 /* ---------------------------------------------------------------------- */
 /*  Live updates                                                           */
@@ -293,7 +306,7 @@ function DebatesPage() {
               <div className="debate-detail__head">
                 <h2>{state.run.topic}</h2>
                 <span className="debate-detail__status">
-                  {STATUS_LABEL[state.run.status]} · round {state.run.rounds_done}/
+                  {statusLabel(state.run, posts)} · round {state.run.rounds_done}/
                   {state.run.rounds}
                 </span>
                 {isActive(state.run.status) && (

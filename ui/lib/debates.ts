@@ -190,6 +190,23 @@ export async function closeDebate(
   return unwrap(await fetch(`/api/debates/close?${params}`, { method: "POST" }));
 }
 
+/**
+ * Who ended a debate: the operator, a peer, or nobody yet.
+ *
+ * Derived from the CLOSED post's vouch lane, because that is where the fact
+ * lives. Both arrive with `sender === "human"` — every host stamps its own
+ * operator that way — so labelling every closure "ended early" would credit you
+ * with a decision an outside participant may have made.
+ */
+export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
+  for (let i = posts.length - 1; i >= 0; i--) {
+    if (posts[i].kind === "CLOSED") {
+      return isObserved(posts[i]) ? "operator" : "peer";
+    }
+  }
+  return null;
+}
+
 /** Debate statuses that can still produce new posts. */
 export function isActive(status: DebateStatus): boolean {
   return status === "setting_up" || status === "debating";

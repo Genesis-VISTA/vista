@@ -22,6 +22,7 @@ and re-record the test fixtures on upgrade.
 
 import asyncio
 import json
+import re
 import shlex
 from enum import StrEnum
 from pathlib import Path
@@ -348,6 +349,36 @@ class ThreadSummary(BaseModel):
         return self.header.id
 
 
+class VotePolicy(StrEnum):
+    """
+    How h5i counts a vote.
+
+    `origin` needs no setup and counts one vote per machine. `principal` counts
+    one per enrolled forge account — and counts nothing at all from a machine
+    nobody enrolled, which is the trap: setting it before anyone enrolls makes
+    every vote worthless, including our own agents'.
+    """
+
+    ORIGIN = "origin"
+    PRINCIPAL = "principal"
+
+
+class SyncResult(BaseModel):
+    """What one exchange with the remote moved."""
+
+    pulled: int = 0
+    pushed: int = 0
+
+
+class Enrollment(BaseModel):
+    """A machine bound to a forge account, signed with that account's SSH key."""
+
+    principal: str | None = None
+    origin: str | None = None
+    name: str | None = None
+    verified: bool | None = None
+
+
 class Participant(BaseModel):
     """
     A role on the forum: a box, the identity it posts under, and the policy it
@@ -557,6 +588,61 @@ class ForumClient:
         return safe
 
     # -- threads ----------------------------------------------------------- #
+
+    # -- federation --------------------------------------------------------- #
+
+    async def set_remote(self, url: str, *, branch_refs: bool = True) -> None:
+        """
+        Publish this forum to a git URL. Host-only.
+
+        `branch_refs` publishes threads under `refs/heads/h5i-forum/**` so a forge
+        can protect them. It defaults on because the alternative has no
+        server-side protection at all: branch rules only reach `refs/heads/**`,
+        so under a custom ref namespace anyone with push access can delete or
+        force-push a thread and nothing refuses.
+        """
+        args = ["forum", "remote", url]
+        if branch_refs:
+            args.append("--branch-refs")
+        await self._run(*args)
+
+    async def remote(self) -> str:
+        """Where this forum publishes, as h5i describes it. No JSON form exists."""
+        _, out, _ = await self._run("forum", "remote")
+        return out.strip()
+
+    async def sync(self) -> SyncResult:
+        """
+        Exchange with the remote now.
+
+        Rarely needed on its own: every host-side read tends the forum, and the
+        tend pass syncs. This is for the moments nothing is reading — an idle
+        debate whose thread a peer has just commented on.
+        """
+        _, out, _ = await self._run("forum", "sync")
+        match = re.search(r"(\d+)\s+pulled,\s*(\d+)\s+pushed", out)
+        if match is None:
+            return SyncResult()
+        return SyncResult(pulled=int(match.group(1)), pushed=int(match.group(2)))
+
+    async def vote_policy(self) -> VotePolicy:
+        payload = await self._run_json("forum", "policy", "--json")
+        return VotePolicy(payload.get("vote", VotePolicy.ORIGIN))
+
+    async def set_vote_policy(self, vote: VotePolicy) -> None:
+        """
+        Set how votes are counted. Host-only.
+
+        Switching to `principal` before participants enroll silently zeroes every
+        vote on the forum, so a caller should check `enrollments()` rather than
+        assume the change was free.
+        """
+        await self._run("forum", "policy", "--vote", str(vote))
+
+    async def enrollments(self) -> list[Enrollment]:
+        """Machines bound to a forge account. Empty means `principal` counts nothing."""
+        payload = await self._run_json("forum", "enrollments", "--json")
+        return [Enrollment.model_validate(row) for row in payload]
 
     async def create_thread(
         self, title: str, *, body: str | None = None, ceiling: str | None = None

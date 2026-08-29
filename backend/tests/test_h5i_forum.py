@@ -24,6 +24,7 @@ from vista_backend.services.h5i_forum import (
     PostNotConfirmed,
     Thread,
     ThreadClosed,
+    VotePolicy,
 )
 
 
@@ -393,3 +394,57 @@ def test_host_generated_posts_are_not_agent_authored():
     )
     assert not thread.posts[0].agent_authored
     assert thread.posts[1].agent_authored
+
+
+# --------------------------------------------------------------------------- #
+# Federation
+#
+# The shapes here were measured against real h5i with two hosts and a shared
+# bare repo; see docs/h5i-forum-contract.md §8.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_setting_a_remote_defaults_to_protectable_refs(client):
+    """
+    `--branch-refs` is on by default because the alternative cannot be protected:
+    forge branch rules only reach `refs/heads/**`, so under a custom namespace
+    anyone with push access can delete or force-push a thread and nothing refuses.
+    """
+    await client.set_remote("git@github.com:org/forum.git")
+    described = await client.remote()
+    assert "git@github.com:org/forum.git" in described
+    assert "h5i-forum" in described, "threads published where a forge can protect them"
+
+
+@pytest.mark.anyio
+async def test_custom_refs_can_be_asked_for_explicitly(client):
+    await client.set_remote("git@github.com:org/forum.git", branch_refs=False)
+    assert "h5i-forum" not in await client.remote()
+
+
+@pytest.mark.anyio
+async def test_sync_reports_what_moved(client):
+    result = await client.sync()
+    assert result.pulled == 0 and result.pushed == 0
+
+
+@pytest.mark.anyio
+async def test_the_default_vote_policy_is_per_machine(client):
+    assert await client.vote_policy() == VotePolicy.ORIGIN
+
+
+@pytest.mark.anyio
+async def test_the_vote_policy_can_be_set_to_principal(client):
+    await client.set_vote_policy(VotePolicy.PRINCIPAL)
+    assert await client.vote_policy() == VotePolicy.PRINCIPAL
+
+
+@pytest.mark.anyio
+async def test_no_enrollments_means_principal_would_count_nothing(client):
+    """
+    The trap worth surfacing: `principal` counts one vote per enrolled account
+    and nothing at all from an unenrolled machine. Setting it on a forum where
+    nobody has enrolled silently zeroes every vote, our own agents' included.
+    """
+    assert await client.enrollments() == []

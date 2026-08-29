@@ -171,3 +171,131 @@ async def test_real_h5i_drops_an_unknown_kind(live_client):
         )
     finally:
         await client.remove_participant(proposer)
+
+
+async def test_two_hosts_sharing_a_remote(tmp_path):
+    """
+    The federation contract, end to end, against real h5i.
+
+    This is the test the whole peer-provenance design rests on: an external
+    participant posting normally from their own machine arrives with
+    `sender == "human"` — byte-identical to the local operator's posts — and is
+    distinguishable *only* by origin and vouch lane. It also shows that a peer
+    can wear one of our role identities, and that push access alone lets them
+    close a thread they did not open.
+    """
+    if H5I is None:
+        pytest.skip("h5i is not installed")
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+
+    def host(name: str) -> ForumClient:
+        root = tmp_path / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        for key, value in (("user.email", f"{name}@local"), ("user.name", name)):
+            subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+        (root / "README.md").write_text(f"{name}\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+        return ForumClient(
+            ForumSettings(
+                enabled=True,
+                binary=H5I,
+                repo_root=root,
+                box_isolation="process",
+                timeout=120.0,
+            )
+        )
+
+    alpha, beta = host("alpha"), host("beta")
+    for side in (alpha, beta):
+        await side.set_remote(str(remote))
+
+    thread_id = await alpha.create_thread("live: federation", body="Debate it.")
+    await alpha.post_as_human(thread_id, "the local operator speaking")
+    await alpha.sync()
+
+    assert (await beta.sync()).pulled > 0, "the thread reaches the other host"
+
+    # An ordinary external human, posting normally. No spoofing involved.
+    await beta.post_as_human(thread_id, "an outsider speaking")
+    await beta.sync()
+    await alpha.sync()
+
+    thread = await alpha.read_thread(thread_id)
+    ours = next(p for p in thread.posts if p.body == "the local operator speaking")
+    theirs = next(p for p in thread.posts if p.body == "an outsider speaking")
+
+    assert ours.sender == theirs.sender == "human", (
+        "every host stamps its own operator with the same literal — the sender "
+        "field cannot tell them apart"
+    )
+    assert ours.origin != theirs.origin
+    assert thread.is_operator(ours) and not thread.is_operator(theirs)
+    assert thread.is_observed(ours) and thread.is_peer(theirs)
+    assert thread.lane(theirs.id) == "peer-claimed"
+
+
+async def test_a_peer_can_wear_one_of_our_role_identities(tmp_path):
+    """
+    Nothing stops a peer attaching a box under `vista-proposer-…`. The lane is
+    the only signal, which is why the UI derives role badges from it.
+    """
+    if H5I is None:
+        pytest.skip("h5i is not installed")
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+
+    def host(name: str) -> ForumClient:
+        root = tmp_path / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        for key, value in (("user.email", f"{name}@local"), ("user.name", name)):
+            subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+        (root / "README.md").write_text(f"{name}\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+        return ForumClient(
+            ForumSettings(
+                enabled=True,
+                binary=H5I,
+                repo_root=root,
+                box_isolation="process",
+                timeout=120.0,
+            )
+        )
+
+    alpha, beta = host("alpha"), host("beta")
+    for side in (alpha, beta):
+        await side.set_remote(str(remote))
+
+    thread_id = await alpha.create_thread("live: impersonation", body="go")
+    await alpha.sync()
+    await beta.sync()
+
+    impostor = await beta.create_participant(
+        box_slug="imposter",
+        identity="vista-proposer-1a2b",
+        role=ParticipantRole.WORKER,
+    )
+    try:
+        await beta.post_as(
+            impostor, thread_id, "I am your proposer.", kind=PostKind.PROPOSAL
+        )
+        await beta.sync()
+        await alpha.sync()
+
+        thread = await alpha.read_thread(thread_id)
+        spoof = next(p for p in thread.posts if p.kind == PostKind.PROPOSAL)
+
+        assert spoof.sender == "vista-proposer-1a2b", "the name is entirely theirs"
+        assert spoof.role == "worker"
+        assert thread.is_peer(spoof), (
+            "the vouch lane is the only thing that gives it away"
+        )
+        assert not thread.is_observed(spoof)
+    finally:
+        await beta.remove_participant(impostor)
