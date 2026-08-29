@@ -20,7 +20,7 @@ from vista_backend.config import ForumSettings, settings
 from vista_backend.db.schemas import ProjectCreate
 from vista_backend.services import debate as debate_service
 from vista_backend.services import project as project_service
-from vista_backend.services.h5i_forum import ForumClient, ParticipantRole
+from vista_backend.services.h5i_forum import ForumClient, ParticipantRole, PostKind
 
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
@@ -111,6 +111,43 @@ async def _run(session, user, project, *, topic="why does the knee move?"):
 # --------------------------------------------------------------------------- #
 # Reading
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_get_picks_up_a_peer_post_on_a_finished_debate(
+    forum_config, app_client, session, alice
+):
+    """
+    The case federation exists for, and the one that was invisible.
+
+    An outside reviewer is most likely to comment *after* a debate has argued
+    itself out — that is when there is a hypothesis worth objecting to. But a
+    finished run is not in ACTIVE_STATUSES, so the UI opens no event stream for
+    it, and the refresh that reads the forum lived only inside that stream. With
+    the plain GET reading nothing but the local projection, a peer's post could
+    never appear: not late, never.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    # Read before committing: a commit expires every object the session holds,
+    # and touching one afterwards is async IO where none can be awaited.
+    run_id, thread_id, project_name = run.id, run.thread_id, project.name
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+
+    # A peer publishes to the remote; nothing local knows yet.
+    await client.post_as_human(
+        thread_id, "the 803 K figure is from a fit", kind=PostKind.FINDING
+    )
+
+    body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
+
+    assert "FINDING" in [p["kind"] for p in body["posts"]], (
+        "a peer commented on a finished debate and the interface never showed it"
+    )
 
 
 @pytest.mark.anyio
@@ -392,6 +429,7 @@ async def test_the_stream_emits_posts_that_arrive_while_it_is_open(
     monkeypatch.setattr(
         debate_api, "stream_session_factory", lambda: AsyncSession(engine)
     )
+
     async def add_a_post_then_finish():
         await asyncio.sleep(0.05)
         await client.post_as(
@@ -530,6 +568,36 @@ async def test_forum_status_says_when_votes_are_being_discarded(
     assert body["vote_policy"] == "principal"
     assert body["enrolled"] == 0
     assert body["votes_counting"] is False
+
+
+@pytest.mark.anyio
+async def test_forum_status_does_not_call_a_forum_shared_on_the_settings_alone(
+    forum_config, app_client, monkeypatch
+):
+    """
+    A configured `remote_url` is an intention, not a fact. `ensure_federation`
+    logs and carries on when the remote is unreachable at boot, so the setting
+    can name a remote the forum never adopted — and reporting `shared: true`
+    there tells the operator outsiders can reach a forum that is still purely
+    local. h5i's own answer is the one that counts.
+    """
+    from vista_backend.config import ForumSettings, settings
+
+    monkeypatch.setattr(
+        settings,
+        "forum",
+        ForumSettings(
+            enabled=True,
+            binary=forum_config.binary,
+            repo_root=forum_config.repo_root,
+            remote_url="git@github.com:someone/never-applied.git",
+        ),
+    )
+
+    body = (await app_client.get("/forum/status")).json()
+
+    assert body["shared"] is False
+    assert body["remote"] is None, "do not advertise a remote the forum has not taken"
 
 
 @pytest.mark.anyio

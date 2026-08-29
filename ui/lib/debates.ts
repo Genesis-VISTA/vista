@@ -239,6 +239,22 @@ export function isActive(status: DebateStatus): boolean {
 }
 
 /**
+ * Whether a finished debate can still receive posts from outside.
+ *
+ * A concluded debate is not a closed thread: the agents ran out of rounds, but
+ * the forum thread stays open and a peer can still object to the hypothesis —
+ * which is the likeliest moment for one to, since there is finally something to
+ * object to. The event stream ends at a terminal status and the UI opens none
+ * for a finished run, so this is what keeps such a debate watched.
+ *
+ * `closed` is excluded because h5i moves a closed thread to the attic and
+ * nothing further can arrive on it.
+ */
+export function watchesForPeerPosts(status: DebateStatus): boolean {
+  return !isActive(status) && status !== "closed";
+}
+
+/**
  * The scientific role behind a forum identity (`vista-proposer-1a2b` → proposer).
  *
  * h5i's own role vocabulary is only worker/reviewer/observer, so the meaningful

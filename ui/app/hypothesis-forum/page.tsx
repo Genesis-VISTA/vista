@@ -14,11 +14,21 @@ import {
   fetchForumStatus,
   fetchDebate,
   isActive,
+  watchesForPeerPosts,
   listDebates,
   openDebate,
   postToDebate,
 } from "@/lib/debates";
 import { useActiveProject } from "@/lib/projects";
+
+const FINISHED_POLL_MS = 15_000;
+/**
+ * How often a finished-but-open debate is re-read.
+ *
+ * Comfortably above the backend's own forum-refresh interval, so a poll finds
+ * either fresh news or a cheap cache hit rather than forcing a git fetch of its
+ * own. A peer's comment on a concluded debate is not a live conversation.
+ */
 
 const STATUS_LABEL: Record<DebateRun["status"], string> = {
   setting_up: "Setting up",
@@ -156,6 +166,36 @@ function DebatesPage() {
       });
     return () => controller.abort();
   }, [projectName, selectedId]);
+
+  // Keep watching a finished debate for posts from outside.
+  //
+  // A live debate is followed by the event stream. A concluded one is not — the
+  // stream ends at a terminal status and none is opened for a run that is
+  // already finished — yet its thread is still open and a peer reviewer can
+  // still post to it. Without this the page would sit on a stale projection
+  // until someone reloaded it by hand.
+  //
+  // Re-fetching is what makes the server read the forum; the backend throttles
+  // that to one fetch per thread per interval however many people are watching.
+  const watchedStatus = state?.run.status;
+  useEffect(() => {
+    if (!projectName || !selectedId || !watchedStatus) return;
+    if (!watchesForPeerPosts(watchedStatus)) return;
+
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      fetchDebate(projectName, selectedId, controller.signal)
+        .then(setState)
+        .catch(() => {
+          /* a failed poll should not disturb a page that is already readable */
+        });
+    }, FINISHED_POLL_MS);
+
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [projectName, selectedId, watchedStatus]);
 
   useDebateStream(
     projectName,

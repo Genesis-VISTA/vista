@@ -448,3 +448,46 @@ async def test_no_enrollments_means_principal_would_count_nothing(client):
     nobody has enrolled silently zeroes every vote, our own agents' included.
     """
     assert await client.enrollments() == []
+
+
+@pytest.mark.anyio
+async def test_enrollment_parses_h5i_field_names(client, forum_root):
+    """
+    h5i calls the login `display_name`, not `name`. Every field on `Enrollment`
+    is optional, so a mismatch does not raise — it silently yields `None`, which
+    is why this went unnoticed until a real enrollment existed. The payload below
+    is the shape v0.3.8 actually emits, keys and all.
+    """
+    import json
+
+    (forum_root / ".fake-forum.json").write_text(
+        json.dumps(
+            {
+                "threads": {},
+                "boxes": {},
+                "participants": {},
+                "views": {},
+                "seq": 0,
+                "enrollments": [
+                    {
+                        "version": 1,
+                        "principal": "github.com/user/19734876",
+                        "display_name": "jqyin",
+                        "origin": "host-504de42f20b4dd28",
+                        "ssh_pubkey": "ssh-rsa AAAAB3Nza...",
+                        "enrolled_at": "2026-08-29T19:47:58.642194Z",
+                        "signature": "-----BEGIN SSH SIGNATURE-----\n...\n",
+                    }
+                ],
+            }
+        )
+    )
+
+    (enrolled,) = await client.enrollments()
+    assert enrolled.name == "jqyin"
+    assert enrolled.principal == "github.com/user/19734876"
+    assert enrolled.origin == "host-504de42f20b4dd28"
+    assert not hasattr(enrolled, "verified"), (
+        "`--json` emits the same object with and without `--verify`, so a "
+        "`verified` field could only ever read as False when it means unasked"
+    )

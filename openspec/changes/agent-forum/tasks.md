@@ -122,5 +122,34 @@ command's stderr onto the host's *stdout*.
 - [x] 12.9 Forum status endpoint + UI banner when votes are being discarded
 - [x] 12.10 Test DB moved off the shared-connection StaticPool, which had made two
       tests pass for the wrong reason
-- [ ] 12.8b Verify against a real forge (GitHub): authentication, and that a ruleset on
-      `h5i-forum/**` actually refuses a force-push. Needs the repository to exist.
+- [x] 12.8b Verified against a real forge (`jqyin/vista-hypothesis-forum`, private,
+      SSH): auth and publish work; only forum refs are pushed (`main` and the three
+      `h5i/env/human/*` box branches stayed local); a peer with no prior state reads
+      both threads and sees every post labelled `peer-claimed`
+- [ ] 12.8c Ref protection refusing a force-push — **blocked, not deferred**. GitHub
+      returns 403 "Upgrade to GitHub Pro or make this repository public" for both the
+      rulesets API and classic branch protection, so a free private repo cannot have
+      ref protection at all. The unprotected case was measured instead: force-push
+      backwards and delete are both accepted. Needs a repo on a plan offering rulesets.
+      See `docs/hypothesis-forum-hosting.md` §3.
+- [x] 12.11 Enrollment live: this host enrolled as `github.com/user/19734876` (jqyin),
+      signature verified against the forge, published; vote policy set to `principal`
+      and `/forum/status` now reports `votes_counting: true`
+- [x] 12.12 `Enrollment` corrected against real h5i — the login is `display_name`,
+      and `verified` dropped because `--verify` never reaches `--json`
+      (`docs/h5i-forum-contract.md` §8.4)
+- [x] 12.13 `/forum/status` decides `shared` from h5i's actual remote, not the
+      setting, so an unreachable-at-boot remote is not advertised as shared
+- [x] 12.14 `scripts/ci-local.sh` no longer reports success with lint errors:
+      `run_section` called each section inside `if !`, which suppresses `set -e`
+      through the whole call tree. Under `--fast` — the pre-commit hook's path —
+      backend lint could not fail at all.
+- [x] 12.15 A peer's post on a *finished* debate is visible. The event stream ends at
+      a terminal status and the UI opens none for a finished run, so the forum refresh
+      — which lived only inside that stream — never ran again; a peer commenting on a
+      concluded hypothesis, the likeliest moment for one to, was invisible permanently.
+      The detail endpoint now refreshes under the same throttle, and the page keeps
+      polling a concluded-but-open debate (not a `closed` one — h5i's attic takes no
+      posts). Reproduced with a failing test first.
+- [x] 12.16 Measured that a host-side read fetches from the remote: ~1.5 s against
+      GitHub over SSH vs 0.24 s local (`docs/h5i-forum-contract.md` §8.5)

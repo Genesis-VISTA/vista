@@ -28,7 +28,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import ForumSettings, settings
 
@@ -402,12 +402,23 @@ class SyncResult(BaseModel):
 
 
 class Enrollment(BaseModel):
-    """A machine bound to a forge account, signed with that account's SSH key."""
+    """
+    A machine bound to a forge account, signed with that account's SSH key.
+
+    There is deliberately no `verified` field. `enrollments --verify` re-checks
+    each pinned key against the forge and reports the result in its *human*
+    output only — `--json` emits the same object either way (measured against
+    v0.3.8). A field that could never be populated would read as "not verified"
+    rather than "not asked", so callers needing the check must run the CLI and
+    read its text.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     principal: str | None = None
     origin: str | None = None
-    name: str | None = None
-    verified: bool | None = None
+    name: str | None = Field(default=None, alias="display_name")
+    """h5i calls this `display_name`; the forge login, e.g. `jqyin`."""
 
 
 class Participant(BaseModel):

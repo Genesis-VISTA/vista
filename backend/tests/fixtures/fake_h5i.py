@@ -189,7 +189,17 @@ def forum(args: list[str], identity: str | None, box_id: str | None) -> None:
             state["remote"] = {"url": url, "branch_refs": "--branch-refs" in rest}
             save(state)
         cfg = state.get("remote") or {}
-        print(f"✔ forum publishes to {cfg.get('url', '(local)')}")
+        if not cfg.get("url"):
+            # The unconfigured shape, as v0.3.8 prints it. It does not mention a
+            # URL at all, so a caller deciding "is this shared?" cannot look for
+            # the absence of one — it has to look for its configured URL being
+            # present.
+            print(f"local  {ROOT}/.git/.h5i/forum.git")
+            print(
+                "  this forum is only on this machine. Point it at a git URL to share it:"
+            )
+            return
+        print(f"✔ forum publishes to {cfg['url']}")
         if cfg.get("branch_refs"):
             print("  refs     refs/heads/h5i-forum/threads/<id>  (branches)")
         return

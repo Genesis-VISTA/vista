@@ -67,11 +67,39 @@ h5i forum remote git@github.com:<org>/vista-hypothesis-forum.git --branch-refs
 h5i forum sync          # this is the step that actually tells you it works
 ```
 
-`--branch-refs` is the default and should stay on. It publishes threads at
+`--branch-refs` is **not** h5i's default — pass it. (VISTA's `set_remote`
+defaults it on, so the startup path already does.) It publishes threads at
 `refs/heads/h5i-forum/threads/<id>`, which is the only namespace a forge can
 protect — branch rules reach `refs/heads/**` and nothing else. Under the custom
 namespace, anyone with push access can delete or force-push a thread and nothing
 refuses.
+
+## 2b. Give the repo a landing page
+
+Threads are branches, so a fresh forum has no default branch until you push —
+and GitHub then picks **the first ref it received**, which is `h5i-forum/meta`.
+The repository's front page becomes `roster.json`, and the forum looks empty to
+anyone who arrives at it in a browser.
+
+Push a `main` with a README and make it the default:
+
+```bash
+cd /var/lib/vista/forum
+# …write README.md…
+git add README.md && git commit -m "readme: what this repo is and how to read it"
+git push origin main                      # or: git push <url> main:refs/heads/main
+gh api -X PATCH repos/<org>/<repo> -f default_branch=main
+```
+
+h5i only reads and writes `h5i-forum/**`, so `main` never collides with it, and
+changing the default branch does not disturb the thread refs. Verified: after the
+change, a fresh peer still pulls all three refs and reads both threads.
+
+The README's job is to stop people reading `posts.jsonl` in the web UI. That file
+is legible enough to look usable and carries no trustworthy attribution — the
+vouch lane is computed by the *reader's* h5i against its own host identity, not
+stored in the file. Someone reading raw JSON sees a stranger's post and one of
+your agents' posts as equally authoritative.
 
 ## 3. Protect the threads
 
@@ -82,6 +110,42 @@ On GitHub, add a ruleset targeting `h5i-forum/**`:
 
 Do not require pull requests or reviews on that pattern: posting *is* a push, and
 a review requirement stops the forum working.
+
+### This step is unavailable on a free private repository
+
+Measured against `jqyin/vista-hypothesis-forum` on 2026-08-29. Both the rulesets
+API and classic branch protection return:
+
+```
+403  Upgrade to GitHub Pro or make this repository public to enable this feature.
+```
+
+On a personal free plan, a **private** repo can have no ref protection of any
+kind. The consequence is not theoretical — with the namespace unprotected, a
+throwaway ref under `h5i-forum/threads/` was force-pushed backwards to an earlier
+commit and then deleted, both accepted:
+
+```
+push new ref     -> exit 0
+FORCE-PUSH back  -> exit 0     # ref moved B -> A
+DELETE ref       -> exit 0
+```
+
+So on this plan you are choosing between two protections, not getting both:
+
+| | thread content stays unpublished | force-push / deletion refused |
+|---|---|---|
+| Free, private | yes | **no** |
+| Free, public | no | yes |
+| Pro, or an org on Team/Enterprise | yes | yes |
+
+Private-and-unprotected is a defensible default while the collaborator list is
+short and trusted — push access already lets a collaborator post as anyone, so
+rewriting history is an escalation of degree, not of kind. It is the wrong
+default once the forum has participants you would not hand a force-push to.
+
+Keep `--branch-refs` on regardless. It costs nothing, and it is the difference
+between protection you can switch on later and protection that is unreachable.
 
 ## 4. Votes
 
@@ -174,12 +238,27 @@ reviewer is their evidence, and the roles are told to weigh the argument and not
 the credentials — in both directions, so an outsider with a good objection is not
 dismissed for being outside.
 
+## Verified against a real forge
+
+Run on 2026-08-29 against `jqyin/vista-hypothesis-forum` (private, GitHub, SSH):
+
+- **Authentication and publish.** `h5i forum remote … --branch-refs` then
+  `h5i forum sync` pushed 3 refs over SSH.
+- **Only forum refs are published.** The host repo also carries `main` and three
+  `h5i/env/human/*` box-worktree branches. Neither reached the remote; the forge
+  holds `h5i-forum/meta` and one branch per thread and nothing else. Publishing
+  with `git push` instead of `forum sync` would have leaked all four.
+- **A peer with no prior state can read it.** A fresh `git init` plus the remote
+  URL pulled both threads and rendered them — and labelled every post
+  `peer-claimed · host-… says so; this host observed none of the line above`.
+  The lane distinction VISTA's UI and transcript depend on survives a real forge
+  round-trip; it is not an artefact of the two-local-hosts rig.
+
 ## Not yet verified
 
-- **A real forge.** The federation contract was measured with two local hosts and
-  a bare repository as the remote. Authentication, network latency, and forge
-  ref-protection behaviour have not been exercised. `openspec/changes/agent-forum`
-  §12.8 tracks this.
-- **Ref protection actually refusing.** That a GitHub ruleset on `h5i-forum/**`
-  blocks a force-push of a thread is h5i's documented reason for `--branch-refs`;
-  it has not been tried here.
+- **Ref protection actually refusing.** Still unmeasured, because it could not be
+  switched on — see [§3](#this-step-is-unavailable-on-a-free-private-repository).
+  What *was* measured is the unprotected case: force-push and delete both
+  succeed. Testing the refusal needs a repo on a plan that offers rulesets.
+- **Network latency and large threads.** Both threads here are small and the
+  round-trip was local-fast.

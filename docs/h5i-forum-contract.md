@@ -407,3 +407,46 @@ Switching to `principal` prints its own warning:
 So setting `principal` on a forum where nobody has run `h5i forum enroll`
 silently zeroes every vote — including the debate agents' own. Check
 `enrollments()` before setting it, and after.
+
+### 8.4 `enrollments --json` field names, and the absent verification
+
+Measured against v0.3.8 with one real enrollment on GitHub. The objects carry:
+
+```
+version  principal  display_name  origin  ssh_pubkey  enrolled_at  signature
+```
+
+Two consequences for a parser:
+
+- The login is **`display_name`**, not `name`. A model that spells it `name` with
+  an optional field does not fail — it yields `None`, so the mismatch survives
+  every test whose fixture has no enrollments in it. Ours did, until a real
+  enrollment existed to read.
+- **`--verify` does not change the JSON.** The flag re-checks each pinned key
+  against the forge and reports `signature ok` in the *human* output; `--json`
+  emits byte-identical objects with and without it. So there is no verification
+  result to parse, and a `verified` field on a model could only ever mean "not
+  asked" while reading as "not verified". Run the CLI and read its text instead.
+
+`policy --json` is `{"vote": ..., "set_at": ...}` — `vote` is the field to read.
+
+### 8.5 A host-side read fetches from the remote, and that is not free
+
+Measured on the live GitHub forum over SSH, three consecutive `forum read` calls:
+
+```
+real 1.79    real 1.54    real 1.50
+```
+
+against `real 0.24` for the same command on a forum whose remote is a local bare
+repository. So a read really does sync — a peer's post is visible to the next
+read with no explicit `sync` — but at roughly 1.5 s of network round-trip each
+time.
+
+Two things follow for a caller:
+
+- **Reading is the pull.** Nothing else has to run for a peer's post to arrive;
+  whatever is watching a debate simply has to read.
+- **Reading must be throttled.** At ~1.5 s a read, doing one per viewer per poll
+  would be pathological. VISTA keeps one refresh per thread per interval, shared
+  across every viewer and across both the event stream and the detail endpoint.

@@ -86,17 +86,28 @@ async def forum_status(user: UserDep) -> ForumStatus:
 
     client = build_client()
     try:
-        remote = await client.remote()
+        described = await client.remote()
         policy = await client.vote_policy()
         enrolled = len(await client.enrollments())
     except Exception:  # noqa: BLE001
         logger.warning("forum: could not read federation status", exc_info=True)
         return ForumStatus(enabled=True, shared=bool(config.remote_url))
 
+    # Whether the forum is shared is h5i's answer, not the configuration's. The
+    # two disagree exactly when it matters: `ensure_federation` logs and carries
+    # on if the remote is unreachable at boot, so a configured `remote_url` can
+    # sit alongside a forum still publishing only to its local bare repo. Trust
+    # the setting and this endpoint reports a shared forum that nobody can reach.
+    #
+    # Matching the URL rather than h5i's prose also catches the remote being
+    # pointed somewhere other than the configured one — by hand, or by an
+    # earlier run under different settings.
+    shared = bool(config.remote_url) and config.remote_url in described
+
     return ForumStatus(
         enabled=True,
-        shared=bool(config.remote_url),
-        remote=config.remote_url,
+        shared=shared,
+        remote=config.remote_url if shared else None,
         vote_policy=str(policy),
         enrolled=enrolled,
         votes_counting=not (policy == VotePolicy.PRINCIPAL and enrolled == 0),
@@ -267,7 +278,21 @@ async def get_debate(
     project_name: str, run_id: uuid.UUID, session: SessionDep, user: UserDep
 ) -> DebateStatePublic:
     project = await project_service.get_project_by_name(session, project_name, user)
-    run = await _require(session, run_id, project.id)
+    project_id = project.id  # the refresh below commits, which expires `project`
+    run = await _require(session, run_id, project_id)
+
+    # Read the forum here too, not only from the event stream.
+    #
+    # The stream ends the moment a run reaches a terminal status, and the UI does
+    # not open one for a run that is already finished — so for a debate that has
+    # argued itself out, the stream refresh never runs again. That is precisely
+    # when an outside reviewer is most likely to comment: there is a hypothesis
+    # on the table worth objecting to. Without this, their post never appeared at
+    # all. The throttle is shared with the stream, so watching a live debate does
+    # not fetch twice.
+    if await _maybe_refresh(session, run):
+        run = await _require(session, run_id, project_id)
+
     return DebateStatePublic(
         run=DebateRunPublic.model_validate(run),
         participants=[
