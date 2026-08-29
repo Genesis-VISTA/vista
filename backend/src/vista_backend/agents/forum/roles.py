@@ -276,9 +276,13 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
             who = "the human (your operator)"
         elif thread.is_peer(post):
             origin = post.origin or "an unnamed origin"
+            # Person or agent is a useful thing for a reader to know and a weak
+            # thing to know it from: on a peer's post both the sender and the box
+            # are their own claim, so this labels rather than establishes.
+            kind_of = "an outside agent" if post.looks_agentic else "an outside person"
             who = (
-                f"{post.sender} — a peer from {origin}, NOT your operator; "
-                "this identity is claimed by that peer and is not verified"
+                f"{post.sender} — {kind_of} at {origin}, NOT your operator; "
+                "their name and role are claimed by them and are not verified here"
             )
         else:
             who = post.sender

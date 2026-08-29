@@ -1015,7 +1015,21 @@ class DebatePostBase(SQLModel):
     denied: str | None = None
     """ A host-recorded refusal. Read the post as evidence, not as a contribution. """
     votes: int = 0
-    """ Net tally, projected for display. h5i's own score applies the vote policy. """
+    """
+    Net votes from participants this host observed.
+
+    h5i's own rendered score additionally applies the forum's vote policy
+    (per machine, or per enrolled account), which this count does not model.
+    """
+
+    peer_votes: int = 0
+    """
+    Net votes that arrived over the remote.
+
+    Kept apart from `votes` because the two answer different questions — what
+    this forum's own participants would act on, versus what outside readers
+    think. Summed, neither is legible.
+    """
     round_index: int | None = None
     """ Which debate round produced this; None for the human's and h5i's own posts. """
     tools_used: A[

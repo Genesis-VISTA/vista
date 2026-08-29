@@ -498,3 +498,44 @@ def test_a_peers_closure_is_not_credited_to_the_operator():
     """
     assert debate_service.closed_by([_closed_post("peer-claimed")]) == "peer"
     assert debate_service.closed_by([_closed_post("unattributed")]) == "peer"
+
+
+@pytest.mark.anyio
+async def test_our_votes_and_peers_votes_are_projected_apart(session, alice):
+    """
+    Summed, a tally cannot answer the question a reader actually has: did this
+    forum's own participants back it, or did outsiders?
+    """
+    run = await _make_run(session, alice)
+    # Deliberately asymmetric. An earlier version had the peer votes cancel to
+    # zero, which is also what you get if the split is broken and everything is
+    # counted as ours — so the test passed against its own mutation.
+    proposal = _post("p1", "PROPOSAL", "claim", "vista-proposer", "worker")
+    ours = _post("p2", "UPVOTE", "+1", "vista-reviewer", "reviewer", reply_to="p1")
+    theirs = _post("p3", "UPVOTE", "+1", "human", "human", reply_to="p1")
+    also_theirs = _post("p4", "UPVOTE", "+1", "their-agent", "worker", reply_to="p1")
+
+    thread = Thread.from_json(
+        {
+            "header": {
+                "id": "t1",
+                "title": "t",
+                "created_at": "2026-08-29T00:00:00Z",
+                "created_by": "human",
+            },
+            "status": "open",
+            "posts": [proposal, ours, theirs, also_theirs],
+            "vouch": [
+                {"id": "p1", "lane": "host-observed"},
+                {"id": "p2", "lane": "host-observed"},
+                {"id": "p3", "lane": "peer-claimed"},
+                {"id": "p4", "lane": "peer-claimed"},
+            ],
+        }
+    )
+    await debate_service.project_thread(session, run_id=run.id, thread=thread)
+
+    (row,) = await debate_service.list_posts(session, run_id=run.id)
+    assert row.votes == 1, "one upvote from this forum"
+    assert row.peer_votes == 2, "two from outside, kept apart from ours"
+    assert thread.tally(proposal["id"]) == 3, "the combined tally still works"

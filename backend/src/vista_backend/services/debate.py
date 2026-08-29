@@ -378,11 +378,14 @@ async def project_thread(
 
     created: list[DebatePostTable] = []
     for post in thread.posts:
-        tally = thread.tally(post.id) if not post.is_vote else 0
+        observed_votes, peer_votes = (
+            thread.tally_split(post.id) if not post.is_vote else (0, 0)
+        )
         row = existing.get(post.id)
         if row is not None:
             # Only what can legitimately change after the fact.
-            row.votes = tally
+            row.votes = observed_votes
+            row.peer_votes = peer_votes
             row.vouch_lane = thread.lane(post.id)
             session.add(row)
             continue
@@ -401,7 +404,11 @@ async def project_thread(
             ts=post.ts,
             vouch_lane=thread.lane(post.id),
             denied=post.denied,
-            votes=tally,
+            votes=observed_votes,
+            peer_votes=peer_votes,
+            # Spelled out for the same reason as `verdict=None` in create_debate:
+            # a JSON `sa_column` does not carry its default into __init__.
+            tools_used=[],
             # A round is a unit of the agents' work. The human's interjections
             # and h5i's own bookkeeping happen alongside it, not inside it, so
             # stamping them with a round would credit the debate with words it

@@ -222,6 +222,18 @@ class Post(BaseModel):
         return self.kind in VOTE_KINDS
 
     @property
+    def looks_agentic(self) -> bool:
+        """
+        Whether this reads as an agent's post rather than a person's.
+
+        A person posts host-side and gets `sender == "human"` with no box; an
+        agent posts through an attached box and carries its id. Useful for
+        labelling and nothing more: on a peer's post all of it is their claim, so
+        an outside human could present as an agent or the reverse.
+        """
+        return bool(self.box_id) and not self.claims_human
+
+    @property
     def agent_authored(self) -> bool:
         """False for host-generated posts (TASK, CLOSED) — nobody claimed those."""
         return self.kind not in (PostKind.TASK, PostKind.CLOSED)
@@ -295,6 +307,25 @@ class Thread(BaseModel):
     def content_posts(self) -> list[Post]:
         """Posts a reader would read — votes folded away."""
         return [p for p in self.posts if not p.is_vote]
+
+    def tally_split(self, post_id: str) -> tuple[int, int]:
+        """
+        Net votes on a post as `(observed, peer)`.
+
+        Kept apart rather than summed because they answer different questions:
+        one is what this forum's own participants would act on, the other is what
+        outside readers think. A single number hides which.
+        """
+        observed = peer = 0
+        for post in self.posts:
+            if post.reply_to != post_id or post.kind not in VOTE_KINDS:
+                continue
+            delta = 1 if post.kind == PostKind.UPVOTE else -1
+            if self.is_observed(post):
+                observed += delta
+            else:
+                peer += delta
+        return observed, peer
 
     def tally(self, post_id: str) -> int:
         """

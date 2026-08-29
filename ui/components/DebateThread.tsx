@@ -72,9 +72,20 @@ function Provenance({ post }: { post: DebatePost }) {
       {post.votes !== 0 && (
         <span
           className="debate-post__votes"
-          title="Peers who said this is the post they would act on"
+          title="Participants on this forum who said this is the post they would act on"
         >
           {post.votes > 0 ? `▲${post.votes}` : `▼${-post.votes}`}
+        </span>
+      )}
+      {post.peer_votes !== 0 && (
+        <span
+          className="debate-post__votes debate-post__votes--peer"
+          title={
+            "Votes from outside this forum. Shown apart because who agreed " +
+            "matters as much as how many."
+          }
+        >
+          {post.peer_votes > 0 ? `▲${post.peer_votes}` : `▼${-post.peer_votes}`} outside
         </span>
       )}
     </div>

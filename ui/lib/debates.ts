@@ -94,7 +94,16 @@ export type DebatePost = {
   ts: string;
   vouch_lane: string | null;
   denied: string | null;
+  /** Net votes from participants this host observed. */
   votes: number;
+  /**
+   * Net votes that arrived over the remote.
+   *
+   * Separate from `votes` on purpose: one says what this forum's own
+   * participants would act on, the other what outside readers think. Summed,
+   * neither is legible.
+   */
+  peer_votes: number;
   round_index: number | null;
   /**
    * The tools the agent called for this post.

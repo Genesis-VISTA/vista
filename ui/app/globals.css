@@ -4490,3 +4490,8 @@ button.chat-bubble.intermediate.collapsed:hover {
 .debate-post__lane--claimed {
   color: var(--brand-2);
 }
+
+.debate-post__votes--peer {
+  color: var(--muted);
+  font-weight: 500;
+}

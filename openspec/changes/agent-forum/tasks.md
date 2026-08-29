@@ -100,3 +100,19 @@ command's stderr onto the host's *stdout*.
 - [ ] 11.1 `README.md` + `AGENTS.md` sections for the forum feature
 - [ ] 11.2 `./scripts/ci-local.sh` green across backend / ui / mcp
 - [ ] 11.3 `openspec` sync + archive
+
+
+## 12. Federation (upstreamed forum)
+
+- [x] 12.1 Identity decided by vouch lane, not the sender field — an external human
+      arrives as `sender="human"` by default, and a peer may wear a role identity
+- [x] 12.2 Federation verbs in the client: `remote --branch-refs`, `sync`, `policy`,
+      `enrollments`; contract measured with two hosts (`docs/h5i-forum-contract.md` §8)
+- [x] 12.3 Peer posts surface between rounds — throttled forum refresh driven by the stream
+- [x] 12.4 Closure attributed to operator or peer, derived from the CLOSED post's lane
+- [x] 12.5 Outside person vs outside agent distinguished in the transcript; Referee told
+      to rank reasoning and not claimed identity
+- [x] 12.6 Peer votes counted and displayed apart from this forum's own
+- [ ] 12.7 Publish the repo: dedicated GitHub repo, `forum remote --branch-refs`,
+      branch protection on `h5i-forum/**`, `policy --vote principal` once participants enroll
+- [ ] 12.8 Verify against a real remote (GitHub), not a local bare repo

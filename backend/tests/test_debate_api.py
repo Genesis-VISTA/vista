@@ -392,6 +392,12 @@ async def test_the_stream_emits_posts_that_arrive_while_it_is_open(
     monkeypatch.setattr(
         debate_api, "stream_session_factory", lambda: AsyncSession(engine)
     )
+    # This test is about the DB-poll path. The forum refresh has its own tests,
+    # and letting it run here would have the stream session writing and
+    # committing on the same SQLite connection the writer task below uses — an
+    # artifact of the in-memory StaticPool, where every session shares one
+    # connection, rather than anything true in production.
+    monkeypatch.setattr(debate_api, "FORUM_REFRESH_SECONDS", 1e9)
 
     async def add_a_post_then_finish():
         await asyncio.sleep(0.05)
