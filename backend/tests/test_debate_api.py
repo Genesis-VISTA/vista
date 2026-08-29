@@ -392,13 +392,6 @@ async def test_the_stream_emits_posts_that_arrive_while_it_is_open(
     monkeypatch.setattr(
         debate_api, "stream_session_factory", lambda: AsyncSession(engine)
     )
-    # This test is about the DB-poll path. The forum refresh has its own tests,
-    # and letting it run here would have the stream session writing and
-    # committing on the same SQLite connection the writer task below uses — an
-    # artifact of the in-memory StaticPool, where every session shares one
-    # connection, rather than anything true in production.
-    monkeypatch.setattr(debate_api, "FORUM_REFRESH_SECONDS", 1e9)
-
     async def add_a_post_then_finish():
         await asyncio.sleep(0.05)
         await client.post_as(
@@ -499,3 +492,76 @@ async def test_opening_a_debate_is_503_when_the_forum_is_off(
         f"/projects/{project.name}/debates", json={"topic": "t"}
     )
     assert resp.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# Forum status
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_forum_status_reports_a_local_only_forum(forum_config, app_client):
+    resp = await app_client.get("/forum/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] and not body["shared"]
+    assert body["votes_counting"], "origin counts every machine's vote"
+
+
+@pytest.mark.anyio
+async def test_forum_status_says_when_votes_are_being_discarded(
+    forum_config, app_client, monkeypatch
+):
+    """
+    The state this endpoint exists for. `principal` with nobody enrolled throws
+    away every vote on the forum — the agents' included — and nothing about a
+    thread shows it. Silence here would mean a debate whose votes do nothing and
+    an interface that never says so.
+    """
+    from vista_backend.config import settings
+    from vista_backend.services.h5i_forum import ForumClient, VotePolicy
+
+    client = ForumClient(settings.forum, confirm_delay=0.0)
+    await client.set_vote_policy(VotePolicy.PRINCIPAL)
+
+    resp = await app_client.get("/forum/status")
+    body = resp.json()
+
+    assert body["vote_policy"] == "principal"
+    assert body["enrolled"] == 0
+    assert body["votes_counting"] is False
+
+
+@pytest.mark.anyio
+async def test_forum_status_is_quiet_when_the_forum_is_off(app_client, monkeypatch):
+    from vista_backend.config import ForumSettings, settings
+
+    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=False))
+    body = (await app_client.get("/forum/status")).json()
+    assert body == {
+        "enabled": False,
+        "shared": False,
+        "remote": None,
+        "vote_policy": None,
+        "enrolled": 0,
+        "votes_counting": True,
+    }
+
+
+@pytest.mark.anyio
+async def test_forum_status_survives_an_unreadable_forum(
+    forum_config, app_client, monkeypatch
+):
+    """An endpoint whose job is reporting bad states must not fail on one."""
+    from vista_backend.config import ForumSettings, settings
+
+    monkeypatch.setattr(
+        settings,
+        "forum",
+        ForumSettings(
+            enabled=True, binary="/nonexistent/h5i", repo_root=forum_config.repo_root
+        ),
+    )
+    resp = await app_client.get("/forum/status")
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is True

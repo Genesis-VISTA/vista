@@ -33,13 +33,74 @@ from ..db.schemas import (
 from ..services import debate as debate_service
 from ..services import project as project_service
 from ..services.auth import UserDep
-from ..services.h5i_forum import POSTABLE_KINDS, ForumDisabled, PostKind
+from ..config import settings
+from ..services.h5i_forum import (
+    POSTABLE_KINDS,
+    ForumDisabled,
+    PostKind,
+    VotePolicy,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["debates"])
+
+# The forum's configuration is deployment-wide rather than per-project, so it
+# gets its own prefix instead of hiding global state under a project path.
+forum_router = APIRouter(prefix="/forum", tags=["debates"])
+
+
+class ForumStatus(BaseModel):
+    """Whether this forum is shared, and whether its votes are being counted."""
+
+    enabled: bool
+    shared: bool
+    """Publishing to a remote — i.e. outside participants can reach it."""
+
+    remote: str | None = None
+    vote_policy: str | None = None
+    enrolled: int = 0
+    votes_counting: bool = True
+    """
+    False when the policy is `principal` and nobody has enrolled.
+
+    That combination discards every vote on the forum, including the debate
+    agents' own, and nothing about a thread shows it — which is exactly why it
+    is surfaced here.
+    """
+
+
+@forum_router.get("/status")
+async def forum_status(user: UserDep) -> ForumStatus:
+    """
+    The forum's federation state, for the UI to warn about.
+
+    Never raises on a forum that is off or unreachable: this endpoint exists to
+    report bad states, so failing on one would defeat it.
+    """
+    config = settings.forum
+    if not config.enabled or config.repo_root is None:
+        return ForumStatus(enabled=False, shared=False)
+
+    client = build_client()
+    try:
+        remote = await client.remote()
+        policy = await client.vote_policy()
+        enrolled = len(await client.enrollments())
+    except Exception:  # noqa: BLE001
+        logger.warning("forum: could not read federation status", exc_info=True)
+        return ForumStatus(enabled=True, shared=bool(config.remote_url))
+
+    return ForumStatus(
+        enabled=True,
+        shared=bool(config.remote_url),
+        remote=config.remote_url,
+        vote_policy=str(policy),
+        enrolled=enrolled,
+        votes_counting=not (policy == VotePolicy.PRINCIPAL and enrolled == 0),
+    )
 
 
 def stream_session_factory() -> AsyncSession:

@@ -299,3 +299,64 @@ async def test_a_peer_can_wear_one_of_our_role_identities(tmp_path):
         assert not thread.is_observed(spoof)
     finally:
         await beta.remove_participant(impostor)
+
+
+async def test_federation_startup_against_a_real_remote(tmp_path, monkeypatch):
+    """
+    `ensure_federation` against real h5i and a real remote.
+
+    Everything except the forge itself: setting the remote, proving it reachable
+    with a sync, and the vote policy refusing to tighten while nobody is
+    enrolled. Authentication and forge ref-protection are what remain untested,
+    and they need an actual GitHub repository.
+    """
+    if H5I is None:
+        pytest.skip("h5i is not installed")
+
+    from vista_backend.agents.forum.wiring import ensure_federation
+    from vista_backend.config import settings as app_settings
+    from vista_backend.services.h5i_forum import VotePolicy
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+
+    root = tmp_path / "host"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    for key, value in (("user.email", "host@local"), ("user.name", "host")):
+        subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+    (root / "README.md").write_text("forum\n")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+
+    config = ForumSettings(
+        enabled=True,
+        binary=H5I,
+        repo_root=root,
+        box_isolation="process",
+        timeout=120.0,
+        remote_url=str(remote),
+        vote_policy="principal",
+    )
+    monkeypatch.setattr(app_settings, "forum", config)
+    client = ForumClient(config)
+
+    await ensure_federation(client)
+
+    assert str(remote) in await client.remote(), "the configured remote was applied"
+    assert await client.vote_policy() == VotePolicy.ORIGIN, (
+        "principal is refused while nobody is enrolled — it would discard every "
+        "vote on the forum, the agents' own included"
+    )
+
+    # And the remote really is usable, not merely recorded.
+    thread_id = await client.create_thread("live: startup federation", body="go")
+    await client.post_as_human(thread_id, "published")
+    assert (await client.sync()).pushed >= 0
+    published = subprocess.run(
+        ["git", "-C", str(remote), "for-each-ref", "--format=%(refname)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "h5i-forum" in published, "threads land under the protectable ref namespace"

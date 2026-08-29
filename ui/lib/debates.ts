@@ -135,6 +135,17 @@ export type DebateState = {
   posts: DebatePost[];
 };
 
+/** The forum's federation state — whether it is shared, and whether votes count. */
+export type ForumStatus = {
+  enabled: boolean;
+  shared: boolean;
+  remote: string | null;
+  vote_policy: string | null;
+  enrolled: number;
+  /** False when the policy is `principal` and nobody has enrolled. */
+  votes_counting: boolean;
+};
+
 const JSON_HEADERS = { "content-type": "application/json" };
 
 async function unwrap<T>(response: Response): Promise<T> {
@@ -143,6 +154,12 @@ async function unwrap<T>(response: Response): Promise<T> {
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+export async function fetchForumStatus(
+  signal?: AbortSignal
+): Promise<ForumStatus> {
+  return unwrap(await fetch("/api/forum/status", { signal }));
 }
 
 export async function listDebates(

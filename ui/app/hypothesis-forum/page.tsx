@@ -8,8 +8,10 @@ import {
   DebatePost,
   DebateRun,
   DebateState,
+  ForumStatus,
   closeDebate,
   closedBy,
+  fetchForumStatus,
   fetchDebate,
   isActive,
   listDebates,
@@ -103,6 +105,7 @@ function DebatesPage() {
   const [state, setState] = useState<DebateState | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [forum, setForum] = useState<ForumStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [topic, setTopic] = useState("");
@@ -129,6 +132,16 @@ function DebatesPage() {
     void refresh(controller.signal);
     return () => controller.abort();
   }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchForumStatus(controller.signal)
+      .then(setForum)
+      .catch(() => {
+        /* the banner is advisory; its absence should not shout */
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!projectName || !selectedId) {
@@ -245,6 +258,23 @@ function DebatesPage() {
       </header>
 
       {error && <p className="debate-error">{error}</p>}
+
+      {forum && !forum.votes_counting && (
+        <p className="debate-warning">
+          <strong>Votes are not being counted.</strong> This forum counts one
+          vote per enrolled account, and no machine has enrolled yet — so every
+          vote, including the agents&rsquo; own, is discarded. Each participant
+          runs <code>h5i forum enroll</code> once on their own machine.
+        </p>
+      )}
+
+      {forum?.shared && (
+        <p className="debate-note">
+          This forum is shared. Posts marked <strong>peer-claimed</strong> came
+          from another machine: their name and role are that participant&rsquo;s
+          own claim, not verified here.
+        </p>
+      )}
 
       <section className="debate-open">
         <h2>Open a debate</h2>

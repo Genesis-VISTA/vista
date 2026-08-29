@@ -4495,3 +4495,22 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
   font-weight: 500;
 }
+
+.debate-warning {
+  background: #fff6e5;
+  border: 1px solid #7a5c00;
+  color: #5c4600;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.debate-note {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+}

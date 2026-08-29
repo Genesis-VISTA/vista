@@ -8,7 +8,6 @@ os.environ.setdefault("VISTA_BACKEND_MODEL", "test")
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -59,7 +58,7 @@ def _no_inherited_vista_data(monkeypatch):
 
 
 @pytest.fixture
-async def engine():
+async def engine(tmp_path_factory):
     """
     The in-memory engine behind `session`.
 
@@ -68,10 +67,16 @@ async def engine():
     two sessions on one connection would just share a transaction and never see
     each other's commits.
     """
+    # A file in a temp directory rather than `sqlite://` on a StaticPool. The
+    # in-memory form has to pin every session to one connection to keep the same
+    # database, which means concurrent sessions share a transaction: they see
+    # each other's uncommitted rows, and they interleave inside it. Both are
+    # untrue of the real deployment, and both have produced misleading results
+    # here — a test that passed with a commit removed, and an intermittent
+    # "Could not refresh instance" in the streaming test.
     engine = create_async_engine(
-        "sqlite+aiosqlite://",
+        f"sqlite+aiosqlite:///{tmp_path_factory.mktemp('db') / 'test.db'}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
 
     # Match production: SQLite needs FK enforcement on for ON DELETE CASCADE to fire.

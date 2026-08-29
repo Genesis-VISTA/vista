@@ -116,4 +116,11 @@ command's stderr onto the host's *stdout*.
 - [x] 12.7 Hosting runbook (`docs/hypothesis-forum-hosting.md`) + `ensure_federation`
       applying `remote_url` / `vote_policy` at startup, with the reachability check
       and the unenrolled-principal guard
-- [ ] 12.8 Verify against a real remote (GitHub), not a local bare repo
+- [x] 12.8a `ensure_federation` live-verified against real h5i + a real remote: the
+      configured remote is applied, threads land under `h5i-forum/**`, and `principal`
+      is refused while nobody is enrolled
+- [x] 12.9 Forum status endpoint + UI banner when votes are being discarded
+- [x] 12.10 Test DB moved off the shared-connection StaticPool, which had made two
+      tests pass for the wrong reason
+- [ ] 12.8b Verify against a real forge (GitHub): authentication, and that a ruleset on
+      `h5i-forum/**` actually refuses a force-push. Needs the repository to exist.
