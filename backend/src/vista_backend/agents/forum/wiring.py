@@ -64,10 +64,12 @@ async def _read_skill_body(name: str) -> str:
 
 def build_grounding(client: ForumClient) -> Grounding:
     """
-    What a debate may look at.
+    What a debate may look at, with no run in hand.
 
-    The knowledge-base search is left unwired here: `rag_search` needs a live MCP
-    connection and per-user metadata, which the API supplies per run.
+    Knowledge-base search needs a live MCP connection and the opener's metadata,
+    so it is wired by `build_run_grounding` instead. Prefer that wherever a run
+    exists: without it the Reviewer gets `prior_debates` and nothing else, which
+    is a debate arguing from the model alone.
 
     Web reads are granted only where they can actually work. `WebReader` refuses
     itself when the configured tier does not enforce the egress allowlist, and
@@ -85,6 +87,73 @@ def build_grounding(client: ForumClient) -> Grounding:
         forum=client,
         browser=browser,
     )
+
+
+async def build_run_grounding(
+    session: AsyncSession, run: DebateRunTable, client: ForumClient
+) -> Grounding:
+    """
+    What *this* debate may look at, including its project's knowledge bases.
+
+    `rag_search` runs over the vista MCP server and needs the opener's metadata,
+    exactly like the HPC tools do — so like them it can only be built once a run
+    exists. The knowledge bases are the project's own; a debate is scoped to a
+    project, so there is no second list to keep in step with what the project is
+    for.
+
+    Falls back to the run-less grounding when the project has no knowledge bases
+    or the opener cannot be resolved. A search tool over an empty corpus is worse
+    than no search tool: it answers "nothing found" to every question, and the
+    role reads that as evidence of absence.
+    """
+    grounding = build_grounding(client)
+
+    project = await session.get(ProjectTable, run.project_id)
+    user_row = await session.get(UserTable, run.user_id)
+    if project is None or user_row is None:
+        return grounding
+
+    kbs = list(project.knowledge_bases or [])
+    if not kbs:
+        logger.info(
+            "debate %s: no literature search — project %r has no knowledge bases",
+            run.id,
+            project.name,
+        )
+        return grounding
+
+    user = UserPublicWithConfig.model_validate(user_row)
+    invoke = build_mcp_invoke(user, project_paths_for(run.project_id, run.user_id))
+    default_kb = kbs[0] if len(kbs) == 1 else None
+
+    async def rag(query: str, kb_slug: str | None, n_results: int) -> str:
+        # A slug the project does not list is refused rather than passed through:
+        # the model picks this argument, and the project's KB list is the access
+        # boundary for a debate exactly as it is for a chat.
+        slug = kb_slug or default_kb
+        if slug is not None and slug not in kbs:
+            return (
+                f"No knowledge base {slug!r} on this project. "
+                f"Available: {', '.join(kbs)}."
+            )
+        args: dict[str, object] = {"query": query, "n_results": n_results}
+        if slug is not None:
+            args["kb_slug"] = slug
+        return await invoke("rag_search", args)
+
+    grounding.rag = rag
+    return grounding
+
+
+async def knowledge_bases_for(session: AsyncSession, run: DebateRunTable) -> list[str]:
+    """
+    The corpora this debate's roles may name in a search.
+
+    Travels on `DebateDeps` rather than on `Grounding` because it is a fact about
+    the run, not about the wiring — the same reason `available_jobs` does.
+    """
+    project = await session.get(ProjectTable, run.project_id)
+    return list(project.knowledge_bases or []) if project is not None else []
 
 
 async def ensure_federation(client: ForumClient | None = None) -> None:
@@ -250,6 +319,7 @@ def build_orchestrator(
     grounding: Grounding | None = None,
     available_jobs: list[str] | None = None,
     available_clusters: list[str] | None = None,
+    knowledge_bases: list[str] | None = None,
 ) -> DebateOrchestrator:
     client = build_client()
     grounding = grounding if grounding is not None else build_grounding(client)
@@ -260,6 +330,7 @@ def build_orchestrator(
         checkpoint=checkpoint,
         available_jobs=available_jobs,
         available_clusters=available_clusters,
+        knowledge_bases=knowledge_bases,
     )
 
 
@@ -267,6 +338,45 @@ def _toolsets(grounding: Grounding):
     from .grounding import build_toolsets
 
     return build_toolsets(grounding)
+
+
+async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
+    """
+    Argue an existing thread for a few more rounds.
+
+    Same shape as `run_debate_task` and the same failure handling — the caller
+    returns as soon as the roster is being attached, so a crash here has to land
+    on the run rather than in a task nobody awaits.
+
+    The simulation budget is deliberately *not* refreshed: `max_simulations` is
+    per debate, and a continued debate is the same debate. Otherwise continuing
+    would be a way to buy more cluster time a round at a time.
+    """
+    async with AsyncSession(get_engine()) as session:
+        try:
+            run = await debate_service.require_debate(session, run_id)
+
+            client = build_client()
+            grounding = await build_run_grounding(session, run, client)
+            commissioner, jobs, clusters = await build_simulation(session, run)
+            grounding.simulation = commissioner
+
+            await build_orchestrator(
+                checkpoint=_commit,
+                grounding=grounding,
+                available_jobs=jobs,
+                available_clusters=clusters,
+                knowledge_bases=await knowledge_bases_for(session, run),
+            ).resume(session, run=run, extra_rounds=extra_rounds)
+            await session.commit()
+        except Exception:
+            logger.exception("debate %s: could not continue", run_id)
+            await session.rollback()
+            try:
+                await debate_service.set_status(session, run_id=run_id, status="failed")
+                await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("debate %s: could not record the failure", run_id)
 
 
 async def run_debate_task(run_id: uuid.UUID) -> None:
@@ -283,7 +393,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
             run = await debate_service.require_debate(session, run_id)
 
             client = build_client()
-            grounding = build_grounding(client)
+            grounding = await build_run_grounding(session, run, client)
             commissioner, jobs, clusters = await build_simulation(session, run)
             grounding.simulation = commissioner
 
@@ -295,6 +405,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
                 grounding=grounding,
                 available_jobs=jobs,
                 available_clusters=clusters,
+                knowledge_bases=await knowledge_bases_for(session, run),
             ).run(session, run)
             await session.commit()
         except Exception:

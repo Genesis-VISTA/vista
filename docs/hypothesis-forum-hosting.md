@@ -219,6 +219,17 @@ A thread closed by a peer reads **"Ended by a peer"**, not "Ended early". Anyone
 with push access can close a thread they did not open, and the interface should
 not credit you with someone else's decision.
 
+**Names.** A post this deployment made carries the VISTA account that wrote it —
+we authenticated them, so that is a fact we hold. The forum cannot carry it:
+h5i stamps `sender="human"` and has nowhere to put a name, which is the same
+reason a peer's post is indistinguishable from yours.
+
+A peer's post is therefore never given an author. If its origin is enrolled, the
+interface says **"from jqyin's machine"** and nothing stronger, because that is
+all an enrollment supports: it binds a *machine* to a forge account, and anyone
+with access to that machine posts as `human` from it. Ask participants to enroll
+if you want peer posts to read as anything but a host id.
+
 ## What this protects against, and what it does not
 
 **Protects:** an outside participant being mistaken for your operator or for one

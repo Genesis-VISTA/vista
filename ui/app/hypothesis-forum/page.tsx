@@ -10,10 +10,12 @@ import {
   DebateState,
   ForumStatus,
   closeDebate,
+  continueDebate,
   closedBy,
   fetchForumStatus,
   fetchDebate,
   isActive,
+  simulationStanding,
   watchesForPeerPosts,
   listDebates,
   openDebate,
@@ -117,6 +119,7 @@ function DebatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [forum, setForum] = useState<ForumStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [moreRounds, setMoreRounds] = useState(3);
 
   const [topic, setTopic] = useState("");
   const [framing, setFraming] = useState("");
@@ -277,6 +280,24 @@ function DebatesPage() {
     }
   };
 
+  const handleContinue = async () => {
+    if (!projectName || !state) return;
+    setBusy(true);
+    try {
+      const run = await continueDebate(projectName, state.run.id, moreRounds);
+      // The response is the run as it stood when the request returned; the
+      // orchestrator raises the budget from its own session a moment later. Show
+      // it as arguing so the stream opens and the rest arrives live.
+      const arguing = { ...run, status: "debating" as const };
+      setState((current) => (current ? { ...current, run: arguing } : current));
+      setRuns((current) => current.map((r) => (r.id === run.id ? arguing : r)));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const posts = useMemo(
     () => [...(state?.posts ?? [])].sort((a, b) => a.ts.localeCompare(b.ts)),
     [state]
@@ -384,7 +405,61 @@ function DebatesPage() {
                     End this debate
                   </button>
                 )}
+                {watchesForPeerPosts(state.run.status) && (
+                  <span className="debate-detail__continue">
+                    <label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={moreRounds}
+                        onChange={(event) =>
+                          setMoreRounds(Number(event.target.value) || 1)
+                        }
+                        disabled={busy}
+                      />
+                      more rounds
+                    </label>
+                    <button
+                      onClick={handleContinue}
+                      disabled={busy}
+                      title={
+                        "Attaches a fresh roster and argues on in the same " +
+                        "thread, so an objection raised after the verdict gets " +
+                        "answered against the argument that produced it."
+                      }
+                    >
+                      Continue the debate
+                    </button>
+                  </span>
+                )}
               </div>
+
+              {state.simulations && state.simulations.length > 0 && (
+                <ul className="debate-sims">
+                  {state.simulations.map((sim) => {
+                    const standing = simulationStanding(sim);
+                    return (
+                      <li
+                        key={sim.job_id}
+                        className={`debate-sims__row debate-sims__row--${standing.tone}`}
+                      >
+                        <strong>{sim.job_name ?? sim.job_id}</strong>
+                        <span className="debate-sims__where">
+                          {sim.cluster} · job {sim.job_id}
+                        </span>
+                        <span className="debate-sims__standing">{standing.label}</span>
+                        <span
+                          className="debate-sims__why"
+                          title={`Commissioned by ${sim.commissioned_by} to test: ${sim.prediction}`}
+                        >
+                          {sim.prediction}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
 
               <ul className="debate-roster">
                 {state.participants.map((participant) => (
@@ -407,7 +482,10 @@ function DebatesPage() {
               </ul>
 
               <DebateVerdict run={state.run} />
-              <DebateThread posts={posts} />
+              <DebateThread
+                posts={posts}
+                enrolled={state.enrolled_origins ?? {}}
+              />
 
               <div className="debate-say">
                 <label>

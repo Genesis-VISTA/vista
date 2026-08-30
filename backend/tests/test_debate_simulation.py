@@ -400,6 +400,16 @@ async def test_the_tool_tells_the_agent_not_to_wait(client, session, alice):
     assert "job-42" in out
     assert "do not wait" in out
 
+    # Provenance is the point of the exercise: a FINDING that cites a simulation
+    # is only checkable if the reader can find the run it came from.
+    (call,) = ctx.deps.tool_calls
+    assert "job-42" in call.detail, "the job id is what makes the claim traceable"
+    assert "flibe-viscosity" in call.detail
+    assert call.receipt is not None
+    assert "no shear dependence" in call.receipt, (
+        "the receipt should say which prediction the run was meant to settle"
+    )
+
 
 def test_the_referee_cannot_commission_work():
     """
@@ -887,3 +897,60 @@ async def test_principal_is_set_once_somebody_is_enrolled(client, monkeypatch):
     await ensure_federation(client)
 
     assert await client.vote_policy() == VotePolicy.PRINCIPAL
+
+
+# --------------------------------------------------------------------------- #
+# Seeing what became of a commissioned run
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
+    client, session, alice
+):
+    """
+    The gap a reader actually hit: a post's provenance proves a job was
+    *submitted*, and there it ended. Whether it ran, failed, or is still queued
+    lives on the campaign side, so a job id in a chip was the end of the trail.
+
+    `last_polled_at` is reported for the same reason. A job nothing has looked at
+    since submission is not a job running slowly, and the state alone cannot tell
+    the two apart — which is exactly the case that prompted this.
+    """
+    from vista_backend.agents.forum.simulation import commissioned_runs
+
+    run, participant = await _debate(client, session, alice)
+    await _commission(client, session, alice, run, participant, FakeHpc("57719697"))
+
+    (record,) = await commissioned_runs(session, debate_run_id=run.id)
+
+    assert record.job_id == "57719697"
+    assert record.job_name == "flibe-viscosity"
+    assert record.commissioned_by == "vista-reviewer"
+    assert record.prediction == "No shear-rate dependence below 1/s"
+    assert record.result_collected is False
+    assert record.last_polled_at is None, "nothing has polled it yet, and that shows"
+
+
+@pytest.mark.anyio
+async def test_commissioned_runs_keep_reporting_a_finished_job(client, session, alice):
+    """
+    Unlike `open_simulations`, which answers "may the roster retire yet", this is
+    for reading — and "it finished and posted nothing" is precisely the state
+    worth seeing. Dropping completed runs would hide it.
+    """
+    from vista_backend.agents.forum.simulation import (
+        commissioned_runs,
+        open_simulations,
+    )
+
+    run, participant = await _debate(client, session, alice)
+    job = await _commission(client, session, alice, run, participant, FakeHpc("job-z"))
+
+    await campaign_service.update_job(
+        session, job_id=job.job_id, state="COMPLETED", result_collected=True
+    )
+
+    assert await open_simulations(session, debate_run_id=run.id) == []
+    (record,) = await commissioned_runs(session, debate_run_id=run.id)
+    assert record.result_collected is True

@@ -60,34 +60,49 @@ class Hypothesis(BaseModel):
     """One committed sentence. Not "X may play a role"."""
 
     mechanism: str
-    """The path from cause to observation — why the claim would be true."""
+    """
+    The causal path, in about fifty words — why the claim would be true.
+
+    One path, not a survey of the field. If it wants numbered sub-mechanisms with
+    headings, that is a report; pick the one that carries the claim.
+    """
 
     predictions: list[str] = Field(min_length=1)
     """
-    What must be observed if this is right, and what must not be. At least one:
-    a hypothesis with no prediction is not falsifiable and cannot be debated.
+    Two to four, one line each, each carrying a number, sign, ordering or
+    threshold. What must be observed if this is right, and what must not be.
+
+    At least one is required: a hypothesis with no prediction is not falsifiable
+    and cannot be debated.
     """
 
     confidence: float = Field(ge=0.0, le=1.0)
     """What the proposer would actually bet, not a politeness."""
 
     open_risks: list[str] = Field(default_factory=list)
-    """Where the claim is weakest, named by its own author."""
+    """Where the claim is weakest, named by its own author. One line each."""
 
     def to_post_body(self) -> str:
-        """Render as the markdown a forum post carries. h5i renders markdown."""
+        """
+        Render as the markdown a forum post carries. h5i renders markdown.
+
+        Short inline labels rather than section headings, deliberately. The
+        Proposer and Reviewer are colleagues arguing, and a scaffold of bold
+        headings makes even two sentences read as a submission — which then
+        invites the model to fill it like one. The Referee's verdict keeps the
+        formal shape, because that is the artefact someone cites later.
+        """
         parts = [
             self.claim,
             "",
-            f"**Mechanism.** {self.mechanism}",
+            f"*Why:* {self.mechanism}",
             "",
-            "**Predictions.**",
+            "*Testable:*",
             *(f"- {p}" for p in self.predictions),
-            "",
-            f"**Confidence.** {self.confidence:.2f}",
         ]
         if self.open_risks:
-            parts += ["", "**Open risks.**", *(f"- {r}" for r in self.open_risks)]
+            parts += ["", "*Shaky:*", *(f"- {r}" for r in self.open_risks)]
+        parts += ["", f"*Confidence* {self.confidence:.2f}"]
         return "\n".join(parts)
 
 
@@ -111,7 +126,12 @@ class Critique(BaseModel):
     """
 
     objection: str = ""
-    """The argument. Required when refuting."""
+    """
+    The argument, in a short paragraph — a hundred words is usually plenty.
+
+    Lead with the objection, not with a summary of what is being objected to:
+    `targets` already points at that. Required when refuting.
+    """
 
     targets: str | None = None
     """Which prediction or step is under attack, quoted or named."""
@@ -200,9 +220,32 @@ class ToolCall:
 
     receipt: str | None = None
     """
-    The full record, when there is one worth attaching — a fetch's confinement,
-    a job's report. Attached to the post; `detail` is what the UI shows.
+    The full record behind the call — the query and what came back, the job's
+    submission, a fetch's confinement.
+
+    `detail` is the one-line label; this is the evidence under it. Both are kept:
+    a reader scanning a thread needs the label, and a reader who doubts a claim
+    needs to see what it actually rested on.
     """
+
+    RECEIPT_LIMIT = 8000
+    """
+    Where a receipt is truncated before being stored on the post row.
+
+    Receipts go in a JSON column read on every thread load, and a simulation
+    report or a corpus dump has no natural size. Truncation is marked in the text
+    so a reader can tell a short receipt from a trimmed one.
+    """
+
+    def stored(self) -> dict[str, str | None]:
+        """This call as it is persisted onto the post."""
+        receipt = self.receipt
+        if receipt is not None and len(receipt) > self.RECEIPT_LIMIT:
+            receipt = (
+                receipt[: self.RECEIPT_LIMIT]
+                + f"\n\n… truncated at {self.RECEIPT_LIMIT} characters."
+            )
+        return {"tool": self.tool, "detail": self.detail, "receipt": receipt}
 
 
 @dataclass

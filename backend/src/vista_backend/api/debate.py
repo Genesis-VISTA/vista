@@ -18,10 +18,11 @@ import uuid
 from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
 
-from ..agents.forum.wiring import build_client, run_debate_task
+from ..agents.forum import simulation
+from ..agents.forum.wiring import build_client, continue_debate_task, run_debate_task
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
     DebateCreate,
@@ -29,6 +30,7 @@ from ..db.schemas import (
     DebatePostPublic,
     DebateRunPublic,
     DebateStatePublic,
+    EnrolledOrigin,
 )
 from ..services import debate as debate_service
 from ..services import project as project_service
@@ -158,6 +160,45 @@ seconds is fast enough for a human conversation.
 
 _last_refresh: dict[str, float] = {}
 _refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+ENROLLMENT_CACHE_SECONDS = 60.0
+"""
+How long the origin→account map is reused.
+
+Enrollment is a once-per-machine act, so this changes on the timescale of people
+joining a forum, not of posts arriving. Reading it is another subprocess on a
+path that already pays for a forum read, and the cost of being a minute stale is
+that one new participant's name appears a minute late.
+"""
+
+_enrollments: tuple[float, dict[str, EnrolledOrigin]] | None = None
+
+
+async def _enrolled_origins() -> dict[str, EnrolledOrigin]:
+    """
+    Which machines have bound themselves to a forge account.
+
+    Returns an empty map on any failure. Naming is a courtesy on top of a
+    readable thread; a forum whose enrollments cannot be read should still show
+    its posts, with origins unresolved exactly as they were before.
+    """
+    global _enrollments
+    now = asyncio.get_running_loop().time()
+    if _enrollments is not None and now - _enrollments[0] < ENROLLMENT_CACHE_SECONDS:
+        return _enrollments[1]
+    try:
+        rows = await build_client().enrollments()
+    except Exception:  # noqa: BLE001
+        logger.warning("forum: could not read enrollments", exc_info=True)
+        return {}
+    resolved = {
+        row.origin: EnrolledOrigin(principal=row.principal, name=row.name)
+        for row in rows
+        if row.origin and row.principal
+    }
+    _enrollments = (now, resolved)
+    return resolved
 
 
 async def _maybe_refresh(session: AsyncSession, run) -> bool:
@@ -303,6 +344,13 @@ async def get_debate(
             DebatePostPublic.model_validate(p)
             for p in await debate_service.list_posts(session, run_id=run.id)
         ],
+        enrolled_origins=await _enrolled_origins(),
+        simulations=[
+            record.model_dump()
+            for record in await simulation.commissioned_runs(
+                session, debate_run_id=run_id
+            )
+        ],
     )
 
 
@@ -349,7 +397,61 @@ async def post_to_debate(
     )
     if row is None:
         raise HTTPException(status_code=500, detail="The post did not reach the thread")
+
+    # We know who this was: the request was authenticated. The forum cannot carry
+    # that — h5i stamps `sender="human"` and has nowhere to put a name — so it is
+    # recorded here, on the one path where it is knowledge rather than a claim.
+    await debate_service.record_author(
+        session, run_id=run.id, post_id=post.id, authored_by=user.email
+    )
+    await session.refresh(row)
     return DebatePostPublic.model_validate(row)
+
+
+class ContinueDebate(BaseModel):
+    """How much more arguing to buy."""
+
+    rounds: int = Field(default=3, ge=1, le=10)
+
+
+@router.post("/{project_name}/debates/{run_id}/continue")
+async def continue_debate(
+    project_name: str,
+    run_id: uuid.UUID,
+    body: ContinueDebate,
+    session: SessionDep,
+    user: UserDep,
+) -> DebateRunPublic:
+    """
+    Argue a finished debate for a few more rounds.
+
+    The case this is for: a debate concluded, and then someone — a peer reviewer,
+    or the operator reading the verdict — raised an objection the agents never
+    answered. Opening a fresh debate would lose the argument that produced the
+    objection; this keeps the thread and picks it up.
+
+    Refused on a debate that is still arguing, and on a closed one. Closing is
+    final in h5i — the thread is in the attic and accepts no posts — so a
+    "continue" there would attach a roster that could not speak.
+    """
+    project = await project_service.get_project_by_name(session, project_name, user)
+    run = await _require(session, run_id, project.id)
+
+    if run.status in debate_service.ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="This debate is still arguing.")
+    if run.status == "closed":
+        raise HTTPException(
+            status_code=409,
+            detail="This thread is closed; h5i accepts no further posts on it.",
+        )
+    if not settings.forum.enabled or settings.forum.repo_root is None:
+        raise HTTPException(status_code=503, detail="The forum is not configured.")
+
+    payload = DebateRunPublic.model_validate(run)
+    extra = body.rounds
+    await session.commit()
+    _spawn(continue_debate_task(run_id, extra))
+    return payload
 
 
 @router.post("/{project_name}/debates/{run_id}/close")

@@ -450,3 +450,19 @@ Two things follow for a caller:
 - **Reading must be throttled.** At ~1.5 s a read, doing one per viewer per poll
   would be pathological. VISTA keeps one refresh per thread per interval, shared
   across every viewer and across both the event stream and the detail endpoint.
+
+### 8.6 Revoking is a side effect; recording it is not
+
+`h5i forum revoke` is a subprocess and marking the participant retired is a row
+write, and a caller that treats them as one operation gets them out of step. The
+refusal that matters is revoking an identity h5i has *already* revoked — which
+happens whenever a debate died between the subprocess and the commit. Under one
+`try`, that refusal skips the write, and the row claims the participant is
+attached from then on.
+
+Seen in a live database: six participants marked attached on one run, three of
+them carrying `revoked_at` in the forum's own `roster.json`. The forum was right
+and the projection was stale.
+
+So: attempt the removal, log a refusal, and record the retirement regardless. The
+row means "attached according to us"; if h5i does not have it, the row is wrong.

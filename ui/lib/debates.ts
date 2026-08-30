@@ -76,7 +76,18 @@ export function isOperator(post: DebatePost): boolean {
 }
 
 /** One tool an agent called while producing a post. */
-export type ToolUse = { tool: string; detail: string };
+/**
+ * One tool an agent reached for, and what it saw.
+ *
+ * `detail` is the scanning label; `receipt` is the evidence under it — the query
+ * and the passages that came back, the job id and cluster, the page that was
+ * fetched. Null when the call had nothing worth keeping.
+ */
+export type ToolUse = {
+  tool: string;
+  detail: string;
+  receipt?: string | null;
+};
 
 export type DebatePost = {
   id: string;
@@ -104,6 +115,14 @@ export type DebatePost = {
    * neither is legible.
    */
   peer_votes: number;
+  /**
+   * The VISTA account that wrote this, where this deployment authenticated them.
+   *
+   * Null on every post from outside, and that is not a gap to fill: h5i stamps
+   * `sender="human"` for every host's operator, so a peer's post carries no
+   * name we could believe.
+   */
+  authored_by: string | null;
   round_index: number | null;
   /**
    * The tools the agent called for this post.
@@ -129,11 +148,62 @@ export type Verdict = {
   unresolved: string[];
 };
 
+/**
+ * A simulation the debate commissioned, and where it got to.
+ *
+ * A `commission_simulation` chip proves a job was submitted and no more. This is
+ * what became of it — the half of the story that lives on the campaign side.
+ */
+export type CommissionedRun = {
+  job_id: string;
+  /** Nullable on the job row, so nullable here. */
+  job_name: string | null;
+  cluster: string;
+  prediction: string;
+  commissioned_by: string;
+  state: string;
+  submitted_at: string;
+  /** Null means nothing has polled it since submission. */
+  last_polled_at: string | null;
+  /** Whether the outputs came back and were posted onto the thread. */
+  result_collected: boolean;
+};
+
 export type DebateState = {
   run: DebateRun;
   participants: DebateParticipant[];
   posts: DebatePost[];
+  /** Origin host id → the forge account enrolled on that machine. */
+  enrolled_origins: Record<string, EnrolledOrigin>;
+  simulations: CommissionedRun[];
 };
+
+/**
+ * What to tell a reader about a commissioned run, in one phrase.
+ *
+ * Deliberately distinguishes "nothing has looked at this" from "still running".
+ * They present identically in the raw state, and only the first is a problem
+ * with the deployment rather than with the queue.
+ */
+export function simulationStanding(sim: CommissionedRun): {
+  label: string;
+  tone: "waiting" | "stalled" | "done" | "failed";
+} {
+  const state = sim.state.toUpperCase();
+  if (sim.result_collected) {
+    return { label: "result posted to the thread", tone: "done" };
+  }
+  if (state.includes("FAIL") || state.includes("CANCEL") || state.includes("TIMEOUT")) {
+    return { label: `${sim.state} — no result posted`, tone: "failed" };
+  }
+  if (state.includes("COMPLET")) {
+    return { label: "finished; result not collected yet", tone: "waiting" };
+  }
+  if (!sim.last_polled_at) {
+    return { label: `${sim.state} — not polled yet`, tone: "stalled" };
+  }
+  return { label: `${sim.state} — waiting`, tone: "waiting" };
+}
 
 /** The forum's federation state — whether it is shared, and whether votes count. */
 export type ForumStatus = {
@@ -217,6 +287,27 @@ export async function closeDebate(
 }
 
 /**
+ * Pick a finished debate back up for more rounds.
+ *
+ * A new roster is attached under fresh identities, because the previous one was
+ * revoked when the debate concluded and a revoked identity cannot post.
+ */
+export async function continueDebate(
+  projectName: string,
+  runId: string,
+  rounds: number
+): Promise<DebateRun> {
+  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  return unwrap(
+    await fetch(`/api/debates/continue?${params}`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ rounds }),
+    })
+  );
+}
+
+/**
  * Who ended a debate: the operator, a peer, or nobody yet.
  *
  * Derived from the CLOSED post's vouch lane, because that is where the fact
@@ -234,6 +325,36 @@ export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
 }
 
 /** Debate statuses that can still produce new posts. */
+/**
+ * A forge account bound to one machine.
+ *
+ * What it licenses saying is "this came from a machine <name> enrolled" — not
+ * "<name> wrote this". Anyone with access to that machine posts as `human` from
+ * that origin, so the binding is to hardware, not authorship.
+ */
+export interface EnrolledOrigin {
+  principal: string;
+  name: string | null;
+}
+
+/**
+ * The best available account of who wrote a post.
+ *
+ * Three cases, and they are genuinely different kinds of statement:
+ *  - `account`  — this deployment authenticated them. A fact.
+ *  - `machine`  — an enrolled origin. A fact about the machine, not the person.
+ *  - `null`     — nothing is known, and the origin is all there is to show.
+ */
+export function authorOf(
+  post: DebatePost,
+  enrolled: Record<string, EnrolledOrigin> = {}
+): { kind: "account" | "machine"; label: string } | null {
+  if (post.authored_by) return { kind: "account", label: post.authored_by };
+  const binding = post.origin ? enrolled[post.origin] : undefined;
+  if (binding) return { kind: "machine", label: binding.name ?? binding.principal };
+  return null;
+}
+
 export function isActive(status: DebateStatus): boolean {
   return status === "setting_up" || status === "debating";
 }

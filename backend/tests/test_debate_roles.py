@@ -19,6 +19,7 @@ from vista_backend.agents.forum.roles import (
     Hypothesis,
     RankedHypothesis,
     RoleAgents,
+    ToolCall,
     Verdict,
     render_transcript,
 )
@@ -162,12 +163,35 @@ def test_a_verdict_needs_something_to_rank():
 
 
 def test_hypothesis_renders_every_part_into_the_post():
+    """Nothing the debate needs is dropped on the way into the post."""
     body = Hypothesis(**HYPOTHESIS).to_post_body()
     assert HYPOTHESIS["claim"] in body
-    assert "Mechanism" in body and HYPOTHESIS["mechanism"] in body
+    assert HYPOTHESIS["mechanism"] in body
     assert "no shear-rate dependence below 1/s" in body
     assert "0.60" in body
     assert "no data below 700K" in body
+
+
+def test_a_proposal_is_not_scaffolded_like_a_submission():
+    """
+    The Proposer and Reviewer argue as colleagues; the Referee writes for the
+    record. Section headings are the difference — a form invites being filled in
+    like one, and two sentences under **Mechanism.** still read as a submission.
+
+    Pinned because the register is a product decision that a later edit to the
+    renderer would silently undo.
+    """
+    proposal = Hypothesis(**HYPOTHESIS).to_post_body()
+    assert "**" not in proposal, "bold section labels are the formal register"
+    assert "#" not in proposal, "and headings more so"
+
+    verdict = Verdict(
+        ranked=[
+            RankedHypothesis(hypothesis=Hypothesis(**HYPOTHESIS), standing="stands")
+        ],
+        rationale="nothing landed against it",
+    ).to_post_body()
+    assert "## Verdict" in verdict, "the ruling is the one formal artefact"
 
 
 def test_verdict_reports_standing_and_what_is_unresolved():
@@ -501,3 +525,46 @@ def test_an_outside_objection_is_not_dismissed_for_being_outside():
     assert "no more for the name attached to it, and no less for being" in _prompt(
         "referee"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Evidence
+# --------------------------------------------------------------------------- #
+
+
+def test_a_tool_call_keeps_its_receipt_when_stored():
+    """
+    The label and the evidence are both kept.
+
+    `detail` is what a reader scanning a thread sees; the receipt is what someone
+    who doubts the claim needs. Storing only the label leaves "consulted the
+    corpus" with nothing behind it, which is a claim about grounding rather than
+    evidence of it.
+    """
+    call = ToolCall("search_literature", "viscosity knee — salts", receipt="passage…")
+    assert call.stored() == {
+        "tool": "search_literature",
+        "detail": "viscosity knee — salts",
+        "receipt": "passage…",
+    }
+
+
+def test_an_oversized_receipt_is_truncated_and_says_so():
+    """
+    Receipts land in a JSON column read on every thread load, and a corpus dump
+    or a job report has no natural size. Silent truncation would be worse than
+    the size: a reader cannot tell a short receipt from a trimmed one.
+    """
+    call = ToolCall(
+        "search_literature", "q", receipt="x" * (ToolCall.RECEIPT_LIMIT + 50)
+    )
+    stored = call.stored()
+
+    assert stored["receipt"] is not None
+    assert len(stored["receipt"]) < ToolCall.RECEIPT_LIMIT + 100
+    assert "truncated" in stored["receipt"]
+
+
+def test_a_tool_call_with_no_receipt_stores_none():
+    """Not every call has evidence worth keeping; absence must stay legible."""
+    assert ToolCall("prior_debates", "salts").stored()["receipt"] is None

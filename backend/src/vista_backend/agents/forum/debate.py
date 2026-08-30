@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Iterable
 
 from pydantic_ai.exceptions import UsageLimitExceeded
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -53,6 +53,17 @@ ROSTER: dict[DebateRole, ParticipantRole] = {
     "reviewer": ParticipantRole.REVIEWER,
     "referee": ParticipantRole.WORKER,
 }
+
+
+def _participant_of(row) -> Participant:
+    """The client's view of a recorded participant row."""
+    return Participant(
+        identity=row.identity,
+        role=ParticipantRole(row.forum_role),
+        box_slug=row.box_slug,
+        box_id=row.box_id,
+        policy_digest=row.policy_digest,
+    )
 
 
 PostHook = Callable[[Post], Awaitable[None]]
@@ -89,6 +100,7 @@ class DebateOrchestrator:
         checkpoint: Checkpoint | None = None,
         available_jobs: list[str] | None = None,
         available_clusters: list[str] | None = None,
+        knowledge_bases: list[str] | None = None,
     ) -> None:
         self.client = client
         self.roles = roles or RoleAgents()
@@ -96,6 +108,7 @@ class DebateOrchestrator:
         self.checkpoint = checkpoint
         self.available_jobs = available_jobs or []
         self.available_clusters = available_clusters or []
+        self.knowledge_bases = knowledge_bases or []
 
     # -- setup ------------------------------------------------------------- #
 
@@ -144,20 +157,95 @@ class DebateOrchestrator:
             session, run_id=run.id, status="debating"
         )
 
+    async def resume(
+        self,
+        session: AsyncSession,
+        *,
+        run: DebateRunTable,
+        extra_rounds: int,
+    ) -> DebateRunTable:
+        """
+        Put a finished debate back on the forum for another few rounds.
+
+        The reason this is not just `run()` again: the roster was revoked when
+        the debate concluded, and a revoked identity cannot post. So a new one is
+        attached, under identities suffixed with the stint number — the old posts
+        keep the names they were made under, and the thread shows plainly that
+        the argument was picked up again rather than pretending it never stopped.
+
+        `rounds_done` is left alone and the budget is raised instead, so the loop
+        runs exactly the extra rounds asked for and the record still says how
+        much arguing this debate has had in total.
+        """
+        run_id = run.id
+
+        # Clear any roster still marked attached before adding another.
+        #
+        # Normally there is none: `run` retires on its way out. But a resume that
+        # crashed after its checkpoint leaves one committed and active, and two
+        # live rosters for the same three roles makes `_participants` pick by
+        # string ordering — which of two identities wins should never be decided
+        # by how they sort.
+        leftover = [
+            _participant_of(row)
+            for row in await debate_service.list_active_participants(
+                session, run_id=run_id
+            )
+        ]
+        if leftover:
+            logger.info(
+                "debate %s: retiring %d roster entr(ies) left attached",
+                run_id,
+                len(leftover),
+            )
+            # Every attached row, not the role-keyed roster: a debate that crashed
+            # mid-resume can have more than one stint attached, and a dict keyed by
+            # role would keep exactly one of them — leaving the rest marked active
+            # for the next resume to trip over in the same way.
+            await self._retire(session, run_id, leftover)
+
+        stint = (
+            len(await debate_service.list_participants(session, run_id=run_id))
+            // len(ROSTER)
+            + 1
+        )
+
+        for role, forum_role in ROSTER.items():
+            slug = f"{role}-{str(run_id)[:8]}-{stint}"
+            participant = await self.client.create_participant(
+                box_slug=slug, identity=f"vista-{slug}", role=forum_role
+            )
+            await debate_service.add_participant(
+                session,
+                run_id=run_id,
+                participant=participant,
+                debate_role=role,
+                granted_tools=self.roles.granted.get(role, []),
+            )
+
+        await debate_service.update_debate(
+            session,
+            run_id=run_id,
+            rounds=run.rounds + extra_rounds,
+            status="debating",
+        )
+        # Commit before arguing, so a viewer sees the debate go live instead of
+        # waiting for it to finish — and then re-read, because that commit
+        # expired the row above. Handing the expired object to `run` makes its
+        # first line async IO in a context that cannot await.
+        await self._checkpoint(session)
+        return await self.run(
+            session, await debate_service.require_debate(session, run_id)
+        )
+
     async def _participants(
         self, session: AsyncSession, run_id: uuid.UUID
     ) -> dict[DebateRole, Participant]:
         """Rebuild the client's view of the roster from what was recorded."""
-        rows = await debate_service.list_participants(session, run_id=run_id)
+        rows = await debate_service.list_active_participants(session, run_id=run_id)
         roster: dict[DebateRole, Participant] = {}
         for row in rows:
-            roster[row.debate_role] = Participant(  # type: ignore[index]
-                identity=row.identity,
-                role=ParticipantRole(row.forum_role),
-                box_slug=row.box_slug,
-                box_id=row.box_id,
-                policy_digest=row.policy_digest,
-            )
+            roster[row.debate_role] = _participant_of(row)  # type: ignore[index]
         return roster
 
     # -- the loop ---------------------------------------------------------- #
@@ -190,7 +278,7 @@ class DebateOrchestrator:
             await debate_service.set_status(session, run_id=run_id, status="closed")
             await self._checkpoint(session)
         finally:
-            await self._retire(session, run_id, roster)
+            await self._retire(session, run_id, roster.values())
         return await debate_service.require_debate(session, run_id)
 
     async def run_round(
@@ -331,10 +419,7 @@ class DebateOrchestrator:
                 session,
                 run_id=run.id,
                 post_id=post.id,
-                tools=[
-                    {"tool": call.tool, "detail": call.detail}
-                    for call in deps.tool_calls
-                ],
+                tools=[call.stored() for call in deps.tool_calls],
             )
         if self.on_post is not None:
             await self.on_post(post)
@@ -344,11 +429,17 @@ class DebateOrchestrator:
         self, participant: Participant, deps: DebateDeps | None
     ) -> str | None:
         """
-        Turn this turn's fetch receipts into an attachment on the post.
+        Turn this turn's receipts into an attachment on the post.
 
-        h5i takes one attachment per post, so several fetches become one file.
-        A refused fetch has a receipt too, and it is kept for the same reason a
+        h5i takes one attachment per post, so several calls become one file. A
+        refused fetch has a receipt too, and it is kept for the same reason a
         successful one is: what the debate could not reach is part of the record.
+
+        The same receipts are also stored on the post row, and the duplication is
+        deliberate — they serve different readers. This copy goes onto the forum,
+        where a peer with nothing but the git remote can read it, and it is the
+        untruncated one. The row is what VISTA's own interface shows, capped
+        because it is read on every thread load.
         """
         receipts = [c.receipt for c in deps.tool_calls if c.receipt] if deps else []
         if not receipts:
@@ -400,6 +491,9 @@ class DebateOrchestrator:
         deps = _deps(run, round_index, participant)
         deps.available_jobs = self.available_jobs
         deps.available_clusters = self.available_clusters
+        # Which corpora the search tool may name. Empty means the project has
+        # none, in which case the tool was not granted either.
+        deps.knowledge_bases = self.knowledge_bases
         return deps
 
     async def _checkpoint(self, session: AsyncSession) -> None:
@@ -439,7 +533,7 @@ class DebateOrchestrator:
         self,
         session: AsyncSession,
         run_id: uuid.UUID,
-        roster: dict[DebateRole, Participant],
+        roster: Iterable[Participant],
     ) -> None:
         """
         Take the roster off the forum and delete its boxes.
@@ -460,15 +554,36 @@ class DebateOrchestrator:
             )
             return
 
-        for role, participant in roster.items():
+        for participant in roster:
             try:
                 await self.client.remove_participant(participant)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "debate %s: could not take %s off the forum",
+                    run_id,
+                    participant.identity,
+                    exc_info=True,
+                )
+
+            # Mark it retired even when h5i refused.
+            #
+            # These two are not one operation: the first is an external side
+            # effect, the second a row. Doing them under one `try` meant that a
+            # participant h5i had *already* revoked — the commonest refusal —
+            # left our row saying `active` forever, because the failure skipped
+            # the write. The row records "attached according to us"; if h5i no
+            # longer has it, the row is simply stale, and every later read of the
+            # roster inherits the mistake.
+            try:
                 await debate_service.deactivate_participant(
                     session, run_id=run_id, identity=participant.identity
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "debate %s: could not retire %s", run_id, role, exc_info=True
+                    "debate %s: could not record %s as retired",
+                    run_id,
+                    participant.identity,
+                    exc_info=True,
                 )
 
 

@@ -61,9 +61,14 @@ command's stderr onto the host's *stdout*.
 
 ## 7. Grounding (MR 5)
 
-- [x] 7.1 Per-role tool grants: RAG/KBs, salt-chemistry + neutronics skills
+- [x] 7.1 Per-role tool grants: RAG/KBs, salt-chemistry + neutronics skills.
+      **Corrected in section 15** — the skills half shipped, the RAG half never did:
+      `build_grounding` set no `rag`, so `search_literature` was never granted to any
+      debate and the Reviewer ran with `prior_debates` alone.
 - [x] 7.2 Prior closed threads on the same forum as readable context
-- [x] 7.3 User-uploaded papers via the existing uploads/files service
+- [ ] 7.3 User-uploaded papers via the existing uploads/files service — **not wired**.
+      The tool and its fencing exist; nothing sets `Grounding.uploads`, so
+      `read_attached_paper` is never granted. Same failure as 7.1 and not yet fixed.
 - [x] 7.4 `h5i browser` reads under an egress allowlist; receipt attached to the citing post — **refuses to run below `container`/`microvm`**, because the allowlist does not bind at lower tiers (contract §5.1)
 - [ ] 7.5 Assert a refused fetch stays visible in the record — **blocked on this host**: no `container`/`microvm` tier (no rootless Podman), and the h5i engine's HTTPS fails here, so a real allowlist refusal cannot be observed. Hermetic tests cover the refusal path; verify on a Linux host with Podman.
 
@@ -153,3 +158,89 @@ command's stderr onto the host's *stdout*.
       posts). Reproduced with a failing test first.
 - [x] 12.16 Measured that a host-side read fetches from the remote: ~1.5 s against
       GitHub over SSH vs 0.24 s local (`docs/h5i-forum-contract.md` §8.5)
+- [x] 13.1 Author naming. Our own posts carry the VISTA account that wrote them,
+      stamped on the authenticated path and preserved across every replay. Peer
+      posts stay anonymous — h5i stamps `sender="human"` for every host's operator,
+      so nothing in one is knowledge — and enrolled origins are returned separately
+      as a machine→account map, worded as "from X's machine" rather than "X wrote
+      this", since anyone with access to an enrolled machine posts from it.
+- [x] 13.2 `scripts/migrate_debate_columns.py`: the app creates tables with
+      `create_all`, which never adds a column to an existing table, so a live
+      `debate_post` would fail at read time on `authored_by`. Additive, idempotent,
+      `--dry-run`; applied to the local database.
+- [x] 13.3 Continue an open debate for N more rounds (default 3, user-set).
+      Attaches a fresh roster under stint-suffixed identities because the previous
+      one was revoked at conclusion and a revoked identity cannot post; raises the
+      budget rather than resetting `rounds_done`; refused while still arguing and on
+      a closed thread. The simulation cap is per debate and is deliberately not
+      refreshed, so continuing cannot buy more cluster time a round at a time.
+- [x] 13.4 `_participants` filters to the active roster. Pinned with a test whose
+      retired identity sorts *after* the live one — with real continuation names the
+      unfiltered version passes by luck of string ordering, so the mutation survived
+      until the test was written to defeat that.
+- [x] 13.5 `resume` re-reads the run after its checkpoint. The commit that makes a
+      continued debate visible to a viewer also expires the row, and handing that
+      object to `run` made its first line async IO — the MissingGreenlet the user
+      hit. Missed because the driver harness used a no-op checkpoint; it now commits
+      by default, so every driver test runs the semantics production runs under.
+- [x] 13.6 `_retire` deactivates the row even when h5i refuses the removal. They are
+      an external side effect and a row write, not one operation: under a single
+      `try`, an identity h5i had already revoked left our row claiming `active`
+      forever. Observed in the live database — six participants marked attached, three
+      of them revoked in the forum's own roster.
+- [x] 13.7 `resume` clears *every* attached stint, keyed by identity rather than by
+      role. Crashed resumes accumulate rosters, and a role-keyed retire clears one per
+      role however many are attached.
+- [x] 13.8 `run_job` in `scripts/ci-local.sh` reported real failures as
+      `fail: … (exit 0)`. A compound `if` whose condition fails and which has no
+      `else` returns 0, so `$?` afterwards was the if statement's status, not the
+      command's. A failure line that names exit 0 reads as a harness bug and invites
+      disbelieving the failure.
+
+## 14. Register and evidence
+
+- [x] 14.1 Proposer and Reviewer write as colleagues: brief, sharp, specific, with
+      word budgets in both the prompt and the schema field descriptions (the model
+      sees the latter). Referee keeps the formal register and is now told *why* the
+      contrast exists — its verdict is the artefact someone cites later.
+- [x] 14.2 `Hypothesis.to_post_body` drops the bold section headings for short inline
+      labels. A form invites being filled in like one; two sentences under
+      `**Mechanism.**` still read as a submission. `Verdict.to_post_body` composes its
+      own formal shape from the same fields, so the ruling was unaffected.
+- [x] 14.3 Register pinned by test — a proposal carries no `**`/`#`, a verdict keeps
+      `## Verdict`. It is a product decision a later renderer edit would silently undo.
+- [x] 14.4 Receipts persisted onto the post. `ToolCall.receipt` was written only to an
+      h5i attachment that nothing could open, and `record_post_tools` dropped it — so
+      the UI had "consulted the corpus" with no way to see what came back. Capped at
+      8000 characters with the truncation marked, since it is read on every thread load.
+- [x] 14.5 Every reading tool now records what it saw (query + passages, skill body,
+      paper, prior threads), and `commission_simulation` records the job id and cluster
+      — without those a reader has "a simulation was run" and no way to check that the
+      run behind a FINDING is the run that was claimed.
+- [x] 14.6 UI shows a receipt-backed call as a collapsed disclosure that opens to the
+      full record. Backward compatible: rows written before this carry no `receipt` key
+      and render as plain chips, so no migration is needed.
+- [x] 14.7 A refused tool call is recorded too, marked `refused`. This reverses an
+      earlier assertion that a refused fetch recorded nothing — right about citations,
+      wrong about provenance, now that `tool_calls` feeds both. An agent blocked from
+      checking a source must not look like one that never looked.
+
+## 15. Corpus and simulation visibility
+
+- [x] 15.1 `search_literature` is actually granted. `build_run_grounding` wires
+      `rag_search` over the vista MCP server from the run's project and opener, the
+      way `build_simulation` already did for HPC. A project with no knowledge bases
+      gets no tool at all — a search over an empty corpus answers "nothing found" to
+      every question and a role reads that as evidence of absence.
+- [x] 15.2 A `kb_slug` the project does not list is refused before reaching MCP. The
+      model picks that argument, so the project's KB list is the access boundary for
+      a debate exactly as it is for a chat.
+- [x] 15.3 `DebateDeps.knowledge_bases` is populated. It existed and the tool read
+      it; nothing ever set it, so even a wired RAG would have had no default corpus.
+- [x] 15.4 `commissioned_runs` + a UI panel: every job a debate commissioned, its
+      scheduler state, and whether the result was posted back. A provenance chip
+      proved only that a job was *submitted*; what became of it lived on the campaign
+      side with no join between them.
+- [x] 15.5 `last_polled_at` surfaced distinctly. A job nothing has looked at since
+      submission is not a job running slowly, and the state alone cannot tell them
+      apart — which is the case that prompted this.

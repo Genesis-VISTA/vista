@@ -184,6 +184,12 @@ async def test_the_tool_reports_a_refusal_instead_of_failing_the_turn(tmp_path):
     """
     "This host is not reachable" is a fact the agent should be able to report and
     work around, not an exception that loses its turn.
+
+    This once asserted that a refusal recorded nothing, on the reasoning that you
+    cannot cite what you did not read. That is right about citations and wrong
+    about provenance, and `tool_calls` now feeds both: an agent that tried to
+    check a source and was blocked must not look like one that never looked. The
+    entry is marked `refused` so it cannot be mistaken for a source.
     """
     config = _settings(tmp_path, egress=[], box_isolation="process")
     toolset = build_toolset(
@@ -195,7 +201,11 @@ async def test_the_tool_reports_a_refusal_instead_of_failing_the_turn(tmp_path):
     deps = DebateDeps(topic="t", participant=PARTICIPANT)
     out = await _call(tool, deps, url="http://example.com/")
     assert "disabled here" in out
-    assert deps.tool_calls == [], "a refused fetch produces no citation"
+
+    (attempt,) = deps.tool_calls
+    assert attempt.tool == "read_web_page"
+    assert "refused" in attempt.detail, "a refusal must not read as a source"
+    assert attempt.receipt is not None and "example.com" in attempt.receipt
 
 
 async def _call(tool, deps, **kwargs):
@@ -442,3 +452,160 @@ def test_a_debate_with_no_sources_grants_nothing():
 
     roles = RoleAgents(toolsets=build_toolsets(Grounding()))
     assert roles.granted == {"proposer": [], "reviewer": [], "referee": []}
+
+
+# --------------------------------------------------------------------------- #
+# The knowledge bases actually reaching the debate
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_project_with_knowledge_bases_gets_literature_search(tmp_path, session):
+    """
+    The gap this closes: `build_grounding` never set `rag`, so no debate ever had
+    `search_literature`. The Reviewer — whose whole job is to find evidence
+    against a claim — was granted `prior_debates` and nothing else, and argued
+    from the model alone while a corpus sat indexed beside it.
+    """
+    from vista_backend.agents.forum import wiring
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+
+    project = ProjectTable(name="salts", knowledge_bases=["molten-salts"])
+    user = UserTable(email="scientist@example.com")
+    session.add(project)
+    session.add(user)
+    await session.flush()
+
+    run = DebateRunTable(
+        project_id=project.id,
+        user_id=user.id,
+        topic="t",
+        thread_id="abc",
+        rounds=1,
+        rounds_done=0,
+        status="debating",
+        verdict=None,
+        created_at="now",
+        updated_at="now",
+    )
+    session.add(run)
+    await session.flush()
+
+    calls: list[tuple[str, dict]] = []
+
+    async def fake_invoke(name, args):
+        calls.append((name, args))
+        return "a passage about the viscosity knee"
+
+    import vista_backend.agents.forum.wiring as w
+
+    original = w.build_mcp_invoke
+    w.build_mcp_invoke = lambda user, paths: fake_invoke  # type: ignore[assignment]
+    try:
+        grounding = await wiring.build_run_grounding(
+            session, run, ForumClient(_settings(tmp_path))
+        )
+    finally:
+        w.build_mcp_invoke = original  # type: ignore[assignment]
+
+    assert grounding.rag is not None, "a project with a KB must get literature search"
+    assert "search_literature" in _tool_names(build_toolset("reviewer", grounding))
+
+    out = await grounding.rag("viscosity knee", "molten-salts", 5)
+    assert "viscosity knee" in out
+    assert calls == [
+        (
+            "rag_search",
+            {"query": "viscosity knee", "n_results": 5, "kb_slug": "molten-salts"},
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_project_with_no_knowledge_bases_gets_no_search_tool(tmp_path, session):
+    """
+    A search tool over an empty corpus is worse than none: it answers "nothing
+    found" to every question, and a role reads that as evidence of absence.
+    """
+    from vista_backend.agents.forum import wiring
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+
+    project = ProjectTable(name="bare", knowledge_bases=[])
+    user = UserTable(email="scientist2@example.com")
+    session.add(project)
+    session.add(user)
+    await session.flush()
+    run = DebateRunTable(
+        project_id=project.id,
+        user_id=user.id,
+        topic="t",
+        thread_id="abc",
+        rounds=1,
+        rounds_done=0,
+        status="debating",
+        verdict=None,
+        created_at="now",
+        updated_at="now",
+    )
+    session.add(run)
+    await session.flush()
+
+    grounding = await wiring.build_run_grounding(
+        session, run, ForumClient(_settings(tmp_path))
+    )
+    assert grounding.rag is None
+    assert "search_literature" not in _tool_names(build_toolset("reviewer", grounding))
+
+
+@pytest.mark.anyio
+async def test_a_slug_the_project_does_not_list_is_refused(tmp_path, session):
+    """
+    The model picks `kb_slug`, so it is untrusted input. A project's KB list is
+    the access boundary for a debate exactly as it is for a chat, and passing an
+    unlisted slug through would let a debate read another project's corpus.
+    """
+    from vista_backend.agents.forum import wiring
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+
+    project = ProjectTable(name="salts2", knowledge_bases=["molten-salts"])
+    user = UserTable(email="scientist3@example.com")
+    session.add(project)
+    session.add(user)
+    await session.flush()
+    run = DebateRunTable(
+        project_id=project.id,
+        user_id=user.id,
+        topic="t",
+        thread_id="abc",
+        rounds=1,
+        rounds_done=0,
+        status="debating",
+        verdict=None,
+        created_at="now",
+        updated_at="now",
+    )
+    session.add(run)
+    await session.flush()
+
+    reached: list[tuple[str, dict]] = []
+
+    async def fake_invoke(name, args):
+        reached.append((name, args))
+        return "should not happen"
+
+    import vista_backend.agents.forum.wiring as w
+
+    original = w.build_mcp_invoke
+    w.build_mcp_invoke = lambda user, paths: fake_invoke  # type: ignore[assignment]
+    try:
+        grounding = await wiring.build_run_grounding(
+            session, run, ForumClient(_settings(tmp_path))
+        )
+    finally:
+        w.build_mcp_invoke = original  # type: ignore[assignment]
+
+    assert grounding.rag is not None
+    out = await grounding.rag("anything", "someone-elses-corpus", 5)
+
+    assert "No knowledge base" in out
+    assert reached == [], "the unlisted slug must not reach the MCP server"

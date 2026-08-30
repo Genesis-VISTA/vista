@@ -4514,3 +4514,135 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-bottom: 16px;
   font-size: 0.85rem;
 }
+
+/* Who wrote a post, where that is knowable.
+   Two visually distinct cases on purpose: an authenticated VISTA account is a
+   fact about a person, an enrolled origin is a fact about a machine. Rendering
+   them identically would quietly upgrade the second into the first. */
+.debate-post__author {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.65rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-1, inherit);
+  white-space: nowrap;
+}
+
+.debate-post__author--machine {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+/* Continuing a concluded debate. Kept beside the status rather than in the
+   composer, because it acts on the debate as a whole and not on one post. */
+.debate-detail__continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.debate-detail__continue label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.debate-detail__continue input {
+  width: 3.5rem;
+  padding: 0.15rem 0.35rem;
+}
+
+/* Evidence behind a tool call.
+   A <details> inside the flex row of chips: closed it is the same chip as an
+   un-backed call, open it takes the full width so a receipt is readable rather
+   than squeezed into a column of its own. */
+.debate-post__tool--evidence {
+  display: inline-block;
+}
+
+.debate-post__tool--evidence > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.debate-post__tool--evidence > summary::-webkit-details-marker {
+  display: none;
+}
+
+.debate-post__tool--evidence > summary::after {
+  content: "▸";
+  font-size: 0.65em;
+  opacity: 0.7;
+}
+
+.debate-post__tool--evidence[open] {
+  display: block;
+  flex-basis: 100%;
+}
+
+.debate-post__tool--evidence[open] > summary::after {
+  content: "▾";
+}
+
+.debate-post__receipt {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-1, inherit);
+}
+
+/* Commissioned simulations. A job id in a provenance chip proves only that
+   something was submitted; this is what became of it. */
+.debate-sims {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.76rem;
+}
+
+.debate-sims__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+}
+
+.debate-sims__row--done { border-left-color: #3f9a5a; }
+.debate-sims__row--waiting { border-left-color: #b8862b; }
+/* Distinct from "waiting" on purpose: nothing has looked at this job, which is a
+   fact about the deployment rather than about the queue. */
+.debate-sims__row--stalled { border-left-color: #b8532b; }
+.debate-sims__row--failed { border-left-color: #a8353a; }
+
+.debate-sims__where,
+.debate-sims__standing {
+  color: var(--muted);
+}
+
+.debate-sims__why {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

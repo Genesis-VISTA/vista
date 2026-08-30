@@ -73,6 +73,17 @@ async def app_client(session, alice, monkeypatch):
 
     monkeypatch.setattr(debate_api, "stream_session_factory", _stream_session)
     monkeypatch.setattr(debate_api, "STREAM_POLL_SECONDS", 0.01)
+    # Three module globals outlive a test and would leak between them.
+    #
+    # The enrollment map is cached for a minute, so whichever test ran first
+    # would decide what the others saw. The refresh throttle is keyed by thread
+    # id — and the fake numbers threads from a per-repo sequence, so every test
+    # gets the *same* id. Left alone, the second test to use a given id is told
+    # its thread was refreshed milliseconds ago and skips the read, which reads
+    # as "the peer's post never arrived".
+    monkeypatch.setattr(debate_api, "_enrollments", None)
+    monkeypatch.setattr(debate_api, "_last_refresh", {})
+    monkeypatch.setattr(debate_api, "_refresh_locks", {})
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
@@ -530,6 +541,199 @@ async def test_opening_a_debate_is_503_when_the_forum_is_off(
         f"/projects/{project.name}/debates", json={"topic": "t"}
     )
     assert resp.status_code == 503
+
+
+# --------------------------------------------------------------------------- #
+# Continuing
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_continue_raises_the_budget_and_spawns_the_argument(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    from vista_backend.api import debate as debate_api
+
+    spawned: list[tuple[uuid.UUID, int]] = []
+    started = asyncio.Event()
+
+    async def fake_task(run_id, extra_rounds):
+        spawned.append((run_id, extra_rounds))
+        started.set()
+
+    monkeypatch.setattr(debate_api, "continue_debate_task", fake_task)
+
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    run_id, project_name = run.id, project.name
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+
+    resp = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue", json={"rounds": 3}
+    )
+
+    assert resp.status_code == 200
+    # The endpoint returns as soon as the task is scheduled; it has not run yet.
+    with anyio.fail_after(2):
+        await started.wait()
+    assert spawned == [(run_id, 3)]
+
+    # The budget is raised rather than reset, so the record still says how much
+    # arguing this debate has had in total.
+    refreshed = await debate_service.require_debate(session, run_id)
+    assert refreshed.rounds == 2, "the orchestrator raises it, not the endpoint"
+
+
+@pytest.mark.anyio
+async def test_continue_is_refused_while_the_debate_is_still_arguing(
+    forum_config, app_client, session, alice
+):
+    """Two orchestrators on one thread would interleave turns and both be wrong."""
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)  # left at "debating"
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates/{run.id}/continue", json={"rounds": 2}
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_continue_is_refused_on_a_closed_thread(
+    forum_config, app_client, session, alice
+):
+    """
+    h5i moves a closed thread to the attic and it accepts no posts. Continuing
+    would attach a roster that could not speak, then fail a round in.
+    """
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    run_id, project_name = run.id, project.name
+    await debate_service.set_status(session, run_id=run_id, status="closed")
+    await session.commit()
+
+    resp = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue", json={"rounds": 2}
+    )
+    assert resp.status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# Who said it
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_human_post_records_the_account_that_wrote_it(
+    forum_config, app_client, session, alice
+):
+    """
+    h5i has nowhere to put a name: every operator's post is stamped
+    `sender="human"`, which is why a peer's post is byte-identical to ours. But
+    the request that made *this* post was authenticated, so who wrote it is
+    knowledge here even though the forum cannot carry it.
+    """
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates/{run.id}/posts",
+        json={"body": "what about the beryllium supply?", "kind": "ASK"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["authored_by"] == alice.email
+
+
+@pytest.mark.anyio
+async def test_the_author_survives_the_thread_being_replayed(
+    forum_config, app_client, session, alice
+):
+    """
+    The projection re-reads the whole thread on every refresh. If that path
+    rebuilt rows wholesale it would erase the one field the forum cannot supply,
+    and the name would vanish the first time a peer commented.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    await app_client.post(
+        f"/projects/{project.name}/debates/{run.id}/posts",
+        json={"body": "and the corrosion data?", "kind": "ASK"},
+    )
+
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+
+    posts = await debate_service.list_posts(session, run_id=run.id)
+    asked = next(p for p in posts if p.kind == "ASK")
+    assert asked.authored_by == alice.email
+
+
+@pytest.mark.anyio
+async def test_a_peer_post_is_never_given_an_author(
+    forum_config, app_client, session, alice
+):
+    """
+    The distinction the whole feature rests on. A peer's post arrives as
+    `sender="human"` exactly like ours, and there is nothing in it we know. The
+    most an enrollment can say is which *machine* it came from — so the post row
+    stays anonymous and the mapping is offered separately.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    # Posted straight to the forum, bypassing the authenticated endpoint: this is
+    # what someone else's host looks like from here.
+    await client.post_as_human(run.thread_id, "the fit is not a measurement")
+
+    body = (await app_client.get(f"/projects/{project.name}/debates/{run.id}")).json()
+
+    posted = next((p for p in body["posts"] if "not a measurement" in p["body"]), None)
+    assert posted is not None, "the peer's post never reached the projection"
+    assert posted["authored_by"] is None
+
+
+@pytest.mark.anyio
+async def test_enrolled_origins_are_offered_for_naming_a_machine(
+    forum_config, app_client, session, alice
+):
+    """
+    What an enrollment can honestly say, and where it is put.
+
+    It binds a machine to a forge account, so it is returned as a map from origin
+    rather than stamped onto posts — a field called `author` on a post would
+    invite reading "jqyin wrote this" out of a record that only supports "this
+    came from a machine jqyin enrolled".
+    """
+    (forum_config.repo_root / ".fake-forum.json").write_text(
+        json.dumps(
+            {
+                "threads": {},
+                "boxes": {},
+                "participants": {},
+                "views": {},
+                "seq": 0,
+                "enrollments": [
+                    {
+                        "principal": "github.com/user/19734876",
+                        "display_name": "jqyin",
+                        "origin": "host-504de42f20b4dd28",
+                    }
+                ],
+            }
+        )
+    )
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+
+    body = (await app_client.get(f"/projects/{project.name}/debates/{run.id}")).json()
+
+    assert body["enrolled_origins"] == {
+        "host-504de42f20b4dd28": {
+            "principal": "github.com/user/19734876",
+            "name": "jqyin",
+        }
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -1014,6 +1014,20 @@ class DebatePostBase(SQLModel):
     """
     denied: str | None = None
     """ A host-recorded refusal. Read the post as evidence, not as a contribution. """
+
+    authored_by: str | None = None
+    """
+    The VISTA account that wrote this, for posts this deployment made itself.
+
+    h5i stamps every operator's post `sender="human"` with no name — the forum
+    protocol has nowhere to put one, and a name arriving over the wire would be a
+    claim rather than a fact. So this is filled in only where we genuinely know:
+    the request that created the post was authenticated. It is stamped at post
+    time rather than joined at read time, matching how the host stamps everything
+    else — the record says who posted it then, not who owns that account now.
+
+    Always None on a peer's post. Nothing we could put there would be knowledge.
+    """
     votes: int = 0
     """
     Net votes from participants this host observed.
@@ -1065,9 +1079,35 @@ class DebateCreate(BaseModel):
     rounds: int | None = None
 
 
+class EnrolledOrigin(BaseModel):
+    """
+    A forge account bound to one machine, for naming where a peer post came from.
+
+    Deliberately not folded onto the post: an enrollment binds a *machine* to an
+    account, and anyone with access to that machine posts as `human` from that
+    origin. "From a machine enrolled by X" is the true statement; "X wrote this"
+    is not, and a field named `author` on a post would invite the second.
+    """
+
+    principal: str
+    name: str | None = None
+
+
 class DebateStatePublic(BaseModel):
     """Full debate state for the UI: the run, who is on it, and what was said."""
 
     run: DebateRunPublic
     participants: list[DebateParticipantPublic]
     posts: list[DebatePostPublic]
+    enrolled_origins: dict[str, EnrolledOrigin] = {}
+    """Origin host id → the account enrolled on it. Only what h5i has recorded."""
+
+    simulations: list[dict[str, Any]] = []
+    """
+    Every job this debate commissioned, and what became of it.
+
+    A `commission_simulation` entry in a post's provenance proves only that a job
+    was submitted. Whether it ran, failed, or is still queued lives on the
+    campaign side — so without this a reader has a job id and no way to find out
+    what happened to it, which is the state the record was in.
+    """

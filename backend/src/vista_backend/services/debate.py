@@ -143,12 +143,15 @@ async def update_debate(
     *,
     run_id: uuid.UUID,
     status: DebateStatus | _Unset = _UNSET,
+    rounds: int | _Unset = _UNSET,
     rounds_done: int | _Unset = _UNSET,
     verdict: dict[str, Any] | None | _Unset = _UNSET,
 ) -> DebateRunTable:
     run = await require_debate(session, run_id)
     if status is not _UNSET:
         run.status = status
+    if rounds is not _UNSET:
+        run.rounds = rounds
     if rounds_done is not _UNSET:
         run.rounds_done = rounds_done
     if verdict is not _UNSET:
@@ -222,6 +225,22 @@ async def list_participants(
             .order_by(col(DebateParticipantTable.identity))
         )
     )
+
+
+async def list_active_participants(
+    session: AsyncSession, *, run_id: uuid.UUID
+) -> list[DebateParticipantTable]:
+    """
+    Only the roles currently attached to the forum.
+
+    A debate that has been continued has more than one roster on its record —
+    the retired stint and the current one — and a revoked identity cannot post.
+    Rebuilding the client's roster from every row would hand the orchestrator
+    boxes that no longer exist.
+    """
+    return [
+        row for row in await list_participants(session, run_id=run_id) if row.active
+    ]
 
 
 async def deactivate_participant(
@@ -300,6 +319,31 @@ async def refresh_from_forum(
     return Refresh(
         new_posts=[row.post_id for row in created], closed_remotely=closed_remotely
     )
+
+
+async def record_author(
+    session: AsyncSession, *, run_id: uuid.UUID, post_id: str, authored_by: str
+) -> None:
+    """
+    Name the VISTA account behind a post this deployment made itself.
+
+    Only ever called on the path that created the post, where the request was
+    authenticated — never from the projection, which reads a thread anyone may
+    have written to. `project_thread` refreshes votes and lane on replay and
+    nothing else, so this survives every subsequent re-read.
+    """
+    row = (
+        await session.exec(
+            select(DebatePostTable)
+            .where(DebatePostTable.run_id == run_id)
+            .where(DebatePostTable.post_id == post_id)
+        )
+    ).first()
+    if row is None:  # the confirm-by-reading step should make this unreachable
+        return
+    row.authored_by = authored_by
+    session.add(row)
+    await session.flush()
 
 
 def closed_by(posts: list[DebatePostTable]) -> str | None:

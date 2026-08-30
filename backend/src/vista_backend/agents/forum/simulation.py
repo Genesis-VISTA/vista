@@ -30,6 +30,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Protocol
 
+from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...db.schemas import CampaignRunTable, HpcJobTable
@@ -211,6 +212,84 @@ async def open_simulations(
         if run is not None and run.spec.get("debate_run_id") == wanted:
             matching.append(job)
     return matching
+
+
+class CommissionedRun(BaseModel):
+    """
+    One simulation a debate commissioned, and where it got to.
+
+    Exists because the debate record alone cannot answer the question a reader
+    actually has. A `commission_simulation` entry proves a job was *submitted*;
+    whether it ran, failed, or is still queued lives on the campaign side, and
+    without joining the two a reader sees a job id and no way to find out what
+    became of it.
+    """
+
+    job_id: str
+    job_name: str | None = None
+    """
+    Nullable on the job row, so nullable here.
+
+    A debate always names a job when it commissions one, but this reads the HPC
+    table rather than the order, and coercing a missing name to `""` would show a
+    reader a blank where the honest answer is that the row does not carry it.
+    """
+
+    cluster: str
+    prediction: str
+    """The prediction the run was commissioned to settle."""
+
+    commissioned_by: str
+    """The forum identity that asked for it, which is who the result posts as."""
+
+    state: str
+    """The scheduler's own word for it — `submitted`, `RUNNING`, `COMPLETED`, …"""
+
+    submitted_at: str = ""
+    last_polled_at: str | None = None
+    """
+    None means nothing has looked at this job since it was submitted.
+
+    Worth surfacing rather than smoothing over: a job that was never polled is
+    not a job that is running slowly, and the two are indistinguishable from the
+    state alone.
+    """
+
+    result_collected: bool = False
+    """Whether the outputs came back and were posted onto the thread."""
+
+
+async def commissioned_runs(
+    session: AsyncSession, *, debate_run_id: uuid.UUID
+) -> list[CommissionedRun]:
+    """
+    Every simulation this debate commissioned, finished or not.
+
+    Unlike `open_simulations`, which the orchestrator uses to decide whether the
+    roster may retire, this is for reading: it includes completed and failed runs
+    because "it finished an hour ago and posted nothing" is exactly the state a
+    reader needs to see.
+    """
+    wanted = str(debate_run_id)
+    out: list[CommissionedRun] = []
+    for run in await campaign_service.list_campaigns(session):
+        if run.domain != DEBATE_DOMAIN or run.spec.get("debate_run_id") != wanted:
+            continue
+        for job in await campaign_service.list_jobs_for_run(session, run_id=run.id):
+            out.append(
+                CommissionedRun(
+                    job_id=job.job_id,
+                    job_name=job.job_name,
+                    cluster=job.cluster,
+                    prediction=run.spec.get("prediction", ""),
+                    commissioned_by=run.spec.get("commissioned_by", ""),
+                    state=job.state,
+                    submitted_at=job.submitted_at,
+                    last_polled_at=job.last_polled_at,
+                    result_collected=bool(job.result_collected),
+                )
+            )
+    return sorted(out, key=lambda r: r.submitted_at or "")
 
 
 async def _campaign_for_job(

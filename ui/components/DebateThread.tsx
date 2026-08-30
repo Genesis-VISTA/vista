@@ -3,7 +3,14 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { DebatePost, debateRoleOf, isObserved, isOperator } from "@/lib/debates";
+import {
+  DebatePost,
+  EnrolledOrigin,
+  authorOf,
+  debateRoleOf,
+  isObserved,
+  isOperator,
+} from "@/lib/debates";
 
 /**
  * One debate thread, drawn the way h5i draws one.
@@ -41,11 +48,18 @@ function shortTime(iso: string): string {
 }
 
 /** The identity line: everything on it came from the host, not the poster. */
-function Provenance({ post }: { post: DebatePost }) {
+function Provenance({
+  post,
+  enrolled,
+}: {
+  post: DebatePost;
+  enrolled: Record<string, EnrolledOrigin>;
+}) {
   // Both derived from the vouch lane, never from the sender string: on a shared
   // forum the sender is stamped by whichever host observed the post, so it is a
   // remote peer's account of itself.
   const role = debateRoleOf(post);
+  const author = authorOf(post, enrolled);
 
   return (
     <div className="debate-post__stamp">
@@ -55,6 +69,22 @@ function Provenance({ post }: { post: DebatePost }) {
       <span className="debate-post__sender">
         {isOperator(post) ? "the human" : post.sender}
       </span>
+      {author && (
+        <span
+          className={`debate-post__author${
+            author.kind === "machine" ? " debate-post__author--machine" : ""
+          }`}
+          title={
+            author.kind === "account"
+              ? "Signed in to VISTA as this account when the post was made."
+              : "This machine is enrolled to that forge account. Anyone with " +
+                "access to it posts as `human`, so this names where the post " +
+                "came from, not who typed it."
+          }
+        >
+          {author.kind === "account" ? author.label : `from ${author.label}\u2019s machine`}
+        </span>
+      )}
       {role && <span className="debate-post__role">{role}</span>}
       {!isObserved(post) && (
         <span
@@ -143,24 +173,39 @@ function Grounded({ post }: { post: DebatePost }) {
   }
 
   return (
-    <p className="debate-post__grounding">
+    <div className="debate-post__grounding">
       <span className="debate-post__grounding-label">Consulted</span>
-      {post.tools_used.map((use, i) => (
-        <span key={i} className="debate-post__tool" title={use.detail}>
-          {use.tool}
-          <span className="debate-post__tool-detail">{use.detail}</span>
-        </span>
-      ))}
-    </p>
+      {post.tools_used.map((use, i) =>
+        use.receipt ? (
+          // Collapsed by default: a thread is read for the argument, and every
+          // receipt open at once buries it. Open on demand is what makes a claim
+          // checkable without making the page unreadable.
+          <details key={i} className="debate-post__tool debate-post__tool--evidence">
+            <summary title="Show what this call actually returned">
+              {use.tool}
+              <span className="debate-post__tool-detail">{use.detail}</span>
+            </summary>
+            <pre className="debate-post__receipt">{use.receipt}</pre>
+          </details>
+        ) : (
+          <span key={i} className="debate-post__tool" title={use.detail}>
+            {use.tool}
+            <span className="debate-post__tool-detail">{use.detail}</span>
+          </span>
+        )
+      )}
+    </div>
   );
 }
 
 export function DebatePostCard({
   post,
   repliedTo,
+  enrolled = {},
 }: {
   post: DebatePost;
   repliedTo?: DebatePost | null;
+  enrolled?: Record<string, EnrolledOrigin>;
 }) {
   return (
     <article
@@ -169,7 +214,7 @@ export function DebatePostCard({
       }`}
       style={{ borderLeftColor: kindTone(post.kind) }}
     >
-      <Provenance post={post} />
+      <Provenance post={post} enrolled={enrolled} />
       <Lane post={post} />
 
       {post.denied && (
@@ -195,7 +240,13 @@ export function DebatePostCard({
   );
 }
 
-export default function DebateThread({ posts }: { posts: DebatePost[] }) {
+export default function DebateThread({
+  posts,
+  enrolled = {},
+}: {
+  posts: DebatePost[];
+  enrolled?: Record<string, EnrolledOrigin>;
+}) {
   const byId = new Map(posts.map((post) => [post.post_id, post]));
 
   if (posts.length === 0) {
@@ -216,6 +267,7 @@ export default function DebateThread({ posts }: { posts: DebatePost[] }) {
           key={post.post_id}
           post={post}
           repliedTo={post.reply_to ? byId.get(post.reply_to) ?? null : null}
+          enrolled={enrolled}
         />
       ))}
     </div>

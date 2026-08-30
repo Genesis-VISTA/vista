@@ -239,7 +239,12 @@ def build_toolset(
             )
             passages = await grounding.rag(query, slug, 5)
             ctx.deps.tool_calls.append(
-                ToolCall("search_literature", f"{query} — {slug or 'default'}")
+                ToolCall(
+                    "search_literature",
+                    f"{query} — {slug or 'default'}"
+                    + ("" if passages.strip() else " (nothing found)"),
+                    receipt=f"query: {query}\nknowledge base: {slug or 'default'}\n\n{passages}",
+                )
             )
             return fence(f"knowledge base {slug or 'default'}", passages)
 
@@ -255,7 +260,11 @@ def build_toolset(
             """
             assert grounding.skills is not None
             body = await grounding.skills(skill)
-            ctx.deps.tool_calls.append(ToolCall("read_domain_guidance", skill))
+            ctx.deps.tool_calls.append(
+                ToolCall(
+                    "read_domain_guidance", skill, receipt=f"skill {skill}\n\n{body}"
+                )
+            )
             return fence(f"skill {skill}", body)
 
         toolset.add_function(read_domain_guidance)
@@ -273,7 +282,11 @@ def build_toolset(
             assert grounding.uploads is not None
             body = await grounding.uploads(name)
             ctx.deps.tool_calls.append(
-                ToolCall("read_attached_paper", name or "(index)")
+                ToolCall(
+                    "read_attached_paper",
+                    name or "(index)",
+                    receipt=f"attachment {name or 'index'}\n\n{body}",
+                )
             )
             return fence(f"attachment {name or 'index'}", body)
 
@@ -296,6 +309,17 @@ def build_toolset(
             try:
                 text, receipt = await grounding.browser.read(ctx.deps.participant, url)
             except PermissionError as exc:
+                # A refusal is part of the record. Without this, an agent that
+                # tried to check a source and was blocked is indistinguishable
+                # from one that never looked — and the first is a fact about the
+                # deployment that a reader of the claim should have.
+                ctx.deps.tool_calls.append(
+                    ToolCall(
+                        "read_web_page",
+                        f"{url} — refused",
+                        receipt=f"url: {url}\nrefused: {exc}",
+                    )
+                )
                 return f"Web reads are disabled here: {exc}"
             ctx.deps.tool_calls.append(ToolCall("read_web_page", url, receipt=receipt))
             return fence(url, text)
@@ -333,9 +357,37 @@ def build_toolset(
                     script_args=script_args,
                 )
             except Exception as exc:  # noqa: BLE001 — a refused job is an answer
+                # Recorded for the same reason a successful submission is: an
+                # attempt that was refused — over budget, unknown job, no
+                # credentials — is evidence about the debate, and dropping it
+                # makes "we did not try" and "we were not allowed" look alike.
+                ctx.deps.tool_calls.append(
+                    ToolCall(
+                        "commission_simulation",
+                        f"{job} — refused",
+                        receipt=f"job: {job}\nrefused: {exc}\n\nwould have tested: {prediction}",
+                    )
+                )
                 return f"The simulation could not be started: {exc}"
+            # The job id and cluster are what make this traceable: without them a
+            # reader has "a simulation was run" and no way to find which, or to
+            # check that the run behind a FINDING is the run that was claimed.
+            where = cluster or "the default cluster"
             ctx.deps.tool_calls.append(
-                ToolCall("commission_simulation", f"{job} → {prediction}")
+                ToolCall(
+                    "commission_simulation",
+                    f"{job} on {where} — job {job_id}",
+                    receipt="\n".join(
+                        [
+                            f"job:        {job}",
+                            f"job id:     {job_id}",
+                            f"cluster:    {where}",
+                            f"script args: {script_args or '(none)'}",
+                            "",
+                            f"testing the prediction: {prediction}",
+                        ]
+                    ),
+                )
             )
             return (
                 f"Submitted {job} as job {job_id} to test “{prediction}”. "
@@ -355,7 +407,9 @@ def build_toolset(
             """
             assert grounding.forum is not None
             found = await _summarise_prior(grounding.forum, about)
-            ctx.deps.tool_calls.append(ToolCall("prior_debates", about))
+            ctx.deps.tool_calls.append(
+                ToolCall("prior_debates", about, receipt=f"about: {about}\n\n{found}")
+            )
             return fence("prior debates", found)
 
         toolset.add_function(prior_debates)
