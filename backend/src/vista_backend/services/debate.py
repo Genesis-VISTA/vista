@@ -163,6 +163,24 @@ async def update_debate(
     return run
 
 
+async def set_activity(
+    session: AsyncSession, *, run_id: uuid.UUID, activity: str | None
+) -> None:
+    """
+    Record what the debate is doing, or clear it.
+
+    Committed by the caller's checkpoint rather than here: this is written on the
+    debate's own session between turns, and a commit inside would expire the
+    caller's objects mid-round.
+    """
+    run = await require_debate(session, run_id)
+    run.activity = activity
+    run.activity_since = now_iso() if activity else None
+    run.updated_at = now_iso()
+    session.add(run)
+    await session.flush()
+
+
 async def set_status(
     session: AsyncSession, *, run_id: uuid.UUID, status: DebateStatus
 ) -> DebateRunTable:

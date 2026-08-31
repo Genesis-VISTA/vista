@@ -4654,3 +4654,45 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* "Something is happening." Shown while a role is thinking or waiting on a
+   cluster job — a turn produces nothing until it finishes, so without this the
+   page is indistinguishable from a crashed one. */
+.debate-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent, #4a7fb5);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.debate-working__pulse {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent, #4a7fb5);
+  animation: debate-pulse 1.4s ease-in-out infinite;
+}
+
+.debate-working__elapsed {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+@keyframes debate-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.1); }
+}
+
+/* Respect a reader who has asked for less motion: the dot still marks the line,
+   it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .debate-working__pulse { animation: none; opacity: 0.9; }
+}

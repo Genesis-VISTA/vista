@@ -760,3 +760,93 @@ async def test_a_role_cannot_read_outside_the_projects_uploads(tmp_path, monkeyp
 async def _ready(value):
     """An awaitable that just yields a value, for stubbing an async call."""
     return value
+
+
+# --------------------------------------------------------------------------- #
+# Prior debates: the dead end that cost four rounds
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_concluded_debate_counts_as_prior_even_though_its_thread_is_open(
+    tmp_path,
+):
+    """
+    The bug behind four BLOCKED reviewer turns.
+
+    A concluded VISTA debate posts its verdict and leaves the h5i thread *open* —
+    h5i reports it `done`, and `closed` only ever means somebody explicitly put it
+    in the attic. Filtering on `closed` therefore selected for a state VISTA
+    hardly ever produces, so this answered "nothing matches" on a forum full of
+    finished debates. Verified against the real CLI: `done` threads are listed
+    without `--all`.
+    """
+    from vista_backend.agents.forum.grounding import _summarise_prior
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    thread = await client.create_thread("viscosity knee in FLiBe", body="go")
+    participant = await client.create_participant(
+        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
+    )
+    await client.post_as(
+        participant, thread, "## Verdict\n\nrigidity stands", kind="DONE"
+    )
+
+    out = await _summarise_prior(client, "FLiBe viscosity")
+
+    assert "rigidity stands" in out, (
+        "a debate that reached a verdict was invisible as precedent"
+    )
+
+
+@pytest.mark.anyio
+async def test_no_match_lists_what_is_there_instead_of_just_saying_no(tmp_path):
+    """
+    Why the reviewer looped. A tool that returns the same refusal to every
+    phrasing invites rephrasing, and every attempt is a request — which is how a
+    role spends its whole turn searching and posts BLOCKED instead of an argument.
+    """
+    from vista_backend.agents.forum.grounding import _summarise_prior
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    thread = await client.create_thread("viscosity knee in FLiBe", body="go")
+    participant = await client.create_participant(
+        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
+    )
+    await client.post_as(participant, thread, "## Verdict\n\nstands", kind="DONE")
+
+    out = await _summarise_prior(client, "beryllium supply chain economics")
+
+    assert "viscosity knee in FLiBe" in out, (
+        "say what is there, so retrying is pointless"
+    )
+    assert "rephrasing will not help" in out
+
+
+@pytest.mark.anyio
+async def test_a_role_does_not_find_its_own_debate_as_precedent(tmp_path):
+    """
+    Otherwise a role searching for precedent reads its own half-finished thread
+    back as settled history.
+    """
+    from vista_backend.agents.forum.grounding import _summarise_prior
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    thread = await client.create_thread("viscosity knee in FLiBe", body="go")
+    participant = await client.create_participant(
+        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
+    )
+    await client.post_as(participant, thread, "## Verdict\n\nstands", kind="DONE")
+
+    out = await _summarise_prior(client, "viscosity knee", exclude=thread)
+    assert "stands" not in out
+
+
+@pytest.mark.anyio
+async def test_an_empty_forum_says_not_to_search_again(tmp_path):
+    from vista_backend.agents.forum.grounding import _summarise_prior
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    out = await _summarise_prior(client, "anything")
+    assert "no finished debates yet" in out
+    assert "Do not search again" in out

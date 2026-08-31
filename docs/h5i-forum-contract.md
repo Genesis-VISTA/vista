@@ -466,3 +466,30 @@ and the projection was stale.
 
 So: attempt the removal, log a refusal, and record the retirement regardless. The
 row means "attached according to us"; if h5i does not have it, the row is wrong.
+
+### 6.1 A thread's status names its last word, and `done` is still open
+
+`forum list` reports four statuses, and only one of them means the attic.
+Measured on a forum with five finished debates:
+
+```
+a4f7f9a8  done      …          ← listed WITHOUT --all
+f4f0db1f  blocked   …          ← listed WITHOUT --all
+49c7a41f  closed    …          ← only with --all
+```
+
+So `done` and `blocked` are **open** threads named after their last content post:
+a thread whose last word was a DONE verdict reports `done`, one whose last word
+was a BLOCKED note reports `blocked`. `closed` means somebody ran `forum close`.
+
+This matters more than it looks. A VISTA debate that reaches a verdict does *not*
+close its thread — it posts DONE and stops. So a concluded debate sits at `done`
+forever, and code asking "is this debate finished?" by testing `status == "closed"`
+answers no for every debate VISTA has ever concluded. That is exactly what
+`prior_debates` did: it looked for closed threads on a forum where finished
+debates are `done`, found nothing however it was asked, and a Reviewer rephrasing
+its way through that dead end spent its whole request budget and posted BLOCKED
+in four consecutive rounds.
+
+`Thread.is_closed` testing `== "closed"` is nonetheless correct — closure really is
+just that one status. The mistake is using closure as a proxy for finished.

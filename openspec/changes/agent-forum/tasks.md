@@ -298,3 +298,61 @@ command's stderr onto the host's *stdout*.
       shortened paper is one a role will treat as though it read the conclusions.
 - [x] 17.5 Calling with no name lists what is attached: a role cannot ask for a file
       it does not know exists.
+
+## 18. Waiting, and saying so
+
+- [x] 18.1 A role waits for the simulation it commissioned and gets the output inside
+      its turn, so it can argue from the number. Reverses 10.2's non-blocking design:
+      that was true to the shapes involved — a job outlives a round — but the result
+      arrived after the verdict, where no agent read it. Bounded by
+      `forum.max_job_wait` (30 min default); on timeout the debate argues on and the
+      result still reaches the thread.
+- [x] 18.2 A timeout is reported as "still running", never as failure. A role told a
+      job failed when it merely has not finished argues from a false negative.
+- [x] 18.3 **The deadlock waiting would otherwise cause.** A waiting role waits for
+      the monitor to record a result; an open write transaction on SQLite stops the
+      monitor writing it. Three changes: the commissioner uses its own committed
+      session, `wait_for_result` opens one session per poll, and the orchestrator
+      commits before each role speaks (`_settle`). All three mutation-verified —
+      holding one session across the wait makes the wait time out, and dropping the
+      pre-turn commit makes another session see nothing mid-turn.
+- [x] 18.4 The commissioner's sessions come from the *caller's* engine, not
+      `get_engine()`. Reaching for the process-wide engine had the debate writing to a
+      different database than the caller was reading, which is what it did under test.
+- [x] 18.5 `DebateRunTable.activity` / `activity_since`, emitted on the event stream
+      and rendered as a pulsing line with an elapsed count. A turn produces nothing
+      until it finishes, so a thread that stops growing looks identical to a crash —
+      and with waiting that silence is now minutes. Cleared in `finally`, because a
+      stale line is the frozen screen again with a caption claiming otherwise.
+- [x] 18.6 The wait announces what it is waiting for, job id and cluster included, from
+      its own session — a tool has no handle on the session running the debate.
+- [x] 18.7 `_wired` and the commissioner tests commit rather than flush. They passed
+      only because everything shared one session; the commissioner now needs the run
+      committed, which `open_debate` does in production.
+
+## 19. Why the Reviewer blocked in every round
+
+- [x] 19.1 Root cause: `prior_debates` filtered threads on `status == "closed"`, but a
+      concluded VISTA debate posts DONE and leaves its thread *open* — h5i then reports
+      it `done`. So the tool answered "no match" on a forum with five finished debates,
+      the Reviewer rephrased its way through a dead end that returns identical output
+      for every phrasing, and each attempt cost a request. Four rounds, four BLOCKED
+      notes, no critique. Contract §6.1.
+- [x] 19.2 Ruled out by measurement rather than assumed: output-validation retries cost
+      2 requests and raise `UnexpectedModelBehavior`, not `UsageLimitExceeded`; and the
+      Reviewer failed both with four tools and with only `prior_debates`, so tool count
+      was not it either.
+- [x] 19.3 **The fake could not express `done`.** It emitted open/closed only, which is
+      why a bug hinging on `done` survived every test. It now derives status from the
+      last content post the way v0.3.8 does, and hides only `closed` without `--all`.
+- [x] 19.4 A no-match answer now lists the finished thread titles and says rephrasing
+      will not help. A tool that returns the same refusal to every phrasing invites
+      being called again, and each call is a request.
+- [x] 19.5 `prior_debates` excludes the debate's own thread, so a role does not read its
+      own half-finished argument back as settled precedent.
+- [x] 19.6 A role that exhausts its budget gets one more turn with its tools withheld.
+      It cannot loop without tools, and an argument from the thread beats a BLOCKED note
+      that tells the debate nothing.
+- [x] 19.7 A BLOCKED note records the tool calls the turn made — the one post where
+      provenance was empty and the one where a reader most needs it. The first attempt's
+      calls survive the retry rather than being cleared: they are what the budget went on.

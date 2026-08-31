@@ -35,6 +35,15 @@ export type DebateRun = {
   verdict: Verdict | null;
   created_at: string;
   updated_at: string;
+  /**
+   * What the debate is doing right now, in words, or null when nothing is.
+   *
+   * A turn produces nothing until it finishes, so without this a thread that has
+   * stopped growing looks the same whether a role is thinking, waiting on a
+   * cluster job, or dead.
+   */
+  activity: string | null;
+  activity_since: string | null;
 };
 
 export type DebateParticipant = {

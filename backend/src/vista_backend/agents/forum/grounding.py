@@ -341,15 +341,18 @@ def build_toolset(
 
             Use it to settle a disagreement that argument cannot: name the
             prediction under test and the `hpc_jobs/<name>` that would test it.
-            The job takes far longer than a round, so this does not answer you
-            now — the result is posted onto the thread under your identity when
-            it finishes, whether or not the debate is still running.
+
+            This waits for the job and returns its output, so you can use the
+            answer in the post you are about to write. It can take a long time.
+            If the wait runs out the job keeps going and its result is posted to
+            the thread later — that is not a failed test, so do not read it as
+            one.
             """
             assert grounding.simulation is not None
             if ctx.deps.participant is None:
                 return "Simulations are unavailable: this turn has no identity to run under."
             try:
-                job_id = await grounding.simulation(
+                outcome = await grounding.simulation(
                     participant=ctx.deps.participant,
                     job=job,
                     prediction=prediction,
@@ -373,26 +376,51 @@ def build_toolset(
             # reader has "a simulation was run" and no way to find which, or to
             # check that the run behind a FINDING is the run that was claimed.
             where = cluster or "the default cluster"
+            if outcome.timed_out:
+                standing = f"still running after the wait (state {outcome.state})"
+            elif not outcome.finished:
+                standing = "submitted; not waited for"
+            elif outcome.ok:
+                standing = f"finished {outcome.state}"
+            else:
+                standing = f"failed {outcome.state}"
+
             ctx.deps.tool_calls.append(
                 ToolCall(
                     "commission_simulation",
-                    f"{job} on {where} — job {job_id}",
+                    f"{job} on {where} — job {outcome.job_id}, {standing}",
                     receipt="\n".join(
                         [
                             f"job:        {job}",
-                            f"job id:     {job_id}",
+                            f"job id:     {outcome.job_id}",
                             f"cluster:    {where}",
                             f"script args: {script_args or '(none)'}",
+                            f"outcome:    {standing}",
                             "",
                             f"testing the prediction: {prediction}",
+                            "",
+                            outcome.outputs or "(no outputs recorded)",
                         ]
                     ),
                 )
             )
-            return (
-                f"Submitted {job} as job {job_id} to test “{prediction}”. "
-                "The result will be posted to this thread when it finishes; do "
-                "not wait for it."
+
+            if outcome.timed_out:
+                return (
+                    f"Job {outcome.job_id} ({job}) is still running — the debate "
+                    f"stopped waiting. Its state is {outcome.state}. The result "
+                    "will be posted to this thread when it lands, so argue on "
+                    "without it rather than treating this as a negative result."
+                )
+            if not outcome.finished:
+                return (
+                    f"Submitted {job} as job {outcome.job_id}. The result will be "
+                    "posted to this thread when it finishes."
+                )
+            verdict = "finished" if outcome.ok else "failed"
+            return fence(
+                f"job {outcome.job_id} ({job}) {verdict} — {outcome.state}",
+                outcome.outputs or "The job recorded no outputs.",
             )
 
         toolset.add_function(commission_simulation)
@@ -406,7 +434,9 @@ def build_toolset(
             already argued and rejected is not proposed again as if it were new.
             """
             assert grounding.forum is not None
-            found = await _summarise_prior(grounding.forum, about)
+            found = await _summarise_prior(
+                grounding.forum, about, exclude=ctx.deps.thread_id
+            )
             ctx.deps.tool_calls.append(
                 ToolCall("prior_debates", about, receipt=f"about: {about}\n\n{found}")
             )
@@ -418,20 +448,44 @@ def build_toolset(
     return toolset if granted else None
 
 
-async def _summarise_prior(client: ForumClient, about: str) -> str:
+FINISHED_THREAD_STATUSES = frozenset({"done", "closed"})
+"""
+h5i statuses that mean a debate reached an end worth citing.
+
+`done` is the important one and was the omission: a concluded VISTA debate posts
+its verdict and leaves the thread *open* — h5i then reports it `done`, and
+`closed` only ever means somebody explicitly closed it into the attic. Filtering
+on `closed` alone therefore selected for a state VISTA hardly ever produces, so
+the tool answered "nothing matches" on a forum full of finished debates.
+
+`blocked` is excluded on purpose: that is a debate whose last word was a role
+running out of budget, and its conclusions are not conclusions.
+"""
+
+
+async def _summarise_prior(
+    client: ForumClient, about: str, *, exclude: str = ""
+) -> str:
     """
-    Closed threads whose titles overlap the query, with their verdicts.
+    Finished debates whose titles overlap the query, with their verdicts.
 
     Deliberately a title match rather than a search: the forum is not an index,
-    and pulling every closed thread through an embedding model to answer "has
-    this been argued before" would cost more than the question is worth.
+    and pulling every thread through an embedding model to answer "has this been
+    argued before" would cost more than the question is worth.
+
+    The no-match answer lists what is on the forum instead of just saying no. A
+    tool that returns the same refusal to every phrasing invites a model to keep
+    rephrasing, and each attempt is a request — which is how a role burns its
+    whole budget on one turn and posts BLOCKED instead of an argument.
     """
     terms = {w.lower() for w in about.split() if len(w) > 3}
     lines: list[str] = []
+    available: list[str] = []
     for summary in await client.list_threads(include_closed=True):
-        if summary.status != "closed":
+        if summary.status not in FINISHED_THREAD_STATUSES or summary.id == exclude:
             continue
         title = summary.header.title
+        available.append(title)
         if terms and not (terms & {w.lower().strip(".,?") for w in title.split()}):
             continue
         thread = await client.read_thread(summary.id)
@@ -441,7 +495,20 @@ async def _summarise_prior(client: ForumClient, about: str) -> str:
         lines.append(
             f"## {title}\n{verdict.body if verdict else '(ended without a verdict)'}"
         )
-    return "\n\n".join(lines) if lines else "No earlier debate on this forum matches."
+    if lines:
+        return "\n\n".join(lines)
+    if not available:
+        return (
+            "This forum has no finished debates yet, so there is no precedent to "
+            "find. Do not search again this turn."
+        )
+    listed = "\n".join(f"- {t}" for t in available)
+    return (
+        "No finished debate's title overlaps that. Titles are all this matches "
+        "on, so rephrasing will not help — here is everything there is:\n"
+        f"{listed}\n"
+        "Ask again only with words from one of those titles."
+    )
 
 
 def build_toolsets(grounding: Grounding) -> dict[DebateRole, Toolsets]:

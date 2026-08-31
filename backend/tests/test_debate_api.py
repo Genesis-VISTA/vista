@@ -837,3 +837,55 @@ async def test_forum_status_survives_an_unreadable_forum(
     resp = await app_client.get("/forum/status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
+
+
+# --------------------------------------------------------------------------- #
+# Saying that something is happening
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_the_stream_says_what_the_debate_is_doing(
+    forum_config, app_client, session, alice, engine
+):
+    """
+    A turn produces nothing until it finishes, so a thread that has stopped
+    growing looks the same whether a role is thinking, waiting on a cluster job,
+    or dead. Now that a role waits for simulations, that silence lasts minutes.
+    """
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    run_id, project_name = run.id, project.name
+    await debate_service.set_activity(
+        session, run_id=run_id, activity="Proposer is thinking · round 1 of 2"
+    )
+    await session.commit()
+
+    # Terminal status, so the stream replays and ends rather than polling forever.
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+
+    events = await _collect_stream(app_client, project_name, run_id)
+    activity = [data for name, data in events if name == "activity"]
+    assert activity, "the stream never said what the debate was doing"
+    assert "Proposer is thinking" in activity[0]
+
+
+@pytest.mark.anyio
+async def test_a_finished_debate_reports_no_activity(
+    forum_config, app_client, session, alice
+):
+    """
+    A stale activity is worse than none — it is the frozen screen this was added
+    to fix, with a caption claiming otherwise.
+    """
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    run_id, project_name = run.id, project.name
+    await debate_service.set_activity(session, run_id=run_id, activity="thinking")
+    await debate_service.set_activity(session, run_id=run_id, activity=None)
+    await session.commit()
+
+    body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
+    assert body["run"]["activity"] is None
+    assert body["run"]["activity_since"] is None

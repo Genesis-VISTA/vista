@@ -279,6 +279,12 @@ class DebateOrchestrator:
             await self._checkpoint(session)
         finally:
             await self._retire(session, run_id, roster.values())
+            # Whatever ended the debate — verdict, closure, a raised error — the
+            # interface must stop saying someone is thinking. A stale activity is
+            # worse than none: it is the frozen screen this was added to fix,
+            # except now with a caption.
+            await debate_service.set_activity(session, run_id=run_id, activity=None)
+            await self._checkpoint(session)
         return await debate_service.require_debate(session, run_id)
 
     async def run_round(
@@ -299,12 +305,28 @@ class DebateOrchestrator:
 
         propose_deps = self._turn_deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        # Commit the projection before handing off to the role.
+        #
+        # `_sync_thread` writes, so without this the session holds a write
+        # transaction for the whole turn. That was harmless while a turn was
+        # seconds; a role that waits for a cluster job holds it for minutes, and
+        # on SQLite that blocks the monitor from recording the very result the
+        # role is waiting for — the debate would wait on something it was itself
+        # blocking.
+        run = await self._announce(
+            session, run_id, f"Proposer is thinking · round {index + 1} of {run.rounds}"
+        )
         try:
-            hypothesis = await self.roles.propose(propose_deps, thread)
+            hypothesis = await self._speak(
+                self.roles.propose, propose_deps, thread, run, run_id, index, "proposer"
+            )
         except UsageLimitExceeded as exc:
-            # The round produced nothing, but the thread should say so rather
-            # than the debate ending in a traceback nobody on the forum can see.
-            await self._blocked(session, run, roster["proposer"], index, exc)
+            # Out of budget twice, tools and all. The round produced nothing, but
+            # the thread should say so rather than the debate ending in a
+            # traceback nobody on the forum can see.
+            await self._blocked(
+                session, run, roster["proposer"], index, exc, deps=propose_deps
+            )
             await debate_service.update_debate(
                 session, run_id=run_id, rounds_done=index + 1
             )
@@ -322,12 +344,19 @@ class DebateOrchestrator:
 
         review_deps = self._turn_deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        run = await self._announce(
+            session, run_id, f"Reviewer is looking for holes · round {index + 1}"
+        )
         try:
-            critique = await self.roles.review(review_deps, thread)
+            critique = await self._speak(
+                self.roles.review, review_deps, thread, run, run_id, index, "reviewer"
+            )
         except UsageLimitExceeded as exc:
             # An unanswered proposal is a worse record than an answered one, but
             # it is a true one, and the next round still has something to argue.
-            await self._blocked(session, run, roster["reviewer"], index, exc)
+            await self._blocked(
+                session, run, roster["reviewer"], index, exc, deps=review_deps
+            )
             critique = None
 
         if critique is None:
@@ -364,6 +393,7 @@ class DebateOrchestrator:
         run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
         deps = self._turn_deps(run, run.rounds_done, roster["referee"])
+        run = await self._announce(session, run_id, "Referee is ruling on the thread")
         try:
             verdict = await self.roles.rule(deps, thread)
         except UsageLimitExceeded as exc:
@@ -460,9 +490,16 @@ class DebateOrchestrator:
         participant: Participant,
         round_index: int | None,
         exc: Exception,
+        deps: DebateDeps | None = None,
     ) -> None:
         """
         Record on the thread that a role ran out of budget mid-turn.
+
+        `deps` is passed so the tool calls the failed turn *did* make are recorded
+        on the note. Without them this post was the one place in the record where
+        provenance was empty — and it is the one place a reader most needs it,
+        because "it spent its whole budget" and "we will not say on what" is
+        exactly backwards.
 
         `BLOCKED` is h5i's kind for exactly this: the agent could not finish, and
         a reader needs to know that rather than inferring silence. Best effort —
@@ -478,6 +515,7 @@ class DebateOrchestrator:
                 "be read as agreement or as a finding.",
                 kind=PostKind.BLOCKED,
                 round_index=round_index,
+                deps=deps,
             )
         except Exception:  # noqa: BLE001
             logger.warning(
@@ -495,6 +533,60 @@ class DebateOrchestrator:
         # none, in which case the tool was not granted either.
         deps.knowledge_bases = self.knowledge_bases
         return deps
+
+    async def _speak(self, role_fn, deps, thread, run, run_id, index, label):
+        """
+        One role's turn, retried once with its tools withheld.
+
+        A tool that answers unhelpfully invites being called again, and every call
+        is a request — so a role can spend a whole turn searching and post nothing.
+        That is what happened to the Reviewer on a forum where `prior_debates`
+        could only ever say "no match": four rounds, four BLOCKED notes, no
+        critique. Without tools it cannot do that, and an argument from the thread
+        alone is worth incomparably more than a note saying there isn't one.
+
+        Only `UsageLimitExceeded` is caught here. Anything else is a real fault
+        and belongs in the log, not smoothed over by a quieter second attempt.
+        """
+        try:
+            return await role_fn(deps, thread)
+        except UsageLimitExceeded:
+            logger.info(
+                "debate %s: %s spent its request budget; retrying with no tools",
+                run_id,
+                label,
+            )
+            # The first attempt's calls are kept, not cleared. They are what the
+            # turn spent its budget on, so they belong on whatever it eventually
+            # posts — a provenance chip reading "search_literature — nothing
+            # found" next to a tool-free argument is the most useful thing a
+            # reader of that post could have.
+            return await role_fn(deps, thread, tools=False)
+
+    async def _announce(
+        self, session: AsyncSession, run_id: uuid.UUID, activity: str | None
+    ) -> DebateRunTable:
+        """
+        Say what is about to happen, durably, before it happens.
+
+        Committed rather than flushed: the reader is the event stream on another
+        session, and an uncommitted activity is invisible to exactly the person
+        it is for.
+        """
+        await debate_service.set_activity(session, run_id=run_id, activity=activity)
+        return await self._settle(session, run_id)
+
+    async def _settle(self, session: AsyncSession, run_id: uuid.UUID) -> DebateRunTable:
+        """
+        Commit what is pending and hand back a live run row.
+
+        Called before a role speaks, so no write transaction is held across a
+        turn — a turn can now block on a cluster job. Re-reads because the commit
+        expires every object the session holds, and handing the expired one on is
+        how this module has produced MissingGreenlet more than once.
+        """
+        await self._checkpoint(session)
+        return await debate_service.require_debate(session, run_id)
 
     async def _checkpoint(self, session: AsyncSession) -> None:
         """Make progress durable, if the caller gave us a way to. Never fatal."""
@@ -600,6 +692,7 @@ def _deps(
     return DebateDeps(
         topic=run.topic,
         framing=run.framing,
+        thread_id=run.thread_id,
         round_index=round_index,
         rounds=run.rounds,
         project_id=str(run.project_id),

@@ -13,6 +13,7 @@ nobody could sensibly time out.
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import AsyncIterator
@@ -496,6 +497,7 @@ async def debate_events(
 
     async def events() -> AsyncIterator[dict]:
         seen: set[str] = set()
+        last_activity: str | None | object = object()  # never equal to a real value
         # Its own session: this generator outlives the request handler, and the
         # request's session is closed as soon as the response starts streaming.
         async with stream_session_factory() as stream_session:
@@ -516,6 +518,23 @@ async def debate_events(
                     yield {
                         "event": "post",
                         "data": DebatePostPublic.model_validate(post).model_dump_json(),
+                    }
+
+                # Emit the activity line whenever it changes. Without it the
+                # page shows a thread that stops growing and no indication that
+                # anything is still happening — which is indistinguishable from
+                # a crash, and now that a role can wait on a cluster job the
+                # silence lasts minutes.
+                if run.activity != last_activity:
+                    last_activity = run.activity
+                    yield {
+                        "event": "activity",
+                        "data": json.dumps(
+                            {
+                                "activity": run.activity,
+                                "since": run.activity_since,
+                            }
+                        ),
                     }
 
                 if run.status not in debate_service.ACTIVE_STATUSES:

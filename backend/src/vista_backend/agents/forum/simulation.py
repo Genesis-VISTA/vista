@@ -9,10 +9,21 @@ identity as the claim it bears on.
 
 Two facts about the shapes involved drive the design:
 
-  - **An HPC job outlives the debate.** Rounds take seconds; a job takes minutes
-    to hours. So a commission does not block a round. The result lands on the
-    thread whenever it lands — during a later round if the debate is still
-    running, or after the verdict if it is not, which is honest either way.
+  - **An HPC job outlives a round, and the role waits for it anyway.** This was
+    once the other way round: a commission returned immediately and the result
+    landed on the thread whenever it landed. That was true to the shapes involved
+    and wrong in practice — the answer usually arrived after the verdict, where
+    no agent ever reasoned about it, so the debate paid for a simulation and then
+    argued without it. Now the role that asked the question waits for the answer,
+    bounded by `forum.max_job_wait`; on timeout the debate carries on and the
+    result still reaches the thread.
+
+    Waiting has one hard requirement: nothing may hold a database transaction
+    across it. A waiting role is waiting for the *monitor* to record a result, and
+    on SQLite an open write transaction stops the monitor writing — the debate
+    would block what it is waiting for. Hence the commissioner's own session, the
+    per-poll sessions in `wait_for_result`, and the orchestrator committing before
+    a role speaks.
   - **Attribution requires the box to still exist.** A revoked participant cannot
     post, so the orchestrator does not retire a role while it has work in flight.
     `reap_after_collection` retires it once the result is in.
@@ -24,11 +35,12 @@ Building a second poller beside that one would be a second thing to get wrong.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -117,7 +129,8 @@ class SimulationCommissioner(Protocol):
         cluster: str | None = None,
         script_args: str | None = None,
         reply_to: str | None = None,
-    ) -> str: ...
+        wait: bool = True,
+    ) -> JobOutcome: ...
 
 
 async def commission(
@@ -212,6 +225,79 @@ async def open_simulations(
         if run is not None and run.spec.get("debate_run_id") == wanted:
             matching.append(job)
     return matching
+
+
+class JobOutcome(BaseModel):
+    """
+    What a role learned by waiting for the job it commissioned.
+
+    `timed_out` is a distinct outcome from failure. The job is still running and
+    its result will still reach the thread; what ran out is the debate's patience,
+    and a role told "it failed" when it merely has not finished yet would reason
+    from a false negative.
+    """
+
+    job_id: str
+    finished: bool = False
+    ok: bool | None = None
+    """None while unknown — nobody has seen a terminal state yet."""
+
+    state: str = ""
+    outputs: str = ""
+    timed_out: bool = False
+
+
+async def wait_for_result(
+    session_factory: Callable[[], AsyncSession],
+    *,
+    job_id: str,
+    timeout: float,
+    poll_seconds: float,
+) -> JobOutcome:
+    """
+    Block until a commissioned job finishes, or until the debate gives up.
+
+    Polls the database rather than the cluster, deliberately. The campaign monitor
+    is the only thing that polls a scheduler, and a second poller would race it on
+    the same rows — two `_process` passes could both decide a job needs collecting.
+    So this watches for the monitor's own conclusion, which means the floor on
+    noticing is `campaigns.monitor_interval` and not `poll_seconds`.
+
+    Each poll opens its own session and closes it. A long-lived session here would
+    hold a read transaction across the whole wait, and on SQLite that is enough to
+    keep the monitor from writing the very update being waited for.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        async with session_factory() as session:
+            job = await campaign_service.get_job(session, job_id)
+            if job is None:
+                return JobOutcome(job_id=job_id, state="unknown")
+            step = await campaign_service.get_step(session, job.step_id)
+            done = bool(job.result_collected) or (
+                step is not None and step.status in ("completed", "failed")
+            )
+            if done:
+                result = (step.result if step is not None else None) or {}
+                state = str(result.get("state") or job.state)
+                return JobOutcome(
+                    job_id=job_id,
+                    finished=True,
+                    ok=(step.status == "completed") if step is not None else None,
+                    state=state,
+                    outputs=str(result.get("outputs") or ""),
+                )
+            state_now = job.state
+
+        if asyncio.get_running_loop().time() >= deadline:
+            logger.info(
+                "debate: gave up waiting on job %s after %.0fs (state %s)",
+                job_id,
+                timeout,
+                state_now,
+            )
+            return JobOutcome(job_id=job_id, state=state_now, timed_out=True)
+        await asyncio.sleep(poll_seconds)
 
 
 class CommissionedRun(BaseModel):

@@ -71,7 +71,8 @@ function useDebateStream(
   // the dependency array directly. Stashing them in refs would mean writing a
   // ref during render, which React forbids for good reason.
   onPost: (post: DebatePost) => void,
-  onStatus: (run: DebateRun) => void
+  onStatus: (run: DebateRun) => void,
+  onActivity: (activity: string | null, since: string | null) => void
 ) {
   const runId = run?.id ?? null;
   const active = run ? isActive(run.status) : false;
@@ -92,6 +93,14 @@ function useDebateStream(
         /* a malformed frame should not tear down a live debate */
       }
     });
+    source.addEventListener("activity", (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        onActivity(data.activity ?? null, data.since ?? null);
+      } catch {
+        /* as above */
+      }
+    });
     source.addEventListener("status", (event) => {
       try {
         onStatus(JSON.parse((event as MessageEvent).data));
@@ -102,7 +111,48 @@ function useDebateStream(
     });
 
     return () => source.close();
-  }, [projectName, runId, active, onPost, onStatus]);
+  }, [projectName, runId, active, onPost, onStatus, onActivity]);
+}
+
+/**
+ * What the debate is doing, and for how long.
+ *
+ * The elapsed count is the part that carries the weight. "Proposer is thinking"
+ * alone is still ambiguous after two minutes — it could be a stuck request — and
+ * a number that keeps moving is the difference between waiting and wondering.
+ * Ticks on its own interval rather than on stream events, because the whole point
+ * is to keep changing when nothing is arriving.
+ */
+function Working({
+  activity,
+  since,
+}: {
+  activity: string;
+  since: string | null;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activity]);
+
+  const started = since ? Date.parse(since) : NaN;
+  const seconds = Number.isNaN(started)
+    ? null
+    : Math.max(0, Math.round((now - started) / 1000));
+
+  return (
+    <p className="debate-working" aria-live="polite">
+      <span className="debate-working__pulse" aria-hidden="true" />
+      {activity}
+      {seconds !== null && (
+        <span className="debate-working__elapsed">
+          {seconds < 90 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`}
+        </span>
+      )}
+    </p>
+  );
 }
 
 /* ---------------------------------------------------------------------- */
@@ -221,6 +271,13 @@ function DebatesPage() {
     useCallback((run: DebateRun) => {
       setState((current) => (current ? { ...current, run } : current));
       setRuns((current) => current.map((r) => (r.id === run.id ? run : r)));
+    }, []),
+    useCallback((activity: string | null, since: string | null) => {
+      setState((current) =>
+        current
+          ? { ...current, run: { ...current.run, activity, activity_since: since } }
+          : current
+      );
     }, [])
   );
 
@@ -499,6 +556,13 @@ function DebatesPage() {
               </ul>
 
               <DebateVerdict run={state.run} />
+              {state.run.activity && (
+                <Working
+                  activity={state.run.activity}
+                  since={state.run.activity_since}
+                />
+              )}
+
               <DebateThread
                 posts={posts}
                 enrolled={state.enrolled_origins ?? {}}

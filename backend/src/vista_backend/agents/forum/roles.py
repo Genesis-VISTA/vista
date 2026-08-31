@@ -278,6 +278,14 @@ class DebateDeps:
     round_index: int = 0
     rounds: int = 5
     project_id: str | None = None
+    thread_id: str = ""
+    """
+    This debate's own thread, so `prior_debates` can leave it out.
+
+    Without it a role searching for precedent finds the argument it is currently
+    having and reads its own half-finished thread back as settled history.
+    """
+
     knowledge_bases: list[str] = field(default_factory=list)
 
     available_jobs: list[str] = field(default_factory=list)
@@ -477,7 +485,9 @@ class RoleAgents:
             toolsets=tools.get("referee"),
         )
 
-    async def propose(self, deps: DebateDeps, thread: Thread) -> Hypothesis:
+    async def propose(
+        self, deps: DebateDeps, thread: Thread, *, tools: bool = True
+    ) -> Hypothesis:
         prompt = _situation(deps, thread)
         if thread.content_posts():
             # Said as a reply, and said with the round number, because the failure
@@ -500,16 +510,45 @@ class RoleAgents:
                 "\n\nOpen the discussion: what do you think is going on, and why? "
                 "Say what would change your mind."
             )
-        result = await self.proposer.run(prompt, deps=deps, usage_limits=self.limits)
-        return result.output
+        if not tools:
+            prompt += (
+                "\n\nYou have no tools this turn — you spent the budget for them "
+                "already. Say what you think from what is already in front of you."
+            )
+        return await self._run(self.proposer, prompt, deps, tools=tools)
 
-    async def review(self, deps: DebateDeps, thread: Thread) -> Critique:
+    async def review(
+        self, deps: DebateDeps, thread: Thread, *, tools: bool = True
+    ) -> Critique:
         prompt = _situation(deps, thread) + (
             "\n\nTry to falsify the most recent proposal. Concede only if you "
             "genuinely cannot — conceding is a real outcome, and inventing an "
             "objection to look rigorous is worse than agreeing."
         )
-        result = await self.reviewer.run(prompt, deps=deps, usage_limits=self.limits)
+        if not tools:
+            prompt += (
+                "\n\nYou have no tools this turn — you spent the budget for them "
+                "already. Argue from the thread in front of you. That is enough: "
+                "the strongest objections in this debate are about reasoning, not "
+                "about evidence you have not gathered."
+            )
+        return await self._run(self.reviewer, prompt, deps, tools=tools)
+
+    async def _run(self, agent, prompt: str, deps: DebateDeps, *, tools: bool):
+        """
+        One role's turn, optionally with its tools withheld.
+
+        Withholding is the second chance after a role exhausts its request budget.
+        A tool that answers unhelpfully invites being called again, and each call
+        is a request, so a role can spend a whole turn searching and post nothing.
+        Without tools it cannot do that, and an argument from the thread alone
+        beats a BLOCKED note that tells the debate nothing.
+        """
+        if tools:
+            result = await agent.run(prompt, deps=deps, usage_limits=self.limits)
+            return result.output
+        with agent.override(toolsets=[]):
+            result = await agent.run(prompt, deps=deps, usage_limits=self.limits)
         return result.output
 
     async def rule(self, deps: DebateDeps, thread: Thread) -> Verdict:

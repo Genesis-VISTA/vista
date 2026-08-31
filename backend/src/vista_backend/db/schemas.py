@@ -927,6 +927,24 @@ class DebateRunBase(SQLModel):
     a failure.
     """
 
+    activity: str | None = None
+    """
+    What the debate is doing right now, in words, or None when nothing is.
+
+    Exists because a turn is not instantaneous and produces nothing until it is
+    finished. A role thinking for thirty seconds and a debate that has crashed
+    look identical from outside, and now that a role can wait on a cluster job
+    the gap between "working" and "frozen" is minutes rather than seconds.
+
+    A sentence rather than a role name and a code, because what a reader wants
+    is what is happening — "Reviewer is waiting for job 57719697 on perlmutter"
+    is the whole answer, and reassembling that in the interface from parts would
+    put the words furthest from the code that knows them.
+    """
+
+    activity_since: str | None = None
+    """When the current activity started, so the interface can show how long."""
+
 
 class DebateRunPublic(DebateRunBase):
     id: uuid.UUID

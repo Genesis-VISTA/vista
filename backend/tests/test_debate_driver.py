@@ -387,9 +387,12 @@ async def test_progress_is_checkpointed_every_round(client, session, alice):
     )
     await orch.run(session, run)
 
-    # Three rounds plus the verdict: progress is durable before the next round
-    # starts, not only when the whole argument is over.
-    assert len(checkpoints) == 4
+    # At least one per round plus the verdict. Deliberately not an exact count:
+    # there is now also a checkpoint before each role speaks, so that no write
+    # transaction is held across a turn that may be waiting on a cluster job.
+    # Pinning the exact number would make that a breaking change every time the
+    # loop gains a durability point, which is the opposite of the intent here.
+    assert len(checkpoints) >= 4
 
 
 @pytest.mark.anyio
@@ -955,3 +958,172 @@ async def test_the_forum_carries_the_proposers_own_words(client, session, alice)
 
     posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
     assert posts[PostKind.PROPOSAL].body == HYPOTHESIS["note"]
+
+
+@pytest.mark.anyio
+async def test_nothing_is_held_uncommitted_while_a_role_speaks(
+    engine, client, session, alice
+):
+    """
+    The property the round-boundary checkpoint exists for.
+
+    A role can now block for as long as a cluster job takes, and while it does the
+    debate's session must not be sitting on an open write transaction — on SQLite
+    that stops the campaign monitor recording the result the role is waiting for.
+
+    Checked from a *separate* session, mid-turn: if the projection is visible
+    there, it was committed before the role was handed control.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    seen: list[int] = []
+
+    async def nosy_proposer(messages, info):
+        # Runs inside the proposer's turn — the moment that matters.
+        async with AsyncSession(engine) as other:
+            rows = await debate_service.list_posts(other, run_id=run_id)
+            seen.append(len(rows))
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
+        )
+
+    orch, run = await _start(
+        client,
+        session,
+        alice,
+        roles=_roles(proposer=FunctionModel(nosy_proposer)),
+        rounds=1,
+    )
+    run_id = run.id
+    await orch.run(session, run)
+
+    assert seen, "the proposer's turn never ran"
+    assert seen[0] >= 1, (
+        "another session saw nothing mid-turn, so the thread projection was "
+        "still sitting in the debate's uncommitted transaction"
+    )
+
+
+@pytest.mark.anyio
+async def test_a_role_announces_itself_before_it_starts_thinking(
+    engine, client, session, alice
+):
+    """
+    Announced before the turn, not after, and committed — the reader is on
+    another session, and an uncommitted activity is invisible to exactly the
+    person it is for.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    seen: list[str | None] = []
+
+    async def nosy_proposer(messages, info):
+        async with AsyncSession(engine) as other:
+            row = await debate_service.require_debate(other, run_id)
+            seen.append(row.activity)
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
+        )
+
+    orch, run = await _start(
+        client,
+        session,
+        alice,
+        roles=_roles(proposer=FunctionModel(nosy_proposer)),
+        rounds=1,
+    )
+    run_id = run.id
+    await orch.run(session, run)
+
+    assert seen and seen[0] is not None, "nothing said what the debate was doing"
+    assert "Proposer" in seen[0]
+
+    # And cleared when it is over: a stale line is the frozen screen again, with
+    # a caption claiming otherwise.
+    final = await debate_service.require_debate(session, run_id)
+    assert final.activity is None
+    assert final.activity_since is None
+
+
+# --------------------------------------------------------------------------- #
+# A spent budget should still produce an argument
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_role_out_of_budget_argues_again_without_its_tools(
+    client, session, alice
+):
+    """
+    What four BLOCKED reviewer turns should have been.
+
+    A tool that answers unhelpfully invites being called again, and every call is
+    a request — so a role can spend a whole turn searching and post nothing. The
+    retry withholds the tools, which makes that impossible, and an argument from
+    the thread alone is worth incomparably more than a note saying there isn't one.
+    """
+    attempts = {"n": 0}
+
+    def flaky_reviewer(messages, info: AgentInfo):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise UsageLimitExceeded("The next request would exceed the request_limit")
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, REFUTE)])
+
+    orch, run = await _start(
+        client,
+        session,
+        alice,
+        roles=_roles(reviewer=FunctionModel(flaky_reviewer)),
+        rounds=1,
+    )
+    run = await orch.run(session, run)
+
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert PostKind.RISK in kinds, "the retry should have produced a real objection"
+    assert PostKind.BLOCKED not in kinds, "and no BLOCKED note, since it recovered"
+
+
+@pytest.mark.anyio
+async def test_a_blocked_note_records_what_the_turn_actually_called(
+    client, session, alice
+):
+    """
+    The one post in the record where provenance was empty, and the one where a
+    reader most needs it: "it spent its whole budget" and "we will not say on
+    what" is exactly backwards. Answering why the Reviewer failed took a round of
+    guesswork that this would have made unnecessary.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
+
+    async def rag(query, kb_slug, n):
+        return "nothing useful"
+
+    searched = {"n": 0}
+
+    def searches_then_runs_dry(messages, info: AgentInfo):
+        # One real tool call, then out of budget — the shape of the failure.
+        searched["n"] += 1
+        if searched["n"] == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("search_literature", {"query": "redox window"})]
+            )
+        raise UsageLimitExceeded("The next request would exceed the request_limit")
+
+    roles = RoleAgents(
+        models={
+            "proposer": scripted(HYPOTHESIS),
+            "reviewer": FunctionModel(searches_then_runs_dry),
+            "referee": scripted(VERDICT),
+        },
+        toolsets=build_toolsets(Grounding(rag=rag)),
+    )
+    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    run = await orch.run(session, run)
+
+    posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
+    blocked = posts.get(PostKind.BLOCKED)
+    assert blocked is not None, "the reviewer should have posted BLOCKED"
+    assert [t["tool"] for t in blocked.tools_used] == ["search_literature"], (
+        "the note has to say what the turn spent its budget on"
+    )

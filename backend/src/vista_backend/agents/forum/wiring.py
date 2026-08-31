@@ -329,6 +329,22 @@ async def _commit(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def _say(sessions, run_id: uuid.UUID, activity: str) -> None:
+    """
+    Update the debate's activity from outside its own session.
+
+    A tool has no handle on the session running the debate, and reaching for one
+    would mean writing to a transaction it does not own. Its own session, its own
+    commit, and never fatal: losing a status line must not lose a simulation.
+    """
+    try:
+        async with sessions() as own:
+            await debate_service.set_activity(own, run_id=run_id, activity=activity)
+            await own.commit()
+    except Exception:  # noqa: BLE001
+        logger.debug("debate %s: could not record activity", run_id, exc_info=True)
+
+
 async def build_simulation(
     session: AsyncSession, run: DebateRunTable
 ) -> tuple[SimulationCommissioner | None, list[str], list[str]]:
@@ -367,6 +383,15 @@ async def build_simulation(
         )
         return None, [], []
 
+    # Fresh sessions on the *caller's* engine, not `get_engine()`.
+    #
+    # A commissioning role needs its own session — see the closure below — and
+    # reaching for the process-wide engine to get one is how the debate ends up
+    # writing to a different database than the caller is reading, which is
+    # exactly what it did under test.
+    bind = session.bind
+    sessions = lambda: AsyncSession(bind)  # noqa: E731
+
     hpc = McpHpcTools(
         build_mcp_invoke(user, project_paths_for(run.project_id, run.user_id))
     )
@@ -385,7 +410,8 @@ async def build_simulation(
         cluster: str | None = None,
         script_args: str | None = None,
         reply_to: str | None = None,
-    ) -> str:
+        wait: bool = True,
+    ) -> simulation.JobOutcome:
         if job not in jobs:
             raise ValueError(
                 f"{job!r} is not runnable in this project. Available: "
@@ -395,28 +421,56 @@ async def build_simulation(
             raise ValueError(
                 f"no credentials for {cluster!r}. Available: {', '.join(clusters)}."
             )
-        spent = await commissioned_count(session, debate_run_id=run_id)
-        if spent >= settings.forum.max_simulations:
-            raise ValueError(
-                f"this debate has already commissioned {spent} of "
-                f"{settings.forum.max_simulations} permitted simulations."
-            )
+        # Its own session, committed before the wait begins.
+        #
+        # Two reasons, and the second is the important one. The job row has to be
+        # visible to the monitor for the monitor to poll it, so it must be
+        # committed rather than sitting in the debate's open transaction. And the
+        # debate's session must not be the one holding a transaction while a role
+        # waits minutes for a cluster: on SQLite that blocks the monitor from
+        # writing the very update being waited for.
+        async with sessions() as own:
+            spent = await commissioned_count(own, debate_run_id=run_id)
+            if spent >= settings.forum.max_simulations:
+                raise ValueError(
+                    f"this debate has already commissioned {spent} of "
+                    f"{settings.forum.max_simulations} permitted simulations."
+                )
 
-        row = await simulation.commission(
-            session,
-            debate_run_id=run_id,
-            project_id=project_id,
-            user_id=user_id,
-            thread_id=thread_id,
-            participant=participant,
-            hpc=hpc,
-            job=job,
-            prediction=prediction,
-            cluster=cluster or clusters[0],
-            script_args=script_args,
-            reply_to=reply_to,
-        )
-        return row.job_id
+            row = await simulation.commission(
+                own,
+                debate_run_id=run_id,
+                project_id=project_id,
+                user_id=user_id,
+                thread_id=thread_id,
+                participant=participant,
+                hpc=hpc,
+                job=job,
+                prediction=prediction,
+                cluster=cluster or clusters[0],
+                script_args=script_args,
+                reply_to=reply_to,
+            )
+            job_id = row.job_id
+            await own.commit()
+
+        if not wait:
+            return simulation.JobOutcome(job_id=job_id)
+
+        # Say what the wait is for, on its own session. This is the longest a
+        # debate ever stalls, so it is the moment the interface most needs to be
+        # saying something other than nothing.
+        where = cluster or clusters[0]
+        await _say(sessions, run_id, f"Waiting for {job} on {where} · job {job_id}")
+        try:
+            return await simulation.wait_for_result(
+                sessions,
+                job_id=job_id,
+                timeout=settings.forum.max_job_wait,
+                poll_seconds=settings.forum.job_poll_seconds,
+            )
+        finally:
+            await _say(sessions, run_id, "Reading the simulation result")
 
     return commissioner, jobs, clusters
 

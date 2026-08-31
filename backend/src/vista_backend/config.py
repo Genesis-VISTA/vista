@@ -86,6 +86,29 @@ class ForumSettings(BaseModel):
     ~0.5s, so this only bounds a hang.
     """
 
+    max_job_wait: float = 1800.0
+    """
+    How long a role will wait for a simulation it commissioned, in seconds.
+
+    A round used to end the moment a job was submitted, so the result arrived on
+    the thread whenever it arrived — often after the verdict, where no agent ever
+    reasoned about it. Waiting means the role that asked the question sees the
+    answer, which is the point of asking.
+
+    On timeout the debate carries on and the result is posted when it lands, so
+    this bounds the stall rather than deciding whether the evidence is used.
+    """
+
+    job_poll_seconds: float = 15.0
+    """
+    How often a waiting role re-checks its job.
+
+    The floor on noticing is `campaigns.monitor_interval` (300s by default), not
+    this: the monitor is the only thing that polls the cluster, and a second
+    poller would race it on the same rows. Lower that setting if a debate should
+    see its results sooner.
+    """
+
     default_rounds: int = 5
     """ Debate round budget when the caller does not specify one. """
 
