@@ -10,11 +10,12 @@ Follows the shape of `test_campaign_driver.py`: script the model, drive the real
 runtime, assert the state transitions.
 """
 
+import json
 import uuid
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -60,6 +61,19 @@ VERDICT = {
 }
 
 
+def structured(payload: dict) -> ModelResponse:
+    """
+    A role's answer in the shape prompted output actually produces: JSON as text.
+
+    The fakes used to return `ToolCallPart(info.output_tools[0].name, …)`, which
+    modelled pydantic-ai's tool-based output. The agents no longer use it — a model
+    with unreliable tool-calling answered in prose and the prose was parsed as
+    JSON — so a fake that still calls an output tool would be testing a path
+    production does not take.
+    """
+    return ModelResponse(parts=[TextPart(json.dumps(payload))])
+
+
 def scripted(*payloads: dict, capture: list[str] | None = None) -> FunctionModel:
     """
     Return each payload in turn, repeating the last once they run out.
@@ -82,7 +96,7 @@ def scripted(*payloads: dict, capture: list[str] | None = None) -> FunctionModel
             )
         payload = payloads[min(calls["n"], len(payloads) - 1)]
         calls["n"] += 1
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+        return structured(payload)
 
     return FunctionModel(respond)
 
@@ -585,9 +599,7 @@ def _tool_using_proposer() -> FunctionModel:
                     ToolCallPart("read_domain_guidance", {"skill": "salt-chemistry"})
                 ]
             )
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
-        )
+        return ModelResponse(parts=[TextPart(json.dumps(HYPOTHESIS))])
 
     return FunctionModel(respond)
 
@@ -983,9 +995,7 @@ async def test_nothing_is_held_uncommitted_while_a_role_speaks(
         async with AsyncSession(engine) as other:
             rows = await debate_service.list_posts(other, run_id=run_id)
             seen.append(len(rows))
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
-        )
+        return ModelResponse(parts=[TextPart(json.dumps(HYPOTHESIS))])
 
     orch, run = await _start(
         client,
@@ -1021,9 +1031,7 @@ async def test_a_role_announces_itself_before_it_starts_thinking(
         async with AsyncSession(engine) as other:
             row = await debate_service.require_debate(other, run_id)
             seen.append(row.activity)
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, HYPOTHESIS)]
-        )
+        return ModelResponse(parts=[TextPart(json.dumps(HYPOTHESIS))])
 
     orch, run = await _start(
         client,
@@ -1068,7 +1076,7 @@ async def test_a_role_out_of_budget_argues_again_without_its_tools(
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise UsageLimitExceeded("The next request would exceed the request_limit")
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, REFUTE)])
+        return structured(REFUTE)
 
     orch, run = await _start(
         client,
@@ -1126,4 +1134,53 @@ async def test_a_blocked_note_records_what_the_turn_actually_called(
     assert blocked is not None, "the reviewer should have posted BLOCKED"
     assert [t["tool"] for t in blocked.tools_used] == ["search_literature"], (
         "the note has to say what the turn spent its budget on"
+    )
+
+
+@pytest.mark.anyio
+async def test_prose_where_structured_output_was_expected_costs_one_round(
+    client, session, alice
+):
+    """
+    The failure that killed a whole debate: a model answered in prose, pydantic-ai
+    parsed the prose as JSON, and the resulting error escaped `run_round`, escaped
+    `run`, and marked the run `failed` with nothing in the thread to say why.
+
+    Only the budget case was caught. This is the same consequence — the role said
+    nothing this round — so it is caught alongside it, and the debate goes on.
+    """
+    rounds_seen: list[int] = []
+
+    def answers_in_prose(messages, info: AgentInfo):
+        # Exactly what gpt-oss-120b did: a good reply, in the wrong envelope.
+        rounds_seen.append(len(rounds_seen))
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    "The viscosity data from ORNL's FLiBe assessment shows that "
+                    "raising the BeF2 fraction pushes pressure drops past 2 MPa."
+                )
+            ]
+        )
+
+    orch, run = await _start(
+        client,
+        session,
+        alice,
+        roles=_roles(reviewer=FunctionModel(answers_in_prose)),
+        rounds=2,
+    )
+    run = await orch.run(session, run)
+
+    posts = await debate_service.list_posts(session, run_id=run.id)
+    kinds = [p.kind for p in posts]
+
+    assert run.status != "failed", "one malformed turn should not kill the debate"
+    assert PostKind.BLOCKED in kinds, "and the thread should say the turn failed"
+    assert kinds.count(PostKind.PROPOSAL) == 2, "both rounds still ran"
+    assert PostKind.DONE in kinds, "and the referee still ruled"
+
+    blocked = next(p for p in posts if p.kind == PostKind.BLOCKED)
+    assert "could not produce an answer in the form" in blocked.body, (
+        "a malformed answer is not a spent budget, and the note should not say so"
     )

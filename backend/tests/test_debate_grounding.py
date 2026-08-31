@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vista_backend.agents.forum.grounding import (
@@ -341,6 +341,11 @@ async def test_a_grounded_role_can_call_its_tool_and_still_return_a_hypothesis(
     assert out.claim == HYPOTHESIS["claim"]
 
 
+def structured(payload: dict) -> ModelResponse:
+    """A role's answer in the shape prompted output produces: JSON as text."""
+    return ModelResponse(parts=[TextPart(json.dumps(payload))])
+
+
 def _searching_model(payload: dict) -> FunctionModel:
     """Calls search_literature once, then answers."""
     state = {"searched": False}
@@ -351,7 +356,7 @@ def _searching_model(payload: dict) -> FunctionModel:
             return ModelResponse(
                 parts=[ToolCallPart("search_literature", {"query": "knee temperature"})]
             )
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+        return structured(payload)
 
     return FunctionModel(respond)
 

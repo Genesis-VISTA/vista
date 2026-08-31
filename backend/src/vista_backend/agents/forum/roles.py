@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Literal, Sequence, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
-from pydantic_ai import Agent
+from pydantic_ai import Agent, PromptedOutput
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.toolsets import AgentToolset
@@ -415,11 +415,24 @@ def build_agent(
     `output_type` is a parameter rather than looked up from `role` so the return
     type stays specific: a caller gets an `Agent[DebateDeps, Hypothesis]`, not an
     agent that might return any of the three.
+
+    The output is **prompted, not a tool call**. pydantic-ai's default asks the
+    model to return its answer by calling a synthetic output tool, and a model
+    whose tool-calling is unreliable answers in prose instead — at which point the
+    prose is parsed as JSON and fails at "line 1 column 1". That is what happened
+    with `gpt-oss-120b`, and the reply it lost was a good one: it engaged both
+    objections and revised the hypothesis with numbers. The reasoning was fine and
+    only the envelope was wrong.
+
+    `PromptedOutput` asks for JSON in the prompt and parses it out of the text, so
+    a text reply is the expected shape rather than a failure. Ordinary tools are
+    unaffected — they are still tool calls; this changes only how the final answer
+    comes back.
     """
     return Agent(
         model=infer_model(model or settings.model),
         deps_type=DebateDeps,
-        output_type=output_type,
+        output_type=PromptedOutput(output_type),
         system_prompt=_prompt(role),
         toolsets=list(toolsets) if toolsets else None,
     )

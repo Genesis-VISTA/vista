@@ -23,7 +23,11 @@ import logging
 import uuid
 from typing import Awaitable, Callable, Iterable
 
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
@@ -64,6 +68,31 @@ def _participant_of(row) -> Participant:
         box_id=row.box_id,
         policy_digest=row.policy_digest,
     )
+
+
+TURN_FAILED: tuple[type[Exception], ...] = (
+    UsageLimitExceeded,
+    UnexpectedModelBehavior,
+    ToolRetryError,
+)
+"""
+Ways a role can fail to produce a usable answer, all of which cost a round.
+
+`UsageLimitExceeded` is a spent request budget. The other two are the model
+failing to return the shape asked of it — most often by answering in prose where
+structured output was expected, which pydantic-ai then tries to parse as JSON and
+reports as "expected value at line 1 column 1".
+
+Caught together because the consequence is identical: this role said nothing this
+round. Before, only the budget case was caught, so a malformed answer escaped
+`run_round`, escaped `run`, and killed the whole debate — a run marked `failed`
+with nothing in the thread to say why. One bad turn should cost a turn.
+
+Deliberately not a bare `except Exception`: a forum that has gone away, a
+database that will not write, a bug in this module — those are faults, and
+swallowing them into a BLOCKED note would turn every one into a debate that
+quietly argued worse.
+"""
 
 
 PostHook = Callable[[Post], Awaitable[None]]
@@ -320,8 +349,8 @@ class DebateOrchestrator:
             hypothesis = await self._speak(
                 self.roles.propose, propose_deps, thread, run, run_id, index, "proposer"
             )
-        except UsageLimitExceeded as exc:
-            # Out of budget twice, tools and all. The round produced nothing, but
+        except TURN_FAILED as exc:
+            # The round produced nothing, but
             # the thread should say so rather than the debate ending in a
             # traceback nobody on the forum can see.
             await self._blocked(
@@ -351,7 +380,7 @@ class DebateOrchestrator:
             critique = await self._speak(
                 self.roles.review, review_deps, thread, run, run_id, index, "reviewer"
             )
-        except UsageLimitExceeded as exc:
+        except TURN_FAILED as exc:
             # An unanswered proposal is a worse record than an answered one, but
             # it is a true one, and the next round still has something to argue.
             await self._blocked(
@@ -396,7 +425,7 @@ class DebateOrchestrator:
         run = await self._announce(session, run_id, "Referee is ruling on the thread")
         try:
             verdict = await self.roles.rule(deps, thread)
-        except UsageLimitExceeded as exc:
+        except TURN_FAILED as exc:
             # No verdict is an honest outcome; a fabricated one is not.
             await self._blocked(session, run, roster["referee"], None, exc)
             await debate_service.set_status(session, run_id=run_id, status="failed")
@@ -505,14 +534,23 @@ class DebateOrchestrator:
         a reader needs to know that rather than inferring silence. Best effort —
         a debate already in trouble must not also fail on its own error report.
         """
+        # Say which kind of failure it was. "This is a budget limit" was written
+        # when a spent budget was the only thing caught, and it is now sometimes a
+        # lie: a model that answered in prose where structured output was expected
+        # did not run out of anything.
+        if isinstance(exc, UsageLimitExceeded):
+            cause = "I ran out of my request budget for this turn"
+        else:
+            cause = "I could not produce an answer in the form this debate needs"
+
         try:
             await self._post(
                 session,
                 run,
                 participant,
-                f"I could not finish this turn: {exc}. "
-                "This is a budget limit, not a conclusion — nothing here should "
-                "be read as agreement or as a finding.",
+                f"{cause}: {exc}. "
+                "This is a failure of my turn, not a conclusion — nothing here "
+                "should be read as agreement or as a finding.",
                 kind=PostKind.BLOCKED,
                 round_index=round_index,
                 deps=deps,

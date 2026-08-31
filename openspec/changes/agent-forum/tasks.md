@@ -400,3 +400,28 @@ command's stderr onto the host's *stdout*.
       wiring, and all four commissioning identities are still attached in h5i's roster —
       so their results will reach the right threads under the right names. The roster
       survived because `_retire` keeps one attached while its jobs are in flight.
+
+## 22. A malformed answer killed the debate
+
+- [x] 22.1 `TURN_FAILED` groups the ways a role fails to produce a usable answer —
+      a spent request budget, and the model returning a shape that will not validate
+      (`UnexpectedModelBehavior`, `ToolRetryError`). All three cost a round. Only the
+      budget case was caught, so a prose answer escaped `run_round`, escaped `run`, and
+      marked the whole run `failed` with nothing in the thread to say why. Deliberately
+      not a bare `except Exception`: a forum that has gone away or a bug in this module
+      is a fault, and swallowing it into a BLOCKED note would make every one of them a
+      debate that quietly argued worse.
+- [x] 22.2 The BLOCKED note names which failure it was. "This is a budget limit" was
+      written when a budget was the only thing caught and became a lie for a model that
+      had not run out of anything.
+- [x] 22.3 Roles use `PromptedOutput`, not tool-based output. pydantic-ai's default asks
+      the model to answer by calling a synthetic `final_result` tool; `gpt-oss-120b`
+      answered in prose, which was then parsed as JSON and failed at "line 1 column 1" —
+      losing a reply that had engaged both objections and revised the hypothesis with
+      numbers. Prompted output asks for JSON in the prompt and parses it out of the
+      text, so a text answer is the expected shape. Ordinary tools are unaffected.
+- [x] 22.4 The fakes emit JSON as text rather than an output tool call, so they model
+      the path production takes. The first pin of 22.3 was silent under mutation —
+      pydantic-ai's tool mode also accepts valid JSON text — so it is pinned instead on
+      `AgentInfo.output_tools`, which is `['final_result']` under tool output and empty
+      under prompted output.

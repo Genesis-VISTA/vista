@@ -8,9 +8,11 @@ are ours to get right: that the output contract refuses a shape the debate canno
 use, and that each role is actually *given* what it needs to do its job.
 """
 
+import json
+
 import pytest
 from pydantic import ValidationError
-from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vista_backend.agents.forum.roles import (
@@ -81,6 +83,19 @@ HYPOTHESIS = {
 }
 
 
+def structured(payload: dict) -> ModelResponse:
+    """
+    A role's answer in the shape prompted output actually produces: JSON as text.
+
+    The fakes used to return `ToolCallPart(info.output_tools[0].name, …)`, which
+    modelled pydantic-ai's tool-based output. The agents no longer use it — a model
+    with unreliable tool-calling answered in prose and the prose was parsed as
+    JSON — so a fake that still calls an output tool would be testing a path
+    production does not take.
+    """
+    return ModelResponse(parts=[TextPart(json.dumps(payload))])
+
+
 def scripted(payload: dict, *, capture: list[str] | None = None) -> FunctionModel:
     """
     A model that returns `payload` as the agent's structured output.
@@ -103,8 +118,7 @@ def scripted(payload: dict, *, capture: list[str] | None = None) -> FunctionMode
                     and isinstance(part.content, str)
                 )
             )
-        assert info.output_tools, "the role should be asking for structured output"
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, payload)])
+        return structured(payload)
 
     return FunctionModel(respond)
 
@@ -628,3 +642,31 @@ async def test_a_later_round_is_told_it_is_replying_not_proposing():
     assert "replying, not proposing again" in prompts[0]
     assert "do not restate" in prompts[0]
     assert "round 4" in prompts[0], "the round number is what makes 'again' concrete"
+
+
+@pytest.mark.anyio
+async def test_roles_ask_for_their_answer_as_text_not_as_a_tool_call():
+    """
+    Pinned because a model with unreliable tool-calling answered in prose, and
+    pydantic-ai then parsed the prose as JSON and failed at "line 1 column 1" —
+    losing a reply that had engaged both objections and revised the hypothesis.
+
+    Under tool-based output the agent offers a `final_result` tool and expects it
+    to be called. Prompted output offers none and asks for JSON in the prompt, so
+    a text answer is the expected shape rather than a failure. `output_tools` is
+    what distinguishes them, and it is the only externally visible difference —
+    which is why reverting the mode is otherwise silent.
+    """
+    seen: dict[str, list[str]] = {}
+
+    def respond(messages, info: AgentInfo) -> ModelResponse:
+        seen["output_tools"] = [t.name for t in (info.output_tools or [])]
+        return structured(HYPOTHESIS)
+
+    roles = RoleAgents(models={"proposer": FunctionModel(respond)})
+    await roles.propose(DebateDeps(topic="t"), _thread())
+
+    assert seen["output_tools"] == [], (
+        "the roles are back on tool-based output, which is the failure mode this "
+        "deployment's model actually hits"
+    )
