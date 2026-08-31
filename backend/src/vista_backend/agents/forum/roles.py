@@ -288,17 +288,19 @@ class DebateDeps:
 
     knowledge_bases: list[str] = field(default_factory=list)
 
-    available_jobs: list[str] = field(default_factory=list)
+    runnable: dict[str, list[str]] = field(default_factory=dict)
     """
-    Simulations this debate may commission, from the project's loaded skills.
+    Simulations this debate may commission, each with the clusters it can run on.
 
-    Told to the role in its prompt rather than left to guess: a model inventing a
-    job name spends a turn discovering it was wrong, and the names are not
-    something it could know.
+    Told to the role rather than left to guess: a model inventing a job name spends
+    a turn discovering it was wrong, and the names are not something it could know.
+
+    A mapping and not two lists, because two lists cannot say that
+    `salt-neutronics-tbr` runs on odo and perlmutter while `salt-chemistry-md` runs
+    only on frontier. Offered a flat list of the opener's clusters, a role picked a
+    cluster the job had no section for, was refused, and retried the same thing —
+    it had not been given what it needed to choose correctly.
     """
-
-    available_clusters: list[str] = field(default_factory=list)
-    """Clusters the opener has credentials for. Same reasoning."""
 
     participant: Participant | None = None
     """
@@ -370,10 +372,16 @@ def _situation(deps: DebateDeps, thread: Thread) -> str:
     if deps.framing:
         header.append(f"\nThe human added: {deps.framing}")
 
-    if deps.available_jobs:
+    if deps.runnable:
+        # Per job, because the clusters differ per job. A single joined list reads
+        # as "any of these work for any of those", which is how a role ends up
+        # naming a cluster the job cannot run on.
+        offered = "; ".join(
+            f"{job} (on {' or '.join(clusters)})"
+            for job, clusters in sorted(deps.runnable.items())
+        )
         header.append(
-            f"\nSimulations you may commission: {', '.join(deps.available_jobs)}"
-            f" — on {' or '.join(deps.available_clusters)}."
+            f"\nSimulations you may commission: {offered}."
             " Use one only to settle a prediction argument cannot."
         )
 

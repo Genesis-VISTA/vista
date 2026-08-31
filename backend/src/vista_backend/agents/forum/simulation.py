@@ -101,6 +101,47 @@ def runnable_jobs(project_skills: list[str], catalog: Path) -> list[str]:
     return sorted(set(project_skills) & available)
 
 
+def clusters_for_job(job: str, catalog: Path) -> list[str]:
+    """
+    The clusters a job's own `cluster_defaults.json` defines.
+
+    A job is not portable: `salt-neutronics-tbr` has sections for odo and
+    perlmutter, `salt-chemistry-md` only for frontier. Submitting to a cluster the
+    job has no section for is refused by `submit_hpc_job`, so the set has to be
+    read here rather than discovered by being told no.
+    """
+    path = catalog / job / "cluster_defaults.json"
+    try:
+        defaults = json.loads(path.read_text())
+    except OSError, json.JSONDecodeError:
+        return []
+    return sorted(defaults) if isinstance(defaults, dict) else []
+
+
+def runnable_simulations(
+    project_skills: list[str], catalog: Path, user_clusters: list[str]
+) -> dict[str, list[str]]:
+    """
+    Each job this debate may run, and where it can actually run it.
+
+    The intersection of three things, and all three matter: the project's loaded
+    skills, the jobs on disk, and the clusters the opener has credentials for.
+
+    Kept as a mapping rather than two lists because two lists cannot express the
+    thing that broke. With `["salt-neutronics-tbr"]` and
+    `["frontier", "odo", "perlmutter"]` the only available default was
+    `clusters[0]` — alphabetical, unrelated to the job — which picked frontier, the
+    one cluster that job has no section for. Nothing was launched, and the agent
+    was shown a cluster list it could not choose correctly from.
+    """
+    allowed = set(user_clusters)
+    pairs = (
+        (job, [c for c in clusters_for_job(job, catalog) if c in allowed])
+        for job in runnable_jobs(project_skills, catalog)
+    )
+    return {job: clusters for job, clusters in pairs if clusters}
+
+
 async def commissioned_count(session: AsyncSession, *, debate_run_id: uuid.UUID) -> int:
     """
     How many jobs this debate has commissioned, finished or not.

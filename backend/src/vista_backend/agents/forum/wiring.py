@@ -41,6 +41,7 @@ from .simulation import (
     clusters_for,
     commissioned_count,
     runnable_jobs,
+    runnable_simulations,
 )
 
 
@@ -347,12 +348,19 @@ async def _say(sessions, run_id: uuid.UUID, activity: str) -> None:
 
 async def build_simulation(
     session: AsyncSession, run: DebateRunTable
-) -> tuple[SimulationCommissioner | None, list[str], list[str]]:
+) -> tuple[SimulationCommissioner | None, dict[str, list[str]]]:
     """
     The HPC commissioner for one debate, plus what it may run and where.
 
-    Returns `(commissioner, jobs, clusters)`, and `None` when this debate cannot
-    submit anything — no simulation skills on the project, or no HPC credentials
+    Returns `(commissioner, runnable)` — a mapping from each job to the clusters it
+    can actually run on here, which is the intersection of the project's skills,
+    the jobs on disk, and the opener's credentials. A mapping rather than the two
+    lists it used to be: those could not express that a neutronics job runs on odo
+    and perlmutter while a chemistry job runs only on frontier, so the default was
+    `clusters[0]` — alphabetical — and it picked the one cluster the job could not
+    use.
+
+    `None` when this debate cannot submit anything — no simulation skills on the project, or no HPC credentials
     on the person who opened it. The tool is then not granted at all, for the
     reason the usage-limit bug taught: a model handed a tool that can only fail
     keeps calling it until its budget is gone.
@@ -362,26 +370,42 @@ async def build_simulation(
     project = await session.get(ProjectTable, run.project_id)
     user_row = await session.get(UserTable, run.user_id)
     if project is None or user_row is None:
-        return None, [], []
+        return None, {}
 
     user = UserPublicWithConfig.model_validate(user_row)
-    jobs = runnable_jobs(list(project.skills or []), settings.hpc_jobs_dir)
     clusters = clusters_for(user)
-
-    if not jobs:
-        logger.info(
-            "debate %s: no HPC — project %r loads no skill with a matching job",
-            run.id,
-            project.name,
-        )
-        return None, [], []
     if not clusters:
         logger.info(
             "debate %s: no HPC — %s has no cluster credentials configured",
             run.id,
             user.email,
         )
-        return None, [], []
+        return None, {}
+
+    runnable = runnable_simulations(
+        list(project.skills or []), settings.hpc_jobs_dir, clusters
+    )
+    if not runnable:
+        # Distinguishes the two ways this comes out empty, because they call for
+        # different actions: load a simulation skill, or get a credential for a
+        # cluster the jobs you have actually support.
+        offered = runnable_jobs(list(project.skills or []), settings.hpc_jobs_dir)
+        if offered:
+            logger.info(
+                "debate %s: no HPC — %s can reach %s, and no job in %s has a "
+                "section for any of them",
+                run.id,
+                user.email,
+                ", ".join(clusters),
+                ", ".join(offered),
+            )
+        else:
+            logger.info(
+                "debate %s: no HPC — project %r loads no skill with a matching job",
+                run.id,
+                project.name,
+            )
+        return None, {}
 
     # Fresh sessions on the *caller's* engine, not `get_engine()`.
     #
@@ -412,14 +436,19 @@ async def build_simulation(
         reply_to: str | None = None,
         wait: bool = True,
     ) -> simulation.JobOutcome:
-        if job not in jobs:
+        if job not in runnable:
             raise ValueError(
                 f"{job!r} is not runnable in this project. Available: "
-                f"{', '.join(jobs)}."
+                f"{', '.join(sorted(runnable))}."
             )
-        if cluster is not None and cluster not in clusters:
+        # Validated against where *this job* can run, not against every cluster the
+        # opener can reach. Those are different sets, and the difference is what
+        # sent a neutronics job to frontier — a cluster it has no section for — and
+        # launched nothing.
+        allowed = runnable[job]
+        if cluster is not None and cluster not in allowed:
             raise ValueError(
-                f"no credentials for {cluster!r}. Available: {', '.join(clusters)}."
+                f"{job!r} cannot run on {cluster!r}. It runs on: {', '.join(allowed)}."
             )
         # Its own session, committed before the wait begins.
         #
@@ -447,7 +476,7 @@ async def build_simulation(
                 hpc=hpc,
                 job=job,
                 prediction=prediction,
-                cluster=cluster or clusters[0],
+                cluster=cluster or allowed[0],
                 script_args=script_args,
                 reply_to=reply_to,
             )
@@ -474,7 +503,7 @@ async def build_simulation(
         # Say what the wait is for, on its own session. This is the longest a
         # debate ever stalls, so it is the moment the interface most needs to be
         # saying something other than nothing.
-        where = cluster or clusters[0]
+        where = cluster or runnable[job][0]
         await _say(sessions, run_id, f"Waiting for {job} on {where} · job {job_id}")
         try:
             return await simulation.wait_for_result(
@@ -486,7 +515,7 @@ async def build_simulation(
         finally:
             await _say(sessions, run_id, "Reading the simulation result")
 
-    return commissioner, jobs, clusters
+    return commissioner, runnable
 
 
 def build_orchestrator(
@@ -494,8 +523,7 @@ def build_orchestrator(
     on_post=None,
     checkpoint=None,
     grounding: Grounding | None = None,
-    available_jobs: list[str] | None = None,
-    available_clusters: list[str] | None = None,
+    runnable: dict[str, list[str]] | None = None,
     knowledge_bases: list[str] | None = None,
 ) -> DebateOrchestrator:
     client = build_client()
@@ -505,8 +533,7 @@ def build_orchestrator(
         roles=RoleAgents(toolsets=_toolsets(grounding)),
         on_post=on_post,
         checkpoint=checkpoint,
-        available_jobs=available_jobs,
-        available_clusters=available_clusters,
+        runnable=runnable,
         knowledge_bases=knowledge_bases,
     )
 
@@ -535,14 +562,13 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
 
             client = build_client()
             grounding = await build_run_grounding(session, run, client)
-            commissioner, jobs, clusters = await build_simulation(session, run)
+            commissioner, runnable = await build_simulation(session, run)
             grounding.simulation = commissioner
 
             await build_orchestrator(
                 checkpoint=_commit,
                 grounding=grounding,
-                available_jobs=jobs,
-                available_clusters=clusters,
+                runnable=runnable,
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).resume(session, run=run, extra_rounds=extra_rounds)
             await session.commit()
@@ -571,7 +597,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
 
             client = build_client()
             grounding = await build_run_grounding(session, run, client)
-            commissioner, jobs, clusters = await build_simulation(session, run)
+            commissioner, runnable = await build_simulation(session, run)
             grounding.simulation = commissioner
 
             # Checkpoint per round: a reader on another session — the event
@@ -580,8 +606,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
             await build_orchestrator(
                 checkpoint=_commit,
                 grounding=grounding,
-                available_jobs=jobs,
-                available_clusters=clusters,
+                runnable=runnable,
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).run(session, run)
             await session.commit()

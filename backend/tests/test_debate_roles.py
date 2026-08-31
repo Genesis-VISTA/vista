@@ -670,3 +670,32 @@ async def test_roles_ask_for_their_answer_as_text_not_as_a_tool_call():
         "the roles are back on tool-based output, which is the failure mode this "
         "deployment's model actually hits"
     )
+
+
+@pytest.mark.anyio
+async def test_a_role_is_told_which_clusters_each_job_runs_on():
+    """
+    Offered a flat list of the opener's clusters, a role named one the job had no
+    section for, was refused, and retried the identical call. It had not been given
+    what it needed to choose correctly — the clusters differ per job, and a single
+    joined list reads as "any of these work for any of those".
+    """
+    prompts: list[str] = []
+    roles = RoleAgents()
+    deps = DebateDeps(
+        topic="t",
+        runnable={
+            "salt-neutronics-tbr": ["odo", "perlmutter"],
+            "salt-chemistry-md": ["frontier"],
+        },
+    )
+
+    with roles.proposer.override(model=scripted(HYPOTHESIS, capture=prompts)):
+        await roles.propose(deps, _thread())
+
+    prompt = prompts[0]
+    assert "salt-neutronics-tbr (on odo or perlmutter)" in prompt
+    assert "salt-chemistry-md (on frontier)" in prompt
+    assert "frontier or odo or perlmutter" not in prompt, (
+        "one joined list is what let a role pick a cluster its job cannot use"
+    )

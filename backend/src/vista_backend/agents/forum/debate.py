@@ -127,16 +127,14 @@ class DebateOrchestrator:
         roles: RoleAgents | None = None,
         on_post: PostHook | None = None,
         checkpoint: Checkpoint | None = None,
-        available_jobs: list[str] | None = None,
-        available_clusters: list[str] | None = None,
+        runnable: dict[str, list[str]] | None = None,
         knowledge_bases: list[str] | None = None,
     ) -> None:
         self.client = client
         self.roles = roles or RoleAgents()
         self.on_post = on_post
         self.checkpoint = checkpoint
-        self.available_jobs = available_jobs or []
-        self.available_clusters = available_clusters or []
+        self.runnable = runnable or {}
         self.knowledge_bases = knowledge_bases or []
 
     # -- setup ------------------------------------------------------------- #
@@ -565,8 +563,7 @@ class DebateOrchestrator:
     ) -> DebateDeps:
         """Deps for one turn, including what this debate is allowed to run."""
         deps = _deps(run, round_index, participant)
-        deps.available_jobs = self.available_jobs
-        deps.available_clusters = self.available_clusters
+        deps.runnable = self.runnable
         # Which corpora the search tool may name. Empty means the project has
         # none, in which case the tool was not granted either.
         deps.knowledge_bases = self.knowledge_bases

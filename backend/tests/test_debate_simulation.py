@@ -9,6 +9,7 @@ to post the answer, and the monitor has to not throw the job away first.
 Anything needing a real cluster belongs behind the `hpc` marker.
 """
 
+import json
 import uuid
 from pathlib import Path
 
@@ -670,8 +671,20 @@ async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
     from vista_backend.config import settings as app_settings
     from vista_backend.db.schemas import UserTable
 
-    for name in ("salt-neutronics-tbr", "salt-chemistry-md", "forge-tune"):
+    # Each job carries a `cluster_defaults.json`, as every real one does, and they
+    # deliberately support *different* clusters. A catalogue of bare directories
+    # cannot express the thing that broke: a job being offered on a cluster it has
+    # no section for.
+    catalogue = {
+        "salt-neutronics-tbr": ["odo", "perlmutter"],
+        "salt-chemistry-md": ["frontier"],
+        "forge-tune": ["frontier", "odo", "perlmutter"],
+    }
+    for name, clusters in catalogue.items():
         (tmp_path / name).mkdir(exist_ok=True)
+        (tmp_path / name / "cluster_defaults.json").write_text(
+            json.dumps({c: {"nodes": 1} for c in clusters})
+        )
     monkeypatch.setattr(app_settings, "hpc_jobs_dir", tmp_path)
 
     user = await session.get(UserTable, alice.id)
@@ -720,11 +733,13 @@ async def test_the_tool_is_wired_when_the_project_and_user_allow_it(
         skills=["salt-neutronics-tbr", "splash-planner"],
         tokens={"s3m_token": "tok"},
     )
-    commissioner, jobs, clusters = await wiring.build_simulation(session, run)
+    commissioner, runnable = await wiring.build_simulation(session, run)
 
     assert commissioner is not None
-    assert jobs == ["salt-neutronics-tbr"], "the planner skill contributes no job"
-    assert clusters == ["frontier", "odo"]
+    # The planner skill contributes no job, and the neutronics job is offered only
+    # on odo — the OLCF credential also reaches frontier, but that job has no
+    # frontier section, and offering it there is what launched nothing.
+    assert runnable == {"salt-neutronics-tbr": ["odo"]}
 
 
 @pytest.mark.anyio
@@ -738,8 +753,8 @@ async def test_no_tool_without_credentials(session, alice, monkeypatch, tmp_path
         skills=["salt-neutronics-tbr"],
         tokens={"s3m_token": None, "nersc_iri_token": None},
     )
-    commissioner, jobs, clusters = await wiring.build_simulation(session, run)
-    assert commissioner is None and jobs == [] and clusters == []
+    commissioner, runnable = await wiring.build_simulation(session, run)
+    assert commissioner is None and runnable == {}
 
 
 @pytest.mark.anyio
@@ -754,7 +769,7 @@ async def test_no_tool_when_the_project_has_no_simulation_skills(
         skills=["salt-prediction"],
         tokens={"s3m_token": "tok"},
     )
-    commissioner, _, _ = await wiring.build_simulation(session, run)
+    commissioner, _ = await wiring.build_simulation(session, run)
     assert commissioner is None
 
 
@@ -771,7 +786,7 @@ async def test_the_commissioner_refuses_a_job_outside_the_project(
         skills=["salt-neutronics-tbr"],
         tokens={"s3m_token": "tok"},
     )
-    commissioner, _, _ = await wiring.build_simulation(session, run)
+    commissioner, _ = await wiring.build_simulation(session, run)
 
     with pytest.raises(ValueError, match="not runnable in this project"):
         await commissioner(participant=PARTICIPANT, job="forge-tune", prediction="p")
@@ -789,9 +804,11 @@ async def test_the_commissioner_refuses_a_cluster_without_credentials(
         skills=["salt-neutronics-tbr"],
         tokens={"s3m_token": "tok", "nersc_iri_token": None},
     )
-    commissioner, _, _ = await wiring.build_simulation(session, run)
+    commissioner, _ = await wiring.build_simulation(session, run)
 
-    with pytest.raises(ValueError, match="no credentials for 'perlmutter'"):
+    # Refused because *this job* cannot run there for this user: the job supports
+    # odo and perlmutter, and the opener has no NERSC credential.
+    with pytest.raises(ValueError, match="cannot run on 'perlmutter'"):
         await commissioner(
             participant=PARTICIPANT,
             job="salt-neutronics-tbr",
@@ -816,7 +833,7 @@ async def test_the_budget_stops_a_third_simulation(
         tokens={"s3m_token": "tok"},
     )
     assert app_settings.forum.max_simulations == 2
-    commissioner, _, _ = await wiring.build_simulation(session, run)
+    commissioner, _ = await wiring.build_simulation(session, run)
 
     # `wait=False`: this is about the cap, and waiting for a job the fake never
     # finishes would stall the test for `max_job_wait_seconds`.
@@ -1139,7 +1156,7 @@ async def test_no_monitor_means_no_wait_and_no_promise(
         tokens={"s3m_token": "tok"},
     )
     monkeypatch.setattr(app_settings.campaigns, "monitor_enabled", False)
-    commissioner, _, _ = await wiring.build_simulation(session, run)
+    commissioner, _ = await wiring.build_simulation(session, run)
 
     outcome = await commissioner(
         participant=PARTICIPANT, job="salt-neutronics-tbr", prediction="p"
@@ -1182,3 +1199,85 @@ async def test_the_tool_says_plainly_that_nothing_will_collect_the_job():
     assert "nothing is polling it" in call.detail, (
         "the record has to show it too, not just the agent's transcript"
     )
+
+
+@pytest.mark.anyio
+async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
+    session, alice, monkeypatch, tmp_path
+):
+    """
+    The bug that launched nothing.
+
+    The opener has credentials for frontier, odo and perlmutter. `clusters_for`
+    returns them sorted, and the default used to be `clusters[0]` — frontier,
+    picked alphabetically, with no reference to the job. `salt-neutronics-tbr` has
+    no frontier section, so `submit_hpc_job` refused it, twice, and the agent had
+    been given no way to know which cluster to ask for instead.
+    """
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": "tok", "nersc_iri_token": "tok"},
+    )
+    commissioner, runnable = await wiring.build_simulation(session, run)
+
+    assert runnable == {"salt-neutronics-tbr": ["odo", "perlmutter"]}
+    assert "frontier" not in runnable["salt-neutronics-tbr"], (
+        "frontier is reachable for this user but this job has no section for it"
+    )
+
+    outcome = await commissioner(
+        participant=PARTICIPANT,
+        job="salt-neutronics-tbr",
+        prediction="TBR > 1.1",
+        wait=False,
+    )
+    job = await campaign_service.get_job(session, outcome.job_id)
+    assert job is not None, "the job should have been submitted"
+    assert job.cluster == "odo", "defaulted to a cluster the job supports"
+
+
+@pytest.mark.anyio
+async def test_a_frontier_only_job_is_offered_on_frontier(
+    session, alice, monkeypatch, tmp_path
+):
+    """
+    The same rule the other way round, which is why it cannot be a fixed default:
+    `salt-chemistry-md` runs *only* on frontier, so alphabetical order was right
+    for it by luck and wrong for the neutronics job.
+    """
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-chemistry-md"],
+        tokens={"s3m_token": "tok", "nersc_iri_token": "tok"},
+    )
+    _commissioner, runnable = await wiring.build_simulation(session, run)
+    assert runnable == {"salt-chemistry-md": ["frontier"]}
+
+
+@pytest.mark.anyio
+async def test_a_job_with_no_reachable_cluster_is_not_offered_at_all(
+    session, alice, monkeypatch, tmp_path
+):
+    """
+    Never grant what can only fail. A NERSC-only opener cannot run a frontier-only
+    job, so it is dropped rather than offered and refused on every attempt.
+    """
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-chemistry-md"],
+        tokens={"s3m_token": None, "nersc_iri_token": "tok"},
+    )
+    commissioner, runnable = await wiring.build_simulation(session, run)
+
+    assert runnable == {}
+    assert commissioner is None, "a tool that can only be refused is not granted"

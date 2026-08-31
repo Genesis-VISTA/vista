@@ -425,3 +425,32 @@ command's stderr onto the host's *stdout*.
       pydantic-ai's tool mode also accepts valid JSON text — so it is pinned instead on
       `AgentInfo.output_tools`, which is `['final_result']` under tool output and empty
       under prompted output.
+
+## 23. The default cluster was chosen alphabetically
+
+- [x] 23.1 Root cause of "I asked for a simulation and nothing launched": the default
+      cluster was `sorted(user_credentials)[0]`, chosen with no reference to the job.
+      The opener could reach frontier, odo and perlmutter, so the default was
+      *frontier* — the one cluster `salt-neutronics-tbr` has no section for. Two
+      attempts, both refused by `submit_hpc_job`, nothing submitted. For
+      `salt-chemistry-md`, which runs only on frontier, the same arbitrary default was
+      right by luck; that is what made it look like it worked.
+- [x] 23.2 `clusters_for_job` reads a job's own `cluster_defaults.json`, and
+      `runnable_simulations` returns job → the clusters it can actually run on here —
+      the intersection of the project's skills, the jobs on disk, and the opener's
+      credentials. The default is now that job's first reachable cluster.
+- [x] 23.3 A job with no reachable cluster is not offered at all, rather than offered
+      and refused on every attempt. A NERSC-only opener is no longer shown a
+      frontier-only job. Same rule as the ungranted web reader.
+- [x] 23.4 `DebateDeps.runnable` replaces `available_jobs` + `available_clusters`. Two
+      lists cannot say that one job runs on odo and perlmutter while another runs only
+      on frontier, and the prompt's single joined list read as "any of these work for
+      any of those" — which is how a role named a cluster its job could not use, was
+      refused, and retried the identical call.
+- [x] 23.5 The test catalogue writes a `cluster_defaults.json` per job with
+      *different* clusters, as every real job has. Bare directories could not express
+      the failure, which is why nothing caught it — the same gap as the fake's status
+      vocabulary in §19.3.
+- [x] 23.6 The budget was not consumed by the two refusals: `commission` creates the
+      campaign row before submitting, and the failed submit rolls its session back.
+      Verified against the live database — zero campaign rows for that debate.
