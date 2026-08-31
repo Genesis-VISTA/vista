@@ -59,7 +59,15 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
     if step is None:
         raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
     run = await campaign_service.require_campaign(session, step.run_id)
-    if run.session_id is None:
+    if run.session_id is None and run.domain != DEBATE_DOMAIN:
+        # A chat-backed campaign that lost its conversation cannot be rebuilt, so
+        # refusing here stops the monitor polling something nothing can act on.
+        #
+        # A debate-commissioned job never had a conversation — its result goes to
+        # a forum thread — and `CampaignMonitor._is_orphaned` already says so in
+        # as many words. The exemption was written there and not here, so every
+        # debate job failed on its first poll with a complaint about a sandbox
+        # volume that the line below does not use a session to resolve.
         raise ValueError(
             f"Campaign {run.id} has no session_id; cannot resolve its sandbox volume."
         )

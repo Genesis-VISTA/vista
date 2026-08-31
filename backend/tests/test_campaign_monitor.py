@@ -1,5 +1,7 @@
 """Tests for the campaign monitor (poll -> advance -> notify), with poll/collect/email injected."""
 
+import uuid
+
 import pytest
 
 from vista_backend.db.schemas import ProjectTable
@@ -240,3 +242,65 @@ async def _user_email(session, alice):
 
     user = await session.get(UserTable, alice.id)
     return user.email
+
+
+@pytest.mark.anyio
+async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session, alice):
+    """
+    The bug that made every debate-commissioned job fail on its first poll.
+
+    A debate campaign has no chat session by design — its result goes to a forum
+    thread, not a conversation. `_is_orphaned` says exactly that and exempts it.
+    The exemption was written there and not in the path resolver, which refused
+    with "cannot resolve its sandbox volume" — for a path it derives from
+    project and user and never from a session.
+    """
+    from vista_backend.agents.campaign.wiring import _job_run_user_paths
+    from vista_backend.agents.forum.simulation import DEBATE_DOMAIN
+
+    project = ProjectTable(name=f"debate-poll-{uuid.uuid4().hex[:8]}")
+    session.add(project)
+    await session.flush()
+    run = await campaign_service.create_campaign(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=None,
+        domain=DEBATE_DOMAIN,
+        planner_skill="",
+        title="Testing: no shear dependence",
+    )
+    step = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="simulation"
+    )
+    job = await campaign_service.record_job(
+        session,
+        job_id=f"j-{uuid.uuid4().hex[:6]}",
+        step_id=step.id,
+        user_id=alice.id,
+        cluster="perlmutter",
+        job_name="salt-neutronics-tbr",
+    )
+
+    _run, user, paths = await _job_run_user_paths(session, job)
+
+    assert user.email == alice.email
+    assert paths["skills_dir"], "the paths come from project and user, not a session"
+
+
+@pytest.mark.anyio
+async def test_a_chat_campaign_that_lost_its_session_is_still_refused(session, alice):
+    """
+    The guard still does its job for the case it was written for: a conversation
+    was deleted, the planner cannot be rebuilt, and polling would achieve nothing.
+    """
+    from vista_backend.agents.campaign.wiring import _job_run_user_paths
+
+    _run, _step, job = await _make_job(
+        session, alice, job_id=f"c-{uuid.uuid4().hex[:6]}"
+    )
+    step = await campaign_service.get_step(session, job.step_id)
+    await campaign_service.update_campaign(session, run_id=step.run_id, session_id=None)
+
+    with pytest.raises(ValueError, match="no session_id"):
+        await _job_run_user_paths(session, job)

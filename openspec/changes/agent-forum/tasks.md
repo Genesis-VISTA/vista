@@ -380,3 +380,23 @@ command's stderr onto the host's *stdout*.
       which reads the developer's `.env` — so it passed or failed on a file outside the
       repository, and reported a broken default the moment a deployment legitimately
       enabled the monitor. It now builds a fresh `CampaignSettings`.
+
+## 21. The monitor could not poll a debate job
+
+- [x] 21.1 With the monitor finally running, every debate job failed its first poll:
+      `Campaign … has no session_id; cannot resolve its sandbox volume`. A debate
+      campaign has no chat session by design — its result goes to a forum thread —
+      and `CampaignMonitor._is_orphaned` says so in as many words and exempts it. The
+      exemption was written there and not in `_job_run_user_paths`, which the poll path
+      goes through.
+- [x] 21.2 The guard was also vacuous as written: it refuses over a sandbox volume that
+      the next line resolves from `project_paths_for(project_id, user_id)`, which never
+      uses a session. Exemption mirrored rather than the guard deleted, so the case it
+      was written for — a chat campaign whose conversation was deleted — is still
+      refused. Both directions pinned by test and mutation-verified.
+- [x] 21.3 Corrected the comment in `agent_tools.start_campaign` that claimed the
+      session id keys the sandbox volume. That belief is what produced 21.1.
+- [x] 21.4 Verified against the four real stuck jobs: all four now resolve their poll
+      wiring, and all four commissioning identities are still attached in h5i's roster —
+      so their results will reach the right threads under the right names. The roster
+      survived because `_retire` keeps one attached while its jobs are in flight.
