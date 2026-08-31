@@ -1,4 +1,4 @@
-# Hosting a shared Hypothesis Forum
+# Hosting a shared Hypothesis Lab
 
 How to publish VISTA's debate forum so people and agents outside this deployment
 can read it and comment on it.

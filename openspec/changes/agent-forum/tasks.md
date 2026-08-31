@@ -66,9 +66,9 @@ command's stderr onto the host's *stdout*.
       `build_grounding` set no `rag`, so `search_literature` was never granted to any
       debate and the Reviewer ran with `prior_debates` alone.
 - [x] 7.2 Prior closed threads on the same forum as readable context
-- [ ] 7.3 User-uploaded papers via the existing uploads/files service — **not wired**.
-      The tool and its fencing exist; nothing sets `Grounding.uploads`, so
-      `read_attached_paper` is never granted. Same failure as 7.1 and not yet fixed.
+- [x] 7.3 User-uploaded papers via the existing uploads/files service. **Wired in
+      section 17** — it was unwired for two rounds after RAG for no technical reason,
+      only because it sat outside what was asked each time.
 - [x] 7.4 `h5i browser` reads under an egress allowlist; receipt attached to the citing post — **refuses to run below `container`/`microvm`**, because the allowlist does not bind at lower tiers (contract §5.1)
 - [ ] 7.5 Assert a refused fetch stays visible in the record — **blocked on this host**: no `container`/`microvm` tier (no rootless Podman), and the h5i engine's HTTPS fails here, so a real allowlist refusal cannot be observed. Hermetic tests cover the refusal path; verify on a Linux host with Podman.
 
@@ -244,3 +244,57 @@ command's stderr onto the host's *stdout*.
 - [x] 15.5 `last_polled_at` surfaced distinctly. A job nothing has looked at since
       submission is not a job running slowly, and the state alone cannot tell them
       apart — which is the case that prompted this.
+
+## 16. Hypothesis Lab
+
+- [x] 16.1 Renamed "Hypothesis Forum" → "Hypothesis Lab": nav label, page heading, and
+      the route (`/hypothesis-lab`). The hosting doc's prose follows; its
+      `jqyin/vista-hypothesis-forum` references are a real repository slug and stay.
+- [x] 16.2 The Proposer writes its own post. `Hypothesis.note` is published verbatim
+      and `to_post_body` adds nothing. Assembling the fields into claim → *Why:* →
+      *Testable:* → *Confidence* gave every proposal in every round the same
+      silhouette, so a fifth-round reply to one objection arrived shaped like a fresh
+      submission — a form refilled, which is not how anyone brainstorms.
+- [x] 16.3 `mechanism` and `open_risks` are optional; the note carries the argument. A
+      required field is pressure to write the note as a rendering of the fields. The
+      verdict skips a blank mechanism rather than leaving a gap.
+- [x] 16.4 The prompt's "a hypothesis has four parts" list — the actual source of the
+      four-part post — is reframed as properties of the thinking, with an explicit
+      note that it is not a shape to pour a post into, and per-situation guidance
+      (opening / answering / conceding / changing your mind / stuck).
+- [x] 16.5 A later round is told it is replying, with the round number, and told not to
+      restate what is not in dispute. Told "propose a hypothesis" every turn, a model
+      re-emits the whole hypothesis with the objection folded in — the half of the
+      problem a renderer change cannot fix.
+- [x] 16.6 Pinned by test at both levels: `to_post_body` equals the note and adds no
+      scaffold, and the body that reaches the forum end to end is the role's own text.
+      Mutation-verified by restoring the old template.
+- [x] 16.7 The lede says the lab is externally hosted and that outside experts and
+      their agents can be invited — but only when `/forum/status` reports the forum
+      actually shared. On a local-only deployment it says so instead, because naming a
+      capability nobody outside the machine can reach is worse than naming none.
+      `forum === null` is treated as not-yet-known rather than not-shared: keyed off
+      `forum?.shared` alone, a shared lab flashed "on this machine only" on first paint.
+
+## 17. Attachments
+
+- [x] 17.1 `Grounding.uploads` wired from the run's project agent, so
+      `read_attached_paper` is granted. Distinct source from the knowledge base: that
+      is indexed literature the debate queries, these are the specific files a human
+      put in front of this piece of work. All three roles get it — the Referee too,
+      since the human's own evidence is part of the record it rules on.
+- [x] 17.2 The filename is untrusted (the model supplies it), so it goes through the
+      files service's own `_get_file` traversal check rather than a second copy of
+      that logic. Tested through the real reader, not against the validator in
+      isolation: the property that matters is that this path *calls* the check.
+      Mutation-verified — removing it lets `../secret.txt` through.
+- [x] 17.3 PDFs extracted with PyMuPDF, already a backend dependency for the KB
+      indexer. `get_text` is polymorphic across modes, so the mode is named and the
+      result type-checked; a cast would have turned a structured page into the repr
+      of a list. An empty extraction says it may be a scan rather than returning "".
+- [x] 17.4 Non-text attachments are described, not decoded — bytes of a spreadsheet
+      waste a turn and can look enough like prose to be reasoned about. Long ones are
+      truncated at 60k characters with the truncation marked, because a silently
+      shortened paper is one a role will treat as though it read the conclusions.
+- [x] 17.5 Calling with no name lists what is attached: a role cannot ask for a file
+      it does not know exists.

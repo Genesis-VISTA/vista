@@ -13,6 +13,7 @@ Hermetic: every source is an injected callable, and the h5i binary is the fake.
 """
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,7 @@ PARTICIPANT = Participant(
 )
 
 HYPOTHESIS = {
+    "note": "Rigidity sets the knee — percolation. No shear dependence if so.",
     "claim": "rigidity sets the knee",
     "mechanism": "percolation",
     "predictions": ["no shear dependence"],
@@ -510,6 +512,11 @@ async def test_a_project_with_knowledge_bases_gets_literature_search(tmp_path, s
 
     assert grounding.rag is not None, "a project with a KB must get literature search"
     assert "search_literature" in _tool_names(build_toolset("reviewer", grounding))
+    # Attachments are a separate source from the corpus and were unwired for
+    # longer: the knowledge base is indexed literature the debate queries, these
+    # are the specific files a human put in front of this piece of work.
+    assert grounding.uploads is not None, "the project's attachments must be readable"
+    assert "read_attached_paper" in _tool_names(build_toolset("reviewer", grounding))
 
     out = await grounding.rag("viscosity knee", "molten-salts", 5)
     assert "viscosity knee" in out
@@ -609,3 +616,147 @@ async def test_a_slug_the_project_does_not_list_is_refused(tmp_path, session):
 
     assert "No knowledge base" in out
     assert reached == [], "the unlisted slug must not reach the MCP server"
+
+
+# --------------------------------------------------------------------------- #
+# Attachments the human put in front of the debate
+# --------------------------------------------------------------------------- #
+
+
+def test_an_attachment_that_is_not_text_is_described_not_decoded(tmp_path):
+    """
+    Handing a model the bytes of a spreadsheet wastes its turn, and decoded
+    badly they can look enough like prose to be reasoned about.
+    """
+    from vista_backend.agents.forum.wiring import _read_as_text
+
+    blob = tmp_path / "run.sqlite"
+    blob.write_bytes(b"\x00\x01\x02\xff\xfe binary \x00")
+
+    out = _read_as_text(blob)
+    assert "not text" in out
+    assert "run.sqlite" in out
+
+
+def test_a_long_attachment_is_truncated_and_says_so(tmp_path):
+    """
+    A silently shortened paper is one a role will reason about as though it had
+    read the conclusions.
+    """
+    from vista_backend.agents.forum.wiring import UPLOAD_TEXT_LIMIT, _read_as_text
+
+    paper = tmp_path / "paper.txt"
+    paper.write_text("x" * (UPLOAD_TEXT_LIMIT + 500))
+
+    out = _read_as_text(paper)
+    assert "truncated" in out
+    assert len(out) < UPLOAD_TEXT_LIMIT + 200
+
+
+def test_an_empty_pdf_says_it_may_be_a_scan(tmp_path):
+    """
+    A scanned paper extracts to nothing. Returning "" would read as an empty
+    paper rather than as one this path cannot read.
+    """
+    import pymupdf
+
+    from vista_backend.agents.forum.wiring import _read_as_text
+
+    path = tmp_path / "scan.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(path)
+    doc.close()
+
+    assert "may be a scan" in _read_as_text(path)
+
+
+def test_a_pdf_attachment_comes_back_as_text(tmp_path):
+    import pymupdf
+
+    from vista_backend.agents.forum.wiring import _read_as_text
+
+    path = tmp_path / "paper.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "the knee is at 803 K")
+    doc.save(path)
+    doc.close()
+
+    assert "the knee is at 803 K" in _read_as_text(path)
+
+
+def test_the_listing_names_what_is_attached(tmp_path):
+    """A role cannot ask for a file it does not know exists."""
+    from vista_backend.agents.forum.wiring import _listing
+
+    (tmp_path / "a.pdf").write_text("a")
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "b.csv").write_text("b")
+
+    out = _listing(tmp_path)
+    assert "- a.pdf" in out
+    assert "- nested/b.csv" in out
+
+
+def test_an_empty_uploads_dir_says_so_rather_than_nothing(tmp_path):
+    from vista_backend.agents.forum.wiring import _listing
+
+    assert "Nothing has been attached" in _listing(tmp_path / "missing")
+    (tmp_path / "empty").mkdir()
+    assert "Nothing has been attached" in _listing(tmp_path / "empty")
+
+
+@pytest.mark.anyio
+async def test_a_role_cannot_read_outside_the_projects_uploads(tmp_path, monkeypatch):
+    """
+    The filename comes from the model, so it is untrusted input.
+
+    Goes through the real reader rather than testing `_get_file` in isolation,
+    because the property that matters is that this path *calls* the check — a
+    reader that resolved the name itself would pass a unit test of the service's
+    validator while ignoring it.
+    """
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from vista_backend.agents.forum import wiring
+    from vista_backend.db.schemas import DebateRunTable
+
+    uploads = tmp_path / "uploads"
+    uploads.mkdir()
+    (uploads / "paper.txt").write_text("the knee is at 803 K")
+    (tmp_path / "secret.txt").write_text("not for the debate")
+
+    @asynccontextmanager
+    async def fake_get(_key):
+        yield SimpleNamespace(uploads_dir=uploads, output_dir=tmp_path / "out")
+
+    monkeypatch.setattr(wiring, "get_project_agent_key", lambda *a, **k: _ready(None))
+    monkeypatch.setattr(wiring, "project_agent_pool", SimpleNamespace(get=fake_get))
+
+    run = DebateRunTable(
+        project_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        topic="t",
+        thread_id="abc",
+        rounds=1,
+        rounds_done=0,
+        status="debating",
+        verdict=None,
+        created_at="now",
+        updated_at="now",
+    )
+    read = wiring._upload_reader(run)
+
+    assert "803 K" in await read("paper.txt")
+
+    for escape in ("../secret.txt", "/etc/passwd", "nested/../../secret.txt"):
+        out = await read(escape)
+        assert "not for the debate" not in out, f"{escape} escaped the uploads dir"
+        assert "Could not read" in out
+
+
+async def _ready(value):
+    """An awaitable that just yields a value, for stubbing an async call."""
+    return value

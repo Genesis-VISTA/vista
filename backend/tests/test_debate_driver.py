@@ -36,6 +36,11 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
 
 
 HYPOTHESIS = {
+    "note": (
+        "Rigidity, not composition — the Be-F network stiffens above "
+        "percolation and that puts the knee at 800K. Testable: no shear-rate "
+        "dependence below 1/s. Nothing below 700K to check it against, though."
+    ),
     "claim": "Be-F network rigidity sets the 800K knee",
     "mechanism": "intermediate-range order stiffens above percolation",
     "predictions": ["no shear-rate dependence below 1/s"],
@@ -933,3 +938,20 @@ async def test_resume_clears_every_attached_stint_not_just_one_per_role(
         if p.identity.endswith("-a") or p.identity.endswith("-b")
     ]
     assert not stale, f"left attached after a resume: {stale}"
+
+
+@pytest.mark.anyio
+async def test_the_forum_carries_the_proposers_own_words(client, session, alice):
+    """
+    End to end: what lands on the thread is the text the role wrote.
+
+    The unit test pins `to_post_body`; this pins that nothing between the role and
+    the forum re-wraps it. The Reviewer and Referee read post bodies, so a
+    scaffold added anywhere on this path would be what they see — and would be
+    what the next round is written against.
+    """
+    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+
+    posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
+    assert posts[PostKind.PROPOSAL].body == HYPOTHESIS["note"]

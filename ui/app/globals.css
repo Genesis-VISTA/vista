@@ -4646,3 +4646,11 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The local-only variant of the lede. Dimmer than the invitation it replaces:
+   it describes what this deployment cannot do yet, so it should read as a note
+   rather than as a feature. */
+.debate-page__lede--muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}

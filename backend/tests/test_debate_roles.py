@@ -61,6 +61,15 @@ def _post(pid, kind, body, sender, role, **extra) -> dict:
 
 
 HYPOTHESIS = {
+    "note": (
+        "I think it's the Be-F network going rigid, not anything to do with "
+        "composition drift.\n\n"
+        "Above the percolation threshold the intermediate-range order stiffens, "
+        "and that's what puts the knee at 800K. If that's right there should be "
+        "no shear-rate dependence below 1/s, and the knee should move with BeF2 "
+        "fraction.\n\n"
+        "Weak point: we have nothing below 700K."
+    ),
     "claim": "Be-F network rigidity sets the 800K knee",
     "mechanism": "intermediate-range order stiffens above the percolation threshold",
     "predictions": [
@@ -162,36 +171,62 @@ def test_a_verdict_needs_something_to_rank():
 # --------------------------------------------------------------------------- #
 
 
-def test_hypothesis_renders_every_part_into_the_post():
-    """Nothing the debate needs is dropped on the way into the post."""
+def test_the_post_is_what_the_proposer_wrote_and_nothing_else():
+    """
+    The renderer has no opinion about shape.
+
+    It used to assemble the fields — claim, then *Why:*, then *Testable:*, then a
+    confidence line — so every proposal in every round had the same silhouette
+    regardless of what it was doing, and a reply to one objection came out looking
+    like a fresh submission. Whatever variation the model produced was flattened
+    back out on the way to the forum.
+    """
+    hypothesis = Hypothesis(**HYPOTHESIS)
+    assert hypothesis.to_post_body() == HYPOTHESIS["note"].strip()
+
+
+def test_the_renderer_adds_no_scaffold_of_its_own():
+    """
+    Pinned separately from the equality above, because the failure to guard
+    against is someone adding "just a confidence footer" — which is how the
+    template came back last time. Any field appended here is a shape imposed on
+    every post in every round.
+    """
     body = Hypothesis(**HYPOTHESIS).to_post_body()
-    assert HYPOTHESIS["claim"] in body
-    assert HYPOTHESIS["mechanism"] in body
-    assert "no shear-rate dependence below 1/s" in body
-    assert "0.60" in body
-    assert "no data below 700K" in body
+    assert "*Testable:*" not in body
+    assert "*Why:*" not in body
+    assert "Confidence" not in body
+    assert f"{HYPOTHESIS['confidence']:.2f}" not in body
 
 
-def test_a_proposal_is_not_scaffolded_like_a_submission():
+def test_the_verdict_is_still_a_formal_document():
     """
-    The Proposer and Reviewer argue as colleagues; the Referee writes for the
-    record. Section headings are the difference — a form invites being filled in
-    like one, and two sentences under **Mechanism.** still read as a submission.
-
-    Pinned because the register is a product decision that a later edit to the
-    renderer would silently undo.
+    The one place a fixed shape is right: the ruling is what someone cites a
+    month later without the thread in front of them.
     """
-    proposal = Hypothesis(**HYPOTHESIS).to_post_body()
-    assert "**" not in proposal, "bold section labels are the formal register"
-    assert "#" not in proposal, "and headings more so"
-
     verdict = Verdict(
         ranked=[
             RankedHypothesis(hypothesis=Hypothesis(**HYPOTHESIS), standing="stands")
         ],
         rationale="nothing landed against it",
     ).to_post_body()
-    assert "## Verdict" in verdict, "the ruling is the one formal artefact"
+    assert "## Verdict" in verdict
+    assert "*Standing.*" in verdict
+
+
+def test_a_verdict_leaves_no_gap_when_no_mechanism_was_stated():
+    """
+    `mechanism` is optional now that the proposal's prose carries the argument.
+    Printed unconditionally it left a blank line where a mechanism would have
+    been, which reads as something missing rather than something not separately
+    stated.
+    """
+    fields = {**HYPOTHESIS, "mechanism": ""}
+    body = Verdict(
+        ranked=[RankedHypothesis(hypothesis=Hypothesis(**fields), standing="stands")],
+        rationale="r",
+    ).to_post_body()
+    assert "\n\n\n" not in body
 
 
 def test_verdict_reports_standing_and_what_is_unresolved():
@@ -568,3 +603,28 @@ def test_an_oversized_receipt_is_truncated_and_says_so():
 def test_a_tool_call_with_no_receipt_stores_none():
     """Not every call has evidence worth keeping; absence must stay legible."""
     assert ToolCall("prior_debates", "salts").stored()["receipt"] is None
+
+
+@pytest.mark.anyio
+async def test_a_later_round_is_told_it_is_replying_not_proposing():
+    """
+    The half of the template problem a renderer change cannot fix.
+
+    Told "propose a hypothesis" every turn, a model produces the whole hypothesis
+    again with the objection folded in — a form refilled, not a conversation. So a
+    later round says plainly that it is a reply, and says not to restate what is
+    not in dispute.
+    """
+    prompts: list[str] = []
+    roles = RoleAgents()
+    thread = _thread(
+        _post("p1", "PROPOSAL", "rigidity", "vista-proposer", "worker"),
+        _post("p2", "RISK", "the redox window is wider", "vista-reviewer", "reviewer"),
+    )
+
+    with roles.proposer.override(model=scripted(HYPOTHESIS, capture=prompts)):
+        await roles.propose(DebateDeps(topic="t", round_index=3, rounds=5), thread)
+
+    assert "replying, not proposing again" in prompts[0]
+    assert "do not restate" in prompts[0]
+    assert "round 4" in prompts[0], "the round number is what makes 'again' concrete"

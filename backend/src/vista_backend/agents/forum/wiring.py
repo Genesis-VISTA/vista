@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -23,6 +24,9 @@ from ...db.schemas import (
     UserTable,
 )
 from ...services import debate as debate_service
+from ...services.files import _get_file, _kind_dir
+from ...services.project_agent import get_project_agent_key, project_agent_pool
+from ...utils.misc import path_is_under
 from ...services import skills as skills_service
 from ...services.h5i_forum import ForumClient
 from ..campaign.hpc_tools import McpHpcTools
@@ -142,7 +146,112 @@ async def build_run_grounding(
         return await invoke("rag_search", args)
 
     grounding.rag = rag
+    grounding.uploads = _upload_reader(run)
     return grounding
+
+
+def _upload_reader(run: DebateRunTable):
+    """
+    Read the papers and data the human attached to this project.
+
+    Distinct from literature search: the knowledge base is an indexed corpus the
+    debate queries, and these are the specific files someone put in front of it
+    for this work. A role that cannot see them argues about a topic while the
+    evidence for it sits unread in the project.
+
+    Called with no name it lists what is there, because a role cannot ask for a
+    file it does not know exists.
+    """
+
+    async def read_upload(name: str | None) -> str:
+        # Its own session: tools run inside an agent turn, which may outlive the
+        # request session that started the debate. Same reason as `_read_skill_body`.
+        async with AsyncSession(get_engine()) as session:
+            try:
+                agent_key = await get_project_agent_key(
+                    session, project_id=run.project_id, user_id=run.user_id
+                )
+                async with project_agent_pool.get(agent_key) as agent:
+                    uploads_dir = _kind_dir(agent, "uploads")
+                    if name is None:
+                        return _listing(uploads_dir)
+                    # `_get_file` is the service's own traversal check, and the
+                    # name here comes from the model. Reimplementing that check
+                    # is how the two copies drift and one of them is wrong.
+                    return _read_as_text(_get_file(uploads_dir, name))
+            except Exception as exc:  # noqa: BLE001 — a missing file is an answer
+                logger.info("debate %s: could not read upload %r", run.id, name)
+                return f"Could not read {name or 'the attachment list'}: {exc}"
+
+    return read_upload
+
+
+def _listing(uploads_dir: Path) -> str:
+    if not uploads_dir.is_dir():
+        return "Nothing has been attached to this project."
+    names = sorted(
+        f.relative_to(uploads_dir).as_posix()
+        for f in uploads_dir.rglob("*")
+        if f.is_file() and path_is_under(uploads_dir, f)
+    )
+    if not names:
+        return "Nothing has been attached to this project."
+    return "Attached to this project:\n" + "\n".join(f"- {n}" for n in names)
+
+
+UPLOAD_TEXT_LIMIT = 60_000
+"""
+Where an attachment is truncated before going into a prompt.
+
+A paper is a few tens of thousands of characters; a data dump has no natural
+size, and a role's whole context is not the place to find that out. Truncation
+is marked, because a silently shortened paper is one a role will reason about as
+if it had read the conclusions.
+"""
+
+
+def _read_as_text(path: Path) -> str:
+    """
+    An attachment as text a model can read.
+
+    PDFs go through PyMuPDF — already a backend dependency for the knowledge-base
+    indexer. Anything that is not text and not a PDF is described rather than
+    decoded: handing a model the bytes of a spreadsheet wastes its turn and can
+    look enough like prose to be reasoned about.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        import pymupdf
+
+        with pymupdf.open(path) as doc:
+            # `get_text` returns a str, a list or a dict depending on the mode,
+            # so the mode is named and the result checked. Casting instead would
+            # turn a page that came back structured into the repr of a list.
+            pages: list[str] = []
+            for page in doc:
+                extracted = page.get_text("text")
+                if isinstance(extracted, str):
+                    pages.append(extracted)
+            text = "\n\n".join(pages)
+    else:
+        try:
+            text = path.read_text(errors="strict")
+        except UnicodeDecodeError, ValueError:
+            size = path.stat().st_size
+            return (
+                f"{path.name} is not text ({suffix or 'no extension'}, {size} bytes). "
+                "Ask the human what is in it, or commission a job to process it."
+            )
+
+    text = text.strip()
+    if not text:
+        return f"{path.name} has no extractable text — it may be a scan."
+    if len(text) > UPLOAD_TEXT_LIMIT:
+        return (
+            text[:UPLOAD_TEXT_LIMIT]
+            + f"\n\n… {path.name} truncated at {UPLOAD_TEXT_LIMIT} characters."
+        )
+    return text
 
 
 async def knowledge_bases_for(session: AsyncSession, run: DebateRunTable) -> list[str]:

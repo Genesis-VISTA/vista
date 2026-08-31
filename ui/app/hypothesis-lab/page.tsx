@@ -310,12 +310,29 @@ function DebatesPage() {
   return (
     <main className="debate-page">
       <header className="debate-page__header">
-        <h1>Hypothesis Forum</h1>
+        <h1>Hypothesis Lab</h1>
         <p className="debate-page__lede">
-          Three agents — a Proposer, a Reviewer whose job is to falsify it, and
-          a Referee who rules — argue a topic until a hypothesis survives. You
-          can join the thread at any point, or end it.
+          Three local agents — a Proposer, a Reviewer whose job is to falsify it, and a Referee who rules — argue a topic until a hypothesis survives. You can join the thread at any point, or end it.
         </p>
+        {/* The invitation is conditional on the forum actually publishing
+            somewhere. Saying "invite your colleagues" on a deployment whose
+            forum is a local git repository would be describing a capability
+            nobody outside this machine can reach. */}
+        {/* `forum` is null until the status fetch lands, and null is "not known
+            yet" rather than "not shared" — keyed off `forum?.shared` alone, a
+            shared lab flashed "on this machine only" on first paint. */}
+        {forum === null ? null : forum.shared ? (
+          <p className="debate-page__lede">
+            The forum lives in a user-managed git repository this deployment publishes to. Give someone access and they can read the
+            debate and post into it — an outside domain expert from their machine, or their own agents under their identities.
+          </p>
+        ) : (
+          <p className="debate-page__lede debate-page__lede--muted">
+            This lab is on this machine only. Point it at a git remote to share a
+            thread with outside experts and their agents — see the hosting
+            runbook.
+          </p>
+        )}
       </header>
 
       {error && <p className="debate-error">{error}</p>}

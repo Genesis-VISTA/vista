@@ -48,23 +48,41 @@ def _prompt(name: str) -> str:
 
 class Hypothesis(BaseModel):
     """
-    A scientific claim in the form the debate can actually act on.
+    A scientific claim, as it was actually said plus what the record needs.
 
-    The four parts are not bureaucracy: a claim with no mechanism is an
-    observation, and a claim with no falsifiable prediction cannot be attacked,
-    which would leave the Reviewer nothing to do and the debate nothing to
-    resolve.
+    `note` is the post. The rest is an index over it: the machine needs a claim
+    to rank, at least one prediction so the Reviewer has something to attack, and
+    a number to weigh — but none of those should decide how the post *reads*.
+
+    That split is the whole point. Rendering the fields into a fixed layout made
+    every proposal identical in shape, so a fifth-round reply to one objection
+    arrived looking like a fresh submission with a few words changed. Scientists
+    do not brainstorm by refilling a form.
+    """
+
+    note: str
+    """
+    The post, written the way you would actually say it to a colleague.
+
+    This is what everyone reads — the Reviewer, the Referee, the human — so it
+    has to stand on its own. Nothing is appended to it and nothing is inserted
+    around it, so if the reasoning is not in here, it is nowhere.
     """
 
     claim: str
-    """One committed sentence. Not "X may play a role"."""
-
-    mechanism: str
     """
-    The causal path, in about fifty words — why the claim would be true.
+    One committed sentence, for the record and for the Referee's ranking.
 
-    One path, not a survey of the field. If it wants numbered sub-mechanisms with
-    headings, that is a report; pick the one that carries the claim.
+    Not the post's opening line unless that is what it happens to be — this is a
+    handle on the idea, extracted from what you wrote.
+    """
+
+    mechanism: str = ""
+    """
+    Optional one-liner on the causal path, for the verdict to cite.
+
+    Optional because `note` already carries the argument, and a required field
+    here is pressure to write the note as a rendering of the fields.
     """
 
     predictions: list[str] = Field(min_length=1)
@@ -84,26 +102,20 @@ class Hypothesis(BaseModel):
 
     def to_post_body(self) -> str:
         """
-        Render as the markdown a forum post carries. h5i renders markdown.
+        The post, verbatim. Nothing is added.
 
-        Short inline labels rather than section headings, deliberately. The
-        Proposer and Reviewer are colleagues arguing, and a scaffold of bold
-        headings makes even two sentences read as a submission — which then
-        invites the model to fill it like one. The Referee's verdict keeps the
-        formal shape, because that is the artefact someone cites later.
+        This used to assemble the fields into a fixed layout — claim, then
+        *Why:*, then *Testable:*, then a confidence line — which meant every
+        proposal in every round had the same silhouette regardless of what it was
+        doing. A reply to a single objection came out shaped like an opening
+        submission. Whatever variation the model produced was flattened back out
+        by the renderer.
+
+        So the renderer no longer has an opinion. The Referee's verdict still
+        composes a formal shape from these fields, because that one *is* a
+        document someone cites later.
         """
-        parts = [
-            self.claim,
-            "",
-            f"*Why:* {self.mechanism}",
-            "",
-            "*Testable:*",
-            *(f"- {p}" for p in self.predictions),
-        ]
-        if self.open_risks:
-            parts += ["", "*Shaky:*", *(f"- {r}" for r in self.open_risks)]
-        parts += ["", f"*Confidence* {self.confidence:.2f}"]
-        return "\n".join(parts)
+        return self.note.strip()
 
 
 class Critique(BaseModel):
@@ -181,11 +193,14 @@ class Verdict(BaseModel):
     def to_post_body(self) -> str:
         parts: list[str] = ["## Verdict", ""]
         for i, entry in enumerate(self.ranked, start=1):
+            parts += [f"**{i}. {entry.hypothesis.claim}**", ""]
+            # Optional now that the proposal's own prose carries the argument.
+            # Printing it unconditionally left a blank line where a mechanism
+            # would have been, which reads as something missing rather than
+            # something not separately stated.
+            if entry.hypothesis.mechanism.strip():
+                parts += [entry.hypothesis.mechanism, ""]
             parts += [
-                f"**{i}. {entry.hypothesis.claim}**",
-                "",
-                f"{entry.hypothesis.mechanism}",
-                "",
                 f"*Standing.* {entry.standing}",
                 f"*Confidence.* {entry.hypothesis.confidence:.2f}",
                 "",
@@ -465,13 +480,26 @@ class RoleAgents:
     async def propose(self, deps: DebateDeps, thread: Thread) -> Hypothesis:
         prompt = _situation(deps, thread)
         if thread.content_posts():
+            # Said as a reply, and said with the round number, because the failure
+            # mode is re-posting: without this the model treats every turn as "make
+            # a proposal" and produces the whole hypothesis again with the
+            # objection folded in, which reads as a form refilled rather than a
+            # conversation.
             prompt += (
-                "\n\nAnswer the strongest objection standing against your last "
-                "proposal. Revise the hypothesis if the objection holds, and say "
-                "what changed; if it does not hold, name the step that fails."
+                f"\n\nThis is round {deps.round_index + 1}. You are replying, not "
+                "proposing again — the thread already has your hypothesis and "
+                "everyone can see it.\n\n"
+                "Answer the strongest objection standing against it. If it holds, "
+                "change your mind and say what changed; if it does not, name the "
+                "step in their reasoning that fails. Write only what this round "
+                "adds: do not restate the hypothesis, the mechanism, or the "
+                "predictions that are not in dispute."
             )
         else:
-            prompt += "\n\nPropose the best hypothesis you can for this topic."
+            prompt += (
+                "\n\nOpen the discussion: what do you think is going on, and why? "
+                "Say what would change your mind."
+            )
         result = await self.proposer.run(prompt, deps=deps, usage_limits=self.limits)
         return result.output
 
