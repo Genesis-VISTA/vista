@@ -437,7 +437,7 @@ async def build_simulation(
         wait: bool = True,
     ) -> simulation.JobOutcome:
         if job not in runnable:
-            raise ValueError(
+            raise simulation.BadCommission(
                 f"{job!r} is not runnable in this project. Available: "
                 f"{', '.join(sorted(runnable))}."
             )
@@ -447,7 +447,7 @@ async def build_simulation(
         # launched nothing.
         allowed = runnable[job]
         if cluster is not None and cluster not in allowed:
-            raise ValueError(
+            raise simulation.BadCommission(
                 f"{job!r} cannot run on {cluster!r}. It runs on: {', '.join(allowed)}."
             )
         # Its own session, committed before the wait begins.
@@ -461,7 +461,7 @@ async def build_simulation(
         async with sessions() as own:
             spent = await commissioned_count(own, debate_run_id=run_id)
             if spent >= settings.forum.max_simulations:
-                raise ValueError(
+                raise simulation.BudgetSpent(
                     f"this debate has already commissioned {spent} of "
                     f"{settings.forum.max_simulations} permitted simulations."
                 )

@@ -292,6 +292,18 @@ class DebateOrchestrator:
         # fails as MissingGreenlet rather than as anything that names the cause.
         run_id = run.id
         roster = await self._participants(session, run_id)
+        # Written here and not where the roster was attached, because `start` runs
+        # in the request that opened the debate — before the run exists, and so
+        # before the grounding that needs it can be built. This orchestrator is the
+        # one whose tools the roles will actually have.
+        # Widened off `DebateRole` on the way out: the service stores a column,
+        # not a role vocabulary, and `dict` is invariant in its key.
+        granted: dict[str, list[str]] = {
+            str(role): tools for role, tools in self.roles.granted.items()
+        }
+        await debate_service.record_granted_tools(
+            session, run_id=run_id, granted=granted
+        )
         try:
             while True:
                 run = await debate_service.require_debate(session, run_id)

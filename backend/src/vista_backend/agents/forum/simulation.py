@@ -75,6 +75,27 @@ CLUSTER_CREDENTIALS: dict[str, tuple[str, ...]] = {
 }
 
 
+class CommissionRefused(ValueError):
+    """
+    A commission turned down before any job existed.
+
+    Subclassed rather than raised directly, because the two kinds ask opposite
+    things of the role that tried. A `BadCommission` is the role's own mistake and
+    a corrected call works; a `BudgetSpent` is final for the debate. Everything
+    else that comes out of a submission — an S3M token minted for the wrong
+    project, a scratch directory the submitter could not create — is neither: only
+    a human can clear it, and the role should stop asking.
+    """
+
+
+class BadCommission(CommissionRefused):
+    """The job or cluster named is not one this debate has. Try again, corrected."""
+
+
+class BudgetSpent(CommissionRefused):
+    """This debate has used its simulation allowance. No later call can work."""
+
+
 def clusters_for(user: Any) -> list[str]:
     """The clusters this user actually has credentials for."""
     return sorted(

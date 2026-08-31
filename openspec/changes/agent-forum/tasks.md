@@ -454,3 +454,45 @@ command's stderr onto the host's *stdout*.
 - [x] 23.6 The budget was not consumed by the two refusals: `commission` creates the
       campaign row before submitting, and the failed submit rolls its session back.
       Verified against the live database — zero campaign rows for that debate.
+
+## 24. The roster panel understated every debate's first stint
+
+- [x] 24.1 Root cause of "the agent doesn't have the simulation tool": it did — the
+      newest run's posts cite `search_literature`, `read_attached_paper` and three
+      `commission_simulation` calls — but `debate_participant.granted_tools` read
+      `["prior_debates", "read_domain_guidance"]`. `open_debate` builds an
+      orchestrator to create the thread, and at that moment the run does not exist,
+      so `build_run_grounding` — which needs it to find the project's knowledge bases
+      and the opener's credentials — cannot have been called. The roster rows were
+      written from that bare orchestrator and never revisited.
+- [x] 24.2 `record_granted_tools` rewrites the active roster's grants at the top of
+      `run()`, which is the only place that knows them: `start()` cannot, by
+      construction. Retired stints are left alone — what an old stint could reach is a
+      fact about the posts it made, and restating it in today's terms would show an
+      old post as having had tools it never had.
+- [x] 24.3 Both halves are pinned under mutation: removing the call fails the
+      first-stint test, and widening it to every participant fails the retired-stint
+      test.
+
+## 25. A refusal only a human can clear was retried
+
+- [x] 25.1 The same debate asked odo for the identical job twice and was told twice
+      that its S3M token belongs to `chm243` while odo requires `gen150-vista`. Two of
+      twelve requests spent on a fact already on the table — the same shape as the
+      `prior_debates` dead end in §19: a tool that can only refuse invites being
+      called again.
+- [x] 25.2 `CommissionRefused` splits into `BadCommission` (wrong job or cluster; a
+      corrected call works, and the reply now names what this debate *can* run) and
+      `BudgetSpent` (final for the debate). Everything else out of a submission is the
+      deployment — a token scoped to the wrong project, a scratch directory the
+      submitter could not create — and the reply says plainly that no rephrasing will
+      help.
+- [x] 25.3 Environment refusals are memoised on `DebateDeps.refused_commissions`,
+      keyed by (job, cluster), and a repeat is answered from memory without touching
+      the cluster. Per pair and not per turn: a job odo refuses may well run on
+      perlmutter, and blocking the turn would throw away the debate's other
+      credential. `BadCommission` is deliberately not memoised.
+- [x] 25.4 The key resolves `cluster=None` through the same rule the commissioner
+      uses — the job's first reachable cluster — so omitting the argument is not a way
+      to retry a dead credential. That also fixes the receipt, which used to record
+      "the default cluster" where provenance needs a machine name.

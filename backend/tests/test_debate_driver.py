@@ -154,15 +154,112 @@ async def _start(
     return orch, run
 
 
-def _roles(*, proposer=None, reviewer=None, referee=None, capture=None) -> RoleAgents:
+def _roles(
+    *, proposer=None, reviewer=None, referee=None, capture=None, toolsets=None
+) -> RoleAgents:
     """The three roles, each built on its own scripted model."""
     return RoleAgents(
         models={
             "proposer": proposer or scripted(HYPOTHESIS, capture=capture),
             "reviewer": reviewer or scripted(REFUTE),
             "referee": referee or scripted(VERDICT),
-        }
+        },
+        toolsets=toolsets,
     )
+
+
+@pytest.mark.anyio
+async def test_the_roster_records_the_tools_the_debate_actually_ran_with(
+    client, session, alice
+):
+    """
+    Whoever runs the debate writes the grants, because only they know them.
+
+    The roster is attached by `open_debate`, and at that moment the run does not
+    exist — so `build_run_grounding`, which needs it to find the project's
+    knowledge bases and the opener's credentials, cannot have been called. The
+    grants recorded there are a bare orchestrator's. Left alone, they made the
+    roster panel report two tools for a debate whose posts cite a literature
+    search, an attached paper and a commissioned job.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
+
+    _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    run_id = run.id
+
+    before = await debate_service.list_participants(session, run_id=run_id)
+    assert {r.debate_role: list(r.granted_tools) for r in before} == {
+        "proposer": [],
+        "reviewer": [],
+        "referee": [],
+    }, "a groundingless orchestrator has nothing to grant"
+
+    async def rag(query, kb_slug, n_results):  # pragma: no cover - never called
+        return "nothing"
+
+    wired = DebateOrchestrator(
+        client=client,
+        roles=_roles(toolsets=build_toolsets(Grounding(rag=rag, forum=client))),
+        checkpoint=_committing,
+        knowledge_bases=["salt"],
+    )
+    await wired.run(session, await debate_service.require_debate(session, run_id))
+
+    after = await debate_service.list_participants(session, run_id=run_id)
+    granted = {r.debate_role: list(r.granted_tools) for r in after}
+    assert "search_literature" in granted["reviewer"]
+    assert "prior_debates" in granted["reviewer"]
+
+
+@pytest.mark.anyio
+async def test_a_retired_stints_grants_are_left_as_they_were(client, session, alice):
+    """
+    History is not restated in today's terms.
+
+    A continued debate carries the retired roster on its record. What *that* stint
+    could reach is a fact about the posts it made; rewriting it to match the
+    current wiring would make an old post look as though it had tools it never
+    had.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
+
+    _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    run_id = run.id
+    await _run_to_verdict(client, session, run_id)
+
+    retired = await debate_service.list_participants(session, run_id=run_id)
+    assert all(not r.active for r in retired), "the first stint is retired"
+
+    async def rag(query, kb_slug, n_results):  # pragma: no cover - never called
+        return "nothing"
+
+    wired = DebateOrchestrator(
+        client=client,
+        roles=_roles(toolsets=build_toolsets(Grounding(rag=rag, forum=client))),
+        checkpoint=_committing,
+        knowledge_bases=["salt"],
+    )
+    await wired.resume(
+        session,
+        run=await debate_service.require_debate(session, run_id),
+        extra_rounds=1,
+    )
+
+    # Both stints are retired by now — resume argues to a verdict and revokes on
+    # its way out — so they are told apart by identity, which is what carries the
+    # stint number and what the posts are stamped with.
+    rows = await debate_service.list_participants(session, run_id=run_id)
+    first = [r for r in rows if not r.identity.endswith("-2")]
+    second = [r for r in rows if r.identity.endswith("-2")]
+    assert len(first) == len(second) == len(ROSTER)
+    assert all(list(r.granted_tools) == [] for r in first), "the first stint is history"
+    assert all("prior_debates" in r.granted_tools for r in second)
+
+
+async def _run_to_verdict(client, session, run_id):
+    """Argue the first stint out, so the next one resumes rather than starts."""
+    plain = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
+    await plain.run(session, await debate_service.require_debate(session, run_id))
 
 
 # --------------------------------------------------------------------------- #

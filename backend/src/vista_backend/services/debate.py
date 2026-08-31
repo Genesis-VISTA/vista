@@ -233,6 +233,37 @@ async def add_participant(
     return row
 
 
+async def record_granted_tools(
+    session: AsyncSession, *, run_id: uuid.UUID, granted: dict[str, list[str]]
+) -> None:
+    """
+    Correct the record of what each attached role may use.
+
+    The roster is attached before the debate has any tools. `open_debate` builds
+    an orchestrator to create the thread, and at that moment the run does not
+    exist yet — so `build_run_grounding`, which needs the run to find the
+    project's knowledge bases and the opener's credentials, cannot have been
+    called. The roster rows are written from that bare orchestrator and record
+    the two tools it has, while the debate then runs with a fully wired one.
+
+    The result was a roster panel that said a debate had `prior_debates` and
+    nothing else, on a run whose posts cite literature search, an attached paper
+    and a commissioned job. So the row is rewritten by whoever actually runs the
+    debate, which is the only party that knows.
+
+    Silent about roles it is not given: a debate continued for extra rounds has
+    retired stints on its record, and what *they* were granted is history, not
+    something to restate in today's terms.
+    """
+    for row in await list_active_participants(session, run_id=run_id):
+        tools = granted.get(row.debate_role)
+        if tools is None or list(row.granted_tools) == tools:
+            continue
+        row.granted_tools = list(tools)
+        session.add(row)
+    await session.flush()
+
+
 async def list_participants(
     session: AsyncSession, *, run_id: uuid.UUID
 ) -> list[DebateParticipantTable]:

@@ -788,7 +788,7 @@ async def test_the_commissioner_refuses_a_job_outside_the_project(
     )
     commissioner, _ = await wiring.build_simulation(session, run)
 
-    with pytest.raises(ValueError, match="not runnable in this project"):
+    with pytest.raises(simulation.BadCommission, match="not runnable in this project"):
         await commissioner(participant=PARTICIPANT, job="forge-tune", prediction="p")
 
 
@@ -808,7 +808,7 @@ async def test_the_commissioner_refuses_a_cluster_without_credentials(
 
     # Refused because *this job* cannot run there for this user: the job supports
     # odo and perlmutter, and the opener has no NERSC credential.
-    with pytest.raises(ValueError, match="cannot run on 'perlmutter'"):
+    with pytest.raises(simulation.BadCommission, match="cannot run on 'perlmutter'"):
         await commissioner(
             participant=PARTICIPANT,
             job="salt-neutronics-tbr",
@@ -845,7 +845,7 @@ async def test_the_budget_stops_a_third_simulation(
             wait=False,
         )
 
-    with pytest.raises(ValueError, match="already commissioned 2 of 2"):
+    with pytest.raises(simulation.BudgetSpent, match="already commissioned 2 of 2"):
         await commissioner(
             participant=PARTICIPANT, job="salt-neutronics-tbr", prediction="p"
         )
@@ -1281,3 +1281,181 @@ async def test_a_job_with_no_reachable_cluster_is_not_offered_at_all(
 
     assert runnable == {}
     assert commissioner is None, "a tool that can only be refused is not granted"
+
+
+# --------------------------------------------------------------------------- #
+# A refusal only a human can clear
+# --------------------------------------------------------------------------- #
+
+
+def _ctx(participant, **deps_kwargs):
+    from pydantic_ai import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    from vista_backend.agents.forum.roles import DebateDeps
+
+    return RunContext(  # type: ignore[arg-type]
+        deps=DebateDeps(topic="t", participant=participant, **deps_kwargs),
+        model=None,
+        usage=RunUsage(),
+    )
+
+
+def _sim_tool(commissioner):
+    from vista_backend.agents.forum.grounding import Grounding, build_toolset
+
+    toolset = build_toolset("proposer", Grounding(simulation=commissioner))
+    assert toolset is not None
+    return toolset.tools["commission_simulation"].function
+
+
+@pytest.mark.anyio
+async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
+    """
+    Retrying a token scoped to the wrong project only spends the request budget.
+
+    This is what the live forum did: an S3M token minted for `chm243` was refused
+    by odo, which wants `gen150-vista`, and the role asked again with identical
+    arguments and was refused identically. Two of twelve requests for one fact
+    that was already on the table.
+    """
+    calls = []
+
+    async def commissioner(**kwargs):
+        calls.append(kwargs["cluster"])
+        raise RuntimeError(
+            "Your S3M token belongs to project 'chm243', but odo access "
+            "requires 'gen150-vista'."
+        )
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
+
+    first = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
+    assert "gen150-vista" in first
+    assert "only a human can" in first
+
+    second = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
+    assert calls == ["odo"], "the second attempt never reached the cluster"
+    assert "already tried" in second
+    assert "gen150-vista" in second, "and it still says why"
+
+
+@pytest.mark.anyio
+async def test_another_cluster_is_still_worth_trying(client, session, alice):
+    """
+    The memo is per (job, cluster), not per turn.
+
+    A job that odo refuses may well run on perlmutter, and blocking the whole turn
+    on the first refusal would throw away the debate's other credential.
+    """
+    calls = []
+
+    async def commissioner(**kwargs):
+        calls.append(kwargs["cluster"])
+        raise RuntimeError("no credentials")
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
+
+    await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
+    await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="perlmutter")
+    assert calls == ["odo", "perlmutter"]
+
+
+@pytest.mark.anyio
+async def test_the_default_cluster_is_the_same_attempt_as_naming_it(
+    client, session, alice
+):
+    """
+    Otherwise omitting an argument is a way to retry a dead credential.
+
+    The commissioner sends an unnamed cluster to the job's first, so `cluster=None`
+    and `cluster="odo"` are one attempt against one machine; keyed separately they
+    would be two, and the block would be trivially evaded.
+    """
+    calls = []
+
+    async def commissioner(**kwargs):
+        calls.append(kwargs["cluster"])
+        raise RuntimeError("no credentials")
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
+
+    await tool(ctx, job="salt-neutronics-tbr", prediction="p")
+    out = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
+    assert calls == [None], "naming the default is not a new attempt"
+    assert "already tried" in out
+
+
+@pytest.mark.anyio
+async def test_a_mistyped_job_can_be_corrected(client, session, alice):
+    """
+    The one refusal worth another go, so it must *not* be remembered.
+
+    A wrong name is the role's own mistake and a corrected call works. Memoising
+    it would turn a typo into a dead end for the rest of the turn — and the reply
+    says what this debate can actually run, so the correction is one the role is
+    able to make.
+    """
+    calls = []
+
+    async def commissioner(**kwargs):
+        calls.append(kwargs["job"])
+        raise simulation.BadCommission("'md' is not runnable in this project.")
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
+
+    out = await tool(ctx, job="md", prediction="p")
+    assert "salt-neutronics-tbr (on odo or perlmutter)" in out
+    assert "only a human can" not in out
+
+    await tool(ctx, job="md", prediction="p")
+    assert calls == ["md", "md"], "a correctable refusal is not a dead end"
+
+
+@pytest.mark.anyio
+async def test_a_spent_budget_says_to_stop_rather_than_to_retry(client, session, alice):
+    """No later call can work either, and the reply has to say so."""
+
+    async def commissioner(**kwargs):
+        raise simulation.BudgetSpent("already commissioned 2 of 2 permitted.")
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo"]})
+
+    out = await tool(ctx, job="salt-neutronics-tbr", prediction="p")
+    assert "do not call this tool again" in out
+    assert "2 of 2" in out
+
+
+@pytest.mark.anyio
+async def test_the_receipt_names_the_cluster_the_job_went_to(client, session, alice):
+    """
+    "the default cluster" is not provenance.
+
+    The receipt is how a reader checks that the run behind a FINDING is the run
+    that was claimed, and a role that leaves the cluster to the default was the
+    common case.
+    """
+
+    async def commissioner(**kwargs):
+        return simulation.JobOutcome(
+            job_id="j-1", state="COMPLETED", finished=True, ok=True, outputs="TBR 1.05"
+        )
+
+    tool = _sim_tool(commissioner)
+    _, participant = await _debate(client, session, alice)
+    ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
+
+    await tool(ctx, job="salt-neutronics-tbr", prediction="p")
+    (call,) = ctx.deps.tool_calls
+    assert "odo" in call.detail
+    assert "cluster:    odo" in (call.receipt or "")

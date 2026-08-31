@@ -31,7 +31,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from ...config import ForumSettings, settings
 from ...services.h5i_forum import ForumClient, Participant
 from .roles import DebateDeps, DebateRole, ToolCall, Toolsets
-from .simulation import SimulationCommissioner
+from .simulation import BadCommission, BudgetSpent, SimulationCommissioner
 
 
 logger = logging.getLogger(__name__)
@@ -351,15 +351,21 @@ def build_toolset(
             assert grounding.simulation is not None
             if ctx.deps.participant is None:
                 return "Simulations are unavailable: this turn has no identity to run under."
-            try:
-                outcome = await grounding.simulation(
-                    participant=ctx.deps.participant,
-                    job=job,
-                    prediction=prediction,
-                    cluster=cluster,
-                    script_args=script_args,
+
+            # Resolved the same way the commissioner resolves it, so asking twice
+            # — once by name, once by leaving it to the default — is recognised as
+            # the same attempt rather than as two.
+            where = cluster or _default_cluster(ctx.deps.runnable, job)
+
+            if (prior := ctx.deps.refused_commissions.get((job, where))) is not None:
+                return (
+                    f"You already tried {job} on {where or 'the default cluster'} "
+                    f"this turn and it was refused: {prior} Nothing has changed "
+                    "since, and only a human can change it. Say the test could not "
+                    "be run, and argue from what you have or test something else."
                 )
-            except Exception as exc:  # noqa: BLE001 — a refused job is an answer
+
+            def refused(exc: Exception) -> None:
                 # Recorded for the same reason a successful submission is: an
                 # attempt that was refused — over budget, unknown job, no
                 # credentials — is evidence about the debate, and dropping it
@@ -371,11 +377,55 @@ def build_toolset(
                         receipt=f"job: {job}\nrefused: {exc}\n\nwould have tested: {prediction}",
                     )
                 )
-                return f"The simulation could not be started: {exc}"
+
+            try:
+                outcome = await grounding.simulation(
+                    participant=ctx.deps.participant,
+                    job=job,
+                    prediction=prediction,
+                    cluster=cluster,
+                    script_args=script_args,
+                )
+            except BadCommission as exc:
+                # The role's own mistake, and the only refusal worth another go:
+                # it is told what it may actually run, so the corrected call is one
+                # it can make. Deliberately not memoised — memoising it would turn
+                # a typo into a dead end for the rest of the turn.
+                refused(exc)
+                offer = ", ".join(
+                    f"{name} (on {' or '.join(where_)})"
+                    for name, where_ in sorted(ctx.deps.runnable.items())
+                )
+                return (
+                    f"That commission was rejected: {exc} "
+                    f"This debate can run: {offer or 'nothing'}."
+                )
+            except BudgetSpent as exc:
+                refused(exc)
+                return (
+                    f"No simulation was started: {exc} That allowance is per debate "
+                    "and does not come back, so do not call this tool again — "
+                    "argue from the results you already have."
+                )
+            except Exception as exc:  # noqa: BLE001 — a refused job is an answer
+                # Everything left is the deployment, not the request: a token
+                # scoped to the wrong project, a scratch directory the submitter
+                # could not create. Retrying spends a request to be told the same
+                # thing, so the attempt is remembered and the second call is
+                # answered from memory instead of from the cluster.
+                ctx.deps.refused_commissions[(job, where)] = str(exc)
+                refused(exc)
+                return (
+                    f"The simulation could not be started: {exc}\n\n"
+                    "That is a problem with this deployment's credentials or "
+                    "storage, not with how you asked — nothing you can rephrase "
+                    "will fix it, and only a human can. Do not retry this job on "
+                    f"{where or 'this cluster'}. Report that the test could not be "
+                    "run and carry on with the argument."
+                )
             # The job id and cluster are what make this traceable: without them a
             # reader has "a simulation was run" and no way to find which, or to
             # check that the run behind a FINDING is the run that was claimed.
-            where = cluster or "the default cluster"
             if outcome.uncollectable:
                 standing = "submitted, but nothing is polling it"
             elif outcome.timed_out:
@@ -390,12 +440,12 @@ def build_toolset(
             ctx.deps.tool_calls.append(
                 ToolCall(
                     "commission_simulation",
-                    f"{job} on {where} — job {outcome.job_id}, {standing}",
+                    f"{job} on {where or 'the default cluster'} — job {outcome.job_id}, {standing}",
                     receipt="\n".join(
                         [
                             f"job:        {job}",
                             f"job id:     {outcome.job_id}",
-                            f"cluster:    {where}",
+                            f"cluster:    {where or 'the default cluster'}",
                             f"script args: {script_args or '(none)'}",
                             f"outcome:    {standing}",
                             "",
@@ -457,6 +507,19 @@ def build_toolset(
         granted = True
 
     return toolset if granted else None
+
+
+def _default_cluster(runnable: dict[str, list[str]], job: str) -> str | None:
+    """
+    Where a commission goes when the role does not say.
+
+    Mirrors the commissioner's own rule — the first cluster the job can run on —
+    so a refusal recorded against `(job, None)` and one recorded against the name
+    that None resolves to are the same entry. Two spellings of one attempt would
+    let a role retry a dead credential simply by omitting an argument.
+    """
+    clusters = runnable.get(job) or []
+    return clusters[0] if clusters else None
 
 
 FINISHED_THREAD_STATUSES = frozenset({"done", "closed"})

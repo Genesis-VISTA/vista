@@ -310,6 +310,18 @@ class DebateDeps:
     is confined by the same policy the role's posts are stamped with.
     """
 
+    refused_commissions: dict[tuple[str, str | None], str] = field(default_factory=dict)
+    """
+    Commissions already refused this turn, keyed by (job, cluster), with the reason.
+
+    Only refusals a role cannot act on are recorded here — a missing credential, a
+    filesystem the submitter could not write. Asking again with the same arguments
+    gets the same answer, and each attempt costs a request out of a budget of
+    twelve; a role that does it twice has spent a sixth of its turn learning
+    nothing. A wrong job or cluster name is deliberately *not* recorded, because
+    there a second, corrected call is exactly the right move.
+    """
+
     tool_calls: list[ToolCall] = field(default_factory=list)
     """
     Every tool this turn used, appended by the tools themselves.
