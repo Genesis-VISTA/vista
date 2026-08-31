@@ -376,7 +376,9 @@ def build_toolset(
             # reader has "a simulation was run" and no way to find which, or to
             # check that the run behind a FINDING is the run that was claimed.
             where = cluster or "the default cluster"
-            if outcome.timed_out:
+            if outcome.uncollectable:
+                standing = "submitted, but nothing is polling it"
+            elif outcome.timed_out:
                 standing = f"still running after the wait (state {outcome.state})"
             elif not outcome.finished:
                 standing = "submitted; not waited for"
@@ -405,6 +407,15 @@ def build_toolset(
                 )
             )
 
+            if outcome.uncollectable:
+                return (
+                    f"Job {outcome.job_id} ({job}) was submitted, but this "
+                    "deployment has no job monitor running, so nothing will "
+                    "collect its result and it will not be posted to the thread. "
+                    "Do not commission more work this turn — it would have the "
+                    "same outcome. Argue from what you already have, and say that "
+                    "the test is pending rather than treating it as done."
+                )
             if outcome.timed_out:
                 return (
                     f"Job {outcome.job_id} ({job}) is still running — the debate "

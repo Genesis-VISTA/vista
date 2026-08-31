@@ -454,6 +454,20 @@ async def build_simulation(
             job_id = row.job_id
             await own.commit()
 
+        # Nothing polls jobs unless the campaign monitor is running, and it is
+        # opt-in. Waiting for a collector that does not exist can only ever time
+        # out — thirty minutes of a debate stalled per job, for nothing — so the
+        # wait is skipped and the reason is told to the agent rather than being
+        # left to look like a slow cluster.
+        if not settings.campaigns.monitor_enabled:
+            logger.warning(
+                "debate %s: submitted job %s but the campaign monitor is disabled, "
+                "so nothing will poll it or post its result",
+                run_id,
+                job_id,
+            )
+            return simulation.JobOutcome(job_id=job_id, uncollectable=True)
+
         if not wait:
             return simulation.JobOutcome(job_id=job_id)
 
@@ -466,7 +480,7 @@ async def build_simulation(
             return await simulation.wait_for_result(
                 sessions,
                 job_id=job_id,
-                timeout=settings.forum.max_job_wait,
+                timeout=settings.forum.max_job_wait_seconds,
                 poll_seconds=settings.forum.job_poll_seconds,
             )
         finally:

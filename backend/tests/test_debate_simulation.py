@@ -819,7 +819,7 @@ async def test_the_budget_stops_a_third_simulation(
     commissioner, _, _ = await wiring.build_simulation(session, run)
 
     # `wait=False`: this is about the cap, and waiting for a job the fake never
-    # finishes would stall the test for `max_job_wait`.
+    # finishes would stall the test for `max_job_wait_seconds`.
     for _ in range(2):
         await commissioner(
             participant=PARTICIPANT,
@@ -1112,4 +1112,73 @@ async def test_waiting_leaves_the_database_writable(engine, client, session, ali
     outcome = await waiting
     assert outcome.outputs == "TBR = 1.09", (
         "the wait never saw the monitor's write, which means it was blocking it"
+    )
+
+
+@pytest.mark.anyio
+async def test_no_monitor_means_no_wait_and_no_promise(
+    session, alice, monkeypatch, tmp_path
+):
+    """
+    Nothing polls jobs unless the campaign monitor is running, and it is off by
+    default — which is how five jobs sat at `submitted` for three days.
+
+    Two things follow, and both were wrong before. Waiting for a collector that
+    does not exist can only time out, stalling a debate for `max_job_wait_seconds` per
+    job. And telling the agent "the result will be posted when it finishes" writes
+    a promise the deployment cannot keep into the permanent record of the debate.
+    """
+    from vista_backend.config import settings as app_settings
+
+    wiring, run = await _wired(
+        session,
+        alice,
+        monkeypatch,
+        tmp_path,
+        skills=["salt-neutronics-tbr"],
+        tokens={"s3m_token": "tok"},
+    )
+    monkeypatch.setattr(app_settings.campaigns, "monitor_enabled", False)
+    commissioner, _, _ = await wiring.build_simulation(session, run)
+
+    outcome = await commissioner(
+        participant=PARTICIPANT, job="salt-neutronics-tbr", prediction="p"
+    )
+
+    assert outcome.uncollectable is True
+    assert outcome.timed_out is False, "it did not time out; it was never watched"
+    assert outcome.finished is False
+
+
+@pytest.mark.anyio
+async def test_the_tool_says_plainly_that_nothing_will_collect_the_job():
+    """
+    The agent has to be told, or it argues as though a test is running when
+    nothing is watching it — and commissions another with the same outcome.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolset
+    from vista_backend.agents.forum.roles import DebateDeps
+    from vista_backend.agents.forum.simulation import JobOutcome
+
+    async def commissioner(*, participant, job, prediction, **kw):
+        return JobOutcome(job_id="job-99", uncollectable=True)
+
+    toolset = build_toolset("reviewer", Grounding(simulation=commissioner))
+    assert toolset is not None
+
+    from pydantic_ai import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    deps = DebateDeps(topic="t", participant=PARTICIPANT)
+    ctx = RunContext(deps=deps, model=None, usage=RunUsage())  # type: ignore[arg-type]
+    out = await toolset.tools["commission_simulation"].function(
+        ctx, job="salt-neutronics-tbr", prediction="p"
+    )
+
+    assert "no job monitor running" in out
+    assert "will not be posted" in out
+    assert "Do not commission more work" in out
+    (call,) = deps.tool_calls
+    assert "nothing is polling it" in call.detail, (
+        "the record has to show it too, not just the agent's transcript"
     )

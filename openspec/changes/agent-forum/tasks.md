@@ -356,3 +356,27 @@ command's stderr onto the host's *stdout*.
 - [x] 19.7 A BLOCKED note records the tool calls the turn made — the one post where
       provenance was empty and the one where a reader most needs it. The first attempt's
       calls survive the retry rather than being cleared: they are what the budget went on.
+
+## 20. Nothing was polling the jobs
+
+- [x] 20.1 Root cause of five jobs sitting at `submitted` for three days:
+      `campaigns.monitor_enabled` defaults to **False**, and nothing in the
+      deployment's `.env` turned it on. The campaign monitor is the only thing that
+      polls a cluster or collects a result, so no `post_result` ever ran and no FINDING
+      was ever posted. Enabled, with the interval lowered to 60s since a debate now
+      waits on the answer.
+- [x] 20.2 §18's waiting was built on a poller nobody had checked was running — its own
+      comment asserted the latency floor was the monitor interval, which presumed it
+      ran. With the monitor off the wait could only ever time out, stalling a round for
+      the full budget per job.
+- [x] 20.3 The commissioner refuses to wait when the monitor is disabled, and says so:
+      `JobOutcome.uncollectable`, distinct from `timed_out`. The old message —
+      "the result will be posted to this thread when it finishes" — was a promise the
+      deployment could not keep, written into the permanent record of the debate.
+- [x] 20.4 `max_job_wait` renamed `max_job_wait_seconds`. It had been set to `30`
+      meaning half an hour and was half a minute. Minutes is the natural unit for a
+      cluster job and seconds is what the code wants, so the unit belongs in the name.
+- [x] 20.5 `test_campaign_settings_default_off` asserted on the process-wide `settings`,
+      which reads the developer's `.env` — so it passed or failed on a file outside the
+      repository, and reported a broken default the moment a deployment legitimately
+      enabled the monitor. It now builds a fresh `CampaignSettings`.

@@ -15,7 +15,7 @@ Two facts about the shapes involved drive the design:
     and wrong in practice — the answer usually arrived after the verdict, where
     no agent ever reasoned about it, so the debate paid for a simulation and then
     argued without it. Now the role that asked the question waits for the answer,
-    bounded by `forum.max_job_wait`; on timeout the debate carries on and the
+    bounded by `forum.max_job_wait_seconds`; on timeout the debate carries on and the
     result still reaches the thread.
 
     Waiting has one hard requirement: nothing may hold a database transaction
@@ -245,6 +245,17 @@ class JobOutcome(BaseModel):
     state: str = ""
     outputs: str = ""
     timed_out: bool = False
+
+    uncollectable: bool = False
+    """
+    The job was submitted and nothing will ever collect it.
+
+    True when the campaign monitor is disabled, which is its default. Distinct
+    from `timed_out`: that job is still being watched and its result will arrive,
+    this one will sit at `submitted` forever. Saying "the result will be posted
+    when it finishes" here would be a promise the deployment cannot keep, written
+    into the permanent record of the debate.
+    """
 
 
 async def wait_for_result(

@@ -86,9 +86,13 @@ class ForumSettings(BaseModel):
     ~0.5s, so this only bounds a hang.
     """
 
-    max_job_wait: float = 1800.0
+    max_job_wait_seconds: float = 1800.0
     """
-    How long a role will wait for a simulation it commissioned, in seconds.
+    How long a role will wait for a simulation it commissioned.
+
+    Named with its unit because it was set to `30` meaning half an hour and got
+    half a minute. A bare `max_job_wait` invites that: minutes is the natural unit
+    for a cluster job and seconds is what the code wants.
 
     A round used to end the moment a job was submitted, so the result arrived on
     the thread whenever it arrived — often after the verdict, where no agent ever
