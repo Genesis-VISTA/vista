@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H ${VISTA_UI_HOST:-127.0.0.1} -p ${VISTA_UI_PORT:-3000}",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H ${VISTA_UI_HOST:-127.0.0.1} -p ${VISTA_UI_PORT:-3000}",
     "lint": "eslint ."
   },
   "dependencies": {

@@ -92,6 +92,10 @@ Open:
 http://localhost:3000
 ```
 
+### Bind address
+
+Use`VISTA_UI_HOST` / `VISTA_UI_PORT` env vars to set the host/port (defaults to 127.0.0.1:3000)
+
 ## Quick Test Plan
 
 1. MCP health:
