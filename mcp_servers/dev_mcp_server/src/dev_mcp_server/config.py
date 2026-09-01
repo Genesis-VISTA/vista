@@ -30,6 +30,12 @@ class AppSettings(BaseSettings):
         Path(__file__).parent / "docker" / "Dockerfile"
     )
     image: str = "vista-sandbox:latest"
+    oci_image_tar: A[ResolvedPath | None, EmptyIsNone] = None
+    """
+    Path to a tar archive (e.g. from `docker save`) holding the sandbox image.
+    
+    Allows prepackaging an OCI tar for use in environments without podman/docker to build the image.
+    """
 
     volumes: list[tuple[ResolvedPath, Path, Literal["r", "w"]]] = []
     """

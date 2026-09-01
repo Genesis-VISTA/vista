@@ -22,6 +22,7 @@ SANDBOX_SPAWN_FUNCS: dict[str, Callable[..., Awaitable[Sandbox]]] = {
         env=env,
         dockerfile=settings.dockerfile,
         image=settings.image,
+        oci_image_tar=settings.oci_image_tar,
     ),
     "container": lambda volumes=None, env=None: ContainerSandbox.spawn(
         volumes=volumes,
@@ -49,6 +50,7 @@ SANDBOX_BUILD_FUNCS: dict[str, Callable[[], Awaitable[None]]] = {
     "microsandbox": lambda: MicrosandboxSandbox.build(
         dockerfile=settings.dockerfile,
         image=settings.image,
+        oci_image_tar=settings.oci_image_tar,
     ),
     "container": lambda: ContainerSandbox.build(
         dockerfile=settings.dockerfile,
