@@ -81,7 +81,7 @@ async def test_pending_job_stays_open_and_unnotified(session, alice):
     async def poll(_session, j):
         return "PENDING", ""
 
-    async def collect(_session, j, raw):
+    async def collect(_session, j, raw, ok):
         raise AssertionError("should not collect a pending job")
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
@@ -106,7 +106,7 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     async def poll(_session, j):
         return "COMPLETED", "TBR=1.18"
 
-    async def collect(_session, j, raw):
+    async def collect(_session, j, raw, ok):
         collected.append((j.job_id, raw))
         await campaign_service.update_step(
             session,
@@ -139,22 +139,103 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
 
 
 @pytest.mark.anyio
-async def test_failed_job_marks_step_failed_and_emails(session, alice):
+async def test_a_failure_is_not_believed_on_one_reading(session, alice):
+    """
+    A scheduler can report FAILED for a job it has not registered yet.
+
+    odo did exactly that: FAILED fifty-five seconds after submission, for a job
+    whose own log showed it still building its virtualenv. Because a terminal
+    state also stops the watch, no later poll ever corrected it — one wrong
+    answer was permanent. So the first sighting only records the state.
+    """
     run, step, job = await _make_job(session, alice)
     emailer = _Emailer()
 
-    async def poll(_session, j):
-        return "FAILED", ""
+    calls = []
 
-    async def collect(_session, j, raw):
-        raise AssertionError("failed jobs should not be collected")
+    async def poll(_session, j):
+        return "FAILED", "STATE=FAILED"
+
+    # A flag, not a `raise`. `reconcile_once` catches per-job exceptions so one
+    # bad job cannot stall the rest, which means an assertion thrown from inside
+    # a collector is swallowed and the test passes for the wrong reason.
+    async def collect(_session, j, raw, ok):
+        calls.append(j.job_id)
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
     await monitor.reconcile_once(session)
 
+    assert calls == [], "a single failure reading must not be acted on"
+    refreshed = await campaign_service.get_job(session, job.job_id)
+    assert refreshed.state == "FAILED", "the reading is recorded"
+    assert refreshed.result_collected is False, "but the job is still watched"
+    assert emailer.sent == []
+    assert job.job_id in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
+
+
+@pytest.mark.anyio
+async def test_a_failure_the_next_poll_contradicts_is_dropped(session, alice):
+    """The whole point: the second reading is allowed to say something else."""
+    run, step, job = await _make_job(session, alice)
+    emailer = _Emailer()
+    answers = iter([("FAILED", ""), ("RUNNING", ""), ("COMPLETED", "TBR=1.18")])
+    collected = []
+
+    async def poll(_session, j):
+        return next(answers)
+
+    async def collect(_session, j, raw, ok):
+        collected.append((raw, ok))
+        await campaign_service.update_step(
+            session, step_id=j.step_id, status="completed", result={}
+        )
+
+    monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
+    for _ in range(3):
+        await monitor.reconcile_once(session)
+
+    assert collected == [("TBR=1.18", True)], "it completed; the FAILED was noise"
+    refreshed_step = await campaign_service.get_step(session, step.id)
+    assert refreshed_step.status == "completed"
+
+
+@pytest.mark.anyio
+async def test_a_confirmed_failure_is_collected_with_its_log(session, alice):
+    """
+    A failed run goes to the collector too, carrying the status text.
+
+    That text is the scheduler's log, and it is the only account of *why* the job
+    died — the difference between "the physics says no" and "the script had a
+    typo". Recording the bare state left whoever was waiting with the word
+    "failed" and nothing to go on.
+    """
+    run, step, job = await _make_job(session, alice)
+    emailer = _Emailer()
+    seen = []
+
+    async def poll(_session, j):
+        return "FAILED", "STATE=FAILED\n--- LOGS ---\nsrun: error: node failure"
+
+    async def collect(_session, j, raw, ok):
+        seen.append((raw, ok))
+        await campaign_service.update_step(
+            session, step_id=j.step_id, status="failed", result={"outputs": raw}
+        )
+
+    monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
+    await monitor.reconcile_once(session)
+    await monitor.reconcile_once(session)
+
+    assert len(seen) == 1
+    raw, ok = seen[0]
+    assert ok is False
+    assert "node failure" in raw
+
     refreshed_step = await campaign_service.get_step(session, step.id)
     assert refreshed_step.status == "failed"
-    assert refreshed_step.result["state"] == "FAILED"
+    assert "node failure" in refreshed_step.result["outputs"]
 
     refreshed = await campaign_service.get_job(session, job.job_id)
     assert refreshed.result_collected is True
@@ -171,7 +252,7 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
     async def poll(_session, j):
         return "COMPLETED", ""
 
-    async def collect(_session, j, raw):
+    async def collect(_session, j, raw, ok):
         await campaign_service.update_step(
             session, step_id=j.step_id, status="completed", result={}
         )
@@ -194,7 +275,7 @@ async def test_monitor_abandons_orphaned_job(session, alice):
     async def poll(_session, j):
         raise AssertionError("orphaned job should not be polled")
 
-    async def collect(_session, j, raw):
+    async def collect(_session, j, raw, ok):
         raise AssertionError("orphaned job should not be collected")
 
     monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)

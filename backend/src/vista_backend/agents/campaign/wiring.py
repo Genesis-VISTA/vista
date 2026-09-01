@@ -29,7 +29,7 @@ from ...services import campaign as campaign_service
 from ..forum import simulation
 from ..forum.simulation import DEBATE_DOMAIN
 from ..forum.wiring import build_client as build_forum_client
-from ...services.campaign_monitor import CampaignMonitor, is_success
+from ...services.campaign_monitor import CampaignMonitor, normalize_state
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
 from .mcp_invoke import build_mcp_invoke, project_paths_for
@@ -136,9 +136,27 @@ def build_status_poll(*, invoke_builder: InvokeBuilder = build_mcp_invoke):
 
 
 def build_collector(planner_provider: PlannerProvider = build_planner_for_job):
-    """Build a monitor `collect(session, job, raw_status)` that delegates to the run's planner."""
+    """
+    Build a monitor `collect(session, job, raw_status, ok)` for an ordinary campaign.
 
-    async def collect(session: AsyncSession, job: HpcJobTable, raw_status: str) -> None:
+    A finished job goes to the run's planner, which parses it. A failed one does
+    not — there is nothing to parse — but its status text is kept on the step
+    rather than discarded, because that text is the scheduler's log and the only
+    account of why the job died. Recording the bare state left the planner, the
+    UI and anyone reading later with the word "failed" and no way past it.
+    """
+
+    async def collect(
+        session: AsyncSession, job: HpcJobTable, raw_status: str, ok: bool
+    ) -> None:
+        if not ok:
+            await campaign_service.update_step(
+                session,
+                step_id=job.step_id,
+                status="failed",
+                result={"state": normalize_state(job.state), "outputs": raw_status},
+            )
+            return
         planner = await planner_provider(session, job)
         await planner.collect_job(session, job=job)
 
@@ -157,24 +175,31 @@ def build_debate_aware_collector(
     """
     campaign_collect = build_collector(planner_provider)
 
-    async def collect(session: AsyncSession, job: HpcJobTable, raw_status: str) -> None:
+    async def collect(
+        session: AsyncSession, job: HpcJobTable, raw_status: str, ok: bool
+    ) -> None:
         step = await campaign_service.get_step(session, job.step_id)
         run = (
             await campaign_service.get_campaign(session, step.run_id) if step else None
         )
         if run is not None and run.domain == DEBATE_DOMAIN:
             client = build_forum_client()
+            # Failures are posted too. `post_result` has always written them
+            # correctly — "did not complete", with the log attached — but the
+            # monitor only ever called it on success, so a debate that lost a run
+            # left no trace of it on the thread at all. A reader saw a hypothesis
+            # argued without the test, and nothing to say the test had been tried.
             await simulation.post_result(
                 session,
                 client,
                 job,
                 state=parse_job_state(raw_status),
-                ok=is_success(parse_job_state(raw_status)),
+                ok=ok,
                 outputs=raw_status,
             )
             await simulation.reap_after_collection(session, client, job)
             return
-        await campaign_collect(session, job, raw_status)
+        await campaign_collect(session, job, raw_status, ok)
 
     return collect
 

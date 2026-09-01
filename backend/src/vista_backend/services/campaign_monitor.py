@@ -58,6 +58,10 @@ def is_success(state: str | None) -> bool:
     return normalize_state(state) in _TERMINAL_SUCCESS
 
 
+def is_failure(state: str | None) -> bool:
+    return normalize_state(state) in _TERMINAL_FAILURE
+
+
 def format_job_notification(
     *, run: CampaignRunTable, job: HpcJobTable, state: str, ok: bool
 ) -> tuple[str, str]:
@@ -81,9 +85,9 @@ def format_job_notification(
     return subject, body
 
 
-# poll(session, job) -> (state, raw_status); collect(session, job, raw_status) -> None
+# poll(session, job) -> (state, raw_status); collect(session, job, raw_status, ok) -> None
 PollFn = Callable[[AsyncSession, HpcJobTable], Awaitable[tuple[str, str]]]
-CollectFn = Callable[[AsyncSession, HpcJobTable, str], Awaitable[None]]
+CollectFn = Callable[[AsyncSession, HpcJobTable, str, bool], Awaitable[None]]
 SendEmailFn = Callable[..., Awaitable[bool]]
 
 
@@ -126,6 +130,7 @@ class CampaignMonitor:
             )
             return
 
+        was = job.state  # read before the update below overwrites it
         state, raw_status = await self._poll(session, job)
         await campaign_service.update_job(
             session, job_id=job.job_id, state=state, last_polled_at=now_iso()
@@ -134,16 +139,34 @@ class CampaignMonitor:
             return
 
         ok = is_success(state)
-        if ok:
-            # The collector parses outputs and completes the step (subagent.collect).
-            await self._collect(session, job, raw_status)
-        else:
-            await campaign_service.update_step(
-                session,
-                step_id=job.step_id,
-                status="failed",
-                result={"state": normalize_state(state)},
+        if not ok and not is_failure(was):
+            # A failure is only believed the second time it is said.
+            #
+            # A terminal state used to be final on one reading, and the reading
+            # comes from a scheduler service that can answer for a job it has not
+            # registered yet. On odo that produced FAILED fifty-five seconds after
+            # submission for a job whose own log showed it was still building its
+            # virtualenv — and because a terminal state also stops the watch, no
+            # later poll ever corrected it. The debate was told its simulation had
+            # failed, and spent one of its two runs on a job that was alive.
+            #
+            # Success needs no such confirmation: a scheduler does not report
+            # COMPLETED for a job it has not seen.
+            logger.info(
+                "job %s reported %s from %s; waiting for a second reading before "
+                "treating it as failed",
+                job.job_id,
+                normalize_state(state),
+                normalize_state(was) or "(no prior state)",
             )
+            return
+
+        # Both outcomes go to the collector. A failed run's log is the most useful
+        # thing it produces — it separates "the physics says no" from "the script
+        # had a typo" — and this branch used to throw `raw_status` away and record
+        # the bare state, so whoever was waiting learned that something failed and
+        # never why.
+        await self._collect(session, job, raw_status, ok)
         # The monitor owns "stop watching this job" regardless of the collector.
         await campaign_service.update_job(
             session, job_id=job.job_id, result_collected=True

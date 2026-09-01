@@ -520,3 +520,31 @@ command's stderr onto the host's *stdout*.
       same repo and `gh` is authenticated over it with the osxkeychain helper. The
       forum remote is now the HTTPS URL, re-applied with `--branch-refs` so threads
       keep publishing where a ruleset can protect them.
+
+## 26. A job was declared dead while its log showed it building a virtualenv
+
+- [x] 26.1 Root cause of "the odo job completed but the agent said it failed": odo's
+      IRI reported `FAILED` fifty-five seconds after submission — forty-five seconds
+      after the same client had logged `Resource … is not UP (current status:
+      unknown)` — most likely answering for a job it had not registered yet. The
+      Slurm log fetched during that very poll is still on disk and ends
+      `[salt-neutronics-tbr] env ready on odo03`, so the job was alive and setting up.
+- [x] 26.2 A terminal state was final on one reading, and a terminal state also sets
+      `result_collected`, so nothing ever looked again. A failure is now believed only
+      when a second consecutive poll repeats it. Success is exempt: a scheduler does
+      not report `COMPLETED` for a job it has not seen.
+- [x] 26.3 The monitor called the collector only on success and wrote `{"state":
+      "FAILED"}` on failure, discarding `raw_status` — which held the log that
+      disproved the verdict. Both outcomes now go to the collector with an `ok` flag,
+      and the campaign path keeps the status text on the step. A failed run's log is
+      the most useful thing it produces: it separates "the physics says no" from "the
+      script had a typo".
+- [x] 26.4 A debate that lost a run now posts it. `post_result` had always rendered
+      failures correctly — "did not complete", with the report attached — but was
+      unreachable on that path, so the thread carried no sign a test had been tried.
+- [x] 26.5 Four mutations pinned: no confirmation, confirmation demanded of successes
+      too, failures withheld from the collector, and the campaign collector dropping
+      the log. Fixing 26.2 also exposed a test of my own that passed for the wrong
+      reason — `reconcile_once` swallows per-job exceptions, so an `AssertionError`
+      raised inside an injected collector never reaches pytest. It asserts on a
+      recorded flag now.

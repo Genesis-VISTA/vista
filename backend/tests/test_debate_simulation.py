@@ -434,6 +434,53 @@ async def test_the_tool_hands_the_agent_the_job_output(client, session, alice):
     )
 
 
+@pytest.mark.anyio
+async def test_a_failed_run_hands_the_agent_the_log(client, session, alice):
+    """
+    Why it failed is the part the debate can use.
+
+    The Proposer was told `outcome: failed FAILED` and `(no outputs recorded)` for
+    a job whose log — fetched during the same poll and then discarded — showed it
+    had only just finished building its virtualenv. With nothing to go on it
+    reported the run as a genuine gap and argued from literature, which was the
+    honest reading of what it had been given and the wrong reading of what had
+    happened.
+    """
+    from vista_backend.agents.forum.grounding import Grounding, build_toolset
+    from vista_backend.agents.forum.roles import DebateDeps
+    from vista_backend.agents.forum.simulation import JobOutcome
+
+    async def commissioner(**kwargs):
+        return JobOutcome(
+            job_id="44018",
+            finished=True,
+            ok=False,
+            state="FAILED",
+            outputs="STATE=FAILED\n--- LOGS ---\n[salt-neutronics-tbr] env ready on odo03",
+        )
+
+    toolset = build_toolset("proposer", Grounding(simulation=commissioner))
+    assert toolset is not None
+    _, participant = await _debate(client, session, alice)
+
+    from pydantic_ai import RunContext
+    from pydantic_ai.usage import RunUsage
+
+    ctx = RunContext(  # type: ignore[arg-type]
+        deps=DebateDeps(topic="t", participant=participant),
+        model=None,
+        usage=RunUsage(),
+    )
+    out = await toolset.tools["commission_simulation"].function(
+        ctx, job="salt-neutronics-tbr", prediction="TBR peaks near 40 mol % BeF2"
+    )
+    assert "failed" in out
+    assert "env ready on odo03" in out, (
+        "a role that cannot see the log cannot tell a broken script from a "
+        "scheduler that answered for a job it had not registered"
+    )
+
+
 def test_the_referee_cannot_commission_work():
     """
     A referee that goes and generates new evidence is arguing, which is what its
@@ -507,7 +554,7 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
     job = await _commission(client, session, alice, run, participant)
 
     collect = wiring.build_debate_aware_collector(planner_must_not_run)
-    await collect(session, job, "STATE=COMPLETED\nviscosity: flat")
+    await collect(session, job, "STATE=COMPLETED\nviscosity: flat", True)
 
     thread = await client.read_thread(run.thread_id)
     finding = next(p for p in thread.posts if p.kind == "FINDING")
@@ -546,8 +593,86 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, a
         return _Planner()
 
     collect = wiring.build_debate_aware_collector(provider)
-    await collect(session, job, "STATE=COMPLETED")
+    await collect(session, job, "STATE=COMPLETED", True)
     assert seen == ["j7"]
+
+
+@pytest.mark.anyio
+async def test_a_failed_run_is_posted_to_the_thread_too(
+    client, session, alice, monkeypatch
+):
+    """
+    A debate that loses a run should say so on the thread.
+
+    `post_result` has always written failures correctly — "did not complete",
+    with the status text attached — but the monitor only called the collector on
+    success, so nothing was posted at all. A reader saw a hypothesis argued
+    without its test and no sign the test had ever been attempted; the receipt on
+    the commissioning post was the only trace, and only that agent could see it.
+    """
+    from vista_backend.agents.campaign import wiring
+
+    monkeypatch.setattr(wiring, "build_forum_client", lambda: client)
+
+    async def planner_must_not_run(session, job):  # pragma: no cover - guard
+        raise AssertionError("a debate job has no planner to collect through")
+
+    run, participant = await _debate(client, session, alice)
+    job = await _commission(client, session, alice, run, participant)
+
+    collect = wiring.build_debate_aware_collector(planner_must_not_run)
+    await collect(
+        session, job, "STATE=FAILED\n--- LOGS ---\nsrun: error: task 0 exited", False
+    )
+
+    thread = await client.read_thread(run.thread_id)
+    finding = next(p for p in thread.posts if p.kind == "FINDING")
+    assert "did not complete" in finding.body
+    assert "task 0 exited" in finding.body, "the log is what makes it useful"
+
+    step = await campaign_service.get_step(session, job.step_id)
+    assert step.status == "failed"
+    assert "task 0 exited" in step.result["outputs"]
+
+
+@pytest.mark.anyio
+async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session, alice):
+    """
+    Same for an ordinary campaign, where there is no planner run to parse it.
+
+    The step used to record `{"state": "FAILED"}` and nothing else — the status
+    text, which is where the scheduler explains itself, went in the bin.
+    """
+    from vista_backend.agents.campaign import wiring
+
+    project = ProjectTable(name="ordinary-failure")
+    session.add(project)
+    await session.flush()
+    campaign = await campaign_service.create_campaign(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        domain="splash",
+        planner_skill="splash-planner",
+    )
+    step = await campaign_service.add_step(
+        session, run_id=campaign.id, cycle=0, kind="neutronics"
+    )
+    job = await campaign_service.record_job(
+        session, job_id="j8", step_id=step.id, user_id=alice.id, cluster="odo"
+    )
+    await campaign_service.update_job(session, job_id="j8", state="FAILED")
+
+    async def planner_must_not_run(session, job):  # pragma: no cover - guard
+        raise AssertionError("there is nothing to parse in a failed job")
+
+    collect = wiring.build_collector(planner_must_not_run)
+    await collect(session, job, "STATE=FAILED\nOUT_OF_MEMORY at step 3", False)
+
+    refreshed = await campaign_service.get_step(session, step.id)
+    assert refreshed.status == "failed"
+    assert refreshed.result["state"] == "FAILED"
+    assert "OUT_OF_MEMORY at step 3" in refreshed.result["outputs"]
 
 
 # --------------------------------------------------------------------------- #
