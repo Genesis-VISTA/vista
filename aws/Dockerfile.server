@@ -73,6 +73,8 @@ ENV VISTA_DATA_DIR=/data
 # I can't make this default to be under data, as you get weird errors about "agent relay socket path is too long" if
 # the directory is nested deeply. But can make under data it in the deployment.
 ENV MSB_HOME=/data/msb
+ENV VISTA_UI_HOST=0.0.0.0
+ENV VISTA_BACKEND_HOST=0.0.0.0
 
 EXPOSE 3000 8001
 ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build"]
