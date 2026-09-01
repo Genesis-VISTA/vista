@@ -146,6 +146,32 @@ class ForumDisabled(ForumError):
     """The feature is off, or `repo_root` is unset. Raised before any subprocess."""
 
 
+DETAIL_LIMIT = 400
+"""How much of a failed command's output goes in the exception message."""
+
+
+def _collapse(output: str) -> str:
+    """
+    Every line of a command's output, on one line, bounded.
+
+    This used to take the *last* line, on the theory that a CLI prints progress
+    and then its error. Git does the opposite: the cause comes first and the
+    boilerplate follows, so a blocked SSH port reported itself as
+
+        `h5i forum sync` exited 1: and the repository exists.
+
+    — the tail of "Please make sure you have the correct access rights / and the
+    repository exists", with `ERROR: Repository not found` four lines above it and
+    thrown away. Both ends carry the cause for some tool, so neither end is
+    dropped; the streams are still on the exception in full for anyone who wants
+    the original shape.
+    """
+    joined = " · ".join(line.strip() for line in output.splitlines() if line.strip())
+    if len(joined) > DETAIL_LIMIT:
+        return joined[: DETAIL_LIMIT - 1].rstrip() + "…"
+    return joined or "no output"
+
+
 class ForumCommandError(ForumError):
     """An h5i command failed. Carries the argv and both streams for diagnosis."""
 
@@ -156,9 +182,9 @@ class ForumCommandError(ForumError):
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
-        detail = (stderr.strip() or stdout.strip() or "no output").splitlines()
         super().__init__(
-            f"`{shlex.join(argv)}` exited {returncode}: {detail[-1] if detail else ''}"
+            f"`{shlex.join(argv)}` exited {returncode}: "
+            f"{_collapse(stderr.strip() or stdout.strip() or 'no output')}"
         )
 
 

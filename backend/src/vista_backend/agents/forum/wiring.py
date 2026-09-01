@@ -300,11 +300,17 @@ async def ensure_federation(client: ForumClient | None = None) -> None:
                 result.pulled,
                 result.pushed,
             )
-        except Exception:  # noqa: BLE001 — an unreachable remote must not stop boot
+        except Exception as exc:  # noqa: BLE001 — an unreachable remote must not stop boot
+            # The cause goes on the warning line, not only in the traceback below
+            # it. A boot warning is read in a scrolling launch log where the
+            # traceback is the part that gets skipped, and "could not reach" alone
+            # does not distinguish a missing repo from a firewalled port — which
+            # is the difference between creating a repo and changing a URL.
             logger.warning(
-                "forum: could not reach %s — debates will run locally and publish "
-                "nothing until it is fixed",
+                "forum: could not reach %s (%s) — debates will run locally and "
+                "publish nothing until it is fixed",
                 config.remote_url,
+                exc,
                 exc_info=True,
             )
 

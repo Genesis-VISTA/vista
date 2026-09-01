@@ -491,3 +491,52 @@ async def test_enrollment_parses_h5i_field_names(client, forum_root):
         "`--json` emits the same object with and without `--verify`, so a "
         "`verified` field could only ever read as False when it means unasked"
     )
+
+
+def test_a_failure_keeps_the_line_that_says_why():
+    """
+    Git puts the cause first and the boilerplate after it.
+
+    Taking the last line reported a firewalled SSH port as "and the repository
+    exists." — the tail of the advice paragraph, with `Repository not found` four
+    lines above it and discarded. Whoever read that warning went looking for a
+    missing repo that was there all along.
+    """
+    err = (
+        "ERROR: Repository not found.\n"
+        "fatal: Could not read from remote repository.\n"
+        "\n"
+        "Please make sure you have the correct access rights\n"
+        "and the repository exists.\n"
+    )
+    message = str(h5i_forum.ForumCommandError(["h5i", "forum", "sync"], 1, "", err))
+    assert "Repository not found" in message
+    assert "`h5i forum sync` exited 1" in message
+    assert "\n" not in message, "a log line must stay one line"
+
+
+def test_a_failure_falls_back_to_stdout_and_then_to_nothing():
+    """Some h5i commands report on stdout, and some report nothing at all."""
+    on_stdout = str(
+        h5i_forum.ForumCommandError(["h5i", "box", "ls"], 2, "no such box", "")
+    )
+    assert "no such box" in on_stdout
+
+    silent = str(h5i_forum.ForumCommandError(["h5i", "box", "ls"], 2, "  \n ", ""))
+    assert "no output" in silent
+
+
+def test_a_runaway_stream_is_truncated_not_dropped():
+    """
+    The whole stream is on the exception; the message is bounded.
+
+    A command that dumps a corpus should not put all of it on one log line, but
+    it must not lose the first line either — that is where the cause is.
+    """
+    err = "fatal: the actual cause\n" + "\n".join(f"noise {i}" for i in range(500))
+    exc = h5i_forum.ForumCommandError(["h5i", "forum", "sync"], 1, "", err)
+    message = str(exc)
+    assert "fatal: the actual cause" in message
+    assert len(message) < 500
+    assert message.endswith("\u2026")
+    assert "noise 499" in exc.stderr, "the full stream survives on the exception"

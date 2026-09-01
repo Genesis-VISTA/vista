@@ -496,3 +496,27 @@ command's stderr onto the host's *stdout*.
       uses — the job's first reachable cluster — so omitting the argument is not a way
       to retry a dead credential. That also fixes the receipt, which used to record
       "the default cluster" where provenance needs a machine name.
+
+## 26. A boot warning that named everything except the cause
+
+- [x] 26.1 `ForumCommandError` took the *last* line of a failed command's output, on
+      the theory that a CLI prints progress and then its error. Git does the opposite:
+      the cause comes first and the advice paragraph follows. So a firewalled SSH port
+      reported itself as `` `h5i forum sync` exited 1: and the repository exists`` —
+      the tail of "Please make sure you have the correct access rights / and the
+      repository exists", with `ERROR: Repository not found` four lines above it and
+      thrown away. It read as a missing repo; the repo was there the whole time.
+- [x] 26.2 `_collapse` joins every non-empty line with ` · ` and truncates at 400
+      characters. Neither end is dropped, because either end carries the cause for
+      some tool, and the full streams stay on the exception for anyone who wants the
+      original shape. Pinned under mutation back to `lines[-1]`.
+- [x] 26.3 `ensure_federation` puts the exception on the warning line rather than only
+      in the traceback under it. A boot warning is read in a scrolling launch log,
+      where the traceback is exactly the part that gets skipped — and "could not reach"
+      alone does not separate a missing repo from a blocked port, which is the
+      difference between creating a repo and changing one character of a URL.
+- [x] 26.4 The deployment cause was environmental: github.com:22 is blocked on this
+      network (`Connection timed out during banner exchange`), while HTTPS reaches the
+      same repo and `gh` is authenticated over it with the osxkeychain helper. The
+      forum remote is now the HTTPS URL, re-applied with `--branch-refs` so threads
+      keep publishing where a ruleset can protect them.
