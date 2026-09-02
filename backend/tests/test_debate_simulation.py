@@ -977,6 +977,74 @@ async def test_the_budget_stops_a_third_simulation(
 
 
 # --------------------------------------------------------------------------- #
+# How to invoke a job
+# --------------------------------------------------------------------------- #
+
+
+def _job_with_readme(tmp_path, name: str, readme: str) -> Path:
+    catalog = tmp_path / "hpc_jobs"
+    (catalog / name).mkdir(parents=True, exist_ok=True)
+    (catalog / name / "README.md").write_text(readme)
+    return catalog
+
+
+def test_a_jobs_usage_comes_from_its_own_readme(tmp_path):
+    """
+    The fix for two submissions that died on invented flags.
+
+    `--salt flibe_90Li6 --geometry arc_lib --multiplier beberyllide_nearwall_30cm`
+    and `--composition-sweep --bef2-mol-pct 10,20,33`, against a script whose
+    options are `--bef2`, `--li6` and friends. argparse exits 2 on an unknown
+    option, so each cost a real submission and one of the debate's two permitted
+    runs to print a usage message to a stream nothing fetched.
+    """
+    catalog = _job_with_readme(
+        tmp_path,
+        "salt-neutronics-tbr",
+        "# TBR\n\nRuns one state point.\n\n"
+        "## Arguments\n"
+        "- Composition (exactly one): `--bef2 P` | `--be-multiplier M`\n"
+        "- `--li6 E`  Li-6 enrichment atom fraction\n\n"
+        "Prose about neutronics that mentions no options at all.\n\n"
+        '        script_args="--bef2 33.33 --li6 0.075")\n',
+    )
+    usage = simulation.usage_for_job("salt-neutronics-tbr", catalog)
+
+    assert "--bef2" in usage
+    assert "--li6" in usage
+    assert 'script_args="--bef2 33.33 --li6 0.075")' in usage
+    assert "Prose about neutronics" not in usage, "only the lines about arguments"
+
+
+def test_a_job_with_no_readme_offers_no_usage(tmp_path):
+    """Silence, not a guess. A job we cannot document is not a job to invent flags for."""
+    catalog = tmp_path / "hpc_jobs"
+    (catalog / "undocumented").mkdir(parents=True)
+    assert simulation.usage_for_job("undocumented", catalog) == ""
+    assert simulation.usage_for(["undocumented"], catalog) == {}
+
+
+def test_a_long_usage_is_capped(tmp_path):
+    from vista_backend.agents.forum.simulation import USAGE_CHARS
+
+    catalog = _job_with_readme(
+        tmp_path,
+        "verbose",
+        "\n".join(f"- `--flag-{i} V` describes it" for i in range(200)),
+    )
+    usage = simulation.usage_for_job("verbose", catalog)
+    assert len(usage) <= USAGE_CHARS + 60
+    assert "see the job's README" in usage
+
+
+def test_usage_covers_only_the_jobs_asked_for(tmp_path):
+    catalog = _job_with_readme(tmp_path, "wanted", "- `--wanted-flag V`")
+    _job_with_readme(tmp_path, "unwanted", "- `--unwanted-flag V`")
+    usage = simulation.usage_for(["wanted"], catalog)
+    assert set(usage) == {"wanted"}
+
+
+# --------------------------------------------------------------------------- #
 # Federation settings actually applying
 # --------------------------------------------------------------------------- #
 

@@ -530,6 +530,7 @@ def build_orchestrator(
     checkpoint=None,
     grounding: Grounding | None = None,
     runnable: dict[str, list[str]] | None = None,
+    job_usage: dict[str, str] | None = None,
     knowledge_bases: list[str] | None = None,
 ) -> DebateOrchestrator:
     client = build_client()
@@ -540,6 +541,7 @@ def build_orchestrator(
         on_post=on_post,
         checkpoint=checkpoint,
         runnable=runnable,
+        job_usage=job_usage,
         knowledge_bases=knowledge_bases,
     )
 
@@ -575,6 +577,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
+                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_dir),
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).resume(session, run=run, extra_rounds=extra_rounds)
             await session.commit()
@@ -613,6 +616,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
+                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_dir),
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).run(session, run)
             await session.commit()

@@ -600,3 +600,45 @@ command's stderr onto the host's *stdout*.
       `_summarise_prior` test used a three-line verdict, where a digest is the whole
       thing. It is now asserted through the lookup's own answer on a verdict of
       realistic size, which is the only place the saving actually exists.
+
+## 29. The agent invented flags, and the error was in a file nobody fetched
+
+- [x] 29.1 Root cause of "the job produced no output": the agent's `script_args`.
+      Job 44039 was launched with `--salt flibe_90Li6 --geometry arc_lib --multiplier
+      beberyllide_nearwall_30cm --compare chloride_ternary_natCl`; 44018 with
+      `--composition-sweep --bef2-mol-pct 10,20,33,…`. `run_state_point.py` accepts
+      `--skill-root`, `--output-dir`, `--bef2`, `--be-multiplier`, `--li6`,
+      `--nominal-bef2`, `--allow-extrapolation`. argparse exits 2 on an unknown
+      option — which is exactly the `EXIT_CODE=2` both jobs reported.
+- [x] 29.2 The invocation is now in the situation. `usage_for_job` reads the flag
+      lines out of `hpc_jobs/<job>/README.md` — which already documents the options
+      and gives a worked `script_args=` example — and `_situation` renders them under
+      each runnable job. It was never shown to a debating role before:
+      `read_domain_guidance` serves the *skill* body, and for this skill that
+      documents `python -m salt_neutronics.cli`, a different interface from the HPC
+      wrapper's.
+- [x] 29.3 Extraction is "every line mentioning a long option", not a section parse:
+      a heading convention is a thing for the next README to get subtly wrong, and
+      the few neighbouring lines it also catches (a range caveat, a "you MUST pass
+      `--model`" warning) are worth having. Capped at `USAGE_CHARS`.
+- [x] 29.4 The tool docstring told it the wrong job name. "name the `hpc_jobs/<name>`
+      that would test it" is why every commissioning turn opened with
+      `job="hpc_jobs/salt-neutronics-tbr"`, was refused, and retried — one request
+      out of twelve, every turn, spent on an error we authored.
+- [x] 29.5 stderr is fetched and shown. Every cluster spec has always set
+      `stdout_path` **and** `stderr_path`; only stdout was recorded, so only stdout
+      was fetched, so a job that died with a usage message or a traceback looked
+      silent. `SubmittedJob` carries `err_path`, both files ride one Globus task (the
+      overhead is per task, not per file), and the status text has a `--- STDERR ---`
+      section. A failed fetch says so rather than rendering as an absence.
+- [x] 29.6 `submit_hpc_job` now returns the rendered `log_path`, `err_path` and
+      `output_dir`, and `parse_submit_summary` keeps them. They existed only in the
+      MCP server's own registry, so Vista's job rows were blank and the report
+      attached to a debate's FINDING post named no file a human could open.
+- [x] 29.7 Nine mutations pinned. Two survived first: dropping the digest… no —
+      dropping the stderr fetch from the *OLCF* path, and collapsing a failed fetch
+      into an absence. The OLCF status path had no test at all, because
+      `FakeGlobusClient` recorded transfers without writing files — fine while every
+      transfer went outward, useless for a path that pulls logs in and reads them off
+      disk. The fake now lands whatever a test seeds. Same lesson as the fake h5i
+      status vocabulary (§19.3) and the bare job catalogue (§23.5).

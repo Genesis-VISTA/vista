@@ -49,6 +49,40 @@ def test_persist_then_load_round_trip(tmp_path, monkeypatch):
     assert loaded["789"].output_dir == "/o/789"
 
 
+def test_the_registry_carries_the_stderr_path(tmp_path, monkeypatch):
+    """
+    Every cluster spec writes a stderr file; only stdout used to be recorded.
+
+    So only stdout was ever fetched, and a job that died with a traceback or an
+    argparse usage message looked silent — the `.out` file held the setup echoes
+    and stopped, and the reason sat in a file nothing here knew existed. Two
+    debate simulations reached an agent as "no outputs recorded" that way.
+    """
+    jobs = {
+        "44039": SubmittedJob(
+            cluster="odo",
+            log_path="/o/44039/log-44039.out",
+            err_path="/o/44039/log-44039.err",
+            output_dir="/o/44039",
+        )
+    }
+    restored = _deserialize_jobs(_serialize_jobs(jobs))
+    assert restored["44039"].err_path == "/o/44039/log-44039.err"
+
+    path = tmp_path / "reg.json"
+    monkeypatch.setattr(m, "_submitted_jobs", jobs)
+    _persist_submitted_jobs(path)
+    assert _load_submitted_jobs(path)["44039"].err_path == "/o/44039/log-44039.err"
+
+
+def test_a_registry_written_before_stderr_was_recorded_still_loads():
+    """A job submitted by the previous build has no `err_path`; it stays pollable."""
+    old = {"1": {"cluster": "odo", "log_path": "/o/l.out", "output_dir": "/o"}}
+    restored = _deserialize_jobs(old)
+    assert restored["1"].log_path == "/o/l.out"
+    assert restored["1"].err_path is None
+
+
 def test_load_missing_file_returns_empty(tmp_path):
     assert _load_submitted_jobs(tmp_path / "does-not-exist.json") == {}
 

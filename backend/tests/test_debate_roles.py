@@ -699,3 +699,42 @@ async def test_a_role_is_told_which_clusters_each_job_runs_on():
     assert "frontier or odo or perlmutter" not in prompt, (
         "one joined list is what let a role pick a cluster its job cannot use"
     )
+
+
+def test_the_situation_tells_a_role_how_to_invoke_the_job():
+    """
+    `script_args` is a free-text string, so a role given no help invents flags.
+
+    Two real submissions died that way and each cost one of the debate's two
+    permitted runs. The job's README documents the options and gives a worked
+    example; it was simply never put in front of a debating role.
+    """
+    from vista_backend.agents.forum.roles import _situation
+
+    deps = DebateDeps(
+        topic="best BeF2 fraction",
+        runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]},
+        job_usage={
+            "salt-neutronics-tbr": '- `--bef2 P`\n        script_args="--bef2 33.33"',
+            "salt-chemistry-md": "- `--temperature T`",
+        },
+    )
+    out = _situation(deps, _thread())
+
+    assert "salt-neutronics-tbr (on odo or perlmutter)" in out
+    assert "`script_args` for salt-neutronics-tbr:" in out
+    assert "--bef2 33.33" in out
+    # A job this debate cannot run is not described. Offering the invocation for
+    # something unreachable is an invitation to try it.
+    assert "--temperature" not in out
+    assert "salt-chemistry-md" not in out
+
+
+def test_a_job_with_no_usage_note_is_still_offered():
+    """The usage is help, not a gate: a job we cannot document is still runnable."""
+    from vista_backend.agents.forum.roles import _situation
+
+    deps = DebateDeps(topic="t", runnable={"undocumented": ["odo"]}, job_usage={})
+    out = _situation(deps, _thread())
+    assert "undocumented (on odo)" in out
+    assert "`script_args` for" not in out

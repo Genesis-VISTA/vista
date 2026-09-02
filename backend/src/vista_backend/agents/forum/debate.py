@@ -128,6 +128,7 @@ class DebateOrchestrator:
         on_post: PostHook | None = None,
         checkpoint: Checkpoint | None = None,
         runnable: dict[str, list[str]] | None = None,
+        job_usage: dict[str, str] | None = None,
         knowledge_bases: list[str] | None = None,
     ) -> None:
         self.client = client
@@ -135,6 +136,7 @@ class DebateOrchestrator:
         self.on_post = on_post
         self.checkpoint = checkpoint
         self.runnable = runnable or {}
+        self.job_usage = job_usage or {}
         self.knowledge_bases = knowledge_bases or []
 
     # -- setup ------------------------------------------------------------- #
@@ -576,6 +578,7 @@ class DebateOrchestrator:
         """Deps for one turn, including what this debate is allowed to run."""
         deps = _deps(run, round_index, participant)
         deps.runnable = self.runnable
+        deps.job_usage = self.job_usage
         # Which corpora the search tool may name. Empty means the project has
         # none, in which case the tool was not granted either.
         deps.knowledge_bases = self.knowledge_bases

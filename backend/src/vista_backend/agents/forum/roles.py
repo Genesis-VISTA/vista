@@ -288,6 +288,21 @@ class DebateDeps:
 
     knowledge_bases: list[str] = field(default_factory=list)
 
+    job_usage: dict[str, str] = field(default_factory=dict)
+    """
+    How to invoke each runnable job, from the job's own README.
+
+    Offered unasked, because `script_args` is a free-text string and a role with
+    no help invents plausible flags. Two real submissions died that way —
+    `--salt flibe_90Li6 --geometry arc_lib` and `--composition-sweep
+    --bef2-mol-pct 10,20,33` against a script whose options are `--bef2`,
+    `--li6`, `--be-multiplier`, `--nominal-bef2` and `--allow-extrapolation`.
+    argparse exits 2 on an unknown option, so each cost a cluster submission and
+    one of the debate's two permitted runs to print a usage message.
+
+    A few hundred tokens a turn against that is not a close call.
+    """
+
     runnable: dict[str, list[str]] = field(default_factory=dict)
     """
     Simulations this debate may commission, each with the clusters it can run on.
@@ -396,6 +411,12 @@ def _situation(deps: DebateDeps, thread: Thread) -> str:
             f"\nSimulations you may commission: {offered}."
             " Use one only to settle a prediction argument cannot."
         )
+        # The flags, verbatim from each job's README. Composing `script_args` from
+        # documentation instead of from guesswork is the difference between a run
+        # and an argparse usage message.
+        for job, usage in sorted(deps.job_usage.items()):
+            if job in deps.runnable:
+                header.append(f"\n`script_args` for {job}:\n{usage}")
 
     transcript = render_transcript(thread)
     if transcript:

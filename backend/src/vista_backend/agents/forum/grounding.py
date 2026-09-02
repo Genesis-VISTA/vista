@@ -341,7 +341,11 @@ def build_toolset(
             Run a simulation to test one specific prediction from this debate.
 
             Use it to settle a disagreement that argument cannot: name the
-            prediction under test and the `hpc_jobs/<name>` that would test it.
+            prediction under test and the job that would test it. `job` is the
+            bare name as listed above — `salt-neutronics-tbr`, not
+            `hpc_jobs/salt-neutronics-tbr`. Compose `script_args` from the flags
+            listed for that job; an option the script does not know makes it exit
+            without running.
 
             This waits for the job and returns its output, so you can use the
             answer in the post you are about to write. It can take a long time.

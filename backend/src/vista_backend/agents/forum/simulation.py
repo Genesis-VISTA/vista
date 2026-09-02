@@ -38,9 +38,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -161,6 +162,62 @@ def runnable_simulations(
         for job in runnable_jobs(project_skills, catalog)
     )
     return {job: clusters for job, clusters in pairs if clusters}
+
+
+_FLAG = re.compile(r"--[a-z][a-z0-9-]{2,}")
+"""A long option in a job's README — the marker for "this line is about arguments"."""
+
+USAGE_CHARS = 900
+"""
+Ceiling on one job's usage note.
+
+Big enough for the whole argument list of both jobs on this deployment (466 and
+637 characters), small enough that offering it every turn costs less than one
+wasted submission.
+"""
+
+
+def usage_for_job(job: str, catalog: Path) -> str:
+    """
+    How to invoke a job, taken from the job's own README.
+
+    `script_args` is a free-text string, and a role given no help with it invents
+    plausible flags: `--salt flibe_90Li6 --geometry arc_lib --multiplier
+    beberyllide_nearwall_30cm`, against a script that accepts `--bef2`, `--li6`,
+    `--be-multiplier`, `--nominal-bef2` and `--allow-extrapolation`. argparse
+    exits 2 on an unknown option, so the job burns a submission and a slot in the
+    debate's budget to print a usage message onto a stream nobody reads.
+
+    The README already answers this — `hpc_jobs/<job>/README.md` documents the
+    flags and gives a worked `script_args=` example. It was simply never shown to
+    a debating role: `read_domain_guidance` serves the *skill* body, and for this
+    skill that documents a different interface (`python -m salt_neutronics.cli`)
+    from the one the HPC wrapper exposes.
+
+    Extraction is deliberately "every line mentioning a long option" rather than a
+    section parse. A heading convention is a thing for the next job's README to
+    get subtly wrong; a line with `--flag` in it is about arguments in any layout,
+    and the few neighbouring lines it also catches — a range caveat, a "you MUST
+    pass" warning — are worth having.
+    """
+    readme = catalog / job / "README.md"
+    try:
+        text = readme.read_text()
+    except OSError:
+        return ""
+    lines = [line.rstrip() for line in text.splitlines() if _FLAG.search(line)]
+    if not lines:
+        return ""
+    usage = "\n".join(lines)
+    if len(usage) > USAGE_CHARS:
+        usage = usage[:USAGE_CHARS] + "\n… see the job's README for the rest."
+    return usage
+
+
+def usage_for(jobs: Iterable[str], catalog: Path) -> dict[str, str]:
+    """Usage notes for the jobs that have one, keyed by job."""
+    found = ((job, usage_for_job(job, catalog)) for job in jobs)
+    return {job: usage for job, usage in found if usage}
 
 
 async def commissioned_count(session: AsyncSession, *, debate_run_id: uuid.UUID) -> int:
