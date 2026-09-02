@@ -573,3 +573,30 @@ command's stderr onto the host's *stdout*.
       own that was green on timing luck — it slept "a few poll intervals" and the
       fixture's interval is 10 ms, so the stream completed one pass before the run
       closed. It counts polls now.
+
+## 28. Precedent cost twelve thousand tokens a lookup
+
+- [x] 28.1 `_summarise_prior` matched on any single title word longer than three
+      characters and quoted each match's whole verdict. On a forum that is about one
+      subject every title says "FLiBe" or "TBR", so nearly everything matched.
+      Measured against the live database: six finished threads, 49,098 characters of
+      verdict, ~12,300 tokens for one call — plus six forum reads at ~1.5s each now
+      that the forum has a remote.
+- [x] 28.2 Matches are ranked by how many query words the title shares, then by
+      recency, and the best `PRIOR_DEBATE_LIMIT` (3) are read. Ranking is what makes
+      the cap safe: where every title shares one word, the count is the only thing
+      separating the apt thread from the adjacent one.
+- [x] 28.3 Each verdict is digested to its ranked claims, their confidence, and what
+      it left unresolved. The `*Standing.*` narrative and `**Why this order.**`
+      rationale are the argument behind the conclusions and 85% of the length, and a
+      role reading precedent is not re-litigating the debate that produced it. A
+      verdict that does not match our layout — a peer's, written by their agent — is
+      clipped to `PRIOR_DIGEST_CHARS` rather than dropped.
+- [x] 28.4 Net: ~12,300 tokens → ~905, and six forum reads → three. The dropped-match
+      count is stated, not silent: a silent cap reads as "that is all there is", and
+      the role would draw a conclusion from an absence we manufactured.
+- [x] 28.5 Five mutations pinned. A sixth — deleting the `_verdict_digest` call from
+      the lookup — survived at first: the digest was tested in isolation and every
+      `_summarise_prior` test used a three-line verdict, where a digest is the whole
+      thing. It is now asserted through the lookup's own answer on a verdict of
+      realistic size, which is the only place the saving actually exists.

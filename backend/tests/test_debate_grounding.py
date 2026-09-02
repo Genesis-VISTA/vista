@@ -772,6 +772,193 @@ async def _ready(value):
 # --------------------------------------------------------------------------- #
 
 
+def test_the_digest_keeps_the_conclusions_and_drops_the_argument():
+    """
+    Built from the real renderer, so a change to the verdict layout lands here.
+
+    A role reading precedent needs to know what was concluded and what is still
+    open — enough not to re-propose something this forum already rejected. It is
+    not re-litigating the earlier debate, and the reasoning is most of the length:
+    on this forum verdicts run 3.5k-11.4k characters and their conclusions are
+    about 1.2k of that.
+    """
+    from vista_backend.agents.forum.grounding import _verdict_digest
+    from vista_backend.agents.forum.roles import (
+        Hypothesis,
+        RankedHypothesis,
+        Verdict,
+    )
+
+    verdict = Verdict(
+        ranked=[
+            RankedHypothesis(
+                hypothesis=Hypothesis(
+                    note="the post as it was written",
+                    claim="the eutectic is the best achievable composition",
+                    mechanism="density falls faster than (n,2n) compensates",
+                    predictions=["TBR >= 1.05 at 33 mol %"],
+                    confidence=0.52,
+                ),
+                standing="EIGHT-ROUND-NARRATIVE " * 40,
+            )
+        ],
+        rationale="WHY-THIS-ORDER-PROSE " * 60,
+        unresolved=["whether the peak sits modestly above the eutectic"],
+    )
+    body = verdict.to_post_body()
+    digest = _verdict_digest(body)
+
+    assert "the eutectic is the best achievable composition" in digest
+    assert "0.52" in digest, "whether it was held or rejected is the point"
+    assert "whether the peak sits modestly above the eutectic" in digest
+    assert "EIGHT-ROUND-NARRATIVE" not in digest, "the standing narrative is argument"
+    assert "WHY-THIS-ORDER-PROSE" not in digest, "so is the rationale"
+    assert len(digest) < len(body) / 4
+
+
+def test_a_verdict_in_an_unfamiliar_format_is_clipped_not_dropped():
+    """
+    A peer's verdict is written by whatever agent they run and owes ours no layout.
+
+    Returning nothing would make their debate invisible as precedent; returning
+    all of it is the cost this change exists to remove.
+    """
+    from vista_backend.agents.forum.grounding import (
+        PRIOR_DIGEST_CHARS,
+        _verdict_digest,
+    )
+
+    foreign = "\n".join(
+        f"we conclude line {i} of a freely written verdict" for i in range(200)
+    )
+    digest = _verdict_digest(foreign)
+
+    assert len(digest) <= PRIOR_DIGEST_CHARS + 60
+    assert "we conclude line 0" in digest
+    assert "trimmed at" in digest, "short and trimmed have to be distinguishable"
+
+
+async def _finished(client, title: str, verdict: str) -> str:
+    """A thread that reached a verdict, which is what counts as precedent."""
+    thread = await client.create_thread(title, body="go")
+    participant = await client.create_participant(
+        box_slug=f"referee-{title[:8].replace(' ', '-')}",
+        identity=f"vista-referee-{title[:8].replace(' ', '-')}",
+        role=ParticipantRole.WORKER,
+    )
+    await client.post_as(participant, thread, verdict, kind="DONE")
+    return thread
+
+
+@pytest.mark.anyio
+async def test_only_the_closest_few_debates_are_quoted(tmp_path):
+    """
+    A cheap match is not a cheap answer.
+
+    Overlap on any single word matched nearly every thread on a forum that is
+    about one subject — every title here says FLiBe — and each match pulled a
+    whole verdict into the turn and cost a forum read to get it.
+    """
+    from vista_backend.agents.forum.grounding import (
+        PRIOR_DEBATE_LIMIT,
+        _summarise_prior,
+    )
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    for i in range(PRIOR_DEBATE_LIMIT + 2):
+        await _finished(
+            client, f"FLiBe question {i}", f"## Verdict\n\n**1. answer {i}**"
+        )
+
+    out = await _summarise_prior(client, "FLiBe")
+
+    quoted = [i for i in range(PRIOR_DEBATE_LIMIT + 2) if f"answer {i}" in out]
+    assert len(quoted) == PRIOR_DEBATE_LIMIT
+    # Said, not hidden: a silent cap reads as "that is all there is", and the role
+    # would draw a conclusion from an absence we manufactured.
+    assert "2 further matching debate(s) not quoted" in out
+
+
+@pytest.mark.anyio
+async def test_the_lookup_returns_the_digest_and_not_the_whole_verdict(tmp_path):
+    """
+    Testing `_verdict_digest` alone was not enough — dropping the call from
+    `_summarise_prior` left every one of these tests green, because their
+    verdicts are three lines long and a digest of three lines is three lines.
+    The saving only exists if the lookup itself does the digesting, so this one
+    asserts it through the tool's own answer, on a verdict of realistic size.
+    """
+    from vista_backend.agents.forum.grounding import _summarise_prior
+    from vista_backend.agents.forum.roles import (
+        Hypothesis,
+        RankedHypothesis,
+        Verdict,
+    )
+
+    verdict = Verdict(
+        ranked=[
+            RankedHypothesis(
+                hypothesis=Hypothesis(
+                    note="the post as written",
+                    claim="the eutectic wins on operability",
+                    predictions=["viscosity stays under 50 mPa s"],
+                    confidence=0.61,
+                ),
+                standing="EIGHT-ROUND-NARRATIVE " * 90,
+            )
+        ],
+        rationale="WHY-THIS-ORDER-PROSE " * 90,
+        unresolved=["whether 36-40 mol % is reachable"],
+    )
+    body = verdict.to_post_body()
+    assert len(body) > 3000, "the fixture has to be big enough for this to matter"
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    await _finished(client, "FLiBe operability window", body)
+
+    out = await _summarise_prior(client, "FLiBe operability")
+
+    assert "the eutectic wins on operability" in out
+    assert "whether 36-40 mol % is reachable" in out
+    assert "EIGHT-ROUND-NARRATIVE" not in out
+    assert "WHY-THIS-ORDER-PROSE" not in out
+    assert len(out) < len(body) / 3, "the whole point is the size of the answer"
+
+
+@pytest.mark.anyio
+async def test_the_most_overlapping_title_wins_the_slot(tmp_path):
+    """
+    With a cap, which threads fill it becomes a decision rather than an accident.
+
+    Ranking by how many query words a title shares is what makes the cap safe: on
+    a forum where everything says FLiBe, the count is the only thing that
+    separates the apt thread from the merely adjacent one.
+    """
+    from vista_backend.agents.forum.grounding import _summarise_prior
+
+    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    await _finished(
+        client, "FLiBe corrosion of steel", "## Verdict\n\n**1. CORROSION-ANSWER**"
+    )
+    await _finished(
+        client, "FLiBe viscosity knee", "## Verdict\n\n**1. VISCOSITY-ANSWER**"
+    )
+    await _finished(
+        client, "FLiBe density curve", "## Verdict\n\n**1. DENSITY-ANSWER**"
+    )
+    await _finished(
+        client,
+        "FLiBe viscosity and density together",
+        "## Verdict\n\n**1. BOTH-ANSWER**",
+    )
+
+    out = await _summarise_prior(client, "FLiBe viscosity density")
+
+    # Three query words shared, then two, then two — corrosion shares only one.
+    assert "BOTH-ANSWER" in out
+    assert "CORROSION-ANSWER" not in out, "the least apt thread lost the slot"
+
+
 @pytest.mark.anyio
 async def test_a_concluded_debate_counts_as_prior_even_though_its_thread_is_open(
     tmp_path,

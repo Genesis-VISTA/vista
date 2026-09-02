@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -493,6 +494,10 @@ def build_toolset(
             """
             Look up what earlier debates on this forum concluded, so a hypothesis
             already argued and rejected is not proposed again as if it were new.
+
+            Matches on title words and returns the closest few, digested to their
+            ranked claims and what each left unresolved — not the arguments that
+            produced them. Ask with words from the topic you mean.
             """
             assert grounding.forum is not None
             found = await _summarise_prior(
@@ -537,6 +542,84 @@ running out of budget, and its conclusions are not conclusions.
 """
 
 
+PRIOR_DEBATE_LIMIT = 3
+"""
+How many earlier debates one lookup may quote.
+
+Matching is on title words, and a forum tends to be about one thing — every
+thread here says "FLiBe" or "TBR" — so "any overlapping word" matched nearly
+everything, and each match pulled a whole verdict into the turn. The three
+best-matching are the precedent; a fourth is a second opinion on the same point
+at full price.
+"""
+
+PRIOR_DIGEST_CHARS = 1400
+"""
+Ceiling on one debate's digest, for a verdict this cannot parse.
+
+A peer's verdict is written by whatever agent they run and need not follow our
+layout. Truncating is a worse answer than digesting and a much better one than
+spending twelve thousand characters on a thread that turned out to be irrelevant.
+"""
+
+_CLAIM_LINE = re.compile(r"^\*\*\d+\.\s")
+"""
+A ranked claim in `Verdict.to_post_body` — `**1. …**`.
+
+Not `**Why this order.**` or `**Unresolved.**`, which start with a letter, and
+not the `*Standing.*` / `*Predictions.*` blocks, which use a single asterisk.
+"""
+
+
+def _verdict_digest(body: str) -> str:
+    """
+    A verdict's conclusions, without the argument that produced them.
+
+    What a role needs from precedent is what was concluded and what is still
+    open — enough not to re-propose a hypothesis this forum already rejected, and
+    to know where the live gap is. The `*Standing.*` narrative and the
+    `**Why this order.**` rationale are the reasoning behind those conclusions,
+    they are most of the body's length, and a role reading precedent is not
+    re-litigating the debate that produced it.
+
+    Real numbers from this forum: verdicts run 3.5k–11.4k characters, of which
+    the claims, their confidence and the unresolved list are about 1.2k. Three
+    matches used to cost roughly 7k tokens; they now cost under one.
+
+    Falls back to a clipped body when nothing matches the layout, because a
+    peer's verdict is written by their agent and owes ours no format.
+    """
+    kept: list[str] = []
+    in_unresolved = False
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line.startswith("**Unresolved."):
+            in_unresolved = True
+            kept.append(line)
+            continue
+        if in_unresolved:
+            if line.startswith("- "):
+                kept.append(line)
+                continue
+            # Any non-bullet ends the block. `Unresolved` is last in our own
+            # layout, but a peer's verdict may put something after it.
+            in_unresolved = False
+        if _CLAIM_LINE.match(line) or line.startswith("*Confidence.*"):
+            kept.append(line)
+    if not kept:
+        return _clip(body, PRIOR_DIGEST_CHARS)
+    return _clip("\n".join(kept), PRIOR_DIGEST_CHARS)
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cut on a line boundary and say so, so a reader can tell short from trimmed."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    head, _, _ = cut.rpartition("\n")
+    return f"{head or cut}\n… trimmed at {limit} characters."
+
+
 async def _summarise_prior(
     client: ForumClient, about: str, *, exclude: str = ""
 ) -> str:
@@ -547,29 +630,55 @@ async def _summarise_prior(
     and pulling every thread through an embedding model to answer "has this been
     argued before" would cost more than the question is worth.
 
+    Ranked and capped, because the cheap match is not a cheap answer. Overlap on
+    any one word matched almost every thread on a forum that is about one subject,
+    and each match quoted a verdict of three to eleven thousand characters. Now
+    the best `PRIOR_DEBATE_LIMIT` are read, best first, and each is digested down
+    to its conclusions — so the turn pays for precedent roughly a tenth of what it
+    did, and waits on a tenth as many forum reads.
+
     The no-match answer lists what is on the forum instead of just saying no. A
     tool that returns the same refusal to every phrasing invites a model to keep
     rephrasing, and each attempt is a request — which is how a role burns its
     whole budget on one turn and posts BLOCKED instead of an argument.
     """
     terms = {w.lower() for w in about.split() if len(w) > 3}
-    lines: list[str] = []
+    matches: list[tuple[int, str, str, str]] = []
     available: list[str] = []
     for summary in await client.list_threads(include_closed=True):
         if summary.status not in FINISHED_THREAD_STATUSES or summary.id == exclude:
             continue
         title = summary.header.title
         available.append(title)
-        if terms and not (terms & {w.lower().strip(".,?") for w in title.split()}):
+        score = len(terms & {w.lower().strip(".,?") for w in title.split()})
+        if terms and not score:
             continue
-        thread = await client.read_thread(summary.id)
+        # Most overlap first, then most recent. Both halves matter: a forum where
+        # every title shares one word needs the count to choose, and among equally
+        # apt threads the newest is the one whose conclusions still stand.
+        matches.append((score, summary.last_activity or "", title, summary.id))
+    matches.sort(reverse=True)
+
+    lines: list[str] = []
+    for _score, _when, title, thread_id in matches[:PRIOR_DEBATE_LIMIT]:
+        thread = await client.read_thread(thread_id)
         verdict = next(
             (p for p in reversed(thread.content_posts()) if p.kind == "DONE"), None
         )
-        lines.append(
-            f"## {title}\n{verdict.body if verdict else '(ended without a verdict)'}"
+        found = (
+            _verdict_digest(verdict.body) if verdict else "(ended without a verdict)"
         )
+        lines.append(f"## {title}\n{found}")
     if lines:
+        # Said, not hidden. A silent cap reads as "that is all there is", and the
+        # role would draw a conclusion from an absence we manufactured.
+        dropped = len(matches) - len(lines)
+        if dropped:
+            lines.append(
+                f"({dropped} further matching debate(s) not quoted — these are the "
+                "closest by title. Conclusions only; the arguments behind them are "
+                "on the forum.)"
+            )
         return "\n\n".join(lines)
     if not available:
         return (
