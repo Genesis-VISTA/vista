@@ -465,6 +465,127 @@ async def test_the_stream_emits_posts_that_arrive_while_it_is_open(
     assert json.loads(events[-1][1])["status"] == "closed"
 
 
+@pytest.mark.anyio
+async def test_the_stream_resends_a_post_whose_provenance_lands_late(
+    forum_config, app_client, session, engine, alice, monkeypatch
+):
+    """
+    A post's tools are written after the post exists, so the stream has to revise.
+
+    `_post` publishes to the forum, reads the thread back to create the row, and
+    only then writes the provenance — and the forum refresh the stream does for
+    peer comments can create that row first, from a record that has no field for
+    how the agent got there. Sending each post once left it reading "based on
+    model alone" for the whole connection, correcting only when the run ended and
+    the client went back to fetching whole states.
+
+    The client has always replaced on a matching `post_id` — its own comment says
+    a replayed post can carry a newer tally — so the missing half was here.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from vista_backend.api import debate as debate_api
+
+    project = await _project(session, alice)
+    run, client, participant = await _run(session, alice, project)
+    post = await client.post_as(participant, run.thread_id, "rigidity", kind="PROPOSAL")
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    run_id, project_name, post_id = run.id, project.name, post.id
+    await session.commit()
+
+    monkeypatch.setattr(
+        debate_api, "stream_session_factory", lambda: AsyncSession(engine)
+    )
+
+    async def record_the_tools_then_finish():
+        await asyncio.sleep(0.05)
+        async with AsyncSession(engine) as s:
+            await debate_service.record_post_tools(
+                s,
+                run_id=run_id,
+                post_id=post_id,
+                tools=[{"tool": "search_literature", "detail": "FLiBe viscosity"}],
+            )
+            await debate_service.set_status(s, run_id=run_id, status="closed")
+            await s.commit()
+
+    writer = asyncio.create_task(record_the_tools_then_finish())
+    try:
+        events = await _collect_stream(app_client, project_name, run_id)
+    finally:
+        await writer
+
+    versions = [
+        json.loads(d)
+        for e, d in events
+        if e == "post" and json.loads(d)["kind"] == "PROPOSAL"
+    ]
+    assert len(versions) == 2, "the post is sent again once its provenance lands"
+    assert versions[0]["tools_used"] == [], "first sighting: the row had no tools yet"
+    assert versions[-1]["tools_used"][0]["tool"] == "search_literature"
+
+
+@pytest.mark.anyio
+async def test_the_stream_does_not_resend_an_unchanged_post(
+    forum_config, app_client, session, engine, alice, monkeypatch
+):
+    """
+    The fingerprint has to be the payload, not the poll.
+
+    Re-emitting on every pass would work and would also push a post a second
+    every time anyone watches a live debate — a fix that trades a stale field for
+    a flood.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from vista_backend.api import debate as debate_api
+
+    project = await _project(session, alice)
+    run, client, _participant = await _run(session, alice, project)
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    run_id, project_name = run.id, project.name
+    await session.commit()
+
+    monkeypatch.setattr(
+        debate_api, "stream_session_factory", lambda: AsyncSession(engine)
+    )
+
+    # Counted, not timed. Sleeping "a few poll intervals" and hoping looks like a
+    # test and is not one: with the fixture's 0.01s interval the stream got
+    # through a single pass before the run closed, so re-emitting on every poll
+    # left this green.
+    polls = 0
+    real_list_posts = debate_service.list_posts
+
+    async def counting_list_posts(session, *, run_id):
+        nonlocal polls
+        polls += 1
+        return await real_list_posts(session, run_id=run_id)
+
+    monkeypatch.setattr(debate_service, "list_posts", counting_list_posts)
+
+    async def close_once_it_has_polled_enough():
+        while polls < 4:
+            await asyncio.sleep(debate_api.STREAM_POLL_SECONDS / 2)
+        async with AsyncSession(engine) as s:
+            await debate_service.set_status(s, run_id=run_id, status="closed")
+            await s.commit()
+
+    writer = asyncio.create_task(close_once_it_has_polled_enough())
+    try:
+        events = await _collect_stream(app_client, project_name, run_id)
+    finally:
+        await writer
+
+    assert polls >= 4, "the stream has to have looked more than once"
+    posts = [d for e, d in events if e == "post"]
+    assert len(posts) == 1, "an unchanged post is sent exactly once"
+
+
 # --------------------------------------------------------------------------- #
 # Opening a debate
 #

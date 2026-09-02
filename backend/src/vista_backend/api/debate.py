@@ -486,17 +486,32 @@ async def debate_events(
     """
     Follow a debate as it argues.
 
-    Emits each new post once, then a terminal `status` event when the run stops.
-    A client that reconnects gets everything again from the start of the thread,
-    which is cheap here and simpler than resumable cursors — a debate is a few
-    dozen posts, not a log.
+    Emits a post whenever its payload changes — on arrival, and again each time
+    something on it moves. A client that reconnects gets everything again from the
+    start of the thread, which is cheap here and simpler than resumable cursors —
+    a debate is a few dozen posts, not a log.
+
+    Re-emitting is not a nicety. Only `body` is fixed once a post exists; the rest
+    of the row is written afterwards. Provenance arrives a beat late by
+    construction — the forum records what was said and has no field for how the
+    agent got there, so `record_post_tools` writes it onto a row the projection
+    has already created — and a vote tally moves for as long as the thread is
+    open, because a peer can upvote something from three rounds ago. Sending each
+    post once meant a post the stream happened to catch inside that gap read
+    "based on model alone" for the rest of the connection, and only corrected when
+    the run ended and the client went back to fetching whole states.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
     await _require(session, run_id, project.id)
     project_id = project.id
 
     async def events() -> AsyncIterator[dict]:
-        seen: set[str] = set()
+        # post_id -> the payload last sent for it. The payload itself is the
+        # fingerprint, deliberately: a hand-written list of "the fields that can
+        # change" is a list to forget to update, and forgetting means the field
+        # added next is silently invisible to every live viewer. This cannot miss
+        # one, and it re-sends only when something really moved.
+        sent: dict[str, str] = {}
         last_activity: str | None | object = object()  # never equal to a real value
         # Its own session: this generator outlives the request handler, and the
         # request's session is closed as soon as the response starts streaming.
@@ -512,13 +527,11 @@ async def debate_events(
                     )
                 posts = await debate_service.list_posts(stream_session, run_id=run_id)
                 for post in posts:
-                    if post.post_id in seen:
+                    payload = DebatePostPublic.model_validate(post).model_dump_json()
+                    if sent.get(post.post_id) == payload:
                         continue
-                    seen.add(post.post_id)
-                    yield {
-                        "event": "post",
-                        "data": DebatePostPublic.model_validate(post).model_dump_json(),
-                    }
+                    sent[post.post_id] = payload
+                    yield {"event": "post", "data": payload}
 
                 # Emit the activity line whenever it changes. Without it the
                 # page shows a thread that stops growing and no indication that

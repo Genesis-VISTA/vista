@@ -548,3 +548,28 @@ command's stderr onto the host's *stdout*.
       reason — `reconcile_once` swallows per-job exceptions, so an `AssertionError`
       raised inside an injected collector never reaches pytest. It asserts on a
       recorded flag now.
+
+## 27. A live post said "based on model alone" until the debate ended
+
+- [x] 27.1 Root cause: the event stream kept `seen: set[str]` and skipped any post
+      whose id it had already emitted, so a post was final the moment it was sent.
+      Only `body` is fixed once a post exists. Provenance is written a beat later by
+      construction — `_post` publishes, reads the thread back to create the row, then
+      calls `record_post_tools` — and the 10-second forum refresh the stream does for
+      peer comments can create that row first from a record that has no field for how
+      the agent got there. Any post caught in that window read "based on model alone"
+      for the whole connection.
+- [x] 27.2 The client was already right: it replaces on a matching `post_id` and its
+      own comment says "a replayed post can still carry a newer vote tally". The
+      server simply never replayed.
+- [x] 27.3 The stream now keys on the serialized payload, so a post is re-emitted when
+      anything on it moves and not otherwise. The payload *is* the fingerprint
+      deliberately: a hand-maintained list of mutable fields is a list to forget to
+      update, and forgetting means the next field added is invisible to live viewers.
+      This also fixes vote tallies, `vouch_lane` and `authored_by`, which were stale
+      live for the same reason.
+- [x] 27.4 Three mutations pinned: remembering only the id, re-emitting on every poll,
+      and a fingerprint that excludes `tools_used`. The second exposed a test of my
+      own that was green on timing luck — it slept "a few poll intervals" and the
+      fixture's interval is 10 ms, so the stream completed one pass before the run
+      closed. It counts polls now.
