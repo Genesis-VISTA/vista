@@ -4142,6 +4142,22 @@ button.chat-bubble.intermediate.collapsed:hover {
   align-items: start;
 }
 
+/* Why every content box below carries `min-width: 0`.
+   A grid track sized `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+   item's min-content width — so one unbreakable child does not overflow its own
+   box, it widens the track, then the layout, then the page. A post containing a
+   markdown table and a `white-space: nowrap` span pushed this page to 2068px
+   inside a 1224px viewport, and the span in question was one we had already
+   asked to truncate with an ellipsis. `min-width: 0` is what makes both the
+   shrinking and the truncation possible; without it, `text-overflow` is
+   decoration on an element that will not shrink. */
+.debate-list,
+.debate-detail,
+.debate-post,
+.debate-verdict__item {
+  min-width: 0;
+}
+
 @media (max-width: 860px) {
   .debate-layout {
     grid-template-columns: 1fr;
@@ -4262,6 +4278,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 0.78rem;
   color: var(--muted);
   padding-bottom: 6px;
+  /* A forge principal is an email address, and an email address has no break
+     opportunity in it. Breaking mid-token is the lesser evil against a stamp
+     that pushes the post wider than its column. */
+  overflow-wrap: anywhere;
 }
 
 .debate-post__kind {
@@ -4331,6 +4351,21 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 0.85em;
 }
 
+/* An agent writes this, so it can hold anything markdown can express: a
+   comparison table, a fenced job log, a `/gpfs/wolf2/olcf/...` path with no
+   break opportunity in it. Prose breaks mid-token rather than widening the
+   column, and a table or code block that genuinely cannot fit scrolls inside
+   its own box instead of taking the page with it. */
+.debate-post__body {
+  overflow-wrap: anywhere;
+}
+
+.debate-post__body :is(pre, table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* The verdict */
 
 .debate-verdict {
@@ -4368,7 +4403,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .debate-verdict__meta {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  /* `minmax(0, …)` on both tracks rather than bare `max-content 1fr`: the label
+     column would otherwise never shrink below "Standing after the debate", and
+     in a narrow column that leaves the value track less room than its own
+     min-content needs — so the whole list widens instead. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: 2px 12px;
   font-size: 0.82rem;
   margin: 0 0 8px;
@@ -4380,6 +4419,19 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .debate-verdict__meta dd {
   margin: 0;
+}
+
+/* Two columns need room for both. Below this the label wins the space and the
+   value gets squeezed to a word a line, so they stack instead. */
+@media (max-width: 520px) {
+  .debate-verdict__meta {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 0;
+  }
+
+  .debate-verdict__meta dd {
+    margin-bottom: 6px;
+  }
 }
 
 .debate-verdict__label {
@@ -4442,6 +4494,8 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 1px 9px;
@@ -4453,7 +4507,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 .debate-post__tool-detail {
   font-family: Roboto, sans-serif;
   color: var(--muted);
-  max-width: 40ch;
+  /* 40ch is the width this wants; 100% is the width it has. A fixed `ch` cap
+     wider than the column made the chip overflow at exactly the moment the
+     ellipsis was supposed to save it. */
+  max-width: min(40ch, 100%);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4560,6 +4618,7 @@ button.chat-bubble.intermediate.collapsed:hover {
    than squeezed into a column of its own. */
 .debate-post__tool--evidence {
   display: inline-block;
+  max-width: 100%;
 }
 
 .debate-post__tool--evidence > summary {
@@ -4568,6 +4627,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
+  /* Shrinkable, so the truncating detail span inside can actually truncate
+     instead of pushing the chip past the column. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .debate-post__tool--evidence > summary::-webkit-details-marker {
@@ -4640,6 +4703,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .debate-sims__why {
   flex-basis: 100%;
+  min-width: 0;
   color: var(--muted);
   font-style: italic;
   overflow: hidden;

@@ -642,3 +642,32 @@ command's stderr onto the host's *stdout*.
       transfer went outward, useless for a path that pulls logs in and reads them off
       disk. The fake now lands whatever a test seeds. Same lesson as the fake h5i
       status vocabulary (§19.3) and the bare job catalogue (§23.5).
+
+## 30. A post pushed the page to 2068px inside a 1224px viewport
+
+- [x] 30.1 Measured in the running app: `.debate-page` scrollWidth 2068 against
+      clientWidth 1224, and `.debate-detail` — the `1fr` track — sized to 1816px
+      inside a 1168px container. Nothing was overflowing its own box; the track had
+      simply been widened.
+- [x] 30.2 Mechanism: `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+      item's min-content width. One unbreakable child therefore widens the track,
+      then the layout, then the page. `min-width: 0` on `.debate-list`,
+      `.debate-detail`, `.debate-post` and `.debate-verdict__item` is the fix, and it
+      works in the one-column mobile layout too — overriding
+      `grid-template-columns` does not, as it fights the `max-width: 860px` rule.
+- [x] 30.3 The specific child was `.debate-sims__why`: `white-space: nowrap` with
+      `text-overflow: ellipsis` and no `min-width: 0`, so its min-content was the
+      whole 1797px prediction string. The truncation we had asked for could never
+      engage — it was decoration on an element that would not shrink. Same defect in
+      `.debate-post__tool-detail`, whose `max-width: 40ch` also exceeded the column
+      on a narrow viewport; now `min(40ch, 100%)`.
+- [x] 30.4 An agent writes the post body, so it can contain anything markdown
+      expresses. The proposal that triggered this had a comparison table with a
+      984-character rule line, and a FINDING carried a fenced job log with a
+      77-character `/gpfs/wolf2/...` path. Prose now breaks mid-token
+      (`overflow-wrap: anywhere`) and `pre`/`table` scroll inside their own box.
+- [x] 30.5 Verified against the live page with devtools rather than by eye: page
+      scrollWidth equals clientWidth at 1280 and at 375, and no element clips without
+      a scroll affordance. Two narrow-width leftovers found the same way and fixed —
+      the verdict's `max-content 1fr` label column squeezing its values to 46px, and
+      an unbreakable forge-principal email in the post stamp.
