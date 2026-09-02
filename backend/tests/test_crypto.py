@@ -65,7 +65,7 @@ def test_encrypted_str_ciphertext_is_fernet(ephemeral_key):
 
 def test_encrypted_str_rejects_a_different_key(ephemeral_key):
     col = EncryptedStr()
-    stored = col.process_bind_param("globus-token", dialect=None)
+    stored = col.process_bind_param("s3m-token", dialect=None)
     other = Fernet(Fernet.generate_key())
     with pytest.raises(InvalidToken):
         other.decrypt(stored.encode())
@@ -86,7 +86,7 @@ def test_get_fernet_is_cached_until_cleared(ephemeral_key, monkeypatch):
 # User token fields at rest
 # ---------------------------------------------------------------------------
 
-TOKEN_FIELDS = ("s3m_token", "nersc_iri_token", "globus_token")
+TOKEN_FIELDS = ("s3m_token", "nersc_iri_token")
 
 
 @pytest.mark.anyio
@@ -127,21 +127,17 @@ async def test_null_token_fields_stay_null_at_rest(ephemeral_key, session):
         email=f"{uuid.uuid4().hex[:8]}@ornl.gov",
         s3m_token=None,
         nersc_iri_token=None,
-        globus_token=None,
     )
     session.add(row)
     await session.flush()
 
     raw = (
         await session.execute(
-            text(
-                "SELECT s3m_token, nersc_iri_token, globus_token "
-                "FROM app_user WHERE id = :id"
-            ),
+            text("SELECT s3m_token, nersc_iri_token FROM app_user WHERE id = :id"),
             {"id": row.id.hex},
         )
     ).one()
-    assert raw == (None, None, None)
+    assert raw == (None, None)
 
 
 @pytest.mark.anyio

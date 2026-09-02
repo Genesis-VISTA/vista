@@ -97,7 +97,6 @@ function UserSettingsForm({
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
-  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -113,7 +112,6 @@ function UserSettingsForm({
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
-      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -158,23 +156,6 @@ function UserSettingsForm({
         />
         <span className="user-settings-hint">
           Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        Frontier Globus token
-        <input
-          className="input"
-          type="password"
-          value={globusToken}
-          onChange={(e) => setGlobusToken(e.target.value)}
-          placeholder="Refresh token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Globus Transfer refresh token used for Frontier file operations.
-          Stored encrypted at rest.
         </span>
       </label>
 
