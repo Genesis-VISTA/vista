@@ -3,8 +3,8 @@ name: model-fine-tuning
 description: >-
   Fine-tune or evaluate the FORGE-based molten-salt regression model. Supports
   the local forge-tune workflow and HPC submission on three clusters: Odo
-  (OLCF, IRI compute + Globus file ops), Frontier (OLCF, IRI compute + Globus
-  file ops), and Perlmutter (NERSC, IRI). Use when the user asks to train,
+  (OLCF, IRI compute + S3 output push), Frontier (OLCF, same), and Perlmutter
+  (NERSC, IRI). Use when the user asks to train,
   fine-tune, resume, or evaluate a model on the molten salt CSV data.
 metadata:
   tags: ["OLCF", "Odo", "Frontier", "NERSC", "Perlmutter", "Materials Design", "Molten Salt Tritium Breeding"]
@@ -127,15 +127,19 @@ Notes:
 - The user can interrupt the loop at any time by sending another message.
 
 Artifacts:
-- checkpoint files in `--checkpoint-dir`:
+- retrievable with `get_hpc_job_outputs` (these land in `$VISTA_OUT`):
+  - `training_speed_log.csv`
+  - `gpu_memory_log.csv` (when CUDA is used)
+- kept on the cluster and NOT retrievable (these land in `$VISTA_KEEP`, because
+  each is multiple GB — far more than the job's exit-time upload window allows):
   - `checkpoint_latest.pt`
   - `checkpoint_best.pt`
   - periodic `checkpoint_epoch_*.pt` (every 5 epochs)
-- logs in `--checkpoint-dir`:
-  - `training_speed_log.csv`
-  - `gpu_memory_log.csv` (when CUDA is used)
-- final saved model:
-  - `<model_name>_classifier.pt`
+  - `<model_name>_classifier.pt` (the final model)
+
+  Do NOT offer to download these or call `get_hpc_job_outputs` for them — it
+  will fail. They exist so a follow-up run can `--resume-from` one; report the
+  path from the job log and offer to resume instead.
 
 ## Guardrails
 

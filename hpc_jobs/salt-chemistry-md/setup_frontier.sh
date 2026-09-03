@@ -24,7 +24,7 @@ fi
 
 if [ ! -f "${RUN_DIR_Frontier}/run_state_point.py" ]; then
     echo "[setup_frontier] ERROR: run_state_point.py missing in ${RUN_DIR_Frontier}" >&2
-    echo "[setup_frontier] vista should have staged it via Globus; verify the upload + dir permissions." >&2
+    echo "[setup_frontier] vista inlines this file into the JobSpec pre_launch; check the job log for base64/mkdir errors." >&2
     exit 1
 fi
 

@@ -26,7 +26,7 @@ required=(forge-tune.py hybrid_split.py setup_dist_vars.sh Molten_Salt_Thermophy
 for f in "${required[@]}"; do
     if [ ! -f "${RUN_DIR_Frontier}/${f}" ]; then
         echo "[setup_frontier] ERROR: missing ${RUN_DIR_Frontier}/${f}" >&2
-        echo "[setup_frontier] vista should have uploaded these via scp; verify VISTA_MCP_FRONTIER_SSH_* settings, the user's frontier_remote_dir, and dir permissions (the IRI service runs as <project>_auser and needs group-readable sources)" >&2
+        echo "[setup_frontier] vista inlines every file in hpc_jobs/forge-tune/ into the JobSpec pre_launch — check the job log for base64/mkdir errors. Molten_Salt_Thermophysical_Properties.csv is gitignored, so it is missing on a fresh clone: put it in hpc_jobs/forge-tune/ on the machine running vista and resubmit. Staging it on the cluster by hand does not work — RUN_DIR_Frontier contains a session id that changes every time the MCP server restarts." >&2
         exit 1
     fi
 done

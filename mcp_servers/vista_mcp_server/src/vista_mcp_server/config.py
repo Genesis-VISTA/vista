@@ -1,4 +1,4 @@
-import os, sys, functools, logging
+import os, sys, logging
 from fastmcp.exceptions import ToolError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
@@ -34,6 +34,36 @@ class FaultSettings(BaseModel):
 
     def is_active(self) -> bool:
         return bool(self.submit_fail_p or self.status_timeout_p or self.token_expire_after_s)
+
+class S3Settings(BaseModel):
+    """
+    AWS S3 object store used to get job output off clusters whose IRI service
+    has no storage scope (Odo, Frontier). Read from env as
+    `VISTA_MCP_S3__<FIELD>`.
+    """
+
+    bucket: str | None = None
+    """ Bucket that job output is pushed to and read back from. """
+
+    region: str = "us-east-2"
+    """ Bucket region, used for SigV4 signing on the cluster side too. """
+
+    key_id: str | None = None
+    """
+    Access key id used for the job's output push and for Vista's own reads.
+    Unset means Vista reads via the boto3 default chain and submissions fail.
+    """
+
+    secret: str | None = None
+    """ Secret for `key_id`. Visible on the cluster — see the class docstring. """
+
+    endpoint: str | None = None
+    """
+    Endpoint override for a non-AWS S3-compatible store. The escape hatch if the
+    OLCF proxy turns out not to reach `*.s3.amazonaws.com`: point this at an
+    ORNL-side object store and neither the uploader nor `lib/s3.py` changes.
+    """
+
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -80,6 +110,14 @@ class AppSettings(BaseSettings):
 
     mcp_apps_dir: ResolvedPath = Path(__file__).parent / 'mcp-apps'
 
+    jobscripts_dir: ResolvedPath = Path(__file__).parent / "jobscripts"
+    """
+    Helper scripts that run *on the cluster*, inlined into the IRI JobSpec by
+    the dispatchers (currently `s3_put.py`, the output push). Deliberately not
+    under `local_hpc_jobs_dir`: `get_available_jobs()` raises at import for any
+    directory there without a cluster job script.
+    """
+
     dockerfile: ResolvedPath = Path(__file__).parent / "docker/Dockerfile"
     image: str = "vista-sandbox"
 
@@ -106,20 +144,8 @@ class AppSettings(BaseSettings):
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """
     S3M token introspection endpoint used to verify that a user's token belongs
-    to `odo_account` before Vista moves files for them with Globus
+    to `odo_account` before Vista serves them that project's job output
     """
-    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
-    """
-    UUID of the Globus Collection that exposes Odo's filesystem (open enclave)
-    """
-    odo_globus_refresh_token: str | None = None
-    """
-    Globus Transfer refresh token for Odo (open enclave) file ops to work around the lack of
-    IRI File API support.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster odo --save-env
-    """
-
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
     frontier_account: str = "chm243"
@@ -133,17 +159,6 @@ class AppSettings(BaseSettings):
     """ Same as `odo_introspect_url`, for Frontier tokens (`frontier_account`). """
     frontier_machine: str = "frontier"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
-    frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
-    """
-    UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
-    """
-    frontier_globus_refresh_token: str | None = None
-    """
-    Deployment-wide Globus Transfer refresh token for Frontier (moderate enclave) file ops.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster frontier --save-env
-    """
-
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
     nersc_machine: str = "perlmutter"
@@ -151,16 +166,18 @@ class AppSettings(BaseSettings):
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
-    Globus Native App client UUID used to mint refresh-token authorizers from
-    the deployment's Globus refresh token.
+    Globus Native App client UUID used by `./scripts/get_globus_token.py
+    --cluster perlmutter` to mint the per-user NERSC IRI token. NERSC's IRI
+    tokens are issued by Globus Auth; this is unrelated to file transfer, which
+    on Perlmutter rides the IRI filesystem API and on OLCF is an S3 push.
     """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
     """
     Legacy SSH host list, kept for the optional agenthpc subserver (disabled by
     default). The Odo/Frontier job tools no longer SSH — compute goes through
-    IRI and file ops through Globus. To use a jump host, pass an array or comma
-    separated list of hosts.
+    IRI and job output comes back via S3. To use a jump host, pass an array or
+    comma separated list of hosts.
     """
     hpc_ssh_user: str | None = None
     """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
@@ -194,26 +211,54 @@ class AppSettings(BaseSettings):
         """
         return self.data_dir / "knowledge-bases"
 
-    @functools.cached_property
-    def vista_globus_collection_id(self) -> str | None:
-        """
-        UUID of the Globus Collection hosted on the Vista server, read from the
-        Globus Connect Personal config.
-        """
-        client_id_file = self.data_dir / "globusonline" / "lta" / "client-id.txt"
-        if not client_id_file.exists():
-            return None
-        return client_id_file.read_text().strip() or None
+    def require_s3_bucket(self) -> str:
+        """ Return the output bucket or raise a `ToolError` if it isn't configured. """
+        if not self.s3.bucket:
+            raise ToolError(
+                "No S3 bucket configured for HPC job output. Set "
+                "VISTA_MCP_S3__BUCKET in env."
+            )
+        return self.s3.bucket
 
-    def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
-        """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """
-        if cluster == "odo":
-            token = self.odo_globus_refresh_token
-        else:
-            token = self.frontier_globus_refresh_token
-        if not token:
-            raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
-        return token
+    def require_job_credentials(self) -> tuple[str, str, str]:
+        """
+        Return `(bucket, key_id, secret)` to hand the job for its output push,
+        or raise a `ToolError` if any part is missing.
+
+        Literal keys are required here even though Vista's own reads can fall
+        back to an instance role: a compute node has no role. Checked before
+        submission rather than at push time, because a job launched without
+        them would run to completion and only then discover it cannot phone
+        home, stranding its results where Vista has no way to reach them.
+        """
+        bucket = self.require_s3_bucket()
+        if not (self.s3.key_id and self.s3.secret):
+            raise ToolError(
+                "No S3 credentials configured. Odo/Frontier jobs push their "
+                "output to S3 themselves, and a compute node has no instance "
+                "role, so set VISTA_MCP_S3__KEY_ID and VISTA_MCP_S3__SECRET in "
+                "env (see aws/.env.sample for the IAM scope)."
+            )
+        return bucket, self.s3.key_id, self.s3.secret
+
+    def job_key_prefix(self, cluster: str, job_id: str) -> str:
+        """
+        Key prefix holding one job's uploaded tree: `jobs/<cluster>/<job_id>`.
+
+        The cluster is part of the key because Odo and Frontier are separate
+        Slurm installs with independent job id counters sharing one bucket, so
+        two live jobs can carry the same numeric id. Without it their trees
+        would silently overwrite each other, and since the prefix is what
+        authorizes a read, `get_hpc_job_outputs(job_id=..., cluster="odo")`
+        would serve a moderate-enclave Frontier job's output to a caller
+        holding only an open-enclave token.
+
+        The `jobs/` root is fixed rather than configurable: it had one caller,
+        was never overridden, and hardcoding it lets the IAM policy's
+        `<bucket>/jobs/*` resource be exactly true. A deployment that needs its
+        own namespace gets its own bucket.
+        """
+        return f"jobs/{cluster}/{job_id}"
 
     rag_model: str = "google/embeddinggemma-300m"
 
@@ -234,7 +279,7 @@ class AppSettings(BaseSettings):
     # VISTA_ENV=prod.
     hpc_dry_run: bool = False
     """
-    When True, HPC job tools short-circuit S3M/IRI/Globus and return recorded
+    When True, HPC job tools short-circuit S3M/IRI/S3 and return recorded
     synthetic responses (evaluation plan M6). No real cluster contact, no
     credentials required. Powers the E1/E6/E7b replay/concurrency/queue
     experiments. Default off — production behavior is unchanged.
@@ -247,6 +292,12 @@ class AppSettings(BaseSettings):
     E7b sweep 5 min / 1 h / 24 h queue behavior (polling overhead, idle-state
     memory, completion) without a real scheduler. Ignored unless
     `hpc_dry_run` is True.
+    """
+
+    s3: S3Settings = Field(default_factory=S3Settings)
+    """
+    S3 object store for HPC job output, overridable via
+    `VISTA_MCP_S3__<FIELD>`. Required for Odo/Frontier submissions.
     """
 
     fault: FaultSettings = Field(default_factory=FaultSettings)

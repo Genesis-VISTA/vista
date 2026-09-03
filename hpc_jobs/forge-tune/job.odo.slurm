@@ -13,7 +13,13 @@ num_epochs=25
 differential_lr=True
 freeze_llm=False
 
+# Checkpoints go to $VISTA_KEEP: multi-GB each, kept on the cluster for
+# --resume-from, never uploaded. The CSV logs go to $VISTA_OUT so they come back
+# with the job output. (This used to fall through to the argparse default,
+# ./checkpoints, which left them in the staged source dir.)
 CMD="python -u forge-tune.py \
+    --checkpoint-dir ${VISTA_KEEP} \
+    --log-dir ${VISTA_OUT} \
     --initial-lr ${initial_lr} \
     --min-lr ${min_lr} \
     --warmup-epochs ${warmup_epochs} \

@@ -4,7 +4,10 @@
 # the NERSC pytorch image, executing the training command inside the container.
 #
 # Env vars provided by vista's IRI dispatcher (mcp-server/.../submit_job_mcp.py):
-#   VISTA_OUT             per-job output dir, already mkdir'd. Use for checkpoints + logs.
+#   VISTA_OUT             per-job output dir, already mkdir'd and collected on exit.
+#                         Use for logs and small artifacts, NOT for checkpoints.
+#   VISTA_KEEP            per-job dir kept on the cluster and never collected. Use for
+#                         checkpoints, which a later run reaches via --resume-from.
 #   VISTA_PM_IMAGE        shifter image (from cluster_defaults.json iri.image)
 #   VISTA_PM_MODULE       shifter module (from cluster_defaults.json iri.module)
 #   SLURM_GPUS_PER_NODE   GPUs per node (= IRI resources.processes_per_node)
@@ -38,7 +41,8 @@ export HDF5_USE_FILE_LOCKING="${HDF5_USE_FILE_LOCKING:-FALSE}"
 TRAIN_CMD="python -u forge-tune.py \
     --model ${FORGE_MODEL_Perlmutter} \
     --input ${RUN_DIR_Perlmutter}/Molten_Salt_Thermophysical_Properties.csv \
-    --checkpoint-dir ${VISTA_OUT} \
+    --checkpoint-dir ${VISTA_KEEP} \
+    --log-dir ${VISTA_OUT} \
     --initial-lr ${initial_lr} \
     --min-lr ${min_lr} \
     --warmup-epochs ${warmup_epochs} \
@@ -71,5 +75,5 @@ INNER_CMD="cd ${RUN_DIR_Perlmutter} && source setup_dist_vars.sh && ${TRAIN_CMD}
 exec shifter \
     --image="${VISTA_PM_IMAGE}" \
     --module="${VISTA_PM_MODULE}" \
-    --env PYTHONUSERBASE="${VISTA_OUT}" \
+    --env PYTHONUSERBASE="${VISTA_SCRATCH}" \
     bash -c "${INNER_CMD}"

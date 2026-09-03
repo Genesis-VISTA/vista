@@ -7,45 +7,36 @@
 #    "pydantic-settings>=2.0",
 # ]
 # ///
-"""Acquire the Globus tokens Vista needs to drive HPC backends.
+"""Acquire the Globus-issued IRI token Vista needs for NERSC.
 
-This one script covers both facilities, picked by ``--cluster``:
+NERSC's IRI API is authorized by a Globus Auth token (scope
+``…/ed3e577d-…/iri_api``). On NERSC a single IRI token covers both compute
+(submit/status) and file ops, and it is a **per-user** credential, so this
+script prints it for you to paste into the Vista UI (the Perlmutter / NERSC IRI
+token field) rather than writing it to ``.env``::
 
-* **OLCF** (``--cluster odo`` / ``--cluster frontier``) — mints a Globus
-  **Transfer refresh token** for file ops (the DTN endpoint), and ``--save-env``
-  writes it to ``.env`` as ``VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN`` (a
-  deployment-wide secret the MCP server reads at startup):
+    ./scripts/get_globus_token.py --cluster perlmutter
 
-      ./scripts/get_globus_token.py --cluster odo --save-env
-      ./scripts/get_globus_token.py --cluster frontier --save-env
+The flow uses the Globus Native App device/auth-code flow, requests refresh
+tokens, and caches them under ``~/.globus/`` so re-running refreshes silently
+instead of forcing another browser login.
 
-* **NERSC** (``--cluster perlmutter``) — mints a Globus **IRI access token**
-  (scope ``…/ed3e577d-…/iri_api``). On NERSC a single IRI token authorizes both
-  compute (submit/status) and file ops, and it is a **per-user** credential, so
-  the script prints it for you to paste into the Vista UI (the Perlmutter / NERSC
-  IRI token field) rather than writing it to ``.env``:
+OLCF (Odo / Frontier) no longer appears here. Those clusters used to need a
+Globus Transfer refresh token because the AmSC IRI tokens carry no storage
+scope, but both OLCF collections are High Assurance with a 3-day
+authentication-assurance timeout that a token refresh cannot reset — unusable
+for unattended operation. Their job output now comes back via an S3 push from
+the compute node instead; see
+``openspec/changes/replace-globus-with-s3-push/design.md``.
 
-      ./scripts/get_globus_token.py --cluster perlmutter
-
-All flows use the Globus Native App device/auth-code flow against the same client
-ID, request refresh tokens, and cache them under ``~/.globus/`` so re-running
-refreshes silently instead of forcing another browser login.
-
-OLCF Globus 4 DTN endpoints (e.g. UUID ef1a9560-7ca1-11e5-992c-22000b96db58) are
-activated with ``endpoint_autoactivate()`` and need only the base Transfer scope.
-If you transfer from a newer OLCF Globus Connect Server 5 mapped collection, pass
-``--data-access`` to also request that collection's ``data_access`` scope.
-
-Ports the structure of NERSC's iri-api-get-globus-token and jqyin/OLCF-Globus-Transfer.
-See https://github.com/NERSC/iri-api-get-globus-token and
-https://github.com/jqyin/OLCF-Globus-Transfer/blob/main/get_olcf_token.py
+Ports the structure of NERSC's iri-api-get-globus-token.
+See https://github.com/NERSC/iri-api-get-globus-token
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import stat
 import sys
 import time
@@ -54,18 +45,11 @@ from pathlib import Path
 import globus_sdk
 from globus_sdk.exc import GlobusAPIError, GlobusConnectionError
 
-# Same Native App client ID used by NERSC's iri-api-get-globus-token and the OLCF
-# transfer helper; settings.globus_native_app_client_id resolves to the same value.
+# Same Native App client ID used by NERSC's iri-api-get-globus-token;
+# settings.globus_native_app_client_id resolves to the same value.
 DEFAULT_CLIENT_ID = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
 
-# OLCF DTN (NCCS Open DTN) Globus collection UUID. Override with
-# --olcf-collection-id if you are transferring from a different OLCF
-# collection (e.g. an HPSS or project-specific GCS5 collection).
-DEFAULT_OLCF_COLLECTION_ID = "ef1a9560-7ca1-11e5-992c-22000b96db58"
-
-TRANSFER_RESOURCE_SERVER = "transfer.api.globus.org"
 AUTH_RESOURCE_SERVER = "auth.globus.org"
-TRANSFER_SCOPE = "urn:globus:auth:scope:transfer.api.globus.org:all"
 
 # NERSC IRI API: the scope is https://auth.globus.org/scopes/<RS>/iri_api, and the
 # minted token's resource_server is that RS UUID. This is the token Vista passes to
@@ -82,118 +66,43 @@ REQUIRED_AUTH_SCOPES = {
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# OLCF enclaves authenticate against different SSO domains; NERSC does not pin one.
-CLUSTER_SESSION_DOMAINS = {
-    "odo": "opensso.ccs.ornl.gov",
-    "frontier": "sso.ccs.ornl.gov",
-}
-OLCF_CLUSTERS = frozenset(CLUSTER_SESSION_DOMAINS)
-NERSC_CLUSTERS = frozenset({"perlmutter"})
-ALL_CLUSTERS = sorted(OLCF_CLUSTERS | NERSC_CLUSTERS)
-
-
-def facility_of(cluster: str | None) -> str:
-    """Map a cluster to its facility ('nersc' or 'olcf'). No cluster => olcf default."""
-    return "nersc" if cluster in NERSC_CLUSTERS else "olcf"
-
-
-def primary_resource_server(facility: str) -> str:
-    """The resource server whose token is the deliverable for this facility."""
-    return NERSC_IRI_RESOURCE_SERVER if facility == "nersc" else TRANSFER_RESOURCE_SERVER
+CLUSTERS = ["perlmutter"]
 
 
 def load_mcp_settings():
-    """Import the vista_mcp_server settings (collection IDs, client ID)."""
+    """Import the vista_mcp_server settings (Native App client id)."""
     sys.path.insert(0, str(REPO_ROOT / "mcp_servers" / "vista_mcp_server" / "src"))
     from vista_mcp_server.config import settings
 
     return settings
 
 
-def build_transfer_scope(collection_id: str | None) -> str:
-    """Return the Transfer scope, optionally with a data_access dependency.
-
-    Globus Connect Server 5 mapped collections require a per-collection
-    data_access scope on top of the Transfer scope. Pass collection_id to
-    request both in one consent. Globus 4 endpoints (like the legacy OLCF
-    DTN) do not have a data_access scope -- pass None to request only the
-    base Transfer scope.
-    """
-    if not collection_id:
-        return TRANSFER_SCOPE
-    data_access = f"https://auth.globus.org/scopes/{collection_id}/data_access"
-    return f"{TRANSFER_SCOPE}[{data_access}]"
-
-
-def get_requested_scopes(facility: str, data_access_collection_id: str | None) -> list[str]:
-    base = sorted(REQUIRED_AUTH_SCOPES)
-    if facility == "nersc":
-        return base + [NERSC_IRI_SCOPE]
-    return base + [build_transfer_scope(data_access_collection_id)]
+def get_requested_scopes() -> list[str]:
+    return sorted(REQUIRED_AUTH_SCOPES) + [NERSC_IRI_SCOPE]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Get Globus tokens for Vista's HPC backends: an OLCF Transfer refresh "
-            "token (odo/frontier file ops) or a NERSC IRI access token (perlmutter). "
-            "Tokens are cached to a secure local file."
+            "Get the Globus-issued NERSC IRI access token for Vista's Perlmutter "
+            "submissions. Tokens are cached to a secure local file."
         )
     )
     parser.add_argument(
         "--cluster",
-        choices=ALL_CLUSTERS,
-        default=None,
+        choices=CLUSTERS,
+        default="perlmutter",
         help=(
-            "Cluster to mint a token for. OLCF (odo/frontier) -> Transfer refresh "
-            "token; NERSC (perlmutter) -> IRI access token. Pulls the client ID "
-            "(and, for OLCF, the collection ID + SSO session domain) from the "
-            "vista_mcp_server config."
-        ),
-    )
-    parser.add_argument(
-        "--save-env",
-        action="store_true",
-        help=(
-            "OLCF only: write the Transfer refresh token to .env at the repo root "
-            "as VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN (requires --cluster). "
-            "NERSC IRI tokens are per-user; paste the printed access token into the UI."
+            "Cluster to mint a token for. Only NERSC/Perlmutter uses a Globus-issued "
+            "IRI token; OLCF clusters need no Globus credential (their job output "
+            "comes back via an S3 push)."
         ),
     )
     parser.add_argument(
         "--token-file",
         type=Path,
         default=None,
-        help=(
-            "Path for saved token JSON (default: ~/.globus/<facility>_tokens_<cluster>.json)"
-        ),
-    )
-    parser.add_argument(
-        "--olcf-collection-id",
-        default=DEFAULT_OLCF_COLLECTION_ID,
-        help=(
-            "OLCF only: UUID of the Globus collection you will transfer from "
-            f"(default: {DEFAULT_OLCF_COLLECTION_ID}). Only used with --data-access."
-        ),
-    )
-    parser.add_argument(
-        "--data-access",
-        action="store_true",
-        help=(
-            "OLCF only: also request the data_access dependent scope for "
-            "--olcf-collection-id. Required for Globus Connect Server 5 mapped "
-            "collections; must NOT be set for Globus 4 endpoints like the legacy "
-            "OLCF DTN (which would return UNKNOWN_SCOPE_ERROR)."
-        ),
-    )
-    parser.add_argument(
-        "--session-domain",
-        default=None,
-        help=(
-            "Force the authorize URL to require an identity from this domain "
-            "(session_required_single_domain). Set automatically per OLCF cluster; "
-            "left unset for NERSC."
-        ),
+        help="Path for saved token JSON (default: ~/.globus/nersc_tokens_perlmutter.json)",
     )
     parser.add_argument(
         "--client-id",
@@ -203,7 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--print-token",
         action="store_true",
-        help="Also print the refresh token (the primary access token is printed for NERSC).",
+        help="Also print the refresh token (the access token is always printed).",
     )
     parser.add_argument(
         "--force-login",
@@ -248,21 +157,6 @@ def save_tokens(token_file: Path, tokens: dict) -> None:
     os.chmod(token_file, stat.S_IRUSR | stat.S_IWUSR)
 
 
-def update_env_file(env_file: Path, key: str, value: str) -> None:
-    """Set key=value in env_file, replacing an existing (possibly commented-out) line."""
-    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
-    pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}=")
-    match_idx = next((i for i in range(len(lines) - 1, -1, -1) if pattern.match(lines[i])), None)
-    if match_idx is not None:
-        lines[match_idx] = f"{key}={value}"
-    else:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(f"{key}={value}")
-    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(env_file, stat.S_IRUSR | stat.S_IWUSR)
-
-
 def parse_scope_string(scope_string: str) -> set[str]:
     return set(scope_string.split()) if scope_string else set()
 
@@ -287,33 +181,27 @@ def require_token(token_response_data: dict, resource_server: str) -> dict:
     return token
 
 
-def validate_auth_data(auth_data: dict, primary_resource: str) -> None:
+def validate_auth_data(auth_data: dict) -> None:
     auth_token = require_token(auth_data, AUTH_RESOURCE_SERVER)
     granted = parse_scope_string(auth_token.get("scope", ""))
     missing = REQUIRED_AUTH_SCOPES - granted
     if missing:
         raise RuntimeError(f"Missing required Globus Auth scopes: {sorted(missing)}")
-    require_token(auth_data, primary_resource)
+    require_token(auth_data, NERSC_IRI_RESOURCE_SERVER)
 
 
 def interactive_login(
     client: globus_sdk.NativeAppAuthClient,
-    facility: str,
-    data_access_collection_id: str | None,
     *,
     prompt_login: bool = False,
-    session_domain: str | None = None,
 ) -> dict:
     client.oauth2_start_flow(
-        requested_scopes=" ".join(get_requested_scopes(facility, data_access_collection_id)),
+        requested_scopes=" ".join(get_requested_scopes()),
         refresh_tokens=True,
     )
     print("Open this URL, login, and consent:")
     prompt = "login" if prompt_login else globus_sdk.MISSING
-    url_kwargs: dict = {"prompt": prompt}
-    if session_domain:
-        url_kwargs["session_required_single_domain"] = session_domain
-    print(client.oauth2_get_authorize_url(**url_kwargs))
+    print(client.oauth2_get_authorize_url(prompt=prompt))
     code = input("\nEnter authorization code: ").strip()
     if not code:
         raise RuntimeError(
@@ -350,7 +238,7 @@ def _normalize_token_expiry(token_data: dict, *, now: float | None = None) -> di
     """Inject absolute expires_at_seconds when only expires_in is present.
 
     Refresh responses return expires_in (relative). The rest of this script
-    and the downstream transfer/list scripts check expires_at_seconds.
+    checks expires_at_seconds.
     """
     if not isinstance(token_data, dict):
         return token_data
@@ -383,7 +271,7 @@ def set_token(stored: dict, resource_server: str, refreshed: dict) -> dict:
 
     A token can be either the top-level token or one of `other_tokens`, depending
     on which scope Globus chose as the response's primary. Handle both so refresh
-    works regardless of facility/scope ordering.
+    works regardless of scope ordering.
     """
     merged = dict(stored)
     if merged.get("resource_server") == resource_server:
@@ -403,12 +291,12 @@ def set_token(stored: dict, resource_server: str, refreshed: dict) -> dict:
 
 
 def refresh_stored_tokens(
-    client: globus_sdk.NativeAppAuthClient, stored: dict, primary_resource: str
+    client: globus_sdk.NativeAppAuthClient, stored: dict
 ) -> dict | None:
     refreshed = dict(stored)
     any_refreshed = False
 
-    for resource_server in (AUTH_RESOURCE_SERVER, primary_resource):
+    for resource_server in (AUTH_RESOURCE_SERVER, NERSC_IRI_RESOURCE_SERVER):
         token = get_token_for_resource_server(refreshed, resource_server)
         refresh_tok = (token or {}).get("refresh_token")
         # The auth token's refresh_token can also sit at the response top level.
@@ -424,7 +312,7 @@ def refresh_stored_tokens(
     if not any_refreshed:
         return None
     try:
-        validate_auth_data(refreshed, primary_resource)
+        validate_auth_data(refreshed)
     except RuntimeError:
         return None
     return refreshed
@@ -435,29 +323,10 @@ def main() -> None:
     if args.force_login and args.refresh_only:
         raise RuntimeError("Choose only one of --force-login or --refresh-only")
 
-    facility = facility_of(args.cluster)
-    primary_resource = primary_resource_server(facility)
-
-    if args.save_env and not args.cluster:
-        raise RuntimeError("--save-env requires --cluster (it picks the .env variable name)")
-    if args.save_env and facility == "nersc":
-        raise RuntimeError(
-            "--save-env is OLCF-only. NERSC IRI tokens are per-user — paste the "
-            "access token this prints into the Vista UI (Perlmutter / NERSC IRI "
-            "token field), not .env."
-        )
-
-    if args.cluster:
-        settings = load_mcp_settings()
-        args.client_id = settings.globus_native_app_client_id
-        if facility == "olcf":
-            args.olcf_collection_id = getattr(settings, f"{args.cluster}_globus_collection_id")
-            args.session_domain = CLUSTER_SESSION_DOMAINS[args.cluster]
+    settings = load_mcp_settings()
+    args.client_id = settings.globus_native_app_client_id
     if args.token_file is None:
-        # Per-cluster cache: different facilities/enclaves use different identities,
-        # so sharing one file would clobber another cluster's refresh token.
-        suffix = f"_{args.cluster}" if args.cluster else ""
-        args.token_file = Path.home() / ".globus" / f"{facility}_tokens{suffix}.json"
+        args.token_file = Path.home() / ".globus" / f"nersc_tokens_{args.cluster}.json"
 
     client = globus_sdk.NativeAppAuthClient(args.client_id)
 
@@ -465,7 +334,7 @@ def main() -> None:
     if not args.force_login:
         stored = load_tokens(args.token_file)
         if stored:
-            auth_data = refresh_stored_tokens(client, stored, primary_resource)
+            auth_data = refresh_stored_tokens(client, stored)
 
     if auth_data is None:
         if args.refresh_only:
@@ -473,22 +342,15 @@ def main() -> None:
                 "Refresh-only mode failed. No usable saved refresh token was "
                 "found, or refresh did not return all required tokens."
             )
-        data_access_collection = (
-            args.olcf_collection_id if (facility == "olcf" and args.data_access) else None
-        )
         auth_data = interactive_login(
-            client,
-            facility,
-            data_access_collection,
-            prompt_login=args.prompt_login or args.force_login,
-            session_domain=args.session_domain,
+            client, prompt_login=args.prompt_login or args.force_login
         )
 
-    validate_auth_data(auth_data, primary_resource)
+    validate_auth_data(auth_data)
     auth_data = _normalize_token_expiry(auth_data)
     save_tokens(args.token_file, auth_data)
 
-    primary = require_token(auth_data, primary_resource)
+    primary = require_token(auth_data, NERSC_IRI_RESOURCE_SERVER)
     expires_at = primary.get("expires_at_seconds")
 
     print(f"Saved token data to {args.token_file}")
@@ -498,40 +360,14 @@ def main() -> None:
         print(f"Access token valid for ~{ttl} seconds.")
     print(f"Primary token scopes: {primary.get('scope', '')}")
 
-    if facility == "nersc":
-        print("\n=== NERSC IRI access token ===")
-        print(primary["access_token"])
-        print(
-            "\nPaste the token above into the Vista UI as your Perlmutter / NERSC "
-            "IRI token. Re-run this script to mint a fresh one (it refreshes silently)."
-        )
-        if args.print_token and primary.get("refresh_token"):
-            print("\nRefresh token (cached in the token file for silent refresh):")
-            print(primary["refresh_token"])
-        return
-
-    # --- OLCF: the deliverable is a Transfer refresh token for .env ---
-    if args.data_access:
-        print(f"OLCF collection ID: {args.olcf_collection_id} (data_access requested)")
-    else:
-        print("Transfer-only scope requested (no data_access).")
-
-    if args.save_env:
-        refresh_token = primary.get("refresh_token")
-        if not refresh_token:
-            raise RuntimeError(
-                "No refresh token in the Transfer token response, cannot --save-env. "
-                "Re-run with --force-login (a --refresh-only flow reuses the existing "
-                "access token and may not return a refresh token)."
-            )
-        env_file = REPO_ROOT / ".env"
-        env_var = f"VISTA_MCP_{args.cluster.upper()}_GLOBUS_REFRESH_TOKEN"
-        update_env_file(env_file, env_var, refresh_token)
-        print(f"Wrote {env_var} to {env_file}")
-    if args.print_token:
-        print("\nTransfer access token:")
-        print(primary["access_token"])
-        print("\nRefresh token:")
+    print("\n=== NERSC IRI access token ===")
+    print(primary["access_token"])
+    print(
+        "\nPaste the token above into the Vista UI as your Perlmutter / NERSC "
+        "IRI token. Re-run this script to mint a fresh one (it refreshes silently)."
+    )
+    if args.print_token and primary.get("refresh_token"):
+        print("\nRefresh token (cached in the token file for silent refresh):")
         print(primary["refresh_token"])
 
 

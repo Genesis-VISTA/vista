@@ -1,9 +1,9 @@
 """
 S3M token introspection — the per-user authorization gate for OLCF file ops.
 
-Globus transfers run under a single Vista-held identity (the backend's
-deployment-wide refresh token), so possession of an S3M token in the cluster's
-OLCF project is what authorizes a user to move files through Vista. S3M tokens
+Job output lands in Vista's own S3 bucket, pushed there by jobs that all run
+under one shared project service account, so possession of an S3M token in the
+cluster's OLCF project is what authorizes a user to read it. S3M tokens
 are group-scoped: each token carries exactly one `project` claim, so one token
 enables exactly one of Odo / Frontier.
 
@@ -64,9 +64,9 @@ async def require_s3m_project(
     """
     Raise ToolError unless the S3M token belongs to `expected_project`.
 
-    Called before every OLCF file op: Globus runs as Vista's own identity
-    against project-shared directories, so project membership on the S3M token
-    is the only thing standing between a user and another project's files.
+    Called before every OLCF job-data read: the output lives in Vista's bucket
+    rather than behind a per-user credential, so project membership on the S3M
+    token is the only thing standing between a user and another project's data.
     """
     project = await get_s3m_token_project(s3m_token, introspect_url=introspect_url)
     if project != expected_project:

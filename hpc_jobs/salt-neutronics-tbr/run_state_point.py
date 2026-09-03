@@ -7,7 +7,8 @@ single tritium-breeding-ratio (TBR) query against the cloned ``salt-neutronics-s
 (``salt_neutronics``) repo, writing ``results.json`` into the output dir.
 
 This file is the only non-metadata file in ``hpc_jobs/salt-neutronics-tbr/``, so vista
-Globus-stages it to ``$RUN_DIR_Odo``. ``job.odo.slurm`` invokes it as::
+inlines it into the JobSpec, materializing it at ``$RUN_DIR_Odo``.
+``job.odo.slurm`` invokes it as::
 
     python run_state_point.py --skill-root <clone> --output-dir $VISTA_OUT <order...>
 

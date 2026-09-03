@@ -1,6 +1,6 @@
-"""Test doubles for IRI / Globus boundaries (no network)."""
+"""Test doubles for IRI / S3 boundaries (no network)."""
 
 from .iri import FakeIriClient
-from .globus import FakeGlobusClient
+from .s3 import FakeS3Client
 
-__all__ = ["FakeIriClient", "FakeGlobusClient"]
+__all__ = ["FakeIriClient", "FakeS3Client"]

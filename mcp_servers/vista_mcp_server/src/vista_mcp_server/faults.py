@@ -8,7 +8,7 @@ any normal deployment. Drives E7a: replay the loadgen campaigns under a
 fault profile and measure auto-recovery rate by fault type.
 
 Faults raise `ToolError`, surfacing to the agent as a tool-call error
-(the same shape a real IRI/Globus failure takes), so the recovery path
+(the same shape a real IRI/S3 failure takes), so the recovery path
 under test is the real one.
 """
 

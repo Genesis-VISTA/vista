@@ -105,10 +105,12 @@ curl http://localhost:3000/api/mcp/health       # Smoke test
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
 
 The vista MCP server boots without any interactive login — HPC job submission authenticates
-with per-user tokens (S3M / NERSC IRI) supplied via the UI at tool-call time, plus
-deployment-wide Globus refresh tokens (`VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` for Odo's open
-enclave, `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` for Frontier's moderate enclave) for file
-ops. Set
+with per-user tokens (S3M / NERSC IRI) supplied via the UI at tool-call time. Odo and
+Frontier have no IRI storage scope, so their job output comes back via an S3 push from the
+compute node: set `VISTA_MCP_S3__BUCKET` plus a
+`VISTA_MCP_S3__KEY_ID` / `VISTA_MCP_S3__SECRET` pair, which the job uses to push and Vista
+uses to read back — so it needs read and write. Grant it via
+`aws/job-output-s3-policy.json`. Set
 `VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
 
 ## NextJS

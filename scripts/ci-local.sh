@@ -58,24 +58,55 @@ RUFF_VERSION="$(ci_var RUFF_VERSION)"
 PYRIGHT_VERSION="$(ci_var PYRIGHT_VERSION)"
 BANDIT_VERSION="$(ci_var BANDIT_VERSION)"
 export RUFF_VERSION PYRIGHT_VERSION BANDIT_VERSION
+# Steps run as child processes (see `step`), so anything they reference has to
+# be exported rather than merely set.
+export REPO_ROOT FAST
 
-run_job() {
-  # run_job <name> <allow_failure 0|1> <command...>
-  local name="$1"
-  local allow_failure="$2"
-  shift 2
-  log "$name"
-  if "$@"; then
-    echo "ok: $name"
+FAILED=0
+
+# Run one step of a section, as its own `bash -c` with its own errexit, and
+# record the result here rather than relying on it to propagate.
+#
+# Both halves of that matter. Bash disables `set -e` inside a function invoked
+# as the condition of `if` — which is how `run_section` calls every section —
+# and that suppression is inherited by ordinary `( ... )` subshells too. So a
+# failing step used to be stepped over, and because a section's exit status is
+# that of its *last* command, one passing step afterwards made the whole
+# section report green. That masked a required job for real: a stale uv.lock
+# left `vista-mcp:test` unable to import boto3, the step never ran, and this
+# script still printed "All requested checks passed" and exited 0.
+#
+# A child process gets a fresh errexit context, which also means a multi-command
+# step stops at its first failure instead of running on and returning the status
+# of the last command.
+step() {
+  local label="$1" script="$2"
+  log "$label"
+  if bash -c "set -euo pipefail
+$script"; then
+    echo "ok: $label"
     return 0
   fi
-  local rc=$?
-  if [[ "$allow_failure" -eq 1 && "$STRICT" != true ]]; then
-    echo "warn: $name failed (advisory; pass --strict to fail)" >&2
+  echo "fail: $label" >&2
+  FAILED=1
+}
+
+# A step mirroring a CI job with `allow_failure: true`: warns instead of
+# failing the run unless --strict.
+advisory_step() {
+  local label="$1" script="$2"
+  log "$label"
+  if bash -c "set -euo pipefail
+$script"; then
+    echo "ok: $label"
     return 0
   fi
-  echo "fail: $name (exit $rc)" >&2
-  return "$rc"
+  if [[ "$STRICT" != true ]]; then
+    echo "warn: $label failed (advisory; pass --strict to fail)" >&2
+    return 0
+  fi
+  echo "fail: $label" >&2
+  FAILED=1
 }
 
 ensure_uv() {
@@ -88,91 +119,88 @@ ensure_npm() {
 
 backend_lint() {
   ensure_uv
-  log "backend:lint (ruff $RUFF_VERSION)"
-  (
+  step "backend:lint (ruff $RUFF_VERSION)" '
     cd "$REPO_ROOT/backend"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  '
   if [[ "$FAST" == true ]]; then
     return 0
   fi
   # Match CI: typecheck is a required gate (the pyright baseline is clean);
   # security is advisory (allow_failure).
-  run_job "backend:typecheck" 0 bash -c '
-    cd "'"$REPO_ROOT"'/backend"
+  step "backend:typecheck" '
+    cd "$REPO_ROOT/backend"
     uv sync --frozen
     uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
   '
-  run_job "backend:security" 1 bash -c '
-    cd "'"$REPO_ROOT"'/backend"
+  advisory_step "backend:security" '
+    cd "$REPO_ROOT/backend"
     uvx "bandit@${BANDIT_VERSION}" -r src/ -ll -q
   '
 }
 
 PYTEST_HERMETIC_MARKERS='not live and not hpc and not sandbox'
+export PYTEST_HERMETIC_MARKERS
 
 backend_test() {
   ensure_uv
-  log "backend:test"
-  (
+  step "backend:test" '
     cd "$REPO_ROOT/backend"
     uv sync --frozen --dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  '
 }
 
 mcp_lint() {
   ensure_uv
-  log "vista-mcp:lint (ruff tests/)"
-  (
+  step "vista-mcp:lint (ruff tests/)" '
     cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check tests/
     uvx "ruff@${RUFF_VERSION}" format --check tests/
-  )
-  log "dev-mcp:lint (ruff)"
-  (
+  '
+  step "dev-mcp:lint (ruff)" '
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  '
 }
 
 mcp_test() {
   ensure_uv
   # Required (matches GitLab vista-mcp:test)
-  log "vista-mcp:test"
-  (
+  step "vista-mcp:test" '
     cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  '
   # Required: container-dependent tests are marked `sandbox` and excluded here.
-  log "dev-mcp:test"
-  (
+  step "dev-mcp:test" '
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  '
 }
 
 ui_lint() {
   ensure_npm
-  log "ui:lint"
-  (
+  step "ui:lint" '
     cd "$REPO_ROOT/ui"
     if [[ "$FAST" == true ]]; then
       if [[ ! -d node_modules ]]; then
         npm ci --prefer-offline
       fi
-      npm run lint
     else
       npm ci --prefer-offline
-      npm run lint
-      log "ui:typecheck"
-      npx tsc --noEmit
     fi
-  )
+    npm run lint
+  '
+  if [[ "$FAST" != true ]]; then
+    step "ui:typecheck" '
+      cd "$REPO_ROOT/ui"
+      npx tsc --noEmit
+    '
+  fi
 }
 
 ui_test() {
@@ -258,11 +286,11 @@ want_action() {
   return 1
 }
 
-FAILED=0
-
 run_section() {
   local label="$1"
   shift
+  # Individual steps record their own failures (see `step`); this only catches a
+  # section that fails some other way.
   if ! "$@"; then
     echo "fail: $label" >&2
     FAILED=1

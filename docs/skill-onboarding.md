@@ -175,7 +175,7 @@ runs across **two execution contexts**, each of which bootstraps the code itself
 | **HPC (GPU)** | OLCF Frontier | the GPU simulation | a thin `hpc_jobs/<job>/` clones the repo on the compute node |
 
 The GPU path is the only part that **can't** be pure clone-at-runtime: VISTA's
-`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (Globus-staged and
+`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (inlined into the JobSpec and
 launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)).
 So an HPC-backed skill pairs a `SKILL.md`
 with a **thin bootstrap job** — no simulation code vendored, just:

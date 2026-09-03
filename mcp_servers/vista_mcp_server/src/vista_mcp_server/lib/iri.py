@@ -108,7 +108,7 @@ class IriClient:
 
     def _resolve_resources(self) -> None:
         # A pre-pinned compute id means no discovery at all: the only pinning
-        # caller (Odo) does its file ops through Globus, never IRI storage, so
+        # caller (Odo) gets its output via the job's S3 push, never IRI storage, so
         # the discover() roundtrip would add latency to every tool call for a
         # storage id that is never used.
         if self._compute_resource_id:
@@ -306,8 +306,8 @@ async def create_odo_iri_client(*, iri_token: str) -> IriClient:
 
     Uses the same S3M token the user already configures for Odo, but routes
     compute through the IRI service at `odo_iri_url` (open enclave) instead of
-    the legacy direct S3M REST endpoint. File ops on Odo go through Globus
-    (`lib/globus.py`) — IRI's storage scope isn't authorized for this token —
+    the legacy direct S3M REST endpoint. Odo output comes back via the job's
+    own S3 push (`lib/s3.py`) — IRI's storage scope isn't authorized for this token —
     so `storage_resource_id` will raise on use, same as the Frontier client.
 
     Pins the compute resource id from settings (matches the working pattern in

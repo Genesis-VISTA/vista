@@ -227,8 +227,14 @@ def get_gpu_memory_info(device):
 
 def train(model, train_data, val_data, tokenizer, learning_rate, epochs, batch_size=4,
           use_differential_lr=True, rank=0, local_rank=0, world_size=1,
-          checkpoint_dir='./checkpoints', resume_from=None, task='regression',
+          checkpoint_dir='./checkpoints', log_dir=None, resume_from=None, task='regression',
           warmup_epochs=0, min_lr=1e-7, log_memory_interval=10):
+
+    # Checkpoints can be gigabytes each; the CSV logs are kilobytes. Vista points
+    # the two at different directories so the logs come back with the job output
+    # while the checkpoints stay on the cluster. Same dir when unset.
+    log_dir = log_dir or checkpoint_dir
+    os.makedirs(log_dir, exist_ok=True)
 
     train_dataset = Dataset(train_data, tokenizer)
     val_dataset = Dataset(val_data, tokenizer)
@@ -440,22 +446,22 @@ def train(model, train_data, val_data, tokenizer, learning_rate, epochs, batch_s
 
         if is_main_process():
             if use_cuda and memory_log['epoch']:
-                pd.DataFrame(memory_log).to_csv(os.path.join(checkpoint_dir, 'gpu_memory_log.csv'), index=False)
+                pd.DataFrame(memory_log).to_csv(os.path.join(log_dir, 'gpu_memory_log.csv'), index=False)
             if speed_log['epoch']:
-                pd.DataFrame(speed_log).to_csv(os.path.join(checkpoint_dir, 'training_speed_log.csv'), index=False)
+                pd.DataFrame(speed_log).to_csv(os.path.join(log_dir, 'training_speed_log.csv'), index=False)
 
         if world_size > 1:
             dist.barrier()
 
     if is_main_process():
         if use_cuda and memory_log['epoch']:
-            pd.DataFrame(memory_log).to_csv(os.path.join(checkpoint_dir, 'gpu_memory_log.csv'), index=False)
+            pd.DataFrame(memory_log).to_csv(os.path.join(log_dir, 'gpu_memory_log.csv'), index=False)
             print("GPU memory log saved.")
             final_alloc, final_reserved, peak_alloc = get_gpu_memory_info(device)
             print(f"Final GPU Memory - Allocated: {final_alloc:.2f} MB, Peak: {peak_alloc:.2f} MB")
 
         if speed_log['epoch']:
-            pd.DataFrame(speed_log).to_csv(os.path.join(checkpoint_dir, 'training_speed_log.csv'), index=False)
+            pd.DataFrame(speed_log).to_csv(os.path.join(log_dir, 'training_speed_log.csv'), index=False)
             print("Speed log saved.")
             print(f"Avg Epoch: {np.mean(speed_log['epoch_time_s']):.2f}s | "
                   f"Avg Throughput: {np.mean(speed_log['samples_per_sec']):.2f} samples/s | "
@@ -532,6 +538,9 @@ if __name__ == "__main__":
     parser.add_argument('--freeze-llm', action='store_true', help='freeze LLM weights (only train head)')
     parser.add_argument('--use-differential-lr', action='store_true', help='use lower LR for LLM, higher for head')
     parser.add_argument('--checkpoint-dir', default='./checkpoints', help='directory to save checkpoints')
+    parser.add_argument('--log-dir', default=None,
+                        help='directory for the CSV logs and the final classifier '
+                             '(default: --checkpoint-dir)')
     parser.add_argument('--resume-from', default=None, help='path to checkpoint to resume from')
     parser.add_argument('--eval-only', action='store_true', help='only run evaluation, no training')
     parser.add_argument('--task', default='regression', choices=['classification', 'regression'], help='task type')
@@ -615,6 +624,7 @@ if __name__ == "__main__":
         use_differential_lr=args.use_differential_lr,
         rank=rank, local_rank=local_rank, world_size=world_size,
         checkpoint_dir=args.checkpoint_dir,
+        log_dir=args.log_dir,
         resume_from=args.resume_from,
         task=args.task,
         warmup_epochs=args.warmup_epochs,
@@ -624,8 +634,9 @@ if __name__ == "__main__":
     if is_main_process():
         model_to_save = model.module if hasattr(model, 'module') else model
         model_name = f"{args.model.split('/')[-1]}_classical"
-        torch.save(model_to_save, f"{model_name}_classifier.pt")
-        print(f"Model saved to {model_name}_classifier.pt")
+        classifier_path = os.path.join(args.checkpoint_dir, f"{model_name}_classifier.pt")
+        torch.save(model_to_save, classifier_path)
+        print(f"Model saved to {classifier_path}")
         metric_name = 'RMSE' if args.task == 'regression' else 'Accuracy'
         print(f"Best validation {metric_name}: {best_val_metric**0.5:.3f}")
 

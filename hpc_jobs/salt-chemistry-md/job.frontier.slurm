@@ -20,15 +20,18 @@
 set -euo pipefail
 
 : "${VISTA_OUT:?VISTA_OUT not set}"
+: "${VISTA_SCRATCH:?VISTA_SCRATCH not set}"
 : "${RUN_DIR_Frontier:?RUN_DIR_Frontier not set}"
 : "${SALTMD_ENV:?SALTMD_ENV not set; add it to cluster_defaults.json iri.environment}"
 
-export HOME="${VISTA_OUT}"
+# $VISTA_OUT is uploaded verbatim, so HOME (pip/conda/matplotlib dotfiles) and
+# the runtime clone both belong in $VISTA_SCRATCH, which vista deletes afterwards.
+export HOME="${VISTA_SCRATCH}"
 export PYTHONNOUSERSITE=1
 
 REPO_URL="${SALTMD_REPO_URL:-https://github.com/jqyin/salt-chemistry-skill}"
 REPO_REF="${SALTMD_REPO_REF:-main}"
-CLONE_DIR="${VISTA_OUT}/salt-chemistry-skill"
+CLONE_DIR="${VISTA_SCRATCH}/salt-chemistry-skill"
 
 # 1. Clone the simulation code at runtime (system git; proxy already exported by vista).
 echo "[salt-chemistry-md] cloning ${REPO_URL}@${REPO_REF} -> ${CLONE_DIR}"

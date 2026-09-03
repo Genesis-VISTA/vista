@@ -11,7 +11,7 @@ The runtime is domain-agnostic plumbing; the domain knowledge lives in the sim s
     step, and mark the job collected.
 
 Both the HPC tools and the result parser are *injected* so the runtime is decoupled
-from MCP transport (credentials, Globus, etc., wired in the planner runtime) and from
+from MCP transport (credentials, object-store access, etc., wired in the planner runtime) and from
 any domain's output format. Tests inject fakes; the planner runtime injects the
 MCP-backed tools and a skill-built parser.
 """

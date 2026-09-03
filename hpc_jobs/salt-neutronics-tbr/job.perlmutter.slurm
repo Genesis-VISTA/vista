@@ -12,12 +12,13 @@
 # This is a CPU-only, single-core, sub-second interpolation: it runs on the Perlmutter
 # CPU partition (constraint=cpu, shared QOS), no GPU, no shifter, no pre-provisioned env.
 #
-# As with the Odo backend, the clone, the venv, and all caches go into NODE-LOCAL/
-# SCRATCH workspace ($WORK), NOT $VISTA_OUT — only results.json lands in $VISTA_OUT, so
-# the recursive output listing in get_hpc_job_status stays a single call.
+# As with the Odo backend, the clone, the venv, and all caches go into $VISTA_SCRATCH,
+# NOT $VISTA_OUT — only results.json lands in $VISTA_OUT. On the OLCF backends $VISTA_OUT
+# is uploaded verbatim, so keeping working files out of it is part of the job contract.
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT              per-job output dir, already mkdir'd. results.json lands here.
+#   VISTA_SCRATCH         per-job working dir, already mkdir'd. Never uploaded.
 #   RUN_DIR_Perlmutter    <nersc_remote_dir>/<job>/src — where vista staged run_state_point.py.
 #   SALTN_REPO_URL        public salt-neutronics-skill repo to clone (the salt_neutronics code + data).
 #   SALTN_REPO_REF        branch/tag/SHA to check out (default: main).
@@ -25,15 +26,15 @@
 set -euo pipefail
 
 : "${VISTA_OUT:?VISTA_OUT not set}"
+: "${VISTA_SCRATCH:?VISTA_SCRATCH not set}"
 : "${RUN_DIR_Perlmutter:?RUN_DIR_Perlmutter not set}"
 
 REPO_URL="${SALTN_REPO_URL:-https://github.com/jqyin/salt-neutronics-skill}"
 REPO_REF="${SALTN_REPO_REF:-main}"
 
-# Scratch for the clone, the venv, and all caches. $SCRATCH (Lustre) is always set on
-# NERSC; fall back to node-local tmp. Keeping these OUT of $VISTA_OUT is what makes the
-# post-run status check fast.
-WORK="${SCRATCH:-${TMPDIR:-/tmp}}/saltn-${SLURM_JOB_ID:-$$}"
+# Scratch for the clone, the venv, and all caches. Keeping these OUT of $VISTA_OUT is
+# what keeps the job's output to a single results.json.
+WORK="${VISTA_SCRATCH}/saltn"
 mkdir -p "${WORK}"
 trap 'rm -rf "${WORK}"' EXIT
 export HOME="${WORK}"               # pip/matplotlib drop dotfiles in HOME — keep them off $VISTA_OUT

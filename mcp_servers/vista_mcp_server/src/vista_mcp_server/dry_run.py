@@ -2,7 +2,7 @@
 HPC dry-run (evaluation plan M6, experiment flag §2a Group 3).
 
 When `VISTA_MCP_HPC_DRY_RUN=true`, the HPC job tools short-circuit
-S3M/IRI/Globus and return recorded synthetic responses: submit returns a
+S3M/IRI/S3 and return recorded synthetic responses: submit returns a
 `dry-<hex>` job id immediately, and status reports `PENDING` for
 `VISTA_MCP_HPC_QUEUE_DELAY_S` seconds (wall-clock from submission) then
 `COMPLETED`. No real cluster contact and no credentials required, so the

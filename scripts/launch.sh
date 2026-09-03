@@ -25,13 +25,9 @@ fi
 cd "$REPO_ROOT/backend"
 uv run python scripts/seed_db.py
 
-"$REPO_ROOT/scripts/launch_globus.py" --setup
-
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
-
-GLOBUS_CMD="'$REPO_ROOT/scripts/launch_globus.py';"
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
@@ -91,8 +87,6 @@ case "$MODE" in
   tmux)
     tmux new-session \
       -d -s vista-dev \
-      "$GLOBUS_CMD; exec bash" \; \
-      split-window -v \
       "$MCP_CMD; exec bash" \; \
       split-window -h \
       "$BACKEND_CMD; exec bash" \; \
@@ -101,7 +95,6 @@ case "$MODE" in
       attach
     ;;
   terminal)
-    launch_terminal "Globus Endpoint" "$GLOBUS_CMD; exec bash"
     launch_terminal "Backend" "$BACKEND_CMD; exec bash"
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
@@ -130,13 +123,11 @@ case "$MODE" in
     }
 
     echo "All services will be started, logging to:"
-    echo "  Globus:     $LOG_DIR/globus.log"
     echo "  MCP server: $LOG_DIR/mcp.log"
     echo "  Backend:    $LOG_DIR/backend.log"
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
-    run_service globus "$LOG_DIR/globus.log" "$GLOBUS_CMD"
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"

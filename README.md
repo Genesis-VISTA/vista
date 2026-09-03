@@ -34,7 +34,6 @@ are in [`openspec/specs/`](openspec/specs/), with open changes under
     - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login` (Or add HF_TOKEN to .env)
 - [git lfs](https://git-lfs.com/) (for the rag db)
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
-- [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)
 
 On MacOS, you may need to install `libmagic` first as well:
 ```bash
@@ -67,8 +66,10 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`      | None    |
-| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None    |
+| VISTA_MCP_S3__BUCKET                    | S3 bucket Odo/Frontier jobs push their output to, and Vista reads it back from                             | None    |
+| VISTA_MCP_S3__REGION                    | Bucket region. Must match the bucket or requests fail to sign                                             | us-east-1 |
+| VISTA_MCP_S3__KEY_ID                    | Access key for the job's push and Vista's reads. Scope per `aws/job-output-s3-policy.json`; see `.env.sample` | None    |
+| VISTA_MCP_S3__SECRET                    | Secret for the above. Visible on the cluster                                                              | None    |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
 Per-user HPC credentials (S3M token, NERSC IRI token) are **not** env vars — each
@@ -108,7 +109,7 @@ cd ./mcp_servers/vista_mcp_server && uv run vista-mcp-server --transport=http
 ## Jobs
 The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires a `README.md` plus at least one per-cluster job script. A job opts in to a cluster by providing the matching script (and, optionally, a section in `cluster_defaults.json`).
 
-All three clusters follow the same submission architecture: compute goes through an IRI service (OLCF AmSC IRI for Odo/Frontier, NERSC IRI for Perlmutter) and file transfer goes through Globus on OLCF clusters (or the IRI Filesystem API on Perlmutter). No SSH is involved.
+All three clusters follow the same submission architecture: compute goes through an IRI service (OLCF AmSC IRI for Odo/Frontier, NERSC IRI for Perlmutter) and no SSH is involved. They differ in how files move. Perlmutter's IRI token authorizes storage as well, so it uses the IRI Filesystem API. The OLCF tokens do not, so Odo and Frontier jobs are given their sources inline in the job submission and **push their own output to S3** when they exit, which Vista then reads back. (Globus used to fill that role, but OLCF's collections are High Assurance with a 3-day authentication timeout that no refresh can extend — shorter than a Frontier queue wait.)
 
 ### Directory layout
 ```
@@ -154,8 +155,20 @@ Per-cluster submission defaults. A job opts in to a cluster by including the cor
 `duration` is in **seconds**. `iri.environment` entries are merged into the job's environment and win over the dispatcher-provided defaults.
 
 ### Job Output
-Inside the job, the `VISTA_OUT` environment variable will be set to the path of an output directory. Any output files and logs should be saved
-under that directory so that Vista can pull the results.
+Two directories are exported into every job, and the split matters:
+
+- **`$VISTA_OUT`** — the results directory. On Odo and Frontier its entire contents are
+  uploaded to S3 verbatim when the job exits, with no filtering, so put only what you
+  want kept here.
+- **`$VISTA_SCRATCH`** — working space: virtualenvs, git clones, pip caches, `$HOME`.
+  Never uploaded, and deleted after the upload finishes.
+
+Both are already created when the job body starts. Writing a venv or a clone into
+`$VISTA_OUT` will ship all of it, so use `$VISTA_SCRATCH` for anything transient.
+
+The Slurm stdout/stderr logs are uploaded alongside the output, and a `manifest.json`
+is written last — if a finished job has no manifest, its upload was cut short and
+`get_hpc_job_status` says so rather than reporting an empty result.
 
 ## VISTAGuard
 

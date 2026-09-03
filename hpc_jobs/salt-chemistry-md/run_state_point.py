@@ -7,7 +7,8 @@ structure build and an NPT density run using the cloned ``salt-chemistry-skill``
 (``saltmd``) repo, writing ``results.json`` into the output dir.
 
 This file is the only non-metadata file in ``hpc_jobs/salt-chemistry-md/``, so vista
-Globus-stages it to ``$RUN_DIR_Frontier``. ``job.frontier.slurm`` invokes it as::
+inlines it into the JobSpec, materializing it at ``$RUN_DIR_Frontier``.
+``job.frontier.slurm`` invokes it as::
 
     python run_state_point.py --skill-root <clone> --output-dir $VISTA_OUT <order...>
 
@@ -20,6 +21,33 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
+
+
+def _child_home() -> str:
+    """
+    A writable HOME for the build/run children: not the user's real one, and not
+    the output dir.
+
+    Under vista's IRI dispatch the inherited HOME drags
+    ~/.local/lib/pythonX/site-packages onto sys.path, which shadows the conda
+    env's torch so torch.cuda.is_available() is False ("Torch reports no GPU").
+    Exporting HOME in the slurm shell does not reliably reach this spawned
+    run_npt.py, so it is set directly in the child env (PYTHONNOUSERSITE is what
+    actually keeps user-site off sys.path).
+
+    It used to point at --output-dir, which fixed the import problem but put
+    pip/conda/matplotlib dotfile trees inside $VISTA_OUT — uploaded verbatim,
+    as many small objects. $VISTA_SCRATCH is the directory the job contract
+    reserves for exactly this and deletes on exit; outside vista (a standalone
+    run) a temp dir serves the same purpose.
+    """
+    scratch = os.environ.get("VISTA_SCRATCH")
+    home = os.path.join(scratch, "run-home") if scratch else tempfile.mkdtemp(
+        prefix="salt-chemistry-md-home-"
+    )
+    os.makedirs(home, exist_ok=True)
+    return home
 
 
 def main(argv=None) -> int:
@@ -48,7 +76,12 @@ def main(argv=None) -> int:
                    help="ML potential; relative paths resolve against --skill-root.")
     p.add_argument("--platform", default=None, help="OpenMM platform (default from env OPENMM_PLATFORM).")
     p.add_argument("--precision", default=None)
-    p.add_argument("--no-trajectory", action="store_true")
+    p.add_argument(
+        "--trajectory", action=argparse.BooleanOptionalAction, default=False,
+        help="Write the MD trajectory into --output-dir. Off by default: nothing in "
+             "vista reads it and $VISTA_OUT is uploaded verbatim, so for a long "
+             "production run it is the largest thing in the upload by far.",
+    )
 
     # Shared.
     p.add_argument("--seed", type=int, default=None)
@@ -65,14 +98,7 @@ def main(argv=None) -> int:
     py = sys.executable
     structure = os.path.join(out, "structure.pdb")
 
-    # run_npt.py must run with HOME pointing at the writable per-job dir, NOT the user's
-    # real HOME. Under vista's IRI dispatch the inherited HOME drags in
-    # ~/.local/lib/pythonX/site-packages onto sys.path, which shadows the conda env's
-    # torch so torch.cuda.is_available() is False ("Torch reports no GPU"). Exporting
-    # HOME in the slurm shell does NOT reliably reach this spawned run_npt.py, so set it
-    # (plus PYTHONNOUSERSITE) directly in the child env — mirrors the verified-working
-    # `HOME=$VISTA_OUT python run_npt.py`.
-    child_env = {**os.environ, "HOME": out, "PYTHONNOUSERSITE": "1"}
+    child_env = {**os.environ, "HOME": _child_home(), "PYTHONNOUSERSITE": "1"}
 
     # ---- build the periodic box ----
     build = [py, os.path.join(skill_root, "scripts", "build_structure.py")]
@@ -125,7 +151,7 @@ def main(argv=None) -> int:
         run += ["--platform", args.platform]
     if args.precision:
         run += ["--precision", args.precision]
-    if args.no_trajectory:
+    if not args.trajectory:
         run += ["--no-trajectory"]
     if args.seed is not None:
         run += ["--seed", str(args.seed)]

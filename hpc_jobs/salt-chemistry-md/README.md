@@ -26,6 +26,9 @@ Passed through to `run_state_point.py`, which routes them to the repo's
 - `--model PATH`               ML potential; relative paths resolve in the clone
                                (default `assets/mace_flibe.model`, Flibe/Li-Be-F only)
 - `--density D`, `--seed N`    initial box density / RNG seed (build)
+- `--trajectory`               write the MD trajectory too (off by default — nothing
+                               in vista reads it, and everything in `$VISTA_OUT` is
+                               uploaded, so on a long run it dominates the transfer)
 
 Example:
 

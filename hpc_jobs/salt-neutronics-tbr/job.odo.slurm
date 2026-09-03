@@ -4,22 +4,21 @@
 # Runs inside vista's IRI `bash -l -c` invocation, which has ALREADY (see the setup
 # snippet in submit_job_mcp.py) exported VISTA_OUT and mkdir'd it, exported the OLCF
 # HTTP proxy, set HOME, run `module purge`, and `cd`'d into RUN_DIR_Odo (where vista
-# Globus-staged run_state_point.py). The state-point order ("$@") is the script_args
+# vista-materialized run_state_point.py). The state-point order ("$@") is the script_args
 # forwarded verbatim — see README.md.
 #
 # This is a CPU-only, single-core, sub-second interpolation: no GPU, no GPU binding,
 # no pre-provisioned conda env. We clone the public repo and build a throwaway venv at
 # runtime (light deps -> seconds), then run one TBR query.
 #
-# IMPORTANT: the clone and the venv go into NODE-LOCAL scratch ($WORK under /tmp), NOT
-# $VISTA_OUT. Only results.json lands in $VISTA_OUT. This keeps the job's output dir to
-# a single file so `get_hpc_job_status`' recursive Globus listing of the output dir
-# stays a single call instead of walking hundreds of venv/.git subdirs (which makes a
-# status check hang for minutes).
+# IMPORTANT: the clone and the venv go into $VISTA_SCRATCH, NOT $VISTA_OUT. Only
+# results.json lands in $VISTA_OUT, which vista uploads verbatim — anything left there
+# is shipped, so working files belong in scratch (vista deletes it after the upload).
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT        per-job output dir, already mkdir'd. results.json lands here.
-#   RUN_DIR_Odo      <odo_remote_dir>/<job>/src — where vista staged run_state_point.py.
+#   VISTA_SCRATCH    per-job working dir, already mkdir'd. NOT uploaded; deleted after.
+#   RUN_DIR_Odo      where vista materialized run_state_point.py.
 #   SALTN_REPO_URL   public salt-neutronics-skill repo to clone (the salt_neutronics code + data).
 #   SALTN_REPO_REF   branch/tag/SHA to check out (default: main).
 #   http(s)_proxy    OLCF HTTP proxy (compute nodes have no direct outbound) — set by vista.
@@ -27,16 +26,17 @@
 set -euo pipefail
 
 : "${VISTA_OUT:?VISTA_OUT not set}"
+: "${VISTA_SCRATCH:?VISTA_SCRATCH not set}"
 : "${RUN_DIR_Odo:?RUN_DIR_Odo not set}"
 
 REPO_URL="${SALTN_REPO_URL:-https://github.com/jqyin/salt-neutronics-skill}"
 REPO_REF="${SALTN_REPO_REF:-main}"
 
-# Node-local scratch for the clone, the venv, and all caches (pip/matplotlib). Keeping
-# these OUT of $VISTA_OUT is what makes the post-run status check fast.
-WORK="${TMPDIR:-/tmp}/saltn-${SLURM_JOB_ID:-$$}"
+# Scratch for the clone, the venv, and all caches (pip/matplotlib). Keeping these OUT
+# of $VISTA_OUT is what keeps the uploaded output to a single results.json.
+# No cleanup trap needed: vista removes $VISTA_SCRATCH after it uploads the output.
+WORK="${VISTA_SCRATCH}/saltn"
 mkdir -p "${WORK}"
-trap 'rm -rf "${WORK}"' EXIT
 export HOME="${WORK}"               # pip/matplotlib drop dotfiles in HOME — keep them off $VISTA_OUT
 export XDG_CACHE_HOME="${WORK}/.cache"
 CLONE_DIR="${WORK}/salt-neutronics-skill"

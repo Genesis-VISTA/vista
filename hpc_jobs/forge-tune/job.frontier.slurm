@@ -9,7 +9,10 @@
 # Frontier the IRI service runs the script once on the head, so we srun explicitly.
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py):
-#   VISTA_OUT            per-job output dir, already mkdir'd. Use for checkpoints + logs.
+#   VISTA_OUT            per-job output dir, already mkdir'd and uploaded on exit.
+#                        Use for logs and small artifacts, NOT for checkpoints.
+#   VISTA_KEEP           per-job dir kept on the cluster and never uploaded. Use for
+#                        checkpoints, which a later run reaches via --resume-from.
 #   RUN_DIR_Frontier     <frontier_remote_dir>/<job>/src (scp'd by vista)
 #   FORGE_MODEL_Frontier path to FORGE base model weights (from cluster_defaults.json
 #                        -> iri.environment).
@@ -42,7 +45,8 @@ checkpoint="${checkpoint:-}"
 TRAIN_CMD="python -u forge-tune.py \
     --model ${FORGE_MODEL_Frontier} \
     --input ${RUN_DIR_Frontier}/Molten_Salt_Thermophysical_Properties.csv \
-    --checkpoint-dir ${VISTA_OUT} \
+    --checkpoint-dir ${VISTA_KEEP} \
+    --log-dir ${VISTA_OUT} \
     --initial-lr ${initial_lr} \
     --min-lr ${min_lr} \
     --warmup-epochs ${warmup_epochs} \
