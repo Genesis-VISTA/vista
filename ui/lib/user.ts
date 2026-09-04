@@ -7,9 +7,10 @@
  * Two views:
  *   - `UserPublic` — id/email/is_admin only. Cached module-level and used
  *     by the nav rail; fetched on first mount, never carries secrets.
- *   - `UserPublicWithConfig` — adds the per-user config (NERSC account,
- *     decrypted S3M / IRI tokens). Fetched on demand by the settings modal
- *     so we don't decrypt or surface secrets on every page load.
+ *   - `UserPublicWithConfig` — adds the per-user config (inference model /
+ *     endpoint / key, NERSC account, decrypted S3M / IRI tokens). Fetched on
+ *     demand by the settings modal so we don't decrypt or surface secrets on
+ *     every page load.
  */
 
 import { useEffect, useReducer } from "react";
@@ -23,11 +24,13 @@ export type UserPublic = {
 
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
 export type UserPublicWithConfig = UserPublic & {
+  inference_model: string | null;
+  inference_base_url: string | null;
+  inference_api_key: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   s3m_token: string | null;
   nersc_iri_token: string | null;
-  globus_token: string | null;
 };
 
 /**
@@ -36,11 +39,13 @@ export type UserPublicWithConfig = UserPublic & {
  * `null` to clear it.
  */
 export type UserSelfUpdate = {
+  inference_model?: string | null;
+  inference_base_url?: string | null;
+  inference_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
   s3m_token?: string | null;
   nersc_iri_token?: string | null;
-  globus_token?: string | null;
 };
 
 let userCache: UserPublic | null = null;

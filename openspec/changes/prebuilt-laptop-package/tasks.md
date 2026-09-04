@@ -8,13 +8,13 @@
 
 ## 2. Inference credentials through the interface (C3, C5)
 
-- [ ] 2.1 Add an encrypted credential column for the inference key using the same `EncryptedStr` pattern as `schemas.py:504`, exposed through the self-update schema; verify a written value is not readable in plaintext via `sqlite3` on the database file
-- [ ] 2.2 Resolve the credential at agent-build time — user row first, environment second — and raise a typed error when neither supplies one; verify the resolution order with a unit test covering all four combinations
-- [ ] 2.3 Turn that typed error into a response naming the setting and where to enter it, rather than a traceback; verify a chat request with no credential returns the guidance message and a non-5xx status
-- [ ] 2.4 Confirm changing the credential takes effect without restart by relying on the existing post-commit eviction (`services/project_agent.py:143-156`); verify a test that a committed user update evicts the pooled agent for that user
-- [ ] 2.5 Add the model, endpoint, and credential fields to `UserSettingsModal.tsx`; verify a saved value round-trips and the next message uses it
-- [ ] 2.6 Remove the dead "Frontier Globus token" field from `UserSettingsModal.tsx:100,116` and its two entries in `ui/lib/user.ts:30,43`; verify `npm run lint` passes and no other component references it
-- [ ] 2.7 Verify that projects, skills, and knowledge bases remain browsable with no inference credential configured — the non-inference features must not be gated
+- [x] 2.1 Add an encrypted credential column for the inference key using the same `EncryptedStr` pattern as `schemas.py:504`, exposed through the self-update schema; verify a written value is not readable in plaintext via `sqlite3` on the database file
+- [x] 2.2 Resolve the credential at agent-build time — user row first, environment second — and raise a typed error when neither supplies one; verify the resolution order with a unit test covering all four combinations
+- [x] 2.3 Turn that typed error into a response naming the setting and where to enter it, rather than a traceback; verify a chat request with no credential returns the guidance message and a non-5xx status
+- [x] 2.4 Confirm changing the credential takes effect without restart by relying on the existing post-commit eviction (`services/project_agent.py:143-156`); verify a test that a committed user update evicts the pooled agent for that user
+- [x] 2.5 Add the model, endpoint, and credential fields to `UserSettingsModal.tsx`; verify a saved value round-trips and the next message uses it
+- [x] 2.6 Remove the dead "Frontier Globus token" field from `UserSettingsModal.tsx:100,116` and its two entries in `ui/lib/user.ts:30,43`; verify `npm run lint` passes and no other component references it
+- [x] 2.7 Verify that projects, skills, and knowledge bases remain browsable with no inference credential configured — the non-inference features must not be gated
 
 ## 3. Ungated embedding model (E1, E2, E3, E6)
 

@@ -26,7 +26,7 @@ from ..agents.skills import (
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import SkillTable, SkillUpdate
+from ..db.schemas import SkillTable, SkillUpdate, UserPublicWithConfig
 from ..utils.misc import now_iso
 from ._helpers import new_storage_path
 
@@ -157,10 +157,12 @@ async def import_skill(session: AsyncSession, url: str) -> SkillTable:
 
 
 async def generate_draft(
-    message_history: list[ModelMessage], hint: str | None
+    message_history: list[ModelMessage],
+    hint: str | None,
+    user: UserPublicWithConfig | None = None,
 ) -> SkillDraft:
     """Draft a SKILL.md from a chat conversation. Persists nothing."""
-    return await generate_skill_draft(message_history, hint)
+    return await generate_skill_draft(message_history, hint, user)
 
 
 async def update_skill(

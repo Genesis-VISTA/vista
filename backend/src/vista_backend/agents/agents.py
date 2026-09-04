@@ -20,6 +20,7 @@ from pydantic_ai import (
     RunUsage,
     AgentRunResultEvent,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -38,7 +39,11 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
 )
-from .inference import build_inference_model
+from .inference import (
+    build_model_for,
+    rejected_credential_detail,
+    require_inference_credential,
+)
 import mcp.client.session
 import mcp.shared.context
 import mcp.types
@@ -341,14 +346,18 @@ class ProjectAgent:
         quarantine_agent = None
         intent_extraction_agent = None
         code_intent_extraction_agent = None
+        # One `Model` for this agent and its Q-LLM sub-agents. Built from the
+        # user's settings row where they set one, falling back to `Settings`
+        # -- see `agents.inference.resolve_inference_target`. Shared rather
+        # than rebuilt per sub-agent so all four talk to the same endpoint
+        # with the same credential, and so a single HTTP client is reused.
+        model = build_model_for(self.user)
         if settings.vistaguard.quarantine_enabled:
-            quarantine_agent = build_quarantine_agent(settings.model)
-            intent_extraction_agent = build_intent_extraction_agent(settings.model)
+            quarantine_agent = build_quarantine_agent(model)
+            intent_extraction_agent = build_intent_extraction_agent(model)
             # Shared by G4 and G5 slow tiers ("what is this code/job
             # trying to do?").
-            code_intent_extraction_agent = build_code_intent_extraction_agent(
-                settings.model
-            )
+            code_intent_extraction_agent = build_code_intent_extraction_agent(model)
 
         capabilities = self._sidecar.build_capabilities(
             quarantine_agent=quarantine_agent,
@@ -370,7 +379,7 @@ class ProjectAgent:
         )
 
         agent = Agent(
-            model=build_inference_model(settings.model),
+            model=model,
             toolsets=toolsets,
             end_strategy="exhaustive",
             capabilities=capabilities,
@@ -798,7 +807,22 @@ class ProjectAgent:
 
         Pass db_session to enable campaign mode: the campaign tools persist through this session and
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
+
+        Raises:
+            MissingInferenceCredential: if no inference credential is
+                configured. Raised here rather than at agent construction so
+                the features that share this pooled agent but never reach the
+                model -- listing uploads, listing MCP tools -- keep working on
+                an install where nothing is configured yet. This method is a
+                plain method returning an iterator, not an async generator, so
+                the raise happens on the call and not on first iteration.
         """
+        # `self.user` is the snapshot taken when this agent was pooled. It
+        # stays current because `services.user.update_user` evicts this user's
+        # agents after every commit, which is also what lets a key pasted into
+        # the settings modal take effect without a restart.
+        require_inference_credential(self.user)
+
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
         # Merge the agent's own event stream with our own MCP Server log notifications
@@ -923,6 +947,28 @@ class ProjectAgent:
                             yield event
                 except VistaGuardDeny as deny:
                     yield log("WARNING", "VISTAGuard:G1", deny.decision.reason)
+                    yield ProjectAgentResultEvent(
+                        result=ProjectAgentResult(
+                            new_messages=[],
+                            usage=RunUsage(),
+                            logs=list(logs),
+                        )
+                    )
+                    return
+                except ModelHTTPError as exc:
+                    # A rejected credential is the same reportable condition as
+                    # an absent one -- a typo'd key is the likeliest first-run
+                    # failure -- but it can only be discovered by asking the
+                    # provider, which happens after the response has started.
+                    # Reported in-stream on the SEV1 pattern above rather than
+                    # as a broken stream. Anything else propagates: an outage
+                    # or a bad request is not a configuration problem and must
+                    # not be described as one.
+                    if exc.status_code not in (401, 403):
+                        raise
+                    yield log(
+                        "ERROR", "Agent", rejected_credential_detail(exc.model_name)
+                    )
                     yield ProjectAgentResultEvent(
                         result=ProjectAgentResult(
                             new_messages=[],

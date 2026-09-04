@@ -93,11 +93,15 @@ function UserSettingsForm({
   user: UserPublicWithConfig;
   onClose: () => void;
 }) {
+  const [inferenceApiKey, setInferenceApiKey] = useState(user.inference_api_key ?? "");
+  const [inferenceModel, setInferenceModel] = useState(user.inference_model ?? "");
+  const [inferenceBaseUrl, setInferenceBaseUrl] = useState(
+    user.inference_base_url ?? "",
+  );
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
-  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -109,11 +113,21 @@ function UserSettingsForm({
     const nullableCandidates: Array<
       [keyof UserSelfUpdate, string | null, string | null]
     > = [
+      [
+        "inference_api_key",
+        user.inference_api_key ?? null,
+        blankToNull(inferenceApiKey),
+      ],
+      ["inference_model", user.inference_model ?? null, blankToNull(inferenceModel)],
+      [
+        "inference_base_url",
+        user.inference_base_url ?? null,
+        blankToNull(inferenceBaseUrl),
+      ],
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
-      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -146,6 +160,54 @@ function UserSettingsForm({
       </div>
 
       <label className="project-modal-label">
+        Inference API key
+        <input
+          className="input"
+          type="password"
+          value={inferenceApiKey}
+          onChange={(e) => setInferenceApiKey(e.target.value)}
+          placeholder="API key"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Key for the inference endpoint below. Required to chat; everything
+          else works without it. Stored encrypted at rest, and picked up on your
+          next message without a restart.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Model
+        <input
+          className="input"
+          value={inferenceModel}
+          onChange={(e) => setInferenceModel(e.target.value)}
+          placeholder="openai:claude-sonnet"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Optional override, as <code>provider:name</code>. Leave blank to use
+          the server default.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Inference endpoint
+        <input
+          className="input"
+          value={inferenceBaseUrl}
+          onChange={(e) => setInferenceBaseUrl(e.target.value)}
+          placeholder="https://api.i2-core.american-science-cloud.org"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Optional override for the OpenAI-compatible endpoint. Leave blank to
+          use the server default.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
         S3M token
         <input
           className="input"
@@ -158,23 +220,6 @@ function UserSettingsForm({
         />
         <span className="user-settings-hint">
           Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        Frontier Globus token
-        <input
-          className="input"
-          type="password"
-          value={globusToken}
-          onChange={(e) => setGlobusToken(e.target.value)}
-          placeholder="Refresh token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Globus Transfer refresh token used for Frontier file operations.
-          Stored encrypted at rest.
         </span>
       </label>
 
