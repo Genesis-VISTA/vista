@@ -34,12 +34,12 @@
 
 ## 5. Optional file-transfer setup never blocks startup (H2, H3)
 
-- [ ] 5.1 Add a line sourcing `.env` to `scripts/launch.sh`, matching the `build.sh:6` idiom; verify a value present only in `.env` is visible to the script
-- [ ] 5.2 Gate the Globus setup call at `scripts/launch.sh:28` on either OLCF refresh token being non-empty, capture whether it succeeded, and make failure non-fatal with a warning naming the affected clusters; verify a launch on a host with no container runtime and a token set reaches a serving UI
-- [ ] 5.3 Start the Globus service only when setup succeeded, in all three launch modes (`:94`, `:104`, `:139`); verify no `globus.log` is produced and no service is started when setup was skipped or failed
-- [ ] 5.4 Verify the unset case is unchanged: with both refresh tokens absent, no transfer setup is attempted and every service starts
-- [ ] 5.5 Verify the token-set-and-working case is unchanged: on a host where setup succeeds, the endpoint and service start exactly as before
-- [ ] 5.6 Verify a dependent job tool reports the incomplete setup by name rather than an internal error — run against the dry-run path so this stays out of PR CI (`hpc` marker)
+- [x] 5.1 Add a line sourcing `.env` to `scripts/launch.sh`; verify a value present only in `.env` is visible to the script. Does **not** match the `build.sh:6` idiom — that idiom is broken: bash treats a missing *script* file as fatal and exits before the `|| true` is considered, so `build.sh` has silently died on any checkout without a `.env`. Both scripts now guard with a file test instead
+- [x] 5.2 Gate the Globus setup call at `scripts/launch.sh:28` on either OLCF refresh token being non-empty, capture whether it succeeded, and make failure non-fatal with a warning naming the affected clusters; verify a launch on a host with no container runtime and a token set reaches a serving UI
+- [x] 5.3 Start the Globus service only when setup succeeded, in all three launch modes (`:94`, `:104`, `:139`); verify no `globus.log` is produced and no service is started when setup was skipped or failed
+- [x] 5.4 Verify the unset case is unchanged: with both refresh tokens absent, no transfer setup is attempted and every service starts
+- [x] 5.5 Verify the token-set-and-working case is unchanged: on a host where setup succeeds, the endpoint and service start exactly as before
+- [x] 5.6 Verify a dependent job tool reports the incomplete setup by name rather than an internal error — run against the dry-run path so this stays out of PR CI (`hpc` marker)
 
 ## 6. UI and build configuration (P4, P5)
 
