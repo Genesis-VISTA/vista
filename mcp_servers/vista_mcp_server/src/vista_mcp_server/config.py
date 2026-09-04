@@ -215,7 +215,16 @@ class AppSettings(BaseSettings):
             raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
         return token
 
-    rag_model: str = "google/embeddinggemma-300m"
+    rag_model: str = "microsoft/harrier-oss-v1-270m"
+    """
+    Sentence-transformers model used to encode `rag_search` queries.
+
+    Ungated (MIT) and 640-dimension, so a fresh install needs no HuggingFace
+    account. Kept byte-identical to `build_rag.TextRAG.__init__`'s
+    `text_model` default, which is the *indexing* encoder: a Chroma
+    collection locks to the dimension of its first insert, so the two names
+    must never diverge. Change one, change the other.
+    """
 
     hf_token: A[str | None, Field(validation_alias="HF_TOKEN")] = None
 

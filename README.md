@@ -29,9 +29,9 @@ are in [`openspec/specs/`](openspec/specs/), with open changes under
 - Node.js 20+
 - [uv](https://docs.astral.sh/uv/)
 - Docker
-- [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
-    - VISTA will automatically download the model, but you need to sign up for access to it on [hugging face](https://huggingface.co/google/embeddinggemma-300m)
-    - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login` (Or add HF_TOKEN to .env)
+- [microsoft/harrier-oss-v1-270m](https://huggingface.co/microsoft/harrier-oss-v1-270m)
+    - VISTA downloads the embedding model automatically. It is MIT-licensed and
+      ungated, so no HuggingFace account, terms acceptance, or `HF_TOKEN` is needed.
 - [git lfs](https://git-lfs.com/) (for the rag db)
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
 - [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)

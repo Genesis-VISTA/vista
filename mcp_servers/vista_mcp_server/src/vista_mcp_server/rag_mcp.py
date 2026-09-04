@@ -15,7 +15,7 @@ Environment variables:
                                     (`<data_dir>/knowledge-bases`) is derived
                                     from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
-                                    Default: google/embeddinggemma-300m
+                                    Default: microsoft/harrier-oss-v1-270m
 """
 import json
 import logging
@@ -139,6 +139,12 @@ async def app_lifespan(server):
         # scary ERROR on every boot. Matching `hnsw:space=cosine` to what
         # build_rag.py uses so a later indexing run finds compatible
         # collections rather than re-creating them.
+        # No `embedding_function` is passed, so Chroma attaches its default
+        # (`ONNXMiniLM_L6_V2`), which downloads an ONNX archive from a public
+        # S3 bucket. It never fires: `__call__` is the only thing that
+        # downloads, and every read below passes `query_embeddings=` from
+        # `_embed`. Do not add a call that omits them -- it would reach the
+        # network on an offline machine and encode with the wrong model.
         try:
             text_collection = client.get_or_create_collection(
                 name="text_chunks",

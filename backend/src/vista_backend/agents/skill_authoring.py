@@ -11,7 +11,7 @@ the actual `POST /skills` write.
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import infer_model
+from .inference import build_inference_model
 
 from ..config import settings
 
@@ -66,7 +66,7 @@ async def generate_skill_draft(
         A `SkillDraft` the caller can edit before persisting via `POST /skills`.
     """
     agent = Agent(
-        model=infer_model(settings.model),
+        model=build_inference_model(settings.model),
         system_prompt=_SYSTEM_PROMPT,
         output_type=SkillDraft,
     )

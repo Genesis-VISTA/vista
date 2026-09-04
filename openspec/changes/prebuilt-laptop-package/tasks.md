@@ -1,10 +1,10 @@
 ## 1. Boot with no configuration (C1, C2)
 
-- [ ] 1.1 Give `model` the default `openai:claude-sonnet` in `backend/src/vista_backend/config.py:72`, written with the provider prefix; verify `Settings.model_validate({})` succeeds in a shell with no VISTA variables and no `.env` on the path
-- [ ] 1.2 Add an OpenAI-compatible endpoint settings field defaulting to the AmSC URL; verify it reads from the environment when set and returns the default when not
-- [ ] 1.3 Pass the endpoint and credential explicitly through `infer_model`'s `provider_factory` at `agents.py:373` instead of relying on process environment; verify with a unit test that a constructed agent carries the configured base URL and that `OPENAI_BASE_URL` is not consulted
-- [ ] 1.4 Confirm the MCP server and UI need no configuration file: verify `vista-mcp-server` starts and `/mcp` answers with no `.env` present anywhere in the parent path chain
-- [ ] 1.5 Add a backend test that the whole settings object constructs with an empty environment, so a future required field is caught immediately; place it alongside `backend/tests/test_crypto.py`
+- [x] 1.1 Give `model` the default `openai:claude-sonnet` in `backend/src/vista_backend/config.py:72`, written with the provider prefix; verify `Settings.model_validate({})` succeeds in a shell with no VISTA variables and no `.env` on the path
+- [x] 1.2 Add an OpenAI-compatible endpoint settings field defaulting to the AmSC URL; verify it reads from the environment when set and returns the default when not
+- [x] 1.3 Pass the endpoint and credential explicitly through `infer_model`'s `provider_factory` at `agents.py:373` instead of relying on process environment; verify with a unit test that a constructed agent carries the configured base URL and that `OPENAI_BASE_URL` is not consulted
+- [x] 1.4 Confirm the MCP server and UI need no configuration file: verify `vista-mcp-server` starts and `/mcp` answers with no `.env` present anywhere in the parent path chain
+- [x] 1.5 Add a backend test that the whole settings object constructs with an empty environment, so a future required field is caught immediately; place it alongside `backend/tests/test_crypto.py`
 
 ## 2. Inference credentials through the interface (C3, C5)
 
@@ -18,10 +18,10 @@
 
 ## 3. Ungated embedding model (E1, E2, E3, E6)
 
-- [ ] 3.1 Change the embedding model default to `microsoft/harrier-oss-v1-270m` at `build_rag.py:640` and `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py:218`; verify both files carry the identical string and add a comment on each naming the other, since they cannot desynchronize silently otherwise
-- [ ] 3.2 Confirm the retrieval service starts with the model resolved from `HF_HOME` and no token set; verify with `HF_TOKEN` unset and `HF_HUB_OFFLINE=1` against a primed cache
-- [ ] 3.3 Confirm the produced vectors are 640-dimension and that a freshly built store queries correctly end to end; verify by indexing two short documents and asserting a query returns the nearer one
-- [ ] 3.4 Record in a comment near the collection calls that Chroma's default embedding function must never be invoked, since it downloads from S3 and every call currently passes explicit vectors; verify no `get_or_create_collection` call site omits `embeddings=` or `query_embeddings=`
+- [x] 3.1 Change the embedding model default to `microsoft/harrier-oss-v1-270m` at `build_rag.py:640` and `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py:218`; verify both files carry the identical string and add a comment on each naming the other, since they cannot desynchronize silently otherwise
+- [x] 3.2 Confirm the retrieval service starts with the model resolved from `HF_HOME` and no token set; verify with `HF_TOKEN` unset and `HF_HUB_OFFLINE=1` against a primed cache
+- [x] 3.3 Confirm the produced vectors are 640-dimension and that a freshly built store queries correctly end to end; verify by indexing two short documents and asserting a query returns the nearer one
+- [x] 3.4 Record in a comment near the collection calls that Chroma's default embedding function must never be invoked, since it downloads from S3 and every call currently passes explicit vectors; verify no `get_or_create_collection` call site omits `embeddings=` or `query_embeddings=`
 
 ## 4. Seeding from a bundled payload (D1, D2, D4)
 
@@ -63,7 +63,7 @@
 
 ## 8. Launcher (L1, L2, L3, P2, P3, D2)
 
-- [ ] 8.1 Create the `vista` launcher resolving its own location and exporting absolute paths for the state directory and the MCP servers directory; verify it runs correctly from any working directory
+- [ ] 8.1 Create the `vista` launcher resolving its own location and exporting absolute paths for the state directory, the MCP servers directory, and the local HPC jobs directory; verify it runs correctly from any working directory. `vista_mcp_server/config.py:86` defaults `local_hpc_jobs_dir` to a cwd-relative `../../hpc_jobs` and `submit_job_mcp.py:80` iterates it at *import* time, so the server raises `FileNotFoundError` before its lifespan when started from anywhere but its own project directory — `VISTA_DATA_DIR` alone is not enough
 - [ ] 8.2 Put the bundled `uv` on `PATH` and export `UV_NO_SYNC=1`; verify an agent session spawns the sandbox MCP server with no network access available
 - [ ] 8.3 Add the platform guard comparing `uname` against the artifact's build target; verify a deliberately mislabelled artifact refuses to start and names the target platform
 - [ ] 8.4 Add the port preflight for 3000, 8000, and 8001 with a message naming the conflicting port; verify startup stops immediately when a port is held rather than waiting on a health poll

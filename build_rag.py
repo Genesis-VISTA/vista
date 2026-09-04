@@ -637,7 +637,12 @@ class TextRAG:
         self,
         pdf_folder: str,
         db_path: str = "./chroma_db",
-        text_model: str = "google/embeddinggemma-300m",
+        # Ungated (MIT) and 640-dimension. Kept byte-identical to
+        # `vista_mcp_server.config.Settings.rag_model`, which is the *query*
+        # encoder: a Chroma collection locks to the dimension of its first
+        # insert, so the two names must never diverge. Change one, change
+        # the other.
+        text_model: str = "microsoft/harrier-oss-v1-270m",
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
@@ -678,6 +683,14 @@ class TextRAG:
         self.db_exists = self._check_database_exists()
 
         # Collections
+        # Both collections are created without an `embedding_function`, so
+        # Chroma attaches its default (`ONNXMiniLM_L6_V2`). That default
+        # downloads an ONNX archive from a public S3 bucket -- but only inside
+        # its `__call__`, which never fires because every write below passes
+        # `embeddings=` and every read passes `query_embeddings=`, computed by
+        # `embed_text` from `self.text_model`. Do not add a call that omits
+        # them: it would reach the network on a machine meant to work offline,
+        # and write 384-dimension vectors into a 640-dimension collection.
         self.text_collection = self.client.get_or_create_collection(
             name="text_chunks",
             metadata={"hnsw:space": "cosine"},

@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models import infer_model
+from ..inference import build_inference_model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
@@ -188,7 +188,7 @@ def build_skill_parser(
     """Construct the LLM-backed parser for a role, specialized by its sim skill."""
     system_prompt = build_subagent_system_prompt(skill_dir, role)
     agent = Agent(
-        model=infer_model(model or settings.model),
+        model=build_inference_model(model or settings.model),
         output_type=ParsedResult,
         system_prompt=system_prompt,
     )

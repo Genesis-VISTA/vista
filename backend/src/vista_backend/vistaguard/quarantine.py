@@ -89,7 +89,6 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models import infer_model
 
 from .capabilities import DualUseMarker
 
@@ -160,6 +159,20 @@ class QuarantineDecision(BaseModel):
 # -----------------------------------------------------------------
 
 
+def _resolve_model(model: "str | Model") -> "Model":
+    """
+    Build the Q-LLM's pydantic-ai model against VISTA's configured endpoint.
+
+    `agents.inference` is imported here rather than at module scope: `config`
+    imports `vistaguard.config`, which runs this package's `__init__`, which
+    imports this module. A module-scope import of `agents.inference` -- which
+    needs `config.settings` -- would close that cycle.
+    """
+    from ..agents.inference import build_inference_model
+
+    return build_inference_model(model)
+
+
 def build_quarantine_agent(
     model: "str | Model",
     *,
@@ -168,7 +181,7 @@ def build_quarantine_agent(
     """
     Construct the Q-LLM PydanticAI Agent.
     """
-    resolved_model = infer_model(model) if isinstance(model, str) else model
+    resolved_model = _resolve_model(model)
     return Agent(
         model=resolved_model,
         system_prompt=system_prompt,
@@ -372,7 +385,7 @@ def build_intent_extraction_agent(
     """
     Construct the G1-slow-tier intent-extraction PydanticAI Agent.
     """
-    resolved_model = infer_model(model) if isinstance(model, str) else model
+    resolved_model = _resolve_model(model)
     return Agent(
         model=resolved_model,
         system_prompt=system_prompt,
@@ -582,7 +595,7 @@ def build_code_intent_extraction_agent(
     """
     Construct the G4 slow-tier code-intent PydanticAI Agent.
     """
-    resolved_model = infer_model(model) if isinstance(model, str) else model
+    resolved_model = _resolve_model(model)
     return Agent(
         model=resolved_model,
         system_prompt=system_prompt,

@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
 )
-from pydantic_ai.models import infer_model
+from .inference import build_inference_model
 import mcp.client.session
 import mcp.shared.context
 import mcp.types
@@ -370,7 +370,7 @@ class ProjectAgent:
         )
 
         agent = Agent(
-            model=infer_model(settings.model),
+            model=build_inference_model(settings.model),
             toolsets=toolsets,
             end_strategy="exhaustive",
             capabilities=capabilities,

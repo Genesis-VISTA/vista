@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Annotated as A, Literal
-from pydantic import BaseModel, Field, ByteSize, SecretStr
+from pydantic import AliasChoices, BaseModel, Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
@@ -69,12 +69,56 @@ class Settings(BaseSettings):
 
     log_level: LogLevel = "INFO"
 
-    model: str
+    model: str = "openai:claude-sonnet"
     """
     LLM to use.
     
     This is passed to Pydantic AI, see https://pydantic.dev/docs/ai/api/pydantic-ai/providers/ for
     other env vars to set for specific providers
+
+    Defaults to the AmSC-served `claude-sonnet` reached over the
+    OpenAI-compatible endpoint in `openai_base_url`, so a fresh install has a
+    working inference target with no configuration and only the access key is
+    outstanding. Written with the `openai:` provider prefix to match
+    `.env.sample` and the parsing in `utils/indexer.py:_parse_backend_model`,
+    which keys the citation extractor off this same value.
+    """
+
+    openai_base_url: A[
+        str,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_BACKEND_OPENAI_BASE_URL", "OPENAI_BASE_URL"
+            )
+        ),
+    ] = "https://api.i2-core.american-science-cloud.org"
+    """
+    Base URL of the OpenAI-compatible inference endpoint. Defaults to the AmSC
+    Inference API.
+
+    Resolved here rather than left to the OpenAI SDK's own `OPENAI_BASE_URL`
+    lookup, whose fallback is `api.openai.com` — a host where the default model
+    does not exist. `agents/inference.py` passes this value explicitly when it
+    builds the provider, so the endpoint no longer depends on a `.env` being
+    present. The bare `OPENAI_BASE_URL` name is still accepted so existing
+    deployments configured from `.env.sample` are unaffected.
+    """
+
+    openai_api_key: A[
+        SecretStr | None,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_BACKEND_OPENAI_API_KEY", "OPENAI_API_KEY"
+            )
+        ),
+    ] = None
+    """
+    Access key for `openai_base_url`.
+
+    Optional: with no key configured every service still starts and the missing
+    credential is reported when inference is first attempted. On a single-user
+    install this is normally supplied through the settings UI instead, which
+    takes precedence over this value.
     """
 
     mcp_url: str = Field(
