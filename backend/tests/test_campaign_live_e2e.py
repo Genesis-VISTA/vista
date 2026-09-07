@@ -1,10 +1,13 @@
 """
 End-to-end test of the campaign framework over a mock domain (hermetic).
 
-Despite the historical filename, this is **not** a live-LLM / live-HPC test.
-It uses FunctionModel + a fake MCP invoke. Marked ``integration`` so it stays
-in hermetic PR CI. Opt-in ``live`` / ``hpc`` markers are reserved for Milestone D
-tests that need real credentials.
+Despite the historical filename, this is **not** a live-LLM / live-HPC test
+and MUST NOT be marked ``live`` or ``hpc``. It uses FunctionModel + a fake MCP
+invoke. Marked ``integration`` so it stays in hermetic PR CI.
+
+Opt-in ``live`` / ``hpc`` markers (plus ``VISTA_RUN_LIVE=1`` /
+``VISTA_RUN_HPC=1``) are reserved for ``backend/tests/live/`` validation-lane
+tests that need real credentials — see ``docs/validation-lane.md``.
 
 Unlike test_campaign_e2e (which fakes the planner provider) and test_campaign_driver (which
 fakes the planner), this drives the *real* wiring:

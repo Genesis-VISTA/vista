@@ -84,6 +84,11 @@ npm run dev
 Testing roadmap (milestones A–D, VISTAGuard out of scope): canonical specs in
 `openspec/specs/` and open changes `openspec/changes/milestone-*`.
 
+Hermetic PR CI uses `-m "not live and not hpc and not sandbox"`. Live / HPC /
+Playwright validation is schedule-or-manual only — see
+[`docs/validation-lane.md`](docs/validation-lane.md) and
+`./scripts/nightly-validation.sh`.
+
 Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
