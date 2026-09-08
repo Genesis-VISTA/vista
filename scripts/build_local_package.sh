@@ -414,6 +414,26 @@ bundle_runtime() {
 
 # ─── sources ────────────────────────────────────────────────────────────────
 
+# Build the MCP app the display_file tool serves.
+#
+# Its single self-contained HTML file is a build artifact and is not committed,
+# so a fresh checkout has nothing to stage -- `scripts/build.sh` produces it,
+# and a package built without this step silently ships without it. Runs before
+# the sources are staged, since the output lands inside the tree that gets
+# copied.
+build_mcp_app() {
+  log "building the MCP app"
+  (
+    cd "$REPO_ROOT/mcp_servers/vista_mcp_server/mcp-apps"
+    [[ -d node_modules ]] || npm ci --prefer-offline >/dev/null
+    npm run build >/dev/null
+  )
+  local emitted="$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/mcp-apps"
+  [[ -f "$emitted/display-file.html" ]] \
+    || die "the MCP app build emitted no display-file.html in $emitted"
+  echo "mcp app     : $(du -sh "$emitted" | cut -f1)"
+}
+
 stage_sources() {
   log "staging application sources"
 
@@ -422,13 +442,16 @@ stage_sources() {
     source="${project%%|*}"
     mkdir -p "$STAGING_APP/$(dirname "$source")"
     # `.venv` is excluded rather than copied: the package gets environments
-    # built against its own interpreter below. `mcp-apps` is the MCP app's npm
-    # project -- 137 MB of build-time dependencies whose only output is the
-    # single self-contained HTML file already inside `src/`.
+    # built against its own interpreter below. `/mcp-apps/` is the MCP app's npm
+    # project -- 137 MB of build-time dependencies whose only output is one
+    # self-contained HTML file. The leading slash anchors that exclusion to the
+    # top of this transfer: unanchored, it also matched the *output* directory
+    # `src/vista_mcp_server/mcp-apps/`, and the app was silently left out of
+    # every package.
     rsync -a \
       --exclude '.venv/' \
       --exclude '__pycache__/' \
-      --exclude 'mcp-apps/' \
+      --exclude '/mcp-apps/' \
       --exclude '.pytest_cache/' \
       --exclude 'tests/' \
       "$REPO_ROOT/$source/" "$STAGING_APP/$source/"
@@ -446,6 +469,9 @@ stage_sources() {
   # The launcher lives at the package root, where a researcher will look for
   # it, and is the only executable they are asked to run.
   install -m 755 "$REPO_ROOT/scripts/package_launcher.sh" "$STAGING/vista"
+
+  local staged_app="$STAGING_APP/mcp_servers/vista_mcp_server/src/vista_mcp_server/mcp-apps/display-file.html"
+  [[ -f "$staged_app" ]] || die "the MCP app did not reach the package at $staged_app"
 
   echo "staged: $(du -sh "$STAGING_APP" | cut -f1)"
 }
@@ -997,6 +1023,7 @@ BUNDLED_PYTHON_DIR=''
 prepare_staging
 bundle_runtime
 bundle_node
+build_mcp_app
 stage_sources
 stage_ui
 create_environments
