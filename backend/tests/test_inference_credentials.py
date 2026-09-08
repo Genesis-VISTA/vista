@@ -469,3 +469,120 @@ async def test_other_provider_errors_still_propagate(session):
             async for _ in agent.run_stream(user_prompt="hi"):
                 pass
     assert excinfo.value.status_code == 503
+
+
+class TestCitationCredentials:
+    """
+    Citation extraction has to see a key entered in the settings modal.
+
+    `build_rag` resolves its LLM from the process environment, which cannot
+    reach an encrypted value in the user's row. Without the carrier built here,
+    a researcher on a fresh install uploads PDFs, gets searchable chunks, and
+    silently gets no titles, authors, or DOIs.
+    """
+
+    @staticmethod
+    def _scrubbed(monkeypatch):
+        """Neither the environment nor Settings supplies a credential."""
+        for name in (
+            "OPENAI_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "ENDPOINT_URL",
+            "DEPLOYMENT_NAME",
+            "OPENAI_MODEL",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(settings, "openai_api_key", None)
+
+    def test_no_credential_anywhere_disables_extraction(self, monkeypatch):
+        from vista_backend.agents.inference import citation_credentials
+        from vista_backend.utils.indexer import has_llm_credentials
+
+        self._scrubbed(monkeypatch)
+        credentials = citation_credentials(None)
+        assert credentials.is_usable is False
+        assert has_llm_credentials(credentials) is False
+
+    def test_row_credential_enables_extraction(self, monkeypatch):
+        from vista_backend.agents.inference import citation_credentials
+        from vista_backend.utils.indexer import has_llm_credentials
+
+        self._scrubbed(monkeypatch)
+        user = UserPublicWithConfig(
+            id=uuid.uuid4(),
+            email="researcher@example.org",
+            is_admin=False,
+            inference_api_key="sk-from-the-settings-modal",
+            inference_base_url="https://endpoint.example/v1",
+            inference_model="openai:my-model",
+        )
+        credentials = citation_credentials(user)
+        assert credentials.is_usable is True
+        assert has_llm_credentials(credentials) is True
+        assert credentials.api_key == "sk-from-the-settings-modal"
+        assert credentials.base_url == "https://endpoint.example/v1"
+
+    def test_model_id_loses_its_provider_prefix(self, monkeypatch):
+        """
+        `Settings.model` and the row hold a pydantic-ai id (`provider:name`),
+        but this value goes straight into an OpenAI `model=` field where the
+        prefix is not a valid model name.
+        """
+        from vista_backend.agents.inference import citation_credentials
+
+        self._scrubbed(monkeypatch)
+        user = UserPublicWithConfig(
+            id=uuid.uuid4(),
+            email="researcher@example.org",
+            is_admin=False,
+            inference_api_key="sk-x",
+            inference_model="openai:claude-sonnet",
+        )
+        assert citation_credentials(user).model == "claude-sonnet"
+
+    def test_supplied_credential_beats_the_environment(self, monkeypatch):
+        """
+        An explicit credential means the caller already decided; re-deriving
+        from the environment could only contradict it.
+        """
+        from vista_backend.agents.inference import citation_credentials
+        from vista_backend.utils.indexer import _get_text_rag_cls
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.example/v1")
+        user = UserPublicWithConfig(
+            id=uuid.uuid4(),
+            email="researcher@example.org",
+            is_admin=False,
+            inference_api_key="sk-from-the-row",
+            inference_base_url="https://row.example/v1",
+            inference_model="openai:row-model",
+        )
+
+        _get_text_rag_cls()  # puts the repo root on sys.path
+        import build_rag
+
+        resolved = build_rag._resolve_llm_config(60.0, citation_credentials(user))
+        assert resolved.model == "row-model"
+        assert str(resolved.client.base_url).rstrip("/") == "https://row.example/v1"
+
+    def test_environment_path_is_unchanged(self, monkeypatch):
+        """Deployments configured through `.env` keep working untouched."""
+        from vista_backend.utils.indexer import _get_text_rag_cls, has_llm_credentials
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.example/v1")
+        monkeypatch.setenv("VISTA_BACKEND_MODEL", "openai:env-model")
+        assert has_llm_credentials(None) is True
+
+        _get_text_rag_cls()
+        import build_rag
+
+        resolved = build_rag._resolve_llm_config(60.0, None)
+        assert resolved.model == "env-model"
+        assert (
+            str(resolved.client.base_url).rstrip("/")
+            == "https://environment.example/v1"
+        )

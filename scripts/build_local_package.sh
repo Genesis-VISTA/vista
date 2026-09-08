@@ -24,6 +24,8 @@
 #   --archive-format FMT gz (default), zstd, or none to leave the tree unpacked
 #   --without-hpc        Build without amscrot-py; HPC job submission will not
 #                         work in the result, and the manifest records that
+#   --without-citations  Build the vector store without citation metadata
+#                         (titles, authors, DOIs), and record that
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
@@ -36,7 +38,7 @@ cd "$REPO_ROOT"
 # ─── house idiom (matches scripts/ci-local.sh) ──────────────────────────────
 
 usage() {
-  sed -n '2,29p' "$0" | sed -E 's/^# ?//'
+  sed -n '2,31p' "$0" | sed -E 's/^# ?//'
 }
 
 die() {
@@ -59,6 +61,7 @@ PAYLOAD_DIR=''
 OUTPUT_DIR="$REPO_ROOT/dist"
 ARCHIVE_FORMAT=gz
 WITHOUT_HPC=false
+WITHOUT_CITATIONS=false
 SKIP_SMOKE_TEST=false
 KEEP_STAGING=false
 
@@ -67,6 +70,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help) usage; exit 0 ;;
     --check) CHECK_ONLY=true ;;
     --without-hpc) WITHOUT_HPC=true ;;
+    --without-citations) WITHOUT_CITATIONS=true ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
@@ -186,6 +190,28 @@ mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
   with HPC job submission disabled.")
   fi
 
+  # An inference credential, for the citation metadata the vector store
+  # carries. Building the store calls an LLM once per paper to extract title,
+  # authors, journal, year, and DOI; without a credential that step is skipped
+  # and the shipped corpus retrieves passages that cite nothing.
+  #
+  # The recipient never needs this -- the citations are baked into the store
+  # they receive -- which is exactly why it has to be checked here.
+  #
+  # Mirrors the decision in `backend/src/vista_backend/utils/indexer.py`
+  # (`has_llm_credentials`); if that resolution order changes, this follows.
+  if [[ "$WITHOUT_CITATIONS" == true ]]; then
+    warn "--without-citations: the vector store will have no titles, authors, \
+or DOIs, and retrieval results will cite nothing"
+  elif [[ -z "${OPENAI_API_KEY:-}" && -z "${AZURE_OPENAI_API_KEY:-}" ]]; then
+    failures+=("no inference credential for citation extraction — set \
+OPENAI_API_KEY (with OPENAI_BASE_URL and VISTA_BACKEND_MODEL) or the \
+AZURE_OPENAI_* trio, normally through the repo-root .env. Building the vector \
+store calls the model once per paper for title/authors/DOI; without it the \
+shipped corpus returns passages that cite nothing. Pass \
+--without-citations to build that way deliberately.")
+  fi
+
   # Network, per host rather than as one "is the internet up" question: a
   # restricted network that allows pypi but blocks huggingface is a real
   # configuration, and finding out mid-build costs an hour. HEAD only --
@@ -237,6 +263,11 @@ requested — gz needs no extra tool and is the default for that reason") ;;
     echo "amscrot-py        : omitted (--without-hpc)"
   else
     echo "amscrot-py        : reachable"
+  fi
+  if [[ "$WITHOUT_CITATIONS" == true ]]; then
+    echo "citations         : omitted (--without-citations)"
+  else
+    echo "citations         : credential present"
   fi
   echo "archive format    : ${ARCHIVE_FORMAT}"
   echo "package           : ${PACKAGE_NAME}"

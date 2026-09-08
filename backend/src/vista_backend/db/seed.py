@@ -174,10 +174,17 @@ async def _build_knowledge_base(kb_dir: Path):
     logging.info(
         f"Embedding {len(filenames)} PDF(s) into the knowledge base at {rag_db}."
     )
+    # No user exists yet at first-run seeding, so this resolves from
+    # `Settings` alone. It matters for a plain checkout indexing the corpus
+    # itself; the prebuilt package ships a store that already has citations,
+    # so `_build_knowledge_base` returns before reaching this.
+    from ..agents.inference import citation_credentials
+
     results = await indexer.index_publications(
         rag_db_path=str(rag_db),
         pdfs_dir=str(pdfs_dir),
         filenames=filenames,
+        llm_credentials=citation_credentials(),
     )
 
     failed = [r.get("filename") for r in results if r.get("status") == "failed"]

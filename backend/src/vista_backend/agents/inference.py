@@ -218,6 +218,38 @@ def resolve_inference_target(
     )
 
 
+def citation_credentials(user=None):
+    """
+    The inference credential for citation extraction, as `build_rag` wants it.
+
+    Citation extraction lives in `build_rag`, which resolves its LLM from the
+    process environment. That cannot see a key entered in the settings modal --
+    it is encrypted in the user's row, and this module is what resolves it --
+    so a user-created knowledge base would index its text and silently get no
+    titles, authors, or DOIs. Callers pass the result of this down to the
+    indexer instead.
+
+    `build_rag` is imported lazily: it lives at the repo root rather than in a
+    package, pulls in sentence-transformers and chromadb, and is otherwise only
+    loaded when indexing actually starts.
+    """
+    from ..utils.indexer import _get_text_rag_cls
+
+    _get_text_rag_cls()  # puts the repo root on sys.path
+    from build_rag import LLMCredentials  # type: ignore[import-not-found]
+
+    target = resolve_inference_target(user)
+    # `model` is a pydantic-ai model id (`provider:name`), but `build_rag` puts
+    # its value straight into an OpenAI `model=` field, where the prefix is not
+    # a valid model name. Split it the same way `infer_model` would.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        _, model_name = parse_model_id(target.model)
+    return LLMCredentials(
+        base_url=target.base_url, api_key=target.api_key, model=model_name
+    )
+
+
 def require_inference_credential(
     user: "UserPublicWithConfig | None" = None,
 ) -> InferenceTarget:

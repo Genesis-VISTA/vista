@@ -20,11 +20,20 @@ pytestmark = [pytest.mark.anyio, pytest.mark.unit]
 class FakeTextRAG:
     """Records the PDF paths handed to it instead of embedding them."""
 
-    def __init__(self, *, pdf_folder, db_path, extract_citations, force_reindex):
+    def __init__(
+        self,
+        *,
+        pdf_folder,
+        db_path,
+        extract_citations,
+        force_reindex,
+        llm_credentials=None,
+    ):
         self.pdf_folder = pdf_folder
         self.db_path = db_path
         self.extract_citations = extract_citations
         self.force_reindex = force_reindex
+        self.llm_credentials = llm_credentials
         self.indexed: list[Path] = []
 
     def index_single_pdf(self, pdf_path, progress_cb=None):
@@ -138,3 +147,26 @@ async def test_missing_nested_pdf_is_reported_as_failed(tmp_path, fake_rag):
     assert "File not found" in missing["error"]
     assert present["status"] == "indexed"
     assert fake_rag[0].indexed == [pdfs / "thermo/present.pdf"]
+
+
+async def test_llm_credentials_reach_the_rag_instance(fake_rag, tmp_path):
+    """
+    The credential the caller resolved has to arrive at `TextRAG`, which is
+    what puts it in front of the citation extractor. `knowledge_bases.py`
+    resolves it from the requesting user's row; without this hop a fresh
+    install indexes text and produces no citation metadata.
+    """
+    pdfs_dir = tmp_path / "pdfs"
+    pdfs_dir.mkdir()
+    (pdfs_dir / "paper.pdf").write_bytes(b"%PDF-1.4")
+
+    sentinel = object()
+    await indexer.index_publications(
+        rag_db_path=str(tmp_path / "rag_db"),
+        pdfs_dir=str(pdfs_dir),
+        filenames=["paper.pdf"],
+        extract_citations=True,
+        llm_credentials=sentinel,
+    )
+    assert len(fake_rag) == 1
+    assert fake_rag[0].llm_credentials is sentinel
