@@ -255,7 +255,8 @@ shipped corpus returns passages that cite nothing. Pass \
   for host_probe in \
       "pypi.org|https://pypi.org/simple/|python dependencies" \
       "registry.npmjs.org|https://registry.npmjs.org/|the UI and MCP app builds" \
-      "huggingface.co|https://huggingface.co/api/models/microsoft/harrier-oss-v1-270m|the embedding weights"; do
+      "huggingface.co|https://huggingface.co/api/models/microsoft/harrier-oss-v1-270m|the embedding weights" \
+      "nodejs.org|https://nodejs.org/dist/|the bundled Node runtime"; do
     local probe_host="${host_probe%%|*}"
     local probe_rest="${host_probe#*|}"
     local probe_url="${probe_rest%%|*}"
@@ -345,6 +346,22 @@ PYTHON_REQUIREMENT="$(
 )"
 [[ -n "$PYTHON_REQUIREMENT" ]] \
   || die "could not read requires-python from backend/pyproject.toml"
+
+# The Node runtime the standalone UI server needs.
+#
+# Bundled for the same reason the interpreter is: the artifact "SHALL NOT
+# require ... a language runtime" on the researcher's machine, and Next's
+# standalone output is a `server.js`, not an executable. Pinned rather than
+# taken from the build host so two builds of the same commit agree; override
+# with VISTA_NODE_VERSION when moving to a new major.
+NODE_VERSION="${VISTA_NODE_VERSION:-24.20.0}"
+case "$TARGET_OS-$TARGET_ARCH" in
+  macos-arm64)  NODE_PLATFORM=darwin-arm64 ;;
+  macos-x86_64) NODE_PLATFORM=darwin-x64 ;;
+  linux-aarch64|linux-arm64) NODE_PLATFORM=linux-arm64 ;;
+  linux-x86_64) NODE_PLATFORM=linux-x64 ;;
+  *) die "no Node build known for $TARGET_OS-$TARGET_ARCH" ;;
+esac
 
 # Every project that gets its own environment inside the package, as
 # <source path>|<sync flags>.
@@ -544,6 +561,59 @@ install_cpu_torch() {
     --torch-backend=cpu torch >/dev/null
 }
 
+# ─── Node runtime and the UI ────────────────────────────────────────────────
+
+bundle_node() {
+  log "bundling the Node runtime (v$NODE_VERSION, $NODE_PLATFORM)"
+
+  local archive="node-v${NODE_VERSION}-${NODE_PLATFORM}.tar.xz"
+  local url="https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
+  local tmp
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/$archive" "$url" \
+    || die "could not download the Node runtime from $url"
+  # Official tarballs unpack to node-v<version>-<platform>/; strip that so the
+  # layout inside the package does not carry a version in its path.
+  mkdir -p "$STAGING/node"
+  tar -xJf "$tmp/$archive" -C "$STAGING/node" --strip-components=1
+  rm -rf "$tmp"
+
+  # npm and npx are build-time tools; the package only ever runs `node
+  # server.js`. Dropping them saves a little over 10 MB and removes the only
+  # thing in the package that could try to install something at runtime.
+  rm -rf "$STAGING/node/lib/node_modules/npm" \
+         "$STAGING/node/bin/npm" "$STAGING/node/bin/npx" \
+         "$STAGING/node/include"
+
+  [[ -x "$STAGING/node/bin/node" ]] || die "no node binary after unpacking"
+  echo "node        : $("$STAGING/node/bin/node" --version)"
+}
+
+stage_ui() {
+  log "building and staging the UI"
+
+  (
+    cd "$REPO_ROOT/ui"
+    [[ -d node_modules ]] || npm ci --prefer-offline >/dev/null
+    npm run build >/dev/null
+  )
+
+  local out="$REPO_ROOT/ui/.next/standalone"
+  [[ -d "$out" ]] \
+    || die "no standalone output at $out — is output: 'standalone' still set in ui/next.config.mjs?"
+
+  rsync -a "$out/" "$STAGING_APP/ui/"
+  # Next deliberately leaves these out of the standalone tree, on the
+  # assumption that a CDN serves them. There is no CDN here, and `server.js`
+  # serves them once they are in place.
+  mkdir -p "$STAGING_APP/ui/.next"
+  rsync -a "$REPO_ROOT/ui/.next/static/" "$STAGING_APP/ui/.next/static/"
+  rsync -a "$REPO_ROOT/ui/public/" "$STAGING_APP/ui/public/"
+
+  [[ -f "$STAGING_APP/ui/server.js" ]] || die "staged UI has no server.js"
+  echo "ui          : $(du -sh "$STAGING_APP/ui" | cut -f1)"
+}
+
 # ─── sandbox image ──────────────────────────────────────────────────────────
 
 # The agent's `run_bash` runs inside a microVM created by the bundled `msb`,
@@ -571,7 +641,9 @@ BUNDLED_PYTHON_DIR=''
 
 prepare_staging
 bundle_runtime
+bundle_node
 stage_sources
+stage_ui
 create_environments
 export_sandbox_image
 
