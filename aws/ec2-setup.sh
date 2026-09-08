@@ -1,7 +1,7 @@
 #!/bin/bash
 sudo apt update -y
 sudo apt upgrade -y
-sudo apt install -y podman tmux curl ec2-instance-connect ca-certificates git git-lfs nano
+sudo apt install -y podman tmux curl ec2-instance-connect ca-certificates git git-lfs nano sudo apt build-essential
 sudo -u ubuntu -H git lfs install
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
