@@ -199,6 +199,17 @@ class Settings(BaseSettings):
     read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
     """
 
+    version: A[str, Field(validation_alias="VISTA_VERSION")] = "dev"
+    """
+    Human-readable build identifier, surfaced as the API's version.
+
+    Set by the prebuilt package's launcher from the `VERSION` file beside it,
+    so the same string appears in the artifact's manifest, in the launcher's
+    output, and in `/openapi.json` from the running service -- which is how a
+    researcher reporting a problem can say which build they have. `dev` on a
+    checkout.
+    """
+
     hpc_jobs_dir: A[
         ResolvedPath | None, Field(validation_alias="VISTA_HPC_JOBS_DIR")
     ] = None

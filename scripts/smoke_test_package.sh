@@ -58,85 +58,37 @@ wait_for() {
   return 1
 }
 
-# ─── environment ────────────────────────────────────────────────────────────
+# ─── run it the way a researcher would ──────────────────────────────────────
 
-# Nothing about the package may depend on where it was built or where it is now,
-# so every path is derived from its own location. `VISTA_HPC_JOBS_DIR` and
-# `VISTA_BUILD_RAG_DIR` exist because the two paths they replace are derived by
-# walking up from a module's file, which lands inside the virtual environment
-# once the project is installed non-editably.
-export PATH="$PACKAGE/bin:$PACKAGE/node/bin:$PATH"
-export UV_NO_SYNC=1
-export VISTA_DATA_DIR="$STATE"
-export VISTA_MCP_SERVERS_PATH="$PACKAGE/app/mcp_servers"
-export VISTA_MCP_LOCAL_HPC_JOBS_DIR="$PACKAGE/app/hpc_jobs"
-export VISTA_HPC_JOBS_DIR="$PACKAGE/app/hpc_jobs"
-export VISTA_BUILD_RAG_DIR="$PACKAGE/app"
-export VISTA_DATA_PAYLOAD_DIR="$STATE/vista-data"
-export VISTA_MCP_URL="http://127.0.0.1:$MCP_PORT/mcp"
-export VISTA_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
+# The package's own launcher is what gets exercised, rather than a second copy
+# of its logic: first-run setup, the path pinning, the sandbox image import and
+# the service ordering all live there, and a smoke test that reimplemented them
+# would be testing itself.
+[[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+
+export VISTA_HOME="$STATE"
+export VISTA_UI_PORT="$UI_PORT"
+export VISTA_MCP_PORT="$MCP_PORT"
 export VISTA_BACKEND_PORT="$BACKEND_PORT"
-export HF_HOME="$STATE/huggingface"
-# A cache miss must fail loudly rather than quietly reaching the network: the
-# whole point of shipping the weights is that this works offline.
-export HF_HUB_OFFLINE=1
-export MSB_HOME="$STATE/microsandbox"
+BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 
-# Use the sandbox image already imported into msb, instead of building it.
-#
-# `dev_mcp_server` defaults `dockerfile` to the Dockerfile inside its own
-# package, and the microsandbox backend treats a dockerfile as "build this with
-# docker or podman first" -- so on a host with neither, the very first agent
-# session dies with `docker or podman not found on PATH`. Clearing it takes the
-# other branch, which asks msb whether the image is present and needs no
-# container runtime at all. This is what the no-Docker promise actually rests
-# on, alongside shipping the image.
-export VISTA_DEV_MCP_DOCKERFILE=""
-export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
-
-# ─── first-run setup ────────────────────────────────────────────────────────
-
-log "preparing state at $STATE"
 mkdir -p "$STATE" "$LOGS"
 
-# The payload is copied rather than read in place: the knowledge-base row
-# records absolute paths, and the corpus is the researcher's to add to.
-for part in vista-data knowledge-bases huggingface; do
-  if [[ -d "$PACKAGE/payload/$part" && ! -e "$STATE/$part" ]]; then
-    cp -R "$PACKAGE/payload/$part" "$STATE/$part"
+log "starting the package launcher"
+"$PACKAGE/vista" > "$LOGS/launcher.log" 2>&1 &
+PIDS+=($!)
+
+# The launcher prints one address line when every service is up.
+for (( i = 0; i < 600; i++ )); do
+  grep -q 'VISTA is running at' "$LOGS/launcher.log" 2>/dev/null && break
+  if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
+    tail -20 "$LOGS/launcher.log" >&2
+    die "the launcher exited before reporting an address"
   fi
+  perl -e 'select(undef, undef, undef, 1)'
 done
-
-MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
-  -path '*/microsandbox/_bundled/bin/msb' | head -1)"
-[[ -x "$MSB" ]] || die "no msb binary in $PACKAGE"
-if [[ -f "$PACKAGE/payload/sandbox-image.tar" ]]; then
-  if ! MSB_HOME="$MSB_HOME" "$MSB" image inspect --format=json vista-sandbox:latest \
-       >/dev/null 2>&1; then
-    log "importing the sandbox image"
-    MSB_HOME="$MSB_HOME" "$MSB" load -i "$PACKAGE/payload/sandbox-image.tar" \
-      -t vista-sandbox:latest
-  fi
-fi
-
-# ─── services ───────────────────────────────────────────────────────────────
-
-log "starting services"
-"$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
-  --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
-PIDS+=($!)
-wait_for "$VISTA_MCP_URL" 180 || { tail -20 "$LOGS/mcp.log" >&2; die "MCP server did not start"; }
-
-"$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
-PIDS+=($!)
-wait_for "$VISTA_BACKEND_URL/openapi.json" 300 \
-  || { tail -20 "$LOGS/backend.log" >&2; die "backend did not start"; }
-
-PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
-  "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
-PIDS+=($!)
-wait_for "http://127.0.0.1:$UI_PORT/" 120 \
-  || { tail -20 "$LOGS/ui.log" >&2; die "UI did not start"; }
+grep -q 'VISTA is running at' "$LOGS/launcher.log" \
+  || { tail -20 "$LOGS/launcher.log" >&2; die "the launcher never reported an address"; }
 
 # ─── checks ─────────────────────────────────────────────────────────────────
 
@@ -147,8 +99,8 @@ http_ok() {
   [[ "$code" == "200" ]]
 }
 
-check "mcp server responds"      curl -s -o /dev/null -m 10 "$VISTA_MCP_URL"
-check "backend serves openapi"   http_ok "$VISTA_BACKEND_URL/openapi.json"
+check "mcp server responds"      curl -s -o /dev/null -m 10 "http://127.0.0.1:$MCP_PORT/mcp"
+check "backend serves openapi"   http_ok "$BACKEND_URL/openapi.json"
 check "ui serves its home page"  http_ok "http://127.0.0.1:$UI_PORT/"
 check "ui reaches the backend"   http_ok "http://127.0.0.1:$UI_PORT/api/projects"
 
@@ -159,7 +111,7 @@ retrieval_returns_passages() {
   local body
   body="$(
     curl -s -m 120 -X POST \
-      "$VISTA_BACKEND_URL/projects/molten-salt/mcp/call" \
+      "$BACKEND_URL/projects/molten-salt/mcp/call" \
       -H 'content-type: application/json' \
       -d '{"name":"rag_search","arguments":{"query":"thermal conductivity of molten fluoride salts","kb_slug":"molten-salt-papers"}}'
   )"
@@ -179,6 +131,22 @@ if len(text) < 200:
 PYCHECK
 }
 check "retrieval returns passages" retrieval_returns_passages
+
+# The build identifier has to be the same in the manifest, the launcher output
+# and the running service, so a researcher reporting a problem can say which
+# build they have.
+version_is_consistent() {
+  local declared reported
+  declared="$(cat "$PACKAGE/VERSION")"
+  reported="$(
+    curl -s -m 20 "$BACKEND_URL/openapi.json" \
+      | "$PACKAGE/app/backend/.venv/bin/python" -c \
+        'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+  )"
+  [[ -n "$declared" && "$declared" == "$reported" ]] \
+    && grep -q "VISTA $declared" "$LOGS/launcher.log"
+}
+check "version matches across manifest, launcher and app" version_is_consistent
 
 log "shutting down"
 cleanup

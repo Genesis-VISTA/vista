@@ -443,6 +443,10 @@ stage_sources() {
   # server does not start without it.
   rsync -a --exclude '__pycache__/' "$REPO_ROOT/hpc_jobs/" "$STAGING_APP/hpc_jobs/"
 
+  # The launcher lives at the package root, where a researcher will look for
+  # it, and is the only executable they are asked to run.
+  install -m 755 "$REPO_ROOT/scripts/package_launcher.sh" "$STAGING/vista"
+
   echo "staged: $(du -sh "$STAGING_APP" | cut -f1)"
 }
 
