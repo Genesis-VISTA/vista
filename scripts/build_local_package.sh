@@ -26,6 +26,8 @@
 #                         work in the result, and the manifest records that
 #   --without-citations  Build the vector store without citation metadata
 #                         (titles, authors, DOIs), and record that
+#   --vector-store DIR   Reuse an already-built vector store instead of
+#                         indexing the corpus again
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
@@ -95,6 +97,7 @@ OUTPUT_DIR="$REPO_ROOT/dist"
 ARCHIVE_FORMAT=gz
 WITHOUT_HPC=false
 WITHOUT_CITATIONS=false
+REUSE_STORE=''
 SKIP_SMOKE_TEST=false
 KEEP_STAGING=false
 
@@ -104,6 +107,9 @@ while [[ $# -gt 0 ]]; do
     --check) CHECK_ONLY=true ;;
     --without-hpc) WITHOUT_HPC=true ;;
     --without-citations) WITHOUT_CITATIONS=true ;;
+    --vector-store)
+      [[ $# -ge 2 ]] || die "--vector-store needs a directory"
+      REUSE_STORE="$2"; shift ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
@@ -234,7 +240,11 @@ mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
   #
   # Mirrors the decision in `backend/src/vista_backend/utils/indexer.py`
   # (`has_llm_credentials`); if that resolution order changes, this follows.
-  if [[ "$WITHOUT_CITATIONS" == true ]]; then
+  if [[ -n "$REUSE_STORE" ]]; then
+    [[ -f "$REUSE_STORE/chroma.sqlite3" ]] \
+      || failures+=("--vector-store is not a Chroma store: $REUSE_STORE \
+(expected chroma.sqlite3 inside it)")
+  elif [[ "$WITHOUT_CITATIONS" == true ]]; then
     warn "--without-citations: the vector store will have no titles, authors, \
 or DOIs, and retrieval results will cite nothing"
   elif [[ -z "${OPENAI_API_KEY:-}" && -z "${AZURE_OPENAI_API_KEY:-}" ]]; then
@@ -299,7 +309,9 @@ requested — gz needs no extra tool and is the default for that reason") ;;
   else
     echo "amscrot-py        : reachable"
   fi
-  if [[ "$WITHOUT_CITATIONS" == true ]]; then
+  if [[ -n "$REUSE_STORE" ]]; then
+    echo "vector store      : reusing $REUSE_STORE (no indexing, no model calls)"
+  elif [[ "$WITHOUT_CITATIONS" == true ]]; then
     echo "citations         : omitted (--without-citations)"
   else
     echo "citations         : credential present"
@@ -725,6 +737,43 @@ PYHF
   echo "weights     : $model, $(du -sh "$hf" | cut -f1)"
 }
 
+# Refuse a reused store that was built from a different corpus.
+#
+# The one real hazard of reuse: a store whose chunks cite papers the payload
+# does not contain ships a knowledge base whose citations are dead links, and
+# nothing downstream would notice -- the store is non-empty and every count
+# looks healthy.
+check_store_matches_corpus() {
+  local kb="$1"
+  VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+    "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYMATCH'
+import sys
+from pathlib import Path
+
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+
+kb = Path(sys.argv[1])
+client = chromadb.PersistentClient(
+    path=str(kb / "rag_db"), settings=ChromaSettings(anonymized_telemetry=False)
+)
+sources = {
+    (m or {}).get("source")
+    for m in client.get_collection("text_chunks").get(include=["metadatas"])["metadatas"]
+}
+sources.discard(None)
+present = {p.name for p in (kb / "pdfs").rglob("*.pdf")}
+missing = sorted(s for s in sources if s not in present)
+if missing:
+    sys.exit(
+        f"the reused vector store cites {len(missing)} document(s) that are not "
+        f"in this payload, so its citations would be dead links. First few: "
+        f"{missing[:3]}"
+    )
+print(f"  store covers {len(sources)} of {len(present)} payload documents")
+PYMATCH
+}
+
 # Build the vector store from the payload's PDFs.
 #
 # Shipped prebuilt because indexing is the one first-run step that cannot be
@@ -738,6 +787,28 @@ build_vector_store() {
   local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
   mkdir -p "$kb"
   rsync -a "$STAGING_PAYLOAD/vista-data/molten-salt-papers/" "$kb/pdfs/"
+
+  # Reusing a store skips the slowest step in the build -- reading every paper,
+  # embedding ~4400 chunks, and calling a model once per paper for citation
+  # metadata. Worth having because packaging changes need iterating on and the
+  # corpus does not change between them; the consistency check below is what
+  # keeps a stale store from being shipped against a different corpus.
+  if [[ -n "$REUSE_STORE" ]]; then
+    log "reusing the vector store from $REUSE_STORE"
+    rsync -a "$REUSE_STORE/" "$kb/rag_db/"
+    check_store_matches_corpus "$kb"
+    VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+      "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYCHECK'
+import sys
+from pathlib import Path
+
+from vista_backend.db.seed import _assert_knowledge_base_indexed
+
+_assert_knowledge_base_indexed(Path(sys.argv[1]))
+PYCHECK
+    echo "store       : $(du -sh "$kb/rag_db" | cut -f1) (reused)"
+    return 0
+  fi
 
   local citations=1
   [[ "$WITHOUT_CITATIONS" == true ]] && citations=0
@@ -888,7 +959,7 @@ PYCOUNT
   },
   "completeness": {
     "hpc_job_submission": $([[ "$WITHOUT_HPC" == true ]] && echo false || echo true),
-    "corpus_citations": $([[ "$WITHOUT_CITATIONS" == true ]] && echo false || echo true)
+    "corpus_citations": $([[ "$citations" -gt 0 ]] && echo true || echo false)
   }
 }
 EOF
