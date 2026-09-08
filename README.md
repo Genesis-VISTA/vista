@@ -1,5 +1,134 @@
 # VISTA (Visual Intelligence for Scientific & Tooling Assistant)
 
+VISTA Prebuilt package instructions:
+
+For a **development checkout** instead, skip to [Prerequisites](#prerequisites).
+
+## Running a prebuilt package
+
+```bash
+shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
+mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
+cd ~/vista/vista-<version>-<platform> && ./vista
+```
+
+Extract with the platform's own `tar`: macOS `bsdtar` stores extended attributes
+by default, and GNU `tar` needs `--xattrs`. Those attributes carry the bundled
+`msb` binary's adhoc code signature, without which the code-execution sandbox
+cannot create microVMs.
+
+First run copies the corpus, vector store, and embedding weights into the state
+directory (~1 GB), imports the sandbox image, and seeds the database — a few
+minutes, with each step logged as it happens. It then prints
+`VISTA is running at http://localhost:3000`. Ctrl-C stops all three services.
+Later runs skip every setup step and start in seconds.
+
+Open the UI and paste your inference API key into the settings modal. It takes
+effect immediately; no restart.
+
+All state lives in the state directory: `vista.db`, uploads, the corpus, the
+sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
+`setup.log`). The unpacked package tree is disposable — upgrading is replacing
+that directory, and starting over is deleting the state directory.
+
+| Variable             | Description                                                                                                                                             | Default    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `VISTA_HOME`         | State directory. Keep the path under 60 characters — the sandbox derives a Unix socket path from it and the kernel caps that at 104 bytes. Checked at startup. | `~/.vista` |
+| `VISTA_UI_PORT`      | Web interface                                                                                                                                           | `3000`     |
+| `VISTA_MCP_PORT`     | MCP server                                                                                                                                              | `8000`     |
+| `VISTA_BACKEND_PORT` | Backend                                                                                                                                                 | `8001`     |
+
+`./vista --help` prints the same list.
+
+## Building a prebuilt package
+
+The build host needs the credentials and tooling so the recipient does not.
+Run the preflight first — it checks every prerequisite in one pass, reports all
+the misses together, and installs or configures nothing:
+
+```bash
+./scripts/build_local_package.sh --check
+```
+
+Then build. The archive lands in `dist/` with a `.sha256` and a
+`.manifest.json` beside it:
+
+```bash
+./scripts/build_local_package.sh
+```
+
+Build from a clean, committed tree: the version is stamped from the commit as
+`0.1.0+<short-sha>` (plus `-dirty` when the tree is not clean) and recorded in
+the manifest along with the runtime versions and payload inventory. Budget about
+7 GB in the output directory — the staging tree plus the archive — for a ~2 GB
+result. The build finishes by unpacking the archive somewhere else and running
+the launcher against it, so a green finish means the artifact has been started
+and queried, not just assembled; a failed smoke test fails the build.
+
+Cross-compiling is not supported. The package carries a platform-specific
+interpreter and compiled libraries, and the launcher refuses to run where
+`os-arch` does not match its manifest. Build on each platform you ship.
+
+### Build-host requirements
+
+All verified by `--check`:
+
+- `uv`, `npm`, `git`
+- A working Docker or Podman **daemon** — the sandbox image is built and
+  exported here precisely so the recipient needs no container runtime. Checked
+  by asking the daemon, not by finding the client on `PATH`.
+- Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
+  `amscrot-py` that HPC job submission needs; see
+  [Prerequisites](#prerequisites) for the `url.insteadOf` rewrite. Nothing is
+  read out of your credential store and nothing is written to `.env` — the
+  preflight only asks git whether the fetch would succeed.
+- Network access to `pypi.org`, `registry.npmjs.org`, `huggingface.co`,
+  `nodejs.org`, and — only when fetching the corpus with a token —
+  `code.ornl.gov`. Probed per host, because a network that allows PyPI and
+  blocks HuggingFace is a real configuration worth finding out about in seconds
+  rather than an hour in.
+
+### Build-host env vars
+
+Read from the repo-root `.env`, the same way the backend reads it: a value
+already exported in your environment wins over the file.
+
+| Variable                                                                          | Needed for                                                                                                    | Skip it with                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `VISTA_DATA_TOKEN`                                                                | Fetching the molten-salt corpus from `v28/vista-data` on code.ornl.gov                                        | `--payload DIR`, an already-unpacked `vista-data` tree           |
+| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store — one model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` to reuse a built store, or `--without-citations` |
+| `VISTA_VERSION`                                                                   | Overriding the commit-derived version stamp                                                                   | Optional; omit it                                                |
+
+The preflight treats a missing citation credential as an error rather than a
+warning: without it the shipped corpus retrieves passages that cite nothing, and
+the recipient has no way to fix that — the citations are baked into the store
+they receive.
+
+### Build options
+
+| Flag                             | Effect                                                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--check`                        | Run the preflight and exit; builds nothing                                                                                |
+| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
+| `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
+| `--archive-format gz\|zstd\|none` | `gz` is the default and needs no extra tool; `zstd` is faster for a local round trip; `none` leaves the tree unpacked      |
+| `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again — the biggest time saver, and it makes no model calls |
+| `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
+| `--without-hpc`                  | Omit `amscrot-py`. HPC job submission will not work in the result, and the manifest records that                          |
+| `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
+| `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
+
+A typical rebuild, once you have a corpus clone and a vector store worth reusing:
+
+```bash
+./scripts/build_local_package.sh \
+  --payload ~/.vista-build/vista-data \
+  --vector-store ~/.vista-build/rag_db
+```
+
+That still downloads the embedding weights, runs `npm ci`, and builds the UI and
+the MCP app; it skips only the indexing pass and its per-paper model calls.
+
 ## Architecture
 
 - `./mcp_servers`
