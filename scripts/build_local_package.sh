@@ -35,6 +35,39 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ─── configuration ──────────────────────────────────────────────────────────
+
+# Read the repo-root .env, like build.sh and launch.sh do. The preflight below
+# tells the user their credentials normally come from that file, so this script
+# has to actually read it.
+#
+# Deliberately does NOT override a variable already set in the environment,
+# matching `backend/src/vista_backend/config.py`, whose `load_dotenv` defaults
+# to `override=False`. So `VISTA_DATA_TOKEN=... ./build_local_package.sh` wins
+# over the file, and the preflight agrees with what the build's own Python
+# steps will resolve. (`build.sh` and `launch.sh` use `set -o allexport` and
+# let the file win instead; not changed here, but worth knowing they differ.)
+load_env_file() {
+  local file="$1" line key value
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -z "$line" || "$line" == '#'* ]] && continue
+    [[ "$line" == "export "* ]] && line="${line#export }"
+    key="${line%%=*}"
+    [[ "$key" == "$line" ]] && continue
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key:-}" ]] && continue
+    value="${line#*=}"
+    if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$file"
+}
+
+load_env_file "$REPO_ROOT/.env"
+
 # ─── house idiom (matches scripts/ci-local.sh) ──────────────────────────────
 
 usage() {
