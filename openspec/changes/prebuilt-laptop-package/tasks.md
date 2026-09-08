@@ -60,6 +60,7 @@
 - [ ] 7.8 Assemble the archive as `vista-<version>-<os>-<arch>.tar.gz` with hardlinks and extended attributes preserved, plus a `.sha256`; verify the `msb` binary's code signature survives a round trip through archive and extraction
 - [ ] 7.9 Write a manifest of components and sizes alongside the archive; verify it lists every payload element and that a deliberately incomplete build is identifiable from the manifest alone
 - [ ] 7.10 Add the post-build smoke test: unpack to a temporary directory at a different path depth, start, poll the three health endpoints, run one retrieval query, shut down; verify the build fails when the smoke test does
+- [x] 7.11 Stop pinning `device="cpu"` for the embedding model at both call sites (`build_rag.py` for indexing, `rag_mcp.py` for queries), letting sentence-transformers select cuda, then mps, then cpu, with `VISTA_EMBED_DEVICE` as an override; verify the indexer auto-selects an accelerator and that the override forces cpu. (Added after measuring 28s vs 0.5s per batch of 8 chunks while building the store for real -- hours versus minutes over the corpus, paid on every packaging build and on any first run that has to index, so it is a prerequisite for 7.6. Decided with Sam. The device changes only how fast the vectors are computed, not their values, so the indexing and query encoders need not agree. `tests/test_embedding_model.py` keeps its explicit `device="cpu"` so the assertions stay deterministic.)
 
 ## 8. Launcher (L1, L2, L3, P2, P3, D2)
 
@@ -80,4 +81,4 @@
 - [ ] 9.5 Verify no container runtime is required: run the full path on a host with docker and podman absent from `PATH`, including one sandbox `run_bash` call (`sandbox` marker — excluded from PR CI)
 - [ ] 9.6 Verify Perlmutter submission from the package with only the three per-user fields entered in the UI (`hpc` marker — excluded from PR CI)
 - [ ] 9.7 Verify the no-declaration regression case: on a normal git checkout with no bundled payload path and no refresh tokens recorded, confirm `build.sh` and `launch.sh` execute the same commands as before this change
-- [ ] 9.8 Run `./scripts/ci-local.sh` and confirm lint and hermetic tests pass across the backend, ui, and mcp targets
+- [ ] 9.8 Run `./scripts/ci-local.sh` and confirm lint and hermetic tests pass across the backend, ui, and mcp targets (note: `run_section` in that script called each section as `if ! "$@"`, which disables bash errexit for the whole call, so any lint command that was not the last in its function had its failure discarded -- local CI reported green over two real failures. Fixed to run each section in a subshell that re-arms errexit and capture the status outside a tested context.)

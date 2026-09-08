@@ -114,8 +114,6 @@ def test_index_and_query_round_trip(offline_encoder, tmp_path) -> None:
     )
 
     query_vector = offline_encoder.encode(["What is FLiBe's melting point?"])[0]
-    result = collection.query(
-        query_embeddings=[query_vector.tolist()], n_results=2
-    )
+    result = collection.query(query_embeddings=[query_vector.tolist()], n_results=2)
     assert result["ids"][0][0] == "near", result
     assert result["documents"][0][0] == near

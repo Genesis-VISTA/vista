@@ -263,7 +263,20 @@ FAILED=0
 run_section() {
   local label="$1"
   shift
-  if ! "$@"; then
+  # Run the section in a subshell that re-arms errexit, and capture its status
+  # outside any tested context.
+  #
+  # The obvious `if ! "$@"` is wrong here: bash disables errexit for the whole
+  # duration of a function called in a condition, so a lint function whose
+  # `ruff check` failed would keep going and return the status of its *last*
+  # command instead. That silently passed backend lint errors for as long as
+  # this script has existed.
+  local status=0
+  set +e
+  ( set -e; "$@" )
+  status=$?
+  set -e
+  if (( status != 0 )); then
     echo "fail: $label" >&2
     FAILED=1
   fi

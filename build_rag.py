@@ -671,9 +671,20 @@ class TextRAG:
         self.citation_max_pages = citation_max_pages
         self.citation_max_chars = citation_max_chars
 
-        # Text embedding model
-        log.info("Loading text model: %s", text_model)
-        self.text_encoder = SentenceTransformer(text_model, device="cpu")
+        # Text embedding model.
+        #
+        # `device=None` lets sentence-transformers pick the best available
+        # accelerator -- cuda, then mps, then cpu. Previously pinned to cpu,
+        # which measured at 28s per batch of 8 chunks against 0.5s on mps:
+        # hours versus minutes to index the molten-salt corpus, paid on every
+        # packaging build and on any first run that has to index. Set
+        # `VISTA_EMBED_DEVICE` to force one (e.g. `cpu`) if an accelerator
+        # misbehaves. The same variable pins the *query* encoder in
+        # `vista_mcp_server.rag_mcp`; the device changes only how fast the
+        # vectors are computed, not what they are, so the two need not agree.
+        device = os.environ.get("VISTA_EMBED_DEVICE") or None
+        log.info("Loading text model: %s (device=%s)", text_model, device or "auto")
+        self.text_encoder = SentenceTransformer(text_model, device=device)
 
         self.client = chromadb.PersistentClient(
             path=db_path,

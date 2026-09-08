@@ -14,8 +14,6 @@ from pydantic_ai.messages import ModelMessage
 from .inference import build_model_for
 from ..db.schemas import UserPublicWithConfig
 
-from ..config import settings
-
 
 class SkillDraft(BaseModel):
     """A draft skill produced by the LLM from a conversation."""

@@ -16,6 +16,10 @@ Environment variables:
                                     from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
                                     Default: microsoft/harrier-oss-v1-270m
+    VISTA_EMBED_DEVICE             Torch device for the encoder. Unset lets
+                                    sentence-transformers choose (cuda, then
+                                    mps, then cpu). `build_rag.py` reads the
+                                    same variable when indexing.
 """
 import json
 import logging
@@ -111,8 +115,12 @@ async def app_lifespan(server):
     """Load the embedding model and open ChromaDB collections at startup."""
     global _encoder
 
-    logger.info("RAG: loading embedding model %s", settings.rag_model)
-    _encoder = SentenceTransformer(settings.rag_model, device="cpu")
+    logger.info(
+        "RAG: loading embedding model %s (device=%s)",
+        settings.rag_model,
+        settings.embed_device or "auto",
+    )
+    _encoder = SentenceTransformer(settings.rag_model, device=settings.embed_device)
 
     discovered = _discover_kb_paths()
     if not discovered:

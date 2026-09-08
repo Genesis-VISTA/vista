@@ -215,6 +215,19 @@ class AppSettings(BaseSettings):
             raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
         return token
 
+    embed_device: A[str | None, Field(validation_alias="VISTA_EMBED_DEVICE")] = None
+    """
+    Torch device for the query encoder, or `None` to let
+    sentence-transformers choose the best available (cuda, then mps, then
+    cpu).
+
+    Unpinned because pinning cpu costs roughly 60x on a machine with an
+    accelerator -- measured while indexing the molten-salt corpus. Set this
+    to `cpu` to force it back. `build_rag.py` reads the same variable for
+    the *indexing* encoder; the two need not agree, since the device
+    affects only how fast vectors are computed and not their values.
+    """
+
     rag_model: str = "microsoft/harrier-oss-v1-270m"
     """
     Sentence-transformers model used to encode `rag_search` queries.
