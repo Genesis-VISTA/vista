@@ -61,13 +61,20 @@ def _get_text_rag_cls():
 
     import sys
 
+    from ..config import settings
+
     here = Path(__file__).resolve()
-    # utils -> vista_backend -> src -> backend -> repo root
-    repo_root = here.parents[4]
+    # utils -> vista_backend -> src -> backend -> repo root. Correct only while
+    # this package sits in `backend/src/`; a non-editable install (the prebuilt
+    # package) puts it in site-packages, where the same walk lands inside the
+    # virtual environment. `build_rag_dir` is how that deployment says where the
+    # module actually is.
+    repo_root = settings.build_rag_dir or here.parents[4]
     if not (repo_root / "build_rag.py").is_file():
         raise RuntimeError(
-            f"Could not locate build_rag.py at {repo_root}. The KB indexer "
-            f"expects the repo root to contain `build_rag.py`."
+            f"Could not locate build_rag.py at {repo_root}. Set "
+            f"VISTA_BUILD_RAG_DIR to the directory containing it, or run from a "
+            f"checkout where the repo root holds `build_rag.py`."
         )
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))

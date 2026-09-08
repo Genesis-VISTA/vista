@@ -282,9 +282,8 @@ async def seed_db(engine: AsyncEngine) -> None:
         if vista_data_client:
             # TODO This is not really where we should handle the hpc_jobs files, but it will work for now
             job_mstdb_file = (
-                REPO_ROOT
-                / "hpc_jobs/forge-tune/Molten_Salt_Thermophysical_Properties.csv"
-            )
+                settings.hpc_jobs_dir or REPO_ROOT / "hpc_jobs"
+            ) / "forge-tune/Molten_Salt_Thermophysical_Properties.csv"
             if not job_mstdb_file.exists():
                 await vista_data_client.download_file(
                     "mstdb/Molten_Salt_Thermophysical_Properties.csv", job_mstdb_file

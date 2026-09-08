@@ -614,6 +614,162 @@ stage_ui() {
   echo "ui          : $(du -sh "$STAGING_APP/ui" | cut -f1)"
 }
 
+# ─── corpus payload ─────────────────────────────────────────────────────────
+
+# The vista-data files, the vector store built from them, and the embedding
+# weights, all inside the package.
+#
+# `payload/` is copied into the state directory on first run rather than read in
+# place, because the knowledge-base row records absolute paths and the corpus is
+# a researcher's to add to. The tree under `payload/vista-data` deliberately
+# mirrors the repository, so `db/seed.LocalRepoClient` resolves the same
+# repo-relative paths the GitLab client would.
+stage_payload() {
+  log "assembling the corpus payload"
+
+  local vista_data="$STAGING_PAYLOAD/vista-data"
+  mkdir -p "$vista_data"
+
+  if [[ -n "$PAYLOAD_DIR" ]]; then
+    rsync -a --exclude '.git/' "$PAYLOAD_DIR/" "$vista_data/"
+  else
+    local tmp
+    tmp="$(mktemp -d)"
+    GIT_TERMINAL_PROMPT=0 git -c "credential.helper=!f() { \
+      echo username=oauth2; echo \"password=\$VISTA_DATA_TOKEN\"; }; f" \
+      clone --depth 1 https://code.ornl.gov/v28/vista-data.git "$tmp/vista-data" \
+      >/dev/null 2>&1 \
+      || die "could not clone v28/vista-data — is VISTA_DATA_TOKEN still valid?"
+    rsync -a --exclude '.git/' "$tmp/vista-data/" "$vista_data/"
+    rm -rf "$tmp"
+  fi
+
+  local pdfs="$vista_data/molten-salt-papers"
+  [[ -d "$pdfs" ]] || die "payload has no molten-salt-papers directory"
+  [[ -d "$vista_data/mstdb" ]] || die "payload has no mstdb directory"
+  local pdf_count
+  pdf_count="$(find "$pdfs" -name '*.pdf' | wc -l | tr -d ' ')"
+  (( pdf_count > 0 )) || die "payload contains no PDFs"
+
+  # The CSV `hpc_jobs/forge-tune` reads. Staged here rather than left to
+  # first-run seeding so the job works on a package built with a payload.
+  local job_csv="$vista_data/mstdb/Molten_Salt_Thermophysical_Properties.csv"
+  [[ -f "$job_csv" ]] || die "payload has no mstdb CSV for hpc_jobs/forge-tune"
+  mkdir -p "$STAGING_APP/hpc_jobs/forge-tune"
+  cp "$job_csv" "$STAGING_APP/hpc_jobs/forge-tune/"
+
+  echo "corpus      : $pdf_count PDFs, $(du -sh "$vista_data" | cut -f1)"
+}
+
+# Stage the embedding weights in HuggingFace cache layout, so retrieval loads
+# them with the network switched off. Reuses the build host's cache when it
+# already holds the model rather than re-downloading 500 MB.
+stage_embedding_weights() {
+  log "staging the embedding weights"
+
+  local hf="$STAGING_PAYLOAD/huggingface"
+  mkdir -p "$hf"
+  local model
+  model="$(
+    sed -nE 's/^    rag_model: str = "([^"]+)"/\1/p' \
+      "$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py" | head -1
+  )"
+  [[ -n "$model" ]] || die "could not read rag_model from the MCP server config"
+  local cache_name="models--${model//\//--}"
+
+  local host_cache="$REPO_ROOT/data/huggingface/hub/$cache_name"
+  if [[ -d "$host_cache" ]]; then
+    mkdir -p "$hf/hub"
+    rsync -a "$host_cache/" "$hf/hub/$cache_name/"
+  else
+    HF_HOME="$hf" HF_HUB_DISABLE_TELEMETRY=1 \
+      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/bin/python" - "$model" <<'PYHF'
+import sys
+from huggingface_hub import snapshot_download
+
+snapshot_download(sys.argv[1])
+PYHF
+  fi
+
+  [[ -d "$hf/hub/$cache_name" ]] || die "no weights staged for $model"
+  echo "weights     : $model, $(du -sh "$hf" | cut -f1)"
+}
+
+# Build the vector store from the payload's PDFs.
+#
+# Shipped prebuilt because indexing is the one first-run step that cannot be
+# made fast: it reads every paper, embeds ~4400 chunks, and calls a model once
+# per paper for citation metadata. `db/seed._build_knowledge_base` returns early
+# when a store is already present, so the researcher's first run finds a
+# searchable corpus and does none of this.
+build_vector_store() {
+  log "building the vector store (this is the slow part)"
+
+  local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
+  mkdir -p "$kb"
+  rsync -a "$STAGING_PAYLOAD/vista-data/molten-salt-papers/" "$kb/pdfs/"
+
+  local citations=1
+  [[ "$WITHOUT_CITATIONS" == true ]] && citations=0
+
+  # Driven through the backend's own indexer -- the same call first-run seeding
+  # makes -- so the store is built exactly as the application would build it.
+  HF_HOME="$STAGING_PAYLOAD/huggingface" \
+  HF_HUB_OFFLINE=1 \
+  VISTA_BUILD_RAG_DIR="$STAGING_APP" \
+  VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+    "$STAGING_APP/backend/.venv/bin/python" - "$kb" "$citations" <<'PYINDEX'
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s")
+
+kb = Path(sys.argv[1])
+with_citations = sys.argv[2] == "1"
+
+from vista_backend.agents.inference import citation_credentials
+from vista_backend.utils import indexer
+
+
+async def main() -> int:
+    pdfs = kb / "pdfs"
+    names = sorted(
+        str(p.relative_to(pdfs)).replace("\\", "/") for p in pdfs.rglob("*.pdf")
+    )
+    results = await indexer.index_publications(
+        rag_db_path=str(kb / "rag_db"),
+        pdfs_dir=str(pdfs),
+        filenames=names,
+        extract_citations=bool(with_citations),
+        llm_credentials=citation_credentials() if with_citations else None,
+    )
+    failed = [r for r in results if r.get("status") == "failed"]
+    for r in failed:
+        print(f"failed: {r.get('filename')}: {r.get('error')}", file=sys.stderr)
+    return 1 if failed else 0
+
+
+sys.exit(asyncio.run(main()))
+PYINDEX
+
+  # A store that exists but holds nothing is the failure a researcher could not
+  # diagnose, so it is caught here rather than shipped -- the same check the
+  # backend applies before recording the knowledge base.
+  VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+    "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYCHECK'
+import sys
+from pathlib import Path
+
+from vista_backend.db.seed import _assert_knowledge_base_indexed
+
+_assert_knowledge_base_indexed(Path(sys.argv[1]))
+PYCHECK
+
+  echo "store       : $(du -sh "$kb/rag_db" | cut -f1)"
+}
+
 # ─── sandbox image ──────────────────────────────────────────────────────────
 
 # The agent's `run_bash` runs inside a microVM created by the bundled `msb`,
@@ -635,6 +791,195 @@ export_sandbox_image() {
   echo "archive     : $(du -sh "$STAGING_PAYLOAD/sandbox-image.tar" | cut -f1)"
 }
 
+# ─── manifest ───────────────────────────────────────────────────────────────
+
+# What the package contains and how big each part is, written inside the
+# package and beside the archive.
+#
+# Two audiences. A researcher gets to see what they were given and which
+# version. And a deliberately incomplete build -- `--without-hpc`,
+# `--without-citations` -- has to be identifiable from this file alone, because
+# the resulting package looks entirely healthy right up to the moment someone
+# submits a job or reads a citation.
+write_manifest() {
+  log "writing the manifest"
+
+  local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
+  local chunks citations pdf_count
+  chunks="$(
+    VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+      "$STAGING_APP/backend/.venv/bin/python" - "$kb/rag_db" <<'PYCOUNT'
+import sys
+
+import chromadb
+from chromadb.config import Settings as ChromaSettings
+
+client = chromadb.PersistentClient(
+    path=sys.argv[1], settings=ChromaSettings(anonymized_telemetry=False)
+)
+for name in ("text_chunks", "citations"):
+    try:
+        print(client.get_collection(name).count())
+    except Exception:
+        print(0)
+PYCOUNT
+  )"
+  citations="$(echo "$chunks" | sed -n 2p)"
+  chunks="$(echo "$chunks" | sed -n 1p)"
+  pdf_count="$(find "$STAGING_PAYLOAD/vista-data/molten-salt-papers" -name '*.pdf' | wc -l | tr -d ' ')"
+
+  local size_of
+  size_of() { du -sk "$1" 2>/dev/null | cut -f1 | awk '{printf "%d", $1 * 1024}'; }
+
+  cat > "$STAGING/manifest.json" <<EOF
+{
+  "name": "$PACKAGE_NAME",
+  "version": "$VERSION",
+  "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "commit": "$(git -C "$REPO_ROOT" rev-parse HEAD)",
+  "target": { "os": "$TARGET_OS", "arch": "$TARGET_ARCH" },
+  "runtimes": {
+    "python": "$(basename "$BUNDLED_PYTHON_DIR")",
+    "node": "$("$STAGING/node/bin/node" --version)",
+    "uv": "$("$STAGING_BIN/uv" --version | cut -d' ' -f2)"
+  },
+  "components": {
+    "python": $(size_of "$STAGING_PYTHON"),
+    "node": $(size_of "$STAGING/node"),
+    "bin": $(size_of "$STAGING_BIN"),
+    "app": $(size_of "$STAGING_APP"),
+    "payload": $(size_of "$STAGING_PAYLOAD")
+  },
+  "payload": {
+    "sandbox_image": { "reference": "$SANDBOX_IMAGE", "bytes": $(size_of "$STAGING_PAYLOAD/sandbox-image.tar") },
+    "corpus": { "pdfs": $pdf_count, "bytes": $(size_of "$STAGING_PAYLOAD/vista-data") },
+    "vector_store": { "text_chunks": $chunks, "citations": $citations, "bytes": $(size_of "$kb/rag_db") },
+    "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") }
+  },
+  "completeness": {
+    "hpc_job_submission": $([[ "$WITHOUT_HPC" == true ]] && echo false || echo true),
+    "corpus_citations": $([[ "$WITHOUT_CITATIONS" == true ]] && echo false || echo true)
+  }
+}
+EOF
+  echo "$VERSION" > "$STAGING/VERSION"
+
+  # Fail rather than ship a manifest that claims something untrue.
+  "$STAGING_APP/backend/.venv/bin/python" - "$STAGING/manifest.json" <<'PYVALID'
+import json
+import sys
+
+manifest = json.loads(open(sys.argv[1]).read())
+for section, keys in (
+    ("components", ("python", "node", "bin", "app", "payload")),
+    ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),
+):
+    missing = [k for k in keys if k not in manifest[section]]
+    if missing:
+        sys.exit(f"manifest is missing {section}: {missing}")
+if manifest["payload"]["vector_store"]["text_chunks"] < 1:
+    sys.exit("manifest reports an empty vector store")
+PYVALID
+
+  echo "manifest    : $STAGING/manifest.json"
+}
+
+# ─── archive ────────────────────────────────────────────────────────────────
+
+# Pack the tree, preserving hardlinks and extended attributes.
+#
+# Hardlinks because uv installs from its cache by linking, so the same wheel
+# files appear in more than one environment as one inode -- tar collapses them
+# back to a single copy plus link entries. Extended attributes because the
+# bundled `msb` carries an adhoc code signature in them, and macOS refuses to
+# execute a binary whose signature no longer matches.
+#
+# gzip is the default because the recipient has to extract before anything of
+# ours runs, so "install a decompressor first" is an instruction with nowhere
+# to go. zstd is available for a faster local round trip.
+create_archive() {
+  [[ "$ARCHIVE_FORMAT" == none ]] && { log "archive: skipped (--archive-format none)"; return 0; }
+
+  log "creating the archive"
+  local suffix
+  case "$ARCHIVE_FORMAT" in
+    gz) suffix=tar.gz ;;
+    zstd) suffix=tar.zst ;;
+  esac
+  ARCHIVE_PATH="$OUTPUT_DIR/${PACKAGE_NAME}.${suffix}"
+
+  local xattr_flag=()
+  # bsdtar (macOS) stores extended attributes by default and rejects --xattrs;
+  # GNU tar needs to be asked.
+  if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
+    xattr_flag=(--xattrs)
+  fi
+
+  local compressor
+  case "$ARCHIVE_FORMAT" in
+    gz) compressor=(gzip -c) ;;
+    zstd) compressor=(zstd -T0 -q -c) ;;
+  esac
+
+  tar "${xattr_flag[@]+"${xattr_flag[@]}"}" -cf - \
+    -C "$OUTPUT_DIR" "$PACKAGE_NAME" \
+    | "${compressor[@]}" > "$ARCHIVE_PATH"
+
+  ( cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ARCHIVE_PATH")" \
+      > "$(basename "$ARCHIVE_PATH").sha256" )
+  cp "$STAGING/manifest.json" "$ARCHIVE_PATH.manifest.json"
+
+  echo "archive     : $ARCHIVE_PATH ($(du -sh "$ARCHIVE_PATH" | cut -f1))"
+  echo "checksum    : $(cut -d' ' -f1 < "$ARCHIVE_PATH.sha256")"
+}
+
+# ─── smoke test ─────────────────────────────────────────────────────────────
+
+# Unpack the archive somewhere else and actually run it.
+#
+# Relocation is the highest-risk part of this design and a manifest proves
+# files exist, not that they still work. Unpacked at a different path depth
+# because that is what catches a path baked in at build time; a same-depth test
+# can pass on a broken package.
+run_smoke_test() {
+  if [[ "$SKIP_SMOKE_TEST" == true ]]; then
+    log "smoke test: skipped (--skip-smoke-test)"
+    return 0
+  fi
+  if [[ "$ARCHIVE_FORMAT" == none ]]; then
+    log "smoke test: skipped (no archive was created)"
+    return 0
+  fi
+
+  log "smoke test: unpacking elsewhere and running"
+  local root
+  root="$(mktemp -d)/a/deeper/path"
+  mkdir -p "$root"
+  tar -xf "$ARCHIVE_PATH" -C "$root"
+  local unpacked="$root/$PACKAGE_NAME"
+
+  # The signature has to survive the round trip or the binary will not run.
+  local msb
+  msb="$(find "$unpacked/app/mcp_servers/dev_mcp_server/.venv" \
+    -path '*/microsandbox/_bundled/bin/msb' | head -1)"
+  [[ -x "$msb" ]] || die "smoke test: no msb binary in the unpacked package"
+  "$msb" --version >/dev/null \
+    || die "smoke test: the unpacked msb will not run — its code signature did \
+not survive archiving. Check that extended attributes were preserved."
+
+  local state="$root/state"
+  local failures=0
+  "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
+
+  if (( failures )); then
+    die "smoke test failed; the archive at $ARCHIVE_PATH is not usable. The \
+unpacked copy was left at $unpacked for inspection."
+  fi
+  rm -rf "$root"
+  echo "smoke test  : passed"
+}
+
+ARCHIVE_PATH=''
 SANDBOX_IMAGE="vista-sandbox:latest"
 BUNDLED_PYTHON=''
 BUNDLED_PYTHON_DIR=''
@@ -645,10 +990,21 @@ bundle_node
 stage_sources
 stage_ui
 create_environments
+stage_payload
+stage_embedding_weights
+build_vector_store
 export_sandbox_image
+write_manifest
+create_archive
+run_smoke_test
 
-log "staged $PACKAGE_NAME"
-echo "$STAGING"
-echo
-echo "note: payload, archive, manifest, and smoke test are not implemented yet"
+log "built $PACKAGE_NAME"
+if [[ -n "$ARCHIVE_PATH" ]]; then
+  echo "$ARCHIVE_PATH"
+else
+  echo "$STAGING"
+fi
+if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
+  rm -rf "$STAGING"
+fi
 

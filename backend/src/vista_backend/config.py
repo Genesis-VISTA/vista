@@ -199,6 +199,37 @@ class Settings(BaseSettings):
     read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
     """
 
+    hpc_jobs_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_HPC_JOBS_DIR")
+    ] = None
+    """
+    Directory holding the HPC job templates, or `None` to derive it from the
+    repository layout.
+
+    Seeding drops the MSTDB CSV that `hpc_jobs/forge-tune` needs into this
+    directory. It has to be configurable because the derived path is
+    `db/seed.py`'s own location walked up five levels, which is correct only
+    while `vista_backend` sits in `backend/src/`: installed non-editably -- as
+    it is inside the prebuilt package -- that resolves inside the virtual
+    environment, and the CSV would be written where nothing reads it. Point it
+    at the same directory as the MCP server's
+    `VISTA_MCP_LOCAL_HPC_JOBS_DIR`.
+    """
+
+    build_rag_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_BUILD_RAG_DIR")
+    ] = None
+    """
+    Directory containing `build_rag.py`, or `None` to derive it from the
+    repository layout.
+
+    Same reason as `hpc_jobs_dir`: `utils/indexer.py` locates the module by
+    walking up from itself, which finds the repository root from
+    `backend/src/` and the virtual environment's `lib/` from a non-editable
+    install. Without this, indexing a knowledge base inside the prebuilt
+    package fails with "Could not locate build_rag.py".
+    """
+
     vista_data_payload_dir: A[
         ResolvedPath | None, Field(validation_alias="VISTA_DATA_PAYLOAD_DIR")
     ] = None
