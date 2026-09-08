@@ -843,12 +843,34 @@ async def download_publication(
     session: SessionDep,
 ) -> FileResponse:
     kb = await kb_service.get_kb(session, slug)
-    # Reject anything with path-separator chars; we look up by basename only.
+    # Reject anything with path-separator chars; the lookup is by basename only.
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    pdf_path = Path(kb.pdfs_dir) / filename
+
+    pdfs_dir = Path(kb.pdfs_dir)
+    pdf_path = pdfs_dir / filename
     if not pdf_path.is_file():
-        raise HTTPException(status_code=404, detail="Publication not found.")
+        # Fall back to a search beneath the folder, because a corpus can be
+        # organised into subdirectories -- the bundled molten-salt corpus keeps
+        # every paper under a per-topic folder -- while retrieval reports each
+        # chunk's source as a bare filename. Without this every citation from
+        # such a corpus is a dead link, which is the one thing a reader is most
+        # likely to click.
+        #
+        # Sorted so the choice is deterministic when two folders hold the same
+        # filename. The corpus does contain three such pairs, and they are
+        # duplicate copies of the same paper -- the indexer skips the second as
+        # already present -- so either file answers the citation.
+        matches = sorted(
+            candidate for candidate in pdfs_dir.rglob(filename) if candidate.is_file()
+        )
+        if not matches:
+            raise HTTPException(status_code=404, detail="Publication not found.")
+        pdf_path = matches[0]
+        # A symlink inside the folder could still point outside it.
+        if not pdf_path.resolve().is_relative_to(pdfs_dir.resolve()):
+            raise HTTPException(status_code=404, detail="Publication not found.")
+
     return FileResponse(
         pdf_path,
         filename=filename,

@@ -971,7 +971,13 @@ run_smoke_test() {
     || die "smoke test: the unpacked msb will not run — its code signature did \
 not survive archiving. Check that extended attributes were preserved."
 
-  local state="$root/state"
+  # The package is unpacked deep on purpose -- that is what catches a path baked
+  # in at build time. The state directory is not: the sandbox's socket path is
+  # derived from it and has to stay under the kernel's limit, which is a
+  # property of where a researcher keeps their state, not of where the package
+  # sits.
+  local state
+  state="$(mktemp -d)/s"
   local failures=0
   "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
 

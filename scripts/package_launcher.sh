@@ -90,6 +90,28 @@ if (( ${#conflicts[@]} > 0 )); then
   exit 1
 fi
 
+# ─── state path length ──────────────────────────────────────────────────────
+
+# The sandbox runtime derives a Unix domain socket path from its store
+# directory, and those have a hard length limit in the kernel -- 104 bytes on
+# macOS and BSD, 108 on Linux. msb adds about 40 bytes of its own beneath the
+# store, so a state directory much past 60 characters makes the socket
+# unaddressable.
+#
+# Reported here because the alternative is discovering it on the first agent
+# message, as `InvalidConfigError: agent relay socket path is too long`, long
+# after startup said everything was fine. The default `~/.vista` is around 30
+# bytes; this only bites a deliberately deep `VISTA_HOME`.
+MSB_STORE="$STATE/microsandbox"
+SOCKET_BUDGET=60
+if (( ${#MSB_STORE} > SOCKET_BUDGET )); then
+  die "the state directory path is too long for the code-execution sandbox:
+    $MSB_STORE
+  is ${#MSB_STORE} characters, and the sandbox's socket path must stay under the \
+kernel's 104-byte limit. Set VISTA_HOME to something shorter (the default, \
+~/.vista, is fine) and re-run."
+fi
+
 # ─── environment ────────────────────────────────────────────────────────────
 
 # Every path is derived from this script's own location, so the package works
@@ -123,7 +145,7 @@ export HF_HOME="$STATE/huggingface"
 # A cache miss must fail loudly rather than quietly reaching the network: the
 # weights ship inside the package precisely so this works offline.
 export HF_HUB_OFFLINE=1
-export MSB_HOME="$STATE/microsandbox"
+export MSB_HOME="$MSB_STORE"
 # Use the sandbox image already imported below, rather than building one.
 # `dev_mcp_server` defaults `dockerfile` to the file inside its own package, and
 # the microsandbox backend reads a dockerfile as "build this with docker or
