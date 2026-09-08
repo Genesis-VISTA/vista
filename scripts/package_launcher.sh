@@ -107,9 +107,10 @@ SOCKET_BUDGET=60
 if (( ${#MSB_STORE} > SOCKET_BUDGET )); then
   die "the state directory path is too long for the code-execution sandbox:
     $MSB_STORE
-  is ${#MSB_STORE} characters, and the sandbox's socket path must stay under the \
-kernel's 104-byte limit. Set VISTA_HOME to something shorter (the default, \
-~/.vista, is fine) and re-run."
+  is ${#MSB_STORE} characters and has to be at most $SOCKET_BUDGET. The sandbox \
+runtime appends about 40 bytes to it to build a Unix socket path, which the \
+kernel caps at 104 bytes. Set VISTA_HOME to a shorter directory -- the default, \
+~/.vista, is about 30 -- and re-run."
 fi
 
 # ─── environment ────────────────────────────────────────────────────────────

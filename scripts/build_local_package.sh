@@ -1002,8 +1002,13 @@ not survive archiving. Check that extended attributes were preserved."
   # derived from it and has to stay under the kernel's limit, which is a
   # property of where a researcher keeps their state, not of where the package
   # sits.
+  #
+  # Deliberately not under `$TMPDIR`: on macOS that is a per-user directory
+  # roughly 50 characters long before anything is added to it, which cannot fit
+  # the sandbox's socket budget however short the rest of the path is. `/tmp` is
+  # short on both platforms.
   local state
-  state="$(mktemp -d)/s"
+  state="$(mktemp -d /tmp/vista-smoke.XXXXXX)"
   local failures=0
   "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
 
@@ -1011,7 +1016,7 @@ not survive archiving. Check that extended attributes were preserved."
     die "smoke test failed; the archive at $ARCHIVE_PATH is not usable. The \
 unpacked copy was left at $unpacked for inspection."
   fi
-  rm -rf "$root"
+  rm -rf "$root" "$state"
   echo "smoke test  : passed"
 }
 
