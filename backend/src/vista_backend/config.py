@@ -199,6 +199,26 @@ class Settings(BaseSettings):
     read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
     """
 
+    vista_data_payload_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_DATA_PAYLOAD_DIR")
+    ] = None
+    """
+    Optional directory holding an already-unpacked copy of the vista-data
+    repository, used instead of `vista_data_token` to seed on first run.
+
+    Set by the prebuilt package's launcher, which ships the payload rather than
+    a token: a researcher gets the molten-salt corpus and the MSTDB assets with
+    no access to `code.ornl.gov`. The layout is repo-relative and identical to
+    what the GitLab client fetches -- `mstdb/...`, `molten-salt-papers/...` --
+    because `LocalRepoClient` in `db/seed.py` is a drop-in for
+    `GitlabRepoClient` and resolves the same paths against this root.
+
+    Takes precedence over `vista_data_token` when both are set: a local payload
+    is already on disk, so preferring it avoids a network fetch that could only
+    produce the same files. Unset on a normal checkout, where seeding behaves
+    exactly as before.
+    """
+
     email: EmailSettings = Field(default_factory=EmailSettings)
     """ Outbound SMTP notification settings; see `EmailSettings`. Disabled by default. """
 

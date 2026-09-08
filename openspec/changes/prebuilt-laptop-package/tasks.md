@@ -25,12 +25,12 @@
 
 ## 4. Seeding from a bundled payload (D1, D2, D4)
 
-- [ ] 4.1 Add a bundled-payload path settings field in `backend/src/vista_backend/config.py` alongside `vista_data_token`; verify it defaults to `None` and reads from the environment
-- [ ] 4.2 Add `LocalRepoClient` to `backend/src/vista_backend/db/seed.py` implementing `download_file(path, dest)` and `download_dir(path, dest)` against an unpacked payload root, skipping files already on disk like its GitLab counterpart; verify a unit test copies a nested file and a directory tree
-- [ ] 4.3 Add the third `ctx_manager` branch at `seed.py:140-148` selecting the local client when the payload path is set, GitLab when the token is set, and the existing no-op otherwise; verify precedence is deterministic when both are set
-- [ ] 4.4 Add the non-empty-index assertion before the knowledge-base row is written, so an absent or empty store fails loudly rather than producing a row reporting `build_status="ready"`; verify a test that an empty store raises and names the corpus
-- [ ] 4.5 Add a seeding test proving payload-sourced seeding yields the same knowledge-base slug, the same project knowledge-base list, and the same asset-dependent skills as the token path; verify it runs under the default hermetic PR filter
-- [ ] 4.6 Confirm `backend/tests/test_seed_projects.py` and `backend/tests/test_seed_splash.py` pass unmodified, proving the tokenless path is untouched; verify via `cd backend && uv run --extra dev pytest -k seed`
+- [x] 4.1 Add a bundled-payload path settings field in `backend/src/vista_backend/config.py` alongside `vista_data_token`; verify it defaults to `None` and reads from the environment
+- [x] 4.2 Add `LocalRepoClient` to `backend/src/vista_backend/db/seed.py` implementing `download_file(path, dest)` and `download_dir(path, dest)` against an unpacked payload root, skipping files already on disk like its GitLab counterpart; verify a unit test copies a nested file and a directory tree
+- [x] 4.3 Add the third `ctx_manager` branch at `seed.py:140-148` selecting the local client when the payload path is set, GitLab when the token is set, and the existing no-op otherwise; verify precedence is deterministic when both are set
+- [x] 4.4 Add the non-empty-index assertion before the knowledge-base row is written, so an absent or empty store fails loudly rather than producing a row reporting `build_status="ready"`; verify a test that an empty store raises and names the corpus
+- [x] 4.5 Add a seeding test proving payload-sourced seeding yields the same knowledge-base slug, the same project knowledge-base list, and the same asset-dependent skills as the token path; verify it runs under the default hermetic PR filter
+- [x] 4.6 Confirm `backend/tests/test_seed_projects.py` and `backend/tests/test_seed_splash.py` pass unmodified, proving the tokenless path is untouched; verify via `cd backend && uv run --extra dev pytest -k seed` (both files pass with no edits. Their offline fixture pins `vista_data_token=None` and cannot know about the new payload setting, so an autouse fixture in `backend/tests/conftest.py` clears both vista-data sources for every test; without it a host with `VISTA_DATA_PAYLOAD_DIR` exported -- a packaging build machine -- would silently move the offline seeding tests onto the payload branch. Verified by re-running with a bogus value exported.)
 
 ## 5. Optional file-transfer setup never blocks startup (H2, H3)
 
