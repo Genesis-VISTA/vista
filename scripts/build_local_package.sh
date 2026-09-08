@@ -146,6 +146,7 @@ preflight() {
     if command -v "$candidate" >/dev/null 2>&1; then
       if "$candidate" info >/dev/null 2>&1; then
         runtime="$candidate"
+        CONTAINER_RUNTIME="$candidate"
         break
       fi
       warn "$candidate is installed but its daemon is not responding"
@@ -283,4 +284,266 @@ if [[ "$CHECK_ONLY" == true ]]; then
   exit 0
 fi
 
-die "not implemented past the preflight yet"
+# ─── layout ─────────────────────────────────────────────────────────────────
+
+# The package tree. Paths inside it are the contract the launcher relies on, so
+# they are named once here.
+STAGING="$OUTPUT_DIR/$PACKAGE_NAME"
+STAGING_PYTHON="$STAGING/python"
+STAGING_BIN="$STAGING/bin"
+STAGING_APP="$STAGING/app"
+STAGING_PAYLOAD="$STAGING/payload"
+
+# uv resolves TLS against rustls' bundled roots, so a host behind an inspecting
+# proxy -- corporate MITM, a zero-trust gateway -- fails every download with
+# `invalid peer certificate: UnknownIssuer` while curl and git succeed. Asking
+# uv to use the platform trust store instead costs nothing on a normal host.
+# (`UV_NATIVE_TLS` is the older name for this and is deprecated.)
+export UV_SYSTEM_CERTS=1
+# Keep every interpreter this build downloads inside the package.
+export UV_PYTHON_INSTALL_DIR="$STAGING_PYTHON"
+
+# The interpreter every environment is built against. Read from the projects
+# rather than pinned here, so a bump to `requires-python` cannot leave the
+# package on an interpreter no longer supported.
+PYTHON_REQUIREMENT="$(
+  sed -nE 's/^requires-python = "~=([0-9]+\.[0-9]+)\..*"/\1/p' \
+    "$REPO_ROOT/backend/pyproject.toml" | head -1
+)"
+[[ -n "$PYTHON_REQUIREMENT" ]] \
+  || die "could not read requires-python from backend/pyproject.toml"
+
+# Every project that gets its own environment inside the package, as
+# <source path>|<sync flags>.
+PROJECTS=(
+  "backend|"
+  "mcp_servers/vista_mcp_server|--extra hpc"
+  "mcp_servers/dev_mcp_server|"
+)
+
+prepare_staging() {
+  log "staging: $STAGING"
+  rm -rf "$STAGING"
+  mkdir -p "$STAGING_PYTHON" "$STAGING_BIN" "$STAGING_APP" "$STAGING_PAYLOAD"
+}
+
+# ─── bundled runtime ────────────────────────────────────────────────────────
+
+bundle_runtime() {
+  log "bundling the python interpreter and uv"
+
+  uv python install "$PYTHON_REQUIREMENT" >/dev/null
+  # The install leaves a `cpython-<minor>-<platform>` symlink beside the real
+  # `cpython-<patch>-<platform>` directory, pointing at it by absolute path --
+  # which dangles the moment the package is unpacked somewhere else. The real
+  # directory is what everything references, so the alias is dropped.
+  local alias
+  while IFS= read -r alias; do
+    [[ -L "$alias" ]] && rm -f "$alias"
+  done < <(find "$STAGING_PYTHON" -maxdepth 1 -type l)
+  rm -rf "$STAGING_PYTHON/.temp" "$STAGING_PYTHON/.lock"
+
+  BUNDLED_PYTHON_DIR="$(
+    find "$STAGING_PYTHON" -maxdepth 1 -type d -name 'cpython-*' | head -1
+  )"
+  [[ -n "$BUNDLED_PYTHON_DIR" ]] \
+    || die "uv python install left no interpreter in $STAGING_PYTHON"
+  BUNDLED_PYTHON="$BUNDLED_PYTHON_DIR/bin/python$PYTHON_REQUIREMENT"
+  [[ -x "$BUNDLED_PYTHON" ]] || die "no interpreter at $BUNDLED_PYTHON"
+
+  # uv is a runtime dependency, not just a build tool: the backend spawns the
+  # sandbox MCP server with `uv run dev-mcp-server` on every agent session.
+  local uv_binary
+  uv_binary="$(command -v uv)"
+  cp "$uv_binary" "$STAGING_BIN/uv"
+  chmod +x "$STAGING_BIN/uv"
+
+  echo "interpreter : $(basename "$BUNDLED_PYTHON_DIR")"
+  echo "uv          : $("$STAGING_BIN/uv" --version)"
+}
+
+# ─── sources ────────────────────────────────────────────────────────────────
+
+stage_sources() {
+  log "staging application sources"
+
+  local project source
+  for project in "${PROJECTS[@]}"; do
+    source="${project%%|*}"
+    mkdir -p "$STAGING_APP/$(dirname "$source")"
+    # `.venv` is excluded rather than copied: the package gets environments
+    # built against its own interpreter below. `mcp-apps` is the MCP app's npm
+    # project -- 137 MB of build-time dependencies whose only output is the
+    # single self-contained HTML file already inside `src/`.
+    rsync -a \
+      --exclude '.venv/' \
+      --exclude '__pycache__/' \
+      --exclude 'mcp-apps/' \
+      --exclude '.pytest_cache/' \
+      --exclude 'tests/' \
+      "$REPO_ROOT/$source/" "$STAGING_APP/$source/"
+  done
+
+  # `build_rag.py` sits at the repo root and is imported by the indexer, which
+  # locates it by walking up from the backend package -- so it has to keep the
+  # same position relative to `backend/`.
+  cp "$REPO_ROOT/build_rag.py" "$STAGING_APP/build_rag.py"
+
+  # `submit_job_mcp.py` iterates this directory at import time, so the MCP
+  # server does not start without it.
+  rsync -a --exclude '__pycache__/' "$REPO_ROOT/hpc_jobs/" "$STAGING_APP/hpc_jobs/"
+
+  echo "staged: $(du -sh "$STAGING_APP" | cut -f1)"
+}
+
+# ─── environments ───────────────────────────────────────────────────────────
+
+# Make one environment relocatable.
+#
+# `uv venv --relocatable` gets the console scripts right -- they become `sh`
+# wrappers that resolve the interpreter next to themselves -- but three things
+# it does not touch still carry the build host's absolute paths:
+#
+#   * `bin/python` is an absolute symlink to the interpreter;
+#   * `pyvenv.cfg`'s `home` is an absolute path;
+#   * the project itself is installed *editable*, as a `.pth` file holding the
+#     build-time source directory, so after relocation the interpreter and its
+#     dependencies import but the application does not.
+#
+# The third is fixed at install time with `--no-editable`; the first two here.
+relocate_environment() {
+  local venv="$1"
+  local python_dir_name
+  python_dir_name="$(basename "$BUNDLED_PYTHON_DIR")"
+
+  # Depth from <venv>/bin back to the package root, so the link survives
+  # wherever the package is unpacked.
+  local up_to_root
+  up_to_root="$(
+    python3 -c '
+import os, sys
+print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$STAGING" "$venv/bin"
+  )"
+  ln -sfn "$up_to_root/python/$python_dir_name/bin/python$PYTHON_REQUIREMENT" \
+    "$venv/bin/python"
+  ln -sfn python "$venv/bin/python3"
+  ln -sfn python "$venv/bin/python$PYTHON_REQUIREMENT"
+
+  local home_relative
+  home_relative="$(
+    python3 -c '
+import os, sys
+print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
+      "$BUNDLED_PYTHON_DIR/bin" "$venv"
+  )"
+  python3 - "$venv/pyvenv.cfg" "$home_relative" <<'PYFIX'
+import pathlib, re, sys
+
+config = pathlib.Path(sys.argv[1])
+config.write_text(
+    re.sub(r"^home = .*$", f"home = {sys.argv[2]}", config.read_text(), flags=re.M)
+)
+PYFIX
+}
+
+create_environments() {
+  log "creating relocatable environments"
+
+  local project source flags venv
+  for project in "${PROJECTS[@]}"; do
+    source="${project%%|*}"
+    flags="${project#*|}"
+    venv="$STAGING_APP/$source/.venv"
+
+    echo "  $source"
+    local skip=()
+    read -r -a skip <<< "$(cuda_packages_to_skip "$REPO_ROOT/$source/uv.lock")"
+    (
+      cd "$STAGING_APP/$source"
+      "$STAGING_BIN/uv" venv --relocatable --python "$BUNDLED_PYTHON" .venv \
+        >/dev/null
+      # --no-editable so the project is copied into site-packages instead of
+      # pointed at by an absolute path. Without it the package unpacks to a
+      # working interpreter that cannot import the application.
+      UV_PROJECT_ENVIRONMENT="$venv" \
+        "$STAGING_BIN/uv" sync --frozen --no-editable $flags \
+        ${skip[@]+"${skip[@]}"} >/dev/null
+    )
+    install_cpu_torch "$venv" "${#skip[@]}"
+    relocate_environment "$venv"
+  done
+
+  echo "environments: $(du -sh "$STAGING_APP" | cut -f1) total staged"
+}
+
+# ─── CPU-only torch (Linux) ─────────────────────────────────────────────────
+
+# On Linux the locked `torch` pulls a CUDA runtime -- 37 NVIDIA distributions
+# and roughly 2.5 GB -- that a laptop cannot use.
+#
+# They are skipped at install time rather than installed and then removed: the
+# removal would still cost the download, on every Linux build. `uv.lock` is
+# never rewritten, so the committed lock stays the one CI and developers
+# resolve against and this remains a property of the package alone.
+#
+# macOS wheels have no CUDA variant, so both halves are no-ops there.
+cuda_packages_to_skip() {
+  local lock="$1"
+  [[ "$TARGET_OS" == linux ]] || return 0
+  [[ -f "$lock" ]] || return 0
+  grep -c 'name = "torch"' "$lock" >/dev/null 2>&1 || return 0
+
+  local name
+  while IFS= read -r name; do
+    printf -- '--no-install-package %s ' "$name"
+  done < <(
+    sed -nE 's/^name = "(nvidia-[a-z0-9-]+|torch|triton)"$/\1/p' "$lock" | sort -u
+  )
+}
+
+install_cpu_torch() {
+  local venv="$1" skipped="$2"
+  [[ "$TARGET_OS" == linux ]] || return 0
+  (( skipped > 0 )) || return 0
+
+  log "installing the CPU build of torch"
+  "$STAGING_BIN/uv" pip install --python "$venv/bin/python" \
+    --torch-backend=cpu torch >/dev/null
+}
+
+# ─── sandbox image ──────────────────────────────────────────────────────────
+
+# The agent's `run_bash` runs inside a microVM created by the bundled `msb`,
+# from an OCI image. Building that image needs a container runtime; *loading* it
+# does not, so the image is built and exported here and the launcher imports the
+# archive with `msb load` on first run. That is the whole reason a researcher
+# needs neither Docker nor podman.
+export_sandbox_image() {
+  log "building and exporting the sandbox image"
+
+  local dockerfile="$REPO_ROOT/mcp_servers/dev_mcp_server/src/dev_mcp_server/docker/Dockerfile"
+  [[ -f "$dockerfile" ]] || die "sandbox Dockerfile not found at $dockerfile"
+
+  "$CONTAINER_RUNTIME" build -t "$SANDBOX_IMAGE" -f "$dockerfile" \
+    "$(dirname "$dockerfile")" >/dev/null
+  "$CONTAINER_RUNTIME" save -o "$STAGING_PAYLOAD/sandbox-image.tar" "$SANDBOX_IMAGE"
+
+  echo "image       : $SANDBOX_IMAGE"
+  echo "archive     : $(du -sh "$STAGING_PAYLOAD/sandbox-image.tar" | cut -f1)"
+}
+
+SANDBOX_IMAGE="vista-sandbox:latest"
+BUNDLED_PYTHON=''
+BUNDLED_PYTHON_DIR=''
+
+prepare_staging
+bundle_runtime
+stage_sources
+create_environments
+export_sandbox_image
+
+log "staged $PACKAGE_NAME"
+echo "$STAGING"
+echo
+echo "note: payload, archive, manifest, and smoke test are not implemented yet"
+
