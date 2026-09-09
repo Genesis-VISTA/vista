@@ -60,6 +60,35 @@ ${HOST_OS}-${HOST_ARCH}. Interpreters and compiled libraries inside it cannot ru
 use the ${HOST_OS}-${HOST_ARCH} build."
 fi
 
+# ─── hardware virtualisation ────────────────────────────────────────────────
+
+# The code-execution sandbox runs each agent session in a microVM. On macOS it
+# uses the Hypervisor framework, which is always present. On Linux it needs
+# KVM, which is not: a bare-metal workstation has it, a cloud VM needs nested
+# virtualisation switched on, and access is usually group-gated.
+#
+# Checked here because the alternative is discovering it on the first agent
+# message, several minutes after startup reported that everything was fine.
+if [[ "$HOST_OS" == linux ]]; then
+  if [[ ! -e /dev/kvm ]]; then
+    die "the code-execution sandbox needs hardware virtualisation, and this \
+machine has no /dev/kvm.
+
+  On bare metal, enable virtualisation (VT-x or AMD-V) in the firmware and \
+check that the kvm module is loaded. Inside a virtual machine, the host has \
+to expose nested virtualisation to it. Everything else in VISTA works \
+without this; only running code in the sandbox does not."
+  fi
+  if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+    die "the code-execution sandbox needs read and write access to /dev/kvm, \
+and this account has neither.
+
+  It is usually owned by the kvm group. Add yourself with \
+\`sudo usermod -aG kvm $USER\`, then log out and back in so the new group \
+takes effect."
+  fi
+fi
+
 # ─── port preflight ─────────────────────────────────────────────────────────
 
 # Reported before any service starts. Otherwise the conflict surfaces as a
