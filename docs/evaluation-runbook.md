@@ -5,10 +5,12 @@ and multi-tenancy metrics for VISTA using the built-in instrumentation. Run the
 phases in the order below; each section says what it produces, how to run it,
 and whether it needs a live LLM.
 
-For the broader testing roadmap (unit/integration milestones and planned
-nightly automation), see the OpenSpec sources in [`openspec/specs/`](../openspec/specs/)
-and [`openspec/changes/`](../openspec/changes/) (Milestone D wraps this runbook;
-it does not replace it).
+For the broader testing roadmap (unit/integration milestones and nightly
+automation), see [`docs/validation-lane.md`](validation-lane.md) (Milestone D
+owns the scheduled wrapper and pass/fail policy) plus OpenSpec sources in
+[`openspec/specs/`](../openspec/specs/) and
+[`openspec/changes/`](../openspec/changes/). This runbook remains the
+step-by-step for metrics JSONL, amortization, and concurrency curves.
 
 > **Two execution modes.** The deterministic load generator has a `tools` mode
 > (drives `/mcp/call`, **no LLM, no HPC credentials**) and an `agent` mode
@@ -352,6 +354,9 @@ them as each measurement completes.
 ---
 
 ## Fault recovery (note)
+
+The scheduled validation lane optionally exercises this path — see
+[`validation-lane.md`](validation-lane.md) (`VISTA_RUN_FAULT_CHECKS=1`).
 
 Fault injection is an **MCP-server** flag group; relaunch with a profile:
 

@@ -15,6 +15,25 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from vista_backend.db.schemas import UserPublicWithConfig, UserTable
 
 
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Opt-in gates for live / real-HPC tests (Milestone D validation lane).
+
+    Markers alone keep PR CI hermetic via ``-m "not live and not hpc and not sandbox"``.
+    These skips also protect bare ``pytest`` runs without the marker filter.
+    """
+    run_live = os.environ.get("VISTA_RUN_LIVE") == "1"
+    run_hpc = os.environ.get("VISTA_RUN_HPC") == "1"
+    skip_live = pytest.mark.skip(reason="set VISTA_RUN_LIVE=1 to run live tests")
+    skip_hpc = pytest.mark.skip(reason="set VISTA_RUN_HPC=1 to run real-HPC tests")
+    for item in items:
+        if item.get_closest_marker("live") is not None and not run_live:
+            item.add_marker(skip_live)
+        if item.get_closest_marker("hpc") is not None and not run_hpc:
+            item.add_marker(skip_hpc)
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"

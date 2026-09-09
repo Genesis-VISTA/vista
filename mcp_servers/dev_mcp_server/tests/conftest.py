@@ -16,8 +16,3 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_live)
         if item.get_closest_marker("hpc") is not None and not run_hpc:
             item.add_marker(skip_hpc)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"

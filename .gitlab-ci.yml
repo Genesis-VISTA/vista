@@ -1,16 +1,22 @@
 # Vista CI Pipeline
 #
 # Stages:
-#   lint  — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
-#   test  — pytest (backend + vista_mcp_server + dev_mcp_server); each job
-#           publishes a JUnit XML report so pipelines/MRs show per-test results
+#   lint     — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
+#   test     — pytest (backend + vista_mcp_server + dev_mcp_server); hermetic only;
+#              each job publishes a JUnit XML report for pipelines/MRs
+#   nightly  — scheduled / manual validation lane (Milestone D); never blocks MRs
 #
 # Python jobs use the official uv image and let uv manage the Python 3.14 install.
 # Node jobs use node:22-slim. All jobs run in parallel within each stage.
+#
+# Hermetic PR expression (required jobs): -m "not live and not hpc and not sandbox"
+# Live / HPC secrets MUST exist only in scheduled pipeline variables — never as
+# required variables for merge-request pipelines.
 
 stages:
   - lint
   - test
+  - nightly
 
 default:
   interruptible: true
@@ -206,3 +212,43 @@ ui:typecheck:
     - cd ui
     - npm ci --prefer-offline
     - npx tsc --noEmit
+
+# ─── Nightly validation lane (Milestone D) ──────────────────────────────────
+#
+# Schedule this pipeline in GitLab (CI/CD → Schedules) and attach secrets only
+# to the schedule. Point VISTA_LIVE_BASE_URL at a standing stack with dry-run
+# HPC + a real model. See docs/validation-lane.md.
+
+.nightly-rules: &nightly-rules
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $VISTA_RUN_VALIDATION == "1"'
+    - when: never
+
+nightly:validation:
+  stage: nightly
+  <<: [*python-image, *cache-uv-backend, *nightly-rules]
+  allow_failure: true
+  variables:
+    VISTA_RUN_LIVE: "1"
+    # Override in schedule variables: VISTA_BACKEND_MODEL, provider keys,
+    # VISTA_LIVE_BASE_URL, VISTA_RUN_FAULT_CHECKS, VISTA_RUN_PLAYWRIGHT
+  script:
+    - ./scripts/nightly-validation.sh
+
+nightly:playwright:
+  stage: nightly
+  image: mcr.microsoft.com/playwright:v1.51.0-jammy
+  <<: *cache-npm-ui
+  allow_failure: true
+  # Separate optional job so UI smoke can run without the Python validation
+  # stack when only PLAYWRIGHT_BASE_URL is configured.
+  # Intentionally NOT a required MR job (no merge_request_event rules).
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $VISTA_RUN_PLAYWRIGHT == "1"'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $VISTA_RUN_VALIDATION == "1" && $VISTA_RUN_PLAYWRIGHT == "1"'
+    - when: never
+  script:
+    - cd ui
+    - npm ci --prefer-offline
+    - npx playwright test -c playwright.config.ts
