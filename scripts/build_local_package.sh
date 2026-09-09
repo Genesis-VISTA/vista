@@ -658,12 +658,16 @@ create_environments() {
   msb="$(find "$STAGING_APP/mcp_servers/dev_mcp_server/.venv" \
     -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
   if [[ -x "$msb" ]]; then
-    local msb_error host_glibc
-    # `sed -n 1p` rather than `head -1`: with pipefail, head closing the pipe
-    # sends ldd a SIGPIPE, the pipeline reports failure, and any `|| fallback`
-    # runs *in addition to* the value that was already printed.
-    host_glibc="$(ldd --version 2>/dev/null \
-      | sed -nE '1s/.*[[:space:]]([0-9]+\.[0-9]+)$/\1/p')"
+    local msb_error host_glibc=''
+    # Guarded twice, and both guards are load-bearing. `ldd` does not exist on
+    # macOS, and a standalone assignment whose command substitution fails is
+    # fatal under `set -e` -- which is how this stage once exited silently,
+    # with exit 127, immediately after reporting the staged size. The `|| true`
+    # covers the same hazard on a Linux host whose ldd behaves unexpectedly.
+    if [[ "$TARGET_OS" == linux ]]; then
+      host_glibc="$(ldd --version 2>/dev/null \
+        | sed -nE '1s/.*[[:space:]]([0-9]+\.[0-9]+)$/\1/p' || true)"
+    fi
     if ! msb_error="$("$msb" --version 2>&1)"; then
       die "the bundled sandbox binary cannot run in this build environment:
 

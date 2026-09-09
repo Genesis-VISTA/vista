@@ -213,10 +213,13 @@ if ! docker build \
     # Named from the handshake rather than guessed, so the message says which
     # certificate to go and find.
     local proxy_ca
+    # `|| true` because this runs inside a failure path: if the probe cannot
+    # reach the host, the guidance below still has to print rather than the
+    # script dying on a failed assignment under `set -e`.
     proxy_ca="$(
       openssl s_client -connect nodejs.org:443 -servername nodejs.org </dev/null 2>/dev/null \
         | openssl x509 -noout -issuer 2>/dev/null \
-        | sed -nE 's|.*/CN=([^/]+).*|\1|p'
+        | sed -nE 's|.*/CN=([^/]+).*|\1|p' || true
     )"
     if [[ -n "$CA_BUNDLE" ]]; then
       die "TLS still failed with the CA bundle supplied.
