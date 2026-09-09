@@ -60,6 +60,22 @@ log() {
   printf '\n==> %s\n' "$*"
 }
 
+# How to get the proxy's root out of this host's trust store. macOS keeps it
+# in a keychain, which is why a container cannot see it in the first place.
+ca_export_hint() {
+  if [[ "$(uname -s)" == Darwin ]]; then
+    cat <<'HINT'
+      security find-certificate -a -c <CA name from below> \
+        -p /Library/Keychains/System.keychain > ~/root-ca.pem
+HINT
+  else
+    cat <<'HINT'
+      # the root is usually already a file here:
+      ls /usr/local/share/ca-certificates /etc/pki/ca-trust/source/anchors
+HINT
+  fi
+}
+
 PLATFORM=linux/amd64
 ALLOW_DIRTY=false
 KEEP_WORK=false
@@ -194,22 +210,40 @@ if ! docker build \
   echo >&2
   if grep -q 'self-signed certificate\|SSL certificate problem\|unable to get local issuer' \
        "$WORK/build-image.log"; then
-    die "the build environment could not verify TLS.
+    # Named from the handshake rather than guessed, so the message says which
+    # certificate to go and find.
+    local proxy_ca
+    proxy_ca="$(
+      openssl s_client -connect nodejs.org:443 -servername nodejs.org </dev/null 2>/dev/null \
+        | openssl x509 -noout -issuer 2>/dev/null \
+        | sed -nE 's|.*/CN=([^/]+).*|\1|p'
+    )"
+    if [[ -n "$CA_BUNDLE" ]]; then
+      die "TLS still failed with the CA bundle supplied.
 
-  This network inspects TLS, and the container does not trust the proxy that
-  does it. Your macOS host does, because the root sits in its keychain, which
-  a Linux container cannot read -- so the same URL works outside the
-  container and fails inside it.
+    bundle : $CA_BUNDLE
+    proxy  : ${proxy_ca:-could not be read}
 
-  Export your organisation's root CA as PEM and pass it:
-
-      ./scripts/build_in_docker.sh --ca-bundle ~/org-root-ca.pem ...
-
-  Or set VISTA_BUILD_CA_BUNDLE once. To find which CA to export, ask the
-  proxy itself:
+  The bundle does not contain the root that signs this proxy's certificates,
+  or holds only an intermediate. Export the *root* -- the last entry in the
+  chain, the one issued to itself -- and try again:
 
       openssl s_client -connect nodejs.org:443 -servername nodejs.org \\
         </dev/null 2>/dev/null | grep 'i:'"
+    fi
+    die "the build environment could not verify TLS.
+
+  This network inspects TLS: the certificate served for nodejs.org is signed
+  by ${proxy_ca:-a private CA}, not by a public authority. Your host trusts
+  that signer because it sits in the system keychain, which a Linux container
+  cannot read, so the same URL works outside the container and fails inside
+  it.
+
+  Export that root and hand it back:
+$(ca_export_hint)
+      ./scripts/build_in_docker.sh --ca-bundle ~/root-ca.pem ...
+
+  Or set VISTA_BUILD_CA_BUNDLE once, so it applies to every build."
   fi
   die "building the build environment failed; see $WORK/build-image.log"
 fi

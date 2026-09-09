@@ -26,6 +26,13 @@ Later runs skip every setup step and start in seconds.
 Open the UI and paste your inference API key into the settings modal. It takes
 effect immediately; no restart.
 
+On **Linux**, the code-execution sandbox needs hardware virtualisation through
+`/dev/kvm`. A bare-metal workstation has it; a virtual machine needs nested
+virtualisation enabled by its host; and access is usually gated on the `kvm`
+group. The launcher checks this before starting anything and names the fix.
+Everything else works without it, only running code in the sandbox does not.
+macOS needs nothing here, since microsandbox uses the Hypervisor framework.
+
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
 `setup.log`). The unpacked package tree is disposable — upgrading is replacing
@@ -128,6 +135,54 @@ A typical rebuild, once you have a corpus clone and a vector store worth reusing
 
 That still downloads the embedding weights, runs `npm ci`, and builds the UI and
 the MCP app; it skips only the indexing pass and its per-paper model calls.
+
+### Building for another platform
+
+Cross-compiling is not possible here, so the build runs inside a container of
+the target platform instead, under emulation:
+
+```bash
+./scripts/build_in_docker.sh --payload ~/.vista-build/vista-data \
+                             --vector-store ~/.vista-build/rag_db
+```
+
+Defaults to `linux/amd64`; pass `--platform` for another. Every other flag goes
+straight through to `build_local_package.sh`, and host paths given to
+`--payload` and `--vector-store` are mounted in automatically. Run
+`--check` first, as with a native build.
+
+Three things differ from a native build.
+
+The container builds from `git archive HEAD`, not from your working copy,
+because `stage_ui` and `build_mcp_app` run `npm` *inside* the source tree and
+skip the install when `node_modules` already exists. A mounted checkout would
+have its macOS `node_modules` reused under Linux. So the wrapper refuses a
+dirty tree unless you pass `--allow-dirty`, and uncommitted work is excluded
+either way.
+
+Credentials come from the environment rather than `.env`, since the extracted
+tree has no `.env` in it. `VISTA_DATA_TOKEN` and the inference variables are
+forwarded when set. `amscrot-py` needs one addition: your keychain credential
+for gitlab.com is unreachable from a Linux container, so set `AMSC_GIT_TOKEN`
+to a gitlab.com token that can read the amsc2 repository, or build
+`--without-hpc`.
+
+**On a network that inspects TLS**, the container fails where the host
+succeeds. It has its own trust store and cannot read your system keychain, so
+downloads from any inspected host stop with `self-signed certificate in
+certificate chain` even though the same URL works outside the container. Find
+which CA is doing it, export that root, and pass it in:
+
+```bash
+openssl s_client -connect nodejs.org:443 -servername nodejs.org </dev/null 2>/dev/null | grep 'i:'
+security find-certificate -a -c <CA name> -p /Library/Keychains/System.keychain > ~/root-ca.pem
+./scripts/build_in_docker.sh --ca-bundle ~/root-ca.pem ...
+```
+
+Set `VISTA_BUILD_CA_BUNDLE` to avoid repeating the flag. The build's failure
+message walks through this too, including the case where the bundle you
+supplied turns out to hold an intermediate rather than a root. Keep the PEM out
+of the repository; it belongs in your home directory.
 
 ## Architecture
 
