@@ -39,6 +39,12 @@ check() {
   fi
 }
 
+# Distinct from `ok` on purpose. A check that could not run here is not a check
+# that passed, and the build's output should not let the two be confused.
+skip() {
+  echo "  skip $1 -- $2"
+}
+
 cleanup() {
   trap - INT TERM EXIT
   local pid
@@ -67,6 +73,17 @@ wait_for() {
 [[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
 
 export VISTA_HOME="$STATE"
+
+# The launcher refuses to start on Linux without KVM, because every agent tool
+# call needs it. A build container never has /dev/kvm, so a cross-platform
+# build would be unable to exercise its own artifact at all. The override lets
+# the services start; the checks that go through the agent are skipped below
+# and reported as skipped rather than passed.
+AGENT_PATH_TESTABLE=true
+if [[ "$(uname -s)" == Linux && ! -e /dev/kvm ]]; then
+  export VISTA_ALLOW_NO_KVM=1
+  AGENT_PATH_TESTABLE=false
+fi
 export VISTA_UI_PORT="$UI_PORT"
 export VISTA_MCP_PORT="$MCP_PORT"
 export VISTA_BACKEND_PORT="$BACKEND_PORT"
@@ -130,7 +147,16 @@ if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
 PYCHECK
 }
-check "retrieval returns passages" retrieval_returns_passages
+if [[ "$AGENT_PATH_TESTABLE" == true ]]; then
+  check "retrieval returns passages" retrieval_returns_passages
+else
+  # Not a weaker assertion about retrieval: it cannot be reached at all here.
+  # The sandbox server is part of the agent's toolset and its lifespan spawns a
+  # microVM, so with no /dev/kvm the backend's MCP client gets `Connection
+  # closed` and this call returns 500 regardless of the store's health.
+  skip "retrieval returns passages" \
+    "no /dev/kvm here, so every agent tool call fails; verify on a KVM host"
+fi
 
 # The build identifier has to be the same in the manifest, the launcher output
 # and the running service, so a researcher reporting a problem can say which

@@ -26,12 +26,17 @@ Later runs skip every setup step and start in seconds.
 Open the UI and paste your inference API key into the settings modal. It takes
 effect immediately; no restart.
 
-On **Linux**, the code-execution sandbox needs hardware virtualisation through
-`/dev/kvm`. A bare-metal workstation has it; a virtual machine needs nested
-virtualisation enabled by its host; and access is usually gated on the `kvm`
-group. The launcher checks this before starting anything and names the fix.
-Everything else works without it, only running code in the sandbox does not.
-macOS needs nothing here, since microsandbox uses the Hypervisor framework.
+On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
+the launcher refuses to start without it. A bare-metal workstation has it; a
+virtual machine needs nested virtualisation enabled by its host; and access is
+usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
+login is the common fix.
+
+This is a hard requirement rather than a missing feature. The sandbox server
+is started as part of the agent's toolset and spawns a microVM as it comes up,
+so without KVM *every* agent tool call fails, retrieval included, even though
+retrieval never touches the sandbox. macOS needs nothing here, since
+microsandbox uses the Hypervisor framework.
 
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,

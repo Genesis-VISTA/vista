@@ -488,7 +488,7 @@ bundle_runtime() {
   rm -rf "$STAGING_PYTHON/.temp" "$STAGING_PYTHON/.lock"
 
   BUNDLED_PYTHON_DIR="$(
-    find "$STAGING_PYTHON" -maxdepth 1 -type d -name 'cpython-*' | head -1
+    find "$STAGING_PYTHON" -maxdepth 1 -type d -name 'cpython-*' -print -quit
   )"
   [[ -n "$BUNDLED_PYTHON_DIR" ]] \
     || die "uv python install left no interpreter in $STAGING_PYTHON"
@@ -656,7 +656,7 @@ create_environments() {
   # its Python modules, not this.
   local msb
   msb="$(find "$STAGING_APP/mcp_servers/dev_mcp_server/.venv" \
-    -path '*/microsandbox/_bundled/bin/msb' 2>/dev/null | head -1)"
+    -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
   if [[ -x "$msb" ]]; then
     local msb_error host_glibc
     # `sed -n 1p` rather than `head -1`: with pipefail, head closing the pipe
@@ -1214,7 +1214,7 @@ run_smoke_test() {
   # 29 MB binary.
   local msb
   msb="$(find "$unpacked/app/mcp_servers/dev_mcp_server/.venv" \
-    -path '*/microsandbox/_bundled/bin/msb' | head -1)"
+    -path '*/microsandbox/_bundled/bin/msb' -print -quit)"
   [[ -x "$msb" ]] || die "smoke test: no msb binary in the unpacked package"
   local msb_error
   if ! msb_error="$("$msb" --version 2>&1)"; then

@@ -67,28 +67,40 @@ fi
 # KVM, which is not: a bare-metal workstation has it, a cloud VM needs nested
 # virtualisation switched on, and access is usually group-gated.
 #
-# Reported and then carried on, rather than refused. This blocks one tool --
-# running code in the sandbox -- and leaves chat, retrieval, the corpus and job
-# submission working, so refusing to start would deny a researcher everything
-# over the loss of one thing. Said at startup because the alternative is
-# discovering it on the first agent message with no explanation attached.
-if [[ "$HOST_OS" == linux ]]; then
-  kvm_warning=''
+# This refuses to start, and the reason is stronger than "one tool is missing".
+# `dev_mcp_server`'s lifespan spawns a sandbox eagerly at startup
+# (`server.py:79`), so without KVM that server never finishes `initialize`, the
+# backend's MCP client sees `Connection closed`, and *every* agent tool call
+# fails -- retrieval included, even though retrieval never touches the sandbox.
+# Measured, not assumed: `rag_search` returns HTTP 500 on a host with no
+# /dev/kvm while the MCP server itself has the store open and reports 4401
+# chunks. Serving pages while the agent cannot answer anything is worse than
+# saying so up front.
+#
+# VISTA_ALLOW_NO_KVM exists for the build's own smoke test, which runs inside a
+# container where /dev/kvm is never present. It is not a way to use VISTA
+# without KVM; the checks that depend on the agent are skipped when it is set.
+if [[ "$HOST_OS" == linux && "${VISTA_ALLOW_NO_KVM:-}" != 1 ]]; then
+  kvm_problem=''
   if [[ ! -e /dev/kvm ]]; then
-    kvm_warning="this machine has no /dev/kvm. On bare metal, enable \
-virtualisation (VT-x or AMD-V) in the firmware and check that the kvm module \
-is loaded. Inside a virtual machine, the host has to expose nested \
-virtualisation to it."
+    kvm_problem="this machine has no /dev/kvm.
+
+  On bare metal, enable virtualisation (VT-x or AMD-V) in the firmware and \
+check that the kvm module is loaded. Inside a virtual machine, the host has to \
+expose nested virtualisation to it."
   elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
-    kvm_warning="this account cannot read or write /dev/kvm, which is usually \
-owned by the kvm group. Add yourself with \`sudo usermod -aG kvm \
-${USER:-$(id -un)}\`, then log out and back in."
+    kvm_problem="this account cannot read or write /dev/kvm.
+
+  It is usually owned by the kvm group. Add yourself with \
+\`sudo usermod -aG kvm ${USER:-$(id -un)}\`, then log out and back in so the \
+new group takes effect."
   fi
-  if [[ -n "$kvm_warning" ]]; then
-    log ""
-    log "warning: the code-execution sandbox will not work here -- $kvm_warning"
-    log "Everything else works; only running code in the sandbox does not."
-    log ""
+  if [[ -n "$kvm_problem" ]]; then
+    die "VISTA needs hardware virtualisation on Linux, and $kvm_problem
+
+  Every agent tool call depends on it, not just running code: the sandbox
+  server is started as part of the agent's toolset, so without it retrieval
+  fails too."
   fi
 fi
 
@@ -209,7 +221,7 @@ for part in vista-data knowledge-bases huggingface; do
 done
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
-  -path '*/microsandbox/_bundled/bin/msb' 2>/dev/null | head -1)"
+  -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
 if [[ -x "$MSB" && -f "$PACKAGE/payload/sandbox-image.tar" ]]; then
   if ! "$MSB" image inspect --format=json "$VISTA_DEV_MCP_IMAGE" >/dev/null 2>&1; then
     log "First run: importing the code-execution sandbox image..."
