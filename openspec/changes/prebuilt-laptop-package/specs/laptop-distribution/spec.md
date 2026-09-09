@@ -103,6 +103,13 @@ SHALL be told which requirement it fails rather than failing partway through sta
   support the sandbox
 - **THEN** it reports the specific unmet requirement before starting any service
 
+#### Scenario: Hardware virtualisation unavailable
+
+- **WHEN** the artifact is started on a host where the code-execution sandbox cannot obtain
+  hardware virtualisation
+- **THEN** it reports that requirement by name before starting any service, rather than
+  failing on the researcher's first agent message
+
 ### Requirement: Bundled corpus is searchable at first run
 
 The artifact SHALL include the molten-salt corpus already indexed, so retrieval works on
@@ -138,6 +145,43 @@ interface.
   the settings interface
 - **THEN** job submission, status polling, and output retrieval work for that cluster with
   no further installation
+
+### Requirement: Building for another platform
+
+A build host SHALL be able to produce an artifact for a supported platform other than its
+own, without access to a machine of that platform. Such an artifact SHALL be equivalent to
+one built natively for the target.
+
+#### Scenario: Building for a different platform
+
+- **WHEN** a build is run for a supported target platform that differs from the build
+  host's
+- **THEN** it produces an artifact whose bundled interpreter, language runtime, compiled
+  dependencies, and sandbox image are all the target platform's
+
+#### Scenario: A host component is not substituted for a target one
+
+- **WHEN** a component staged into the artifact could be taken either from the build host
+  or from the target environment
+- **THEN** the copy placed in the artifact is the target platform's, and a component that
+  cannot be obtained for the target fails the build rather than being substituted
+
+#### Scenario: The cross-built artifact is still exercised
+
+- **WHEN** a cross-platform build completes
+- **THEN** the artifact is started and checked in a target-platform environment before the
+  build reports success, on the same terms as a native build
+
+### Requirement: Stated compatibility floor
+
+An artifact SHALL record the oldest target-platform system libraries it supports, so a host
+that cannot run it can be identified without unpacking and starting it.
+
+#### Scenario: Reading an artifact's requirements
+
+- **WHEN** the recorded contents of an artifact are inspected
+- **THEN** they state the platform it targets and the minimum system library version that
+  platform needs
 
 ### Requirement: Build-time verification
 

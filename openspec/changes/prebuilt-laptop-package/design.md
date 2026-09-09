@@ -155,6 +155,50 @@ The build preflights its prerequisites and ends by unpacking to a different path
 exercising health plus one retrieval query (P8), because relocation is the highest-risk
 part of the design and a manifest proves files exist, not that they still run.
 
+### Cross-platform builds: emulate the target, never borrow from the host (P11-P13)
+
+The artifact carries a target-specific interpreter, compiled wheels, a Node runtime, and a
+sandbox image, so the build has to *run* on the target platform rather than compile for it.
+`uv` can resolve for a foreign platform -- `--python-platform` is how P6's CPU-only torch
+set was verified -- but resolution is not the whole build: creating the environments,
+building the standalone UI, and exercising the finished artifact all execute target
+binaries. So a Linux x86_64 build runs inside a `linux/amd64` container (P11), under QEMU
+emulation on a macOS arm64 host. The emulation is the point rather than a compromise: a
+build host that already ran the target platform would simply run the script directly, so
+the container exists precisely for the case where no such host is available.
+
+The base image fixes the package's glibc floor, because everything installed inside
+inherits it. `ubuntu:22.04` (glibc 2.35) is chosen (P12): it matches the `manylinux_2_28`
+floor the `microsandbox` wheel already imposes, and covers Ubuntu 22.04+, Debian 12 and
+RHEL 9. A newer base narrows that reach and buys nothing.
+
+The sandbox image is built on the host with `buildx --platform` and passed in as an archive
+(P13) instead of being built inside the build container. A container has no daemon of its
+own, and mounting the host's socket would build the *host's* default architecture -- an
+arm64 sandbox inside an x86_64 package, which no later step would notice. Taking an archive
+as an argument mirrors `--vector-store`, drops the container runtime from the build
+container's requirements entirely, and makes the target architecture explicit rather than
+inherited.
+
+*Alternative rejected -- docker-in-docker.* A privileged container to produce the same
+archive the host produces in one `buildx` command.
+
+The standing hazard in a cross-platform build is a component quietly taken from the build
+host. Three are staged from outside the target environment: `uv` is copied from
+`command -v uv` (P2), the embedding weights are rsynced from the host's HuggingFace cache
+when it already holds them, and the sandbox image comes from a daemon. Only the first is
+architecture-specific, so only it changes hands -- `uv` must be installed inside the image
+rather than mounted. Weights are safetensors and JSON, and the prebuilt Chroma store is
+little-endian data on both architectures; both are portable, and a task verifies the store
+rather than assuming it.
+
+The build's own smoke test is expected to survive emulation, because it exercises no
+microVM: it checks service health, one retrieval query, and version consistency, and
+first-run `msb load` only unpacks into the store. That keeps relocation and retrieval
+verified before the archive is handed over, which matters more here than usual: where the
+target platform is unavailable outside the container, this is the only place the artifact
+gets started at all.
+
 ### Launch and HPC (L1–L3, H1–H4)
 
 State lives outside the artifact (L1), which makes copying carry no personal data and makes
