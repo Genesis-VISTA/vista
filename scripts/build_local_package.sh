@@ -28,6 +28,10 @@
 #                         (titles, authors, DOIs), and record that
 #   --vector-store DIR   Reuse an already-built vector store instead of
 #                         indexing the corpus again
+#   --sandbox-image TAR  Use an already-exported sandbox image archive instead
+#                         of building one, so no container runtime is needed.
+#                         Its architecture must match the target; see
+#                         scripts/build_in_docker.sh
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
@@ -73,7 +77,10 @@ load_env_file "$REPO_ROOT/.env"
 # ─── house idiom (matches scripts/ci-local.sh) ──────────────────────────────
 
 usage() {
-  sed -n '2,31p' "$0" | sed -E 's/^# ?//'
+  # Printed by walking the header block rather than by line number: the range
+  # this used to hardcode had already fallen four lines behind the block it
+  # printed, silently dropping the last two options from `--help`.
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 die() {
@@ -98,6 +105,7 @@ ARCHIVE_FORMAT=gz
 WITHOUT_HPC=false
 WITHOUT_CITATIONS=false
 REUSE_STORE=''
+SANDBOX_IMAGE_TAR=''
 SKIP_SMOKE_TEST=false
 KEEP_STAGING=false
 
@@ -110,6 +118,9 @@ while [[ $# -gt 0 ]]; do
     --vector-store)
       [[ $# -ge 2 ]] || die "--vector-store needs a directory"
       REUSE_STORE="$2"; shift ;;
+    --sandbox-image)
+      [[ $# -ge 2 ]] || die "--sandbox-image needs a tar archive"
+      SANDBOX_IMAGE_TAR="$2"; shift ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
@@ -158,6 +169,38 @@ AMSC_GIT_URL="$(
     "$REPO_ROOT/mcp_servers/vista_mcp_server/pyproject.toml" | head -1
 )"
 
+# ─── the sandbox image's architecture ───────────────────────────────────────
+
+# `uname -m` and an OCI image config disagree on names for the same processor,
+# so the comparison is made in OCI's vocabulary rather than the kernel's.
+oci_arch_for_target() {
+  case "$TARGET_ARCH" in
+    x86_64|amd64)  echo amd64 ;;
+    arm64|aarch64) echo arm64 ;;
+    *)             echo "$TARGET_ARCH" ;;
+  esac
+}
+
+# Read straight out of the archive, with no container runtime involved -- the
+# point of accepting one is that this host may have none.
+#
+# `docker save` and `podman save` both write a `manifest.json` naming the
+# image's config blob, and that blob records the architecture. Checking it is
+# what makes the flag safe to trust: an arm64 sandbox inside an x86_64 package
+# would `msb load` without complaint and fail only when a microVM starts, which
+# no part of the build does -- so the build would hand over an artifact whose
+# code execution is broken, having verified everything else about it.
+sandbox_archive_arch() {
+  local archive="$1" config
+  config="$(
+    tar -xOf "$archive" manifest.json 2>/dev/null \
+      | sed -nE 's/.*"Config":"?([^",]+)"?.*/\1/p' | head -1
+  )"
+  [[ -n "$config" ]] || return 1
+  tar -xOf "$archive" "$config" 2>/dev/null \
+    | sed -nE 's/.*"architecture":"([a-z0-9]+)".*/\1/p' | head -1
+}
+
 # ─── preflight ──────────────────────────────────────────────────────────────
 
 # Every prerequisite is checked before any of them is allowed to stop the build,
@@ -178,23 +221,49 @@ preflight() {
   command -v git >/dev/null 2>&1 \
     || failures+=("git is not installed")
 
-  # A container runtime, to build and export the sandbox image. Checked by
-  # asking the daemon, not by finding the client: a `docker` on PATH with no
-  # daemon behind it is the common broken case, and it fails much later.
-  for candidate in docker podman; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      if "$candidate" info >/dev/null 2>&1; then
-        runtime="$candidate"
-        CONTAINER_RUNTIME="$candidate"
-        break
-      fi
-      warn "$candidate is installed but its daemon is not responding"
+  # The sandbox image: either built here, which needs a container runtime, or
+  # supplied as an already-exported archive, which needs none. The second form
+  # is what lets the build itself run inside a container, since a container has
+  # no daemon of its own -- and it is the only way to get a target-architecture
+  # image when the runtime available would build the host's instead.
+  if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
+    local want_arch got_arch
+    want_arch="$(oci_arch_for_target)"
+    if [[ ! -f "$SANDBOX_IMAGE_TAR" ]]; then
+      failures+=("--sandbox-image is not a file: $SANDBOX_IMAGE_TAR")
+    elif ! got_arch="$(sandbox_archive_arch "$SANDBOX_IMAGE_TAR")" \
+         || [[ -z "$got_arch" ]]; then
+      failures+=("--sandbox-image does not look like a saved container image: \
+$SANDBOX_IMAGE_TAR (no manifest.json naming a config blob). Produce one with \
+\`docker save -o FILE IMAGE\`.")
+    elif [[ "$got_arch" != "$want_arch" ]]; then
+      failures+=("--sandbox-image holds a $got_arch image; this package targets \
+$want_arch:
+    $SANDBOX_IMAGE_TAR
+  Nothing later in the build would notice: the image loads on any \
+architecture and is only executed when an agent runs code. Rebuild it for the \
+target with \`docker buildx build --platform linux/$want_arch\`.")
     fi
-  done
-  if [[ -z "$runtime" ]]; then
-    failures+=("no working container runtime — the sandbox image is built with \
-docker or podman on this host, so the recipient needs neither. Start Docker \
-Desktop, or install podman.")
+  else
+    # Checked by asking the daemon, not by finding the client: a `docker` on
+    # PATH with no daemon behind it is the common broken case, and it fails
+    # much later.
+    for candidate in docker podman; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        if "$candidate" info >/dev/null 2>&1; then
+          runtime="$candidate"
+          CONTAINER_RUNTIME="$candidate"
+          break
+        fi
+        warn "$candidate is installed but its daemon is not responding"
+      fi
+    done
+    if [[ -z "$runtime" ]]; then
+      failures+=("no working container runtime — the sandbox image is built \
+with docker or podman on this host, so the recipient needs neither. Start \
+Docker Desktop, install podman, or pass --sandbox-image with an archive \
+exported elsewhere.")
+    fi
   fi
 
   # The corpus. Either an unpacked tree or a token that can fetch one.
@@ -302,7 +371,11 @@ requested — gz needs no extra tool and is the default for that reason") ;;
     return 1
   fi
 
-  echo "container runtime : ${runtime}"
+  if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
+    echo "sandbox image     : $SANDBOX_IMAGE_TAR ($(oci_arch_for_target), supplied)"
+  else
+    echo "container runtime : ${runtime}"
+  fi
   echo "corpus source     : ${PAYLOAD_DIR:-VISTA_DATA_TOKEN (code.ornl.gov)}"
   if [[ "$WITHOUT_HPC" == true ]]; then
     echo "amscrot-py        : omitted (--without-hpc)"
@@ -879,6 +952,18 @@ PYCHECK
 # archive with `msb load` on first run. That is the whole reason a researcher
 # needs neither Docker nor podman.
 export_sandbox_image() {
+  # An archive supplied on the command line is copied in as-is. Its own
+  # RepoTags are irrelevant: the launcher loads it with `msb load -t`, which
+  # names the image itself, so only the contents and architecture matter --
+  # and the architecture was settled in the preflight.
+  if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
+    log "staging the supplied sandbox image"
+    cp "$SANDBOX_IMAGE_TAR" "$STAGING_PAYLOAD/sandbox-image.tar"
+    echo "image       : $SANDBOX_IMAGE (from $SANDBOX_IMAGE_TAR)"
+    echo "archive     : $(du -sh "$STAGING_PAYLOAD/sandbox-image.tar" | cut -f1)"
+    return 0
+  fi
+
   log "building and exporting the sandbox image"
 
   local dockerfile="$REPO_ROOT/mcp_servers/dev_mcp_server/src/dev_mcp_server/docker/Dockerfile"
