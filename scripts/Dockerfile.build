@@ -2,11 +2,18 @@
 # the build host's. Driven by scripts/build_in_docker.sh, which builds this
 # image for the target platform and runs build_local_package.sh inside it.
 #
-# ubuntu:22.04 fixes the package's glibc floor at 2.35, because everything
-# installed in here inherits it. 2.35 matches the manylinux_2_28 floor that
-# the microsandbox wheel already imposes, and covers Ubuntu 22.04+, Debian 12
-# and RHEL 9. A newer base narrows that reach and buys nothing.
-FROM ubuntu:22.04
+# ubuntu:24.04 because microsandbox leaves no choice. Its wheel is tagged
+# manylinux_2_28, which describes the Python extension modules inside it and
+# says nothing about the `msb` executable it also bundles -- and that binary
+# needs GLIBC_2.39. 22.04 was tried first, on the strength of that wheel tag,
+# and the build ran to completion before the smoke test failed on
+# `version GLIBC_2.38 not found`.
+#
+# So the artifact's floor is 2.39 wherever it is built, and an older base
+# widens nothing while breaking the sandbox. That means Ubuntu 24.04+,
+# Debian 13+ and RHEL 10+; notably not Ubuntu 22.04 or RHEL 9. It also matches
+# the base the sandbox image itself uses.
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 

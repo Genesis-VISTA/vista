@@ -168,9 +168,20 @@ build host that already ran the target platform would simply run the script dire
 the container exists precisely for the case where no such host is available.
 
 The base image fixes the package's glibc floor, because everything installed inside
-inherits it. `ubuntu:22.04` (glibc 2.35) is chosen (P12): it matches the `manylinux_2_28`
-floor the `microsandbox` wheel already imposes, and covers Ubuntu 22.04+, Debian 12 and
-RHEL 9. A newer base narrows that reach and buys nothing.
+inherits it -- but the floor is dictated rather than chosen (P12). `ubuntu:22.04` was
+picked first, reading the `microsandbox` wheel's `manylinux_2_28` tag as the binding
+constraint. That tag describes the Python extension modules in the wheel and says nothing
+about the `msb` executable it also bundles, which needs `GLIBC_2.39`. The build ran to
+completion and the smoke test caught it: `version GLIBC_2.38 not found`. So the artifact
+needs 2.39 wherever it is built, an older base widens nothing while breaking the sandbox,
+and `ubuntu:24.04` is the base -- the same one the sandbox image uses. Supported
+recipients are Ubuntu 24.04+, Debian 13+ and RHEL 10+, and explicitly not Ubuntu 22.04
+or RHEL 9.
+
+The lesson generalises past this one binary: a wheel tag constrains the wheel's own
+modules, so any bundled executable's requirements have to be checked separately. The
+build now runs `msb --version` as soon as the environments exist, which turns an
+hour-late smoke-test failure into one that arrives before anything is archived.
 
 The sandbox image is built on the host with `buildx --platform` and passed in as an archive
 (P13) instead of being built inside the build container. A container has no daemon of its

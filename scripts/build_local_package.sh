@@ -648,6 +648,34 @@ create_environments() {
   done
 
   echo "environments: $(du -sh "$STAGING_APP" | cut -f1) total staged"
+
+  # Run the bundled msb once, here, rather than discovering at the smoke test
+  # that the build environment is older than it needs. This is the whole
+  # sandbox in one binary, and it is the only bundled executable whose system
+  # requirements are not the interpreter's -- microsandbox's wheel tag covers
+  # its Python modules, not this.
+  local msb
+  msb="$(find "$STAGING_APP/mcp_servers/dev_mcp_server/.venv" \
+    -path '*/microsandbox/_bundled/bin/msb' 2>/dev/null | head -1)"
+  if [[ -x "$msb" ]]; then
+    local msb_error host_glibc
+    # `sed -n 1p` rather than `head -1`: with pipefail, head closing the pipe
+    # sends ldd a SIGPIPE, the pipeline reports failure, and any `|| fallback`
+    # runs *in addition to* the value that was already printed.
+    host_glibc="$(ldd --version 2>/dev/null \
+      | sed -nE '1s/.*[[:space:]]([0-9]+\.[0-9]+)$/\1/p')"
+    if ! msb_error="$("$msb" --version 2>&1)"; then
+      die "the bundled sandbox binary cannot run in this build environment:
+
+    $msb_error
+
+  Everything the package needs is present, but a smoke test here would fail
+  and a recipient on this platform would too. On Linux this means the build
+  environment's glibc is older than msb requires: ${host_glibc:-unknown} here.
+  Build on a newer base."
+    fi
+    echo "sandbox bin : $($msb --version 2>/dev/null)"
+  fi
 }
 
 # ─── CPU-only torch (Linux) ─────────────────────────────────────────────────
@@ -998,7 +1026,8 @@ export_sandbox_image() {
 # submits a job or reads a citation.
 # The oldest system libraries the artifact can run against. Everything
 # compiled into it inherits the build environment's floor, so on Linux this is
-# the build container's glibc -- ubuntu:22.04 puts it at 2.35. Recorded rather
+# the build container's glibc -- ubuntu:24.04 puts it at 2.39, which is also
+# the minimum the bundled `msb` needs regardless of base. Recorded rather
 # than merely known, so a host that cannot run the artifact is identifiable
 # without unpacking and starting it.
 target_floor() {
@@ -1127,7 +1156,11 @@ create_archive() {
   # bsdtar (macOS) stores extended attributes by default and rejects --xattrs;
   # GNU tar needs to be asked.
   if tar --version 2>/dev/null | grep -qi 'gnu tar'; then
-    xattr_flag=(--xattrs)
+    # `no-xattr` silences one warning per file on filesystems that do not
+    # carry them, which a container's overlay and bind mounts do not. The
+    # signature this flag exists for is a macOS concern, and macOS uses
+    # bsdtar, so on Linux the flag is kept for correctness and quieted.
+    xattr_flag=(--xattrs --warning=no-xattr)
   fi
 
   local compressor
@@ -1173,14 +1206,27 @@ run_smoke_test() {
   tar -xf "$ARCHIVE_PATH" -C "$root"
   local unpacked="$root/$PACKAGE_NAME"
 
-  # The signature has to survive the round trip or the binary will not run.
+  # msb has to survive the round trip and run here. Two different things can
+  # stop it, so the loader's own words are reported rather than guessed at: on
+  # macOS a lost adhoc signature, on Linux a glibc older than the binary
+  # wants. Claiming the former when it was the latter sent one debugging
+  # session looking for missing extended attributes on a perfectly intact
+  # 29 MB binary.
   local msb
   msb="$(find "$unpacked/app/mcp_servers/dev_mcp_server/.venv" \
     -path '*/microsandbox/_bundled/bin/msb' | head -1)"
   [[ -x "$msb" ]] || die "smoke test: no msb binary in the unpacked package"
-  "$msb" --version >/dev/null \
-    || die "smoke test: the unpacked msb will not run — its code signature did \
-not survive archiving. Check that extended attributes were preserved."
+  local msb_error
+  if ! msb_error="$("$msb" --version 2>&1)"; then
+    die "smoke test: the unpacked msb will not run.
+
+    $msb_error
+
+  On Linux that is usually a glibc older than the binary requires; compare
+  \`objdump -T\` on it against \`ldd --version\` here. On macOS it is usually an
+  adhoc code signature lost in archiving, so check that extended attributes
+  were preserved."
+  fi
 
   # The package is unpacked deep on purpose -- that is what catches a path baked
   # in at build time. The state directory is not: the sandbox's socket path is
