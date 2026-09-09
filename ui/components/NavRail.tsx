@@ -8,7 +8,7 @@ import {
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import { useActiveProject } from "@/lib/projects";
-import { useCurrentUser, userDisplayName, userInitials } from "@/lib/user";
+import { useCurrentUser } from "@/lib/user";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -181,19 +181,15 @@ export function NavRail() {
     setRailCollapsed(!collapsed);
   }
 
-  const displayName = user
-    ? userDisplayName(user)
+  // VISTA runs locally as a single user, so the rail ends in a settings
+  // button rather than an identity chip. `user` is still read because the
+  // settings modal edits that user's row — there is nothing to open until it
+  // has loaded.
+  const settingsHint = user
+    ? "Settings"
     : userLoading
-      ? "Loading…"
-      : "Signed out";
-  const initials = user ? userInitials(user) : userLoading ? "…" : "?";
-  const userHint = user
-    ? user.is_admin
-      ? "Admin"
-      : ""
-    : userLoading
-      ? "Loading user…"
-      : "Not signed in";
+      ? "Loading settings…"
+      : "Settings unavailable";
 
   /**
    * An entry is active when its href matches the current location. We split
@@ -353,21 +349,19 @@ export function NavRail() {
 
       <button
         type="button"
-        className="nav-rail-user"
+        className="nav-rail-settings"
         onClick={() => setSettingsOpen(true)}
         disabled={!user}
-        title={user ? `${displayName} — user settings` : userHint}
-        aria-label="Open user settings"
+        title={settingsHint}
+        aria-label="Open settings"
       >
-        <div className="nav-rail-user-avatar" aria-hidden="true">
-          {initials}
-        </div>
-        {!collapsed && (
-          <div className="nav-rail-user-meta">
-            <div className="nav-rail-user-name">{displayName}</div>
-            <div className="nav-rail-user-hint">{userHint}</div>
-          </div>
-        )}
+        <span className="nav-rail-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+          </svg>
+        </span>
+        {!collapsed && <span className="nav-rail-settings-label">Settings</span>}
       </button>
 
       {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
