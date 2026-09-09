@@ -20,6 +20,10 @@
 #   --allow-dirty     Build even though the working tree has uncommitted
 #                      changes. Those changes are still excluded: the source
 #                      comes from `git archive HEAD`
+#   --ca-bundle FILE  A PEM holding your organisation's root CA, for a network
+#                      that inspects TLS. Needed because a macOS host keeps
+#                      that root in its keychain, which a Linux container
+#                      cannot read
 #   --keep-work       Leave the extracted source and sandbox archive in place
 #   -h, --help        Show this help
 #
@@ -59,6 +63,7 @@ log() {
 PLATFORM=linux/amd64
 ALLOW_DIRTY=false
 KEEP_WORK=false
+CA_BUNDLE="${VISTA_BUILD_CA_BUNDLE:-}"
 PASSTHROUGH=()
 OUTPUT_DIR="$REPO_ROOT/dist"
 
@@ -70,6 +75,9 @@ while [[ $# -gt 0 ]]; do
       PLATFORM="$2"; shift ;;
     --allow-dirty) ALLOW_DIRTY=true ;;
     --keep-work) KEEP_WORK=true ;;
+    --ca-bundle)
+      [[ $# -ge 2 ]] || die "--ca-bundle needs a PEM file"
+      CA_BUNDLE="$2"; shift ;;
     # Captured rather than passed through: the container sees a different
     # path for it, and it has to be mounted.
     --output-dir)
@@ -158,12 +166,53 @@ echo "sandbox     : $(du -sh "$WORK/sandbox-image.tar" | cut -f1)"
 
 BUILD_IMAGE="vista-build:${PLATFORM//\//-}"
 
+# Staged rather than using scripts/ directly, so an extra root CA can be
+# placed in the context without ever being committed. The directory is always
+# created: `COPY ca/` on a missing directory fails the build outright, and
+# `update-ca-certificates` reads only .crt files so the placeholder is inert.
+CTX="$WORK/context"
+mkdir -p "$CTX/ca"
+cp "$REPO_ROOT/scripts/Dockerfile.build" "$CTX/Dockerfile.build"
+: > "$CTX/ca/.keep"
+if [[ -n "$CA_BUNDLE" ]]; then
+  [[ -f "$CA_BUNDLE" ]] || die "--ca-bundle is not a file: $CA_BUNDLE"
+  grep -q 'BEGIN CERTIFICATE' "$CA_BUNDLE" \
+    || die "--ca-bundle holds no PEM certificate: $CA_BUNDLE
+  Export it in PEM form, not DER: \`openssl x509 -inform der -in cert.cer -out ca.pem\`"
+  # Named .crt because that is the only extension update-ca-certificates reads.
+  cp "$CA_BUNDLE" "$CTX/ca/build-host-extra.crt"
+  echo "ca bundle   : $CA_BUNDLE"
+fi
+
 log "building the build environment ($BUILD_IMAGE)"
-docker build \
-  --platform "$PLATFORM" \
-  -t "$BUILD_IMAGE" \
-  -f "$REPO_ROOT/scripts/Dockerfile.build" \
-  "$REPO_ROOT/scripts" >/dev/null
+if ! docker build \
+     --platform "$PLATFORM" \
+     -t "$BUILD_IMAGE" \
+     -f "$CTX/Dockerfile.build" \
+     "$CTX" >"$WORK/build-image.log" 2>&1; then
+  tail -25 "$WORK/build-image.log" >&2
+  echo >&2
+  if grep -q 'self-signed certificate\|SSL certificate problem\|unable to get local issuer' \
+       "$WORK/build-image.log"; then
+    die "the build environment could not verify TLS.
+
+  This network inspects TLS, and the container does not trust the proxy that
+  does it. Your macOS host does, because the root sits in its keychain, which
+  a Linux container cannot read -- so the same URL works outside the
+  container and fails inside it.
+
+  Export your organisation's root CA as PEM and pass it:
+
+      ./scripts/build_in_docker.sh --ca-bundle ~/org-root-ca.pem ...
+
+  Or set VISTA_BUILD_CA_BUNDLE once. To find which CA to export, ask the
+  proxy itself:
+
+      openssl s_client -connect nodejs.org:443 -servername nodejs.org \\
+        </dev/null 2>/dev/null | grep 'i:'"
+  fi
+  die "building the build environment failed; see $WORK/build-image.log"
+fi
 
 # ─── mounts and environment ─────────────────────────────────────────────────
 
@@ -201,7 +250,9 @@ if [[ -d "$HOST_HF/hub" ]]; then
   echo "weights     : reusing the host cache at $HOST_HF"
 fi
 
-ENVS=(-e "VISTA_VERSION=$VERSION")
+ENVS=(-e "VISTA_VERSION=$VERSION" -e "VISTA_COMMIT=$(git -C "$REPO_ROOT" rev-parse HEAD)")
+# --keep-work leaves the staged context in place; without it the trap removes
+# the CA copy along with everything else once the build finishes.
 for name in VISTA_DATA_TOKEN OPENAI_API_KEY OPENAI_BASE_URL VISTA_BACKEND_MODEL \
             AZURE_OPENAI_API_KEY AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_VERSION \
             AMSC_GIT_TOKEN; do

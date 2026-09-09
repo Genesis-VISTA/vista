@@ -154,6 +154,15 @@ if [[ -z "$VERSION" ]]; then
   fi
 fi
 
+# Both of these are overridable because a cross-platform build runs against a
+# tree extracted with `git archive`, which carries no `.git`. Left to query
+# git, the manifest's commit field came out as an empty string -- the build
+# still succeeded and the artifact simply lost its traceability.
+COMMIT="${VISTA_COMMIT:-}"
+if [[ -z "$COMMIT" ]]; then
+  COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+fi
+
 case "$(uname -s)" in
   Darwin) TARGET_OS=macos ;;
   Linux)  TARGET_OS=linux ;;
@@ -987,6 +996,26 @@ export_sandbox_image() {
 # `--without-citations` -- has to be identifiable from this file alone, because
 # the resulting package looks entirely healthy right up to the moment someone
 # submits a job or reads a citation.
+# The oldest system libraries the artifact can run against. Everything
+# compiled into it inherits the build environment's floor, so on Linux this is
+# the build container's glibc -- ubuntu:22.04 puts it at 2.35. Recorded rather
+# than merely known, so a host that cannot run the artifact is identifiable
+# without unpacking and starting it.
+target_floor() {
+  case "$TARGET_OS" in
+    linux)
+      local glibc
+      glibc="$(ldd --version 2>/dev/null | sed -nE '1s/.* ([0-9]+\.[0-9]+)$/\1/p')"
+      [[ -n "$glibc" ]] && printf ', "min_glibc": "%s"' "$glibc"
+      ;;
+    macos)
+      local macos
+      macos="$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)"
+      [[ -n "$macos" ]] && printf ', "built_on_macos": "%s"' "$macos"
+      ;;
+  esac
+}
+
 write_manifest() {
   log "writing the manifest"
 
@@ -1022,8 +1051,8 @@ PYCOUNT
   "name": "$PACKAGE_NAME",
   "version": "$VERSION",
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "commit": "$(git -C "$REPO_ROOT" rev-parse HEAD)",
-  "target": { "os": "$TARGET_OS", "arch": "$TARGET_ARCH" },
+  "commit": "$COMMIT",
+  "target": { "os": "$TARGET_OS", "arch": "$TARGET_ARCH"$(target_floor) },
   "runtimes": {
     "python": "$(basename "$BUNDLED_PYTHON_DIR")",
     "node": "$("$STAGING/node/bin/node" --version)",
