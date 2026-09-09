@@ -165,11 +165,6 @@ are in [`openspec/specs/`](openspec/specs/), with open changes under
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
 - [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)
 
-On MacOS, you may need to install `libmagic` first as well:
-```bash
-brew install libmagic
-```
-
 To install the NERSC/OLCF IRI dependencies (`amscrot-py`), sync the optional
 `hpc` extra (needs access to
 https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git):

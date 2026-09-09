@@ -62,6 +62,38 @@ class TestFormatFileContent:
         result = format_file_content(b"a\nb\n")
         assert len(result.splitlines()) == 2
 
+    # --- text vs binary classification ---
+    #
+    # Pinned deliberately: this used to ask libmagic for a MIME type and test
+    # it against `text/`, which hid every JSON and SVG file. Nothing here
+    # would have caught that, which is how it survived.
+
+    def test_json_is_text(self):
+        # libmagic returned application/json, so this rendered as binary.
+        result = format_file_content(b'{"salt": "FLiBe", "k": 1.1}')
+        assert result == '1\t{"salt": "FLiBe", "k": 1.1}'
+
+    def test_svg_is_text(self):
+        # libmagic returned image/svg+xml, likewise.
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+        assert "<svg" in format_file_content(svg)
+
+    def test_pdf_is_binary(self):
+        # A real PDF header with no NUL byte in it: the decode is what rejects
+        # this, not the NUL scan. matplotlib's toolbar icons look like this.
+        pdf = b"%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\n\xd0\xcf\x11\xe0"
+        assert format_file_content(pdf) == "[binary file]"
+
+    def test_latin1_text_is_binary(self):
+        # Accepted regression. libmagic called this text/plain and it printed
+        # with replacement characters; a strict decode refuses it.
+        assert format_file_content(b"temp = 900\xb0C\n") == "[binary file]"
+
+    def test_utf16_text_is_binary(self):
+        # Accepted regression, and the clearest gap: UTF-16 encodes ASCII with
+        # zero bytes, so the NUL scan rejects it before the decode runs.
+        assert format_file_content("k = 1.1\n".encode("utf-16")) == "[binary file]"
+
     # --- fixed-width padding ---
 
     def test_padding_for_ten_lines(self):
