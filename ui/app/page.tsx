@@ -65,10 +65,6 @@ type McpToolsResponse = {
   error?: string;
 };
 
-const MODEL_SERVICES = ["AmSC model services"];
-const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
-const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
-
 function formatResultSummary(result: ExecutionResult): string {
   const status = result.ok ? "OK" : "ERROR";
   const output = result.stdout ? result.stdout.slice(0, 240) : "";
@@ -176,7 +172,6 @@ export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeColumnResizer, setActiveColumnResizer] = useState<"right" | null>(null);
   const [activeRowResizer, setActiveRowResizer] = useState<"right" | null>(null);
   const [vizWidth, setVizWidth] = useState(460);
@@ -413,12 +408,6 @@ export default function HomePage() {
     args: Record<string, unknown> | null;
     decisionMetadata: DecisionMetadata | null;
   } | null>(null);
-  const [chatService] = useState(MODEL_SERVICES[0]);
-  const [chatFamily, setChatFamily] = useState(MODEL_FAMILIES[0]);
-  const [chatOpenModel, setChatOpenModel] = useState(OPEN_MODELS[0]);
-  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [isServiceExpanded, setIsServiceExpanded] = useState(false);
-  const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
   const logEndRef = useRef<HTMLDivElement | null>(null);
@@ -509,19 +498,6 @@ export default function HomePage() {
       window.removeEventListener("pointerup", onPointerUp);
     };
   }, [activeRowResizer]);
-
-  useEffect(() => {
-    if (!isModelMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const node = modelMenuRef.current;
-      if (!node) return;
-      if (!node.contains(event.target as Node)) {
-        setIsModelMenuOpen(false);
-      }
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [isModelMenuOpen]);
 
   async function handleElicitationSubmit(
     id: string,
@@ -1417,87 +1393,8 @@ export default function HomePage() {
 
       <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-header">
-          <div className="panel-header-stack">
-            <div className="panel-title">
-              {isConversationListView ? "Conversations" : "Chat with"}
-            </div>
-            {isConversationOpen && (
-              <div className="model-cascade-menu" ref={modelMenuRef}>
-                <button
-                  type="button"
-                  className="input model-menu-trigger"
-                  onClick={() => {
-                    setIsModelMenuOpen((prev) => {
-                      const next = !prev;
-                      if (next) {
-                        setIsServiceExpanded(true);
-                        setIsOpenModelsExpanded(chatFamily === "open models");
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  {chatService} / {chatFamily === "open models" ? chatOpenModel : chatFamily}
-                </button>
-
-                {isModelMenuOpen && (
-                  <div className="model-menu level1">
-                    <button
-                      type="button"
-                      className="model-menu-item has-children"
-                      onMouseEnter={() => setIsServiceExpanded(true)}
-                      onClick={() => setIsServiceExpanded((prev) => !prev)}
-                    >
-                      {chatService}
-                    </button>
-
-                    {isServiceExpanded && (
-                      <div className="model-menu level2">
-                        {MODEL_FAMILIES.map((family) => (
-                          <button
-                            type="button"
-                            key={family}
-                            className={`model-menu-item ${family === "open models" ? "has-children" : ""}`}
-                            onMouseEnter={() => setIsOpenModelsExpanded(family === "open models")}
-                            onClick={() => {
-                              setChatFamily(family);
-                              if (family !== "open models") {
-                                setIsModelMenuOpen(false);
-                                setIsOpenModelsExpanded(false);
-                              } else {
-                                setIsOpenModelsExpanded(true);
-                              }
-                            }}
-                          >
-                            {family}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {isServiceExpanded && isOpenModelsExpanded && (
-                      <div className="model-menu level3">
-                        {OPEN_MODELS.map((model) => (
-                          <button
-                            type="button"
-                            key={model}
-                            className="model-menu-item"
-                            onClick={() => {
-                              setChatFamily("open models");
-                              setChatOpenModel(model);
-                              setIsModelMenuOpen(false);
-                              setIsOpenModelsExpanded(false);
-                            }}
-                          >
-                            {model}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+          <div className="panel-title">
+            {isConversationListView ? "Conversations" : "Chat"}
           </div>
           <div className="chat-header-actions">
             {isConversationListView ? (

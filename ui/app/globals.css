@@ -478,75 +478,6 @@ main {
   min-width: 180px;
 }
 
-.panel-header-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.model-cascade {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.model-cascade-menu {
-  position: relative;
-  width: 100%;
-}
-
-.model-menu-trigger {
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-}
-
-.model-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 220px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 24px rgba(28, 26, 23, 0.12);
-  padding: 6px;
-  z-index: 30;
-}
-
-.model-menu.level2 {
-  left: calc(100% + 6px);
-  top: 0;
-}
-
-.model-menu.level3 {
-  left: calc(200% + 12px);
-  top: 0;
-}
-
-.model-menu-item {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  font-size: 13px;
-  padding: 7px 8px;
-  cursor: pointer;
-}
-
-.model-menu-item:hover {
-  border-color: var(--line);
-  background: var(--panel-2);
-}
-
-.model-menu-item.has-children::after {
-  content: "›";
-  float: right;
-  color: var(--muted);
-}
-
 .skill-item {
   padding: 10px 12px 10px 16px;
   border-radius: 10px;
@@ -1614,11 +1545,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-overflow: ellipsis;
 }
 
-.nav-rail-user {
+/* Pinned to the bottom of the rail by `margin-top: auto`, and given the same
+   icon + label metrics as `.nav-rail-entry` so it reads as one of the nav
+   items rather than a separate widget. The rule it sits above is what
+   separates it from the list. */
+.nav-rail-settings {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px;
   margin-top: auto;
   /* Render as a button without inheriting browser button chrome. */
   background: transparent;
@@ -1628,63 +1563,36 @@ button.chat-bubble.intermediate.collapsed:hover {
   width: 100%;
   text-align: left;
   font: inherit;
-  color: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
   cursor: pointer;
   transition: background 120ms ease;
 }
 
-.nav-rail-user:hover:not(:disabled) {
+.nav-rail-settings:hover:not(:disabled) {
   background: var(--panel-2);
 }
 
-.nav-rail-user:focus-visible {
+.nav-rail-settings:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: -2px;
 }
 
-.nav-rail-user:disabled {
+.nav-rail-settings:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.45;
 }
 
-.nav-rail.collapsed .nav-rail-user {
+.nav-rail.collapsed .nav-rail-settings {
   justify-content: center;
-  padding: 10px 0;
+  padding: 12px 0;
 }
 
-.nav-rail-user-avatar {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: var(--brand);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 12px;
-  font-family: "Figtree", system-ui, sans-serif;
-}
-
-.nav-rail-user-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.nav-rail-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
+.nav-rail-settings-label {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.nav-rail-user-hint {
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .nav-rail-list {
