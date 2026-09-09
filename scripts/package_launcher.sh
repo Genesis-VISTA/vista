@@ -67,25 +67,28 @@ fi
 # KVM, which is not: a bare-metal workstation has it, a cloud VM needs nested
 # virtualisation switched on, and access is usually group-gated.
 #
-# Checked here because the alternative is discovering it on the first agent
-# message, several minutes after startup reported that everything was fine.
+# Reported and then carried on, rather than refused. This blocks one tool --
+# running code in the sandbox -- and leaves chat, retrieval, the corpus and job
+# submission working, so refusing to start would deny a researcher everything
+# over the loss of one thing. Said at startup because the alternative is
+# discovering it on the first agent message with no explanation attached.
 if [[ "$HOST_OS" == linux ]]; then
+  kvm_warning=''
   if [[ ! -e /dev/kvm ]]; then
-    die "the code-execution sandbox needs hardware virtualisation, and this \
-machine has no /dev/kvm.
-
-  On bare metal, enable virtualisation (VT-x or AMD-V) in the firmware and \
-check that the kvm module is loaded. Inside a virtual machine, the host has \
-to expose nested virtualisation to it. Everything else in VISTA works \
-without this; only running code in the sandbox does not."
+    kvm_warning="this machine has no /dev/kvm. On bare metal, enable \
+virtualisation (VT-x or AMD-V) in the firmware and check that the kvm module \
+is loaded. Inside a virtual machine, the host has to expose nested \
+virtualisation to it."
+  elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+    kvm_warning="this account cannot read or write /dev/kvm, which is usually \
+owned by the kvm group. Add yourself with \`sudo usermod -aG kvm \
+${USER:-$(id -un)}\`, then log out and back in."
   fi
-  if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
-    die "the code-execution sandbox needs read and write access to /dev/kvm, \
-and this account has neither.
-
-  It is usually owned by the kvm group. Add yourself with \
-\`sudo usermod -aG kvm $USER\`, then log out and back in so the new group \
-takes effect."
+  if [[ -n "$kvm_warning" ]]; then
+    log ""
+    log "warning: the code-execution sandbox will not work here -- $kvm_warning"
+    log "Everything else works; only running code in the sandbox does not."
+    log ""
   fi
 fi
 
