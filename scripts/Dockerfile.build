@@ -1,0 +1,58 @@
+# Build environment for producing a VISTA package for a platform other than
+# the build host's. Driven by scripts/build_in_docker.sh, which builds this
+# image for the target platform and runs build_local_package.sh inside it.
+#
+# ubuntu:22.04 fixes the package's glibc floor at 2.35, because everything
+# installed in here inherits it. 2.35 matches the manylinux_2_28 floor that
+# the microsandbox wheel already imposes, and covers Ubuntu 22.04+, Debian 12
+# and RHEL 9. A newer base narrows that reach and buys nothing.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# perl is not incidental: the build writes the archive's checksum with
+# `shasum`, which on Debian-family systems ships with perl rather than
+# coreutils. build-essential is here so that a dependency without a wheel for
+# this platform builds from its sdist instead of failing an hour in.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gzip \
+      perl \
+      python3 \
+      rsync \
+      tar \
+      xz-utils \
+      zstd \
+      build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node builds the UI and the MCP app. This is the build toolchain only: the
+# Node that ships inside the package is downloaded separately and pinned by
+# build_local_package.sh, so this version never reaches the artifact. It
+# matches that pinned major anyway, so the standalone output is produced by
+# the same Node line that will run it.
+ARG NODE_MAJOR=24
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv has to be installed in here rather than mounted from the host.
+# `bundle_runtime` copies `command -v uv` into the package, so a mounted host
+# binary would put the build host's architecture inside the artifact -- and
+# since the launcher only ever reaches it through `uv run` when spawning the
+# sandbox server, that would break on the recipient's first agent session
+# rather than during the build.
+ARG UV_VERSION=0.12.8
+RUN curl -fsSL "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Use the system trust store, so the build works on a network that inspects
+# TLS. Without it every uv download fails with `invalid peer certificate:
+# UnknownIssuer` while curl and git carry on working, which is a confusing
+# way to lose an hour.
+ENV UV_SYSTEM_CERTS=1
+
+# Where build_in_docker.sh mounts the source it extracted from git.
+WORKDIR /build
