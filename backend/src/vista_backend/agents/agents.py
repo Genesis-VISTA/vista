@@ -21,6 +21,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
 )
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import Model
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -416,11 +417,11 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
-        register_campaign_tools(agent, self._campaign_driver_deps())
+        register_campaign_tools(agent, self._campaign_driver_deps(model))
 
         return agent
 
-    def _campaign_driver_deps(self) -> CampaignDriverDeps:
+    def _campaign_driver_deps(self, model: Model | None = None) -> CampaignDriverDeps:
         """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
 
         def emit_progress(message: str) -> None:
@@ -428,17 +429,27 @@ class ProjectAgent:
             if cb is not None:
                 cb(message)
 
+        # The same resolved `Model` the agent and its Q-LLM sub-agents use, so
+        # a campaign's parser agents reach the same endpoint with the same
+        # credential. `_build_agent` passes the one it already built; resolved
+        # here otherwise, so a caller that forgets cannot fall back to
+        # `Settings` alone -- which on a single-user install cannot see the key
+        # from the researcher's settings row.
+        campaign_model = model or build_model_for(self.user)
+
         return CampaignDriverDeps(
             project_id=self.project.id,
             user_id=self.user.id,
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
-            get_planner=self._build_campaign_planner_for_run,
+            get_planner=lambda session, run: self._build_campaign_planner_for_run(
+                session, run, model=campaign_model
+            ),
             emit_progress=emit_progress,
         )
 
     async def _build_campaign_planner_for_run(
-        self, session: AsyncSession, run: Any
+        self, session: AsyncSession, run: Any, *, model: Model | None = None
     ) -> CampaignPlanner:
         """Build the planner for a campaign run: its manifest + subagents over this agent's MCP server."""
         project_paths = {
@@ -453,7 +464,10 @@ class ProjectAgent:
         )
         manifest = load_manifest(self.skills_volume_dir / run.planner_skill)
         subagents = build_subagents(
-            manifest, hpc=McpHpcTools(invoke), skills_dir=self.skills_volume_dir
+            manifest,
+            hpc=McpHpcTools(invoke),
+            skills_dir=self.skills_volume_dir,
+            model=model,
         )
         return CampaignPlanner(manifest=manifest, subagents=subagents)
 

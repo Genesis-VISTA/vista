@@ -20,7 +20,7 @@ from vista_backend.agents.campaign.wiring import (
     parse_job_state,
 )
 from vista_backend.config import settings
-from vista_backend.db.schemas import ProjectTable
+from vista_backend.db.schemas import ProjectTable, UserTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
 
@@ -158,6 +158,52 @@ async def test_build_planner_for_job_reconstructs_from_skill(
 
     assert planner.manifest.roles == ["alpha", "beta"]
     assert set(planner.subagents) == {"alpha", "beta"}
+
+
+@pytest.mark.anyio
+async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
+    session, alice, tmp_path, monkeypatch
+):
+    """
+    With no explicit model, the parser resolves one from the job's user row.
+
+    This is the monitor's path: it runs in the background with no request
+    context and never passes a model, so the parser used to fall back to
+    `Settings` alone and could not see a key entered in the settings modal.
+    """
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    _project, run, _step, job = await _make_run_step_job(
+        session, alice, planner_skill="mock-planner-usermodel"
+    )
+
+    user_row = await session.get(UserTable, alice.id)
+    user_row.inference_model = "openai-chat:row-model"
+    user_row.inference_base_url = "https://user.example/v1"
+    user_row.inference_api_key = "row-key"
+    await session.flush()
+
+    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
+    (skills_dir / run.planner_skill).mkdir(parents=True)
+    (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
+    for role in ("alpha", "beta"):
+        (skills_dir / f"{role}-skill").mkdir(parents=True)
+        (skills_dir / f"{role}-skill" / "SKILL.md").write_text(
+            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n"
+        )
+
+    async def _noop_invoke(name, args):
+        return ""
+
+    # No `parser_factory` and no `model`: the production path, resolving both
+    # from the row above.
+    planner = await build_planner_for_job(
+        session, job, invoke_builder=lambda user, paths: _noop_invoke
+    )
+
+    client = planner.subagents["alpha"].parser.agent.model.client
+    assert str(client.base_url).rstrip("/") == "https://user.example/v1"
+    assert client.api_key == "row-key"
 
 
 # --- build_collector -------------------------------------------------------
