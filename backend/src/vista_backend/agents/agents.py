@@ -11,6 +11,7 @@ import asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import (
@@ -515,6 +516,15 @@ class ProjectAgent:
         MCP server instances configured with the right env vars/headers, and
         move project_paths off metadata too.
         """
+        project_name = quote(self.project.name, safe="")
+        uri_map = {
+            "file:///mnt/data/output/{path}": (
+                f"/api/files/outputs/{{path}}?project_name={project_name}"
+            ),
+            "file:///mnt/data/uploads/{path}": (
+                f"/api/files/uploads/{{path}}?project_name={project_name}"
+            ),
+        }
         metadata: dict[str, Any] = {
             "vista": {
                 "project_paths": {
@@ -522,6 +532,7 @@ class ProjectAgent:
                     "output_dir": str(self.output_dir),
                     "uploads_dir": str(self.uploads_dir),
                 },
+                "uri_map": uri_map,
             },
         }
         HPC_TOOLS = {
