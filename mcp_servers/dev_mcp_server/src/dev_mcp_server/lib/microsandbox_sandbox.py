@@ -10,6 +10,7 @@ from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, Pu
 from microsandbox.types import DnsConfig  # not re-exported from package root
 from microsandbox._runtime import msb_path as _msb_path
 
+from .dns import host_nameservers
 from .sandbox import Sandbox, Volume
 from .util import check_output, parse_output
 from .container_sandbox import resolve_container_runtime
@@ -125,7 +126,7 @@ class MicrosandboxSandbox(Sandbox):
                 #     ]),
                 # ),
                 policy="public_only",
-                dns=DnsConfig(nameservers=("1.1.1.1", "8.8.8.8")),
+                dns=DnsConfig(nameservers=host_nameservers()),
             ),
         )
         return cls(sandbox=sandbox)
