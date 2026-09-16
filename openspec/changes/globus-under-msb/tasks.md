@@ -20,34 +20,34 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 2. The Globus image
 
-- [ ] 2.1 Write a `vista-globus` Dockerfile carrying `python3`, `ca-certificates` and
+- [x] 2.1 Write a `vista-globus` Dockerfile carrying `python3`, `ca-certificates` and
       `libstdc++6` and nothing else; verify Globus Connect Personal's `_gcp_invokepython` shim
       finds an interpreter, and that `python3-dotenv` and `curl` are absent because nothing in the
       guest needs them
-- [ ] 2.2 Build and export it in `scripts/build_local_package.sh` alongside the sandbox image,
+- [x] 2.2 Build and export it in `scripts/build_local_package.sh` alongside the sandbox image,
       reusing `sandbox_archive_arch` to check the exported archive's architecture; verify a
       deliberately wrong-architecture archive fails the build rather than loading silently
-- [ ] 2.3 Add the image to the build manifest; verify the recorded contents name it and its size
+- [x] 2.3 Add the image to the build manifest; verify the recorded contents name it and its size
 
 ## 3. `gcp_vm.py`
 
-- [ ] 3.1 Create `mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/gcp_vm.py` owning the whole
+- [x] 3.1 Create `mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/gcp_vm.py` owning the whole
       endpoint flow, with `start`, `stop` and `status` callable at any time so that moving the
       trigger later is a change of caller; verify `status` reports distinctly on no image, no VM,
       a running VM, and a VM that died
-- [ ] 3.2 Locate the bundled `msb` binary inside `dev_mcp_server`'s environment by the same
+- [x] 3.2 Locate the bundled `msb` binary inside `dev_mcp_server`'s environment by the same
       discovery `scripts/package_launcher.sh:223` performs, without adding `microsandbox` to
       `vista_mcp_server`'s dependencies; verify `uv sync` in `vista_mcp_server` pulls no new package
-- [ ] 3.3 Build the microVM arguments: `-u ubuntu`, 512 MB, `--dns-nameserver` per host resolver,
+- [x] 3.3 Build the microVM arguments: `-u ubuntu`, 512 MB, `--dns-nameserver` per host resolver,
       the pre-loaded image with no dockerfile and no pull, and no mount options at all; verify by
       unit test against a fake `msb` that the argv contains no `stat-virt` and never a dockerfile,
       the trap `microsandbox_sandbox.py:32` documents
-- [ ] 3.4 Mount the data directory read-write and the HPC jobs directory read-only at matching host
+- [x] 3.4 Mount the data directory read-write and the HPC jobs directory read-only at matching host
       paths, and do not mount the repository root; verify by unit test that the argv contains no
       mount whose source is the repo root, and that every mount source equals its destination
-- [ ] 3.5 Close stdin explicitly on every non-interactive `msb exec`; verify a non-interactive
+- [x] 3.5 Close stdin explicitly on every non-interactive `msb exec`; verify a non-interactive
       invocation returns rather than blocking, which it does when stdin is left open
-- [ ] 3.6 Hold the `msb exec` running the endpoint for the session so microVM lifetime follows the
+- [x] 3.6 Hold the `msb exec` running the endpoint for the session so microVM lifetime follows the
       launcher, replacing the `os.execv` the script uses today; verify the microVM is gone after
       the launcher exits
 
@@ -97,7 +97,7 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 7. Tests
 
-- [ ] 7.1 Add `test_gcp_vm.py` with `unit` tests driving a fake `msb`, covering the argv assertions
+- [x] 7.1 Add `test_gcp_vm.py` with `unit` tests driving a fake `msb`, covering the argv assertions
       in tasks 3.3 and 3.4 and an actionable message for a missing image or stopped VM; verify they
       pass under the hermetic filter `not live and not hpc and not sandbox`
 - [ ] 7.2 Add a `sandbox`-marked test that really boots the microVM and asserts the mounts are
