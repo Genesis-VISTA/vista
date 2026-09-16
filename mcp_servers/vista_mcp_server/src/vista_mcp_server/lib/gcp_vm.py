@@ -29,6 +29,9 @@ import json
 import logging
 import os
 import platform
+import pty
+import re
+import signal
 import subprocess
 import sys
 import tarfile
@@ -257,7 +260,21 @@ class Endpoint:
         return argv
 
     def exec_argv(self, msb: Path, command: Sequence[str], *, tty: bool) -> list[str]:
-        argv = [str(msb), "exec", "--quiet", SANDBOX_NAME, "--user", GUEST_USER]
+        argv = [
+            str(msb),
+            "exec",
+            "--quiet",
+            SANDBOX_NAME,
+            "--user",
+            GUEST_USER,
+            # Every command run in this guest is Globus Connect Personal, and it
+            # writes into HOME. Pointing it at the mounted data directory is
+            # what the container's `-e HOME=/gcphome` did, and is what keeps
+            # that state across runs -- the guest's own filesystem is discarded
+            # with the microVM.
+            "--env",
+            f"HOME={self.home_dir}",
+        ]
         if tty:
             argv.append("--tty")
         return [*argv, "--", *command]
@@ -354,6 +371,47 @@ class Endpoint:
         self._process = subprocess.Popen(command, stdin=subprocess.DEVNULL)
         atexit.register(self.stop)
         return self._process
+
+    def setup(self, setup_key: str | None = None, *, interactive: bool) -> None:
+        """Create the Globus collection. Does nothing once it exists.
+
+        Without a setup key this needs a browser login, so it needs a terminal:
+        Globus Connect Personal prints an address and waits for what the login
+        returns. A pipe cannot answer, and refusing with instructions is better
+        than hanging on a prompt nobody can see.
+        """
+        if self.is_set_up:
+            return
+
+        self.ensure_directories()
+        if setup_key is None and not interactive:
+            raise EndpointError(
+                "Globus Connect Personal is not set up, and setting it up needs a "
+                "browser login. Start VISTA from a terminal to do that, or create a "
+                "setup key with `globus gcp create mapped` and pass it as "
+                "GLOBUS_SETUP_KEY"
+            )
+
+        command = self.setup_command(self.resolve_gcp(), setup_key)
+        if uses_microvm():
+            # `--tty` is the direct analogue of the `docker run -t` this
+            # replaces: Globus Connect Personal prompts only when it has one.
+            command = self.exec_argv(self.create_vm(), command, tty=interactive)
+
+        if interactive:
+            returncode = _run_interactively(command)
+        else:
+            returncode = subprocess.run(command, stdin=subprocess.DEVNULL).returncode
+
+        if returncode != 0:
+            raise EndpointError(
+                f"Globus Connect Personal setup exited with status {returncode}"
+            )
+        if not self.is_set_up:
+            raise EndpointError(
+                f"Globus Connect Personal setup finished without writing "
+                f"{self.client_id_file}"
+            )
 
     def create_vm(self) -> Path:
         """Create the microVM, replacing any earlier one. Returns the `msb` path."""
@@ -466,6 +524,85 @@ class Endpoint:
 
                 tar.extractall(install_dir, filter=strip_top_level)
         return gcp
+
+
+def install_termination_handler() -> None:
+    """Make SIGTERM unwind, so the microVM goes with a killed launcher.
+
+    The default action terminates the process outright and the `atexit` hook
+    registered by `start` never runs, leaving the microVM behind.
+    """
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+
+def open_login_url(url: str) -> None:
+    """Show the researcher the address Globus wants them to log in at.
+
+    The address is always printed, because opening a browser is best-effort and
+    Globus Connect Personal's own instruction is to copy it into any browser.
+    Every failure is ignored: a WSL installation commonly has no browser and no
+    opener, and setup still completes there by copy-and-paste.
+    """
+    openers = (
+        [["open", url]]
+        if sys.platform == "darwin"
+        else [["xdg-open", url], ["wslview", url]]
+    )
+    for opener in openers:
+        try:
+            completed = subprocess.run(
+                opener,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+        except OSError, subprocess.SubprocessError:
+            continue
+        if completed.returncode == 0:
+            # Carriage returns because the terminal is in raw mode while the
+            # child holds it.
+            print(f"\r\nOpening {url}\r\n", flush=True)
+            return
+    print(
+        f"\r\nCould not open a browser. Log in at this address:\r\n  {url}\r\n",
+        flush=True,
+    )
+
+
+_LOGIN_URL = re.compile(rb"https://\S*globus\S*")
+
+
+def _first_login_url(output: bytes) -> str | None:
+    match = _LOGIN_URL.search(output)
+    if match is None:
+        return None
+    return match.group().decode(errors="replace").rstrip(".,)'\"")
+
+
+def _run_interactively(command: Sequence[str]) -> int:
+    """Run a command on a real terminal, opening the first Globus URL it prints.
+
+    `pty.spawn` gives the child a pseudo-terminal and copies both directions,
+    which is what makes Globus Connect Personal prompt and what `msb exec
+    --tty` needs on its own stdin. The read hook sees each chunk on its way to
+    the screen and returns it unchanged, so nothing is swallowed.
+    """
+    opened = False
+    seen = bytearray()
+
+    def read(fd: int) -> bytes:
+        nonlocal opened
+        chunk = os.read(fd, 1024)
+        if not opened and chunk:
+            seen.extend(chunk)
+            url = _first_login_url(bytes(seen))
+            if url:
+                opened = True
+                open_login_url(url)
+        return chunk
+
+    return os.waitstatus_to_exitcode(pty.spawn(list(command), read))
 
 
 def _succeeds(argv: Sequence[str]) -> bool:

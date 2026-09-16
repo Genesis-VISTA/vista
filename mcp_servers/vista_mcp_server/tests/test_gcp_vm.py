@@ -50,6 +50,28 @@ def fake_msb(tmp_path, monkeypatch):
     return log
 
 
+@pytest.fixture(autouse=True)
+def no_downloads(monkeypatch):
+    """No test here may reach the network. Without this, anything that calls
+    `resolve_gcp` on a data directory with no install downloads the real Globus
+    Connect Personal tarball -- which these tests did, at fourteen seconds a go,
+    until it was noticed."""
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a unit test tried to download Globus Connect Personal")
+
+    monkeypatch.setattr(gcp_vm.urllib.request, "urlopen", refuse)
+
+
+@pytest.fixture
+def installed_gcp(endpoint):
+    """Globus Connect Personal already installed under the data directory."""
+    gcp = endpoint.data_dir / "globusconnectpersonal" / "globusconnectpersonal"
+    gcp.parent.mkdir(parents=True, exist_ok=True)
+    gcp.write_text("#!/bin/sh\n")
+    return gcp
+
+
 @pytest.fixture
 def repo_root(tmp_path):
     """A checkout-shaped tree: data/ and hpc_jobs/ side by side under a root."""
@@ -262,6 +284,12 @@ class TestGuestCommands:
         endpoint.run_in_guest(["true"], tty=True)
         assert captured["stdin"] is None
 
+    def test_the_guest_writes_its_state_where_it_survives(self, endpoint):
+        """Globus Connect Personal writes into HOME, and the guest's own
+        filesystem is discarded with the microVM."""
+        argv = endpoint.exec_argv("/msb", ["true"], tty=False)
+        assert f"HOME={endpoint.data_dir / 'gcphome'}" in argv
+
     def test_a_tty_is_asked_for_only_when_wanted(self, endpoint):
         assert "--tty" in endpoint.exec_argv("/msb", ["true"], tty=True)
         assert "--tty" not in endpoint.exec_argv("/msb", ["true"], tty=False)
@@ -307,3 +335,170 @@ class TestMsbDiscovery:
         assert found is not None
         assert found.name == "msb"
         assert os.access(found, os.X_OK)
+
+
+class TestSetup:
+    def test_a_pipe_is_refused_with_instructions(self, endpoint, fake_msb):
+        """Globus Connect Personal prints an address and waits for what the
+        browser login returns. A pipe cannot answer, and hanging on a prompt
+        nobody can see is worse than refusing."""
+        with pytest.raises(gcp_vm.EndpointError) as refusal:
+            endpoint.setup(None, interactive=False)
+        assert "terminal" in str(refusal.value)
+        assert "GLOBUS_SETUP_KEY" in str(refusal.value)
+
+    def test_a_setup_key_needs_no_terminal(
+        self, endpoint, fake_msb, installed_gcp, monkeypatch
+    ):
+        seen = {}
+
+        def record(argv, **kwargs):
+            seen["argv"] = argv
+            endpoint.client_id_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint.client_id_file.write_text("made-by-setup\n")
+            return subprocess.CompletedProcess(argv, 0)
+
+        monkeypatch.setattr(gcp_vm.subprocess, "run", record)
+        endpoint.setup("a-setup-key", interactive=False)
+        assert seen["argv"][-1] == "a-setup-key"
+
+    def test_an_interactive_terminal_asks_for_one_in_the_guest(
+        self, endpoint, fake_msb, installed_gcp, monkeypatch
+    ):
+        """`msb exec --tty` is the direct analogue of the `docker run -t` this
+        replaces; Globus Connect Personal prompts only when it has a terminal."""
+        seen = {}
+
+        def record(argv, read):
+            seen["argv"] = argv
+            endpoint.client_id_file.parent.mkdir(parents=True, exist_ok=True)
+            endpoint.client_id_file.write_text("made-by-setup\n")
+            return 0
+
+        monkeypatch.setattr(gcp_vm.pty, "spawn", record)
+        endpoint.setup(None, interactive=True)
+        assert "--tty" in seen["argv"]
+
+    def test_setup_that_writes_no_collection_is_a_failure(
+        self, endpoint, fake_msb, installed_gcp, monkeypatch
+    ):
+        monkeypatch.setattr(
+            gcp_vm.subprocess,
+            "run",
+            lambda argv, **kw: subprocess.CompletedProcess(argv, 0),
+        )
+        with pytest.raises(gcp_vm.EndpointError, match="without writing"):
+            endpoint.setup("a-setup-key", interactive=False)
+
+    def test_setup_is_skipped_once_the_collection_exists(
+        self, endpoint, fake_msb, monkeypatch
+    ):
+        set_up(endpoint)
+
+        def explode(*args, **kwargs):
+            raise AssertionError("setup ran again")
+
+        monkeypatch.setattr(gcp_vm.subprocess, "run", explode)
+        monkeypatch.setattr(gcp_vm.pty, "spawn", explode)
+        endpoint.setup(None, interactive=True)
+
+
+class TestLoginUrl:
+    @pytest.mark.parametrize(
+        "output, expected",
+        [
+            (
+                b"Please log in at:\n  https://auth.globus.org/v2/oauth2/authorize?c=1\n",
+                "https://auth.globus.org/v2/oauth2/authorize?c=1",
+            ),
+            (
+                b"see https://app.globus.org/file-manager.",
+                "https://app.globus.org/file-manager",
+            ),
+            (b"no address yet, still starting", None),
+            (b"https://example.com/unrelated", None),
+        ],
+    )
+    def test_the_address_is_recognised_however_it_is_worded(self, output, expected):
+        assert gcp_vm._first_login_url(output) == expected
+
+    def test_the_address_is_printed_when_no_opener_exists(self, monkeypatch, capsys):
+        """A WSL installation commonly has no browser and no opener, and setup
+        still has to be completable there by copy-and-paste."""
+
+        def no_opener(*args, **kwargs):
+            raise FileNotFoundError("xdg-open")
+
+        monkeypatch.setattr(gcp_vm.subprocess, "run", no_opener)
+        gcp_vm.open_login_url("https://auth.globus.org/login")
+        assert "https://auth.globus.org/login" in capsys.readouterr().out
+
+    def test_every_opener_is_tried_before_giving_up(self, monkeypatch, capsys):
+        monkeypatch.setattr(gcp_vm.sys, "platform", "linux")
+        tried = []
+
+        def failing(argv, **kwargs):
+            tried.append(argv[0])
+            return subprocess.CompletedProcess(argv, 1)
+
+        monkeypatch.setattr(gcp_vm.subprocess, "run", failing)
+        gcp_vm.open_login_url("https://auth.globus.org/login")
+        assert tried == ["xdg-open", "wslview"]
+
+    def test_the_address_is_printed_when_a_browser_did_open(self, monkeypatch, capsys):
+        monkeypatch.setattr(gcp_vm.sys, "platform", "darwin")
+        monkeypatch.setattr(
+            gcp_vm.subprocess,
+            "run",
+            lambda argv, **kw: subprocess.CompletedProcess(argv, 0),
+        )
+        gcp_vm.open_login_url("https://auth.globus.org/login")
+        assert "https://auth.globus.org/login" in capsys.readouterr().out
+
+
+class TestResolveGcp:
+    def test_an_existing_install_is_not_downloaded_again(self, endpoint, monkeypatch):
+        """It is installed under the data directory so it persists when data/ is
+        a mounted volume."""
+        installed = (
+            endpoint.data_dir / "globusconnectpersonal" / "globusconnectpersonal"
+        )
+        installed.parent.mkdir(parents=True)
+        installed.write_text("#!/bin/sh\n")
+
+        def explode(*args, **kwargs):
+            raise AssertionError("downloaded an install that was already there")
+
+        monkeypatch.setattr(gcp_vm.urllib.request, "urlopen", explode)
+        assert endpoint.resolve_gcp() == installed
+
+    def test_the_host_binary_is_never_used_under_the_microvm(
+        self, endpoint, monkeypatch, fake_msb
+    ):
+        """On macOS `which globusconnectpersonal` finds a Darwin executable,
+        which cannot run in a Linux guest."""
+        monkeypatch.setattr(gcp_vm, "uses_microvm", lambda: True)
+        called = []
+        monkeypatch.setattr(
+            "shutil.which", lambda name: called.append(name) or "/usr/local/bin/gcp"
+        )
+        installed = (
+            endpoint.data_dir / "globusconnectpersonal" / "globusconnectpersonal"
+        )
+        installed.parent.mkdir(parents=True)
+        installed.write_text("#!/bin/sh\n")
+
+        assert endpoint.resolve_gcp() == installed
+        assert "globusconnectpersonal" not in called
+
+    def test_the_host_binary_is_used_on_the_native_path(self, endpoint, monkeypatch):
+        monkeypatch.setattr(gcp_vm, "uses_microvm", lambda: False)
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/local/bin/gcp")
+        assert endpoint.resolve_gcp() == Path("/usr/local/bin/gcp")
+
+    def test_an_unsupported_architecture_is_named(
+        self, endpoint, monkeypatch, fake_msb
+    ):
+        monkeypatch.setattr(gcp_vm.platform, "machine", lambda: "riscv64")
+        with pytest.raises(gcp_vm.EndpointError, match="riscv64"):
+            endpoint.resolve_gcp()

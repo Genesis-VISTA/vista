@@ -56,22 +56,22 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 4. `launch_globus.py`
 
-- [ ] 4.1 Delete `relaunch_in_container`, its inline Dockerfile, the docker/podman resolution, and
+- [x] 4.1 Delete `relaunch_in_container`, its inline Dockerfile, the docker/podman resolution, and
       the now-unused `textwrap`, `getpass` and `shutil` imports; verify no reference to a container
       runtime remains in the file
-- [ ] 4.2 Reduce the script to a thin CLI wrapper over `gcp_vm.py`, so the native and microVM paths
+- [x] 4.2 Reduce the script to a thin CLI wrapper over `gcp_vm.py`, so the native and microVM paths
       differ only in whether a command is prefixed with `msb exec`; verify the `-restrict-paths`
       string and the directory creation exist in exactly one place
-- [ ] 4.3 Confine `resolve_gcp`'s `shutil.which("globusconnectpersonal")` shortcut to the Linux
+- [x] 4.3 Confine `resolve_gcp`'s `shutil.which("globusconnectpersonal")` shortcut to the Linux
       native branch; verify by unit test that the microVM path never returns a host binary,
       which on macOS would be an unrunnable Darwin executable
-- [ ] 4.4 Keep installing Globus Connect Personal into the data directory, as
+- [x] 4.4 Keep installing Globus Connect Personal into the data directory, as
       `scripts/launch_globus.py:61` already does for persistence; verify a second launch performs
       no download
-- [ ] 4.5 Pass `-t` to `msb exec` for setup when the launcher's stdin is a tty, preserving the
+- [x] 4.5 Pass `-t` to `msb exec` for setup when the launcher's stdin is a tty, preserving the
       existing `sys.stdin.isatty()` test, and keep the current refusal-with-instructions when it is
       not; verify setup prompts interactively from a terminal and refuses cleanly from a pipe
-- [ ] 4.6 Open the login URL best-effort with `open` on darwin and `xdg-open` then `wslview` on
+- [x] 4.6 Open the login URL best-effort with `open` on darwin and `xdg-open` then `wslview` on
       linux, ignoring every failure, and always print the URL; verify setup still completes on a
       host where no opener exists
 
