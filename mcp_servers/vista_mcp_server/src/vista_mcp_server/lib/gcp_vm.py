@@ -193,26 +193,34 @@ class Endpoint:
         """
         return f"r{self.hpc_jobs_dir}/,rw{self.volumes_dir}/"
 
-    def mounts(self) -> list[tuple[Path, bool]]:
-        """Host paths visible in the guest, each as `(path, readonly)`.
+    def mounts(self) -> list[Path]:
+        """Host paths visible in the guest, mounted at their host paths.
 
-        Mounted at their host paths, because every absolute path the MCP server
+        The paths have to match, because every absolute path the MCP server
         hands a transfer is a host path -- `submit_job_mcp.py` passes `str(f)`
-        and `str(local_log_path)` straight through -- so a source that differs
-        from its destination resolves to nothing inside the guest.
+        and `str(local_log_path)` straight through -- so a mount whose
+        destination differs from its source resolves to nothing inside.
 
         The repository root is deliberately absent. The container this replaces
         mounted it only because the launch script re-executed itself inside;
         nothing of VISTA's runs in the guest now, and leaving the repository out
         is what stops the endpoint being able to read `.env` and both deployment
         refresh tokens.
+
+        Both are mounted read-write, and no `:ro` is passed. microsandbox 0.5.7
+        mis-parses `source:destination:options`: it appends the option's last
+        character to the destination and mounts read-write regardless, so
+        `-v /x/hpc_jobs:/x/hpc_jobs:ro` arrives in the guest as `/x/hpc_jobso`
+        and every upload would find nothing there. Confinement is
+        `-restrict-paths`, which is also all the container relied on -- it
+        mounted every directory read-write.
         """
-        mounts = [(self.data_dir, False)]
-        # Normally siblings. When the jobs directory is configured inside the
-        # data directory it is already mounted, and mounting it again read-only
-        # would be a mount over a mount; `-restrict-paths` still confines it.
+        mounts = [self.data_dir]
+        # Normally siblings. A jobs directory configured inside the data
+        # directory is already mounted, and mounting it again would be a mount
+        # over a mount.
         if not self.hpc_jobs_dir.is_relative_to(self.data_dir):
-            mounts.append((self.hpc_jobs_dir, True))
+            mounts.append(self.hpc_jobs_dir)
         return mounts
 
     # ─── the commands, built where they can be asserted on ──────────────────
@@ -244,8 +252,8 @@ class Endpoint:
         ]
         for nameserver in nameservers:
             argv += ["--dns-nameserver", nameserver]
-        for path, readonly in self.mounts():
-            argv += ["--volume", f"{path}:{path}:ro" if readonly else f"{path}:{path}"]
+        for path in self.mounts():
+            argv += ["--volume", f"{path}:{path}"]
         return argv
 
     def exec_argv(self, msb: Path, command: Sequence[str], *, tty: bool) -> list[str]:

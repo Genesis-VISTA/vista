@@ -132,15 +132,24 @@ class TestMounts:
     def test_the_data_directory_is_writable(self, endpoint):
         assert f"{endpoint.data_dir}:{endpoint.data_dir}" in self.volumes(endpoint)
 
-    def test_the_jobs_directory_is_read_only(self, endpoint):
+    def test_the_jobs_directory_is_mounted_at_its_host_path(self, endpoint):
         jobs = endpoint.hpc_jobs_dir
-        assert f"{jobs}:{jobs}:ro" in self.volumes(endpoint)
+        assert f"{jobs}:{jobs}" in self.volumes(endpoint)
+
+    def test_no_mount_carries_an_options_suffix(self, endpoint):
+        """microsandbox 0.5.7 mis-parses `source:destination:options`: it
+        appends the option's last character to the destination and mounts
+        read-write anyway, so `:ro` on the jobs directory would put it at
+        `…/hpc_jobso` and every upload would find nothing. Confinement is
+        `-restrict-paths`, asserted below."""
+        for volume in self.volumes(endpoint):
+            assert volume.count(":") == 1, volume
 
     def test_a_jobs_directory_inside_the_data_directory_is_not_mounted_twice(
         self, repo_root
     ):
         nested = Endpoint(repo_root / "data", repo_root / "data" / "hpc_jobs")
-        assert [path for path, _ in nested.mounts()] == [nested.data_dir]
+        assert nested.mounts() == [nested.data_dir]
 
     def test_restrict_paths_confines_the_endpoint_inside_the_guest(self, endpoint):
         assert endpoint.restrict_paths == (

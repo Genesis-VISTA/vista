@@ -170,6 +170,14 @@ this defect stay invisible.
 
 - **Duplicated DNS helper can drift.** → A test in each package asserting the same behaviour.
 
+- **microsandbox 0.5.7 mis-parses a volume's options.** `-v src:dst:ro` mounts at `dst` with the
+  option's last character appended — `/x/hpc_jobs` arrives as `/x/hpc_jobso` — and read-write
+  regardless. Verified deterministic over five runs, and identical through `--mount-dir`. → No
+  mount options are passed at all, so both directories are mounted read-write and confinement is
+  `-restrict-paths`, which is also all the container this replaces relied on: it mounted every
+  directory read-write. A test asserts no volume argument carries an options suffix, so the
+  apparently obvious hardening is not added back before upstream fixes the parse.
+
 - **A failure mode that looks like the change's fault but is not.** microsandbox derives a Unix
   socket path from its store location and fails above 104 bytes. → The packaged launcher already
   budgets for this and the Globus microVM shares that store; recorded so a stray failure during

@@ -42,9 +42,12 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
       the pre-loaded image with no dockerfile and no pull, and no mount options at all; verify by
       unit test against a fake `msb` that the argv contains no `stat-virt` and never a dockerfile,
       the trap `microsandbox_sandbox.py:32` documents
-- [x] 3.4 Mount the data directory read-write and the HPC jobs directory read-only at matching host
-      paths, and do not mount the repository root; verify by unit test that the argv contains no
-      mount whose source is the repo root, and that every mount source equals its destination
+- [x] 3.4 Mount the data directory and the HPC jobs directory at matching host paths, and do not
+      mount the repository root; verify by unit test that the argv contains no mount whose source
+      is the repo root, and that every mount source equals its destination. The jobs directory is
+      *not* mounted read-only: microsandbox 0.5.7 mis-parses `src:dst:ro` into a read-write mount
+      at `dsto`, which would break every upload. `-restrict-paths` confines it, as it did under
+      the container, and a test asserts no volume carries an options suffix
 - [x] 3.5 Close stdin explicitly on every non-interactive `msb exec`; verify a non-interactive
       invocation returns rather than blocking, which it does when stdin is left open
 - [x] 3.6 Hold the `msb exec` running the endpoint for the session so microVM lifetime follows the
