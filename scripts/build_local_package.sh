@@ -4,7 +4,7 @@
 # The output is an archive a researcher unpacks and runs with `./vista`: no
 # Docker, no HuggingFace token, no GitLab access, no `.env`. Everything the
 # running system needs -- interpreters, virtual environments, the standalone
-# UI, the sandbox image, the molten-salt corpus and its prebuilt vector store,
+# UI, the sandbox and Globus images, the molten-salt corpus and its vector store,
 # the embedding weights -- is inside it.
 #
 # This script is the opposite side of that bargain: the build host needs the
@@ -32,6 +32,9 @@
 #                         of building one, so no container runtime is needed.
 #                         Its architecture must match the target; see
 #                         scripts/build_in_docker.sh
+#   --globus-image TAR   The same, for the Globus Connect Personal image. Both
+#                         or neither: a build that supplies one still needs a
+#                         container runtime to build the other
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
@@ -106,6 +109,7 @@ WITHOUT_HPC=false
 WITHOUT_CITATIONS=false
 REUSE_STORE=''
 SANDBOX_IMAGE_TAR=''
+GLOBUS_IMAGE_TAR=''
 SKIP_SMOKE_TEST=false
 KEEP_STAGING=false
 
@@ -121,6 +125,9 @@ while [[ $# -gt 0 ]]; do
     --sandbox-image)
       [[ $# -ge 2 ]] || die "--sandbox-image needs a tar archive"
       SANDBOX_IMAGE_TAR="$2"; shift ;;
+    --globus-image)
+      [[ $# -ge 2 ]] || die "--globus-image needs a tar archive"
+      GLOBUS_IMAGE_TAR="$2"; shift ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
@@ -178,7 +185,7 @@ AMSC_GIT_URL="$(
     "$REPO_ROOT/mcp_servers/vista_mcp_server/pyproject.toml" | head -1
 )"
 
-# ─── the sandbox image's architecture ───────────────────────────────────────
+# ─── a shipped image's architecture ─────────────────────────────────────────
 
 # `uname -m` and an OCI image config disagree on names for the same processor,
 # so the comparison is made in OCI's vocabulary rather than the kernel's.
@@ -195,11 +202,12 @@ oci_arch_for_target() {
 #
 # `docker save` and `podman save` both write a `manifest.json` naming the
 # image's config blob, and that blob records the architecture. Checking it is
-# what makes the flag safe to trust: an arm64 sandbox inside an x86_64 package
+# what makes the flag safe to trust: an arm64 image inside an x86_64 package
 # would `msb load` without complaint and fail only when a microVM starts, which
 # no part of the build does -- so the build would hand over an artifact whose
-# code execution is broken, having verified everything else about it.
-sandbox_archive_arch() {
+# code execution, or whose file transfer, is broken while everything else about
+# it verified clean.
+image_archive_arch() {
   local archive="$1" config
   config="$(
     tar -xOf "$archive" manifest.json 2>/dev/null \
@@ -208,6 +216,31 @@ sandbox_archive_arch() {
   [[ -n "$config" ]] || return 1
   tar -xOf "$archive" "$config" 2>/dev/null \
     | sed -nE 's/.*"architecture":"([a-z0-9]+)".*/\1/p' | head -1
+}
+
+# Everything the preflight has to say about a supplied image archive, for each
+# of the two flags that take one. Prints its complaint and returns non-zero;
+# says nothing and returns 0 when the archive is fit to ship.
+supplied_image_complaint() {
+  local flag="$1" archive="$2" runs_when="$3" want_arch got_arch
+  want_arch="$(oci_arch_for_target)"
+
+  if [[ ! -f "$archive" ]]; then
+    echo "$flag is not a file: $archive"
+  elif ! got_arch="$(image_archive_arch "$archive")" || [[ -z "$got_arch" ]]; then
+    echo "$flag does not look like a saved container image: \
+$archive (no manifest.json naming a config blob). Produce one with \
+\`docker save -o FILE IMAGE\`."
+  elif [[ "$got_arch" != "$want_arch" ]]; then
+    echo "$flag holds a $got_arch image; this package targets $want_arch:
+    $archive
+  Nothing later in the build would notice: the image loads on any \
+architecture and is only executed $runs_when. Rebuild it for the target with \
+\`docker buildx build --platform linux/$want_arch\`."
+  else
+    return 0
+  fi
+  return 1
 }
 
 # ─── preflight ──────────────────────────────────────────────────────────────
@@ -230,30 +263,27 @@ preflight() {
   command -v git >/dev/null 2>&1 \
     || failures+=("git is not installed")
 
-  # The sandbox image: either built here, which needs a container runtime, or
-  # supplied as an already-exported archive, which needs none. The second form
-  # is what lets the build itself run inside a container, since a container has
-  # no daemon of its own -- and it is the only way to get a target-architecture
+  # The two shipped images -- the agent's sandbox and the Globus Connect
+  # Personal guest -- are either built here, which needs a container runtime, or
+  # supplied as already-exported archives, which needs none. The second form is
+  # what lets the build itself run inside a container, since a container has no
+  # daemon of its own -- and it is the only way to get a target-architecture
   # image when the runtime available would build the host's instead.
+  #
+  # A build that supplies one and not the other still needs a runtime for the
+  # one it did not supply, so the runtime check below turns on whether *either*
+  # is missing rather than on the sandbox alone.
+  local complaint=''
   if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
-    local want_arch got_arch
-    want_arch="$(oci_arch_for_target)"
-    if [[ ! -f "$SANDBOX_IMAGE_TAR" ]]; then
-      failures+=("--sandbox-image is not a file: $SANDBOX_IMAGE_TAR")
-    elif ! got_arch="$(sandbox_archive_arch "$SANDBOX_IMAGE_TAR")" \
-         || [[ -z "$got_arch" ]]; then
-      failures+=("--sandbox-image does not look like a saved container image: \
-$SANDBOX_IMAGE_TAR (no manifest.json naming a config blob). Produce one with \
-\`docker save -o FILE IMAGE\`.")
-    elif [[ "$got_arch" != "$want_arch" ]]; then
-      failures+=("--sandbox-image holds a $got_arch image; this package targets \
-$want_arch:
-    $SANDBOX_IMAGE_TAR
-  Nothing later in the build would notice: the image loads on any \
-architecture and is only executed when an agent runs code. Rebuild it for the \
-target with \`docker buildx build --platform linux/$want_arch\`.")
-    fi
-  else
+    complaint="$(supplied_image_complaint --sandbox-image "$SANDBOX_IMAGE_TAR" \
+      "when an agent runs code")" || failures+=("$complaint")
+  fi
+  if [[ -n "$GLOBUS_IMAGE_TAR" ]]; then
+    complaint="$(supplied_image_complaint --globus-image "$GLOBUS_IMAGE_TAR" \
+      "when the transfer endpoint starts")" || failures+=("$complaint")
+  fi
+
+  if [[ -z "$SANDBOX_IMAGE_TAR" || -z "$GLOBUS_IMAGE_TAR" ]]; then
     # Checked by asking the daemon, not by finding the client: a `docker` on
     # PATH with no daemon behind it is the common broken case, and it fails
     # much later.
@@ -268,10 +298,10 @@ target with \`docker buildx build --platform linux/$want_arch\`.")
       fi
     done
     if [[ -z "$runtime" ]]; then
-      failures+=("no working container runtime — the sandbox image is built \
-with docker or podman on this host, so the recipient needs neither. Start \
-Docker Desktop, install podman, or pass --sandbox-image with an archive \
-exported elsewhere.")
+      failures+=("no working container runtime — the sandbox and Globus images \
+are built with docker or podman on this host, so the recipient needs neither. \
+Start Docker Desktop, install podman, or pass --sandbox-image and \
+--globus-image with archives exported elsewhere.")
     fi
   fi
 
@@ -382,7 +412,11 @@ requested — gz needs no extra tool and is the default for that reason") ;;
 
   if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
     echo "sandbox image     : $SANDBOX_IMAGE_TAR ($(oci_arch_for_target), supplied)"
-  else
+  fi
+  if [[ -n "$GLOBUS_IMAGE_TAR" ]]; then
+    echo "globus image      : $GLOBUS_IMAGE_TAR ($(oci_arch_for_target), supplied)"
+  fi
+  if [[ -n "$runtime" ]]; then
     echo "container runtime : ${runtime}"
   fi
   echo "corpus source     : ${PAYLOAD_DIR:-VISTA_DATA_TOKEN (code.ornl.gov)}"
@@ -1018,6 +1052,32 @@ export_sandbox_image() {
   echo "archive     : $(du -sh "$STAGING_PAYLOAD/sandbox-image.tar" | cut -f1)"
 }
 
+# Globus Connect Personal's guest, exported the same way and for the same
+# reason. A second image rather than a second use of the first: the agent runs
+# arbitrary generated code in the sandbox, and this one holds a credential
+# authorising movement of the researcher's files.
+export_globus_image() {
+  if [[ -n "$GLOBUS_IMAGE_TAR" ]]; then
+    log "staging the supplied Globus image"
+    cp "$GLOBUS_IMAGE_TAR" "$STAGING_PAYLOAD/globus-image.tar"
+    echo "image       : $GLOBUS_IMAGE (from $GLOBUS_IMAGE_TAR)"
+    echo "archive     : $(du -sh "$STAGING_PAYLOAD/globus-image.tar" | cut -f1)"
+    return 0
+  fi
+
+  log "building and exporting the Globus image"
+
+  local dockerfile="$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/docker/Dockerfile.globus"
+  [[ -f "$dockerfile" ]] || die "Globus Dockerfile not found at $dockerfile"
+
+  "$CONTAINER_RUNTIME" build -t "$GLOBUS_IMAGE" -f "$dockerfile" \
+    "$(dirname "$dockerfile")" >/dev/null
+  "$CONTAINER_RUNTIME" save -o "$STAGING_PAYLOAD/globus-image.tar" "$GLOBUS_IMAGE"
+
+  echo "image       : $GLOBUS_IMAGE"
+  echo "archive     : $(du -sh "$STAGING_PAYLOAD/globus-image.tar" | cut -f1)"
+}
+
 # ─── manifest ───────────────────────────────────────────────────────────────
 
 # What the package contains and how big each part is, written inside the
@@ -1100,6 +1160,7 @@ PYCOUNT
   },
   "payload": {
     "sandbox_image": { "reference": "$SANDBOX_IMAGE", "bytes": $(size_of "$STAGING_PAYLOAD/sandbox-image.tar") },
+    "globus_image": { "reference": "$GLOBUS_IMAGE", "bytes": $(size_of "$STAGING_PAYLOAD/globus-image.tar") },
     "corpus": { "pdfs": $pdf_count, "bytes": $(size_of "$STAGING_PAYLOAD/vista-data") },
     "vector_store": { "text_chunks": $chunks, "citations": $citations, "bytes": $(size_of "$kb/rag_db") },
     "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") }
@@ -1120,7 +1181,7 @@ import sys
 manifest = json.loads(open(sys.argv[1]).read())
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
-    ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),
+    ("payload", ("sandbox_image", "globus_image", "corpus", "vector_store", "embedding_weights")),
 ):
     missing = [k for k in keys if k not in manifest[section]]
     if missing:
@@ -1257,6 +1318,7 @@ unpacked copy was left at $unpacked for inspection."
 
 ARCHIVE_PATH=''
 SANDBOX_IMAGE="vista-sandbox:latest"
+GLOBUS_IMAGE="vista-globus:latest"
 BUNDLED_PYTHON=''
 BUNDLED_PYTHON_DIR=''
 
@@ -1271,6 +1333,7 @@ stage_payload
 stage_embedding_weights
 build_vector_store
 export_sandbox_image
+export_globus_image
 write_manifest
 create_archive
 run_smoke_test

@@ -1,0 +1,31 @@
+# The guest that runs Globus Connect Personal, and nothing else.
+#
+# Deliberately not the sandbox image. The agent executes arbitrary generated
+# code in that one, and this VM holds a credential authorising movement of the
+# researcher's files; the two must not share an image, a VM, or a code path.
+#
+# Globus Connect Personal itself is not baked in. The host downloads it into
+# the data directory on first run, as it already does on Linux, so both
+# platforms install it by one path and a new Globus release does not oblige a
+# rebuilt image.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# python3         globusconnectpersonal's `_gcp_invokepython` shim searches for
+#                 an interpreter and exits without one.
+# ca-certificates every connection the endpoint makes is outbound TLS.
+# libstdc++6      the shipped binaries link against it.
+#
+# Nothing else. `curl` and `python3-dotenv` were needed while the launch script
+# ran inside the container; it no longer does, and this guest runs one program.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# No USER directive. Globus Connect Personal refuses to run as root, so the VM
+# must run as the `ubuntu` user that ubuntu:24.04 already carries at uid 1000 --
+# but that is asked for at `msb exec -u ubuntu`, which is the form that has been
+# shown to work. Pinning it here as well would change what microsandbox's own
+# agent runs as, which has not.

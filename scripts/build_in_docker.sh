@@ -2,7 +2,7 @@
 # Build a VISTA package for a platform other than this host's.
 #
 # There is no cross-compilation here. The package carries a target-specific
-# interpreter, compiled wheels, a Node runtime and a sandbox image, and
+# interpreter, compiled wheels, a Node runtime and two OCI images, and
 # producing it means *running* on the target platform: creating the
 # environments, building the standalone UI, and exercising the finished
 # artifact all execute target binaries. So the build runs inside a container
@@ -24,7 +24,7 @@
 #                      that inspects TLS. Needed because a macOS host keeps
 #                      that root in its keychain, which a Linux container
 #                      cannot read
-#   --keep-work       Leave the extracted source and sandbox archive in place
+#   --keep-work       Leave the extracted source and image archives in place
 #   -h, --help        Show this help
 #
 # Everything else is passed straight to build_local_package.sh, so
@@ -157,17 +157,21 @@ log "extracting the source at $(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 git -C "$REPO_ROOT" archive --format=tar HEAD | tar -x -C "$WORK/src"
 echo "source      : $(du -sh "$WORK/src" | cut -f1)"
 
-# ─── the sandbox image, built on the host ───────────────────────────────────
+# ─── the shipped images, built on the host ──────────────────────────────────
 
 # Built out here rather than in the container, because a container has no
-# daemon of its own. Building it inside via a mounted host socket would
+# daemon of its own. Building them inside via a mounted host socket would
 # produce the *host's* architecture, which nothing downstream would notice --
-# an arm64 sandbox loads fine inside an x86_64 package and only fails when an
-# agent runs code. `--output type=docker` writes the archive directly, so the
-# host's image store is never touched.
+# an arm64 image loads fine inside an x86_64 package and fails only when an
+# agent runs code, or when the transfer endpoint starts. `--output type=docker`
+# writes the archive directly, so the host's image store is never touched.
 SANDBOX_DIR="$WORK/src/mcp_servers/dev_mcp_server/src/dev_mcp_server/docker"
 [[ -f "$SANDBOX_DIR/Dockerfile" ]] \
   || die "no sandbox Dockerfile in the extracted source at $SANDBOX_DIR"
+
+GLOBUS_DIR="$WORK/src/mcp_servers/vista_mcp_server/src/vista_mcp_server/docker"
+[[ -f "$GLOBUS_DIR/Dockerfile.globus" ]] \
+  || die "no Globus Dockerfile in the extracted source at $GLOBUS_DIR"
 
 log "building the sandbox image for $PLATFORM"
 docker buildx build \
@@ -177,6 +181,15 @@ docker buildx build \
   --output "type=docker,dest=$WORK/sandbox-image.tar" \
   "$SANDBOX_DIR" >/dev/null
 echo "sandbox     : $(du -sh "$WORK/sandbox-image.tar" | cut -f1)"
+
+log "building the Globus image for $PLATFORM"
+docker buildx build \
+  --platform "$PLATFORM" \
+  -t vista-globus:latest \
+  -f "$GLOBUS_DIR/Dockerfile.globus" \
+  --output "type=docker,dest=$WORK/globus-image.tar" \
+  "$GLOBUS_DIR" >/dev/null
+echo "globus      : $(du -sh "$WORK/globus-image.tar" | cut -f1)"
 
 # ─── the build environment ──────────────────────────────────────────────────
 
@@ -254,7 +267,9 @@ fi
 # ─── mounts and environment ─────────────────────────────────────────────────
 
 MOUNTS=(-v "$WORK/src:/build" -v "$OUTPUT_DIR:/out" -v "$WORK:/work:ro")
-ARGS=(--sandbox-image /work/sandbox-image.tar --output-dir /out)
+ARGS=(--sandbox-image /work/sandbox-image.tar \
+      --globus-image /work/globus-image.tar \
+      --output-dir /out)
 
 # --payload and --vector-store name host directories, so they are remapped to
 # read-only mounts. Anything else passes through untouched.
