@@ -14,6 +14,14 @@
 #   VISTA_UI_PORT       default 3000
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
+#
+#   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
+#   VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
+#                       Globus credentials for file transfer to Odo and
+#                       Frontier. With neither set, those two clusters' file
+#                       operations are unavailable and everything else runs
+#                       normally. The first start with one set asks for a
+#                       one-time Globus login in this terminal.
 
 set -euo pipefail
 
@@ -30,7 +38,7 @@ die() { echo "error: $*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  sed -n '2,16p' "$0" | sed -E 's/^# ?//'
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
   exit 0
 fi
 [[ $# -eq 0 ]] || die "unexpected argument: $1 (try --help)"
@@ -198,6 +206,12 @@ export MSB_HOME="$MSB_STORE"
 # with `docker or podman not found on PATH` even though the image is present.
 export VISTA_DEV_MCP_DOCKERFILE=""
 export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
+# The Globus endpoint's image. A second one on purpose: the agent executes
+# arbitrary generated code in `vista-sandbox`, and a long-lived process holding
+# a credential that authorises moving the researcher's files cannot share it.
+# The tag matches `IMAGE` in vista_mcp_server/lib/gcp_vm.py, which is what runs
+# the microVM this imports the image for.
+GLOBUS_IMAGE="vista-globus:latest"
 
 LOGS="$STATE/logs"
 
@@ -222,12 +236,83 @@ done
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
   -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
-if [[ -x "$MSB" && -f "$PACKAGE/payload/sandbox-image.tar" ]]; then
-  if ! "$MSB" image inspect --format=json "$VISTA_DEV_MCP_IMAGE" >/dev/null 2>&1; then
-    log "First run: importing the code-execution sandbox image..."
-    "$MSB" load -i "$PACKAGE/payload/sandbox-image.tar" -t "$VISTA_DEV_MCP_IMAGE" \
-      >> "$LOGS/setup.log" 2>&1 \
-      || die "could not import the sandbox image; see $LOGS/setup.log"
+# The Globus endpoint runs under this same binary, and finds it by repeating
+# this search from inside `vista_mcp_server`. Handing it the path found here
+# means the two cannot end up using different runtimes, and so cannot disagree
+# about which one holds the images imported below. An empty value, when the
+# search found nothing, leaves it to search for itself and report the failure.
+export VISTA_MSB_PATH="$MSB"
+
+# Imports one image from the payload. The `image inspect` guard is what makes a
+# second run cheap: the load costs a minute of disk on a first start and nothing
+# at all afterwards. Nothing to do -- no runtime, or no such archive -- is not a
+# failure; the caller decides what an actual failed load means, because the two
+# images differ there.
+load_image() {
+  local tar="$1" tag="$2" what="$3"
+  [[ -x "$MSB" && -f "$tar" ]] || return 0
+  "$MSB" image inspect --format=json "$tag" >/dev/null 2>&1 && return 0
+  log "First run: importing $what..."
+  "$MSB" load -i "$tar" -t "$tag" >> "$LOGS/setup.log" 2>&1
+}
+
+load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
+  "the code-execution sandbox image" \
+  || die "could not import the sandbox image; see $LOGS/setup.log"
+
+# ─── Globus file transfer ───────────────────────────────────────────────────
+
+# Globus Transfer moves files for Odo and Frontier. Perlmutter never touches it
+# -- every file operation there goes through the NERSC IRI filesystem API -- so
+# a researcher using only Perlmutter needs none of this.
+#
+# Gated *and* non-fatal, which are two different decisions. Gated because the
+# endpoint authenticates with a refresh token, so without one it is a browser
+# login asked of a researcher who has nothing to use it for. Non-fatal because
+# passing the gate is not the same as being able to finish: no network, no
+# terminal to log in from, or a declined login.
+#
+# Deliberately not the hard gate hardware virtualisation gets above. That one
+# refuses to start because the sandbox server is spawned as part of the agent's
+# toolset, so without it every tool call fails, retrieval included. Absent file
+# transfer costs exactly two clusters, while chat, retrieval, the code sandbox
+# and Perlmutter are untouched -- refusing to start would cost far more than it
+# protects.
+TRANSFER_CLUSTERS="Odo and Frontier"
+# Empty once the endpoint is running, and otherwise the reason it is not, in
+# words fit to print. Each branch below is a distinct cause with a distinct
+# remedy, which is the whole point of naming one: a researcher who exported a
+# token and still cannot transfer needs to know whether it was the token, the
+# image, the login, or the endpoint itself.
+TRANSFER_DETAIL="no Globus refresh token is configured"
+GLOBUS_SETUP_DONE=false
+
+# `scripts/` is not installed here, so the module is run directly. It is the
+# same entry point `scripts/launch_globus.py` calls in a development checkout,
+# which is what keeps the two from drifting.
+globus() {
+  "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/python" \
+    -m vista_mcp_server.lib.gcp_vm "$@"
+}
+
+if [[ -n "${VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN:-}" \
+   || -n "${VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN:-}" ]]; then
+  # Imported under the gate rather than beside the sandbox image, and its
+  # failure warned about rather than fatal, so that an image most installations
+  # never use can neither delay nor prevent a start.
+  if ! load_image "$PACKAGE/payload/globus-image.tar" "$GLOBUS_IMAGE" \
+       "the Globus file-transfer image"; then
+    TRANSFER_DETAIL="the Globus image could not be imported; see $LOGS/setup.log"
+  # Setup runs before any service starts, and on this terminal rather than into
+  # a log file: it prints an address to log in at and waits for what the login
+  # returns, so a researcher who cannot see it cannot complete it. Running it
+  # here is also what makes a collection created on a first run visible to the
+  # MCP server started below, in the same session.
+  elif globus --setup; then
+    GLOBUS_SETUP_DONE=true
+    TRANSFER_DETAIL=''
+  else
+    TRANSFER_DETAIL="Globus endpoint setup did not complete"
   fi
 fi
 
@@ -264,6 +349,16 @@ wait_for() {
 log "VISTA $VERSION"
 log "Starting services (logs in $LOGS)..."
 
+# A fourth managed service, in PIDS so the trap above stops it. Nothing waits
+# on it: it serves no port and has no health endpoint, and the two job tools
+# that depend on it report its state themselves. It holds the microVM open, and
+# a SIGTERM from `stop` unwinds it so the microVM goes with this launcher.
+if [[ "$GLOBUS_SETUP_DONE" == true ]]; then
+  globus --start > "$LOGS/globus.log" 2>&1 &
+  GLOBUS_PID=$!
+  PIDS+=("$GLOBUS_PID")
+fi
+
 "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
   --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
 PIDS+=($!)
@@ -280,6 +375,42 @@ PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
   "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
 PIDS+=($!)
 wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
+
+# The endpoint serves no port, so having been started is not the same as
+# running. `--status` asks the runtime, exits non-zero for every state but
+# running, and prints the module's own account of why -- a microVM that died, an
+# image that was never loaded. Only asked when there is something to ask about;
+# the branches above already know the answer in every other case.
+#
+# Retried, because starting the endpoint means creating a microVM first, and
+# reporting a transfer that is merely still coming up would be worse than
+# waiting a moment. Bounded by the holder being alive: a process that has
+# already exited will not produce a running endpoint.
+if [[ -n "${GLOBUS_PID:-}" ]]; then
+  # Defaulted rather than left to the status output, so that a status which
+  # failed without saying anything -- the interpreter itself failing to start --
+  # does not silently report transfer as available.
+  TRANSFER_DETAIL="the Globus endpoint is not running"
+  for (( i = 0; i < 3; i++ )); do
+    if transfer_state="$(globus --status)"; then
+      TRANSFER_DETAIL=''
+      break
+    fi
+    TRANSFER_DETAIL="${transfer_state:-$TRANSFER_DETAIL}"
+    kill -0 "$GLOBUS_PID" 2>/dev/null || break
+    perl -e 'select(undef, undef, undef, 2)' 2>/dev/null || sleep 2
+  done
+fi
+
+# Reported at startup rather than left to be discovered on the first transfer,
+# which is a job submission that fails minutes later for a reason that was
+# already knowable here.
+if [[ -n "$TRANSFER_DETAIL" ]]; then
+  log ""
+  log "note: file transfer for $TRANSFER_CLUSTERS is unavailable:"
+  log "      $TRANSFER_DETAIL."
+  log "      Chat, retrieval, the code sandbox and Perlmutter are unaffected."
+fi
 
 log ""
 log "VISTA is running at http://localhost:$UI_PORT"

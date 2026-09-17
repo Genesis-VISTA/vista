@@ -23,6 +23,7 @@ deliberately.
 
 from __future__ import annotations
 
+import argparse
 import atexit
 import enum
 import json
@@ -526,6 +527,24 @@ class Endpoint:
         return gcp
 
 
+DATA_DIR_ENV = "VISTA_DATA_DIR"
+JOBS_DIR_ENV = "VISTA_MCP_LOCAL_HPC_JOBS_DIR"
+
+
+def endpoint_from_environment() -> Endpoint:
+    """The endpoint this installation is configured for.
+
+    Both variables are the ones `vista_mcp_server` itself reads, which is what
+    makes the mounted directories the same directories the transfers name. The
+    packaged launcher exports both; a development checkout falls back to the
+    repository layout `scripts/launch_globus.py` runs from.
+    """
+    return Endpoint(
+        data_dir=Path(os.environ.get(DATA_DIR_ENV, "./data")).resolve(),
+        hpc_jobs_dir=Path(os.environ.get(JOBS_DIR_ENV, "./hpc_jobs")).resolve(),
+    )
+
+
 def install_termination_handler() -> None:
     """Make SIGTERM unwind, so the microVM goes with a killed launcher.
 
@@ -627,3 +646,83 @@ def _sandbox_status(msb: Path) -> str | None:
         return json.loads(result.stdout).get("status")
     except json.JSONDecodeError, AttributeError:
         return None
+
+
+
+# ─── command line ───────────────────────────────────────────────────────────
+
+# Invoked two ways, which is why the argument handling is here rather than in
+# either caller: a development checkout runs `scripts/launch_globus.py`, and the
+# packaged launcher runs `python -m vista_mcp_server.lib.gcp_vm`, because
+# `scripts/` is not installed by the package. Both reach this function, so the
+# meaning of `--setup` cannot come to differ between them.
+
+_EPILOG = """\
+With no option, setup runs if needed and the endpoint is then started and held.
+
+First-time setup needs a one-time Globus login. Either run this from an
+interactive terminal, which opens a browser and waits for the code it returns,
+or set GLOBUS_SETUP_KEY for a headless setup, creating the key with:
+
+    uvx --from globus-cli globus gcp create mapped "vista-server"
+"""
+
+
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the VISTA-side Globus Connect Personal endpoint.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_EPILOG,
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--setup",
+        action="store_true",
+        help="run first-time setup and exit without starting the endpoint",
+    )
+    mode.add_argument(
+        "--start",
+        action="store_true",
+        help="start the endpoint and hold it, without attempting setup",
+    )
+    mode.add_argument(
+        "--status",
+        action="store_true",
+        help="report the endpoint's state on one line and exit",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    endpoint = endpoint_from_environment()
+
+    if args.status:
+        status = endpoint.status()
+        print(status.detail)
+        # The exit status follows the state so a shell caller can gate on it
+        # without parsing the line, which is what the launcher does to decide
+        # whether to report transfer as unavailable.
+        return 0 if status.running else 1
+
+    try:
+        # `--start` skips setup rather than relying on it being a no-op: the
+        # launcher has already run setup on a terminal by the time it starts the
+        # endpoint in the background, where stdin is not one and an unfinished
+        # setup would refuse rather than prompt.
+        if not args.start:
+            endpoint.setup(
+                os.environ.get("GLOBUS_SETUP_KEY"), interactive=sys.stdin.isatty()
+            )
+            print("Globus endpoint setup complete.")
+            if args.setup:
+                return 0
+        install_termination_handler()
+        return endpoint.start().wait()
+    except EndpointError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

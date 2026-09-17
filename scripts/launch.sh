@@ -41,14 +41,15 @@ uv run python scripts/seed_db.py
 # so a researcher using only Perlmutter needs none of this.
 #
 # Gated *and* non-fatal, because those are two different failures. Gated
-# because `launch_globus.py --setup` re-executes itself inside a Linux
-# container on any non-Linux host and dies without a container runtime, so an
-# unconditional call means a laptop with no Docker cannot start VISTA at all
-# (the same line is why aws/Dockerfile.server cannot boot today). Non-fatal
-# because satisfying the gate is not the same as being able to finish: a token
-# is exported but there is no container runtime, no browser to log in with, no
-# network, or the login is declined. In every one of those cases the rest of
-# VISTA is still perfectly usable.
+# because the endpoint authenticates with a refresh token, so without one
+# setup is a one-time browser login asked of a researcher who has nothing to
+# use it for. Non-fatal because satisfying the gate is not the same as being
+# able to finish: no browser to log in with, no network, or the login is
+# declined. In every one of those cases the rest of VISTA is still perfectly
+# usable.
+#
+# `scripts/package_launcher.sh` gates the packaged artifact the same way, on
+# the same two variables, and calls the same entry point.
 GLOBUS_READY=false
 if [[ -n "${VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN:-}" \
    || -n "${VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN:-}" ]]; then

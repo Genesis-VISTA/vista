@@ -23,7 +23,6 @@ packaged artifact and the two must not drift.
 
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -38,59 +37,22 @@ ENV_FILE = REPO_ROOT / ".env"
 sys.path.insert(0, str(REPO_ROOT / "mcp_servers" / "vista_mcp_server" / "src"))
 
 # Imported after the path is set, deliberately.
-from vista_mcp_server.lib.gcp_vm import (
-    Endpoint,
-    EndpointError,
-    install_termination_handler,
-)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Launch the Vista-side Globus Connect Personal endpoint.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    parser.add_argument(
-        "--setup",
-        action="store_true",
-        help="Run first-time setup and exit without starting the endpoint.",
-    )
-    parser.add_argument(
-        "--status",
-        action="store_true",
-        help="Report whether the endpoint is running, and exit.",
-    )
-    return parser.parse_args()
+from vista_mcp_server.lib.gcp_vm import main as endpoint_main
 
 
 def main() -> None:
-    args = parse_args()
+    """Supply a development checkout's context, then hand over.
+
+    The two things this adds are the two the packaged launcher supplies by other
+    means: a working directory the relative data paths resolve against, and the
+    repository `.env` the refresh tokens live in. Every option, and every
+    decision about what they mean, belongs to `gcp_vm` -- the packaged launcher
+    runs that same entry point as `python -m`, and a second argument parser here
+    is a second place for the two to disagree.
+    """
     os.chdir(REPO_ROOT)
     load_dotenv(ENV_FILE)
-
-    endpoint = Endpoint(
-        data_dir=Path(os.environ.get("VISTA_DATA_DIR", "./data")).resolve(),
-        hpc_jobs_dir=Path(
-            os.environ.get("VISTA_MCP_LOCAL_HPC_JOBS_DIR", "./hpc_jobs")
-        ).resolve(),
-    )
-
-    if args.status:
-        print(endpoint.status().detail)
-        return
-
-    try:
-        endpoint.setup(
-            os.environ.get("GLOBUS_SETUP_KEY"), interactive=sys.stdin.isatty()
-        )
-        print("Globus endpoint setup complete.")
-        if args.setup:
-            return
-        install_termination_handler()
-        sys.exit(endpoint.start().wait())
-    except EndpointError as error:
-        sys.exit(f"error: {error}")
+    sys.exit(endpoint_main())
 
 
 if __name__ == "__main__":

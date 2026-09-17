@@ -77,16 +77,30 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 5. Launcher and startup
 
-- [ ] 5.1 Load the second image in `scripts/package_launcher.sh`'s first-run block; verify a second
-      run does not re-import it
-- [ ] 5.2 Start the endpoint as a fourth managed service added to `PIDS`, gated on a refresh token
+- [x] 5.1 Load the second image in `scripts/package_launcher.sh`'s first-run block; verify a second
+      run does not re-import it. Both images now go through one `load_image`, whose `image inspect`
+      guard gives the idempotence: driven against a fake `msb`, a first call inspects then loads and
+      a second inspects only. The Globus image loads under the refresh-token gate rather than beside
+      the sandbox image, and its failure is a warning rather than `die`, so an image most
+      installations never use can neither delay nor prevent a start
+- [x] 5.2 Start the endpoint as a fourth managed service added to `PIDS`, gated on a refresh token
       being configured and non-fatal on failure, without copying the KVM hard gate; verify that
-      with no token configured the launcher starts everything else and exits 0
-- [ ] 5.3 Run first-run setup before the services start, matching `scripts/launch.sh:52`; verify a
-      collection created during setup is visible to the MCP server in the same session
-- [ ] 5.4 Print a startup line naming the clusters whose file operations are unavailable when the
+      with no token configured the launcher starts everything else and exits 0. The gate, the
+      service and the reporting were driven through five scenarios -- no token, setup refused, image
+      import failed, endpoint running, endpoint died -- each reaching a distinct printed cause with
+      the other services untouched. The full live launch is 9.3, which needs a built package
+- [x] 5.3 Run first-run setup before the services start, matching `scripts/launch.sh:52`; verify a
+      collection created during setup is visible to the MCP server in the same session. Setup runs
+      at `package_launcher.sh:311` and the MCP server starts at `:362`, so the collection exists
+      before the server that reads it. Setup inherits the terminal rather than writing to a log
+      file, because it prints an address to log in at and waits for what the login returns
+- [x] 5.4 Print a startup line naming the clusters whose file operations are unavailable when the
       endpoint did not start, in the shape of the warning block at `scripts/launch.sh:56`; verify
-      the line appears when setup is skipped and is absent when the endpoint is running
+      the line appears when setup is skipped and is absent when the endpoint is running. The line
+      names the cause, which comes from the launcher for the gate and the image and from
+      `--status` for the endpoint itself. Because the endpoint serves no port, having been started
+      is not the same as running: the check is retried briefly, bounded by the holder process being
+      alive, so a microVM still being created is not reported as a failure
 
 ## 6. Reporting and configuration
 

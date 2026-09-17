@@ -502,3 +502,70 @@ class TestResolveGcp:
         monkeypatch.setattr(gcp_vm.platform, "machine", lambda: "riscv64")
         with pytest.raises(gcp_vm.EndpointError, match="riscv64"):
             endpoint.resolve_gcp()
+
+
+class TestCommandLine:
+    """The entry point both callers reach.
+
+    `scripts/launch_globus.py` delegates here, and the packaged launcher runs it
+    as `python -m vista_mcp_server.lib.gcp_vm`, because `scripts/` is not
+    installed. Anything asserted here therefore holds for both.
+    """
+
+    def test_the_environment_names_the_directories(self, repo_root, monkeypatch):
+        """The same two variables `vista_mcp_server` itself reads, which is what
+        makes the mounts the directories the transfers name."""
+        monkeypatch.setenv("VISTA_DATA_DIR", str(repo_root / "data"))
+        monkeypatch.setenv("VISTA_MCP_LOCAL_HPC_JOBS_DIR", str(repo_root / "hpc_jobs"))
+
+        endpoint = gcp_vm.endpoint_from_environment()
+
+        assert endpoint.data_dir == repo_root / "data"
+        assert endpoint.hpc_jobs_dir == repo_root / "hpc_jobs"
+
+    def test_status_exits_non_zero_when_not_running(
+        self, endpoint, fake_msb, monkeypatch, capsys
+    ):
+        """The launcher gates its startup warning on this exit status rather
+        than parsing the line, so the two have to agree."""
+        monkeypatch.setattr(gcp_vm, "endpoint_from_environment", lambda: endpoint)
+
+        assert gcp_vm.main(["--status"]) == 1
+        assert capsys.readouterr().out.strip() == endpoint.status().detail
+
+    def test_status_exits_zero_only_when_running(self, endpoint, fake_msb, monkeypatch):
+        set_up(endpoint)
+        monkeypatch.setenv("FAKE_VM", "running")
+        monkeypatch.setattr(gcp_vm, "endpoint_from_environment", lambda: endpoint)
+
+        assert gcp_vm.main(["--status"]) == 0
+
+    def test_start_does_not_attempt_setup(self, endpoint, fake_msb, monkeypatch):
+        """The launcher runs setup on a terminal and starts the endpoint in the
+        background, where stdin is not one. Were `--start` to attempt setup, an
+        installation that was already set up would be fine and a first run would
+        refuse for want of a terminal it was never supposed to need."""
+        monkeypatch.setattr(gcp_vm, "endpoint_from_environment", lambda: endpoint)
+
+        def refuse(*args, **kwargs):
+            raise AssertionError("--start attempted setup")
+
+        monkeypatch.setattr(Endpoint, "setup", refuse)
+        # Not set up, so `start` is what reports -- the point being that the
+        # refusal comes from starting, not from an unasked-for setup.
+        assert gcp_vm.main(["--start"]) == 1
+
+    def test_setup_reports_its_failure_as_a_line_not_a_traceback(
+        self, endpoint, fake_msb, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(gcp_vm, "endpoint_from_environment", lambda: endpoint)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        assert gcp_vm.main(["--setup"]) == 1
+        assert capsys.readouterr().err.startswith("error: ")
+
+    def test_the_modes_are_exclusive(self):
+        """Each answers a different question, and a caller that passed two would
+        silently get whichever the implementation happened to check first."""
+        with pytest.raises(SystemExit):
+            gcp_vm.main(["--setup", "--status"])
