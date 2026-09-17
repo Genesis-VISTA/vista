@@ -2,7 +2,7 @@
 """Metrics report generator (evaluation plan M8).
 
 Joins the metrics JSONL (written by `vista_backend.metrics`, M1-M5) with the
-VISTAGuard provenance JSONL on `run_id`/`session_id`, computes
+PALISADE provenance JSONL on `run_id`/`session_id`, computes
 mean/p50/p95/p99 per event type offline, and renders either a Markdown ops
 report or the LaTeX rows for the paper's systems table (tab:eval).
 
@@ -274,7 +274,7 @@ def render_markdown(stats: dict[str, Stats], runs: dict, gates: dict, coverage: 
                   f"- mean human interventions: {runs['mean_interventions']:.2f}",
                   f"- total tokens: {runs['total_tokens']}"]
     if gates:
-        lines += ["", "## VISTAGuard gates", "", "| gate | n | allow% | mean ms | p95 ms |", "|---|---|---|---|---|"]
+        lines += ["", "## PALISADE gates", "", "| gate | n | allow% | mean ms | p95 ms |", "|---|---|---|---|---|"]
         for gate in sorted(gates):
             g = gates[gate]
             mean = f"{g['mean_ms']:.2f}" if g["mean_ms"] is not None else "-"

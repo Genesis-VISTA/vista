@@ -182,7 +182,7 @@ async def app_lifespan(server):
             )
             citation_collection = None
 
-        # VISTAGuard G3 hybrid-retrieval defense (Semantic Chameleon
+        # PALISADE G3 hybrid-retrieval defense (Semantic Chameleon
         # arXiv 2603.18034). 
         bm25 = _load_bm25_corpus(slug, db_path)
 
@@ -362,8 +362,8 @@ async def rag_search(
         bool,
         "When True, fuse BM25 lexical retrieval with vector retrieval "
         "(Semantic Chameleon hybrid-search defense). Default False keeps "
-        "the legacy vector-only behavior byte-identical to pre-VISTAGuard "
-        "deployments. The VISTAGuard backend sets this transparently when "
+        "the legacy vector-only behavior byte-identical to pre-PALISADE "
+        "deployments. The PALISADE backend sets this transparently when "
         "the G3 hybrid retrieval setting is enabled.",
     ] = False,
     alpha: A[

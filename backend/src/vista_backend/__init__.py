@@ -1,8 +1,8 @@
 """
-VISTAGuard -- security and safety mediation sidecar for VISTA's agent
+PALISADE -- security and safety mediation sidecar for VISTA's agent
 runtime.
 """
 
-from .config import VistaGuardSettings
+from .config import PalisadeSettings
 
-__all__ = ["VistaGuardSettings"]
+__all__ = ["PalisadeSettings"]

@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
 from .utils.types import ResolvedPath, LogLevel
-from .vistaguard.config import VistaGuardSettings
+from palisade.config import PalisadeSettings
 from .metrics import MetricsSettings
 
 
@@ -55,8 +55,8 @@ class Settings(BaseSettings):
         extra="ignore",
         env_prefix="VISTA_BACKEND_",
         # Double underscore separates the parent field from the nested
-        # field name in env vars, so the VistaGuardSettings sub-model
-        # below is overridable as `VISTA_BACKEND_VISTAGUARD__ENABLED=...`.
+        # field name in env vars, so the PalisadeSettings sub-model
+        # below is overridable as `VISTA_BACKEND_PALISADE__ENABLED=...`.
         # Sibling top-level fields (those that don't contain `__` in
         # their env-var name) are unaffected by this setting.
         env_nested_delimiter="__",
@@ -267,13 +267,13 @@ class Settings(BaseSettings):
     campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
     """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
 
-    vistaguard: VistaGuardSettings = Field(default_factory=VistaGuardSettings)
+    palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
     """
-    VISTAGuard sidecar configuration. See `vista_backend.vistaguard.config`
+    PALISADE sidecar configuration. See `vista_backend.palisade.config`
     for the full set of fields. Every field defaults to off / minimal so
-    that the default behavior of `Settings` is unchanged when VISTAGuard
+    that the default behavior of `Settings` is unchanged when PALISADE
     is not configured. Override individual fields via
-    `VISTA_BACKEND_VISTAGUARD__<FIELD>=...` env vars.
+    `VISTA_BACKEND_PALISADE__<FIELD>=...` env vars.
     """
 
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)

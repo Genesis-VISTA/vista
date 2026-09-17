@@ -1,9 +1,9 @@
 """
-VISTAGuard trust-state + re-auth endpoints (Phase 5).
+PALISADE trust-state + re-auth endpoints (Phase 5).
 
-Mounted on the app only when `settings.vistaguard.enabled` is true (see
+Mounted on the app only when `settings.palisade.enabled` is true (see
 `api.api`), so the endpoints -- and their OpenAPI schemas -- are absent
-entirely when VISTAGuard is disabled.
+entirely when PALISADE is disabled.
 """
 
 from pydantic import BaseModel
@@ -14,13 +14,13 @@ from ..db.schemas import ProjectPublic
 from ..services import project as project_service
 from ..services.project_agent import find_live_project_agent_key, project_agent_pool
 from ..services.auth import UserDep
-from ..vistaguard import TrustScorer
+from palisade import TrustScorer
 from fastapi import APIRouter
 
-router = APIRouter(tags=["vistaguard"])
+router = APIRouter(tags=["palisade"])
 
 
-class VistaGuardCapabilityState(BaseModel):
+class PalisadeCapabilityState(BaseModel):
     """Trust state for a single capability kind (e.g. a gate ``"G2"``)."""
 
     score: float
@@ -35,7 +35,7 @@ class VistaGuardCapabilityState(BaseModel):
     """The sticky floor tier this capability cannot climb above, or null."""
 
 
-class VistaGuardStateResponse(BaseModel):
+class PalisadeStateResponse(BaseModel):
     """Per-capability trust scores and tiers for the caller's session."""
 
     score: float
@@ -52,10 +52,10 @@ class VistaGuardStateResponse(BaseModel):
     contract_coverage: dict
     """Domain-contract coverage: claims checked/covered, coverage fraction,
     and contract violations seen this session."""
-    capabilities: dict[str, VistaGuardCapabilityState]
+    capabilities: dict[str, PalisadeCapabilityState]
 
 
-class VistaGuardReauthResponse(BaseModel):
+class PalisadeReauthResponse(BaseModel):
     """Result of clearing sticky high-stakes lock-in after a user re-auth."""
 
     unlocked_capabilities: list[str]
@@ -63,16 +63,16 @@ class VistaGuardReauthResponse(BaseModel):
 
 
 @router.get(
-    "/projects/{project_name}/vistaguard/state",
-    response_model=VistaGuardStateResponse,
+    "/projects/{project_name}/palisade/state",
+    response_model=PalisadeStateResponse,
 )
-async def vistaguard_state(
+async def palisade_state(
     project_name: str,
     session: SessionDep,
     user: UserDep,
-) -> VistaGuardStateResponse:
+) -> PalisadeStateResponse:
     """
-    Return the current VISTAGuard trust state for the caller's session:
+    Return the current PALISADE trust state for the caller's session:
     the pooled score and session tier, plus the per-capability score and
     tier for every capability that has recorded a signal this session.
 
@@ -93,20 +93,20 @@ async def vistaguard_state(
     else:
         # No live session: report the fresh trust state without building
         # an agent (which would start MCP servers as a side effect).
-        snapshot = TrustScorer(settings.vistaguard).snapshot()
+        snapshot = TrustScorer(settings.palisade).snapshot()
 
-    return VistaGuardStateResponse.model_validate(snapshot)
+    return PalisadeStateResponse.model_validate(snapshot)
 
 
 @router.post(
-    "/projects/{project_name}/vistaguard/reauth",
-    response_model=VistaGuardReauthResponse,
+    "/projects/{project_name}/palisade/reauth",
+    response_model=PalisadeReauthResponse,
 )
-async def vistaguard_reauth(
+async def palisade_reauth(
     project_name: str,
     session: SessionDep,
     user: UserDep,
-) -> VistaGuardReauthResponse:
+) -> PalisadeReauthResponse:
     """
     Clear sticky high-stakes lock-in for the caller's session after a
     user re-authentication flow (proposal §8.4 / C4). Previously
@@ -127,4 +127,4 @@ async def vistaguard_reauth(
         async with project_agent_pool.get(key) as agent:
             unlocked = agent.sidecar.trust_scorer.reauthenticate()
 
-    return VistaGuardReauthResponse(unlocked_capabilities=list(unlocked))
+    return PalisadeReauthResponse(unlocked_capabilities=list(unlocked))

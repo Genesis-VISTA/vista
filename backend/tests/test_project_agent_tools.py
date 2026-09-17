@@ -90,6 +90,20 @@ def test_vista_metadata_includes_project_paths():
     }
 
 
+def test_vista_metadata_maps_sandbox_files_to_project_download_urls():
+    project = make_project(name="molten salt/analysis")
+    uri_map = _agent(project)._build_vista_metadata("display_file")["vista"]["uri_map"]
+
+    assert uri_map == {
+        "file:///mnt/data/output/{path}": (
+            "/api/files/outputs/{path}?project_name=molten%20salt%2Fanalysis"
+        ),
+        "file:///mnt/data/uploads/{path}": (
+            "/api/files/uploads/{path}?project_name=molten%20salt%2Fanalysis"
+        ),
+    }
+
+
 def test_vista_metadata_paths_are_scoped_per_project_and_user():
     """Volume paths key on (project, user) so one tenant cannot read another's."""
     user = make_user()

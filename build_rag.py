@@ -1243,7 +1243,7 @@ class TextRAG:
     # Querying
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
-    # BM25 corpus build (VISTAGuard G3 hybrid retrieval)
+    # BM25 corpus build (PALISADE G3 hybrid retrieval)
     # ------------------------------------------------------------------
     @property
     def _bm25_corpus_path(self) -> Path:

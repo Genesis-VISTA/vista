@@ -11,6 +11,7 @@ import asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field, Discriminator
 from pydantic_ai import (
@@ -57,13 +58,14 @@ from ..metrics import get_recorder, run_id_var
 from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
-from ..vistaguard import VistaGuardSidecar
-from ..vistaguard.capabilities import (
+from palisade import PalisadeSidecar
+from palisade.instrumentation import set_gate_recorder
+from palisade.capabilities import (
     ApprovalOutcome,
-    VistaGuardApprovalCapability,
-    VistaGuardDeny,
+    PalisadeApprovalCapability,
+    PalisadeDeny,
 )
-from ..vistaguard.quarantine import (
+from palisade.quarantine import (
     build_code_intent_extraction_agent,
     build_intent_extraction_agent,
     build_quarantine_agent,
@@ -117,7 +119,7 @@ class McpUrlElicitationEvent(BaseModel):
 
 class McpToolApprovalEvent(BaseModel):
     """
-    A high-stakes tool call awaiting human approval (VISTAGuard, Phase 3.5).
+    A high-stakes tool call awaiting human approval (PALISADE, Phase 3.5).
 
     Emitted when a tool registered with `requires_approval=True` is called.
     Resolve it with the existing `resolve_elicitation(elicitation_id, action,
@@ -133,7 +135,7 @@ class McpToolApprovalEvent(BaseModel):
     args: dict[str, Any] | None = None
     decision_metadata: dict[str, Any] | None = None
     """
-    VISTAGuard gate decision metadata for this call (e.g. G5's fast-tier
+    PALISADE gate decision metadata for this call (e.g. G5's fast-tier
     summary: resolved SLURM script, account verified, resource ceiling
     passed, no denylist match). Populated from the sidecar's
     `pending_approval_metadata`; None for tool calls with no gate context.
@@ -143,6 +145,23 @@ class McpToolApprovalEvent(BaseModel):
 McpElicitationEvent = (
     McpFormElicitationEvent | McpUrlElicitationEvent | McpToolApprovalEvent
 )
+
+
+class EgressWarning(BaseModel):
+    """
+    A PALISADE G6 egress finding, surfaced as a warning blurb *after* the
+    answer rather than woven into it.
+
+    Emitted (annotate mode) when the egress gate flags an unverified citation
+    or a scientific value outside its contract bounds. Kept out of the answer
+    text deliberately: a finding the model could have written itself is not a
+    finding the reader can trust.
+    """
+
+    severity: str = "warning"
+    """ `warning` (annotate) or `error` (block mode). """
+    message: str
+    """ Rendered blurb, already formatted for display. """
 
 
 class ProjectAgentResult(BaseModel):
@@ -165,6 +184,9 @@ class ProjectAgentResult(BaseModel):
     """ Token / request usage for this run -- see `pydantic_ai.RunUsage`. """
     logs: list[LogEntry] = Field(default_factory=list)
     """ All log lines emitted during this run (also streamed live as `LogEvent`s). """
+    egress_warnings: list[EgressWarning] = Field(default_factory=list)
+    """ PALISADE G6 egress findings for this turn (unverified citations,
+    out-of-bounds scientific values). Empty when G6 is off or clean. """
 
 
 class ProjectAgentResultEvent(BaseModel):
@@ -247,7 +269,12 @@ class ProjectAgent:
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
         self._elicitations: dict[str, asyncio.Future] = {}
-        self._sidecar = VistaGuardSidecar(settings.vistaguard, project)
+        # PALISADE is a package and cannot import this host, so the gate
+        # timing probe is inverted: we hand it our recorder. Idempotent, and
+        # a no-op for behaviour -- an inactive recorder takes no clock
+        # reading (see `palisade.instrumentation`).
+        set_gate_recorder(get_recorder())
+        self._sidecar = PalisadeSidecar(settings.palisade, project)
 
         # We need to pass constant callbacks to the MCP server, so that we can reuse the same PydanticAI MCPServer
         # instance between run_stream calls and not relaunch the MCP servers each call. However, we need to
@@ -266,7 +293,7 @@ class ProjectAgent:
         )
         self._cur_mcp_process_tool_call: ProcessToolCallback | None = None
         self._cur_mcp_log_handler: mcp.client.session.LoggingFnT | None = None
-        # Per-run emitter for high-stakes tool-approval requests (VISTAGuard
+        # Per-run emitter for high-stakes tool-approval requests (PALISADE
         # R6); set in run_stream when elicitation is enabled.
         self._cur_approval_emit: Callable[..., Any] | None = None
         # Per-run hooks for campaign mode (set in run_stream): the request DB
@@ -277,10 +304,10 @@ class ProjectAgent:
         self.agent = self._build_agent()
 
     @property
-    def sidecar(self) -> VistaGuardSidecar:
-        """The per-session VISTAGuard sidecar (capability registry, trust
+    def sidecar(self) -> PalisadeSidecar:
+        """The per-session PALISADE sidecar (capability registry, trust
         scorer, incident manager). The trust scorer backing the
-        ``/vistaguard/state`` and ``/vistaguard/reauth`` endpoints lives
+        ``/palisade/state`` and ``/palisade/reauth`` endpoints lives
         here."""
         return self._sidecar
 
@@ -338,7 +365,7 @@ class ProjectAgent:
             for s in self._mcp_servers
         ]
 
-        # VISTAGuard gates are PydanticAI capabilities (Phase 3.5). The
+        # PALISADE gates are PydanticAI capabilities (Phase 3.5). The
         # sidecar is the factory that builds the capability list from its
         # active gate set; a flag-off build yields an empty list, keeping
         # the agent byte-identical to baseline VISTA. The Q-LLM agents
@@ -353,7 +380,7 @@ class ProjectAgent:
         # than rebuilt per sub-agent so all four talk to the same endpoint
         # with the same credential, and so a single HTTP client is reused.
         model = build_model_for(self.user)
-        if settings.vistaguard.quarantine_enabled:
+        if settings.palisade.quarantine_enabled:
             quarantine_agent = build_quarantine_agent(model)
             intent_extraction_agent = build_intent_extraction_agent(model)
             # Shared by G4 and G5 slow tiers ("what is this code/job
@@ -373,10 +400,10 @@ class ProjectAgent:
         )
         capabilities.append(self._eval_metrics_capability)
         # Human-in-the-loop approval for `requires_approval=True` tools
-        # (VISTAGuard R6). Inert until such a tool is registered (G5 in
+        # (PALISADE R6). Inert until such a tool is registered (G5 in
         # Phase 4); resolves via the existing resolve_elicitation surface.
         capabilities.append(
-            VistaGuardApprovalCapability(request_approval=self._request_tool_approval)
+            PalisadeApprovalCapability(request_approval=self._request_tool_approval)
         )
 
         agent = Agent(
@@ -512,7 +539,7 @@ class ProjectAgent:
         metrics correlation reach the server; returns a `CallToolResult`
         envelope (`isError=True` on tool failure rather than raising).
 
-        Bypasses the agent's capability hooks (VISTAGuard) by design — these
+        Bypasses the agent's capability hooks (PALISADE) by design — these
         are explicit user actions, not model-driven tool calls.
         """
         if not self._tool_allowed(name):
@@ -538,6 +565,15 @@ class ProjectAgent:
         MCP server instances configured with the right env vars/headers, and
         move project_paths off metadata too.
         """
+        project_name = quote(self.project.name, safe="")
+        uri_map = {
+            "file:///mnt/data/output/{path}": (
+                f"/api/files/outputs/{{path}}?project_name={project_name}"
+            ),
+            "file:///mnt/data/uploads/{path}": (
+                f"/api/files/uploads/{{path}}?project_name={project_name}"
+            ),
+        }
         metadata: dict[str, Any] = {
             "vista": {
                 "project_paths": {
@@ -545,6 +581,7 @@ class ProjectAgent:
                     "output_dir": str(self.output_dir),
                     "uploads_dir": str(self.uploads_dir),
                 },
+                "uri_map": uri_map,
             },
         }
         HPC_TOOLS = {
@@ -569,14 +606,14 @@ class ProjectAgent:
         return self
 
     async def __aexit__(self, *exc):
-        # Flush/stop the VISTAGuard provenance sink (e.g. the Flowcept
+        # Flush/stop the PALISADE provenance sink (e.g. the Flowcept
         # broker controller) before tearing down the agent. Best-effort:
         # provenance teardown must never mask the agent's own exit.
         try:
             self._sidecar.provenance.close()
         except Exception:  # noqa: BLE001 - teardown must not raise
             logging.getLogger(__name__).warning(
-                "VISTAGuard: provenance.close() failed", exc_info=True
+                "PALISADE: provenance.close() failed", exc_info=True
             )
         await self.agent.__aexit__(*exc)
 
@@ -641,7 +678,7 @@ class ProjectAgent:
             name: str,
             tool_args: dict[str, Any],
         ) -> ToolResult:
-            # VISTAGuard no longer mediates here: gate enforcement runs
+            # PALISADE no longer mediates here: gate enforcement runs
             # via the Agent's capability hooks (Phase 3.5). This callback
             # only injects the per-call MCP metadata (credentials + metrics
             # correlation), built by the shared helper.
@@ -704,7 +741,7 @@ class ProjectAgent:
     ) -> ApprovalOutcome:
         """
         Ask the user to approve a high-stakes (`requires_approval`) tool
-        call. Called by `VistaGuardApprovalCapability`.
+        call. Called by `PalisadeApprovalCapability`.
 
         Routes through the current run's approval emitter (set in
         `run_stream` when elicitation is enabled). When no approval
@@ -733,7 +770,7 @@ class ProjectAgent:
             if tool_call_id in self._elicitations:
                 return ApprovalOutcome(approved=False, message="Duplicate approval id.")
 
-            # VISTAGuard gate decision metadata for the approval UI (e.g.
+            # PALISADE gate decision metadata for the approval UI (e.g.
             # G5's fast-tier summary), stashed on the sidecar by the gate
             # capability that deferred this call.
             decision_metadata = self._sidecar.pending_approval_metadata.get(
@@ -887,14 +924,14 @@ class ProjectAgent:
                 self._cur_db_session = db_session
                 self._cur_progress_emitter = progress
                 try:
-                    # SEV1 termination (VISTAGuard incident playbook): once
+                    # SEV1 termination (PALISADE incident playbook): once
                     # the trust scorer is terminated, refuse every request
                     # without invoking the model -- gate-agnostic, so the
                     # session stays dead even if G1 is disabled.
                     if self._sidecar.trust_scorer.terminated:
                         yield log(
                             "ERROR",
-                            "VISTAGuard",
+                            "PALISADE",
                             "Session terminated by a prior SEV1 incident; refusing request.",
                         )
                         yield ProjectAgentResultEvent(
@@ -905,6 +942,10 @@ class ProjectAgent:
                             )
                         )
                         return
+
+                    # Clear the G6 egress-findings buffer so this turn's warning
+                    # blurb reflects only this response's egress checks.
+                    self._sidecar.reset_egress_findings()
 
                     yield log(
                         "INFO",
@@ -920,7 +961,7 @@ class ProjectAgent:
                     )
 
                     # G1 early-rejection runs via the capability's
-                    # before_run hook and raises VistaGuardDeny (caught
+                    # before_run hook and raises PalisadeDeny (caught
                     # below) before any model request.
                     async for event in self.agent.run_stream_events(
                         user_prompt,
@@ -929,10 +970,17 @@ class ProjectAgent:
                     ):
                         if isinstance(event, AgentRunResultEvent):
                             yield log("INFO", "Agent", "Turn completed")
+                            # Drain any G6 egress findings recorded during
+                            # this run; the UI renders them as warning blurbs
+                            # following the answer.
                             result = ProjectAgentResult(
                                 new_messages=event.result.new_messages(),
                                 usage=event.result.usage(),
                                 logs=list(logs),
+                                egress_warnings=[
+                                    EgressWarning(**w)
+                                    for w in self._sidecar.egress_findings
+                                ],
                             )
                             yield ProjectAgentResultEvent(result=result)
                             break  # Ignore any further log events
@@ -959,8 +1007,8 @@ class ProjectAgent:
                                     )
 
                             yield event
-                except VistaGuardDeny as deny:
-                    yield log("WARNING", "VISTAGuard:G1", deny.decision.reason)
+                except PalisadeDeny as deny:
+                    yield log("WARNING", "PALISADE:G1", deny.decision.reason)
                     yield ProjectAgentResultEvent(
                         result=ProjectAgentResult(
                             new_messages=[],
