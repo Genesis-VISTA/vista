@@ -398,12 +398,7 @@ async def _submit_odo_job(
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
-    if not settings.vista_globus_collection_id:
-        raise ToolError(
-            "Vista's Globus collection is not set up on this deployment. "
-            "Odo file ops go through Globus; run ./scripts/launch_globus.py to expose a "
-            "Globus collection covering both local_hpc_jobs_dir and output_dir."
-        )
+    settings.require_globus_collection("odo")
 
     local_job_dir = settings.local_hpc_jobs_dir / job
     job_script_path = local_job_dir / ODO_JOB_SCRIPT
@@ -719,12 +714,7 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    if not settings.vista_globus_collection_id:
-        raise ToolError(
-            "Vista's Globus collection is not set up on this deployment. "
-            "Frontier file ops go through Globus; run ./scripts/launch_globus.py to expose a "
-            "Globus collection covering both local_hpc_jobs_dir and output_dir."
-        )
+    settings.require_globus_collection("frontier")
 
     await _require_olcf_access(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))

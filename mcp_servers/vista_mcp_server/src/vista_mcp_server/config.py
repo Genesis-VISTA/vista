@@ -1,4 +1,4 @@
-import os, sys, functools, logging
+import os, sys, logging
 from fastmcp.exceptions import ToolError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
@@ -194,16 +194,44 @@ class AppSettings(BaseSettings):
         """
         return self.data_dir / "knowledge-bases"
 
-    @functools.cached_property
+    @property
     def vista_globus_collection_id(self) -> str | None:
         """
         UUID of the Globus Collection hosted on the Vista server, read from the
         Globus Connect Personal config.
+
+        Read on every access rather than cached. The file appears when the
+        transfer endpoint is set up, which can happen after this server has
+        started -- and a cached absence would then persist for the life of the
+        process, so a researcher who completed the Globus login would still be
+        told the collection does not exist until they restarted VISTA.
         """
         client_id_file = self.data_dir / "globusonline" / "lta" / "client-id.txt"
         if not client_id_file.exists():
             return None
         return client_id_file.read_text().strip() or None
+
+    def require_globus_collection(self, cluster: Literal["odo", "frontier"]) -> str:
+        """
+        Return this machine's Globus collection, or say how to get one.
+
+        Both clusters' file operations are brokered between two collections,
+        one of which has to be this machine, so an absent collection is a
+        complete answer to why a transfer cannot happen. The remedy has to be
+        one the researcher can actually perform: a packaged installation has no
+        `scripts/` directory, so naming a script there would be an instruction
+        to run a file they do not have.
+        """
+        collection = self.vista_globus_collection_id
+        if not collection:
+            raise ToolError(
+                f"VISTA's Globus collection is not set up, and {cluster.title()} "
+                "file operations are brokered through it. Restart VISTA from a "
+                "terminal with a Globus refresh token configured: startup "
+                "performs the one-time Globus login, and reports why if it "
+                "cannot."
+            )
+        return collection
 
     def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
         """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """

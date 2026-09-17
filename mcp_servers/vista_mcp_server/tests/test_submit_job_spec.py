@@ -35,7 +35,13 @@ pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 @pytest.fixture(autouse=True)
 def _hpc_jobs_and_registry(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
-    monkeypatch.setattr(settings, "vista_globus_collection_id", "vista-gcs-id")
+    # Patched on the class: `vista_globus_collection_id` is a plain property
+    # reading a file, so there is no instance attribute to assign to.
+    monkeypatch.setattr(
+        type(settings),
+        "vista_globus_collection_id",
+        property(lambda self: "vista-gcs-id"),
+    )
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"

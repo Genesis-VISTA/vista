@@ -32,12 +32,9 @@ def no_globus_collection(monkeypatch):
     """
     No Globus collection, as after a skipped or failed setup.
 
-    `vista_globus_collection_id` is a `functools.cached_property` reading
-    `<data_dir>/globusonline/lta/client-id.txt`, so it is patched on the
-    instance's `__dict__` — assigning through `monkeypatch.setattr` is what a
-    cached property needs, and it also documents the pre-existing staleness
-    trap: a collection created *after* the server started stays cached as
-    absent for the process lifetime.
+    `vista_globus_collection_id` is a property reading
+    `<data_dir>/globusonline/lta/client-id.txt`, so it is patched on the class
+    rather than the instance: a property with no setter cannot be assigned to.
     """
     monkeypatch.setattr(
         type(settings),
@@ -64,8 +61,11 @@ async def test_dispatch_names_the_incomplete_setup(
 
     message = str(excinfo.value)
     assert "Globus collection is not set up" in message, message
-    # Names the remedy, so the researcher is not left guessing.
-    assert "launch_globus.py" in message, message
+    # Names a remedy the researcher can perform. A packaged installation has no
+    # `scripts/` directory, so anything under it is an instruction to run a file
+    # that is not there.
+    assert "scripts/" not in message, message
+    assert "Restart VISTA" in message, message
 
 
 async def test_perlmutter_is_unaffected(no_globus_collection):
