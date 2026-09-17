@@ -162,7 +162,13 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
       `msb exec --tty`, printed its own login banner and the real
       `auth.globus.org/v2/oauth2/authorize` address and waited at `Enter the auth code:`. The URL
       detection captured that address whole, query string included. What remains is pasting a code,
-      which needs a Globus account: nothing is created in Globus before that
+      which needs a Globus account: nothing is created in Globus before that.
+
+      **Left open deliberately.** The assumption this existed to test is settled: Globus Connect
+      Personal does set up under `msb exec`, and this checkout's collection now exists, created
+      through a setup key and reported by Globus as connected. Unproven is only the literal
+      wording, an *interactive* setup driven to completion, which stops at a code only the
+      maintainer can supply. Two minutes at a terminal closes it
 - [x] 9.2 Run `./scripts/ci-local.sh` and verify it is green. 338 backend, 133 + 52 MCP, lint and
       typecheck clean; plus 7 `sandbox` tests run deliberately, which the hermetic filter excludes
 - [x] 9.3 Build the package and run `./scripts/smoke_test_package.sh` with Docker stopped; verify
@@ -174,9 +180,11 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
       payload on the first run and not on the second, `python -m vista_mcp_server.lib.gcp_vm
       --setup` ran from the packaged environment, refused cleanly for want of a terminal, and the
       startup note named that cause rather than the absent-token one
-- [ ] 9.4 With a refresh token exported, start the package and verify the collection appears online
-      in the Globus web interface. Blocked on 9.1: there is no collection until the login is
-      completed
+- [x] 9.4 With a refresh token exported, start the package and verify the collection appears online
+      in the Globus web interface. The collection `VISTA (mac157439)` was created for this
+      checkout, its id written to `data/globusonline/lta/client-id.txt`, and with the endpoint
+      running Globus reported `gcp_connected=True` for it, owned by the maintainer. That is the
+      fact the web interface displays, read from the API instead
 
 ## 10. Gated, not automated
 
