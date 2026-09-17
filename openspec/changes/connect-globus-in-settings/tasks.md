@@ -170,15 +170,41 @@ design.md — Risks; the first can reshape the change.
 
 ## 6. Tests
 
-- [ ] 6.1 Add a hermetic test for the whole credential resolution — user per-cluster, user shared,
+- [x] 6.1 Add a hermetic test for the whole credential resolution — user per-cluster, user shared,
       deployment, none — driven through a tool call rather than the helper alone; verify it passes
-      under `not live and not hpc and not sandbox`
+      under `not live and not hpc and not sandbox`. Added
+      `test_globus_token_resolution_via_tool.py`, driving `_submit_odo_job` (the function a tool
+      call actually runs) with a `create_globus_client` stub that records the `refresh_token` it
+      was handed, instead of the existing `test_submit_job_spec.py` stub that discards it. All four
+      cases pass under the hermetic filter: per-cluster wins over shared and deployment, shared wins
+      over deployment, deployment is the last resort, and with nothing configured the call refuses
+      before ever reaching Globus
 - [ ] 6.2 Extend `scripts/smoke_test_package.sh` so a package with no credential starts, serves
       chat and retrieval, and reports file transfer as not connected; verify it uses `skip` for the
-      endpoint itself, which cannot run without a credential
-- [ ] 6.3 Add a `sandbox`-marked test that the lazy start produces exactly one endpoint under
+      endpoint itself, which cannot run without a credential. **The script side is already done** —
+      landed as part of 5.5, ahead of this task, because closing the group-5 regression required it:
+      both refresh tokens are unset before launch, `launcher_is_quiet_about_transfer` replaces
+      "reports not connected" (the launcher cannot know a per-user state it never sees), and
+      `skip "globus endpoint runs"` names exactly why. `bash -n` is clean.
+
+      **Not verified end to end in this environment.** Running it for real needs a fresh build from
+      current `HEAD`, and this host has neither Docker nor Podman installed, `VISTA_DATA_TOKEN` set,
+      nor an inference credential for citation extraction -- `build_local_package.sh --check` refuses
+      on all three. The only unpacked package on disk (`dist/vista-0.1.0+377ef03-macos-arm64`)
+      predates group 5 (`377ef03` is an ancestor of `5edfe5c`), so running today's script against it
+      would prove nothing -- its launcher still prints the old Globus lines. Left for the maintainer:
+      `./scripts/build_local_package.sh && ./scripts/smoke_test_package.sh dist/<new-package>`
+- [x] 6.3 Add a `sandbox`-marked test that the lazy start produces exactly one endpoint under
       concurrent callers; verify it is excluded from the hermetic filter and passes when run
-      deliberately
+      deliberately. Added `test_local_collection_sandbox.py` against a really-booted microVM, not a
+      fake: `test_local_collection.py`'s own fake proves the lock's logic, but only a real `msb
+      create`/`msb exec` can show whether the guarantee holds once the two really take wall-clock
+      time. A genuine Globus registration is not needed, so none is used -- `globusconnectpersonal
+      -start` refuses to run against anything less, so the guest command is swapped for a real,
+      harmless, long-lived one (`sleep`), leaving the microVM, the process handle, and the lock all
+      genuine. Eight concurrent `ensure_ready` calls, and a second call queued behind a start in
+      progress, both produced exactly one `create_vm`. Deselected under the hermetic filter,
+      2 passed run deliberately with the image loaded
 
 ## 7. Documentation
 
