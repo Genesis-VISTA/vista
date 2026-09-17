@@ -103,6 +103,13 @@ of what becomes unavailable.
 - **THEN** every other service is unaffected, and the failure is reported with the clusters
   whose file operations remain unavailable
 
+#### Scenario: First-run login is presented, not assumed
+
+- **WHEN** file-transfer setup requires the researcher to authenticate with an external
+  service before the transfer endpoint can be created
+- **THEN** the address to authenticate at is displayed, and setup waits for the researcher
+  to supply what the external service returns
+
 #### Scenario: Setup already completed
 
 - **WHEN** VISTA is launched on an installation whose transfer endpoint was set up on a
