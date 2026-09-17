@@ -24,10 +24,14 @@ Constraints established empirically, each of which invalidated an earlier assump
 - microsandbox's bind identity map rewrites the host owner to the configured guest user, so a host
   directory with ordinary permissions is writable from the guest with no mount options. The
   `stat-virt=off` mount option disables this and must not be used.
-- microsandbox forwards DNS to the nameservers in the host's `/etc/resolv.conf`, which on macOS
-  contains none, while `microsandbox_sandbox.py` overrides with hardcoded public resolvers that a
-  network with internal DNS does not answer. Every name lookup in a guest fails on such a network
-  today.
+- `microsandbox_sandbox.py` overrides DNS with hardcoded public resolvers, which a network whose
+  DNS is internal does not answer, so every name lookup in a guest fails on such a network today.
+  The host's real resolvers have to be read per platform: on macOS they come from `scutil --dns`,
+  because `/etc/resolv.conf` is not authoritative there — the file says so itself ("not consulted
+  for DNS hostname resolution"), and it is absent on some configurations. An earlier version of
+  this constraint claimed the file contains no nameservers on macOS; it commonly does. The
+  conclusion was right and the reason was wrong, which is worth recording because the wrong reason
+  would have been disproved by one look at the file and might have taken the conclusion with it.
 - `msb exec` blocks on an open stdin, so a non-interactive invocation must close it explicitly.
 - Globus Connect Personal requires a system `python3` on `PATH`; its `_gcp_invokepython` shim
   searches for one and exits without it.

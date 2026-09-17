@@ -67,7 +67,11 @@ export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
 
-GLOBUS_CMD="'$REPO_ROOT/scripts/launch_globus.py';"
+# `--start`, not a bare call: setup already ran above, on this terminal, and
+# this process is the held endpoint. In `logs` mode it has no tty, so a call
+# that still tried to set up would refuse for want of one it was never supposed
+# to need. `scripts/package_launcher.sh` starts it the same way.
+GLOBUS_CMD="'$REPO_ROOT/scripts/launch_globus.py' --start;"
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
