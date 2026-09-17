@@ -179,21 +179,24 @@ design.md — Risks; the first can reshape the change.
       cases pass under the hermetic filter: per-cluster wins over shared and deployment, shared wins
       over deployment, deployment is the last resort, and with nothing configured the call refuses
       before ever reaching Globus
-- [ ] 6.2 Extend `scripts/smoke_test_package.sh` so a package with no credential starts, serves
+- [x] 6.2 Extend `scripts/smoke_test_package.sh` so a package with no credential starts, serves
       chat and retrieval, and reports file transfer as not connected; verify it uses `skip` for the
-      endpoint itself, which cannot run without a credential. **The script side is already done** —
-      landed as part of 5.5, ahead of this task, because closing the group-5 regression required it:
-      both refresh tokens are unset before launch, `launcher_is_quiet_about_transfer` replaces
-      "reports not connected" (the launcher cannot know a per-user state it never sees), and
-      `skip "globus endpoint runs"` names exactly why. `bash -n` is clean.
+      endpoint itself, which cannot run without a credential. The script side landed as part of
+      5.5, ahead of this task, because closing the group-5 regression required it: both refresh
+      tokens are unset before launch, `launcher_is_quiet_about_transfer` replaces "reports not
+      connected" (the launcher cannot know a per-user state it never sees), and
+      `skip "globus endpoint runs"` names exactly why.
 
-      **Not verified end to end in this environment.** Running it for real needs a fresh build from
-      current `HEAD`, and this host has neither Docker nor Podman installed, `VISTA_DATA_TOKEN` set,
-      nor an inference credential for citation extraction -- `build_local_package.sh --check` refuses
-      on all three. The only unpacked package on disk (`dist/vista-0.1.0+377ef03-macos-arm64`)
-      predates group 5 (`377ef03` is an ancestor of `5edfe5c`), so running today's script against it
-      would prove nothing -- its launcher still prints the old Globus lines. Left for the maintainer:
-      `./scripts/build_local_package.sh && ./scripts/smoke_test_package.sh dist/<new-package>`
+      **Verified end to end, against a real build from current `HEAD` (`1466494`).** First pass
+      wrongly assumed this host had neither Docker nor a usable corpus source: Docker Desktop was
+      running the whole time (`~/.docker/bin/docker`, daemon responsive) and only missing from this
+      shell's `PATH` because it comes from `~/.zprofile`, a login-shell file this shell never
+      sources -- and `~/.vista` already had a real vector store and payload tree to reuse, so no
+      model calls were needed either. `./scripts/build_local_package.sh --payload ~/.vista/vista-data
+      --vector-store ~/.vista/knowledge-bases/molten-salt-papers/rag_db` built both images, packaged
+      `vista-0.1.0+1466494-dirty-macos-arm64`, and ran the smoke test as its own last step. Every
+      check passed, including the two this task asked for: `launcher says nothing about file
+      transfer` and `skip globus endpoint runs -- no credential connected here`
 - [x] 6.3 Add a `sandbox`-marked test that the lazy start produces exactly one endpoint under
       concurrent callers; verify it is excluded from the hermetic filter and passes when run
       deliberately. Added `test_local_collection_sandbox.py` against a really-booted microVM, not a
