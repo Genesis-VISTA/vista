@@ -28,6 +28,11 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "semgrep>=1.79.0",
     "flowcept>=0.10.6",
+    # PALISADE security-mediation sidecar, formerly vendored in-tree as
+    # `vista_backend.vistaguard`. Its companion benchmark SIEGE is a
+    # separate distribution and is deliberately NOT depended on: a
+    # 205-instance attack corpus has no business in a production install.
+    "palisade==1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +42,19 @@ dev = [
 
 [project.scripts]
 vista-backend = "vista_backend.api.api:main"
+
+# The sidecar is fetched from its own repository at a pinned tag, not from a
+# sibling checkout: CI clones only this repo, and a path source cannot
+# resolve there. A tag rather than a branch because a gate stack that drifts
+# underneath a deployment is a security change nobody reviewed.
+#
+# The repository is private until its license clears review, so resolving this
+# needs credentials. A developer machine supplies them from a credential helper
+# without saying so -- which is why a sync that works locally can still fail on
+# a runner. CI passes a read-only token scoped to this one repository; see
+# PALISADE_GITHUB_TOKEN in .gitlab-ci.yml.
+[tool.uv.sources]
+palisade = { git = "https://github.com/herronej/palisade_siege_agentic_security.git", tag = "v1.0.0" }
 
 [build-system]
 requires = ["hatchling"]

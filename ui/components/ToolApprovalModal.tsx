@@ -4,9 +4,9 @@ import { useState } from "react";
 
 /**
  * G5 fast-tier decision metadata attached to a `submit_hpc_job` approval
- * request by VISTAGuard's HPC Job Gate. All fields are optional — the
+ * request by PALISADE's HPC Job Gate. All fields are optional — the
  * modal renders whatever the backend supplied (see
- * `vista_backend.vistaguard.gates.g5_hpc.G5HpcJobGate.fast_tier_metadata`).
+ * `palisade.gates.g5_hpc.G5HpcJobGate.fast_tier_metadata`).
  */
 export type DecisionMetadata = {
   gate?: string;
@@ -45,7 +45,7 @@ function Check({ ok, label }: { ok: boolean; label: string }) {
 
 /**
  * Human-in-the-loop approval modal for high-stakes tool calls
- * (VISTAGuard deferred-tool-calls). When the backend attaches G5
+ * (PALISADE deferred-tool-calls). When the backend attaches G5
  * decision metadata, it renders the resolved SLURM script plus the
  * fast-tier policy-check results so the user approves with full context.
  */
@@ -80,7 +80,7 @@ export default function ToolApprovalModal({
 
           {isG5 && (
             <div className="g5-approval">
-              <div className="g5-section-title">VISTAGuard G5 policy checks</div>
+              <div className="g5-section-title">PALISADE G5 policy checks</div>
               <ul className="g5-checks">
                 {m?.account_verified != null && (
                   <Check

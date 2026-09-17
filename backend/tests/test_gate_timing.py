@@ -1,5 +1,5 @@
 """
-Tests for VISTAGuard gate timing (evaluation plan M4): the `Gate`
+Tests for PALISADE gate timing (evaluation plan M4): the `Gate`
 base-class dispatch emits per-tier `gate.<name>.<tier>` metric events at
 `perf` level (or with the GATE_TIMING override), stays silent otherwise,
 and never changes the decision either way. Also covers the optional
@@ -11,15 +11,16 @@ from pathlib import Path
 
 import pytest
 
+import palisade.instrumentation as palisade_instrumentation
 import vista_backend.metrics as metrics_module
 from vista_backend.metrics import MetricsRecorder, MetricsSettings
-from vista_backend.vistaguard.config import VistaGuardSettings
-from vista_backend.vistaguard.gates.base import (
+from palisade.config import PalisadeSettings
+from palisade.gates.base import (
     GateContext,
     GateDecision,
     PassThroughGate,
 )
-from vista_backend.vistaguard.provenance import ProvenanceEmitter
+from palisade.provenance import ProvenanceEmitter
 
 
 def make_recorder(
@@ -80,6 +81,9 @@ def test_gate_probe_override_at_prod(tmp_path):
 async def test_check_fast_emits_timing(tmp_path, monkeypatch, ctx):
     rec, log_path = make_recorder(tmp_path)
     monkeypatch.setattr(metrics_module, "_recorder", rec)
+    # PALISADE is a package and cannot import this host: the gate probe is
+    # injected, exactly as `ProjectAgent.__init__` does in production.
+    monkeypatch.setattr(palisade_instrumentation, "_recorder", rec)
 
     decision = await PassThroughGate().check_fast({"x": 1}, ctx)
     assert decision.allow is True
@@ -96,6 +100,9 @@ async def test_check_slow_emits_timing(tmp_path, monkeypatch, ctx):
     contract-registry path still runs and is part of the gate's cost."""
     rec, log_path = make_recorder(tmp_path)
     monkeypatch.setattr(metrics_module, "_recorder", rec)
+    # PALISADE is a package and cannot import this host: the gate probe is
+    # injected, exactly as `ProjectAgent.__init__` does in production.
+    monkeypatch.setattr(palisade_instrumentation, "_recorder", rec)
 
     fast = GateDecision(allow=True, reason="fast ok")
     decision = await PassThroughGate().check_slow({"x": 1}, ctx, fast)
@@ -110,6 +117,9 @@ async def test_check_slow_emits_timing(tmp_path, monkeypatch, ctx):
 async def test_disabled_gate_emits_nothing(tmp_path, monkeypatch, ctx):
     rec, log_path = make_recorder(tmp_path)
     monkeypatch.setattr(metrics_module, "_recorder", rec)
+    # PALISADE is a package and cannot import this host: the gate probe is
+    # injected, exactly as `ProjectAgent.__init__` does in production.
+    monkeypatch.setattr(palisade_instrumentation, "_recorder", rec)
 
     gate = PassThroughGate(enabled=False)
     decision = await gate.check_fast({"x": 1}, ctx)
@@ -122,6 +132,9 @@ async def test_disabled_gate_emits_nothing(tmp_path, monkeypatch, ctx):
 async def test_metrics_off_changes_nothing(tmp_path, monkeypatch, ctx):
     rec, log_path = make_recorder(tmp_path, level="off")
     monkeypatch.setattr(metrics_module, "_recorder", rec)
+    # PALISADE is a package and cannot import this host: the gate probe is
+    # injected, exactly as `ProjectAgent.__init__` does in production.
+    monkeypatch.setattr(palisade_instrumentation, "_recorder", rec)
 
     gate = PassThroughGate()
     fast = await gate.check_fast({"x": 1}, ctx)
@@ -138,7 +151,7 @@ async def test_metrics_off_changes_nothing(tmp_path, monkeypatch, ctx):
 def test_emit_gate_decision_carries_duration(tmp_path):
     log_path = tmp_path / "provenance.jsonl"
     emitter = ProvenanceEmitter(
-        VistaGuardSettings(enabled=True), session_id="s", log_path=log_path
+        PalisadeSettings(enabled=True), session_id="s", log_path=log_path
     )
     emitter.emit_gate_decision("G2", GateDecision(allow=True), duration_ms=1.25)
     emitter.emit_gate_decision("G3", GateDecision(allow=False, reason="deny"))

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "allocations": {
+    "stf218": {
+      "max_nodes": 64,
+      "max_time_seconds": 7200,
+      "max_gpus": 512,
+      "permitted_partitions": ["batch"]
+    },
+    "gen150-vista": {
+      "max_nodes": 64,
+      "max_time_seconds": 7200,
+      "max_gpus": 512,
+      "permitted_partitions": ["batch"]
+    }
+  }
+}

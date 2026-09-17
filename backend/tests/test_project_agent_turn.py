@@ -5,7 +5,7 @@ Turns run end to end — scripted model, real agent loop, real event stream —
 with only the MCP boundary faked. `run_stream` does not require entering the
 agent, which is what keeps the STDIO / HTTP MCP servers out of these tests.
 
-VISTAGuard gates stay out of scope; the elicitation and approval tests drive
+PALISADE gates stay out of scope; the elicitation and approval tests drive
 only the event plumbing that exists without the sidecar.
 """
 
