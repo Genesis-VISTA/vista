@@ -125,21 +125,48 @@ design.md — Risks; the first can reshape the change.
 
 ## 5. The endpoint's new owner
 
-- [ ] 5.1 Add a lifespan to `vista_mcp_server` that stops the endpoint when the server stops; verify
-      no microVM survives the server exiting, including on SIGTERM
-- [ ] 5.2 Create the collection on first need, from a setup key obtained with the caller's token;
+- [x] 5.1 Add a lifespan to `vista_mcp_server` that stops the endpoint when the server stops; verify
+      no microVM survives the server exiting, including on SIGTERM. **The lifespan alone does not
+      hold.** Measured against fastmcp 3.3.1 on uvicorn with a real endpoint running: SIGINT
+      unwinds the lifespan, runs its `finally` and then the `atexit` hooks; SIGTERM logs "Shutting
+      down", skips the application shutdown entirely, and runs neither -- leaving a 512 MB microVM
+      holding a Globus credential. SIGTERM is the signal the packaged launcher's trap sends, so the
+      endpoint also installs a chained SIGTERM handler when it starts: after uvicorn's, so it takes
+      effect, and delegating to uvicorn's, so the server still stops. Both signals now leave no
+      microVM, checked with `msb status`
+- [x] 5.2 Create the collection on first need, from a setup key obtained with the caller's token;
       verify an installation with a token and no collection reaches a running endpoint without a
-      terminal, and that one that already has a collection does not create a second
-- [ ] 5.3 Start the endpoint lazily under a lock; verify by test that concurrent tool calls produce
+      terminal, and that one that already has a collection does not create a second.
+      `lib/local_collection.py`. **The second half failed the first time and found a real bug**:
+      the endpoint was built by `gcp_vm.endpoint_from_environment`, which falls back to `./data`
+      relative to the working directory, while `settings.data_dir` falls back to a path relative to
+      the package. With the environment variables unset the two disagreed, `is_set_up` looked where
+      `vista_globus_collection_id` never reads, and a second collection was registered on a real
+      Globus account. The endpoint is now built from `settings`; the stray collection was deleted
+      and two regression tests pin the agreement
+- [x] 5.3 Start the endpoint lazily under a lock; verify by test that concurrent tool calls produce
       one endpoint rather than several, and that a start already in progress is waited on rather
-      than repeated
-- [ ] 5.4 Report the wait as a step in progress rather than a silent pause, and report a failure
+      than repeated. `test_local_collection.py`, and then for real: eight concurrent `ensure_ready`
+      calls against live Globus produced one collection and one microVM in 7.1s, Globus reported
+      `gcp_connected`, and a ninth call returned in under a millisecond on the fast path
+- [x] 5.4 Report the wait as a step in progress rather than a silent pause, and report a failure
       with the cause from `gcp_vm.status`; verify the message distinguishes no credential, no
-      collection, and an endpoint that would not start
-- [ ] 5.5 Remove the refresh-token gate, the fourth managed service and the startup line from
+      collection, and an endpoint that would not start. Progress goes through the fastmcp context
+      when there is one and to the log otherwise, so the module stays callable from the lifespan
+      and from tests. Four distinguishable failures, not three: no collection could be created, the
+      endpoint would not start, it stopped while coming up, and Globus never saw it -- the last
+      worth separating because nothing is broken locally. No credential never reaches this module
+      at all: the caller resolves a token before it can build a client
+- [x] 5.5 Remove the refresh-token gate, the fourth managed service and the startup line from
       `scripts/package_launcher.sh`, and the equivalent block from `scripts/launch.sh`; verify both
       still start everything else and that `scripts/launch_globus.py` and the `python -m` entry
-      point still work for a headless install
+      point still work for a headless install. Both scripts pass `bash -n` and neither mentions
+      Globus any more except to say where the image archive is. The image is no longer imported at
+      startup either: the launcher exports `VISTA_GLOBUS_IMAGE_TAR` and `gcp_vm.ensure_image`
+      imports it the first time an endpoint is wanted, so an installation that never transfers
+      never pays for it. `scripts/smoke_test_package.sh` asserted the startup note; it now asserts
+      the launcher says nothing about transfer at all, which is the honest replacement -- the state
+      it used to report is not knowable before a researcher has connected
 
 ## 6. Tests
 

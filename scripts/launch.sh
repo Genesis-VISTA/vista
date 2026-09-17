@@ -5,9 +5,8 @@ set -m # set jobcontrol
 REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 cd "$REPO_ROOT"
 
-# Source the .env file if there is one, matching build.sh. This script did not
-# read it before, which the Globus gate below needs it to: the refresh tokens
-# that decide whether transfer setup is worth attempting live there.
+# Source the .env file if there is one, matching build.sh, so a checkout runs
+# with the same configuration the services would read for themselves.
 #
 # Guarded with a file test rather than `source ... || true`: bash treats a
 # missing *script* file as fatal and exits before the `||` is considered, so
@@ -36,42 +35,15 @@ fi
 cd "$REPO_ROOT/backend"
 uv run python scripts/seed_db.py
 
-# Globus Transfer moves files for Odo and Frontier. Perlmutter never touches
-# it -- every file operation there goes through the NERSC IRI filesystem API --
-# so a researcher using only Perlmutter needs none of this.
-#
-# Gated *and* non-fatal, because those are two different failures. Gated
-# because the endpoint authenticates with a refresh token, so without one
-# setup is a one-time browser login asked of a researcher who has nothing to
-# use it for. Non-fatal because satisfying the gate is not the same as being
-# able to finish: no browser to log in with, no network, or the login is
-# declined. In every one of those cases the rest of VISTA is still perfectly
-# usable.
-#
-# `scripts/package_launcher.sh` gates the packaged artifact the same way, on
-# the same two variables, and calls the same entry point.
-GLOBUS_READY=false
-if [[ -n "${VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN:-}" \
-   || -n "${VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN:-}" ]]; then
-  if "$REPO_ROOT/scripts/launch_globus.py" --setup; then
-    GLOBUS_READY=true
-  else
-    echo "warning: Globus endpoint setup did not complete." >&2
-    echo "warning:   File operations for Odo and Frontier are unavailable;" >&2
-    echo "warning:   job submission to those clusters will report the" >&2
-    echo "warning:   incomplete setup. Perlmutter is unaffected." >&2
-  fi
-fi
-
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
 
-# `--start`, not a bare call: setup already ran above, on this terminal, and
-# this process is the held endpoint. In `logs` mode it has no tty, so a call
-# that still tried to set up would refuse for want of one it was never supposed
-# to need. `scripts/package_launcher.sh` starts it the same way.
-GLOBUS_CMD="'$REPO_ROOT/scripts/launch_globus.py' --start;"
+# No Globus service here. The MCP server owns the transfer endpoint now and
+# starts it when a file operation first needs one, because creating a
+# collection takes a credential a researcher supplies in the interface -- after
+# this script has finished. `scripts/launch_globus.py` still works for a
+# headless install that would rather set it up from a terminal.
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
@@ -129,20 +101,12 @@ launch_terminal() {
 
 case "$MODE" in
   tmux)
-    # Built up pane by pane rather than as one chained command so the Globus
-    # pane can be omitted; the endpoint process is pointless without setup.
     tmux new-session -d -s vista-dev "$MCP_CMD; exec bash"
     tmux split-window -v "$BACKEND_CMD; exec bash"
     tmux split-window -h "$UI_CMD; exec bash"
-    if [[ "$GLOBUS_READY" == true ]]; then
-      tmux split-window -v "$GLOBUS_CMD; exec bash"
-    fi
     tmux attach -t vista-dev
     ;;
   terminal)
-    if [[ "$GLOBUS_READY" == true ]]; then
-      launch_terminal "Globus Endpoint" "$GLOBUS_CMD; exec bash"
-    fi
     launch_terminal "Backend" "$BACKEND_CMD; exec bash"
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
@@ -171,17 +135,11 @@ case "$MODE" in
     }
 
     echo "All services will be started, logging to:"
-    if [[ "$GLOBUS_READY" == true ]]; then
-      echo "  Globus:     $LOG_DIR/globus.log"
-    fi
     echo "  MCP server: $LOG_DIR/mcp.log"
     echo "  Backend:    $LOG_DIR/backend.log"
     echo "  UI:         $LOG_DIR/ui.log"
     echo "Press Ctrl-C to stop all services."
 
-    if [[ "$GLOBUS_READY" == true ]]; then
-      run_service globus "$LOG_DIR/globus.log" "$GLOBUS_CMD"
-    fi
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"

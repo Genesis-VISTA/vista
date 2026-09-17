@@ -10,6 +10,12 @@ class FakeGlobusClient:
 
     def __init__(self, *, out_dir_permissions: str = "2775"):
         self.out_dir_permissions = out_dir_permissions
+        # This machine's own collection: registered here, seen as connected
+        # once the caller has started something. `connected` starts False so a
+        # test can decide when Globus notices.
+        self.created_endpoints: list[str] = []
+        self.setup_key = "fake-setup-key"
+        self.connected = False
         self.ls_calls: list[tuple[str, str]] = []
         self.mkdir_p_calls: list[tuple[str, str, str | None]] = []
         self.transfers: list[dict[str, Any]] = []
@@ -62,3 +68,10 @@ class FakeGlobusClient:
             }
         )
         return {"status": "SUCCEEDED", "task_id": "fake-task"}
+
+    async def create_gcp_endpoint(self, *, display_name: str) -> str:
+        self.created_endpoints.append(display_name)
+        return self.setup_key
+
+    async def gcp_connected(self, collection_id: str) -> bool:
+        return self.connected

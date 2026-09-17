@@ -5,13 +5,36 @@ from .config import settings # Import first so config env vars are initialized b
 from fastmcp import FastMCP
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server import create_proxy
+from fastmcp.server.lifespan import lifespan
+from .lib import local_collection
 from .display_file_mcp import mcp as display_file_mcp
 from .submit_job_mcp import mcp as submit_job_mcp
 from .rag_mcp import mcp as rag_mcp
 from .agenthpc.mcp import mcp as agenthpc_mcp
 from .metrics import MetricsMiddleware, get_recorder
 
-mcp = FastMCP(name="VISTA MCP Server")
+
+@lifespan
+async def app_lifespan(server):
+    """Nothing to start, one thing to stop.
+
+    The Globus endpoint is started by whichever file operation first needs a
+    collection, not here -- creating one requires a credential that only
+    arrives with a tool call, and a server that started it eagerly would be
+    back to the launcher's problem of acting before anyone has connected.
+
+    Stopping is unconditional and cheap: `shutdown` returns immediately when no
+    endpoint was ever started. Without it the microVM would outlive the server
+    that owns it, since an unwinding shutdown is not the interpreter exit the
+    `atexit` hook in `Endpoint.start` covers.
+    """
+    try:
+        yield
+    finally:
+        await local_collection.shutdown()
+
+
+mcp = FastMCP(name="VISTA MCP Server", lifespan=app_lifespan)
 
 # M3 server-side tool timing. Registered only when VISTA_MCP_METRICS__LEVEL
 # is set, so the default path gains no per-request hop at all.

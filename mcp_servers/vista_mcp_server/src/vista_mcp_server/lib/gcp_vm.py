@@ -39,7 +39,7 @@ import tarfile
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from .dns import host_nameservers
 
@@ -48,6 +48,16 @@ IMAGE = "vista-globus:latest"
 microsandbox backend treats a dockerfile as "build this with docker or podman
 first" (see dev_mcp_server's microsandbox_sandbox.py `_build`), which is the one
 dependency this whole change exists to remove."""
+
+IMAGE_TAR_ENV = "VISTA_GLOBUS_IMAGE_TAR"
+"""Where the packaged launcher put the image archive, so it can be imported the
+first time an endpoint is actually wanted.
+
+The launcher used to import it at startup, under a gate on a refresh token
+being in the environment. Both went when the credential moved into the
+interface: there is nothing at startup to gate on any more, and importing an
+image most installations never use would put time on every start to save it on
+one. So the launcher says where the archive is and stops there."""
 
 SANDBOX_NAME = "vista-globus"
 GUEST_USER = "ubuntu"
@@ -136,6 +146,48 @@ def msb_path() -> Path | None:
     return Path(on_path) if on_path else None
 
 
+def image_present(msb: Path) -> bool:
+    return _succeeds([str(msb), "image", "inspect", "--format=json", IMAGE])
+
+
+def image_archive() -> Path | None:
+    """The image archive this installation can import from, if it has one."""
+    tar = os.environ.get(IMAGE_TAR_ENV)
+    if not tar:
+        return None
+    path = Path(tar)
+    return path if path.is_file() else None
+
+
+def ensure_image(msb: Path) -> None:
+    """Make the Globus image available, importing it if this is the first time.
+
+    A development checkout has no archive and is expected to have built and
+    loaded the image itself, which is what it has always done -- so the failure
+    here names both possibilities rather than assuming the packaged one.
+    """
+    if image_present(msb):
+        return
+    archive = image_archive()
+    if archive is None:
+        raise EndpointError(
+            f"the Globus image {IMAGE} is not loaded, and there is no archive to "
+            f"import it from. A package sets {IMAGE_TAR_ENV} to the archive it "
+            f"ships; a checkout builds and loads the image itself"
+        )
+    logging.info("Importing the Globus image from %s", archive)
+    result = subprocess.run(
+        [str(msb), "load", "-i", str(archive), "-t", IMAGE],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise EndpointError(
+            f"could not import the Globus image from {archive}: "
+            f"{result.stderr.decode().strip()}"
+        )
+
+
 @dataclass(frozen=True)
 class Mount:
     """One host directory, visible in the guest at the same path."""
@@ -197,6 +249,18 @@ class Endpoint:
     @property
     def is_set_up(self) -> bool:
         return self.client_id_file.exists()
+
+    @property
+    def running_here(self) -> bool:
+        """Whether the process this object started is still alive.
+
+        A narrower question than `status`, which asks the runtime and so can
+        answer for an endpoint some other process owns. This one is for a
+        caller that started the endpoint itself and has to re-check on every
+        file operation, where spawning two `msb` subprocesses to learn what a
+        `poll()` already knows would be a silly price.
+        """
+        return self._process is not None and self._process.poll() is None
 
     def ensure_directories(self) -> None:
         for directory in (
@@ -330,10 +394,11 @@ class Endpoint:
                 "the bundled microsandbox binary could not be found, so the "
                 "Globus endpoint cannot run",
             )
-        if not _succeeds([str(msb), "image", "inspect", "--format=json", IMAGE]):
+        if not image_present(msb) and image_archive() is None:
             return Status(
                 State.NO_IMAGE,
-                f"the Globus image {IMAGE} has not been loaded",
+                f"the Globus image {IMAGE} has not been loaded, and there is no "
+                f"archive to import it from",
             )
 
         sandbox = _sandbox_status(msb)
@@ -437,11 +502,7 @@ class Endpoint:
                 "the bundled microsandbox binary could not be found; "
                 "set VISTA_MSB_PATH to its location"
             )
-        if not _succeeds([str(msb), "image", "inspect", "--format=json", IMAGE]):
-            raise EndpointError(
-                f"the Globus image {IMAGE} has not been loaded; "
-                "it ships in the package's payload and is imported on first run"
-            )
+        ensure_image(msb)
 
         argv = self.create_argv(msb, host_nameservers())
         logging.info("Creating the Globus microVM: %s", " ".join(argv))
@@ -558,6 +619,54 @@ def endpoint_from_environment() -> Endpoint:
         data_dir=Path(os.environ.get(DATA_DIR_ENV, "./data")).resolve(),
         hpc_jobs_dir=Path(os.environ.get(JOBS_DIR_ENV, "./hpc_jobs")).resolve(),
     )
+
+
+def install_stop_on_termination(stop: Callable[[], None]) -> None:
+    """Run `stop` on SIGTERM, before whatever was going to happen anyway.
+
+    Needed because a server's own shutdown hook is not enough. Measured against
+    fastmcp 3.3.1 on uvicorn: a SIGINT unwinds the lifespan, runs its `finally`
+    and then the `atexit` hooks; a SIGTERM logs "Shutting down", skips the
+    application shutdown entirely, and runs neither. So an endpoint stopped
+    only from a lifespan survives the one signal that matters -- `kill` is what
+    the packaged launcher's trap sends its services.
+
+    Installed when an endpoint starts rather than at import. Before that there
+    is nothing to clean up, and uvicorn installs its own handler while starting,
+    which would replace an earlier one; installing after it is what makes this
+    take effect.
+
+    Chained, not replacing. Uvicorn's handler is what stops the server, and one
+    that swallowed the signal would trade a stray microVM for a service that
+    ignores SIGTERM.
+    """
+    previous = signal.getsignal(signal.SIGTERM)
+    done = False
+
+    def handler(signum, frame):
+        nonlocal done
+        if not done:
+            done = True
+            try:
+                stop()
+            except Exception:  # noqa: BLE001 - shutting down; nothing to report to
+                logging.exception("Could not stop the Globus endpoint on SIGTERM")
+        if callable(previous):
+            previous(signum, frame)
+        elif previous is signal.SIG_DFL:
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    try:
+        signal.signal(signal.SIGTERM, handler)
+    except ValueError:
+        # Not the main thread, so there is no handler to install. Reported
+        # rather than raised: a missing cleanup hook is not a reason to refuse
+        # to start the endpoint the caller asked for.
+        logging.warning(
+            "Could not install the Globus SIGTERM handler; a termination signal "
+            "may leave the endpoint's microVM running"
+        )
 
 
 def install_termination_handler() -> None:

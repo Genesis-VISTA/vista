@@ -19,6 +19,7 @@ from .lib.iri import (
     IriClient, IriDefaults, create_iri_client, create_odo_iri_client, create_olcf_iri_client,
 )
 from .lib.globus import GlobusClient, create_globus_client
+from .lib.local_collection import ensure_ready as ensure_local_collection
 from .lib.olcf_token import require_s3m_project
 from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
@@ -398,8 +399,6 @@ async def _submit_odo_job(
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
-    settings.require_globus_collection("odo")
-
     local_job_dir = settings.local_hpc_jobs_dir / job
     job_script_path = local_job_dir / ODO_JOB_SCRIPT
     if not job_script_path.exists():
@@ -411,6 +410,7 @@ async def _submit_odo_job(
     await _require_olcf_access(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
     globus = create_globus_client(refresh_token=cfg.require_globus_token("odo"))
+    local_collection = await ensure_local_collection(globus, "odo")
     base = settings.odo_remote_dir.rstrip('/')
     # No session prefix: job ids are unique, and the out dir must be the
     # pre-created group-writable one — a fresh per-session dir would have to be
@@ -422,6 +422,7 @@ async def _submit_odo_job(
     await _sync_job_sources(
         globus, job, src_dir, base=base,
         remote_endpoint=settings.odo_globus_collection_id,
+        local_collection=local_collection,
     )
 
     job_script_text = job_script_path.read_text()
@@ -714,11 +715,10 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    settings.require_globus_collection("frontier")
-
     await _require_olcf_access(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
     globus = create_globus_client(refresh_token=cfg.require_globus_token("frontier"))
+    local_collection = await ensure_local_collection(globus, "frontier")
     base = settings.frontier_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
@@ -741,6 +741,7 @@ async def _submit_frontier_job(
     await _sync_job_sources(
         globus, job, src_dir, base=base,
         remote_endpoint=settings.frontier_globus_collection_id,
+        local_collection=local_collection,
     )
 
     job_script_text = job_script_path.read_text()
@@ -845,6 +846,7 @@ async def _submit_frontier_job(
 
 async def _sync_job_sources(
     globus: GlobusClient, job: str, src_dir: str, *, base: str, remote_endpoint: str,
+    local_collection: str,
 ) -> None:
     """
     Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir` via a
@@ -894,7 +896,7 @@ async def _sync_job_sources(
         return
 
     await globus.transfer_and_wait(
-        src_endpoint=settings.vista_globus_collection_id,
+        src_endpoint=local_collection,
         dst_endpoint=remote_endpoint,
         items=items,
         label=f"vista source upload: {job}",
@@ -1076,7 +1078,7 @@ async def _get_olcf_job_status(
             globus = create_globus_client(refresh_token=cfg.require_globus_token(cluster))
             await globus.transfer_and_wait(
                 src_endpoint=remote_collection,
-                dst_endpoint=settings.vista_globus_collection_id,
+                dst_endpoint=await ensure_local_collection(globus, cluster),
                 items=[(submitted.log_path, str(local_log_path), False)],
                 label=f"vista log fetch: {job_id}",
                 sync_level="mtime",  # log file grows; mtime is cheaper than checksum
@@ -1270,7 +1272,7 @@ async def _get_olcf_job_outputs(
         globus = create_globus_client(refresh_token=cfg.require_globus_token(cluster))
         await globus.transfer_and_wait(
             src_endpoint=_olcf_collection_id(cluster),
-            dst_endpoint=settings.vista_globus_collection_id,
+            dst_endpoint=await ensure_local_collection(globus, cluster),
             items=items,
             label=f"vista output download: {job_id}",
         )

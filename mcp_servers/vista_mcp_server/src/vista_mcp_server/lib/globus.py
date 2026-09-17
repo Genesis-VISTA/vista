@@ -255,6 +255,55 @@ class GlobusClient:
             await self.operation_mkdir(endpoint=endpoint, path=current)
 
 
+    # --- this machine's own collection -------------------------------------
+
+    async def create_gcp_endpoint(self, *, display_name: str) -> str:
+        """Register a Globus Connect Personal collection and return its setup key.
+
+        The key is what lets `gcp_vm.Endpoint.setup` run without a terminal:
+        Globus Connect Personal's interactive setup exists to obtain exactly
+        this, by sending the researcher through a browser login.
+
+        Single use, and single use per collection -- calling this twice makes
+        two collections, so the caller checks whether one already exists.
+        """
+        return await asyncio.to_thread(self._create_gcp_endpoint, display_name)
+
+    def _create_gcp_endpoint(self, display_name: str) -> str:
+        # `TransferClient.create_endpoint` was removed in globus-sdk 4, and the
+        # path needs its version prefix or the API answers 404 with no body,
+        # which reads like a refusal and is not one.
+        response = self._tc.post(
+            "/v0.10/endpoint",
+            data={"DATA_TYPE": "endpoint", "display_name": display_name,
+                  "is_globus_connect": True},
+        )
+        key = response.data.get("globus_connect_setup_key")
+        if not key:
+            raise RuntimeError(
+                "Globus created the collection but returned no setup key, so it "
+                "cannot be brought online from here"
+            )
+        return key
+
+    async def gcp_connected(self, collection_id: str) -> bool:
+        """Whether Globus itself can see this collection right now.
+
+        The question a caller waiting for the endpoint actually has. A running
+        microVM only means the process started; this is the far end agreeing
+        that it did, which is what a transfer needs.
+        """
+        return await asyncio.to_thread(self._gcp_connected, collection_id)
+
+    def _gcp_connected(self, collection_id: str) -> bool:
+        try:
+            return bool(self._tc.get_endpoint(collection_id).get("gcp_connected"))
+        except globus_sdk.TransferAPIError:
+            # Newly created and not yet visible, most likely. The caller is in
+            # a polling loop; a transient no is the right answer to give it.
+            return False
+
+
 def create_globus_client(*, refresh_token: str) -> GlobusClient:
     """ Construct a GlobusClient. The authorizer auto-refreshes the access token. """
     return GlobusClient(refresh_token=refresh_token)

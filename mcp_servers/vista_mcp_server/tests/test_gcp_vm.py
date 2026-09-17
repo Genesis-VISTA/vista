@@ -568,3 +568,91 @@ class TestCommandLine:
         silently get whichever the implementation happened to check first."""
         with pytest.raises(SystemExit):
             gcp_vm.main(["--setup", "--status"])
+
+
+class TestStoppingOnTermination:
+    """A SIGTERM has to take the microVM with it.
+
+    The MCP server's lifespan is not enough on its own, measured rather than
+    assumed: fastmcp 3.3.1 on uvicorn unwinds the lifespan on SIGINT and skips
+    it on SIGTERM. SIGTERM is the one the packaged launcher's trap sends, so
+    without this an ordinary Ctrl-C of the launcher would leave a 512 MB
+    microVM behind holding a Globus credential.
+    """
+
+    @pytest.fixture(autouse=True)
+    def restore_handler(self):
+        import signal
+
+        previous = signal.getsignal(signal.SIGTERM)
+        yield
+        signal.signal(signal.SIGTERM, previous)
+
+    def installed_handler(self):
+        import signal
+
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        return handler
+
+    def test_it_stops_and_then_defers_to_what_was_there(self):
+        import signal
+
+        called = []
+        signal.signal(signal.SIGTERM, lambda *_: called.append("previous"))
+        gcp_vm.install_stop_on_termination(lambda: called.append("stop"))
+
+        self.installed_handler()(signal.SIGTERM, None)
+
+        # Order matters: the previous handler is what ends the server, so
+        # stopping has to happen while the process is still there to do it.
+        assert called == ["stop", "previous"]
+
+    def test_it_stops_once_however_many_signals_arrive(self):
+        import signal
+
+        stops = []
+        signal.signal(signal.SIGTERM, lambda *_: None)
+        gcp_vm.install_stop_on_termination(lambda: stops.append(1))
+
+        handler = self.installed_handler()
+        handler(signal.SIGTERM, None)
+        handler(signal.SIGTERM, None)
+
+        assert stops == [1]
+
+    def test_a_failing_stop_does_not_block_the_shutdown(self):
+        """Shutting down is the caller's business; a microVM that would not go
+        is worth a log line and nothing more."""
+        import signal
+
+        called = []
+
+        def explode():
+            raise RuntimeError("msb is gone")
+
+        signal.signal(signal.SIGTERM, lambda *_: called.append("previous"))
+        gcp_vm.install_stop_on_termination(explode)
+
+        self.installed_handler()(signal.SIGTERM, None)
+
+        assert called == ["previous"]
+
+    def test_off_the_main_thread_it_warns_rather_than_raising(self, caplog):
+        """`signal.signal` is main-thread only. Starting the endpoint is the
+        point of the call; the hook is a bonus, not a precondition."""
+        import threading
+
+        errors: list[BaseException] = []
+
+        def install():
+            try:
+                gcp_vm.install_stop_on_termination(lambda: None)
+            except BaseException as error:  # noqa: BLE001
+                errors.append(error)
+
+        thread = threading.Thread(target=install)
+        thread.start()
+        thread.join()
+
+        assert errors == []

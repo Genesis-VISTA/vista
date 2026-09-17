@@ -84,10 +84,10 @@ if [[ "$(uname -s)" == Linux && ! -e /dev/kvm ]]; then
   export VISTA_ALLOW_NO_KVM=1
   AGENT_PATH_TESTABLE=false
 fi
-# Globus file transfer is gated on a refresh token, and this test deliberately
-# configures none: what is being checked is that the launcher says so and starts
-# everything else anyway. Unset rather than assumed absent, so a maintainer with
-# tokens exported in their own shell tests the same thing the build does.
+# This test deliberately configures no Globus credential, which is now the
+# ordinary state of a fresh install: one arrives when a researcher connects
+# Globus in the interface. Unset rather than assumed absent, so a maintainer
+# with tokens exported in their own shell tests the same thing the build does.
 unset VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
 
 export VISTA_UI_PORT="$UI_PORT"
@@ -164,20 +164,21 @@ else
     "no /dev/kvm here, so every agent tool call fails; verify on a KVM host"
 fi
 
-# With no refresh token configured, the launcher has to report the state rather
-# than start an endpoint or fail. Reaching the address line above already proves
-# it started everything else and did not die; this is about what it said.
-globus_state_is_reported() {
-  grep -q "file transfer for .* is unavailable" "$LOGS/launcher.log" \
-    && grep -q "no Globus refresh token is configured" "$LOGS/launcher.log"
+# The launcher has nothing left to say about file transfer, and this asserts the
+# silence. The endpoint belongs to the MCP server now and comes up when a
+# transfer first needs it, so a start that announced anything about it would be
+# announcing a guess -- the state it used to report is not knowable until a
+# researcher has connected Globus, which happens long after this line.
+launcher_is_quiet_about_transfer() {
+  ! grep -qi "globus\|file transfer" "$LOGS/launcher.log"
 }
-check "launcher reports its Globus state" globus_state_is_reported
+check "launcher says nothing about file transfer" launcher_is_quiet_about_transfer
 
 # The endpoint itself is never exercised here, and saying "ok" for a check that
-# could not run is exactly what `skip` exists to prevent: with no token there is
-# no collection, so nothing was started, mounted or transferred.
+# could not run is exactly what `skip` exists to prevent: with no credential
+# there is no collection, so nothing is started, mounted or transferred.
 skip "globus endpoint runs" \
-  "no refresh token configured here, so no endpoint is started; verify with one exported"
+  "no credential connected here, so no endpoint is started; verify by connecting Globus in settings"
 
 # The build identifier has to be the same in the manifest, the launcher output
 # and the running service, so a researcher reporting a problem can say which

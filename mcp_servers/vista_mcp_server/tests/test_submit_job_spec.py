@@ -84,6 +84,14 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
+
+    # This machine's collection is a given here; bringing one up is
+    # `test_local_collection.py`'s subject. Without this the dispatchers would
+    # try to start a real endpoint on the way to building a job spec.
+    async def _collection(_globus, _cluster):
+        return settings.vista_globus_collection_id
+
+    monkeypatch.setattr(submit_job_mcp, "ensure_local_collection", _collection)
     monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
     monkeypatch.setattr(settings, "odo_globus_refresh_token", "fake-odo-refresh")
     monkeypatch.setattr(
