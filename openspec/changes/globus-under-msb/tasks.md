@@ -140,11 +140,18 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 8. Documentation
 
-- [ ] 8.1 Remove the Docker prerequisite and the macOS `globusconnectpersonal` prerequisite from
+- [x] 8.1 Remove the Docker prerequisite and the macOS `globusconnectpersonal` prerequisite from
       `README.md`, both of which become wrong; verify no remaining instruction tells a user to
-      install either
-- [ ] 8.2 Update the Globus paragraph in `AGENTS.md`; verify it describes the microVM and no
-      container runtime
+      install either. Only half of this held on inspection. The `globusconnectpersonal` line is
+      gone: it is wrong on every platform, since the Linux build is downloaded into the data
+      directory and the macOS GUI application was never used. Docker stays for a *checkout*,
+      because `dev_mcp_server` still defaults `dockerfile` to the file in its own package and the
+      microsandbox backend builds that image with docker or podman on first launch. The entry now
+      says what it is for, and that neither Globus nor a prebuilt package needs it
+- [x] 8.2 Update the Globus paragraph in `AGENTS.md`; verify it describes the microVM and no
+      container runtime. Also added a README section for the packaged artifact, which had no
+      account of file transfer at all: the token to export, the one-time login, and what the
+      launcher prints when there is no token
 
 ## 9. Verification I can run
 

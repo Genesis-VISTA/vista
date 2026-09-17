@@ -20,11 +20,49 @@ cannot create microVMs.
 First run copies the corpus, vector store, and embedding weights into the state
 directory (~1 GB), imports the sandbox image, and seeds the database — a few
 minutes, with each step logged as it happens. It then prints
-`VISTA is running at http://localhost:3000`. Ctrl-C stops all three services.
+`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
 Later runs skip every setup step and start in seconds.
 
 Open the UI and paste your inference API key into the settings modal. It takes
 effect immediately; no restart.
+
+### File transfer to Odo and Frontier
+
+Those two clusters move files through Globus Transfer, which copies between two
+*collections* and never through VISTA itself — so this machine has to be one.
+Globus Connect Personal makes it one, and the package runs it, so nothing is
+installed. Perlmutter needs none of this; its file operations go through the
+NERSC IRI filesystem API.
+
+Export a refresh token before starting, and the launcher does the rest:
+
+```bash
+export VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN=...
+./vista
+```
+
+The first start with a token set asks for a one-time Globus login in the
+terminal: it prints an address, opens a browser if it can, and waits for the
+code the login returns. Copy the address elsewhere if no browser opens — that
+works too. What it creates is written to the state directory, so later starts
+ask for nothing.
+
+With no token set, no login is asked for and nothing is started. The launcher
+says so and everything else runs normally:
+
+```
+note: file transfer for Odo and Frontier is unavailable:
+      no Globus refresh token is configured.
+      Chat, retrieval, the code sandbox and Perlmutter are unaffected.
+```
+
+The same line reports a setup that could not finish, naming which step, so a
+failure here is never why VISTA does not start.
+
+Globus Connect Personal runs in its own microVM, from a different image than
+the one the agent executes generated code in. It can see the jobs directory
+read-only and the data directory read-write, and nothing else — not the
+application's own credentials.
 
 On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
@@ -217,13 +255,19 @@ are in [`openspec/specs/`](openspec/specs/), with open changes under
 
 - Node.js 20+
 - [uv](https://docs.astral.sh/uv/)
-- Docker
+- Docker or Podman — for the agent's code-execution sandbox image, which a
+  checkout builds on first launch. Not needed for Globus, and not needed at all
+  by a prebuilt package, which ships the image already built
 - [microsoft/harrier-oss-v1-270m](https://huggingface.co/microsoft/harrier-oss-v1-270m)
     - VISTA downloads the embedding model automatically. It is MIT-licensed and
       ungated, so no HuggingFace account, terms acceptance, or `HF_TOKEN` is needed.
 - [git lfs](https://git-lfs.com/) (for the rag db)
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
-- [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)
+
+Globus Connect Personal is **not** a prerequisite on any platform. Globus ships
+a scriptable command-line build for Linux only, so VISTA downloads that build
+into the data directory and, on macOS, runs it in a microsandbox microVM. The
+macOS GUI application is not used and does not need to be installed.
 
 To install the NERSC/OLCF IRI dependencies (`amscrot-py`), sync the optional
 `hpc` extra (needs access to
@@ -265,7 +309,13 @@ The launch script will build all dependencies and launch both the MCP server and
 ```bash
 ./launch.sh
 ```
-Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox Docker image).
+Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox image).
+
+With a Globus refresh token in `.env`, the launch also sets up and starts the
+Globus Connect Personal endpoint that Odo and Frontier file operations go
+through, asking once for a browser login. Without one it starts nothing and
+says which clusters' file operations are unavailable. Either way the rest of
+VISTA starts.
 Then go to https://localhost:3000
 
 You can use

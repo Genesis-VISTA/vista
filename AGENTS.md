@@ -116,6 +116,16 @@ enclave, `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` for Frontier's moderate encla
 ops. Set
 `VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
 
+Odo and Frontier file operations are brokered by Globus Transfer between two collections, so
+this machine has to be one — which is what Globus Connect Personal makes it. Globus ships a
+scriptable build for Linux only, so on every other platform it runs in a microsandbox microVM:
+no container runtime, no daemon, and a separate image from the one the agent executes generated
+code in. [`lib/gcp_vm.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/gcp_vm.py) owns
+the whole flow; `scripts/launch_globus.py` is a thin wrapper over it for checkouts, and the
+packaged launcher runs the same entry point as `python -m`. Setup and startup are gated on a
+refresh token being configured and are never fatal — absent transfer costs Odo and Frontier,
+and nothing else.
+
 ## NextJS
 ALWAYS read docs before coding
 
