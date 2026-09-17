@@ -41,6 +41,12 @@
 #                      providing amscrot-py. Your macOS keychain credential is
 #                      unreachable from a Linux container, so without this the
 #                      preflight fails and asks for --without-hpc.
+#   PALISADE_GITHUB_TOKEN -- a read-only, fine-grained GitHub PAT scoped to
+#                      herronej/palisade_siege_agentic_security, the private
+#                      repo `palisade` is a git dependency of. Your own git
+#                      credential helper rule for github.com does not reach
+#                      this container either, for the same reason as above.
+#                      Same variable name CI uses for it.
 
 set -euo pipefail
 
@@ -307,7 +313,7 @@ ENVS=(-e "VISTA_VERSION=$VERSION" -e "VISTA_COMMIT=$(git -C "$REPO_ROOT" rev-par
 # the CA copy along with everything else once the build finishes.
 for name in VISTA_DATA_TOKEN OPENAI_API_KEY OPENAI_BASE_URL VISTA_BACKEND_MODEL \
             AZURE_OPENAI_API_KEY AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_VERSION \
-            AMSC_GIT_TOKEN; do
+            AMSC_GIT_TOKEN PALISADE_GITHUB_TOKEN; do
   [[ -n "${!name:-}" ]] && ENVS+=(-e "$name")
 done
 
@@ -317,9 +323,9 @@ log "building $VERSION for $PLATFORM"
 echo "This runs under emulation and is slow. Reuse a vector store with"
 echo "--vector-store to skip the longest stage."
 
-# The amsc2 rewrite is configured from inside the container, expanding
-# AMSC_GIT_TOKEN there, so the token never appears in this host's process
-# arguments where `ps` could read it.
+# Both rewrites are configured from inside the container, expanding their
+# tokens there, so neither ever appears in this host's process arguments
+# where `ps` could read it.
 docker run --rm \
   --platform "$PLATFORM" \
   "${MOUNTS[@]}" \
@@ -332,6 +338,11 @@ docker run --rm \
       git config --global \
         url."https://oauth2:${AMSC_GIT_TOKEN}@gitlab.com/amsc2/".insteadOf \
         "https://gitlab.com/amsc2/"
+    fi
+    if [[ -n "${PALISADE_GITHUB_TOKEN:-}" ]]; then
+      git config --global \
+        url."https://x-access-token:${PALISADE_GITHUB_TOKEN}@github.com/herronej/palisade_siege_agentic_security.git".insteadOf \
+        "https://github.com/herronej/palisade_siege_agentic_security.git"
     fi
     exec "$@"
   ' bash /build/scripts/build_local_package.sh "${ARGS[@]}"
