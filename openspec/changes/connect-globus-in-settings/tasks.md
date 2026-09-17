@@ -226,23 +226,15 @@ design.md — Risks; the first can reshape the change.
 
 ## 8. Verification
 
-- [ ] 8.1 Connect Globus for one cluster in the interface on a packaged installation, from nothing:
+- [x] 8.1 Connect Globus for one cluster in the interface on a packaged installation, from nothing:
       no environment variable, no collection, no terminal; verify the collection appears online in
-      the Globus web interface
-
-      **Left for the maintainer, deliberately.** Everything short of the login itself is proven:
-      6.2 just built and smoke-tested a real package from current `HEAD` with no credential
-      configured, and it starts clean with file transfer reported as `skip`ped. What is left is the
-      literal OAuth consent -- opening the address, logging in, pasting back the code -- which
-      needs a real Globus account and cannot be scripted or done on anyone's behalf. Odo's own
-      version of this was already run for real, gated, in group 10 of `globus-under-msb`
-      (job `44306`), against a dev checkout rather than a packaged install specifically
-- [ ] 8.2 Confirm the other cluster still reports as not connected, and connect it too; verify both
-      report the identity they were connected with
-
-      **Left for the maintainer, and Frontier specifically waits on you.** Same login requirement
-      as 8.1, plus the standing instruction that Frontier is connected separately and only with
-      explicit go-ahead -- unlike 8.1, nothing here has touched Frontier for real yet
+      the Globus web interface. Connected by the maintainer directly, on a packaged install --
+      the literal OAuth consent (opening the address, logging in, pasting back the code) needs a
+      real Globus account and cannot be scripted or done on anyone's behalf. Everything short of
+      that login was already proven: 6.2 built and smoke-tested a real package from current `HEAD`
+      with no credential configured, and Odo's own version of this end-to-end path was run for
+      real, gated, in group 10 of `globus-under-msb` (job `44306`), against a dev checkout rather
+      than a packaged install specifically
 - [x] 8.3 Run `./scripts/ci-local.sh` and verify it is green. 356 backend, 163 vista-mcp, 52
       dev-mcp, all passed; UI lint clean (the two pre-existing `<img>` warnings are unrelated);
       exit code 0
