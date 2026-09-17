@@ -173,9 +173,38 @@ vista-mcp:lint:
 
 vista-mcp:test:
   stage: test
-  <<: [*python-image, *cache-uv-vista-mcp]
+  <<: *python-image
+  # Also caches dev_mcp_server's own venv, spelled out here rather than by
+  # merging *cache-uv-dev-mcp too: a `<<:` merge only keeps the first `cache:`
+  # key when two merged anchors each define one, so the second would be
+  # silently dropped instead of adding a second cache entry. And each of
+  # *cache-uv-vista-mcp's and *cache-uv-dev-mcp's own value is itself a
+  # `{cache: {key, paths}}` map (one cache entry, not a list item's own
+  # `key`/`paths`), so merging either directly into a list item here would
+  # nest one level too deep instead of producing a `{key, paths}` entry.
+  cache:
+    - key:
+        prefix: uv-vista-mcp
+        files:
+          - mcp_servers/vista_mcp_server/uv.lock
+      paths:
+        - .uv-cache/
+        - mcp_servers/vista_mcp_server/.venv/
+    - key:
+        prefix: uv-dev-mcp
+        files:
+          - mcp_servers/dev_mcp_server/uv.lock
+      paths:
+        - .uv-cache/
+        - mcp_servers/dev_mcp_server/.venv/
   # Required job — must NOT set allow_failure.
   script:
+    # dev_mcp_server is a sibling MCP server, not a dependency: its own venv
+    # is where msb_path() finds the microsandbox binary this package does not
+    # bundle a second copy of. A real checkout or packaged install always has
+    # both venvs side by side; this job only ever set up its own, so
+    # test_gcp_vm.py::TestMsbDiscovery found nothing and failed reliably here.
+    - (cd mcp_servers/dev_mcp_server && uv sync --frozen)
     - cd mcp_servers/vista_mcp_server
     # Install without the private `hpc` extra (amscrot-py). CI job tokens cannot
     # access amsc-isro-toolkit; hermetic tests use FakeIriClient / dry-run.
