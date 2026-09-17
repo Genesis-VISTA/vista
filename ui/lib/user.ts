@@ -31,6 +31,15 @@ export type UserPublicWithConfig = UserPublic & {
   nersc_remote_dir: string | null;
   s3m_token: string | null;
   nersc_iri_token: string | null;
+  /**
+   * File-transfer credentials, read only to tell whether a cluster is
+   * connected. They are deliberately absent from `UserSelfUpdate`: a Globus
+   * credential arrives from an authorization, not from something typed into
+   * the form, so there is nothing here for the save diff to carry.
+   */
+  globus_token: string | null;
+  odo_globus_token: string | null;
+  frontier_globus_token: string | null;
 };
 
 /**
@@ -181,6 +190,64 @@ export async function updateCurrentUser(
   userError = null;
   notifyUser();
   return updated;
+}
+
+/**
+ * The OLCF enclaves VISTA transfers files to. Each is authorized on its own:
+ * they sit behind different identity providers, and a researcher may have an
+ * account on one and not the other.
+ */
+export type GlobusCluster = "odo" | "frontier";
+
+/** Which field on the user holds a cluster's credential. */
+export const GLOBUS_TOKEN_FIELD: Record<GlobusCluster, keyof UserPublicWithConfig> = {
+  odo: "odo_globus_token",
+  frontier: "frontier_globus_token",
+};
+
+/** Backend `GlobusLoginStarted`. */
+export type GlobusLoginStarted = {
+  authorize_url: string;
+};
+
+/** Backend `GlobusConnected`. */
+export type GlobusConnected = {
+  cluster: GlobusCluster;
+  identity: string;
+};
+
+/**
+ * Begin an authorization and get the address to send the researcher to.
+ *
+ * Starting again abandons any address already outstanding for this cluster,
+ * so only the most recent one will produce a code the backend accepts.
+ */
+export async function startGlobusLogin(
+  cluster: GlobusCluster,
+): Promise<GlobusLoginStarted> {
+  const res = await fetch(`/api/users/me/globus/${cluster}/login`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return (await res.json()) as GlobusLoginStarted;
+}
+
+/**
+ * Hand over the code the researcher pasted. On success the credential is
+ * stored server-side and the reply names the Globus account it belongs to.
+ */
+export async function completeGlobusLogin(
+  cluster: GlobusCluster,
+  code: string,
+): Promise<GlobusConnected> {
+  const res = await fetch(`/api/users/me/globus/${cluster}/code`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return (await res.json()) as GlobusConnected;
 }
 
 /**

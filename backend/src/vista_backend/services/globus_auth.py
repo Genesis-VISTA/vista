@@ -63,7 +63,10 @@ TOKEN_FIELDS: dict[Cluster, str] = {
 
 PENDING_TTL_SECONDS = 15 * 60
 """How long an address stays exchangeable. Long enough to log in unhurried,
-short enough that an abandoned flow does not sit in memory for a day."""
+short enough that an abandoned flow does not sit in memory for a day.
+
+It is also what bounds a flow that keeps being handed bad codes, since a
+refusal on its own does not end one -- see `complete_login`."""
 
 
 @dataclass(frozen=True)
@@ -152,14 +155,19 @@ def complete_login(user_id: uuid.UUID, cluster: Cluster, code: str) -> Connectio
     try:
         response = client.oauth2_exchange_code_for_tokens(code)
     except GlobusAPIError as error:
+        # The flow deliberately stays pending. The usual reason a code is
+        # refused is that it was half-copied, and the same address with the
+        # whole code still works -- so taking the flow away here would turn a
+        # typo into a repeat of the entire login. Expiry still bounds it.
         raise _readable(error) from error
     except globus_sdk.GlobusError as error:
         # A malformed code never reaches Globus; the SDK rejects it first.
         raise HTTPException(400, f"That code was not accepted: {error}") from error
-    finally:
-        # One code, one attempt. A spent or rejected code will not work twice,
-        # so leaving the flow pending only invites a second identical failure.
-        _pending.pop((user_id, cluster), None)
+
+    # Accepted, so the code is spent and the flow it belonged to is finished
+    # with -- including on the failures below, which are about what came back
+    # rather than about the exchange.
+    _pending.pop((user_id, cluster), None)
 
     transfer = _token_for(response.data, TRANSFER_RESOURCE_SERVER)
     refresh_token = transfer.get("refresh_token")

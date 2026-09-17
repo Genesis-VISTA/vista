@@ -89,15 +89,39 @@ design.md — Risks; the first can reshape the change.
 
 ## 4. Connect Globus in the settings interface
 
-- [ ] 4.1 Add a Connect Globus control per cluster to `UserSettingsModal.tsx`, showing the
+- [x] 4.1 Add a Connect Globus control per cluster to `UserSettingsModal.tsx`, showing the
       authorization address as something selectable and openable and a box for the code; verify it
-      reports connected, not connected, and in-progress distinctly
-- [ ] 4.2 Keep it out of the modal's save-diff path, since it is an exchange rather than a value to
-      save; verify that saving other fields neither starts nor cancels a pending connection
-- [ ] 4.3 Show which identity a connection was made with, so a researcher can tell the two enclaves
-      apart; verify the identity comes from the token response rather than from what was typed
-- [ ] 4.4 Report a failed exchange in place, keeping the address so the researcher can retry without
-      starting over; verify the message names the cause from task 3.4
+      reports connected, not connected, and in-progress distinctly. A `GlobusConnect` block per
+      cluster, plus two proxy routes under `ui/app/api/users/me/globus/[cluster]/`. Driven in a real
+      browser against a real backend: the three states render distinctly (`connected` / `absent` /
+      `pending`), the address Globus is actually handed carries
+      `session_required_single_domain=opensso.ccs.ornl.gov` for Odo, `code_challenge_method=S256`
+      with no verifier anywhere in the response, and `access_type=offline`. Connecting one cluster
+      leaves the other reading "Not connected"
+- [x] 4.2 Keep it out of the modal's save-diff path, since it is an exchange rather than a value to
+      save; verify that saving other fields neither starts nor cancels a pending connection. The
+      Globus fields are on `UserPublicWithConfig` and deliberately absent from the TypeScript
+      `UserSelfUpdate`, so the diff cannot carry one; editing the NERSC account and saving sent
+      exactly `{"nersc_account":"m9999"}`. Saving also closes the modal, which *would* have thrown
+      away an address the researcher was part-way through using, so the pending address is kept in
+      `sessionStorage` and restored on reopen -- verified by closing and reopening the modal with a
+      flow outstanding
+- [x] 4.3 Show which identity a connection was made with, so a researcher can tell the two enclaves
+      apart; verify the identity comes from the token response rather than from what was typed. The
+      display reads `GlobusConnected.identity`, which `complete_login` takes from the signed
+      `id_token`; nothing typed reaches it. **Limited to the session that made the connection**:
+      no column stores the identity, so reopening the modal later reports "Connected" without
+      naming the account. Persisting it means two more nullable columns and a decision about
+      keeping them out of `UserSelfUpdate`, which is its own change rather than a silent addition
+      here
+- [x] 4.4 Report a failed exchange in place, keeping the address so the researcher can retry without
+      starting over; verify the message names the cause from task 3.4. Verified against real Globus
+      with a deliberately wrong code, which is also the first live confirmation of the `.text` fix
+      from 3.4 -- the stale-code wording appeared rather than a bare HTTP status. **That test found
+      a real bug in 3.2**: `complete_login` dropped the pending flow in a `finally`, so a
+      half-copied code cost the researcher the entire Globus login. The flow now survives a
+      refusal and is spent only on success, bounded by the same expiry; two wrong codes in a row
+      on one address both reached Globus, where the second previously reported "expired"
 
 ## 5. The endpoint's new owner
 

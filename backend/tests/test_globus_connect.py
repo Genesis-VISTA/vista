@@ -289,10 +289,12 @@ class TestGlobusRefusals:
             globus_auth.complete_login(alice, "odo", "x")
         assert "Start it again" in refusal.value.detail
 
-    def test_a_failed_exchange_does_not_leave_the_flow_pending(
-        self, alice, monkeypatch
-    ):
+    def test_a_rejected_code_leaves_the_address_usable(self, alice, monkeypatch):
+        """A refused code is usually a half-copied one, so the flow survives and
+        the researcher can paste the whole code into the address still on
+        screen. Dropping it here would make a typo cost an entire login."""
         globus_auth.start_login(alice, "odo")
+        verifier = globus_auth._pending[(alice, "odo")].verifier
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -300,5 +302,15 @@ class TestGlobusRefusals:
         )
 
         with pytest.raises(HTTPException):
-            globus_auth.complete_login(alice, "odo", "stale")
+            globus_auth.complete_login(alice, "odo", "half-a-cod")
+
+        assert globus_auth._pending[(alice, "odo")].verifier == verifier
+
+        # And the retry with the whole code goes through on that same flow.
+        monkeypatch.setattr(
+            globus_auth.globus_sdk.NativeAppAuthClient,
+            "oauth2_exchange_code_for_tokens",
+            lambda self, code: FakeResponse(transfer_tokens()),
+        )
+        assert globus_auth.complete_login(alice, "odo", "half-a-code").refresh_token
         assert (alice, "odo") not in globus_auth._pending
