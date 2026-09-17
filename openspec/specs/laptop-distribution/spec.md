@@ -160,6 +160,11 @@ interface. For a cluster whose file operations require a transfer endpoint local
 researcher's machine, the artifact SHALL carry what that endpoint needs, so the researcher
 installs nothing to submit jobs there.
 
+Where a credential cannot simply be typed in because it must first be issued by an external
+service, the artifact SHALL carry the means to obtain it. A credential the researcher can
+only acquire from a source checkout SHALL NOT be a condition of any capability the artifact
+offers.
+
 #### Scenario: Submitting to a supported cluster
 
 - **WHEN** a researcher enters their cluster account, remote directory, and access token in
@@ -173,6 +178,13 @@ installs nothing to submit jobs there.
   brokered between two transfer endpoints, one of which must be their own machine
 - **THEN** submission, status polling, and output retrieval work with no transfer software
   installed by the researcher
+
+#### Scenario: A credential that must be issued rather than typed
+
+- **WHEN** a capability depends on a credential that an external service issues after the
+  researcher authorizes VISTA
+- **THEN** the artifact guides the researcher through obtaining it, and no step requires a
+  source checkout, a development tool, or a file the artifact does not contain
 
 ### Requirement: Building for another platform
 
