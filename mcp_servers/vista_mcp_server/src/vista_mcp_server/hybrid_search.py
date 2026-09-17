@@ -1,6 +1,6 @@
 """
 Hybrid (vector + BM25) retrieval merge logic for the
-VISTAGuard G3 defense (Semantic Chameleon arXiv 2603.18034).
+PALISADE G3 defense (Semantic Chameleon arXiv 2603.18034).
 
 ## What this module does
 

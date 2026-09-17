@@ -1,5 +1,5 @@
 """
-Vendored BM25Okapi for the VISTAGuard hybrid-retrieval defense
+Vendored BM25Okapi for the PALISADE hybrid-retrieval defense
 (Semantic Chameleon arXiv 2603.18034).
 
 ## Why vendored
@@ -12,13 +12,13 @@ needs. We vendor a clean implementation here so:
   -- a future BM25 implementation switch doesn't break stored
   indices.
 - The tokenizer and the IDF computation are pinned to a single
-  agreed version, so VISTAGuard's hybrid-retrieval defense
+  agreed version, so PALISADE's hybrid-retrieval defense
   doesn't silently shift its detection profile across MCP-server
   releases.
 - The MCP server's startup cost is one fewer import and one
   fewer dep to audit.
 
-## What BM25 does for VISTAGuard
+## What BM25 does for PALISADE
 
 The Semantic Chameleon defense observation: gradient-guided
 embedding-poisoning attacks (PoisonedRAG, AgentPoison) optimize

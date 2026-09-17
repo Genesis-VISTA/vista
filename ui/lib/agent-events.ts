@@ -153,7 +153,7 @@ export type McpToolApprovalEvent = {
   message: string;
   args?: Record<string, unknown> | null;
   /**
-   * VISTAGuard gate decision metadata (e.g. G5's fast-tier summary:
+   * PALISADE gate decision metadata (e.g. G5's fast-tier summary:
    * resolved SLURM script, account verified, resource ceiling passed,
    * no denylist match). Loose by design — the modal renders what's set.
    */

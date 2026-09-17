@@ -7,7 +7,7 @@ run loop, gates, RAG/HPC stages) are 1-5 lines each. Probes emit raw JSONL
 events sharing correlation ids (`run_id`, `session_id`); statistics are
 computed offline by `scripts/metrics_report.py`.
 
-Design contract (mirrors `VistaGuardSidecar`): **off by default, zero
+Design contract (mirrors `PalisadeSidecar`): **off by default, zero
 hot-path cost when off**. With `VISTA_BACKEND_METRICS__LEVEL=off` every
 probe short-circuits before building any payload and the agent behavior is
 byte-identical to an uninstrumented build.
@@ -100,7 +100,7 @@ class MetricsSettings(BaseModel):
     round-trips, sandbox exec (M3). Minimum level `perf`."""
 
     gate_timing: TriState = "inherit"
-    """Per-gate `duration_ms` on VISTAGuard `gate_decision` provenance
+    """Per-gate `duration_ms` on PALISADE `gate_decision` provenance
     events (M4). Minimum level `perf`."""
 
     agent_run: TriState = "inherit"
@@ -217,7 +217,7 @@ def needs(min_level: MetricsLevel, override: str | None = None):
     Declare a probe's minimum level (and optional tri-state override field)
     so level semantics live in one place. The wrapped recorder method
     short-circuits to None when inactive — same contract as
-    `VistaGuardSidecar` with the master flag off.
+    `PalisadeSidecar` with the master flag off.
     """
 
     def decorator(fn):

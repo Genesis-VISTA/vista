@@ -30,6 +30,15 @@ variables:
   RUFF_VERSION: "0.15.7"
   PYRIGHT_VERSION: "1.1.411"
   BANDIT_VERSION: "1.9.4"
+  # The PALISADE sidecar is a git dependency of the backend, living in a private
+  # GitHub repository until its license clears review. Jobs that install the
+  # backend read it with PALISADE_GITHUB_TOKEN, a read-only fine-grained PAT
+  # scoped to that one repository, set under Settings > CI/CD > Variables.
+  #
+  # Mark it masked but NOT protected: this branch is unprotected, and a
+  # protected variable is simply absent here -- which would look exactly like a
+  # bad token. Held host-relative so the rewrite below need not repeat the URL.
+  PALISADE_REPO: "github.com/herronej/palisade_siege_agentic_security.git"
 
 # ─── Python image ───────────────────────────────────────────────────────────
 #
@@ -99,8 +108,18 @@ backend:typecheck:
   stage: lint
   <<: [*python-image, *cache-uv-backend]
   before_script:
-    # pyright's bundled Node.js binary requires libatomic, absent in bookworm-slim
-    - apt-get update -qq && apt-get install -y --no-install-recommends libatomic1
+    # libatomic: pyright's bundled Node.js binary needs it, absent in bookworm-slim
+    # git: uv shells out to it to fetch the PALISADE sidecar at its release tag.
+    #   The runner's own clone happens in the GitLab helper image, so nothing
+    #   needed git *inside* the job image until the backend gained a git source.
+    - apt-get update -qq && apt-get install -y --no-install-recommends libatomic1 git
+    # Fail with the actual cause: without this, a missing token surfaces as
+    # `could not read Username for 'https://github.com'`, which reads like a
+    # broken URL rather than an unset variable.
+    - test -n "${PALISADE_GITHUB_TOKEN:-}" || { echo "PALISADE_GITHUB_TOKEN is unset -- add it under Settings > CI/CD > Variables (masked, NOT protected)"; exit 1; }
+    # Read the private sidecar. Rewriting only PALISADE's own URL, not all of
+    # github.com, keeps the token off every other fetch.
+    - git config --global url."https://x-access-token:${PALISADE_GITHUB_TOKEN}@${PALISADE_REPO}".insteadOf "https://${PALISADE_REPO}"
   script:
     - cd backend
     # Install project deps so pyright can resolve imports
@@ -123,6 +142,12 @@ backend:security:
 backend:test:
   stage: test
   <<: [*python-image, *cache-uv-backend]
+  before_script:
+    # uv shells out to git to fetch the PALISADE sidecar at its release tag, and
+    # bookworm-slim ships no git. See backend:typecheck for the full note.
+    - apt-get update -qq && apt-get install -y --no-install-recommends git
+    - test -n "${PALISADE_GITHUB_TOKEN:-}" || { echo "PALISADE_GITHUB_TOKEN is unset -- add it under Settings > CI/CD > Variables (masked, NOT protected)"; exit 1; }
+    - git config --global url."https://x-access-token:${PALISADE_GITHUB_TOKEN}@${PALISADE_REPO}".insteadOf "https://${PALISADE_REPO}"
   script:
     - cd backend
     - uv sync --frozen --dev

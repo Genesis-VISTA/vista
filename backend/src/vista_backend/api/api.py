@@ -17,7 +17,7 @@ from ..agents.campaign.wiring import build_default_monitor
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_sessions import router as chat_sessions_router
-from .vistaguard import router as vistaguard_router
+from .palisade import router as palisade_router
 from ..services.project_agent import project_agent_pool
 from ..services.auth import get_user
 from .mcp import router as mcp_router
@@ -100,11 +100,11 @@ app.include_router(skills_router)
 app.include_router(files_router)
 app.include_router(users_router)
 
-# VISTAGuard trust-state + re-auth endpoints: mounted only when the master
+# PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when
-# VISTAGuard is disabled.
-if settings.vistaguard.enabled:
-    app.include_router(vistaguard_router)
+# PALISADE is disabled.
+if settings.palisade.enabled:
+    app.include_router(palisade_router)
 
 
 def main() -> None:

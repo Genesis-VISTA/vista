@@ -4,7 +4,7 @@ Conversational campaign driver — the campaign tools the planner LLM calls.
 `register_campaign_tools(agent, deps)` attaches the campaign lifecycle tools to any PydanticAI
 agent (the production ProjectAgent in campaign mode, or a test agent). The tools call the
 campaign service + `CampaignPlanner` via the injected `deps`, so the driver is decoupled from
-ProjectAgent's MCP/VISTAGuard plumbing and unit-testable with a `FunctionModel`. The planner
+ProjectAgent's MCP/PALISADE plumbing and unit-testable with a `FunctionModel`. The planner
 skill (the campaign playbook) tells the LLM when and how to call these.
 
 HITL is hybrid: structured intake (salt/ranges/platform/targets/budget) is captured into the

@@ -25,7 +25,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UsageLimitExceeded
 
 from ..metrics import get_recorder, run_context
-from ..vistaguard.capabilities import VistaGuardDeny
+from palisade.capabilities import PalisadeDeny
 
 
 class EvalMetricsCapability(AbstractCapability):
@@ -71,7 +71,7 @@ class EvalMetricsCapability(AbstractCapability):
                 result = await handler()
                 stop_reason = "completed"
                 return result
-            except VistaGuardDeny:
+            except PalisadeDeny:
                 stop_reason = "guard_denied"
                 raise
             except UsageLimitExceeded:
