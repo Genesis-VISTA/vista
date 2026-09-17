@@ -54,23 +54,38 @@ design.md — Risks; the first can reshape the change.
 
 ## 3. The authorization flow
 
-- [ ] 3.1 Add a backend service that starts the flow: build the native-app client, generate a PKCE
+- [x] 3.1 Add a backend service that starts the flow: build the native-app client, generate a PKCE
       verifier, and return the authorization address with the cluster's SSO domain pinned, asking
       for the same scopes `get_globus_token.py` does and no more, since 1.2 showed those suffice to
       create the collection; verify by unit test that each cluster gets its own
-      `session_required_single_domain` and that the verifier is never in the response
-- [ ] 3.2 Hold the verifier server-side, keyed to the user, with an expiry; verify by unit test that
+      `session_required_single_domain` and that the verifier is never in the response.
+      `services/globus_auth.py`. The address also carries only the challenge, `access_type=offline`
+      so the credential outlives the hour, and the same client id the script uses so a researcher
+      who has consented once is not asked again
+- [x] 3.2 Hold the verifier server-side, keyed to the user, with an expiry; verify by unit test that
       a code exchanged after expiry is refused with a message telling the researcher to start again,
-      and that one user's pending flow is not reachable by another
-- [ ] 3.3 Add the completing call: exchange the code, keep the Transfer refresh token, store it on
+      and that one user's pending flow is not reachable by another. Fifteen minutes, keyed by
+      researcher and cluster. Starting again replaces a pending flow rather than leaving two live
+      addresses whose only difference is a verifier, and a spent flow is dropped whether the
+      exchange succeeded or failed. In memory, which ties it to one backend process; recorded in
+      the module, since the cost of being wrong is a repeated login rather than a lost credential
+- [x] 3.3 Add the completing call: exchange the code, keep the Transfer refresh token, store it on
       the user's per-cluster field; verify by unit test against a faked token response that the
-      stored value is the refresh token and not the access token
-- [ ] 3.4 Translate the failures Globus returns into statements a researcher can act on — a code
+      stored value is the refresh token and not the access token. `POST /users/me/globus/{cluster}/
+      login` and `.../code`. The response also names the identity Globus signed, read from the
+      id_token rather than from anything typed, so a researcher authorizing both enclaves can see
+      where each landed
+- [x] 3.4 Translate the failures Globus returns into statements a researcher can act on — a code
       pasted from a stale authorize URL is the common one, and `get_globus_token.py:322-340` already
       words it; verify by unit test that a PKCE mismatch names the recovery rather than surfacing
-      the API error
-- [ ] 3.5 Add `globus_sdk` to the backend's dependencies; verify `uv sync` resolves and the backend
-      still starts
+      the API error. Writing the test found the detection reading `raw_text`, which is the
+      globus_sdk 3.x spelling 4.x dropped: `str(error)` is a tuple of request metadata carrying no
+      reason at all, so the stale-code branch could never have fired. It reads the response body
+      now. **`scripts/get_globus_token.py:322` has the same latent bug**, unfixed here because that
+      script pins its own dependencies
+- [x] 3.5 Add `globus_sdk` to the backend's dependencies; verify `uv sync` resolves and the backend
+      still starts. globus-sdk 4.9.0 installed, both routes registered on the app and present in the
+      OpenAPI schema
 
 ## 4. Connect Globus in the settings interface
 
