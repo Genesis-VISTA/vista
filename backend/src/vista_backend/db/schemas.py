@@ -399,6 +399,8 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "s3m_token",
     "nersc_iri_token",
     "globus_token",
+    "odo_globus_token",
+    "frontier_globus_token",
 )
 
 
@@ -420,6 +422,8 @@ class UserCreate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -440,6 +444,8 @@ class UserUpdate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -459,6 +465,8 @@ class UserSelfUpdate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -489,6 +497,8 @@ class UserPublicWithConfig(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
 
 
 class UserTable(SQLModel, table=True):
@@ -553,14 +563,25 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    Globus Transfer refresh token, used for Frontier file ops via the OLCF
-    DTN collection. Long-lived; the MCP server mints short-lived access
-    tokens from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
-    Encrypted at rest.
-    Obtain with: python OLCF-Globus-Transfer/get_olcf_token.py --force-login
-                       --session-domain sso.ccs.ornl.gov
-    Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
+    Globus Transfer refresh token used for OLCF file ops when no cluster-specific
+    one is set. Long-lived; the MCP server mints short-lived access tokens from
+    it on each submission via `globus_sdk.RefreshTokenAuthorizer`. Encrypted at
+    rest.
     """
+    odo_globus_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Odo's Globus Transfer refresh token. Encrypted at rest. Separate from
+    Frontier's because the two enclaves authenticate against different SSO
+    domains -- opensso.ccs.ornl.gov and sso.ccs.ornl.gov -- and can be
+    different identities, so one token cannot be assumed to authorize the
+    other's transfers.
+    """
+    frontier_globus_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ Frontier's Globus Transfer refresh token. Encrypted at rest. """
 
 
 # ---------------------------------------------------------------------------

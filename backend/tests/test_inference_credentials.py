@@ -269,21 +269,30 @@ async def test_clearing_the_key_writes_null_not_empty_string(session, alice):
 
 
 # ---------------------------------------------------------------------------
-# The removed field
+# The field that nothing read
 # ---------------------------------------------------------------------------
 
 
-def test_globus_token_is_gone_from_the_settings_ui():
+def test_the_globus_credential_is_read_by_something():
     """
-    2.6: nothing reads `globus_token` (`vista_mcp_server/lib/user_config.py`
-    lists the six fields the MCP server sees, and it is not among them), so the
-    field must not be offered. The column stays, to keep this change off the
-    backend schema.
+    Inverted, and for the same reason it was written. It asserted that
+    `globus_token` must not be offered because nothing read it -- a field whose
+    value no component consumes is a field that discards it.
+
+    The MCP server now declares all three Globus fields and resolves a
+    transfer's credential through them, so the reason no longer holds and the
+    credential can be offered. What the interface offers is an authorization
+    rather than a box to type a token into, which is why this asserts the
+    reading side; the interface side is asserted where that control is built.
     """
-    ui = Path(__file__).resolve().parents[2] / "ui"
-    for name in ("components/UserSettingsModal.tsx", "lib/user.ts"):
-        assert "globus_token" not in (ui / name).read_text(), name
-        assert "globusToken" not in (ui / name).read_text(), name
+    user_config = (
+        Path(__file__).resolve().parents[2]
+        / "mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/user_config.py"
+    ).read_text()
+
+    for field in ("odo_globus_token", "frontier_globus_token", "globus_token"):
+        assert field in user_config, field
+    assert "def require_globus_token" in user_config
 
 
 # ---------------------------------------------------------------------------

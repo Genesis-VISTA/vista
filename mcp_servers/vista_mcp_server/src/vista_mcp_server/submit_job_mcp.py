@@ -410,7 +410,7 @@ async def _submit_odo_job(
 
     await _require_olcf_access(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
-    globus = create_globus_client(refresh_token=settings.require_globus_token("odo"))
+    globus = create_globus_client(refresh_token=cfg.require_globus_token("odo"))
     base = settings.odo_remote_dir.rstrip('/')
     # No session prefix: job ids are unique, and the out dir must be the
     # pre-created group-writable one — a fresh per-session dir would have to be
@@ -718,7 +718,7 @@ async def _submit_frontier_job(
 
     await _require_olcf_access(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
-    globus = create_globus_client(refresh_token=settings.require_globus_token("frontier"))
+    globus = create_globus_client(refresh_token=cfg.require_globus_token("frontier"))
     base = settings.frontier_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
@@ -1073,7 +1073,7 @@ async def _get_olcf_job_status(
     )
     if log_age >= _LOG_CACHE_TTL_S:
         try:
-            globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
+            globus = create_globus_client(refresh_token=cfg.require_globus_token(cluster))
             await globus.transfer_and_wait(
                 src_endpoint=remote_collection,
                 dst_endpoint=settings.vista_globus_collection_id,
@@ -1105,7 +1105,7 @@ async def _get_olcf_job_status(
     if submitted.output_dir:
         excludes = (".venv", "__pycache__")
         try:
-            ls_globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
+            ls_globus = create_globus_client(refresh_token=cfg.require_globus_token(cluster))
             entries = await ls_globus.operation_ls(
                 endpoint=remote_collection,
                 path=submitted.output_dir,
@@ -1267,7 +1267,7 @@ async def _get_olcf_job_outputs(
         items.append((remote_path, str(local_path), False))
 
     if items:
-        globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
+        globus = create_globus_client(refresh_token=cfg.require_globus_token(cluster))
         await globus.transfer_and_wait(
             src_endpoint=_olcf_collection_id(cluster),
             dst_endpoint=settings.vista_globus_collection_id,

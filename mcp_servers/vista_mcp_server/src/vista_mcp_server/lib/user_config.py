@@ -9,6 +9,8 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
+from ..config import settings
+
 
 class UserConfig(BaseModel):
     odo_s3m_token: str | None = None
@@ -17,6 +19,9 @@ class UserConfig(BaseModel):
     nersc_iri_token: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
+    globus_token: str | None = None
 
     def require_s3m_token(self, cluster: Literal["odo", "frontier"]) -> str:
         token = self.odo_s3m_token if cluster == "odo" else self.frontier_s3m_token
@@ -27,6 +32,24 @@ class UserConfig(BaseModel):
                 f"No S3M token configured for {cluster!r}. Add a {cluster} S3M token in the "
                 "Vista user settings page before submitting jobs."
             )
+        return token
+
+    def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
+        """The Globus Transfer refresh token authorizing this cluster's file ops.
+
+        Three sources, in order: the researcher's own token for this cluster,
+        their shared one, then the deployment's environment variable. The
+        deployment coming last is what lets a researcher on a shared server use
+        their own identity, and the deployment coming at all is what leaves that
+        server working for everyone who has not connected one -- which matters
+        because Odo's permissions model assumes a single shared identity.
+        """
+        token = self.odo_globus_token if cluster == "odo" else self.frontier_globus_token
+        if not token:
+            token = self.globus_token
+        if not token:
+            # Raises a ToolError naming where to connect when there is none.
+            return settings.require_globus_token(cluster)
         return token
 
     def require_nersc_iri_token(self) -> str:

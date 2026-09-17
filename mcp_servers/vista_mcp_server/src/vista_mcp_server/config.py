@@ -234,13 +234,25 @@ class AppSettings(BaseSettings):
         return collection
 
     def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
-        """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """
+        """The deployment's Globus refresh token for a cluster.
+
+        The last of the three sources `UserConfig.require_globus_token` tries,
+        and the only one a hosted deployment has ever had. The message names
+        connecting in the interface rather than the environment variable,
+        because a researcher who reaches this has no way to set one: on a
+        packaged installation there is no `.env` to edit and no shell that
+        outlives the launch.
+        """
         if cluster == "odo":
             token = self.odo_globus_refresh_token
         else:
             token = self.frontier_globus_refresh_token
         if not token:
-            raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
+            raise ToolError(
+                f"Globus file transfer is not connected for {cluster.title()}. "
+                "Connect it in the VISTA user settings, which asks Globus to "
+                "authorize this installation."
+            )
         return token
 
     embed_device: A[str | None, Field(validation_alias="VISTA_EMBED_DEVICE")] = None

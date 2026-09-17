@@ -19,18 +19,30 @@ design.md — Risks; the first can reshape the change.
 
 ## 2. The credential, end to end, with no interface yet
 
-- [ ] 2.1 Add `odo_globus_token` and `frontier_globus_token` to the user schemas and
+- [x] 2.1 Add `odo_globus_token` and `frontier_globus_token` to the user schemas and
       `_USER_CONFIG_NULLABLE_FIELDS`, keeping `globus_token` as the shared fallback; verify
-      `_add_missing_columns` adds them to an existing database at startup with no migration
-- [ ] 2.2 Declare all three on `UserConfig` and add `require_globus_token(cluster)` preferring the
+      `_add_missing_columns` adds them to an existing database at startup with no migration.
+      Encrypted columns, in all four schema variants and the table, so they reach the MCP server
+      in the metadata blob without any change to how that blob is built -- checked by dumping
+      `UserPublicWithConfig` and seeing all three fields on the wire
+- [x] 2.2 Declare all three on `UserConfig` and add `require_globus_token(cluster)` preferring the
       user's over the deployment's, mirroring `require_s3m_token`; verify by unit test that a
       user token wins, that the shared field is the second choice, that the deployment variable is
-      the third, and that the error names where to connect when there is none
-- [ ] 2.3 Resolve the token through the user's configuration at the five `submit_job_mcp.py` call
+      the third, and that the error names where to connect when there is none.
+      `test_globus_token_resolution.py`, nine tests. `Settings.require_globus_token` stays as the
+      last source and its message stopped naming the environment variable, which a packaged
+      researcher has no way to set
+- [x] 2.3 Resolve the token through the user's configuration at the five `submit_job_mcp.py` call
       sites that currently read `settings` alone; verify the existing hermetic tests still pass and
-      that no call site reads `settings.require_globus_token` directly
-- [ ] 2.4 Invert `backend/tests/test_inference_credentials.py:276-286`, whose docstring asserts the
-      Globus field must *not* be offered; verify it now asserts the opposite for the same reason
+      that no call site reads `settings.require_globus_token` directly. All five already had `cfg`
+      in scope; `settings.require_globus_token` no longer appears in the file
+- [x] 2.4 Invert `backend/tests/test_inference_credentials.py:276-286`, whose docstring asserts the
+      Globus field must *not* be offered; verify it now asserts the opposite for the same reason.
+      It asserted the field must not be offered *because nothing read it*; it now asserts the
+      reading side, which is what stopped being true. The interface side is left to group 4, where
+      the control exists -- what the interface will offer is an authorization, not a box to type a
+      token into, so inverting the UI assertion now would have asserted something this change never
+      builds
 
 ## 3. The authorization flow
 
