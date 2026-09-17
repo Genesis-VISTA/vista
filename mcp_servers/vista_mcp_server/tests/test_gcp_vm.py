@@ -152,26 +152,25 @@ class TestMounts:
         assert not any(source == str(repo_root.parent) for source in sources)
 
     def test_the_data_directory_is_writable(self, endpoint):
+        """Downloads and fetched logs land under it, so it carries no `:ro`."""
         assert f"{endpoint.data_dir}:{endpoint.data_dir}" in self.volumes(endpoint)
 
-    def test_the_jobs_directory_is_mounted_at_its_host_path(self, endpoint):
+    def test_the_jobs_directory_is_read_only(self, endpoint):
+        """The endpoint only ever reads job sources out of it. A boundary the
+        kernel enforces, inside the one `-restrict-paths` asks the endpoint to
+        respect. Asserted for real against a booted guest in
+        `test_gcp_vm_sandbox.py`, since argv alone cannot show what the runtime
+        does with it."""
         jobs = endpoint.hpc_jobs_dir
-        assert f"{jobs}:{jobs}" in self.volumes(endpoint)
-
-    def test_no_mount_carries_an_options_suffix(self, endpoint):
-        """microsandbox 0.5.7 mis-parses `source:destination:options`: it
-        appends the option's last character to the destination and mounts
-        read-write anyway, so `:ro` on the jobs directory would put it at
-        `…/hpc_jobso` and every upload would find nothing. Confinement is
-        `-restrict-paths`, asserted below."""
-        for volume in self.volumes(endpoint):
-            assert volume.count(":") == 1, volume
+        assert f"{jobs}:{jobs}:ro" in self.volumes(endpoint)
 
     def test_a_jobs_directory_inside_the_data_directory_is_not_mounted_twice(
         self, repo_root
     ):
         nested = Endpoint(repo_root / "data", repo_root / "data" / "hpc_jobs")
-        assert nested.mounts() == [nested.data_dir]
+        # Read-write, too: mounting it again read-only would take the outputs
+        # written under the data directory with it.
+        assert nested.mounts() == [gcp_vm.Mount(nested.data_dir, readonly=False)]
 
     def test_restrict_paths_confines_the_endpoint_inside_the_guest(self, endpoint):
         assert endpoint.restrict_paths == (

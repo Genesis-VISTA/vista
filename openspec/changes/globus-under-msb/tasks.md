@@ -45,9 +45,10 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 - [x] 3.4 Mount the data directory and the HPC jobs directory at matching host paths, and do not
       mount the repository root; verify by unit test that the argv contains no mount whose source
       is the repo root, and that every mount source equals its destination. The jobs directory is
-      *not* mounted read-only: microsandbox 0.5.7 mis-parses `src:dst:ro` into a read-write mount
-      at `dsto`, which would break every upload. `-restrict-paths` confines it, as it did under
-      the container, and a test asserts no volume carries an options suffix
+      mounted read-only. A probe during this change reported that microsandbox 0.5.7 mis-parses
+      `src:dst:ro`, and the option was dropped for a commit on that basis; re-probing the real
+      configuration against the guest's `/proc/mounts` showed it correct on three consecutive
+      runs, and `test_gcp_vm_sandbox.py` now asserts both the mount table and the refused write
 - [x] 3.5 Close stdin explicitly on every non-interactive `msb exec`; verify a non-interactive
       invocation returns rather than blocking, which it does when stdin is left open
 - [x] 3.6 Hold the `msb exec` running the endpoint for the session so microVM lifetime follows the
@@ -104,25 +105,38 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 6. Reporting and configuration
 
-- [ ] 6.1 Change `vista_globus_collection_id` at
+- [x] 6.1 Change `vista_globus_collection_id` at
       `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py:197` from
       `functools.cached_property` to a plain property; verify a collection created after the server
-      started is seen without a restart
-- [ ] 6.2 Reword the two tool errors at `submit_job_mcp.py:401` and `:722` so the remedy they name
+      started is seen without a restart. `test_globus_collection_id.py` reads the absence first and
+      then the collection written after it, which is the sequence the cache broke. Two existing
+      tests patched the instance attribute a `cached_property` allows and a plain property does
+      not; both now patch the class
+- [x] 6.2 Reword the two tool errors at `submit_job_mcp.py:401` and `:722` so the remedy they name
       exists in a packaged installation, which `./scripts/launch_globus.py` does not; verify the
-      message references nothing under `scripts/`
+      message references nothing under `scripts/`. Both call sites became
+      `settings.require_globus_collection(cluster)`, mirroring the `require_globus_token` beside
+      it, so the message exists once rather than as two copies that can drift. Tests assert the
+      absence of `scripts/` in the message from both the dispatchers and the helper
 
 ## 7. Tests
 
 - [x] 7.1 Add `test_gcp_vm.py` with `unit` tests driving a fake `msb`, covering the argv assertions
       in tasks 3.3 and 3.4 and an actionable message for a missing image or stopped VM; verify they
       pass under the hermetic filter `not live and not hpc and not sandbox`
-- [ ] 7.2 Add a `sandbox`-marked test that really boots the microVM and asserts the mounts are
+- [x] 7.2 Add a `sandbox`-marked test that really boots the microVM and asserts the mounts are
       visible at their host paths, the read-only mount refuses writes, and the repository root is
-      absent; verify it is excluded from the hermetic filter and passes when run deliberately
-- [ ] 7.3 Extend `scripts/smoke_test_package.sh` so that with no refresh token configured the
+      absent; verify it is excluded from the hermetic filter and passes when run deliberately.
+      `test_gcp_vm_sandbox.py`, seven tests, passing against a real microVM. Writing it is what
+      caught the mistake recorded in 3.4: the read-only mount works, and the probe that said
+      otherwise was wrong. It asserts the guest's `/proc/mounts`, not a behaviour, because a write
+      refused by a read-only mount and one refused by an absent mount look identical
+- [x] 7.3 Extend `scripts/smoke_test_package.sh` so that with no refresh token configured the
       launcher reports its Globus state and exits 0, using the existing `skip()` helper rather than
-      `ok` for anything that could not actually run
+      `ok` for anything that could not actually run. Both tokens are unset rather than assumed
+      absent, so a maintainer with them exported tests what the build tests. The endpoint itself is
+      `skip`ped, because with no token none is started. The grep was checked against the launcher's
+      real output
 
 ## 8. Documentation
 

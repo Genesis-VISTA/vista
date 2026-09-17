@@ -170,13 +170,16 @@ this defect stay invisible.
 
 - **Duplicated DNS helper can drift.** → A test in each package asserting the same behaviour.
 
-- **microsandbox 0.5.7 mis-parses a volume's options.** `-v src:dst:ro` mounts at `dst` with the
-  option's last character appended — `/x/hpc_jobs` arrives as `/x/hpc_jobso` — and read-write
-  regardless. Verified deterministic over five runs, and identical through `--mount-dir`. → No
-  mount options are passed at all, so both directories are mounted read-write and confinement is
-  `-restrict-paths`, which is also all the container this replaces relied on: it mounted every
-  directory read-write. A test asserts no volume argument carries an options suffix, so the
-  apparently obvious hardening is not added back before upstream fixes the parse.
+- **A volume-option defect that was reported during this change and does not exist.** A probe
+  concluded that microsandbox 0.5.7 mis-parses `src:dst:ro` into a read-write mount at `dsto`, and
+  the read-only mount was removed for a commit because of it. Re-probed in the configuration the
+  code actually uses — the data directory read-write, the jobs directory `:ro` — the guest's own
+  `/proc/mounts` shows `ro,relatime` at the correct path on three consecutive runs, `msb inspect`
+  agrees, and a write is refused with `Read-only file system`. The read-only mount stands. → The
+  lesson is the one the first probe failed: assert against the guest's mount table, never against
+  a behaviour two different causes produce. A write refused because a mount is read-only and a
+  write refused because the mount is absent are indistinguishable, and `test_gcp_vm_sandbox.py`
+  now checks the table.
 
 - **A failure mode that looks like the change's fault but is not.** microsandbox derives a Unix
   socket path from its store location and fails above 104 bytes. → The packaged launcher already

@@ -136,6 +136,28 @@ def msb_path() -> Path | None:
     return Path(on_path) if on_path else None
 
 
+@dataclass(frozen=True)
+class Mount:
+    """One host directory, visible in the guest at the same path."""
+
+    path: Path
+    readonly: bool = False
+
+    @property
+    def spec(self) -> str:
+        """The `msb --volume` argument.
+
+        Source and destination are the same path, because every absolute path
+        the MCP server hands a transfer is a host path and a destination that
+        differed would resolve to nothing inside.
+        """
+        return (
+            f"{self.path}:{self.path}:ro"
+            if self.readonly
+            else f"{self.path}:{self.path}"
+        )
+
+
 @dataclass
 class Endpoint:
     """One Globus Connect Personal endpoint, and everything needed to run it.
@@ -197,13 +219,8 @@ class Endpoint:
         """
         return f"r{self.hpc_jobs_dir}/,rw{self.volumes_dir}/"
 
-    def mounts(self) -> list[Path]:
-        """Host paths visible in the guest, mounted at their host paths.
-
-        The paths have to match, because every absolute path the MCP server
-        hands a transfer is a host path -- `submit_job_mcp.py` passes `str(f)`
-        and `str(local_log_path)` straight through -- so a mount whose
-        destination differs from its source resolves to nothing inside.
+    def mounts(self) -> list[Mount]:
+        """Host directories visible in the guest.
 
         The repository root is deliberately absent. The container this replaces
         mounted it only because the launch script re-executed itself inside;
@@ -211,20 +228,18 @@ class Endpoint:
         is what stops the endpoint being able to read `.env` and both deployment
         refresh tokens.
 
-        Both are mounted read-write, and no `:ro` is passed. microsandbox 0.5.7
-        mis-parses `source:destination:options`: it appends the option's last
-        character to the destination and mounts read-write regardless, so
-        `-v /x/hpc_jobs:/x/hpc_jobs:ro` arrives in the guest as `/x/hpc_jobso`
-        and every upload would find nothing there. Confinement is
-        `-restrict-paths`, which is also all the container relied on -- it
-        mounted every directory read-write.
+        The jobs directory is mounted read-only, because the endpoint only ever
+        reads job sources out of it -- uploads go up, outputs come back to
+        `volumes/`. That is a second boundary inside the one `-restrict-paths`
+        draws, and unlike `-restrict-paths` it is enforced by the kernel rather
+        than by the process being confined.
         """
-        mounts = [self.data_dir]
+        mounts = [Mount(self.data_dir)]
         # Normally siblings. A jobs directory configured inside the data
         # directory is already mounted, and mounting it again would be a mount
-        # over a mount.
+        # over a mount -- and read-only, which would take the outputs with it.
         if not self.hpc_jobs_dir.is_relative_to(self.data_dir):
-            mounts.append(self.hpc_jobs_dir)
+            mounts.append(Mount(self.hpc_jobs_dir, readonly=True))
         return mounts
 
     # ─── the commands, built where they can be asserted on ──────────────────
@@ -256,8 +271,8 @@ class Endpoint:
         ]
         for nameserver in nameservers:
             argv += ["--dns-nameserver", nameserver]
-        for path in self.mounts():
-            argv += ["--volume", f"{path}:{path}"]
+        for mount in self.mounts():
+            argv += ["--volume", mount.spec]
         return argv
 
     def exec_argv(self, msb: Path, command: Sequence[str], *, tty: bool) -> list[str]:
@@ -646,7 +661,6 @@ def _sandbox_status(msb: Path) -> str | None:
         return json.loads(result.stdout).get("status")
     except json.JSONDecodeError, AttributeError:
         return None
-
 
 
 # ─── command line ───────────────────────────────────────────────────────────

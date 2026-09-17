@@ -84,6 +84,12 @@ if [[ "$(uname -s)" == Linux && ! -e /dev/kvm ]]; then
   export VISTA_ALLOW_NO_KVM=1
   AGENT_PATH_TESTABLE=false
 fi
+# Globus file transfer is gated on a refresh token, and this test deliberately
+# configures none: what is being checked is that the launcher says so and starts
+# everything else anyway. Unset rather than assumed absent, so a maintainer with
+# tokens exported in their own shell tests the same thing the build does.
+unset VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
+
 export VISTA_UI_PORT="$UI_PORT"
 export VISTA_MCP_PORT="$MCP_PORT"
 export VISTA_BACKEND_PORT="$BACKEND_PORT"
@@ -157,6 +163,21 @@ else
   skip "retrieval returns passages" \
     "no /dev/kvm here, so every agent tool call fails; verify on a KVM host"
 fi
+
+# With no refresh token configured, the launcher has to report the state rather
+# than start an endpoint or fail. Reaching the address line above already proves
+# it started everything else and did not die; this is about what it said.
+globus_state_is_reported() {
+  grep -q "file transfer for .* is unavailable" "$LOGS/launcher.log" \
+    && grep -q "no Globus refresh token is configured" "$LOGS/launcher.log"
+}
+check "launcher reports its Globus state" globus_state_is_reported
+
+# The endpoint itself is never exercised here, and saying "ok" for a check that
+# could not run is exactly what `skip` exists to prevent: with no token there is
+# no collection, so nothing was started, mounted or transferred.
+skip "globus endpoint runs" \
+  "no refresh token configured here, so no endpoint is started; verify with one exported"
 
 # The build identifier has to be the same in the manifest, the launcher output
 # and the running service, so a researcher reporting a problem can say which
