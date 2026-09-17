@@ -4,18 +4,26 @@ Both are probes against real Globus with a personal token minted by
 `./scripts/get_globus_token.py --print-token`. Neither uses the deployment refresh tokens. See
 design.md — Risks; the first can reshape the change.
 
-- [ ] 1.1 Determine whether one Globus account's token can drive transfers for both OLCF enclaves,
-      by listing each cluster's collection with a token minted under the other's SSO domain; verify
-      the answer is recorded either way, since a negative means the local collection is pinned to
-      one identity and the interface has to say so
-- [ ] 1.2 Create a Globus Connect Personal endpoint through the Transfer API and confirm the
+- [x] 1.1 ~~Determine whether one Globus account's token can drive transfers for both OLCF
+      enclaves.~~ **Dropped, by the maintainer's decision.** `main` already pairs two per-cluster
+      refresh tokens with a single `vista_globus_collection_id`, so this change inherits the
+      arrangement rather than introducing it. If it is wrong it is wrong today, and fixing it is
+      its own change
+- [x] 1.2 Create a Globus Connect Personal endpoint through the Transfer API and confirm the
       response carries a `globus_connect_setup_key`; verify which scopes the call requires by
       requesting the narrowest set that works, starting from `transfer.api.globus.org:gcp_install`
-      as observed in the address Globus Connect Personal's own setup prints
-- [ ] 1.3 Feed that setup key to `gcp_vm.Endpoint.setup` on a scratch data directory and confirm
+      as observed in the address Globus Connect Personal's own setup prints. It works, and needs
+      no extra scope: the base `transfer.api.globus.org:all` that `get_globus_token.py` already
+      requests was enough, so `gcp_install` was a wrong guess in the harmless direction. The path
+      needs its version prefix, `/v0.10/endpoint`, and `globus_sdk` 4.7 has no `create_endpoint`,
+      so it is `TransferClient.post`. Throwaway endpoint created and deleted
+- [x] 1.3 Feed that setup key to `gcp_vm.Endpoint.setup` on a scratch data directory and confirm
       `client-id.txt` is written with no terminal involved; verify the collection appears in the
-      Globus web interface, and delete it afterwards
-- [ ] 1.4 Record what 1.1 and 1.2 returned in design.md, replacing the inferences they test
+      Globus web interface, and delete it afterwards. `setup(key, interactive=False)` printed
+      "setup completed successfully" and wrote a `client-id.txt` holding the created collection's
+      own id. After `start`, Globus reported `gcp_connected=True` for that collection, which is the
+      same fact the web interface shows. Endpoint deleted
+- [x] 1.4 Record what 1.1 and 1.2 returned in design.md, replacing the inferences they test
 
 ## 2. The credential, end to end, with no interface yet
 
@@ -47,9 +55,10 @@ design.md — Risks; the first can reshape the change.
 ## 3. The authorization flow
 
 - [ ] 3.1 Add a backend service that starts the flow: build the native-app client, generate a PKCE
-      verifier, and return the authorization address with the cluster's SSO domain pinned; verify
-      by unit test that each cluster gets its own `session_required_single_domain` and that the
-      verifier is never in the response
+      verifier, and return the authorization address with the cluster's SSO domain pinned, asking
+      for the same scopes `get_globus_token.py` does and no more, since 1.2 showed those suffice to
+      create the collection; verify by unit test that each cluster gets its own
+      `session_required_single_domain` and that the verifier is never in the response
 - [ ] 3.2 Hold the verifier server-side, keyed to the user, with an expiry; verify by unit test that
       a code exchanged after expiry is refused with a message telling the researcher to start again,
       and that one user's pending flow is not reachable by another

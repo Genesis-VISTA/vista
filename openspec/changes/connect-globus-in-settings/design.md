@@ -87,10 +87,21 @@ With a Transfer token in hand, creating the Globus Connect Personal endpoint thr
 API returns a `globus_connect_setup_key`, which `gcp_vm.setup_command` already accepts. One
 authorization in the interface then covers both the credential and the collection.
 
-The terminal login stays as the fallback and the CLI keeps `--setup`, because a headless install
-still needs it and because it is the path proven working today.
+Proven end to end against real Globus before this was built on:
+`POST /v0.10/endpoint` with `is_globus_connect` returns the key, `setup(key, interactive=False)`
+writes a `client-id.txt` holding the created collection's own id, and after `start` Globus itself
+reports `gcp_connected=True` for it. The version prefix is not optional, and `globus_sdk` 4.7 has
+no `create_endpoint` helper, so the call is `TransferClient.post`.
 
-This is the decision with an unverified assumption under it; see Risks.
+**No extra scope is needed.** The token that did all of this was minted by
+`get_globus_token.py --cluster odo`, whose scopes are the base
+`transfer.api.globus.org:all` plus the identity ones. Globus Connect Personal's own setup requests
+`gcp_install`, which is what led to the guess that this would too; it does not. So the interface
+asks for exactly the consent the existing script asks for, and nothing about the authorization
+changes to gain the collection.
+
+The terminal login stays as the fallback and the CLI keeps `--setup`, because a headless install
+still needs it.
 
 ### The MCP server owns the endpoint, and starts it on first use
 
@@ -119,16 +130,16 @@ point stay for headless installs and for development.
 
 ## Risks / Trade-offs
 
-- **Two enclaves, one local collection.** This is the risk that could reshape the change. A
-  transfer is authorized by a single token that must have rights on *both* collections, and a
-  Globus Connect Personal installation provides one collection, owned by whichever identity created
-  it. If Odo and Frontier are genuinely different identities, a collection created under one may
-  not be usable by the other's token. → Verified first, before anything is built, with a personal
-  token rather than the deployment's. The likely answer is that the two OLCF identities are linked
-  in one Globus account and a single account's token covers both; if not, the fallback is to grant
-  the second identity access to the collection through the Transfer API, and if that fails too, the
-  per-cluster split survives for the tokens while the collection is pinned to one identity, named
-  in the interface.
+- **Two enclaves, one local collection.** A transfer is authorized by a single token that must
+  have rights on *both* collections, and a Globus Connect Personal installation provides one
+  collection, owned by whichever identity created it. If Odo and Frontier are different identities,
+  a collection created under one may not be usable by the other's token. → Carried forward
+  deliberately, not solved here. `main` already works this way: two refresh tokens minted by two
+  logins, one per cluster and each pinning its own SSO domain, against a single
+  `vista_globus_collection_id`. This change moves where those two tokens come from and changes
+  nothing about how they are used, so if the arrangement has a flaw it is a pre-existing one and
+  belongs to its own change. Worth knowing when that day comes: the Odo path is exercised, and
+  there is no evidence the Frontier half has ever run end to end.
 
 - **Creating the collection through the Transfer API is unproven here.** `globus_sdk` 4.7 removed
   the helper, and the scopes that call needs are inferred: Globus Connect Personal's own setup
@@ -167,9 +178,13 @@ either direction.
 
 ## Open Questions
 
-None. The two unknowns — whether one identity's token can drive transfers for both enclaves, and
-whether the collection can be created through the Transfer API — are verification steps placed
-before the work they affect, not deferred decisions. Neither changes the specs: the researcher
-connects in the interface and the deployment variable remains a fallback whichever way they
-resolve. What they change is how many authorizations the interface asks for, which the design
-already treats as per-cluster.
+None. The one unknown — whether the collection can be created through the Transfer API, and under
+which scopes — is a verification step placed before the work it affects, not a deferred decision.
+It does not change the specs: the researcher connects in the interface either way. What it changes
+is whether creating the collection still needs a terminal the first time.
+
+`.env.sample` already documents `globus gcp create mapped` producing a setup key, and that setup
+keys are single use, which is knowledge someone acquired by using one. So the API supports this;
+what the probe settles is making the same call from `globus_sdk`, whose 4.7 release removed the
+`create_endpoint` helper, with scopes requested during the same login that returns the transfer
+token.
