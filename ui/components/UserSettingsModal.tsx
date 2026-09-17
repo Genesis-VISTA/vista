@@ -176,7 +176,15 @@ function UserSettingsForm({
         <span className="user-settings-hint">
           Key for the inference endpoint below. Required to chat; everything
           else works without it. Stored encrypted at rest, and picked up on your
-          next message without a restart.
+          next message without a restart.{" "}
+          <a
+            href="https://api.i2-core.american-science-cloud.org"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a key
+          </a>
+          .
         </span>
       </label>
 
@@ -222,7 +230,15 @@ function UserSettingsForm({
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.
+          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.{" "}
+          <a
+            href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a token
+          </a>
+          . Expires in 24 hours.
         </span>
       </label>
 
@@ -230,7 +246,7 @@ function UserSettingsForm({
       <div className="user-settings-hint" style={{ marginTop: -4 }}>
         Odo and Frontier move files through Globus, which needs your permission
         once per cluster. Connecting opens a Globus login and gives you a code
-        to paste back here. Nothing to install, and no token to copy.
+        to paste back here.
       </div>
       <GlobusConnect
         cluster="odo"
