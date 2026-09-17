@@ -157,12 +157,26 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 - [ ] 9.1 Complete a real interactive setup under `msb exec -t` and confirm `client-id.txt` is
       written to the data directory; this is the one unproven assumption in design.md and blocks
-      the rest
-- [ ] 9.2 Run `./scripts/ci-local.sh` and verify it is green
-- [ ] 9.3 Build the package and run `./scripts/smoke_test_package.sh` with Docker stopped; verify
-      it starts and serves chat and retrieval
+      the rest. **Proven up to the login, which is the maintainer's to complete.** The real Globus
+      Connect Personal, downloaded into the data directory and run in the real microVM under
+      `msb exec --tty`, printed its own login banner and the real
+      `auth.globus.org/v2/oauth2/authorize` address and waited at `Enter the auth code:`. The URL
+      detection captured that address whole, query string included. What remains is pasting a code,
+      which needs a Globus account: nothing is created in Globus before that
+- [x] 9.2 Run `./scripts/ci-local.sh` and verify it is green. 338 backend, 133 + 52 MCP, lint and
+      typecheck clean; plus 7 `sandbox` tests run deliberately, which the hermetic filter excludes
+- [x] 9.3 Build the package and run `./scripts/smoke_test_package.sh` with Docker stopped; verify
+      it starts and serves chat and retrieval. Built `vista-0.1.0+377ef03-macos-arm64`, manifest
+      recording both images. The smoke test ran with docker removed from `PATH` entirely, which is
+      stricter than a stopped daemon -- a code path reaching for it would not even find the binary.
+      Every check passed, retrieval included, with the Globus state reported and the endpoint
+      itself `skip`ped. Started again with a token configured: the Globus image imported from the
+      payload on the first run and not on the second, `python -m vista_mcp_server.lib.gcp_vm
+      --setup` ran from the packaged environment, refused cleanly for want of a terminal, and the
+      startup note named that cause rather than the absent-token one
 - [ ] 9.4 With a refresh token exported, start the package and verify the collection appears online
-      in the Globus web interface
+      in the Globus web interface. Blocked on 9.1: there is no collection until the login is
+      completed
 
 ## 10. Gated, not automated
 
