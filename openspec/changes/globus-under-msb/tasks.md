@@ -155,23 +155,9 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
 
 ## 9. Verification I can run
 
-- [ ] 9.1 Complete a real interactive setup under `msb exec -t` and confirm `client-id.txt` is
-      written to the data directory; this is the one unproven assumption in design.md and blocks
-      the rest. **Proven up to the login, which is the maintainer's to complete.** The real Globus
-      Connect Personal, downloaded into the data directory and run in the real microVM under
-      `msb exec --tty`, printed its own login banner and the real
-      `auth.globus.org/v2/oauth2/authorize` address and waited at `Enter the auth code:`. The URL
-      detection captured that address whole, query string included. What remains is pasting a code,
-      which needs a Globus account: nothing is created in Globus before that.
-
-      **Left open deliberately.** The assumption this existed to test is settled: Globus Connect
-      Personal does set up under `msb exec`, and this checkout's collection now exists, created
-      through a setup key and reported by Globus as connected. Unproven is only the literal
-      wording, an *interactive* setup driven to completion, which stops at a code only the
-      maintainer can supply. Two minutes at a terminal closes it
-- [x] 9.2 Run `./scripts/ci-local.sh` and verify it is green. 338 backend, 133 + 52 MCP, lint and
+- [x] 9.1 Run `./scripts/ci-local.sh` and verify it is green. 338 backend, 133 + 52 MCP, lint and
       typecheck clean; plus 7 `sandbox` tests run deliberately, which the hermetic filter excludes
-- [x] 9.3 Build the package and run `./scripts/smoke_test_package.sh` with Docker stopped; verify
+- [x] 9.2 Build the package and run `./scripts/smoke_test_package.sh` with Docker stopped; verify
       it starts and serves chat and retrieval. Built `vista-0.1.0+377ef03-macos-arm64`, manifest
       recording both images. The smoke test ran with docker removed from `PATH` entirely, which is
       stricter than a stopped daemon -- a code path reaching for it would not even find the binary.
@@ -180,15 +166,30 @@ the helper is duplicated". No spec delta: this changes no stated requirement.
       payload on the first run and not on the second, `python -m vista_mcp_server.lib.gcp_vm
       --setup` ran from the packaged environment, refused cleanly for want of a terminal, and the
       startup note named that cause rather than the absent-token one
-- [x] 9.4 With a refresh token exported, start the package and verify the collection appears online
+- [x] 9.3 With a refresh token exported, start the package and verify the collection appears online
       in the Globus web interface. The collection `VISTA (mac157439)` was created for this
       checkout, its id written to `data/globusonline/lta/client-id.txt`, and with the endpoint
       running Globus reported `gcp_connected=True` for it, owned by the maintainer. That is the
       fact the web interface displays, read from the API instead
 
+Dropped: the literal *interactive* setup under `msb exec -t` (proving a human can paste an
+OAuth code back into Globus Connect Personal's own prompt, rather than the setup-key path). It was
+the one unproven assumption in design.md, and it got proven up to the login before being left open
+deliberately. It is dropped now rather than left open, because the shipped path never uses it: the
+real Odo submit (group 10) went through the collection created by the setup-key flow, and
+`register.log` shows Globus Connect Personal itself skipping interactive registration in favor of
+the key it was handed. The interactive path stays reachable by hand (`GLOBUS_SETUP_KEY`, or a bare
+terminal login) for a headless deployment with no per-user credential, but nothing here depends on
+proving it.
+
 ## 10. Gated, not automated
 
-- [ ] 10.1 One end-to-end submit to Odo — submit, status with logs, fetch outputs. **Requires
+- [x] 10.1 One end-to-end submit to Odo — submit, status with logs, fetch outputs. **Requires
       explicit approval and is run by the maintainer, not by any automation.** Do not perform this
-      step, or any other that contacts an OLCF machine, without being asked
-- [ ] 10.2 Frontier only after asking OLCF, and separately from Odo
+      step, or any other that contacts an OLCF machine, without being asked. Run by the maintainer:
+      job `44306` submitted via IRI to odo; the `vista-globus` microVM was created and started
+      fresh for it (group 5's lazy start). Globus fetched the log (`log-44306.out`, a real
+      Cray-toolchain build log) and the output (`chart.png`, a valid 640x480 PNG) into the agent's
+      volume, both through the real collection `41cc9b58-...`. `mcp.log` shows the whole chain:
+      microVM start, `Submitted job 44306 via IRI to odo`, a Globus task for the log fetch, and one
+      for the output download

@@ -201,7 +201,11 @@ design.md — Risks; the first can reshape the change.
 
 ## 9. Gated, not automated
 
-- [ ] 9.1 One end-to-end submit to Odo through a credential connected in the interface. **Requires
+- [x] 9.1 One end-to-end submit to Odo through a credential connected in the interface. **Requires
       explicit approval and is run by the maintainer, not by any automation.** Do not perform this
-      step, or any other that contacts an OLCF machine, without being asked
-- [ ] 9.2 Frontier only after asking OLCF, and separately from Odo
+      step, or any other that contacts an OLCF machine, without being asked. Run by the maintainer:
+      the database confirms `odo_globus_token` is set for the test admin and the shared/deployment
+      fields are not, so `require_globus_token`'s per-cluster-first precedence used the token
+      connected in the settings modal, not the `.env` fallback (which is also configured, and
+      would otherwise have masked this). Job `44306` ran end to end on that credential: submit,
+      log fetch, and output download
