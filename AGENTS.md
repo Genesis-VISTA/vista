@@ -110,10 +110,8 @@ curl http://localhost:3000/api/mcp/health       # Smoke test
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
 
 The vista MCP server boots without any interactive login — HPC job submission authenticates
-with per-user tokens (S3M / NERSC IRI) supplied via the UI at tool-call time, plus
-deployment-wide Globus refresh tokens (`VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` for Odo's open
-enclave, `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` for Frontier's moderate enclave) for file
-ops. Set
+with per-user tokens (S3M / NERSC IRI for compute, Globus for file ops) supplied via the UI, each
+connected once per cluster in the settings modal rather than exported anywhere. Set
 `VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
 
 Odo and Frontier file operations are brokered by Globus Transfer between two collections, so
@@ -121,10 +119,19 @@ this machine has to be one — which is what Globus Connect Personal makes it. G
 scriptable build for Linux only, so on every other platform it runs in a microsandbox microVM:
 no container runtime, no daemon, and a separate image from the one the agent executes generated
 code in. [`lib/gcp_vm.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/gcp_vm.py) owns
-the whole flow; `scripts/launch_globus.py` is a thin wrapper over it for checkouts, and the
-packaged launcher runs the same entry point as `python -m`. Setup and startup are gated on a
-refresh token being configured and are never fatal — absent transfer costs Odo and Frontier,
-and nothing else.
+the endpoint itself — starting, stopping, status, the mounts and confinement; `scripts/launch_globus.py`
+is a thin wrapper over it for a headless checkout or a shared deployment with no per-user
+credential.
+
+The credential is per-cluster and per-user: a researcher's own Odo or Frontier token wins,
+falling back to one shared token connected for both, and only then to the deployment-wide
+`VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` / `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` env vars —
+what keeps a hosted, multi-user deployment working for everyone who has not connected their own.
+[`lib/local_collection.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/local_collection.py)
+owns *when* the endpoint starts: lazily, under a lock, on the first file operation that needs a
+collection — never at launch, since the launcher runs before anyone has supplied a credential.
+The MCP server's lifespan stops it on shutdown. Absent Globus is never fatal; it costs only Odo
+and Frontier's file operations, nothing else.
 
 ## NextJS
 ALWAYS read docs before coding

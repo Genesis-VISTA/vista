@@ -34,30 +34,20 @@ Globus Connect Personal makes it one, and the package runs it, so nothing is
 installed. Perlmutter needs none of this; its file operations go through the
 NERSC IRI filesystem API.
 
-Export a refresh token before starting, and the launcher does the rest:
+Nothing to export and nothing to run first: open the settings modal in the UI
+and connect Globus for each cluster you need. It shows an authorization
+address to open and a box for the code Globus gives back, the same one-time
+consent a browser login normally asks for — just without a terminal. That
+single authorization is also what creates this machine's collection, so there
+is no separate setup step.
 
-```bash
-export VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN=...
-./vista
-```
-
-The first start with a token set asks for a one-time Globus login in the
-terminal: it prints an address, opens a browser if it can, and waits for the
-code the login returns. Copy the address elsewhere if no browser opens — that
-works too. What it creates is written to the state directory, so later starts
-ask for nothing.
-
-With no token set, no login is asked for and nothing is started. The launcher
-says so and everything else runs normally:
-
-```
-note: file transfer for Odo and Frontier is unavailable:
-      no Globus refresh token is configured.
-      Chat, retrieval, the code sandbox and Perlmutter are unaffected.
-```
-
-The same line reports a setup that could not finish, naming which step, so a
-failure here is never why VISTA does not start.
+The endpoint itself starts lazily, the first time a file operation needs it —
+not at launch, since nobody has connected anything yet when `./vista` first
+prints its address. The first transfer after connecting is slower for it (a
+microVM boot, and Globus agreeing the collection is online); every one after
+is not. A cluster with nothing connected simply reports "Not connected" in
+settings, and everything else — chat, retrieval, the code sandbox, Perlmutter
+— runs normally regardless.
 
 Globus Connect Personal runs in its own microVM, from a different image than
 the one the agent executes generated code in. It can see the jobs directory
@@ -295,12 +285,13 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`      | None    |
-| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None    |
+| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Deployment-wide Globus Transfer fallback for Odo, used only when a researcher has not connected their own in the UI. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env` | None |
+| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Same, for Frontier. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
-Per-user HPC credentials (S3M token, NERSC IRI token) are **not** env vars — each
-user sets them in the UI under User settings. S3M tokens follow the
+Per-user HPC credentials (S3M token, NERSC IRI token, and Globus for Odo/Frontier) are **not**
+env vars — each user connects them in the UI under User settings. Globus is a one-time
+authorization per cluster; S3M tokens follow the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
@@ -311,11 +302,10 @@ The launch script will build all dependencies and launch both the MCP server and
 ```
 Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox image).
 
-With a Globus refresh token in `.env`, the launch also sets up and starts the
-Globus Connect Personal endpoint that Odo and Frontier file operations go
-through, asking once for a browser login. Without one it starts nothing and
-says which clusters' file operations are unavailable. Either way the rest of
-VISTA starts.
+Globus file transfer for Odo and Frontier is untouched by this script: nothing to export first,
+and nothing gated on it starting. Connect it per cluster in the UI once VISTA is running (see
+[File transfer to Odo and Frontier](#file-transfer-to-odo-and-frontier) above) — the endpoint
+starts itself the first time a transfer needs one.
 Then go to https://localhost:3000
 
 You can use

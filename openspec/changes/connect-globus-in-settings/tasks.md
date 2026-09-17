@@ -211,22 +211,48 @@ design.md — Risks; the first can reshape the change.
 
 ## 7. Documentation
 
-- [ ] 7.1 Replace the exported-variable instructions in `README.md` with the interface flow, keeping
+- [x] 7.1 Replace the exported-variable instructions in `README.md` with the interface flow, keeping
       the variables documented as the deployment fallback; verify no instruction tells a desktop
-      researcher to export anything
-- [ ] 7.2 Update the Globus paragraph in `AGENTS.md`; verify it describes where the credential comes
-      from and who owns the endpoint process
+      researcher to export anything. Rewrote "File transfer to Odo and Frontier" (settings modal,
+      lazy start, no separate setup step) and the "Launch" section's Globus paragraph (nothing
+      gated on it starting). The env var table now frames both refresh tokens as the
+      deployment-wide fallback, and the per-user credentials paragraph adds Globus alongside S3M
+      and NERSC IRI. `grep -i globus README.md` shows no remaining `export`
+- [x] 7.2 Update the Globus paragraph in `AGENTS.md`; verify it describes where the credential comes
+      from and who owns the endpoint process. Rewrote to name the three-way precedence
+      (per-cluster user token, shared user token, deployment env var) and split ownership:
+      `lib/gcp_vm.py` owns the endpoint itself, `lib/local_collection.py` owns *when* it starts —
+      lazily, under a lock, never at launch
 
 ## 8. Verification
 
 - [ ] 8.1 Connect Globus for one cluster in the interface on a packaged installation, from nothing:
       no environment variable, no collection, no terminal; verify the collection appears online in
       the Globus web interface
+
+      **Left for the maintainer, deliberately.** Everything short of the login itself is proven:
+      6.2 just built and smoke-tested a real package from current `HEAD` with no credential
+      configured, and it starts clean with file transfer reported as `skip`ped. What is left is the
+      literal OAuth consent -- opening the address, logging in, pasting back the code -- which
+      needs a real Globus account and cannot be scripted or done on anyone's behalf. Odo's own
+      version of this was already run for real, gated, in group 10 of `globus-under-msb`
+      (job `44306`), against a dev checkout rather than a packaged install specifically
 - [ ] 8.2 Confirm the other cluster still reports as not connected, and connect it too; verify both
       report the identity they were connected with
-- [ ] 8.3 Run `./scripts/ci-local.sh` and verify it is green
-- [ ] 8.4 Confirm the hosted path is untouched: with the deployment variables set and no user
-      connection, verify a file operation uses the deployment credential exactly as before
+
+      **Left for the maintainer, and Frontier specifically waits on you.** Same login requirement
+      as 8.1, plus the standing instruction that Frontier is connected separately and only with
+      explicit go-ahead -- unlike 8.1, nothing here has touched Frontier for real yet
+- [x] 8.3 Run `./scripts/ci-local.sh` and verify it is green. 356 backend, 163 vista-mcp, 52
+      dev-mcp, all passed; UI lint clean (the two pre-existing `<img>` warnings are unrelated);
+      exit code 0
+- [x] 8.4 Confirm the hosted path is untouched: with the deployment variables set and no user
+      connection, verify a file operation uses the deployment credential exactly as before.
+      `test_the_deployment_token_is_the_last_resort` (6.1) proves exactly this, through the same
+      `_submit_odo_job` a real tool call runs: with no user token configured and the deployment env
+      var set, `create_globus_client` receives the deployment token. Not run against a second real
+      Odo job -- that would be a second gated submit for a fact the hermetic test already
+      establishes precisely
 
 ## 9. Gated, not automated
 
