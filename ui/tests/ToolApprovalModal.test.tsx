@@ -77,7 +77,7 @@ describe("ToolApprovalModal", () => {
   describe("G5 decision metadata", () => {
     it("shows the passing policy checks, the resources, and the resolved script", () => {
       const { container } = setup({ decisionMetadata: G5 });
-      expect(screen.getByText("VISTAGuard G5 policy checks")).toBeInTheDocument();
+      expect(screen.getByText("PALISADE G5 policy checks")).toBeInTheDocument();
       expect(screen.getByText(/Allocation\/account verified \(mat123\)/)).toBeInTheDocument();
       expect(container.querySelectorAll(".g5-check.fail")).toHaveLength(0);
       expect(container.querySelectorAll(".g5-check.ok")).toHaveLength(3);
@@ -128,7 +128,7 @@ describe("ToolApprovalModal", () => {
 
   it("shows raw arguments for a tool call with no gate metadata", () => {
     setup({ toolName: "run_bash", args: { command: "ls -la" }, decisionMetadata: null });
-    expect(screen.queryByText("VISTAGuard G5 policy checks")).not.toBeInTheDocument();
+    expect(screen.queryByText("PALISADE G5 policy checks")).not.toBeInTheDocument();
     expect(screen.getByText(/"command": "ls -la"/)).toBeInTheDocument();
   });
 });
