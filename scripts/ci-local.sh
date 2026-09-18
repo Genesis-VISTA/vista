@@ -8,7 +8,7 @@
 #   ./scripts/ci-local.sh backend          # lint + test backend
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
-#   ./scripts/ci-local.sh backend ui test  # test backend + UI (UI has no tests; lint/typecheck only)
+#   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -176,8 +176,24 @@ ui_lint() {
 }
 
 ui_test() {
-  # UI has no unit-test job in CI; typecheck is covered under lint.
-  echo "note: UI has no pytest/jest job in CI; use './scripts/ci-local.sh ui lint' for ESLint + tsc"
+  ensure_npm
+  log "ui:test"
+  (
+    cd "$REPO_ROOT/ui"
+    if [[ "$FAST" == true && -d node_modules ]]; then
+      :
+    else
+      npm ci --prefer-offline
+    fi
+    # Hermetic: jsdom only, no backend, no MCP server, no model, no database.
+    npm run test
+    if [[ "$FAST" != true ]]; then
+      # Mirrors the required ui:browser job. Needs a Chromium download the
+      # first time: npx playwright install chromium
+      log "ui:browser"
+      npm run test:e2e:hermetic
+    fi
+  )
 }
 
 install_hooks() {

@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   notifyActiveChatSessionChanged,
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import { useActiveProject } from "@/lib/projects";
-import { useCurrentUser, userDisplayName, userInitials } from "@/lib/user";
+import { useCurrentUser } from "@/lib/user";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -41,16 +41,19 @@ function railSubscribe(cb: () => void) {
 
 function railGetSnapshot(): boolean {
   try {
-    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) !== "false";
+    // Expanded unless the user has said otherwise. Collapsed hides the group
+    // headings and the active-project chip, which is the part a first-time
+    // user most needs to see.
+    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 
 function railGetServerSnapshot(): boolean {
-  // Always start collapsed on the server so SSR and the first client paint
-  // match. The real preference is applied after hydration.
-  return true;
+  // Expanded on the server, matching the client default, so the first paint
+  // is what most users will keep. A stored preference applies after hydration.
+  return false;
 }
 
 function setRailCollapsed(value: boolean) {
@@ -64,8 +67,7 @@ function setRailCollapsed(value: boolean) {
 
 type NavEntry = {
   label: string;
-  href?: string;
-  disabled?: boolean;
+  href: string;
   icon: ReactNode;
 };
 
@@ -90,33 +92,12 @@ const GLOBAL_ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Models",
-    disabled: true,
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
-      </svg>
-    ),
-  },
-  {
     label: "Knowledge Bases",
     href: "/knowledge-bases",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
         <path d="M4 17a3 3 0 0 1 3-3h12" />
-      </svg>
-    ),
-  },
-  {
-    label: "More",
-    disabled: true,
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="6" cy="12" r="1.5" />
-        <circle cx="12" cy="12" r="1.5" />
-        <circle cx="18" cy="12" r="1.5" />
       </svg>
     ),
   },
@@ -154,7 +135,7 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
   },
   {
     label: "Knowledge Bases",
-    href: "/knowledge-bases?scope=project",
+    href: "/knowledge-bases/project",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Z" />
@@ -167,10 +148,10 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
 export function NavRail() {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const activeProject = useActiveProject();
   const { user, loading: userLoading } = useCurrentUser();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const collapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
@@ -178,50 +159,67 @@ export function NavRail() {
   );
 
   function toggle() {
+    setTip(null);
     setRailCollapsed(!collapsed);
   }
 
-  const displayName = user
-    ? userDisplayName(user)
+  /**
+   * A collapsed rail is icons and nothing else, so each one has to be able to
+   * say what it is. The native title tooltip takes about a second to appear
+   * and cannot be styled, and a CSS one would be clipped by the list's own
+   * scrolling — hence a single element positioned against the viewport.
+   */
+  function tipProps(label: string) {
+    if (!collapsed) return {};
+    const show = (event: { currentTarget: HTMLElement }) => {
+      const box = event.currentTarget.getBoundingClientRect();
+      setTip({ label, top: box.top + box.height / 2 });
+    };
+    const hide = () => setTip(null);
+    return { onMouseEnter: show, onFocus: show, onMouseLeave: hide, onBlur: hide };
+  }
+
+  // VISTA runs locally as a single user, so the rail ends in a settings
+  // button rather than an identity chip. `user` is still read because the
+  // settings modal edits that user's row — there is nothing to open until it
+  // has loaded.
+  const settingsHint = user
+    ? "Settings"
     : userLoading
-      ? "Loading…"
-      : "Signed out";
-  const initials = user ? userInitials(user) : userLoading ? "…" : "?";
-  const userHint = user
-    ? user.is_admin
-      ? "Admin"
-      : ""
-    : userLoading
-      ? "Loading user…"
-      : "Not signed in";
+      ? "Loading settings…"
+      : "Settings unavailable";
 
   /**
-   * An entry is active when its href matches the current location. We split
-   * the entry's href into path + query so that two entries pointing at the
-   * same page with different scope querystrings (e.g. global vs
-   * project-local "Knowledge Bases") highlight independently.
+   * The one entry whose href best matches where we are.
+   *
+   * Longest match wins, so `/knowledge-bases/project` highlights the project
+   * entry rather than the global one it sits under, and a nested route added
+   * later highlights its own entry rather than its parent's. "/" is a prefix
+   * of every path, so it only ever matches itself.
+   *
+   * This used to also compare query strings, because the two knowledge-base
+   * views differed only by `?scope=`. They are separate paths now, which is
+   * what let the rail stop reading the query string at all — and reading it
+   * was what kept the rail out of every page's prerendered HTML.
    */
+  const activeHref = useMemo(() => {
+    const hrefs = [...GLOBAL_ENTRIES, ...PROJECT_LOCAL_ENTRIES]
+      .map((entry) => entry.href)
+      .filter((href): href is string => Boolean(href));
+
+    let best: string | null = null;
+    for (const href of hrefs) {
+      const matches =
+        href === "/"
+          ? pathname === "/"
+          : pathname === href || pathname?.startsWith(`${href}/`);
+      if (matches && (best === null || href.length > best.length)) best = href;
+    }
+    return best;
+  }, [pathname]);
+
   function isEntryActive(href?: string): boolean {
-    if (!href) return false;
-    if (href === "/") return pathname === "/";
-
-    const [entryPath, entryQuery = ""] = href.split("?");
-    const pathMatches =
-      pathname === entryPath || pathname?.startsWith(`${entryPath}/`);
-    if (!pathMatches) return false;
-
-    // For entries with a query (e.g. "?scope=project"), every param in the
-    // entry's query must match the current URL. Entries without a query
-    // only match when the URL also has no `scope` — otherwise the global
-    // "Knowledge Bases" entry would light up on the scoped page too.
-    if (!entryQuery) {
-      return !searchParams?.get("scope");
-    }
-    const entryParams = new URLSearchParams(entryQuery);
-    for (const [key, value] of entryParams) {
-      if (searchParams?.get(key) !== value) return false;
-    }
-    return true;
+    return Boolean(href) && href === activeHref;
   }
 
   function renderEntry(entry: NavEntry, className = "") {
@@ -235,27 +233,14 @@ export function NavRail() {
       </>
     );
 
-    if (entry.disabled) {
-      return (
-        <button
-          key={entry.label}
-          type="button"
-          className={`nav-rail-entry disabled ${className}`.trim()}
-          aria-disabled="true"
-          title={`${entry.label} (coming soon)`}
-          disabled
-        >
-          {inner}
-        </button>
-      );
-    }
 
     return (
       <Link
         key={entry.label}
         href={entry.href!}
         className={`nav-rail-entry${isActive ? " active" : ""} ${className}`.trim()}
-        title={entry.label}
+        aria-label={entry.label}
+        {...tipProps(entry.label)}
       >
         {inner}
       </Link>
@@ -264,9 +249,11 @@ export function NavRail() {
 
   function handleOpenChatList() {
     const projectName = activeProject?.name ?? null;
-    if (!projectName) return;
-    writeActiveChatSessionId(projectName, null);
-    notifyActiveChatSessionChanged();
+    if (projectName) {
+      writeActiveChatSessionId(projectName, null);
+      notifyActiveChatSessionChanged();
+    }
+    // With no project, chat redirects to the picker and comes back here.
     router.push("/");
   }
 
@@ -278,10 +265,20 @@ export function NavRail() {
       aria-label="Primary navigation"
     >
       <div className="nav-rail-header">
+        {/* The white lockup needs a solid dark plate under it — see the AmSC
+            style guide. It lives here rather than in the page header so the
+            header can stay a slim breadcrumb. The collapsed rail is too narrow
+            for a horizontal lockup, so it drops out with the rest of the
+            labels. */}
         {!collapsed && (
-          <div className="nav-rail-brand">
+          <div className="nav-rail-brand" title={`VISTA ${APP_VERSION}`}>
+            <span className="nav-rail-lockup">
+              <img
+                src="/genesis-amsc-lockup-horizontal-white-cropped.svg"
+                alt="Genesis VISTA"
+              />
+            </span>
             <span className="nav-rail-brand-name">VISTA</span>
-            <span className="nav-rail-brand-version">/ {APP_VERSION}</span>
           </div>
         )}
         <button
@@ -307,7 +304,8 @@ export function NavRail() {
       <Link
         href="/projects?new=1"
         className="nav-rail-new"
-        title="Create a new project"
+        aria-label="Create a new project"
+        {...tipProps("New project")}
       >
         <span className="nav-rail-new-plus" aria-hidden="true">
           +
@@ -321,54 +319,61 @@ export function NavRail() {
 
         {!collapsed && <div className="nav-rail-section-label">Opened Project</div>}
         {!collapsed && (
-          <div className="nav-rail-project-card" title={activeProject?.name ?? "No project selected"}>
+          <div
+            className="nav-rail-project-card"
+            data-empty={activeProject ? "false" : "true"}
+            title={activeProject?.name ?? "No project selected"}
+          >
             <div className="nav-rail-project-dot" aria-hidden="true" />
             <div className="nav-rail-project-name">
               {activeProject?.name ?? "No project selected"}
             </div>
           </div>
         )}
-        {activeProject ? (
-          <button
-            type="button"
-            className={`nav-rail-entry${isEntryActive("/") ? " active" : ""} project-child`}
-            onClick={handleOpenChatList}
-            title="Chat"
-          >
-            <span className="nav-rail-icon" aria-hidden="true">
-              {PROJECT_LOCAL_ENTRIES[0].icon}
-            </span>
-            {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
-          </button>
-        ) : (
-          renderEntry({ ...PROJECT_LOCAL_ENTRIES[0], disabled: true }, "project-child")
-        )}
-        {projectEntries.map((entry) =>
-          renderEntry(
-            activeProject ? entry : { ...entry, disabled: true },
-            "project-child"
-          )
-        )}
+        {/* Chat is a button rather than a link because opening it means
+            leaving the current conversation and landing on the list. */}
+        <button
+          type="button"
+          className={`nav-rail-entry${isEntryActive("/") ? " active" : ""} project-child`}
+          onClick={handleOpenChatList}
+          aria-label="Chat"
+          {...tipProps("Chat")}
+        >
+          <span className="nav-rail-icon" aria-hidden="true">
+            {PROJECT_LOCAL_ENTRIES[0].icon}
+          </span>
+          {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
+        </button>
+        {projectEntries.map((entry) => renderEntry(entry, "project-child"))}
       </nav>
 
+      {/* settingsHint changes as the user record loads, so it is the tooltip's
+          text but not the accessible name: a name that differs between the
+          server render and the first client one is a hydration mismatch. */}
       <button
         type="button"
-        className="nav-rail-user"
+        className="nav-rail-settings"
         onClick={() => setSettingsOpen(true)}
         disabled={!user}
-        title={user ? `${displayName} — user settings` : userHint}
-        aria-label="Open user settings"
+        aria-label="Open settings"
+        {...tipProps(settingsHint)}
       >
-        <div className="nav-rail-user-avatar" aria-hidden="true">
-          {initials}
-        </div>
-        {!collapsed && (
-          <div className="nav-rail-user-meta">
-            <div className="nav-rail-user-name">{displayName}</div>
-            <div className="nav-rail-user-hint">{userHint}</div>
-          </div>
-        )}
+        <span className="nav-rail-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+          </svg>
+        </span>
+        {!collapsed && <span className="nav-rail-settings-label">Settings</span>}
       </button>
+
+      {/* Fixed rather than absolute: the entry list scrolls, and anything
+          positioned inside it gets clipped at the rail's edge. */}
+      {collapsed && tip && (
+        <div className="nav-rail-tip" style={{ top: tip.top }} aria-hidden="true">
+          {tip.label}
+        </div>
+      )}
 
       {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
     </aside>

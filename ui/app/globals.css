@@ -1,20 +1,88 @@
-@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap");
 
+/* ---------- Tokens --------------------------------------------------
+   Direction A's neutral ramp. The AmSC guide's light surfaces
+   (#D2D3D7 / #E3E3E3 / #F2F2F2) are cold mid-greys; the approved
+   artboards replace them with a warm near-white set while keeping every
+   brand, status and accent value from the guide verbatim. Raised with
+   AmSC as a proposal against the neutral ramp only.
+
+   Legacy names (--panel, --panel-2, --bg-accent) are kept as aliases so
+   the whole app moves at once; prefer the role names below in new code. */
 :root {
-  --bg: #d2d3d7;
-  --bg-accent: #d2d3d7;
-  --ink: #252526;
-  --muted: #5c5f6b;
-  --panel: #e3e3e3;
-  --panel-2: #f2f2f2;
-  --line: #b8bcc5;
+  /* ground and surfaces */
+  --bg: #f4f4f2;          /* furthest surface, visible in page gutters */
+  --surface: #ffffff;     /* rail, top bar, cards */
+  --surface-sunken: #fbfbfa; /* the artifacts column */
+  --surface-active: #ececea; /* selected rail entry */
+
+  /* hairlines: the only thing that separates panes */
+  --line: #e2e2de;
+  --line-soft: #f0f0ec;   /* dividers inside a card */
+  --line-strong: #d8d8d2;
+
+  /* type */
+  --ink: #1c1c1a;
+  --ink-2: #3d3d39;
+  --muted: #767671;
+  --muted-2: #6b6b66;
+
+  /* brand (AmSC guide, verbatim) */
   --brand: #004573;
+  --brand-dark: #112a4d;
+  --brand-tint: #f2f6fa;
+  --brand-line: #dce6ef;
+  --brand-line-strong: #cfd8e2;
   --brand-2: #a6111b;
+
+  /* status (AmSC guide, verbatim) */
+  --success: #0b730b;
+  --success-tint: #f0f6f1;
+  --success-line: #cde0d1;
+  --warning: #e6c500;      /* a fill, not a text colour */
+  --warning-ink: #a06a00;  /* the darkened form, for text on a light ground */
+  --warning-line: #d8b04a;
   --danger: #d61200;
+  --danger-line: #e8a4a0;
+
+  /* type faces: Figtree carries titles and card names, Roboto the rest, and
+     the mono face is confined to tool names, identifiers and raw output */
+  --font-display: "Figtree", system-ui, sans-serif;
+  --font-body: "Roboto", system-ui, -apple-system, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* the dark terminal surfaces: deliberate islands, not part of the light
+     ramp — raw agent output and the log viewer read as a console on purpose */
+  --term-bg: #12100e;
+  --term-bg-2: #1a1714;
+  --term-ink: #c9c1b6;
+  --term-muted: #8a8278;
+  --term-line: #2a2520;
+  --term-ok: #5a9e6f;
+  --term-warn: #d4a843;
+  --term-error: #c9503c;
+
+  /* radii: panes get none, content objects get these */
+  --r-card: 10px;
+  --r-card-lg: 12px;
+  --r-control: 8px;
+  --r-pill: 999px;
+
+  /* legacy aliases */
+  --bg-accent: #f4f4f2;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* The UA rule for [hidden] is display:none at the lowest specificity, so any
+   author rule that sets display — .activity-view is flex, for instance — beats
+   it and a hidden panel renders anyway. */
+[hidden] {
+  display: none !important;
 }
 
 /* Scoped scrollbar styling (theme-aligned, non-light-blue) */
@@ -27,7 +95,7 @@
 .modal-body,
 .output-card {
   scrollbar-width: thin;
-  scrollbar-color: #004573 #e3e3e3;
+  scrollbar-color: var(--brand) var(--line);
 }
 
 .panel-body::-webkit-scrollbar,
@@ -50,7 +118,7 @@
 .reference-list::-webkit-scrollbar-track,
 .modal-body::-webkit-scrollbar-track,
 .output-card::-webkit-scrollbar-track {
-  background: #e3e3e3;
+  background: var(--line);
   border-radius: 999px;
 }
 
@@ -62,9 +130,9 @@
 .reference-list::-webkit-scrollbar-thumb,
 .modal-body::-webkit-scrollbar-thumb,
 .output-card::-webkit-scrollbar-thumb {
-  background: #004573;
+  background: var(--brand);
   border-radius: 999px;
-  border: 2px solid #e3e3e3;
+  border: 2px solid var(--line);
 }
 
 .panel-body::-webkit-scrollbar-thumb:hover,
@@ -75,7 +143,7 @@
 .reference-list::-webkit-scrollbar-thumb:hover,
 .modal-body::-webkit-scrollbar-thumb:hover,
 .output-card::-webkit-scrollbar-thumb:hover {
-  background: #112a4d;
+  background: var(--brand-dark);
 }
 
 html, body {
@@ -83,68 +151,381 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: "Roboto", system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
   min-height: 100%;
   height: 100%;
   overflow: hidden;
 }
 
+/* The chat page's root. Same shape as .app-page: a full-height column whose
+   header runs edge to edge and whose padding sits on the body below it. */
 main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px 12px;
-  min-height: 100vh;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) 10px var(--viz-width, 460px);
-  gap: 12px;
+  grid-template-columns: minmax(440px, 1fr) 1px var(--viz-width, 452px);
+  gap: 0;
+  flex: 1 1 auto;
   min-height: 0;
-  flex: 1;
+  padding: 0;
+  background: var(--bg);
 }
 
-.app-topbar {
-  background: #112a4d;
-  border: 1px solid #004573;
-  border-radius: 12px;
-  min-height: 40px;
-  padding: 2px 10px;
+/* ---------- Shared page chrome --------------------------------------- */
+
+/* Every route: a full-height column with one slim header above the body.
+   Page padding lives on the body so the header runs edge to edge and sits at
+   the same offset on every route. */
+.app-page {
+  height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* Master/detail routes opt out of the list-page gutters so their panes
+   reach the window edges, as the workspace does. */
+.app-page-body.flush {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.app-page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 26px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* A pane sitting directly in a list-route body must not add a second gutter:
+   the body already carries the artboard's 26/30, and skills and datasets were
+   inset 42/46 against skill-hub's 30 because .panel-body added its own. */
+.app-page-body > .panel > .panel-body {
+  padding: 0;
+}
+
+.page-topbar {
   flex: 0 0 auto;
-}
-
-.app-brand {
+  height: 52px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-right: auto;
+  gap: 10px;
+  padding: 0 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.page-topbar-crumb {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 34ch;
+}
+
+/* ---------- Project switcher (the first crumb) ----------------------- */
+
+.project-switcher {
+  position: relative;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
-.app-title {
-  font-family: "Figtree", sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #f2f2f2;
-  line-height: 1.1;
+.project-switcher-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 34ch;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.project-switcher-button:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
+}
+
+.project-switcher-button[aria-expanded="true"] {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.project-switcher-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.project-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.app-logo {
-  display: block;
-  width: auto;
-  max-width: min(70vw, 520px);
-  height: 30px;
-  object-fit: contain;
-  object-position: left center;
-  flex-shrink: 0;
+.project-switcher-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -8px;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(17, 42, 77, 0.16);
+}
+
+.project-switcher-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-switcher-option:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.project-switcher-option:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.project-switcher-option[data-active="true"] {
+  font-weight: 600;
+}
+
+.project-switcher-option-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Filled for the active project, hollow for the rest. */
+.project-switcher-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+}
+
+.project-switcher-option[data-active="true"] .project-switcher-dot {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.project-switcher-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.project-switcher-manage {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 7px 7px;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-switcher-manage:hover {
+  background: rgba(0, 69, 115, 0.07);
+}
+
+.project-switcher-manage:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+/* ---------- "Pick a project" panel ----------------------------------- */
+
+.project-required {
+  margin: auto;
+  width: min(520px, 100%);
+  padding: 28px 26px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.project-required-title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.project-required-body {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.project-required-error {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.project-required-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.project-required-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.project-required-option:hover {
+  border-color: var(--brand);
+  background: var(--surface);
+}
+
+.project-required-option:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.project-required-option-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.project-required-option-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------- Project card stats + empty state ------------------------- */
+
+.project-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.projects-empty {
+  margin: auto;
+  width: min(520px, 100%);
+  padding: 32px 28px;
+  text-align: center;
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+
+.projects-empty-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.projects-empty-body {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.page-topbar-sep {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--line-strong);
+}
+
+.page-topbar-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .page-topbar {
+    padding: 0 14px;
+  }
+  .page-topbar-crumb {
+    max-width: 14ch;
+  }
 }
 
 /* ---------- Domain tabs + banner (skills panel) ----------------------- */
@@ -153,8 +534,8 @@ main {
   /* Each panel instance sets --domain-accent / --domain-accent-soft
      inline based on the active tab. Fallbacks here protect against missing
      values. */
-  --domain-accent: #004573;
-  --domain-accent-soft: #f2f2f2;
+  --domain-accent: var(--brand);
+  --domain-accent-soft: var(--surface-sunken);
 }
 
 .skills-tabs {
@@ -183,8 +564,8 @@ main {
   border-radius: 8px 8px 0 0;
   padding: 5px 10px 8px;
   margin-bottom: -1px; /* overlap the container's bottom border */
-  font-family: "Figtree", sans-serif;
-  font-size: 11.5px;
+  font-family: var(--font-display);
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.01em;
   line-height: 1.2;
@@ -206,7 +587,7 @@ main {
 }
 
 .skills-tab:hover:not(.active) {
-  background: #ececec;
+  background: var(--surface-active);
   color: var(--ink);
 }
 
@@ -221,7 +602,7 @@ main {
   border-top-color: var(--tab-accent, var(--domain-accent));
   /* Cover the container's bottom line so the active tab visually
      connects with the panel body, giving the file-folder/bookmark look. */
-  box-shadow: 0 1px 0 0 var(--panel);
+  box-shadow: 0 1px 0 0 var(--surface);
   z-index: 1;
 }
 
@@ -271,8 +652,8 @@ main {
 }
 
 .domain-banner-label {
-  font-family: "Figtree", sans-serif;
-  font-size: 9.5px;
+  font-family: var(--font-display);
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -291,37 +672,22 @@ main {
     grid-template-columns: 1fr;
   }
 
-  .app-topbar {
-    min-height: 38px;
-  }
-
-  .app-title {
-    font-size: 16px;
-  }
-
-  .app-logo {
-    width: auto;
-    max-width: min(62vw, 300px);
-    height: 26px;
-    object-fit: contain;
-    object-position: left center;
-  }
 }
 
 .panel-resizer {
-  width: 10px;
-  border-radius: 999px;
-  background: #5c5f6b;
-  border: 1px solid #252526;
+  position: relative;
+  width: 1px;
+  border: 0;
+  border-radius: 0;
+  background: var(--line);
+  opacity: 1;
   cursor: col-resize;
   align-self: stretch;
-  opacity: 0.7;
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: background 120ms ease;
 }
 
 .panel-resizer:hover {
-  opacity: 1;
-  transform: scaleX(1.08);
+  background: var(--brand);
 }
 
 @media (max-width: 1100px) {
@@ -331,10 +697,10 @@ main {
 }
 
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 6px 20px rgba(28, 26, 23, 0.06);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -346,68 +712,57 @@ main {
 
 .left-split {
   display: grid;
-  grid-template-rows: minmax(220px, var(--left-top-height, 320px)) 10px minmax(240px, 1fr);
-  gap: 12px;
+  grid-template-rows: minmax(220px, var(--left-top-height, 320px)) 1px minmax(240px, 1fr);
+  gap: 0;
   min-height: 0;
   height: 100%;
   overflow: hidden;
 }
 
-.stack-resizer {
-  height: 10px;
-  border-radius: 999px;
-  background: #5c5f6b;
-  border: 1px solid #252526;
-  cursor: row-resize;
-  justify-self: stretch;
-  opacity: 0.7;
-  transition: opacity 0.12s ease, transform 0.12s ease;
-}
-
-.stack-resizer:hover {
-  opacity: 1;
-  transform: scaleY(1.08);
-}
-
 .panel-header {
-  padding: 12px 14px 8px 14px;
+  flex: 0 0 auto;
+  height: 44px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 16px;
   position: relative;
 }
 
 .panel-title {
-  font-family: "Figtree", sans-serif;
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .panel-body {
-  padding: 12px;
+  padding: 16px;
   overflow: auto;
+  min-height: 0;
 }
 
 .input {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-2);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   font-size: 14px;
+  font-family: inherit;
 }
 
 .button {
   border: none;
   background: var(--brand);
-  color: #fff;
-  padding: 10px 14px;
-  border-radius: 10px;
+  color: var(--surface);
+  padding: 8px 14px;
+  border-radius: var(--r-control);
+  font-family: inherit;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -425,7 +780,7 @@ main {
 .button.ghost {
   background: transparent;
   border: 1px solid var(--line);
-  color: var(--ink);
+  color: var(--ink-2);
 }
 
 .button-xs {
@@ -476,75 +831,6 @@ main {
 .model-select-console {
   width: 220px;
   min-width: 180px;
-}
-
-.panel-header-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.model-cascade {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.model-cascade-menu {
-  position: relative;
-  width: 100%;
-}
-
-.model-menu-trigger {
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-}
-
-.model-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 220px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 12px 24px rgba(28, 26, 23, 0.12);
-  padding: 6px;
-  z-index: 30;
-}
-
-.model-menu.level2 {
-  left: calc(100% + 6px);
-  top: 0;
-}
-
-.model-menu.level3 {
-  left: calc(200% + 12px);
-  top: 0;
-}
-
-.model-menu-item {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  font-size: 13px;
-  padding: 7px 8px;
-  cursor: pointer;
-}
-
-.model-menu-item:hover {
-  border-color: var(--line);
-  background: var(--panel-2);
-}
-
-.model-menu-item.has-children::after {
-  content: "›";
-  float: right;
-  color: var(--muted);
 }
 
 .skill-item {
@@ -663,30 +949,31 @@ main {
   overflow: auto;
 }
 
+/* A named group of uploads, not an object in its own right. It used to wear
+   a border, a 12px radius and a white fill, which made a card out of the
+   container and left white item cards sitting inside a white card. The label
+   is what separates one group from the next. */
 .upload-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: #fff;
 }
 
 .upload-section-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--brand);
-  letter-spacing: 0.01em;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
 }
 
 .upload-item {
   position: relative;
   padding: 8px 10px;
   padding-right: 132px;
-  border-radius: 12px;
+  border-radius: var(--r-card);
   border: 1px solid var(--line);
-  background: var(--panel-2);
+  background: var(--surface);
 }
 
 .upload-name {
@@ -717,19 +1004,20 @@ main {
 .chat-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   height: 100%;
   overflow: auto;
   padding-right: 2px;
 }
 
 .chat-bubble {
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  font-size: 13px;
-  line-height: 1.4;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 88%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -780,7 +1068,7 @@ main {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.92em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .chat-bubble.assistant pre {
@@ -807,7 +1095,7 @@ main {
 }
 
 .chat-bubble.assistant a {
-  color: #0a66c2;
+  color: var(--brand);
   text-decoration: underline;
 }
 
@@ -840,28 +1128,37 @@ main {
 }
 
 .chat-bubble.user {
-  background: #fff;
-  border-color: #f1d1b0;
+  align-self: flex-end;
+  max-width: 76%;
+  padding: 11px 14px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  line-height: 1.5;
 }
 
 .chat-bubble.tool {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--muted-2);
 }
 
 .chat-bubble.thinking {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: fit-content;
-  max-width: 320px;
-  background: #e3eef5;
-  border-color: #9ce2ff;
-  color: #112a4d;
-  align-self: center;
-  justify-content: center;
-  font-size: 15px;
-  font-weight: 600;
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 /* ---------- Intermediate "agent thinking" messages -------------------- */
@@ -879,7 +1176,7 @@ button.chat-bubble.intermediate.collapsed {
   color: var(--muted);
   border: 1px dashed var(--line);
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
   cursor: pointer;
@@ -906,8 +1203,8 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .intermediate-label {
-  font-family: "Figtree", sans-serif;
-  font-size: 9.5px;
+  font-family: var(--font-display);
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -950,7 +1247,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: transparent;
   border: none;
   padding: 0;
-  font-family: "Figtree", sans-serif;
+  font-family: var(--font-display);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -973,7 +1270,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #004573;
+  background: var(--brand);
   opacity: 0.32;
   animation: thinkingPulse 1s ease-in-out infinite;
 }
@@ -1000,10 +1297,15 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .chat-input-row {
+  flex: 0 0 auto;
+  margin: 0 26px 22px;
+  padding: 12px 14px;
   display: flex;
-  gap: 8px;
-  padding: 12px 16px 16px 16px;
-  border-top: 1px solid var(--line);
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card-lg);
 }
 
 .chat-jump-latest {
@@ -1013,7 +1315,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   transform: translateX(-50%);
   border: none;
   background: var(--brand);
-  color: #fff;
+  color: var(--surface);
   border-radius: 999px;
   width: 34px;
   height: 34px;
@@ -1051,15 +1353,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   min-width: 0;
 }
 
-.chat-header-presets {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .chat-header-secondary-actions {
   margin-left: auto;
   display: inline-flex;
@@ -1068,9 +1361,9 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .dropzone {
-  border: 1px dashed #cfad89;
+  border: 1px dashed var(--line-strong);
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface);
   color: var(--muted);
   font-size: 13px;
   min-height: 130px;
@@ -1087,7 +1380,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .dropzone.active {
   border-color: var(--brand);
-  background: #fff7ed;
+  background: var(--brand-tint);
 }
 
 .modal-backdrop {
@@ -1110,6 +1403,84 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* A figure wants the window, not a form-sized card, so the lightbox sizes to
+   the image rather than to a fixed width. */
+.lightbox-backdrop {
+  z-index: 40;
+  padding: 24px;
+  /* Darker than a form dialog's backdrop: a figure is read against it, and
+     the page behind competes with the plot's own ink. */
+  background: rgba(28, 26, 23, 0.66);
+}
+
+/* Sized to the figure, so the bar below lines up with it rather than
+   stretching past its edges. */
+.lightbox {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  max-height: 100%;
+}
+
+.lightbox-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 110px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.lightbox-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.lightbox-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The figure in the column is a control: it opens itself. */
+.artifact-zoom {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.artifact-zoom img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: var(--r-card);
+}
+
+.artifact-zoom:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--r-card);
 }
 
 .skill-editor-modal {
@@ -1135,7 +1506,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .skill-editor-body {
-  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
 }
@@ -1159,12 +1530,12 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .output-card {
-  background: #112a4d;
-  color: #f2f2f2;
+  background: var(--brand-dark);
+  color: var(--surface-sunken);
   padding: 12px;
   border-radius: 12px;
-  border: 1px solid #004573;
-  font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  border: 1px solid var(--brand);
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1180,9 +1551,9 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 4px 8px;
   border-radius: 999px;
   font-size: 11px;
-  background: #9ce2ff;
-  color: #112a4d;
-  border: 1px solid #00608c;
+  background: var(--brand-tint);
+  color: var(--brand);
+  border: 1px solid var(--brand-line-strong);
 }
 
 .error {
@@ -1190,12 +1561,15 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .output-split {
-  display: grid;
-  grid-template-rows: minmax(220px, var(--right-top-height, 280px)) 10px minmax(260px, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.output-top {
+  flex: 1 1 auto;
 }
 
 .output-top,
@@ -1203,7 +1577,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel-2);
-  padding: 0;
+  padding: 12px 14px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1218,7 +1592,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-top: 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
   padding: 8px 10px;
 }
 
@@ -1269,9 +1643,6 @@ button.chat-bubble.intermediate.collapsed:hover {
     overflow: auto;
   }
 
-  .stack-resizer {
-    display: none;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1299,9 +1670,9 @@ button.chat-bubble.intermediate.collapsed:hover {
 .g5-approval {
   margin: 8px 0;
   padding: 10px 12px;
-  border: 1px solid var(--line, #2a2a2a);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  background: var(--surface-sunken);
 }
 .g5-section-title {
   font-size: 12px;
@@ -1324,10 +1695,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.6;
 }
 .g5-check.ok {
-  color: var(--ok, #3fb950);
+  color: var(--success);
 }
 .g5-check.fail {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 .g5-requested {
   display: flex;
@@ -1347,13 +1718,14 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 8px 10px;
   max-height: 220px;
   overflow: auto;
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--surface-1, rgba(0, 0, 0, 0.25));
-  border-radius: 6px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
 }
 
 /* RJSF field labels */
@@ -1407,11 +1779,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 /* ------------------------------------------------------------------ */
 
 .log-viewer {
-  font-family: "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;
-  background: #12100e;
-  color: #c9c1b6;
+  background: var(--term-bg);
+  color: var(--term-ink);
   padding: 8px 10px;
   overflow-y: auto;
   flex: 1;
@@ -1425,7 +1797,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .log-ts {
-  color: #5c564d;
+  color: var(--term-muted);
   margin-right: 6px;
 }
 
@@ -1437,47 +1809,47 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .log-area {
-  color: #b8860b;
+  color: var(--term-warn);
   margin-right: 6px;
 }
 
 .log-msg {
-  color: #c9c1b6;
+  color: var(--term-ink);
 }
 
 .log-extra {
-  color: #5c564d;
+  color: var(--term-muted);
   margin-left: 4px;
   font-size: 10px;
 }
 
 .log-info .log-level {
-  color: #5a9e6f;
+  color: var(--term-ok);
 }
 
 .log-warn .log-level {
-  color: #d4a843;
+  color: var(--term-warn);
 }
 
 .log-error .log-level {
-  color: #c9503c;
+  color: var(--term-error);
 }
 
 .log-empty {
-  color: #5c564d;
+  color: var(--term-muted);
   padding: 16px 4px;
   font-style: italic;
-  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
 .log-status-bar {
-  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   padding: 4px 10px;
-  background: #1a1714;
-  color: #8a8278;
-  border-bottom: 1px solid #2a2520;
+  background: var(--term-bg-2);
+  color: var(--term-muted);
+  border-bottom: 1px solid var(--term-line);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1497,13 +1869,14 @@ button.chat-bubble.intermediate.collapsed:hover {
   min-width: 0;
   height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .nav-rail {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--surface);
   color: var(--ink);
   border-right: 1px solid var(--line);
   transition: width 160ms ease;
@@ -1515,14 +1888,14 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .nav-rail.expanded {
-  width: 220px;
+  width: 232px;
 }
 
 .nav-rail-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 9px;
+  padding: 16px 18px 14px;
   min-height: 48px;
 }
 
@@ -1551,45 +1924,57 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .nav-rail-brand {
-  font-family: "Figtree", system-ui, sans-serif;
+  font-family: var(--font-display);
   color: var(--ink);
   flex: 1 1 auto;
   display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 9px;
   min-width: 0;
+}
+
+/* Solid dark-blue plate. The AmSC guide allows the white lockup only on a
+   solid dark ground, and forbids recolouring it to a dark ink. */
+.nav-rail-lockup {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  background: var(--brand-dark);
+  border-radius: 7px;
+  padding: 6px 9px;
+}
+
+.nav-rail-lockup img {
+  display: block;
+  height: 18px;
+  width: auto;
 }
 
 .nav-rail-brand-name {
   font-weight: 700;
-  font-size: 14px;
-  letter-spacing: 0.5px;
-}
-
-.nav-rail-brand-version {
-  font-weight: 500;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 16px;
+  letter-spacing: 0.06em;
   white-space: nowrap;
 }
 
 .nav-rail-new {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 4px 8px 6px;
+  gap: 8px;
+  margin: 0 12px 12px;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink);
+  border-radius: var(--r-control);
+  border: 1px solid var(--brand-line-strong);
+  background: var(--brand-tint);
+  color: var(--brand);
   text-decoration: none;
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 600;
   transition: background 120ms ease;
 }
 
 .nav-rail-new:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--brand-tint);
 }
 
 .nav-rail.collapsed .nav-rail-new {
@@ -1614,13 +1999,16 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-overflow: ellipsis;
 }
 
-.nav-rail-user {
+/* Pinned to the bottom of the rail by `margin-top: auto`, and given the same
+   icon + label metrics as `.nav-rail-entry` so it reads as one of the nav
+   items rather than a separate widget. The rule it sits above is what
+   separates it from the list. */
+.nav-rail-settings {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 12px 22px;
   margin-top: auto;
-  /* Render as a button without inheriting browser button chrome. */
   background: transparent;
   border: none;
   border-top: 1px solid var(--line);
@@ -1628,70 +2016,43 @@ button.chat-bubble.intermediate.collapsed:hover {
   width: 100%;
   text-align: left;
   font: inherit;
-  color: inherit;
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: nowrap;
   cursor: pointer;
   transition: background 120ms ease;
 }
 
-.nav-rail-user:hover:not(:disabled) {
+.nav-rail-settings:hover:not(:disabled) {
   background: var(--panel-2);
 }
 
-.nav-rail-user:focus-visible {
+.nav-rail-settings:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: -2px;
 }
 
-.nav-rail-user:disabled {
+.nav-rail-settings:disabled {
   cursor: default;
-  opacity: 0.7;
+  opacity: 0.45;
 }
 
-.nav-rail.collapsed .nav-rail-user {
+.nav-rail.collapsed .nav-rail-settings {
   justify-content: center;
-  padding: 10px 0;
+  padding: 12px 0;
 }
 
-.nav-rail-user-avatar {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: var(--brand);
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 12px;
-  font-family: "Figtree", system-ui, sans-serif;
-}
-
-.nav-rail-user-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.nav-rail-user-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
+.nav-rail-settings-label {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.nav-rail-user-hint {
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .nav-rail-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px 8px 8px;
+  padding: 0 12px 8px;
   overflow-y: auto;
   flex: 1 1 auto;
 }
@@ -1704,12 +2065,12 @@ button.chat-bubble.intermediate.collapsed:hover {
 .nav-rail-entry {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-control);
   border: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-2);
   text-decoration: none;
   cursor: pointer;
   font-size: 13px;
@@ -1717,7 +2078,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-align: left;
   width: 100%;
   white-space: nowrap;
-  transition: background 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .nav-rail.collapsed .nav-rail-entry {
@@ -1728,16 +2089,46 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 0;
 }
 
+/* The project children are indented under the project card when the rail is
+   open. Collapsed there is no card to indent under, and the indent survived
+   as a shove against the right edge, so the highlight had no margin there. */
+.nav-rail.collapsed .nav-rail-entry.project-child {
+  margin-left: 0;
+  width: 40px;
+  padding: 0;
+}
+
+/* Names the icon a collapsed rail cannot label. Fixed to the viewport so the
+   scrolling entry list does not clip it; the rail starts at x=0, so its own
+   width plus a gap is the whole of the horizontal placement. */
+.nav-rail-tip {
+  position: fixed;
+  left: 64px;
+  transform: translateY(-50%);
+  z-index: 60;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .nav-rail-entry:hover:not(.disabled):not(:disabled) {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--surface-active);
+  color: var(--ink);
 }
 
 .nav-rail-entry.active {
-  background: var(--ink);
-  color: #fff;
+  background: var(--surface-active);
+  color: var(--ink);
+  font-weight: 600;
 }
 
-.nav-rail-entry.disabled,
+/* Only the settings button, which needs a signed-in user. No navigation
+   entry is ever disabled. */
 .nav-rail-entry:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1748,8 +2139,9 @@ button.chat-bubble.intermediate.collapsed:hover {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted-2);
 }
 
 .nav-rail-label {
@@ -1759,35 +2151,46 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .nav-rail-section-label {
-  margin: 8px 10px 4px;
+  margin: 6px 10px 4px;
   font-size: 10px;
-  letter-spacing: 0.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.9;
 }
 
 .nav-rail-project-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 2px 8px 4px;
+  gap: 10px;
+  margin: 2px 0 0;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.04);
-  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface-active);
+  border: 0;
 }
 
 .nav-rail-project-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
   background: var(--brand);
   flex: 0 0 auto;
 }
 
+/* Hollow when nothing is selected: a filled dot reads as "active". */
+.nav-rail-project-card[data-empty="true"] .nav-rail-project-dot {
+  background: transparent;
+  border: 1.5px solid var(--line);
+}
+
+.nav-rail-project-card[data-empty="true"] .nav-rail-project-name {
+  color: var(--muted);
+  font-weight: 500;
+}
+
 .nav-rail-project-name {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
@@ -1796,8 +2199,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .nav-rail-entry.project-child {
-  margin-left: 16px;
-  width: calc(100% - 16px);
+  margin-left: 18px;
+  width: calc(100% - 18px);
+  padding: 6px 10px;
+  border-radius: 7px;
+  gap: 9px;
 }
 
 .conversation-list-view {
@@ -1820,7 +2226,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .conversation-list-item:hover {
-  background: #eceff2;
+  background: var(--brand-tint);
   border-color: var(--brand);
   transform: translateY(-1px);
 }
@@ -1846,7 +2252,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .conversation-list-title {
-  font-family: "Figtree", system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
@@ -1866,46 +2272,54 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, #213b61 0%, #112a4d 100%);
-  color: #f3f6fb;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(17, 42, 77, 0.18);
-  transition: transform 120ms ease, filter 120ms ease, border-color 120ms ease;
+  box-shadow: none;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 .conversation-action-button:hover,
 .conversation-list-edit:hover,
 .conversation-list-delete:hover,
 .conversation-back-button:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.05);
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--surface-active);
+  border-color: var(--line-strong);
 }
 
 .conversation-action-button {
-  height: 38px;
-  padding: 0 14px;
-  gap: 8px;
-  border-radius: 12px;
-  font-family: "Figtree", system-ui, sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink-2);
   font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: none;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .conversation-action-button.primary {
-  background: linear-gradient(180deg, #1a4f7c 0%, #004573 100%);
+  background: var(--brand-tint);
+  border-color: var(--brand-line-strong);
+  color: var(--brand);
+  font-weight: 600;
 }
 
 .conversation-back-button {
-  height: 42px;
-  padding: 0 14px;
-  gap: 8px;
-  border-radius: 14px;
-  font-family: "Figtree", system-ui, sans-serif;
+  height: 30px;
+  padding: 0 11px;
+  gap: 7px;
+  border-radius: var(--r-control);
+  font-family: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .conversation-back-button:disabled {
@@ -1917,12 +2331,13 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .conversation-list-delete {
   flex: 0 0 auto;
-  align-self: stretch;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #7a2630 0%, #5c1119 100%);
-  color: #fff3f4;
+  align-self: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-control);
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--brand-2);
 }
 
 .chat-session-banner {
@@ -1941,15 +2356,17 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .conversation-list-edit {
-  width: 56px;
-  height: 36px;
-  align-self: stretch;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  align-self: center;
+  border-radius: var(--r-control);
 }
 
 .conversation-list-edit.ghost {
-  background: linear-gradient(180deg, #667383 0%, #4f5c6b 100%);
-  color: #eef2f7;
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink-2);
+  color: var(--brand-tint);
 }
 
 .conversation-list-title-input {
@@ -1960,33 +2377,6 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Active project badge in the chat topbar                            */
-/* ------------------------------------------------------------------ */
-
-.app-active-project {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px 4px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #e6ebf2;
-  font-size: 12px;
-}
-
-.app-active-project-label {
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  font-size: 10px;
-  opacity: 0.7;
-}
-
-.app-active-project-name {
-  font-weight: 600;
-}
-
-/* ------------------------------------------------------------------ */
 /*  Projects page                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1994,29 +2384,30 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex: 1 1 auto;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 16px;
+  align-items: start;
   padding-right: 4px;
 }
 
 .projects-panel {
   flex: 1 1 auto;
   min-height: 0;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
 }
 
 .project-card {
-  background: var(--panel-2);
+  background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: var(--r-card-lg);
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  gap: 12px;
+  transition: border-color 120ms ease;
 }
 
 .project-card:hover {
@@ -2038,7 +2429,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 .project-card-title {
   font-weight: 700;
   font-size: 15px;
-  font-family: "Figtree", system-ui, sans-serif;
+  font-family: var(--font-display);
   color: var(--ink);
 }
 
@@ -2058,7 +2449,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .project-card-badge.active {
   background: var(--brand);
-  color: #fff;
+  color: var(--surface);
 }
 
 .project-card-desc {
@@ -2112,16 +2503,16 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   background: transparent;
-  border: 1.5px dashed var(--line);
-  border-radius: 10px;
-  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-card-lg);
+  padding: 18px 20px;
   font-family: inherit;
   cursor: pointer;
-  color: var(--muted);
+  color: var(--brand);
   min-height: 180px;
-  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .project-new:hover {
@@ -2164,7 +2555,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 6px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .project-modal-skill-item {
@@ -2239,24 +2630,12 @@ button.chat-bubble.intermediate.collapsed:hover {
 /* ------------------------------------------------------------------ */
 
 .hub-page {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  padding: 24px 32px;
   gap: 18px;
-  background: var(--bg);
-  overflow: hidden;
 }
 
-.hub-header h1 {
-  margin: 0 0 4px;
-  font-family: "Figtree", system-ui, sans-serif;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.hub-header p {
+/* One line of explanation under the header, where a page needs one. The page
+   title itself lives in the shared bar. */
+.page-lede {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
@@ -2272,7 +2651,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 .hub-search {
   flex: 1 1 360px;
   min-width: 240px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 14px;
@@ -2282,7 +2661,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .hub-sort {
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 14px;
@@ -2300,7 +2679,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .hub-tag {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   border-radius: 999px;
   padding: 5px 12px;
   font-size: 12px;
@@ -2315,7 +2694,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .hub-tag.active {
   background: var(--ink);
-  color: #fff;
+  color: var(--surface);
   border-color: var(--ink);
 }
 
@@ -2328,10 +2707,10 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex: 1 1 auto;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   grid-auto-rows: min-content;
   align-items: start;
-  gap: 14px;
+  gap: 16px;
   padding-right: 4px;
 }
 
@@ -2344,12 +2723,11 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex-direction: column;
   gap: 8px;
   cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition: border-color 120ms ease;
 }
 
 .hub-card:hover {
-  border-color: var(--brand);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-color: var(--brand-line-strong);
 }
 
 .hub-card-head {
@@ -2369,7 +2747,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex: 0 0 auto;
   border: 1px solid var(--ink);
   background: var(--ink);
-  color: #fff;
+  color: var(--surface);
   border-radius: 6px;
   padding: 5px 12px;
   font-size: 12px;
@@ -2453,10 +2831,15 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .kb-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 12px;
+  /* minmax(0, 1fr), not 1fr: a bare fr track keeps min-width:auto, so the
+     detail panel's widest line — a filesystem path or a long paper title —
+     sets the column width and pushes the right-hand side off screen. */
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 0;
   height: 100%;
   min-height: 0;
+  background: var(--line);
+  column-gap: 1px;
 }
 
 /* Project-scoped layout: drop the left list column and stack the tab
@@ -2468,31 +2851,9 @@ button.chat-bubble.intermediate.collapsed:hover {
 .kb-layout-scoped {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   height: 100%;
   min-height: 0;
-}
-
-.kb-project-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.kb-project-toolbar-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.kb-project-toolbar-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
 }
 
 /* Horizontal tab row. Scrolls horizontally when a project has more
@@ -2502,11 +2863,43 @@ button.chat-bubble.intermediate.collapsed:hover {
 .kb-tabs-row {
   display: flex;
   align-items: stretch;
-  gap: 2px;
-  overflow-x: auto;
+  gap: 8px;
   border-bottom: 1px solid var(--line);
   padding: 0 4px;
   min-height: 38px;
+}
+
+.kb-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Same choice as the tabs beside it: which knowledge bases you are looking
+   at. Styled as a link rather than a button so it does not compete with
+   them. */
+.kb-scope-link {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--brand);
+  text-decoration: none;
+  white-space: nowrap;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.kb-scope-link:hover {
+  background: rgba(0, 69, 115, 0.08);
+  text-decoration: underline;
+}
+
+.kb-scope-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .kb-tab {
@@ -2551,15 +2944,15 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .kb-tab-status-dot[data-tone="ready"] {
-  background: var(--accent, #4caf50);
+  background: var(--success);
 }
 
 .kb-tab-status-dot[data-tone="warn"] {
-  background: #d39e00;
+  background: var(--warning);
 }
 
 .kb-tab-status-dot[data-tone="error"] {
-  background: #c44;
+  background: var(--danger);
 }
 
 .kb-tab-empty {
@@ -2588,12 +2981,6 @@ button.chat-bubble.intermediate.collapsed:hover {
    * `overflow: auto` so the inner .kb-list scrolls in its own region. */
   flex: 1 1 0;
   overflow: hidden;
-}
-
-.kb-list-toolbar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
 }
 
 .kb-list {
@@ -2643,7 +3030,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .kb-list-item-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .kb-list-item-meta {
@@ -2662,17 +3049,17 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .kb-status-ready,
 .kb-detail-status-ready {
-  color: #2f7a3a;
+  color: var(--success);
 }
 
 .kb-status-warn,
 .kb-detail-status-warn {
-  color: #a06a00;
+  color: var(--warning-ink);
 }
 
 .kb-status-error,
 .kb-detail-status-error {
-  color: #b3261e;
+  color: var(--danger);
 }
 
 .kb-status-muted {
@@ -2699,10 +3086,9 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-2);
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .kb-detail-desc {
@@ -2719,7 +3105,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .kb-detail-meta-row code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2776,7 +3162,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .pub-item-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2836,18 +3222,18 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .pub-fields dd.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
+/* A list of the files picked for a new knowledge base. The rows carry their
+   own separation; boxing them made a card out of the list. */
 .kb-create-files {
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-top: 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
-  background: var(--panel-2);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 
 .kb-create-file-row {
@@ -2902,7 +3288,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .kb-pubs-hint code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2934,20 +3320,20 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .pub-item-note code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
 }
 
 .pub-item-tag-indexing {
   background: var(--panel-2);
-  color: #a06a00;
-  border-color: #d8b04a;
+  color: var(--warning-ink);
+  border-color: var(--warning-line);
 }
 
 .pub-item-tag-failed {
   background: var(--panel-2);
-  color: #b3261e;
-  border-color: #e8a4a0;
+  color: var(--danger);
+  border-color: var(--danger-line);
 }
 
 /* ---------- Indexer progress bar ------------------------------------- */
@@ -3017,7 +3403,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .kb-indexing-progress-fill {
   height: 100%;
-  background: #2f7a3a;
+  background: var(--success);
   border-radius: inherit;
   transition: width 400ms ease-out;
 }
@@ -3030,9 +3416,9 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    #2f7a3a 30%,
-    #4ca85a 50%,
-    #2f7a3a 70%,
+    var(--success) 30%,
+    var(--success-line) 50%,
+    var(--success) 70%,
     transparent 100%
   );
   background-size: 50% 100%;
@@ -3049,11 +3435,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 /* Campaign panel — read-only view of the active conversation's SPLASH campaign. */
 .campaign-panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-2);
-  padding: 10px 12px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 12px 14px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: 12px;
 }
 .campaign-head {
   display: flex;
@@ -3074,9 +3460,9 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 .campaign-status-running { color: var(--brand); border-color: var(--brand); }
 .campaign-status-converged,
-.campaign-status-completed { color: #1a7f37; border-color: #1a7f37; }
+.campaign-status-completed { color: var(--success); border-color: var(--success); }
 .campaign-status-failed { color: var(--danger); border-color: var(--danger); }
-.campaign-status-awaiting_user { color: #9a6700; border-color: #9a6700; }
+.campaign-status-awaiting_user { color: var(--warning-ink); border-color: var(--warning-ink); }
 .campaign-plan {
   margin: 0 0 8px;
   padding-left: 20px;
@@ -3096,3 +3482,323 @@ button.chat-bubble.intermediate.collapsed:hover {
 .campaign-metrics { color: var(--muted); font-size: 12px; }
 .campaign-error { color: var(--danger); margin-top: 6px; }
 .campaign-note { color: var(--muted); font-size: 11px; margin-top: 8px; }
+
+/* ------------------------------------------------------------------ */
+/*  Workspace tabs                                                     */
+/* ------------------------------------------------------------------ */
+
+/* The strip is a .panel-header, which already carries the artboard's 44px
+   height and 0 20px padding. Only the spacing between tabs is its own. */
+.workspace-tabs {
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-tab:hover {
+  color: var(--ink);
+}
+
+.workspace-tab[data-active="true"] {
+  background: transparent;
+  border-bottom-color: var(--brand);
+  color: var(--ink);
+}
+
+.workspace-tab:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.workspace-tab-count {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.artifacts-view,
+.activity-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+/* ---------- Activity ------------------------------------------------ */
+
+.activity-empty {
+  padding: 18px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.activity-step {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.activity-step[data-expanded="true"] {
+  background: var(--panel-2);
+}
+
+/* A rail down the left, so a run reads as a sequence. */
+.activity-step-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.activity-step-dot.live {
+  background: var(--brand);
+  animation: activity-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-step-dot.live {
+    animation: none;
+  }
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.activity-step-body {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.activity-step-summary {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-step-summary:hover {
+  color: var(--brand);
+}
+
+.activity-step-summary:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.activity-step[data-expanded="true"] .activity-step-summary {
+  font-weight: 600;
+}
+
+.activity-step-detail {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.activity-step-line :is(p, ul, ol) {
+  margin: 0;
+}
+
+.activity-step-line code {
+  font-size: 12px;
+}
+
+.activity-step-detail :is(p, ul, ol, pre) {
+  margin: 0 0 8px;
+}
+
+.activity-step-live .activity-step-body {
+  color: var(--muted);
+}
+
+.activity-raw {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.activity-raw-toggle {
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.activity-raw-toggle:hover {
+  color: var(--ink);
+}
+
+.activity-raw-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.activity-raw-actions {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+
+/* ---------- Empty conversation -------------------------------------- */
+
+.chat-opener {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 2px;
+}
+
+.chat-opener-lede {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.chat-opener-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Direction A: pane fills ---------------------------------- */
+
+.kb-list-panel {
+  background: var(--surface);
+}
+
+.kb-detail-panel,
+.kb-scoped-detail-panel {
+  background: var(--surface-sunken);
+}
+
+/* ---------- Composer ------------------------------------------------
+   Direction A's composer is a card: the field on its own line, a quiet
+   action row beneath it, and a 32px square send button in brand navy. */
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-spacer {
+  flex: 1 1 auto;
+}
+
+.composer-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--brand);
+  color: var(--surface);
+  font: inherit;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.composer-send.labelled {
+  width: auto;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-send:hover:not(:disabled) {
+  background: var(--brand-dark);
+}
+
+.composer-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.composer-send:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+}
+
+.input:focus {
+  outline: none;
+}
+
+/* ---------- Workspace pane fills ------------------------------------
+   The chat column shows the ground; the artifacts column is the one
+   faintly sunken surface, exactly as on the artboard. */
+
+.workspace > .panel:first-of-type {
+  background: transparent;
+}
+
+.workspace > .panel:last-of-type {
+  background: var(--surface-sunken);
+}
+
+.workspace > .panel:first-of-type > .panel-body {
+  padding: 22px 26px;
+}
+
+/* The one solid navy fill in the rail: the open project's active child. */
+.nav-rail-entry.project-child.active {
+  background: var(--brand);
+  color: var(--surface);
+  font-weight: 400;
+}
+
+.nav-rail-entry.project-child.active .nav-rail-icon {
+  color: var(--surface);
+}

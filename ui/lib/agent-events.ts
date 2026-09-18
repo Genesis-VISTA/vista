@@ -344,3 +344,60 @@ export function htmlFromToolReturnContent(
 
   return null;
 }
+
+/**
+ * Plain text out of a tool return, for the panels that read stdout.
+ *
+ * The salt quick-actions used to be the only path that filled the prediction
+ * summary and references boxes, because they called the MCP route directly and
+ * got an `ExecutionResult` with real stdout back. An agent run reaches the UI
+ * as tool-return content instead, and that content was being dropped. This
+ * pulls the text out of the shapes PydanticAI and MCP actually send, so those
+ * panels work from an agent turn.
+ *
+ * Text only. HTML and files already have their own extractors above.
+ */
+export function textFromToolReturnContent(content: unknown, depth = 0): string | null {
+  if (depth > 6 || content == null) return null;
+
+  if (typeof content === "string") {
+    return content.trim() ? content : null;
+  }
+
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((item) => textFromToolReturnContent(item, depth + 1))
+      .filter((part): part is string => Boolean(part));
+    return parts.length > 0 ? parts.join("\n") : null;
+  }
+
+  if (!isRecord(content)) return null;
+
+  // PydanticAI MultiModalContent, then raw MCP content blocks.
+  if (content.kind === "text-content" && typeof content.text === "string") {
+    return content.text.trim() ? content.text : null;
+  }
+  if (content.type === "text" && typeof content.text === "string") {
+    return content.text.trim() ? content.text : null;
+  }
+  if (content.type === "resource" && isRecord(content.resource)) {
+    const resource = content.resource;
+    const mime = typeof resource.mimeType === "string" ? resource.mimeType : "";
+    if (typeof resource.text === "string" && !mime.includes("html")) {
+      return resource.text.trim() ? resource.text : null;
+    }
+  }
+
+  // The shape an MCP tool returns when it wraps a process run.
+  for (const key of ["stdout", "text", "output"]) {
+    const value = content[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+
+  for (const value of Object.values(content)) {
+    const hit = textFromToolReturnContent(value, depth + 1);
+    if (hit) return hit;
+  }
+
+  return null;
+}

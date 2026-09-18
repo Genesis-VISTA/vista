@@ -543,14 +543,6 @@ class ProjectAgent:
         move project_paths off metadata too.
         """
         project_name = quote(self.project.name, safe="")
-        uri_map = {
-            "file:///mnt/data/output/{path}": (
-                f"/api/files/outputs/{{path}}?project_name={project_name}"
-            ),
-            "file:///mnt/data/uploads/{path}": (
-                f"/api/files/uploads/{{path}}?project_name={project_name}"
-            ),
-        }
         metadata: dict[str, Any] = {
             "vista": {
                 "project_paths": {
@@ -558,7 +550,23 @@ class ProjectAgent:
                     "output_dir": str(self.output_dir),
                     "uploads_dir": str(self.uploads_dir),
                 },
-                "uri_map": uri_map,
+                # `display_file` turns a path inside the sandbox into something
+                # the browser can fetch. Without this map it has nothing to
+                # resolve against and refuses every path, which is why a plot
+                # the agent had just written could not be shown.
+                #
+                # These are the UI's own file routes, not the backend's: the
+                # browser only ever talks to the Next app, which proxies
+                # through to `/projects/{name}/{kind}/{path}`. The `{path}`
+                # placeholder is filled in by the MCP server.
+                "uri_map": {
+                    "file:///mnt/data/output/{path}": (
+                        f"/api/files/outputs/{{path}}?project_name={project_name}"
+                    ),
+                    "file:///mnt/data/uploads/{path}": (
+                        f"/api/files/uploads/{{path}}?project_name={project_name}"
+                    ),
+                },
             },
         }
         HPC_TOOLS = {

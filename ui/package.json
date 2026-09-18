@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:e2e": "playwright test -c playwright.config.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:e2e:hermetic": "playwright test -c playwright.hermetic.config.ts"
   },
   "dependencies": {
     "@rjsf/core": "^6.4.1",
@@ -21,18 +25,22 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.0",
-    "@tailwindcss/postcss": "^4.2.2",
+    "@playwright/test": "1.62.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^5.0.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "16.2.1",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.8",
-    "tailwindcss": "^4.2.2",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.0"
   }
 }

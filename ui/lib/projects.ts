@@ -174,16 +174,22 @@ export function useProjects(): UseProjectsResult {
 }
 
 /**
+ * The name the active-project pointer holds, without waiting for the project
+ * list. `useActiveProject` returns null both when nothing is selected and
+ * while the list is still loading; callers that must tell those apart — a
+ * route deciding whether to redirect, say — need this instead.
+ */
+export function useActiveProjectName(): string | null {
+  return useSyncExternalStore(activeNameSubscribe, readActiveProjectName, () => null);
+}
+
+/**
  * The active project, resolved by name against the fetched list. Returns `null`
  * on the server, before the list loads, or when no project is active.
  */
 export function useActiveProject(): Project | null {
   const { projects } = useProjects();
-  const activeName = useSyncExternalStore(
-    activeNameSubscribe,
-    readActiveProjectName,
-    () => null
-  );
+  const activeName = useActiveProjectName();
   if (!activeName) return null;
   return projects.find((p) => p.name === activeName) ?? null;
 }

@@ -64,17 +64,31 @@ rather than default nightly if flaky.
 - **WHEN** real HPC smoke runs with valid credentials
 - **THEN** documentation/tests SHALL record expected job id, terminal status, and output fetchability (or cluster-specific limits)
 
-### Requirement: Minimal Playwright smoke outside PR CI
+### Requirement: Seeded Playwright smoke outside PR CI
 
-A minimal Playwright flow (open app → select project → send message → observe
-tool card and/or elicitation modal) SHALL run only on schedule or manual
+The **seeded** Playwright flow (open app → select project → send message →
+observe tool card and/or elicitation modal), which needs a standing stack with
+a real model and a seeded project, SHALL run only on schedule or manual
 invocation, not in MR CI.
 
-#### Scenario: Playwright not required to merge
+This scopes the requirement to the flow that needs credentials and live
+infrastructure. A hermetic browser suite, one that starts only the Next server
+and answers every backend route from fixtures, is a different thing: it needs
+nothing to run, so keeping it out of MR CI would buy nothing. That suite is
+required on every MR.
+
+#### Scenario: Seeded smoke not required to merge
 
 - **WHEN** an MR pipeline runs
-- **THEN** Playwright smoke MUST NOT be a required job
+- **THEN** the seeded Playwright smoke MUST NOT be a required job
 - **AND** selectors SHOULD prefer role/text over brittle CSS
+
+#### Scenario: A hermetic browser suite may be required
+
+- **WHEN** a browser suite intercepts every backend route and needs no
+  credentials, no seeded data and no live services
+- **THEN** it MAY be a required MR job
+- **AND** a request that escapes to a real origin SHALL fail the run
 
 ### Requirement: Evaluation runbook remains operational source
 

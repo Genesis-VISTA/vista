@@ -238,6 +238,42 @@ ui:typecheck:
     - npm ci --prefer-offline
     - npx tsc --noEmit
 
+# Required job — must NOT set allow_failure.
+# Hermetic: jsdom only. No backend, no MCP server, no model, no database,
+# no credentials. See openspec/specs/testing-ci "Hermetic UI test lane".
+ui:test:
+  stage: test
+  image: node:22-slim
+  <<: *cache-npm-ui
+  script:
+    - cd ui
+    - npm ci --prefer-offline
+    - npm run test
+
+# Required job — must NOT set allow_failure.
+# Hermetic: starts only the Next server. Every /api/** call is answered inside
+# the page from e2e-hermetic/fixtures.ts, and a route tripwire fails the run if
+# one escapes. No Python backend, no MCP server, no model, no database, no
+# seeded project, no credentials.
+#
+# The image tag MUST match the @playwright/test version pinned in
+# ui/package.json, or the bundled browsers will not match the client.
+ui:browser:
+  stage: test
+  image: mcr.microsoft.com/playwright:v1.62.1-noble
+  <<: *cache-npm-ui
+  script:
+    - cd ui
+    - npm ci --prefer-offline
+    - npm run test:e2e:hermetic
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      junit: ui/playwright-report.xml
+    paths:
+      - ui/test-results/
+
 # ─── Nightly validation lane (Milestone D) ──────────────────────────────────
 #
 # Schedule this pipeline in GitLab (CI/CD → Schedules) and attach secrets only

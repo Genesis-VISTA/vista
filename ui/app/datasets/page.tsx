@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveProject } from "@/lib/projects";
+import { AppTopBar } from "@/components/AppTopBar";
+import { ProjectRequired } from "@/components/ProjectRequired";
 
 type FileKind = "uploads" | "outputs";
 
@@ -157,12 +159,16 @@ export default function DatasetsPage() {
   }
 
   return (
-    <div className="standalone-page">
+    <div className="app-page">
+      <AppTopBar
+        title="Datasets"
+        actions={projectName ? <span className="tag">/mnt/data/uploads</span> : null}
+      />
+      <div className="app-page-body">
+      {!projectName ? (
+        <ProjectRequired what="Datasets" />
+      ) : (
       <section className="panel" style={{ height: "100%" }}>
-        <div className="panel-header">
-          <div className="panel-title">Data</div>
-          <span className="tag">/mnt/data/uploads</span>
-        </div>
         <div className="panel-body">
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <button
@@ -326,6 +332,8 @@ export default function DatasetsPage() {
           </div>
         </div>
       </section>
+      )}
+      </div>
     </div>
   );
 }

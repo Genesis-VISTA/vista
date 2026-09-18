@@ -12,6 +12,8 @@ import {
   readAdditions,
   writeAdditions,
 } from "@/lib/loaded-skills";
+import { AppTopBar } from "@/components/AppTopBar";
+import { ProjectRequired } from "@/components/ProjectRequired";
 import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
@@ -130,11 +132,12 @@ export default function SkillsPage() {
   }, [skills, loadedSlugs, filter]);
 
   return (
-    <div className="standalone-page">
-      <section className="panel" style={{ height: "100%" }}>
-        <div className="panel-header">
-          <div className="panel-title">Skills</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <div className="app-page">
+      <AppTopBar
+        title="Skills"
+        actions={
+          !projectName ? null : (
+          <>
             <span className="tag">{loadedSlugs.size} loaded</span>
             <button
               type="button"
@@ -145,8 +148,15 @@ export default function SkillsPage() {
             >
               Import…
             </button>
-          </div>
-        </div>
+          </>
+          )
+        }
+      />
+      <div className="app-page-body">
+      {!projectName ? (
+        <ProjectRequired what="Skills" />
+      ) : (
+      <section className="panel" style={{ height: "100%" }}>
         <div className="panel-body">
           <input
             className="input"
@@ -268,6 +278,8 @@ export default function SkillsPage() {
           </div>
         </div>
       </section>
+      )}
+      </div>
 
       {selected && (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>

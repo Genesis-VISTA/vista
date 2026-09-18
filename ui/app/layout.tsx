@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           {/* NavRail reads useSearchParams to highlight the active entry,
               which requires a Suspense boundary or Next will bail the
               whole tree out of static prerender. */}
-          <Suspense fallback={<aside className="nav-rail collapsed" aria-label="Primary navigation" />}>
+          <Suspense fallback={<aside className="nav-rail expanded" aria-label="Primary navigation" />}>
             <NavRail />
           </Suspense>
           <div className="app-content">{children}</div>

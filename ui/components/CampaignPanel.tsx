@@ -40,9 +40,17 @@ function metricsText(result: Record<string, unknown> | null): string | null {
 export default function CampaignPanel({
   projectName,
   chatSessionId,
+  onPresenceChange,
 }: {
   projectName: string | null;
   chatSessionId: string | null;
+  /**
+   * Whether this conversation has a campaign at all. The Jobs tab is built
+   * from this: a campaign is a SPLASH-specific thing that nearly every
+   * conversation lacks, and a permanently empty tab is worse than no tab.
+   * Reported from here because this is where the polling already lives.
+   */
+  onPresenceChange?: (present: boolean) => void;
 }) {
   const [state, setState] = useState<CampaignState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +92,12 @@ export default function CampaignPanel({
     };
   }, [projectName, chatSessionId, refreshNonce]);
 
-  if (!projectName || !chatSessionId || !state) return null;
+  const present = Boolean(projectName && chatSessionId && state);
+  useEffect(() => {
+    onPresenceChange?.(present);
+  }, [present, onPresenceChange]);
+
+  if (!present || !state) return null;
 
   const { run, steps, jobs } = state;
   const jobsByStep = new Map(jobs.map((job) => [job.step_id, job] as const));

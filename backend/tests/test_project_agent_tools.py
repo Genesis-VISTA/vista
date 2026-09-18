@@ -90,6 +90,29 @@ def test_vista_metadata_includes_project_paths():
     }
 
 
+def test_vista_metadata_carries_a_uri_map_for_display_file():
+    """
+    Without this map `display_file` has nothing to resolve a sandbox path
+    against, so it refuses every one of them and a plot the agent has just
+    written cannot be shown. The templates are the UI's file routes, because
+    the browser is what fetches the result.
+
+    That these templates actually resolve is pinned in the MCP server's own
+    suite (`test_display_file.py`), which is where `resolve_uri` lives — the
+    two packages have separate virtualenvs and cannot import each other.
+    """
+    agent = _agent(make_project(name="molten salt"))
+    uri_map = agent._build_vista_metadata("display_file")["vista"]["uri_map"]
+    assert uri_map == {
+        "file:///mnt/data/output/{path}": (
+            "/api/files/outputs/{path}?project_name=molten%20salt"
+        ),
+        "file:///mnt/data/uploads/{path}": (
+            "/api/files/uploads/{path}?project_name=molten%20salt"
+        ),
+    }
+
+
 def test_vista_metadata_maps_sandbox_files_to_project_download_urls():
     project = make_project(name="molten salt/analysis")
     uri_map = _agent(project)._build_vista_metadata("display_file")["vista"]["uri_map"]

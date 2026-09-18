@@ -295,5 +295,8 @@ $RECYCLE.BIN/
 
 ui/node_modules/
 ui/.next/
+ui/test-results/
+ui/playwright-report/
+ui/playwright-report.xml
 ui/.env.local
 artifacts/

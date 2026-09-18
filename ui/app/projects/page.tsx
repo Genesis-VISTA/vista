@@ -3,6 +3,9 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
+import { AppTopBar } from "@/components/AppTopBar";
+import { relativeTime, useProjectStats } from "@/lib/project-stats";
+import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
 import {
   type Project,
   type UserPublic,
@@ -75,7 +78,8 @@ function ProjectsPageContent() {
 
   function open(project: Project) {
     activateProject(project);
-    router.push("/");
+    // Back to whatever sent them here, or to chat if they started on this page.
+    router.push(takePendingDestination() ?? DEFAULT_DESTINATION);
   }
 
   async function saveProject(draft: ProjectDraft, editing?: Project) {
@@ -106,15 +110,12 @@ function ProjectsPageContent() {
   }
 
   return (
-    <div className="standalone-page" style={{ paddingBottom: 0 }}>
-      <header style={{ marginBottom: 16 }}>
-        <h1 style={{ margin: "0 0 4px", fontSize: 22, fontFamily: "Figtree, sans-serif" }}>
-          Projects
-        </h1>
-        <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-          Pick a project to scope the chat session with its system prompt, skills, and tools.
-        </p>
-      </header>
+    <div className="app-page">
+      <AppTopBar title="Projects" showProject={false} />
+      <div className="app-page-body">
+      <p className="page-lede">
+        Pick a project to scope the chat session with its system prompt, skills, and tools.
+      </p>
 
       {error && (
         <div className="error" style={{ marginBottom: 12, fontSize: 13 }}>
@@ -126,6 +127,23 @@ function ProjectsPageContent() {
       )}
 
       <div className="projects-panel">
+        {!loading && projects.length === 0 ? (
+          <div className="projects-empty">
+            <h2 className="projects-empty-title">No projects yet</h2>
+            <p className="projects-empty-body">
+              A project is a working context: its own system prompt, the skills and
+              tools the agent may use, and the conversations and datasets that
+              belong to it. Chat starts here, so this is the first thing to make.
+            </p>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setModal({ mode: "create" })}
+            >
+              Create a project
+            </button>
+          </div>
+        ) : (
         <div className="projects-grid">
           {loading && projects.length === 0 && (
             <div className="chat-bubble">Loading projects…</div>
@@ -150,6 +168,8 @@ function ProjectsPageContent() {
             <div className="project-new-label">New project</div>
           </button>
         </div>
+        )}
+      </div>
       </div>
 
       {(modal.mode === "create" || modal.mode === "edit") && (
@@ -191,6 +211,8 @@ function ProjectCard({
   onMembers: () => void;
   onDelete: () => void;
 }) {
+  const stats = useProjectStats(project.name);
+
   return (
     <div className={`project-card${active ? " active" : ""}`}>
       <div className="project-card-head">
@@ -199,6 +221,23 @@ function ProjectCard({
           {active && <span className="project-card-badge active">Active</span>}
         </div>
       </div>
+      {stats && (
+        <div className="project-card-stats">
+          <span>
+            {stats.conversations} {stats.conversations === 1 ? "conversation" : "conversations"}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            {stats.datasets} {stats.datasets === 1 ? "dataset" : "datasets"}
+          </span>
+          {stats.lastActive && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>active {relativeTime(stats.lastActive)}</span>
+            </>
+          )}
+        </div>
+      )}
       <div className="project-card-desc">{project.description || "No description."}</div>
 
       <ChipRow label="Skills" items={project.skills} />

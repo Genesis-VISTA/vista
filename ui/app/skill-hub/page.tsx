@@ -11,6 +11,7 @@ import {
   writeAdditions,
 } from "@/lib/loaded-skills";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
+import { AppTopBar } from "@/components/AppTopBar";
 
 const TAG_FILTERS = [
   "All",
@@ -113,11 +114,12 @@ export default function SkillHubPage() {
   }, [skills, search, activeTag, sort]);
 
   return (
-    <div className="hub-page">
-      <header className="hub-header">
-        <h1>Skill Hub</h1>
-        <p>Discover skills and load them into the current chat session.</p>
-      </header>
+    <div className="app-page">
+      <AppTopBar title="Skill Hub" />
+      <div className="app-page-body hub-page">
+      <p className="page-lede">
+        Discover skills and load them into the current chat session.
+      </p>
 
       <div className="hub-controls">
         <input
@@ -237,6 +239,7 @@ export default function SkillHubPage() {
             );
           })
         )}
+      </div>
       </div>
 
       {selected && (

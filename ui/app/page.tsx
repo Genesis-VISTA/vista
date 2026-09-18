@@ -1,20 +1,39 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
 import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
 import CampaignPanel from "@/components/CampaignPanel";
+import { AppTopBar } from "@/components/AppTopBar";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
   type SkillDraftFields,
   type SkillSavedPayload,
 } from "@/components/SkillEditorModal";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
-import { readActiveProjectName, useActiveProject } from "@/lib/projects";
+import { labelForTool } from "@/lib/tool-labels";
+import {
+  readActiveProjectName,
+  useActiveProject,
+  useActiveProjectName,
+  useProjects,
+  writeActiveProjectName,
+  notifyActiveProjectChanged,
+} from "@/lib/projects";
+import { writePendingDestination } from "@/lib/pending-destination";
 import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
+import {
+  extractPlotPath,
+  extractPredictionSummary,
+  extractReferences,
+  formatResultSummary,
+  intermediatePreview,
+} from "@/lib/result-parsing";
 import {
   createPersistedChatSession,
   deletePersistedChatSession,
@@ -31,6 +50,7 @@ import {
 import {
   htmlFromToolReturnContent,
   fileFromToolReturnContent,
+  textFromToolReturnContent,
   type AgentRunResultEvent,
   type FunctionToolCallEvent,
   type FunctionToolResultEvent,
@@ -43,6 +63,25 @@ import {
   type PartEndEvent,
   type PartStartEvent,
 } from "@/lib/agent-events";
+
+type WorkspaceTab = "artifacts" | "activity" | "jobs";
+
+/**
+ * Openers for an empty conversation. These prefill the composer rather than
+ * sending, so the user can edit before committing — and unlike the salt
+ * buttons they replace, they go through the agent like any other message.
+ */
+const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
+  { id: "artifacts", label: "Artifacts" },
+  { id: "activity", label: "Activity" },
+  { id: "jobs", label: "Jobs" },
+];
+
+const SUGGESTIONS = [
+  "Show me the phase diagram for AlCl3-KCl",
+  "How many fluoride salts are in the database?",
+  "What is the density of FLiBe at 873 K?",
+];
 
 type LogEntry = {
   id: string;
@@ -65,122 +104,40 @@ type McpToolsResponse = {
   error?: string;
 };
 
-const MODEL_SERVICES = ["AmSC model services"];
-const MODEL_FAMILIES = ["gpt-5", "claude", "open models"];
-const OPEN_MODELS = ["open-ai/gpt-oss-20b"];
-
-function formatResultSummary(result: ExecutionResult): string {
-  const status = result.ok ? "OK" : "ERROR";
-  const output = result.stdout ? result.stdout.slice(0, 240) : "";
-  return `${status}${output ? `: ${output}` : ""}`;
-}
-
-function extractPlotPath(stdout: string): string | null {
-  const match = stdout.match(/Plot saved to\s+(.+)/);
-  if (!match) return null;
-  return match[1].trim();
-}
-
-function parseReferencesFromStdout(stdout: string): string[] {
-  if (!stdout) return [];
-  const refs: string[] = [];
-  const lines = stdout.split(/\r?\n/);
-  let inReferencesSection = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (/^references\b/i.test(trimmed)) {
-      inReferencesSection = true;
-      continue;
-    }
-
-    if (inReferencesSection) {
-      if (/^=+$/.test(trimmed)) continue;
-      const cleaned = trimmed
-        .replace(/^\[\d+\]\s*/, "")
-        .replace(/^[-*]\s*/, "")
-        .trim();
-      if (cleaned) refs.push(cleaned);
-      continue;
-    }
-
-    const inlineRef = trimmed.match(/\b(10\.\d{4,9}\/\S+|https?:\/\/\S+)/i);
-    if (inlineRef?.[1]) refs.push(inlineRef[1]);
-  }
-
-  return refs;
-}
-
-function extractReferences(result: ExecutionResult | null): string[] {
-  if (!result) return [];
-  const candidates: string[] = [];
-
-  if (Array.isArray(result.meta?.references)) {
-    for (const item of result.meta.references) {
-      if (typeof item === "string" && item.trim()) candidates.push(item.trim());
-    }
-  }
-
-  const dataRefs = (result.data as Record<string, unknown> | undefined)?.references;
-  if (Array.isArray(dataRefs)) {
-    for (const item of dataRefs) {
-      if (typeof item === "string" && item.trim()) candidates.push(item.trim());
-    }
-  }
-
-  candidates.push(...parseReferencesFromStdout(result.stdout || ""));
-  return Array.from(new Set(candidates));
-}
-
-function extractPredictionSummary(result: ExecutionResult | null): Record<string, unknown> | null {
-  if (!result?.stdout) return null;
-
-  const summaryLine = result.stdout
-    .split(/\r?\n/)
-    .find((line) => line.trim().startsWith("SUMMARY_JSON:"));
-  if (!summaryLine) return null;
-
-  const jsonText = summaryLine.replace(/^.*SUMMARY_JSON:\s*/, "").trim();
-  if (!jsonText) return null;
-
-  try {
-    const parsed = JSON.parse(jsonText);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * One-line preview of an intermediate agent report, used when the bubble is
- * collapsed. Pulls the first markdown heading/meaningful line and strips
- * bullet/heading punctuation so it reads like a chip label.
+ * The figure in the artifacts column, which opens itself full size.
+ *
+ * Its own component only because the surrounding JSX narrows `ui` by a
+ * discriminant a click handler's closure no longer sees.
  */
-function intermediatePreview(content: string): string {
-  const firstLine = content
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith("```"));
-  if (!firstLine) return "Agent update";
-  const cleaned = firstLine
-    .replace(/^#+\s*/, "")
-    .replace(/^[-*>]\s*/, "")
-    .replace(/^\*+|\*+$/g, "")
-    .trim();
-  return cleaned || "Agent update";
+function ArtifactImage({
+  url,
+  name,
+  onZoom,
+}: {
+  url: string;
+  name?: string;
+  onZoom: (image: { src: string; alt: string }) => void;
+}) {
+  const alt = name ?? "Tool output";
+  return (
+    <button
+      type="button"
+      className="artifact-zoom"
+      onClick={() => onZoom({ src: url, alt })}
+      title="Show this figure full size"
+    >
+      <img src={url} alt={alt} />
+    </button>
+  );
 }
 
 export default function HomePage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeColumnResizer, setActiveColumnResizer] = useState<"right" | null>(null);
-  const [activeRowResizer, setActiveRowResizer] = useState<"right" | null>(null);
   const [vizWidth, setVizWidth] = useState(460);
-  const [rightTopHeight, setRightTopHeight] = useState(430);
   /**
    * Active project for the topbar badge. The hook uses
    * `useSyncExternalStore` so SSR and the first client paint both read
@@ -189,6 +146,38 @@ export default function HomePage() {
    * hook's storage subscription.
    */
   const activeProject = useActiveProject();
+  const activeProjectName = useActiveProjectName();
+  const { loading: projectsLoading } = useProjects();
+  const router = useRouter();
+
+  /**
+   * Chat is the only route that redirects. Every other page has something to
+   * show without a project; this one is a conversation with nobody.
+   *
+   * The pointer's name is checked rather than the resolved project, because
+   * the resolved value is also null while the list loads — redirecting on that
+   * would bounce everyone to the picker on every cold load. A name that no
+   * longer matches any project (someone deleted it) is cleared here too,
+   * otherwise the page would wait forever for a project that is not coming.
+   */
+  useEffect(() => {
+    // Read storage directly rather than trusting the hook's value here. On the
+    // hydration render `useSyncExternalStore` hands back the *server* snapshot
+    // (null) so server and client markup agree, and acting on that would
+    // redirect every cold load to the picker. Effects only run on the client,
+    // after hydration, so this read is the real one. The hook still drives the
+    // dependency list, so a later switch re-runs this.
+    const name = readActiveProjectName();
+    // The pointer names a project that no longer exists.
+    const stale = Boolean(name) && !projectsLoading && !activeProject;
+    if (name && !stale) return;
+    if (stale) {
+      writeActiveProjectName(null);
+      notifyActiveProjectChanged();
+    }
+    writePendingDestination("/");
+    router.replace("/projects");
+  }, [activeProjectName, activeProject, projectsLoading, router]);
   const activeChatSessionId = useActiveChatSessionId(activeProject?.name ?? null);
   const isConversationListView = !!activeProject && !activeChatSessionId;
   const isConversationOpen = !!activeProject && !!activeChatSessionId;
@@ -223,6 +212,16 @@ export default function HomePage() {
   const [isSessionHydrated, setIsSessionHydrated] = useState(false);
   const hydratedSessionKeyRef = useRef<string | null>(null);
   const lastPersistedSnapshotRef = useRef<string | null>(null);
+  /**
+   * A conversation this client created a moment ago, mid-send.
+   *
+   * Creating one changes `activeChatSessionId`, which is also the signal the
+   * hydration effect below uses to load a conversation you switched to. There
+   * is nothing to load from a session created seconds ago — the backend has
+   * only the empty record it just made — so hydrating it would replace the
+   * message the user is in the middle of sending with an empty array.
+   */
+  const locallyCreatedSessionIdRef = useRef<string | null>(null);
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
 
   function toggleIntermediate(id: string) {
@@ -275,8 +274,23 @@ export default function HomePage() {
       return;
     }
 
-    let cancelled = false;
     const sessionKey = `${projectName}:${activeChatSessionId ?? ""}`;
+
+    // A conversation this client just created carries the turn being sent.
+    // Fetching it back would hand us the empty record the backend made and
+    // wipe that turn out of the thread — and the save below would then
+    // persist the thread without it, so reopening the conversation would show
+    // an answer with no question.
+    if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
+      locallyCreatedSessionIdRef.current = null;
+      hydratedSessionKeyRef.current = sessionKey;
+      // Nothing is persisted for it yet, so the next change must save.
+      lastPersistedSnapshotRef.current = null;
+      setIsSessionHydrated(true);
+      return;
+    }
+
+    let cancelled = false;
     setIsSessionHydrated(false);
 
     void (async () => {
@@ -381,12 +395,6 @@ export default function HomePage() {
     });
   }, [activeProject?.name, activeChatSessionId, isSessionHydrated, messages, messageHistory, latestResult]);
 
-  const [showAnalyzeModal, setShowAnalyzeModal] = useState(false);
-  const [saltInput, setSaltInput] = useState("AlCl3-KCl");
-  const [showPredictModal, setShowPredictModal] = useState(false);
-  const [predictFormulaInput, setPredictFormulaInput] = useState("NaCl");
-  const [predictCompInput, setPredictCompInput] = useState("Pure Salt");
-
   // Save-as-skill state. `initial: null` while the LLM is drafting; the
   // modal swaps into edit mode once the draft arrives. We keep an error
   // banner separately so we can show backend rejections (duplicate slug,
@@ -413,16 +421,32 @@ export default function HomePage() {
     args: Record<string, unknown> | null;
     decisionMetadata: DecisionMetadata | null;
   } | null>(null);
-  const [chatService] = useState(MODEL_SERVICES[0]);
-  const [chatFamily, setChatFamily] = useState(MODEL_FAMILIES[0]);
-  const [chatOpenModel, setChatOpenModel] = useState(OPEN_MODELS[0]);
-  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [isServiceExpanded, setIsServiceExpanded] = useState(false);
-  const [isOpenModelsExpanded, setIsOpenModelsExpanded] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  /**
+   * What the agent is doing right now, in one line.
+   *
+   * Replaces the stack of "Calling `x`…" bubbles the thread used to grow. The
+   * steps themselves still go into `messages` so they persist and feed the
+   * Activity tab; this is only what the conversation shows while a run is open.
+   */
+  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("artifacts");
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [showRawLog, setShowRawLog] = useState(false);
+  const [hasCampaign, setHasCampaign] = useState(false);
   const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
+  /** What the conversation shows: user turns and final answers. */
+  const conversationMessages = useMemo(
+    () => messages.filter((msg) => !msg.intermediate),
+    [messages]
+  );
+  /** What the Activity tab shows: every step the run took. */
+  const activitySteps = useMemo(
+    () => messages.filter((msg) => msg.intermediate),
+    [messages]
+  );
   const latestPredictionSummary = useMemo(() => extractPredictionSummary(latestResult), [latestResult]);
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
@@ -472,56 +496,6 @@ export default function HomePage() {
       window.removeEventListener("pointerup", onPointerUp);
     };
   }, [activeColumnResizer, vizWidth]);
-
-  useEffect(() => {
-    if (activeRowResizer !== "right") return;
-
-    const splitterSize = 10;
-    const minTop = 170;
-    const minBottom = 180;
-
-    const onPointerMove = (event: PointerEvent) => {
-      if (window.innerWidth <= 1100) return;
-
-      const container = outputSplitRef.current;
-      if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      const raw = event.clientY - rect.top;
-      const maxTop = rect.height - minBottom - splitterSize;
-      const next = Math.max(minTop, Math.min(raw, maxTop));
-      setRightTopHeight(next);
-    };
-
-    const onPointerUp = () => {
-      setActiveRowResizer(null);
-    };
-
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "row-resize";
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-
-    return () => {
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-  }, [activeRowResizer]);
-
-  useEffect(() => {
-    if (!isModelMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const node = modelMenuRef.current;
-      if (!node) return;
-      if (!node.contains(event.target as Node)) {
-        setIsModelMenuOpen(false);
-      }
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [isModelMenuOpen]);
 
   async function handleElicitationSubmit(
     id: string,
@@ -660,6 +634,7 @@ export default function HomePage() {
     requestAnimationFrame(() => scrollChatToLatest("auto"));
     setAgentLogs([]);
     setLatestIntermediateId(null);
+    setLiveStatus("Working on it");
 
     const projectName = readActiveProjectName();
     if (!projectName) {
@@ -681,6 +656,9 @@ export default function HomePage() {
           title: text.slice(0, 60),
         });
         targetChatSessionId = created.id;
+        // Claim it before the pointer moves, so the hydration effect knows not
+        // to fetch this one back over the turn being sent.
+        locallyCreatedSessionIdRef.current = created.id;
         setChatSessions((prev) => [created, ...prev.filter((session) => session.id !== created.id)]);
         setActiveChatSessionTitle(created.title);
         writeActiveChatSessionId(projectName, created.id);
@@ -828,6 +806,8 @@ export default function HomePage() {
           const ev = data as FunctionToolCallEvent;
           const toolName = ev.part?.tool_name ?? "tool";
           const newId = crypto.randomUUID();
+          // Still recorded as a step: `messages` is what gets persisted, so it
+          // is also what the Activity tab can show after a reload.
           setMessages((prev) => [
             ...prev,
             {
@@ -838,7 +818,7 @@ export default function HomePage() {
             }
           ]);
           setLatestIntermediateId(newId);
-          requestAnimationFrame(() => scrollChatToLatest("smooth"));
+          setLiveStatus(labelForTool(toolName));
           break;
         }
 
@@ -856,6 +836,7 @@ export default function HomePage() {
             );
             break;
           }
+          setLiveStatus("Working on it");
           if (result.part_kind === "tool-return" || result.part_kind === "builtin-tool-return") {
             const file = result.tool_name === "display_file" ? fileFromToolReturnContent(result.content) : null;
             const html = file ? null : htmlFromToolReturnContent(result.content);
@@ -864,15 +845,23 @@ export default function HomePage() {
               : html
                 ? ({ kind: "html", html } as const)
                 : null;
-            if (ui) {
-              setLatestResult({
+            // The text matters even when there is nothing to render: it is
+            // what the prediction summary and references panels read. Before
+            // this it was dropped, and those panels only ever filled from the
+            // salt quick-actions, which called MCP directly.
+            const stdout = file || html ? "" : (textFromToolReturnContent(result.content) ?? "");
+            if (ui || stdout) {
+              setLatestResult((prev) => ({
                 ok: true,
-                stdout: "",
+                // Keep text from an earlier tool in the same turn when this
+                // one only produced a figure, so a run that plots *and*
+                // reports does not lose half of itself.
+                stdout: stdout || prev?.stdout || "",
                 stderr: "",
                 artifacts: [],
                 meta: { tool: result.tool_name },
-                ui
-              });
+                ui: ui ?? prev?.ui
+              }));
             }
           }
           break;
@@ -881,6 +870,7 @@ export default function HomePage() {
         case "agent_run_result": {
           const ev = data as AgentRunResultEvent;
           sawAgentRunResult = true;
+          setLiveStatus(null);
           if (ev.result?.new_messages?.length) {
             setMessageHistory((prev) => [...prev, ...ev.result.new_messages]);
           }
@@ -1033,209 +1023,7 @@ export default function HomePage() {
       ]);
     } finally {
       setIsChatLoading(false);
-    }
-  }
-
-  async function runSaltAnalysis() {
-    const tool = "run_bash";
-    const projectName = readActiveProjectName();
-    if (!projectName) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "Select a project first — open the Projects page from the sidebar."
-        }
-      ]);
-      setShowAnalyzeModal(false);
-      return;
-    }
-    setIsCalling(true);
-    const salt = saltInput.trim() || "AlCl3-KCl";
-    const command = `MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt ${salt} --output-dir /mnt/data/output/salt-plots`;
-    const t0 = performance.now();
-
-    try {
-      const response = await fetch("/api/mcp/call", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          project_name: projectName,
-          chat_session_id: activeChatSessionId,
-          tool,
-          args: { command },
-        })
-      });
-      const t1 = performance.now();
-
-      const result = (await response.json()) as ExecutionResult;
-      let finalResult = result;
-      const plotPath = extractPlotPath(result.stdout || "");
-      let previewMs = 0;
-      if (plotPath) {
-        try {
-          const previewStart = performance.now();
-          const previewResponse = await fetch("/api/mcp/call", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              project_name: projectName,
-              chat_session_id: activeChatSessionId,
-              tool: "display_file",
-              args: { uri: plotPath },
-            })
-          });
-          const previewResult = (await previewResponse.json()) as ExecutionResult;
-          previewMs = performance.now() - previewStart;
-          if (previewResult.ui?.kind === "html" || previewResult.ui?.kind === "file") {
-            finalResult = {
-              ...result,
-              ui: previewResult.ui
-            };
-          }
-        } catch {
-          // Keep original result when preview lookup fails.
-        }
-      }
-
-      setLatestResult(finalResult);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "tool",
-          content:
-            `Tool ${tool} finished. ${formatResultSummary(finalResult)} ` +
-            `(mcp: ${Math.round(t1 - t0)}ms, preview: ${Math.round(previewMs)}ms, total: ${Math.round(performance.now() - t0)}ms)`,
-          result: finalResult
-        }
-      ]);
-    } catch {
-      const result: ExecutionResult = {
-        ok: false,
-        stdout: "",
-        stderr: "Failed to call orchestrator route.",
-        artifacts: [],
-        meta: { tool },
-        ui: { kind: "none" }
-      };
-      setLatestResult(result);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "tool",
-          content: `Tool ${tool} failed.`,
-          result
-        }
-      ]);
-    } finally {
-      setIsCalling(false);
-      setShowAnalyzeModal(false);
-    }
-  }
-
-  async function runSaltPrediction() {
-    const tool = "run_bash";
-    const projectName = readActiveProjectName();
-    if (!projectName) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "Select a project first — open the Projects page from the sidebar."
-        }
-      ]);
-      setShowPredictModal(false);
-      return;
-    }
-    setIsCalling(true);
-    const formula = predictFormulaInput.trim() || "NaCl";
-    const comp = predictCompInput.trim() || "Pure Salt";
-    const command =
-      "MPLBACKEND=Agg python3 /mnt/skills/salt-prediction/scripts/predict_salt.py " +
-      `--formula "${formula}" --comp "${comp}" --output-dir /mnt/data/output/salt-prediction`;
-    const t0 = performance.now();
-
-    try {
-      const response = await fetch("/api/mcp/call", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          project_name: projectName,
-          chat_session_id: activeChatSessionId,
-          tool,
-          args: { command },
-        })
-      });
-      const t1 = performance.now();
-
-      const result = (await response.json()) as ExecutionResult;
-      let finalResult = result;
-      const plotPath = extractPlotPath(result.stdout || "");
-      let previewMs = 0;
-      if (plotPath) {
-        try {
-          const previewStart = performance.now();
-          const previewResponse = await fetch("/api/mcp/call", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              project_name: projectName,
-              chat_session_id: activeChatSessionId,
-              tool: "display_file",
-              args: { uri: plotPath },
-            })
-          });
-          const previewResult = (await previewResponse.json()) as ExecutionResult;
-          previewMs = performance.now() - previewStart;
-          if (previewResult.ui?.kind === "html" || previewResult.ui?.kind === "file") {
-            finalResult = {
-              ...result,
-              ui: previewResult.ui
-            };
-          }
-        } catch {
-          // Keep original result when preview lookup fails.
-        }
-      }
-
-      setLatestResult(finalResult);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "tool",
-          content:
-            `Tool ${tool} finished. ${formatResultSummary(finalResult)} ` +
-            `(mcp: ${Math.round(t1 - t0)}ms, preview: ${Math.round(previewMs)}ms, total: ${Math.round(performance.now() - t0)}ms)`,
-          result: finalResult
-        }
-      ]);
-    } catch {
-      const result: ExecutionResult = {
-        ok: false,
-        stdout: "",
-        stderr: "Failed to call orchestrator route.",
-        artifacts: [],
-        meta: { tool },
-        ui: { kind: "none" }
-      };
-      setLatestResult(result);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "tool",
-          content: `Tool ${tool} failed.`,
-          result
-        }
-      ]);
-    } finally {
-      setIsCalling(false);
-      setShowPredictModal(false);
+      setLiveStatus(null);
     }
   }
 
@@ -1391,114 +1179,13 @@ export default function HomePage() {
       ref={mainRef}
       style={
         {
-          "--viz-width": `${vizWidth}px`,
-          "--right-top-height": `${rightTopHeight}px`
+          "--viz-width": `${vizWidth}px`
         } as CSSProperties
       }
     >
-      <header className="app-topbar">
-        <div className="app-brand">
-          <img
-            className="app-logo"
-            src="/genesis-amsc-lockup-horizontal-white-cropped.svg"
-            alt="Genesis VISTA"
-          />
-          <div className="app-title">VISTA</div>
-        </div>
-        {activeProject && (
-          <div className="app-active-project" title="Active project">
-            <span className="app-active-project-label">Project</span>
-            <span className="app-active-project-name">{activeProject.name}</span>
-          </div>
-        )}
-      </header>
-
-      <div className="workspace">
-
-      <section className="panel" style={{ minHeight: 0 }}>
-        <div className="panel-header">
-          <div className="panel-header-stack">
-            <div className="panel-title">
-              {isConversationListView ? "Conversations" : "Chat with"}
-            </div>
-            {isConversationOpen && (
-              <div className="model-cascade-menu" ref={modelMenuRef}>
-                <button
-                  type="button"
-                  className="input model-menu-trigger"
-                  onClick={() => {
-                    setIsModelMenuOpen((prev) => {
-                      const next = !prev;
-                      if (next) {
-                        setIsServiceExpanded(true);
-                        setIsOpenModelsExpanded(chatFamily === "open models");
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  {chatService} / {chatFamily === "open models" ? chatOpenModel : chatFamily}
-                </button>
-
-                {isModelMenuOpen && (
-                  <div className="model-menu level1">
-                    <button
-                      type="button"
-                      className="model-menu-item has-children"
-                      onMouseEnter={() => setIsServiceExpanded(true)}
-                      onClick={() => setIsServiceExpanded((prev) => !prev)}
-                    >
-                      {chatService}
-                    </button>
-
-                    {isServiceExpanded && (
-                      <div className="model-menu level2">
-                        {MODEL_FAMILIES.map((family) => (
-                          <button
-                            type="button"
-                            key={family}
-                            className={`model-menu-item ${family === "open models" ? "has-children" : ""}`}
-                            onMouseEnter={() => setIsOpenModelsExpanded(family === "open models")}
-                            onClick={() => {
-                              setChatFamily(family);
-                              if (family !== "open models") {
-                                setIsModelMenuOpen(false);
-                                setIsOpenModelsExpanded(false);
-                              } else {
-                                setIsOpenModelsExpanded(true);
-                              }
-                            }}
-                          >
-                            {family}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {isServiceExpanded && isOpenModelsExpanded && (
-                      <div className="model-menu level3">
-                        {OPEN_MODELS.map((model) => (
-                          <button
-                            type="button"
-                            key={model}
-                            className="model-menu-item"
-                            onClick={() => {
-                              setChatFamily("open models");
-                              setChatOpenModel(model);
-                              setIsModelMenuOpen(false);
-                              setIsOpenModelsExpanded(false);
-                            }}
-                          >
-                            {model}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+      <AppTopBar
+        title={isConversationListView ? "Conversations" : "Chat"}
+        actions={
           <div className="chat-header-actions">
             {isConversationListView ? (
               <button
@@ -1514,48 +1201,43 @@ export default function HomePage() {
                 <span>New conversation</span>
               </button>
             ) : isConversationOpen ? (
-              <>
-                <div className="chat-header-presets">
-                  <button className="quick-chip" onClick={() => setShowAnalyzeModal(true)}>
-                    Analyze salt…
-                  </button>
-                  <button className="quick-chip" onClick={() => setShowPredictModal(true)}>
-                    Predict salt…
-                  </button>
-                </div>
-                <div className="chat-header-secondary-actions">
-                  <button
-                    className="conversation-back-button"
-                    onClick={handleBackToConversationList}
-                    title="Back to conversations"
-                    aria-label="Back to conversations"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="m15 18-6-6 6-6" />
-                    </svg>
-                    <span>Back to conversations</span>
-                  </button>
-                  <button
-                    className="conversation-back-button"
-                    disabled={messageHistory.length === 0}
-                    title={
-                      messageHistory.length === 0
-                        ? "Have a conversation first; the skill is drafted from it."
-                        : "Distill this conversation into a reusable SKILL.md"
-                    }
-                    onClick={() => void openSaveAsSkill()}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 3H5a2 2 0 0 0-2 2v14l4-3h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
-                      <path d="M19 21V8a2 2 0 0 0-2-2h-3" />
-                    </svg>
-                    <span>Save as skill</span>
-                  </button>
-                </div>
-              </>
+              <div className="chat-header-secondary-actions">
+                <button
+                  className="conversation-back-button"
+                  onClick={handleBackToConversationList}
+                  title="Back to conversations"
+                  aria-label="Back to conversations"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                  <span>Back to conversations</span>
+                </button>
+                <button
+                  className="conversation-back-button"
+                  disabled={messageHistory.length === 0}
+                  title={
+                    messageHistory.length === 0
+                      ? "Have a conversation first; the skill is drafted from it."
+                      : "Distill this conversation into a reusable SKILL.md"
+                  }
+                  onClick={() => void openSaveAsSkill()}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 3H5a2 2 0 0 0-2 2v14l4-3h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
+                    <path d="M19 21V8a2 2 0 0 0-2-2h-3" />
+                  </svg>
+                  <span>Save as skill</span>
+                </button>
+              </div>
             ) : null}
           </div>
-        </div>
+        }
+      />
+
+      <div className="workspace">
+
+      <section className="panel" style={{ minHeight: 0 }}>
         <div className="panel-body" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           {isConversationListView ? (
             <div className="chat-list conversation-list-view">
@@ -1666,67 +1348,40 @@ export default function HomePage() {
                   <div className="chat-session-banner">{activeChatSessionTitle}</div>
                 )}
                 {messages.length === 0 && (
-                  <div className="chat-bubble">
-                    Ask me about molten salts! Try: &quot;Show me the phase diagram for AlCl3-KCl&quot; or &quot;How many fluoride salts are in the database?&quot;
+                  <div className="chat-opener">
+                    <p className="chat-opener-lede">Ask about molten salts.</p>
+                    <div className="chat-opener-chips">
+                      {SUGGESTIONS.map((suggestion) => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          className="quick-chip"
+                          onClick={() => setInput(suggestion)}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
-                {messages.map((msg) => {
-                  const isIntermediate = !!msg.intermediate;
-                  const isLatestIntermediate = isIntermediate && msg.id === latestIntermediateId;
-                  const isManuallyExpanded = expandedIntermediates.has(msg.id);
-                  const collapsed = isIntermediate && !isLatestIntermediate && !isManuallyExpanded;
-
-                  if (collapsed) {
-                    return (
-                      <button
-                        key={msg.id}
-                        type="button"
-                        className="chat-bubble intermediate collapsed"
-                        onClick={() => toggleIntermediate(msg.id)}
-                        aria-expanded="false"
-                      >
-                        <span className="intermediate-chevron" aria-hidden="true">▸</span>
-                        <span className="intermediate-label">agent thinking</span>
-                        <span className="intermediate-preview">{intermediatePreview(msg.content)}</span>
-                      </button>
-                    );
-                  }
-
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`chat-bubble ${msg.role}${isIntermediate ? ` intermediate${isLatestIntermediate ? " current" : " expanded"}` : ""}`}
-                    >
-                      {isIntermediate && (
-                        <div className="intermediate-header">
-                          <span className="intermediate-label">
-                            {isLatestIntermediate ? "agent thinking · latest" : "agent thinking"}
-                          </span>
-                          {!isLatestIntermediate && (
-                            <button
-                              type="button"
-                              className="intermediate-toggle"
-                              onClick={() => toggleIntermediate(msg.id)}
-                              aria-expanded="true"
-                            >
-                              collapse
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      {msg.role === "assistant" ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                      ) : (
-                        msg.content
-                      )}
-                      {msg.result && !msg.result.ok && (
-                        <div className="error" style={{ marginTop: 6 }}>
-                          {msg.result.stderr}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {/* User turns and final answers only. Every intermediate step
+                    is in the Activity tab, where there is room to say what it
+                    was. */}
+                {conversationMessages.map((msg) => (
+                  <div key={msg.id} className={`chat-bubble ${msg.role}`}>
+                    {msg.role === "assistant" ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    ) : (
+                      msg.content
+                    )}
+                    {msg.result && !msg.result.ok && (
+                      <div className="error" style={{ marginTop: 6 }}>
+                        {msg.result.stderr}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {/* One line, updated in place, gone when the answer lands. */}
                 {isChatLoading && (
                   <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
                     <span className="thinking-loader" aria-hidden="true">
@@ -1734,7 +1389,7 @@ export default function HomePage() {
                       <span />
                       <span />
                     </span>
-                    <span>Working on it...</span>
+                    <span>{liveStatus ?? "Working on it"}…</span>
                   </div>
                 )}
               </div>
@@ -1765,11 +1420,7 @@ export default function HomePage() {
           <div className="chat-input-row">
             <input
               className="input"
-              placeholder={
-                isConversationListView
-                  ? "Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
-                  : "Ask about molten salts... (e.g., 'show phase diagram for LiF-NaF')"
-              }
+              placeholder="Ask about molten salts… (e.g., 'show phase diagram for LiF-NaF')"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -1778,9 +1429,26 @@ export default function HomePage() {
                 }
               }}
             />
-            <button className="button" onClick={() => void sendUserMessage()} disabled={isChatLoading}>
-              {isChatLoading ? "Agent working..." : isConversationListView ? "Start chat" : "⏎"}
-            </button>
+            <div className="composer-actions">
+              {isChatLoading && <span className="composer-status">Agent working…</span>}
+              <div className="composer-spacer" />
+              <button
+                className={`composer-send${isConversationListView ? " labelled" : ""}`}
+                onClick={() => void sendUserMessage()}
+                disabled={isChatLoading}
+                title={isConversationListView ? "Start chat" : "Send"}
+                aria-label={isConversationListView ? "Start chat" : "Send"}
+              >
+                {isConversationListView ? (
+                  <span>Start chat</span>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M5 12h13" />
+                    <path d="M13 6l6 6-6 6" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
         )}
       </section>
@@ -1794,15 +1462,163 @@ export default function HomePage() {
       />
 
       <section className="panel">
-        <div className="panel-header">
-          <div className="panel-title">Latest Output</div>
+        {/* Tabs, not two stacked panes. The Jobs tab appears only when the
+            conversation has a campaign — most never do, and a permanently
+            empty tab reads worse than an absent one. */}
+        <div className="panel-header workspace-tabs" role="tablist" aria-label="Workspace">
+          {WORKSPACE_TABS.filter((tab) => tab.id !== "jobs" || hasCampaign).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`workspace-tab-${tab.id}`}
+              aria-selected={workspaceTab === tab.id}
+              aria-controls={`workspace-panel-${tab.id}`}
+              className="workspace-tab"
+              data-active={workspaceTab === tab.id ? "true" : "false"}
+              onClick={() => setWorkspaceTab(tab.id)}
+            >
+              {tab.label}
+              {tab.id === "activity" && activitySteps.length > 0 && (
+                <span className="workspace-tab-count">{activitySteps.length}</span>
+              )}
+            </button>
+          ))}
         </div>
         <div className="panel-body">
-          <CampaignPanel
-            projectName={activeProject?.name ?? null}
-            chatSessionId={activeChatSessionId}
-          />
-          <div className="output-split" ref={outputSplitRef}>
+          {/* Mounted regardless of the visible tab: it owns the polling that
+              decides whether the Jobs tab exists at all. */}
+          <div hidden={workspaceTab !== "jobs"}>
+            <CampaignPanel
+              projectName={activeProject?.name ?? null}
+              chatSessionId={activeChatSessionId}
+              onPresenceChange={setHasCampaign}
+            />
+          </div>
+
+          <div
+            role="tabpanel"
+            id="workspace-panel-activity"
+            aria-labelledby="workspace-tab-activity"
+            hidden={workspaceTab !== "activity"}
+            className="activity-view"
+          >
+            {activitySteps.length === 0 && !isChatLoading && (
+              <div className="activity-empty">
+                Nothing yet. Steps appear here while the agent works.
+              </div>
+            )}
+            {activitySteps.map((step) => {
+              // A tool call is one line and says everything it has to say.
+              // Only a longer step — a mid-campaign report, say — is worth
+              // collapsing, and then the newest one opens on its own.
+              const hasDetail = step.content.trim().includes("\n");
+              const expanded =
+                !hasDetail ||
+                step.id === latestIntermediateId ||
+                expandedIntermediates.has(step.id);
+              return (
+                <div key={step.id} className="activity-step" data-expanded={expanded}>
+                  <span className="activity-step-dot" aria-hidden="true" />
+                  <div className="activity-step-body">
+                    {hasDetail ? (
+                      <>
+                        <button
+                          type="button"
+                          className="activity-step-summary"
+                          aria-expanded={expanded}
+                          onClick={() => toggleIntermediate(step.id)}
+                        >
+                          {intermediatePreview(step.content)}
+                        </button>
+                        {expanded && (
+                          <div className="activity-step-detail">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="activity-step-line">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {isChatLoading && liveStatus && (
+              <div className="activity-step activity-step-live">
+                <span className="activity-step-dot live" aria-hidden="true" />
+                <div className="activity-step-body">{liveStatus}…</div>
+              </div>
+            )}
+
+            <div className="activity-raw">
+              <button
+                type="button"
+                className="activity-raw-toggle"
+                aria-expanded={showRawLog}
+                onClick={() => setShowRawLog((prev) => !prev)}
+              >
+                {showRawLog ? "Hide raw log" : "Show raw log"}
+                {agentLogs.length > 0 && ` (${agentLogs.length})`}
+              </button>
+              {showRawLog && (
+                <>
+                  <div className="activity-raw-actions">
+                    <button className="button ghost button-xs" onClick={checkMcpHealth} disabled={isCheckingHealth}>
+                      {isCheckingHealth ? "Checking..." : "MCP Status"}
+                    </button>
+                    <button className="button ghost button-xs" onClick={listMcpTools} disabled={isLoadingTools}>
+                      {isLoadingTools ? "Loading..." : "Tools"}
+                    </button>
+                    <button className="button ghost button-xs" onClick={() => setAgentLogs([])}>
+                      Clear
+                    </button>
+                  </div>
+                  {mcpHealth && (
+                    <div className="log-status-bar">
+                      MCP: {mcpHealth.ok ? "✓ Connected" : "✗ Disconnected"} ({mcpHealth.mcpBaseUrl})
+                      {mcpHealth.detail ? ` — ${mcpHealth.detail}` : ""}
+                    </div>
+                  )}
+                  {mcpTools && mcpTools.ok && mcpTools.tools.length > 0 && (
+                    <div className="log-status-bar">
+                      Tools: {mcpTools.tools.map((t) => t.name).join(", ")}
+                    </div>
+                  )}
+                  <div className="log-viewer">
+                    {agentLogs.length === 0 && (
+                      <div className="log-empty">
+                        The raw log is live only. It is empty after a reload.
+                      </div>
+                    )}
+                    {agentLogs.map((entry) => (
+                      <div key={entry.id} className={`log-line log-${entry.level.toLowerCase()}`}>
+                        <span className="log-ts">{entry.ts.slice(11, 23)}</span>
+                        <span className="log-level">{entry.level}</span>
+                        <span className="log-area">[{entry.area}]</span>
+                        <span className="log-msg">{entry.message}</span>
+                        {entry.extra && (
+                          <span className="log-extra"> {JSON.stringify(entry.extra)}</span>
+                        )}
+                      </div>
+                    ))}
+                    <div ref={logEndRef} />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div
+            role="tabpanel"
+            id="workspace-panel-artifacts"
+            aria-labelledby="workspace-tab-artifacts"
+            hidden={workspaceTab !== "artifacts"}
+            className="artifacts-view"
+          >
+            <div className="output-split" ref={outputSplitRef}>
             <div className="output-top">
               {!latestResult && <div className="chat-bubble">No figure yet.</div>}
               {latestResult && latestResult.ui?.kind === "html" && (
@@ -1810,10 +1626,10 @@ export default function HomePage() {
               )}
               {latestResult && latestResult.ui?.kind === "file" && (
                 latestResult.ui.mimeType?.startsWith("image/") ? (
-                  <img
-                    src={latestResult.ui.url}
-                    alt={latestResult.ui.name ?? "Tool output"}
-                    style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                  <ArtifactImage
+                    url={latestResult.ui.url}
+                    name={latestResult.ui.name}
+                    onZoom={setLightbox}
                   />
                 ) : (
                   <a href={latestResult.ui.url} target="_blank" rel="noreferrer" className="chat-bubble">
@@ -1857,130 +1673,11 @@ export default function HomePage() {
                 </details>
               )}
             </div>
-            <div
-              className="stack-resizer"
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="Resize output stack"
-              onPointerDown={() => setActiveRowResizer("right")}
-            />
-
-            <div className="output-bottom">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Agent Logs</span>
-                  <span style={{ fontSize: 11, color: "var(--fg-muted)", fontFamily: "monospace" }}>
-                    {agentLogs.length > 0 ? `${agentLogs.length} entries` : ""}
-                  </span>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="button ghost button-xs" onClick={checkMcpHealth} disabled={isCheckingHealth}>
-                    {isCheckingHealth ? "Checking..." : "MCP Status"}
-                  </button>
-                  <button className="button ghost button-xs" onClick={listMcpTools} disabled={isLoadingTools}>
-                    {isLoadingTools ? "Loading..." : "Tools"}
-                  </button>
-                  <button className="button ghost button-xs" onClick={() => setAgentLogs([])}>
-                    Clear
-                  </button>
-                </div>
-              </div>
-
-              {mcpHealth && (
-                <div className="log-status-bar">
-                  MCP: {mcpHealth.ok ? "✓ Connected" : "✗ Disconnected"} ({mcpHealth.mcpBaseUrl})
-                  {mcpHealth.detail ? ` — ${mcpHealth.detail}` : ""}
-                </div>
-              )}
-
-              {mcpTools && mcpTools.ok && mcpTools.tools.length > 0 && (
-                <div className="log-status-bar">
-                  Tools: {mcpTools.tools.map((t) => t.name).join(", ")}
-                </div>
-              )}
-
-              <div className="log-viewer">
-                {agentLogs.length === 0 && (
-                  <div className="log-empty">Waiting for agent activity…</div>
-                )}
-                {agentLogs.map((entry) => (
-                  <div key={entry.id} className={`log-line log-${entry.level.toLowerCase()}`}>
-                    <span className="log-ts">{entry.ts.slice(11, 23)}</span>
-                    <span className="log-level">{entry.level}</span>
-                    <span className="log-area">[{entry.area}]</span>
-                    <span className="log-msg">{entry.message}</span>
-                    {entry.extra && (
-                      <span className="log-extra"> {JSON.stringify(entry.extra)}</span>
-                    )}
-                  </div>
-                ))}
-                <div ref={logEndRef} />
-              </div>
             </div>
           </div>
         </div>
         </section>
       </div>
-
-      {showAnalyzeModal && (
-        <div className="modal-backdrop" onClick={() => setShowAnalyzeModal(false)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div className="panel-title">Analyze Salt</div>
-              <button className="button ghost" onClick={() => setShowAnalyzeModal(false)}>
-                Close
-              </button>
-            </div>
-            <div className="modal-body">
-              <label>
-                Salt string
-                <input
-                  className="input"
-                  value={saltInput}
-                  onChange={(event) => setSaltInput(event.target.value)}
-                />
-              </label>
-              <button className="button secondary" onClick={runSaltAnalysis} disabled={isCalling}>
-                {isCalling ? "Running..." : "Run analysis"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showPredictModal && (
-        <div className="modal-backdrop" onClick={() => setShowPredictModal(false)}>
-          <div className="modal" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div className="panel-title">Predict Salt</div>
-              <button className="button ghost" onClick={() => setShowPredictModal(false)}>
-                Close
-              </button>
-            </div>
-            <div className="modal-body">
-              <label>
-                Formula
-                <input
-                  className="input"
-                  value={predictFormulaInput}
-                  onChange={(event) => setPredictFormulaInput(event.target.value)}
-                />
-              </label>
-              <label>
-                Composition
-                <input
-                  className="input"
-                  value={predictCompInput}
-                  onChange={(event) => setPredictCompInput(event.target.value)}
-                />
-              </label>
-              <button className="button secondary" onClick={runSaltPrediction} disabled={isCalling}>
-                {isCalling ? "Running..." : "Run prediction"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {deleteSessionTarget && (
         <div className="modal-backdrop" onClick={() => setDeleteSessionTarget(null)}>
@@ -2039,6 +1736,14 @@ export default function HomePage() {
           setSkillSaveError(null);
         }}
       />
+
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </main>
   );
 }
