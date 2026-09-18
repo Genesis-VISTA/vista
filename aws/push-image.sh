@@ -1,15 +1,12 @@
 #!/bin/bash
-# Pushes an already-built vista server image to the VISTA account's ECR, which
-# is what the beta host pulls (deploy/README.md, Stage 1).
+# Pushes an already-built vista server image to Model Services ECR (amsc-ms-dev).
 #
-#   ./aws/build-image.sh                              # build
-#   AWS_ACCOUNT_ID=288834681766 ./aws/push-image.sh   # then push
+#   ./aws/build-image.sh
+#   ./aws/push-image.sh
 #
-# Pushing to the *VISTA* account, not the cluster's: the puller is an EC2
-# instance in 288834681766 using its own instance profile, so a same-account
-# repository needs no cross-account repository policy. The proxy image is the
-# opposite case — EKS pulls it, so it lives in the cluster account
-# (deploy/proxy/build-image.sh).
+# Registry lives in the MS account (890890990154), same place as
+# vista/amsc-vista-nginx. Requires AWS creds that can ecr:PutImage there
+# (PlatformAdmin, or GitLab OIDC via the amsc-ms-dev CI pusher role).
 set -euo pipefail
 
 # The local image to push, as tagged by build-image.sh.
@@ -29,12 +26,11 @@ done
   exit 1
 }
 
-: "${AWS_ACCOUNT_ID:?set AWS_ACCOUNT_ID — the VISTA account that owns the ECR repo}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-890890990154}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-IMAGE_ECR_REPO="${IMAGE_ECR_REPO:-images/vista-server}"
-# Tag by date rather than :latest. vista.service pins a tag so that restarting
-# the unit cannot silently pick up a different build than the one that was
-# tested; :latest makes that impossible to guarantee.
+IMAGE_ECR_REPO="${IMAGE_ECR_REPO:-vista/vista-server}"
+# Tag by date rather than :latest so a pinned host/unit cannot silently pick
+# up a different build than the one that was tested.
 TAG="${TAG:-$(date +%Y%m%d-%H%M)}"
 registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 ref="${registry}/${IMAGE_ECR_REPO}:${TAG}"
@@ -45,10 +41,10 @@ aws ecr get-login-password --region "$AWS_REGION" \
   | "$RUNTIME" login --username AWS --password-stdin "$registry"
 "$RUNTIME" push "$ref"
 
-cat <<EOF
+cat <<MSG
 
 Pushed $ref
 
-Set this on the host, in /etc/vista/vista.env:
+Pin this ref where the workload runs (pod image, or /etc/vista/vista.env):
   VISTA_SERVER_IMAGE=$ref
-EOF
+MSG

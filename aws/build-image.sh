@@ -65,4 +65,4 @@ echo "==> Building server image $SERVER_IMAGE"
 
 echo "==> Built $SERVER_IMAGE"
 
-echo "Push it with: AWS_ACCOUNT_ID=<vista account> ./aws/push-image.sh $SERVER_IMAGE"
+echo "Push it with: ./aws/push-image.sh $SERVER_IMAGE"
