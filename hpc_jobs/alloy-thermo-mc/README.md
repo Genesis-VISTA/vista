@@ -1,0 +1,110 @@
+# alloy-thermo-mc
+
+Parallel-tempering Monte Carlo thermodynamics for one refractory high-entropy alloy
+composition. Returns the order-disorder transition temperature **Tc** (from the
+specific-heat peak, cross-checked against the susceptibility peak), plus the
+Warren-Cowley short-range-order parameter and run-quality signals.
+
+One submission = **one composition** = one Tc. That is the subagent unit a campaign
+planner fans out over.
+
+## What runs
+
+The simulation code is **not vendored here**. The job clones the public
+[`alloy-thermo-skill`](https://github.com/jqyin/alloy-thermo-skill) repo on the compute
+node and builds its C++17/MPI engine there (~1-2 min; no dependencies beyond MPI, so a
+per-job build is cheaper than maintaining a pre-provisioned environment).
+
+```
+composition  -> spec.json        (DFT pair couplings reused from the repo's MoNbTaW example)
+spec.json    -> make_inputs.py   -> composition/coupling/control.input
+control.input-> srun alloy_mc    -> thermo_run<i>.csv        <- the parallel step
+csv          -> analyze.py       -> summary.json
+summary.json -> results.json     (campaign-facing metrics)
+```
+
+**MPI ranks are temperature replicas.** The engine places one replica of the
+parallel-tempering ladder on each rank, geometrically spaced between `T_init` and
+`T_final`. The defaults allocate 2 nodes x 56 ranks = **112 replicas**.
+
+## `script_args` contract
+
+Pass one composition, plus optional sampling overrides, as a single flat string:
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--mo F` | Mo atom fraction | required |
+| `--nb F` | Nb atom fraction | required |
+| `--ta F` | Ta atom fraction | required |
+| `--w F` | W atom fraction | required |
+| `--n N` | linear lattice size; sites = N^3 | 12 |
+| `--t-init T` / `--t-final T` | ladder endpoints (K) | 200 / 2000 |
+| `--n-runs K` | independent runs — **sequential per rank, multiplies walltime** | 2 |
+| `--n-drop S` | equilibration sweeps | 5000 |
+| `--n-samples S` | measurement samples | 20000 |
+| `--walltime-hours H` | engine soft budget; checkpoints near 0.9x and exits | 0.07 |
+| `--lattice L` | `bcc` \| `fcc` \| `sc` | from the base spec (`bcc`) |
+| `--seed N` | base RNG seed | 12345 |
+
+**Mo + Nb + Ta + W must equal 1.0 (+/- 1e-3).** These are atom fractions; the wrapper
+rejects anything else before launching. The engine itself only warns, so this gate is
+the one that matters.
+
+```python
+submit_hpc_job(
+    job="alloy-thermo-mc",
+    cluster="odo",
+    script_args="--mo 0.30 --nb 0.25 --ta 0.25 --w 0.20",
+)
+```
+
+## Sampling defaults are cheap on purpose
+
+Cost scales as `n_runs * (n_drop + n_samples) * N^3`. The repo's own
+`examples/MoNbTaW/spec.json` carries **production** values (N=16, n_runs=4, 100k
+sweeps) that take ~2 h. This wrapper overrides them with screening values sized for
+the campaign's ~5-minute budget, so a bare submission cannot burn a 2-hour allocation
+by accident. Ask for production fidelity explicitly.
+
+> **These defaults are an estimate, not a measurement.** Whether 112 replicas
+> equilibrate at N=12 within 5 minutes has not been verified on Odo. Treat the first
+> submission as a **calibration run**: check the reported walltime and
+> `swap_accept_mean`, then retune before dispatching a full campaign cycle.
+
+## Outputs (in `$VISTA_OUT`)
+
+- `results.json` — the campaign-facing result (see below).
+- `summary.md` — the human-readable analysis summary.
+- `thermo.png` — energy, specific heat, susceptibility, Binder cumulant vs T.
+- `order.png` — Warren-Cowley SRO parameters vs T.
+
+Everything else (the clone, the build tree, the venv, `thermo_run*.csv`, checkpoints)
+stays in node-local scratch and is discarded. Keeping `$VISTA_OUT` small is what keeps
+`get_hpc_job_status`' recursive Globus listing fast.
+
+### `results.json`
+
+```json
+{"job": "alloy-thermo-mc",
+ "composition": {"Mo": 0.30, "Nb": 0.25, "Ta": 0.25, "W": 0.20},
+ "metrics": {
+   "Tc_cv_K": 1180.0, "Tc_chi_K": 1240.0,
+   "cv_peak": 0.42, "chi_peak": 3.1,
+   "sro_alpha1": -0.31, "swap_accept_mean": 0.28,
+   "peak_bracketed": true, "estimators_agree": true},
+ "run": {"lattice": "bcc", "replicas": 112, "seed": 12345, "...": "..."}}
+```
+
+`Tc_cv_K` is the primary metric. The rest are the campaign scorer's inputs:
+`sro_alpha1` (|alpha| at the lowest ladder temperature) distinguishes genuine
+ordering from a spurious Cv bump, while `peak_bracketed`, `estimators_agree` and
+`swap_accept_mean` are run-quality signals reported as advisory.
+
+## Clusters
+
+`odo` and `frontier`, both 2 nodes x 56 ranks, 600 s walltime. Odo is the primary
+target; the job is CPU-only, so it uses a Frontier node's CPU cores and leaves its
+GPUs idle — prefer Odo unless Frontier is what you have.
+
+A `setup_<cluster>.sh` pre-launch validation gate is not shipped yet; the build and
+clone steps fail loudly inside the job instead.
