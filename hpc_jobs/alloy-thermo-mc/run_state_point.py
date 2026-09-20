@@ -147,7 +147,9 @@ def summarize(summary: dict, spec: dict, args, ranks: int) -> dict:
     }
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The job's argument contract. Split out so the campaign manifest's rendered
+    `script_args` can be checked against it in a test without launching anything."""
     p = argparse.ArgumentParser(description="Run one MoNbTaW composition through PT Monte Carlo.")
     p.add_argument("--skill-root", required=True, help="Path to the cloned alloy-thermo-skill repo.")
     p.add_argument("--engine-bin", required=True, help="Path to the built alloy_mc binary.")
@@ -189,7 +191,11 @@ def main(argv=None) -> int:
     p.add_argument("--launcher", default="srun", help="Parallel launcher (srun | mpirun).")
     p.add_argument("--seed", type=int, default=12345, help="Base RNG seed.")
 
-    args = p.parse_args(argv)
+    return p
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
 
     skill_root = Path(args.skill_root).resolve()
     engine_bin = Path(args.engine_bin).resolve()

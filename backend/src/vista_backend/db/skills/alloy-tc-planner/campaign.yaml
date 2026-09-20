@@ -1,0 +1,38 @@
+# Alloy Tc campaign manifest (read by the multi-agent framework's load_manifest).
+# Defines the campaign entirely as skills: the design variables, the goal metric +
+# scorer, and the subagent role bound to its simulation skill + HPC job.
+domain: alloy-tc
+
+# The four atom fractions of the MoNbTaW refractory HEA. Each is individually bounded
+# [0, 1], but they are COUPLED: they must sum to 1.0 (+/- 1e-3). The manifest schema has
+# no constraint field, so that simplex constraint is enforced in three other places —
+# the planner (pre-dispatch, per SKILL.md), the job wrapper (rejects bad sums before
+# launching), and the scorer (re-checks). Do not treat these ranges as independent.
+variables:
+  - {name: mo, range: [0.0, 1.0], unit: fraction}
+  - {name: nb, range: [0.0, 1.0], unit: fraction}
+  - {name: ta, range: [0.0, 1.0], unit: fraction}
+  - {name: w,  range: [0.0, 1.0], unit: fraction}
+
+metrics:
+  # Tc from the specific-heat peak. `target` is elicited from the user at intake and
+  # stored in the campaign spec — it is a stopping threshold, not a ranking term.
+  primary: {name: Tc_cv_K, direction: maximize}
+  scorer: scripts/score_candidates.py   # composition + SRO gates, ranks by Tc
+
+subagents:
+  - role: thermo
+    skill: alloy-thermo-mc
+    job: alloy-thermo-mc
+    default_count: 1
+    collect_files: [results.json]
+    args:
+      encoding: flags
+      map: {mo: --mo, nb: --nb, ta: --ta, w: --w}
+
+# NOTE: `search.strategy` is declared by the manifest schema but is NOT read by any
+# backend code and is not shown to the planner (only SKILL.md is inlined into the
+# prompt). Candidate proposal is the planner's own judgment, guided by the search
+# guidance in SKILL.md. This value is documentation only.
+search:
+  strategy: llm
