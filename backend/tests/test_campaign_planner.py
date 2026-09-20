@@ -7,7 +7,10 @@ import pytest
 
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools, parse_submit_summary
 from vista_backend.agents.inference import build_inference_model
-from vista_backend.agents.campaign.manifest import CampaignManifest
+from vista_backend.agents.campaign.manifest import (
+    CampaignManifest,
+    render_script_args,
+)
 from vista_backend.agents.campaign.planner import (
     CampaignPlanner,
     build_planner_system_prompt,
@@ -282,3 +285,137 @@ def test_build_planner_system_prompt_inlines_playbook(tmp_path):
     assert "planner agent orchestrating" in prompt
     assert "Test planner playbook" in prompt  # the playbook body is inlined
     assert "exit on user confirmation" in prompt
+
+
+# --- render_script_args (pure) ---------------------------------------------
+
+RENDER_MANIFEST_YAML = """
+domain: testdomain
+variables:
+  - {name: a, range: [0, 1]}
+  - {name: b, range: [0, 1]}
+  - {name: c, range: [0, 1]}
+metrics:
+  primary: {name: SCORE}
+subagents:
+  - role: alpha
+    skill: alpha-skill
+    job: alpha_job
+    args:
+      encoding: flags
+      map: {a: --ay, b: --bee}
+      extra: "--fixed 3"
+  - role: beta
+    skill: beta-skill
+    job: beta_job
+    args:
+      encoding: flags
+      map: {c: --see}
+  - {role: gamma, skill: gamma-skill, job: gamma_job}
+  - role: delta
+    skill: delta-skill
+    job: delta_job
+    args:
+      encoding: json
+"""
+
+
+def _render_manifest() -> CampaignManifest:
+    import yaml
+
+    return CampaignManifest.model_validate(yaml.safe_load(RENDER_MANIFEST_YAML))
+
+
+def test_render_flags_uses_manifest_variable_order_not_candidate_order():
+    m = _render_manifest()
+    # Candidate deliberately in reverse declaration order.
+    rendered = render_script_args(m, m.subagent("alpha"), {"b": 2, "a": 1})
+    assert rendered == "--ay 1 --bee 2 --fixed 3"
+
+
+def test_render_flags_excludes_unmapped_variables():
+    m = _render_manifest()
+    # `c` is declared and present, but alpha does not map it.
+    rendered = render_script_args(m, m.subagent("alpha"), {"a": 1, "b": 2, "c": 3})
+    assert "--see" not in rendered
+    assert rendered == "--ay 1 --bee 2 --fixed 3"
+
+
+def test_render_gives_each_role_its_own_subset():
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2, "c": 3}
+    assert render_script_args(m, m.subagent("alpha"), candidate) == "--ay 1 --bee 2 --fixed 3"
+    assert render_script_args(m, m.subagent("beta"), candidate) == "--see 3"
+
+
+def test_render_without_extra_omits_it():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("beta"), {"c": 0.5}) == "--see 0.5"
+
+
+def test_render_json_encoding_is_opt_in():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("delta"), {"a": 1}) == '{"a": 1}'
+
+
+def test_render_without_args_block_is_byte_identical_to_pre_change_behavior():
+    """The pre-contract encoding was json.dumps(candidate); non-adopters must match it."""
+    import json
+
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2.5, "c": "x"}
+    assert render_script_args(m, m.subagent("gamma"), candidate) == json.dumps(candidate)
+
+
+def test_render_without_args_block_and_empty_candidate_is_none():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("gamma"), {}) is None
+    assert render_script_args(m, m.subagent("gamma"), None) is None
+
+
+def test_render_flags_with_bool_uses_store_true_style():
+    m = _render_manifest()
+    spec = m.subagent("beta")
+    assert render_script_args(m, spec, {"c": True}) == "--see"
+    assert render_script_args(m, spec, {"c": False}) is None
+
+
+@pytest.mark.anyio
+async def test_dispatch_candidate_submits_rendered_flags(session, alice):
+    """The rendered string is what actually reaches submit_hpc_job."""
+    import yaml
+
+    manifest = CampaignManifest.model_validate(yaml.safe_load(RENDER_MANIFEST_YAML))
+    hpc = FakeHpcTools()
+    hpc.script_args_seen = []
+
+    original_submit = hpc.submit
+
+    async def recording_submit(*, job, cluster, node_count, duration, script_args):
+        hpc.script_args_seen.append((job, script_args))
+        return await original_submit(
+            job=job, cluster=cluster, node_count=node_count,
+            duration=duration, script_args=script_args,
+        )
+
+    hpc.submit = recording_submit
+    subagents = build_subagents(
+        manifest,
+        hpc=hpc,
+        skills_dir="/unused",
+        parser_factory=lambda skill_dir, role: CallableResultParser(
+            lambda **_: ParsedResult(ok=True)
+        ),
+    )
+    planner = CampaignPlanner(manifest=manifest, subagents=subagents)
+    run = await _make_run(session, alice)
+
+    await planner.dispatch_candidate(
+        session, run_id=run.id, user_id=alice.id,
+        candidate={"a": 1, "b": 2, "c": 3}, cycle=0,
+    )
+
+    seen = dict(hpc.script_args_seen)
+    assert seen["alpha_job"] == "--ay 1 --bee 2 --fixed 3"
+    assert seen["beta_job"] == "--see 3"
+    assert seen["gamma_job"] == '{"a": 1, "b": 2, "c": 3}'  # unchanged for non-adopters

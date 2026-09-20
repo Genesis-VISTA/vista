@@ -153,6 +153,10 @@ def build_collector(planner_provider: PlannerProvider = build_planner_for_job):
     rather than discarded, because that text is the scheduler's log and the only
     account of why the job died. Recording the bare state left the planner, the
     UI and anyone reading later with the word "failed" and no way past it.
+
+    No `files` argument is passed: `CampaignPlanner.collect_job` resolves the job's role
+    to its manifest-declared `collect_files`, so the monitor stays domain-agnostic and a
+    role that declares none is collected from status text alone, as before.
     """
 
     async def collect(
