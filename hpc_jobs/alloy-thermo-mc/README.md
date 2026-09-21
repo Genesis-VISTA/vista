@@ -27,6 +27,29 @@ summary.json -> results.json     (campaign-facing metrics)
 parallel-tempering ladder on each rank, geometrically spaced between `T_init` and
 `T_final`. The defaults allocate 2 nodes x 56 ranks = **112 replicas**.
 
+### This job spans multiple nodes — the build must be on shared storage
+
+`srun` launches ranks across **every** node in the allocation, and each rank both
+`execve`s the binary *and* reads `control.input` / `composition.input` /
+`coupling.input` from the run directory. (Only rank 0 writes `thermo_run<i>.csv`, but
+all ranks read the inputs.) Building into node-local `/tmp` therefore works on one node
+and fails the instant the allocation spans two:
+
+```
+error: execve(): /tmp/alloymc-44384/alloy-thermo-skill/engine/alloy_mc: No such file or directory
+```
+
+So the clone, the build, and the run directory go on **shared scratch**: a sibling of
+`$VISTA_OUT` (`ALLOYMC_SCRATCH_DIR` overrides it), removed when the job exits. They
+cannot go *inside* `$VISTA_OUT` — `get_hpc_job_status` recursively lists that directory
+over Globus, and a build tree plus a `.git` dir makes a status check hang for minutes.
+Only the Python venv and the pip/matplotlib caches stay node-local, since just the batch
+node needs them and a venv install on a parallel filesystem is slow.
+
+The job verifies the binary is visible from every node before launching the ladder, so a
+misconfigured `ALLOYMC_SCRATCH_DIR` fails fast with a clear message instead of an
+`execve()` error partway in.
+
 ## `script_args` contract
 
 Pass one composition, plus optional sampling overrides, as a single flat string:
@@ -79,8 +102,9 @@ by accident. Ask for production fidelity explicitly.
 - `order.png` — Warren-Cowley SRO parameters vs T.
 
 Everything else (the clone, the build tree, the venv, `thermo_run*.csv`, checkpoints)
-stays in node-local scratch and is discarded. Keeping `$VISTA_OUT` small is what keeps
-`get_hpc_job_status`' recursive Globus listing fast.
+lives in scratch and is discarded when the job exits — see
+[the shared-storage note](#this-job-spans-multiple-nodes--the-build-must-be-on-shared-storage).
+Keeping `$VISTA_OUT` small is what keeps `get_hpc_job_status`' recursive Globus listing fast.
 
 ### `results.json`
 
@@ -106,5 +130,9 @@ ordering from a spurious Cv bump, while `peak_bracketed`, `estimators_agree` and
 target; the job is CPU-only, so it uses a Frontier node's CPU cores and leaves its
 GPUs idle — prefer Odo unless Frontier is what you have.
 
-A `setup_<cluster>.sh` pre-launch validation gate is not shipped yet; the build and
-clone steps fail loudly inside the job instead.
+`ALLOYMC_SCRATCH_DIR` overrides the shared scratch location on either cluster; leave it
+unset to use the `$VISTA_OUT` sibling, which is writable on both (Odo's output dir is
+pre-created group-writable; Frontier's is granted to the IRI automation user by setfacl).
+
+A `setup_<cluster>.sh` pre-launch validation gate is not shipped yet; the clone, build,
+and cross-node visibility checks fail loudly inside the job instead.

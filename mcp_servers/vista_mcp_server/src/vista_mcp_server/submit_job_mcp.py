@@ -1341,12 +1341,17 @@ async def _get_olcf_job_status(
     if not submitted.output_dir:
         listing = "(no output directory recorded for this job)"
     elif globus is not None:
-        excludes = (".venv", "__pycache__")
+        # Pruned at the TRAVERSAL level, not just filtered out of the results below:
+        # the walk costs one sequential API call per directory, so descending into a
+        # venv/.git only to drop the entries afterwards is what turns a status check
+        # into minutes of apparent hang.
+        excludes = (".venv", "__pycache__", ".git", "node_modules")
         try:
             entries = await globus.operation_ls(
                 endpoint=remote_collection,
                 path=submitted.output_dir,
                 recursive=True,
+                exclude_segments=excludes,
             )
             for e in entries:
                 if e.get("type") != "file":
