@@ -338,19 +338,23 @@ async def seed_db(engine: AsyncEngine) -> None:
             ProjectTable(
                 id=uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661"),
                 name="alloy-design",
-                description="High Entropy Alloy Design — agentic optimization of refractory MoNbTaW compositions on the Andes HPC cluster.",
+                description=(
+                    "High Entropy Alloy Design — runs the alloy Tc campaign "
+                    "(alloy-tc-planner): a multi-cycle, human-in-the-loop search for the "
+                    "MoNbTaW composition with the highest order-disorder transition "
+                    "temperature, evaluated by parallel-tempering Monte Carlo on HPC "
+                    "(alloy-thermo-mc)."
+                ),
+                # encoding kept explicit per the UTF-8 portability pass on main.
                 system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(
                     encoding="utf-8"
                 ),
-                skills=sorted({"alloy-design"} - skipped_skills),
+                skills=sorted({"alloy-tc-planner", "alloy-thermo-mc"} - skipped_skills),
                 knowledge_bases=[],
-                tools=[
-                    "*",
-                    "!submit_hpc_job",
-                    "!get_hpc_job_status",
-                    "!get_hpc_job_outputs",
-                    "!list_hpc_jobs",
-                ],
+                # The campaign dispatches + monitors HPC jobs through the standard HPC
+                # toolchain, so those must be ALLOWED here (they used to be denied, back
+                # when alloy-design went through the retired agenthpc_* SSH tools).
+                tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=600),
             ),
             ProjectTable(
@@ -376,8 +380,8 @@ async def seed_db(engine: AsyncEngine) -> None:
                     - skipped_skills
                 ),
                 knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
-                # Allow everything except the alloy-design HPC toolchain (the SPLASH campaign
-                # dispatches + monitors HPC jobs through the standard HPC toolchain).
+                # Deny the retired agenthpc_* SSH toolchain; the SPLASH campaign
+                # dispatches + monitors HPC jobs through the standard HPC toolchain.
                 tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=100),
             ),

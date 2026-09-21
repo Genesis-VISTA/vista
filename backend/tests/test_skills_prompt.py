@@ -77,7 +77,7 @@ def _write_skill(root: Path, name: str, description: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_read_skill_loads_seeded_alloy_design_skill():
+def test_read_skill_loads_seeded_alloy_tc_planner_skill():
     """A real on-disk skill under db/skills/ parses without a network."""
     skill_dir = (
         Path(__file__).resolve().parents[1]
@@ -85,10 +85,10 @@ def test_read_skill_loads_seeded_alloy_design_skill():
         / "vista_backend"
         / "db"
         / "skills"
-        / "alloy-design"
+        / "alloy-tc-planner"
     )
     skill = read_skill(skill_dir)
-    assert skill.name == "alloy-design"
+    assert skill.name == "alloy-tc-planner"
     assert (
         "high-entropy" in skill.description.lower()
         or "alloy" in skill.description.lower()
