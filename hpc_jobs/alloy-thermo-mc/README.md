@@ -50,6 +50,12 @@ The job verifies the binary is visible from every node before launching the ladd
 misconfigured `ALLOYMC_SCRATCH_DIR` fails fast with a clear message instead of an
 `execve()` error partway in.
 
+## Driving it from the API
+
+[`docs/api-example-alloy-tc.md`](../../docs/api-example-alloy-tc.md) walks through
+estimating Tc end to end through the vista API, with a runnable script at
+[`backend/scripts/example_alloy_tc.py`](../../backend/scripts/example_alloy_tc.py).
+
 ## `script_args` contract
 
 Pass one composition, plus optional sampling overrides, as a single flat string:
