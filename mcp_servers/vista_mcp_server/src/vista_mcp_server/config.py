@@ -254,6 +254,33 @@ class AppSettings(BaseSettings):
     must never diverge. Change one, change the other.
     """
 
+    rag_query_instruction: str = (
+        "Given a question, retrieve passages from documents that answer it"
+    )
+    """
+    One-sentence task description prepended to every `rag_search` query as
+    `Instruct: <this>\\nQuery: `.
+
+    `rag_model` is instruction-tuned. Its model card's FAQ: "Do I need to add
+    instructions to the query? Yes, this is how the model is trained,
+    otherwise you will see a performance degradation." Its
+    `config_sentence_transformers.json` leaves `default_prompt_name` null, so
+    sentence-transformers prepends nothing unless a caller asks; without this
+    the queries went in bare.
+
+    The same FAQ says the document side needs no instruction, and
+    `build_rag.py` gives it none. That asymmetry is what makes this a
+    query-time setting: changing it re-encodes no documents and invalidates
+    no ChromaDB store.
+
+    The default describes the task rather than any subject matter, because
+    Knowledge Bases are user-built and may hold anything. It still beats the
+    model card's stock `web_search_query` prompt, which describes retrieving
+    web results for a search query -- what `rag_search` does is answer a
+    question from an indexed document corpus. A deployment serving one
+    known corpus can tighten this to name it.
+    """
+
     hf_token: A[str | None, Field(validation_alias="HF_TOKEN")] = None
 
     metrics: MetricsSettings = Field(default_factory=MetricsSettings)
