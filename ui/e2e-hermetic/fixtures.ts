@@ -94,9 +94,18 @@ export const CHAT_SESSION = {
  * flow only ever asks for one project and one conversation, so varying the
  * response by query would add branching the test cannot exercise.
  */
+export const MODELS = {
+  supported: true,
+  models: [
+    { id: "gpt-5", owned_by: "openai" },
+    { id: "gpt-5-mini", owned_by: "openai" },
+  ],
+};
+
 export const ROUTES: Record<string, unknown> = {
   "GET /api/users/me": USER,
   "GET /api/projects": PROJECTS,
+  "GET /api/projects/molten-salt/models": MODELS,
   "GET /api/skills": SKILLS,
   "GET /api/knowledge-bases": KNOWLEDGE_BASES,
   "GET /api/chat/sessions": [CHAT_SESSION_SUMMARY],

@@ -1,30 +1,31 @@
 import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
+import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
-import uvicorn
 
+from ..agents.agents import get_vista_mcp_server
+from ..agents.campaign.wiring import build_default_monitor
+from ..agents.inference import MissingInferenceCredential
 from ..config import settings
 from ..db.db import get_engine, init_db
-from ..agents.agents import get_vista_mcp_server
-from ..agents.inference import MissingInferenceCredential
-from ..agents.campaign.wiring import build_default_monitor
+from ..services.auth import get_user
+from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_sessions import router as chat_sessions_router
-from .palisade import router as palisade_router
-from ..services.project_agent import project_agent_pool
-from ..services.auth import get_user
-from .mcp import router as mcp_router
+from .files import router as files_router
 from .knowledge_bases import router as knowledge_bases_router
+from .mcp import router as mcp_router
+from .models import router as models_router
+from .palisade import router as palisade_router
 from .projects import router as projects_router
 from .skills import router as skills_router
-from .files import router as files_router
 from .users import router as users_router
 
 
@@ -95,6 +96,7 @@ app.include_router(campaign_router)
 app.include_router(chat_sessions_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)
+app.include_router(models_router)
 app.include_router(projects_router)
 app.include_router(skills_router)
 app.include_router(files_router)

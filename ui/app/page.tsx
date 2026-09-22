@@ -9,6 +9,7 @@ import ElicitationModal from "@/components/ElicitationModal";
 import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
 import CampaignPanel from "@/components/CampaignPanel";
 import { AppTopBar } from "@/components/AppTopBar";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
@@ -1231,6 +1232,7 @@ export default function HomePage() {
                 </button>
               </div>
             ) : null}
+            <ModelPicker />
           </div>
         }
       />

@@ -46,6 +46,18 @@ _CONFIGURED_ENDPOINT_PROVIDERS = frozenset(
 )
 
 
+def _display_model_name(model: str) -> str:
+    """
+    Strip the `openai:` prefix for a message a researcher reads.
+
+    `openai:` is an internal routing detail -- the Settings Model field and
+    the model picker both write and show bare names, since it's the only
+    provider surfaced through the UI today -- so echoing it back in an error
+    banner would name something nobody typed.
+    """
+    return model.removeprefix("openai:")
+
+
 def build_provider_factory(
     api_key: str | None = None, base_url: str | None = None
 ) -> Callable[[str], Provider[Any]]:
@@ -133,8 +145,9 @@ def rejected_credential_detail(model_name: str) -> str:
     """
     return (
         f"The configured inference API key was rejected when calling "
-        f"{model_name!r}. Check the key in {SETTINGS_LOCATION}, and that it "
-        "belongs to the endpoint configured beside it."
+        f"{_display_model_name(model_name)!r}. Check the key in "
+        f"{SETTINGS_LOCATION}, and that it belongs to the endpoint configured "
+        "beside it."
     )
 
 
@@ -151,8 +164,8 @@ class MissingInferenceCredential(Exception):
         self.model = model
         self.base_url = base_url
         self.detail = (
-            f"No inference API key is configured, so {model!r} at {base_url} "
-            f"cannot be reached. Add one in {SETTINGS_LOCATION}. "
+            f"No inference API key is configured, so {_display_model_name(model)!r} "
+            f"at {base_url} cannot be reached. Add one in {SETTINGS_LOCATION}. "
             "Everything that does not need the model — projects, skills, "
             "knowledge bases, uploads — works without it."
         )

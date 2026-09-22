@@ -10,6 +10,7 @@ import {
   type UserPublicWithConfig,
   type UserSelfUpdate,
 } from "@/lib/user";
+import { displayModelName, qualifyModelInput } from "@/lib/models";
 
 /**
  * Modal for editing the authenticated user's per-user config. Fetches the
@@ -97,7 +98,9 @@ function UserSettingsForm({
   onClose: () => void;
 }) {
   const [inferenceApiKey, setInferenceApiKey] = useState(user.inference_api_key ?? "");
-  const [inferenceModel, setInferenceModel] = useState(user.inference_model ?? "");
+  const [inferenceModel, setInferenceModel] = useState(
+    displayModelName(user.inference_model ?? ""),
+  );
   const [inferenceBaseUrl, setInferenceBaseUrl] = useState(
     user.inference_base_url ?? "",
   );
@@ -121,7 +124,11 @@ function UserSettingsForm({
         user.inference_api_key ?? null,
         blankToNull(inferenceApiKey),
       ],
-      ["inference_model", user.inference_model ?? null, blankToNull(inferenceModel)],
+      [
+        "inference_model",
+        user.inference_model ?? null,
+        blankToNull(qualifyModelInput(inferenceModel)),
+      ],
       [
         "inference_base_url",
         user.inference_base_url ?? null,
@@ -194,12 +201,12 @@ function UserSettingsForm({
           className="input"
           value={inferenceModel}
           onChange={(e) => setInferenceModel(e.target.value)}
-          placeholder="openai:claude-sonnet"
+          placeholder="claude-sonnet"
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Optional override, as <code>provider:name</code>. Leave blank to use
-          the server default.
+          Optional override, by name. Leave blank to use the server default.
+          Also settable from the model picker next to the project switcher.
         </span>
       </label>
 
@@ -213,8 +220,8 @@ function UserSettingsForm({
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Optional override for the OpenAI-compatible endpoint. Leave blank to
-          use the server default.
+          OpenAI-compatible endpoint. Optional override; leave blank to use
+          the server default.
         </span>
       </label>
 

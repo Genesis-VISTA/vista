@@ -379,6 +379,140 @@ main {
   outline-offset: -2px;
 }
 
+/* ---------- Model picker (chat header, next to the project crumb) ---- */
+
+.model-picker {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.model-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.model-picker-button:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--line-strong);
+}
+
+.model-picker-button[aria-expanded="true"] {
+  background: var(--surface-active);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.model-picker-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.model-picker-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.model-picker-label {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(17, 42, 77, 0.16);
+}
+
+.model-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-picker-option:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.model-picker-option:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.model-picker-option[data-active="true"] {
+  font-weight: 600;
+}
+
+.model-picker-option-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Filled for the active model, hollow for the rest -- same convention as
+   `.project-switcher-dot` right next to it in the header. */
+.model-picker-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+}
+
+.model-picker-option[data-active="true"] .model-picker-dot {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.model-picker-empty,
+.model-picker-hint {
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.model-picker-hint a {
+  color: var(--brand);
+}
+
 /* ---------- "Pick a project" panel ----------------------------------- */
 
 .project-required {
@@ -1350,6 +1484,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   min-width: 0;
 }
 
