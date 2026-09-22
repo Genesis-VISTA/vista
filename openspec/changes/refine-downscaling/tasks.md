@@ -51,26 +51,26 @@
 
 ## 3. SKILL.md
 
-- [ ] 3.1 Create `backend/src/vista_backend/db/skills/refine-downscaling/SKILL.md`
+- [x] 3.1 Create `backend/src/vista_backend/db/skills/refine-downscaling/SKILL.md`
       with valid frontmatter (kebab-case `name`, trigger-rich `description` covering
       downscaling / super-resolution / Daymet / REFINE / tmin / tmax / prcp /
       1/4 degree -> 1/24 degree / Water4Energy, `metadata.version`/`tags`, `author`:
       Haoran Niu and Deeksha Rastogi)
-- [ ] 3.2 Document the fixed-scope table (one 6x route, three variables, Daymet
+- [x] 3.2 Document the fixed-scope table (one 6x route, three variables, Daymet
       grid, 1980–1990 staged inputs) and state plainly that training and new
       variables/regions/grids are out of scope
-- [ ] 3.3 Document the workflow: submit -> poll with `sleep 45` between polls ->
+- [x] 3.3 Document the workflow: submit -> poll with `sleep 45` between polls ->
       `get_hpc_job_outputs` -> `display_file` each PNG -> interpret from
       `results.json`, reusing the diagnostic's polling discipline and poll cap
-- [ ] 3.4 Document the mode/`script_args` contract and the day guardrail, including
+- [x] 3.4 Document the mode/`script_args` contract and the day guardrail, including
       why the NetCDF is not fetched by default and what it costs per day
-- [ ] 3.5 Write the interpretation section: the 1990 reference metrics from
+- [x] 3.5 Write the interpretation section: the 1990 reference metrics from
       `model-registry.json` (per-variable bias/MAE/RMSE and
       `mae_improvement_percent` ~75% for tmin/tmax, ~63% for prcp), that a
       short-interval smoke test is **not** the full-year reference, and that prcp
       RMSE (~0.31) is ~6x its MAE (~0.05) versus ~3x for the temperatures because
       precipitation error is heavy-tailed — not a broken run
-- [ ] 3.6 Write guardrails: always pair figures with metrics; label bilinear as a
+- [x] 3.6 Write guardrails: always pair figures with metrics; label bilinear as a
       baseline, not a competing model; cite `job_id` and the checkpoint hash; never
       compare metrics across different splits, intervals, or checkpoints; report a
       failed preflight path and stop rather than resubmitting
