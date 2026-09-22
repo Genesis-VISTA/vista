@@ -145,7 +145,7 @@ CITATION_FIELDS = [
 # `test_embedding_model.py` fails if the two drift. It names no subject
 # matter: Knowledge Bases are user-built and may hold any corpus.
 QUERY_INSTRUCTION = (
-    "Given a question, retrieve passages from documents that answer it"
+    "Given a search query, retrieve relevant passages from documents"
 )
 
 # The citation collection holds "Title. Authors. Journal (Year). DOI"

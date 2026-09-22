@@ -255,7 +255,7 @@ class AppSettings(BaseSettings):
     """
 
     rag_query_instruction: str = (
-        "Given a question, retrieve passages from documents that answer it"
+        "Given a search query, retrieve relevant passages from documents"
     )
     """
     One-sentence task description prepended to every `rag_search` query as
@@ -274,10 +274,13 @@ class AppSettings(BaseSettings):
     no ChromaDB store.
 
     The default describes the task rather than any subject matter, because
-    Knowledge Bases are user-built and may hold anything. It still beats the
-    model card's stock `web_search_query` prompt, which describes retrieving
-    web results for a search query -- what `rag_search` does is answer a
-    question from an indexed document corpus. A deployment serving one
+    Knowledge Bases are user-built and may hold anything. It says "search
+    query" rather than "question" because that is what the agent sends: the
+    `rag_search` calls in chat history are keyword phrases such as
+    `molten salt concentrated solar power thermal energy storage`, even when
+    the user asked a question, following the worked examples in the
+    molten-salt system prompt. It is the model card's stock
+    `web_search_query` prompt with "web" dropped. A deployment serving one
     known corpus can tighten this to name it.
     """
 
