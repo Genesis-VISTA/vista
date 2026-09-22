@@ -26,7 +26,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 import vista_backend
 from harness import agent_under_test, make_project, make_user, scripted_model
-from vista_backend.agents.skills import parse_skill, read_skill, skill_to_markdown, to_prompt
+from vista_backend.agents.skills import (
+    parse_skill,
+    read_skill,
+    skill_to_markdown,
+    to_prompt,
+)
 from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable, SkillTable
 from vista_backend.db.seed import seed_db
@@ -73,8 +78,17 @@ def test_skill_md_round_trips_through_the_serializer():
 
 @pytest.mark.parametrize(
     "trigger",
-    ["E3SM", "ERA5", "TVA", "precipitation", "bias", "pattern correlation",
-     "climate model", "reanalysis", "water4energy"],
+    [
+        "E3SM",
+        "ERA5",
+        "TVA",
+        "precipitation",
+        "bias",
+        "pattern correlation",
+        "climate model",
+        "reanalysis",
+        "water4energy",
+    ],
 )
 def test_description_carries_the_terms_the_model_matches_on(trigger):
     assert trigger.lower() in read_skill(SKILL_DIR).description.lower()
@@ -82,8 +96,14 @@ def test_description_carries_the_terms_the_model_matches_on(trigger):
 
 @pytest.mark.parametrize(
     "section",
-    ["## Workflow", "## `script_args` contract", "## Reading `results.json`",
-     "## Interpreting the result", "## Guardrails", "## Troubleshooting"],
+    [
+        "## Workflow",
+        "## `script_args` contract",
+        "## Reading `results.json`",
+        "## Interpreting the result",
+        "## Guardrails",
+        "## Troubleshooting",
+    ],
 )
 def test_skill_md_has_its_required_sections(section):
     assert section in read_skill(SKILL_DIR).body
@@ -92,13 +112,13 @@ def test_skill_md_has_its_required_sections(section):
 @pytest.mark.parametrize(
     "claim",
     [
-        "0.9937",                      # temperature global reference r
-        "1.685",                       # temperature global reference RMSE
-        "0.8879",                      # precipitation global reference r
-        "~20 grid-cell centers",       # why regional precip correlation is low
-        "different zero points",       # why temperature nRMSE is omitted
-        "E3SM − ERA5",            # bias sign convention
-        'duration="00:30:00"',         # cold-environment first run
+        "0.9937",  # temperature global reference r
+        "1.685",  # temperature global reference RMSE
+        "0.8879",  # precipitation global reference r
+        "~20 grid-cell centers",  # why regional precip correlation is low
+        "different zero points",  # why temperature nRMSE is omitted
+        "E3SM − ERA5",  # bias sign convention
+        'duration="00:30:00"',  # cold-environment first run
     ],
 )
 def test_skill_md_keeps_its_interpretation_guidance(claim):
@@ -209,7 +229,9 @@ async def test_seed_snapshot_for_the_water4energy_project(seeded):
     assert str(row.id) == "e0468a13-50ae-41e3-a8f9-e461b4b4bc3c", (
         "project id must stay stable — it is referenced by saved sessions"
     )
-    assert row.skills == [SKILL]
+    # Both climate skills ride on this project: the diagnostic (E3SM vs ERA5) and
+    # REFINE downscaling. Sorted, so refine-downscaling comes first.
+    assert row.skills == ["refine-downscaling", SKILL]
     assert row.knowledge_bases == []
     assert row.tools == ["*", "!agenthpc_*"]
     assert row.usage_limits == {"request_limit": 100}
@@ -273,7 +295,9 @@ async def _prompt_and_tools(project, user):
         agent,
         _,
     ):
-        async for _ in agent.run_stream(user_prompt="How does E3SM do over the TVA area?"):
+        async for _ in agent.run_stream(
+            user_prompt="How does E3SM do over the TVA area?"
+        ):
             pass
     assert prompts, "the model was never sent a system prompt"
     return prompts[0], tools[0]

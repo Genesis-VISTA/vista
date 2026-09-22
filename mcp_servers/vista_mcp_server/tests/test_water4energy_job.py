@@ -107,23 +107,30 @@ def _argv(tmp_path, *script_args):
     w4e = _load_wrapper()
     args = w4e.parse_args(
         [
-            "--skill-root", str(tmp_path / "clone"),
-            "--data-dir", str(tmp_path / "data"),
-            "--output-dir", str(tmp_path / "out"),
+            "--skill-root",
+            str(tmp_path / "clone"),
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--output-dir",
+            str(tmp_path / "out"),
             *script_args,
         ]
     )
-    return w4e, args, w4e.build_upstream_argv(
+    return (
+        w4e,
         args,
-        python="/venv/bin/python",
-        script=tmp_path / "clone" / "plot_e3sm_era5.py",
-        inputs={
-            "era5": Path("/data/era5.nc"),
-            "e3sm": Path("/data/e3sm.nc"),
-            "tva_boundary": Path("/clone/tva.geojson"),
-        },
-        plots_dir=tmp_path / "out" / "plots",
-        cartopy_data=tmp_path / "clone" / "cartopy_data",
+        w4e.build_upstream_argv(
+            args,
+            python="/venv/bin/python",
+            script=tmp_path / "clone" / "plot_e3sm_era5.py",
+            inputs={
+                "era5": Path("/data/era5.nc"),
+                "e3sm": Path("/data/e3sm.nc"),
+                "tva_boundary": Path("/clone/tva.geojson"),
+            },
+            plots_dir=tmp_path / "out" / "plots",
+            cartopy_data=tmp_path / "clone" / "cartopy_data",
+        ),
     )
 
 
@@ -176,7 +183,7 @@ def test_bare_input_names_resolve_to_absolute_paths(tmp_path):
     in_clone = w4e.resolve_input("tva.geojson", data, clone)
     missing = w4e.resolve_input("absent.nc", data, clone)
 
-    assert staged == (data / "era5.nc").resolve()      # data dir wins
+    assert staged == (data / "era5.nc").resolve()  # data dir wins
     assert in_clone == (clone / "tva.geojson").resolve()  # falls back to the clone
     assert missing.is_absolute() and missing.parent == data.resolve()
 
@@ -200,12 +207,12 @@ def test_preflight_names_every_missing_input(tmp_path):
     data.mkdir()
     (data / "era5.nc").write_bytes(b"x")
     with pytest.raises(SystemExit) as exc:
-        w4e.preflight(
-            {"era5": data / "era5.nc", "e3sm": data / "e3sm.nc"}, data
-        )
+        w4e.preflight({"era5": data / "era5.nc", "e3sm": data / "e3sm.nc"}, data)
     message = str(exc.value)
     assert "e3sm.nc" in message
-    assert "era5.nc" not in message.split("Searched")[0], "present input must not be listed"
+    assert "era5.nc" not in message.split("Searched")[0], (
+        "present input must not be listed"
+    )
 
 
 def test_preflight_passes_when_every_input_exists(tmp_path):
