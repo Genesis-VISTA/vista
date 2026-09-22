@@ -77,12 +77,14 @@
 
 ## 4. Wiring
 
-- [ ] 4.1 Add `refine-downscaling` to the `water4energy` project's skills in
-      `db/seed.py` (no new project, no new UUID)
-- [ ] 4.2 Extend `db/system_prompts/water4energy.md` with a downscaling section and
+- [x] 4.1 Add `refine-downscaling` to the `water4energy` project's skills in
+      `db/seed.py` (no new project, no new UUID); widen the project description to
+      cover both halves, and update the seed snapshot assertion in
+      `backend/tests/test_water4energy_skill.py`
+- [x] 4.2 Extend `db/system_prompts/water4energy.md` with a downscaling section and
       **explicit routing** between the two skills — evaluation/bias/ERA5/E3SM goes
       to the diagnostic, resolution/downscaling/Daymet goes to REFINE
-- [ ] 4.3 Confirm the existing `tools=["*", "!agenthpc_*"]` policy still fits and
+- [x] 4.3 Confirm the existing `tools=["*", "!agenthpc_*"]` policy still fits and
       that the skill is picked up by the seed's skills loop with no registry edit
 
 ## 5. Hermetic tests

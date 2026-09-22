@@ -250,16 +250,21 @@ async def seed_db(engine: AsyncEngine) -> None:
                 id=uuid.UUID("e0468a13-50ae-41e3-a8f9-e461b4b4bc3c"),
                 name="water4energy",
                 description=(
-                    "Water4Energy climate diagnostics — evaluating E3SMv3 against ERA5 "
-                    "reanalysis for 1985-2014 annual-mean surface temperature and "
-                    "precipitation, globally and over the TVA Power Service Area, on OLCF "
-                    "Frontier. Produces four-panel comparison figures plus area-weighted "
-                    "pattern correlation, RMSE, and bias."
+                    "Water4Energy climate work on OLCF Frontier, in two halves. "
+                    "Model evaluation: E3SMv3 against ERA5 reanalysis for 1985-2014 "
+                    "annual-mean surface temperature and precipitation, globally and over "
+                    "the TVA Power Service Area, producing four-panel comparison figures "
+                    "plus area-weighted pattern correlation, RMSE, and bias. AI "
+                    "downscaling: REFINE 6x super-resolution of daily Daymet tmin/tmax/prcp "
+                    "from 1/4 degree to 1/24 degree (~25 km to ~4 km) on GPUs, with "
+                    "evaluation against held-out 1990 truth and a bilinear baseline."
                 ),
                 system_prompt=(SYSTEM_PROMPTS / "water4energy.md").read_text(),
-                skills=sorted({"water4energy-diagnostic"} - skipped_skills),
+                skills=sorted(
+                    {"water4energy-diagnostic", "refine-downscaling"} - skipped_skills
+                ),
                 knowledge_bases=[],
-                # Same shape as molten-salt: the diagnostic goes through the standard HPC
+                # Same shape as molten-salt: both skills go through the standard HPC
                 # toolchain, so only the alloy-design agenthpc_* tools are denied. rag_search
                 # is denied automatically because there are no knowledge bases.
                 tools=["*", "!agenthpc_*"],
