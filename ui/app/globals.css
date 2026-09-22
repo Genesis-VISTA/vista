@@ -4711,6 +4711,17 @@ button.chat-bubble.intermediate.collapsed:hover {
   white-space: nowrap;
 }
 
+.debate-link {
+  color: var(--brand-2);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+.debate-link:hover {
+  opacity: 0.8;
+}
+
 /* The local-only variant of the lede. Dimmer than the invitation it replaces:
    it describes what this deployment cannot do yet, so it should read as a note
    rather than as a feature. */

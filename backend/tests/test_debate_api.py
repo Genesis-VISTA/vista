@@ -16,6 +16,11 @@ import anyio
 import httpx
 import pytest
 
+from vista_backend.agents.forum.project_forum import (
+    build_client_for,
+    forum_config_for,
+    forum_root,
+)
 from vista_backend.config import ForumSettings, settings
 from vista_backend.db.schemas import ProjectCreate
 from vista_backend.services import debate as debate_service
@@ -28,11 +33,15 @@ FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
 
 @pytest.fixture
 def forum_config(tmp_path, monkeypatch) -> ForumSettings:
-    """Point the whole app at a throwaway forum backed by the fake binary."""
-    (tmp_path / ".git" / ".h5i").mkdir(parents=True)
-    config = ForumSettings(
-        enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0
-    )
+    """
+    Point the whole app at throwaway per-project forums backed by the fake binary.
+
+    `data_dir` and not `repo_root`: the repository is a property of the project
+    now, so what a deployment configures is where project forums live, and each
+    project's own root falls out of its id.
+    """
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    config = ForumSettings(enabled=True, binary=str(FAKE), timeout=30.0)
     monkeypatch.setattr(settings, "forum", config)
     return config
 
@@ -81,7 +90,7 @@ async def app_client(session, alice, monkeypatch):
     # gets the *same* id. Left alone, the second test to use a given id is told
     # its thread was refreshed milliseconds ago and skips the read, which reads
     # as "the peer's post never arrived".
-    monkeypatch.setattr(debate_api, "_enrollments", None)
+    monkeypatch.setattr(debate_api, "_enrollments", {})
     monkeypatch.setattr(debate_api, "_last_refresh", {})
     monkeypatch.setattr(debate_api, "_refresh_locks", {})
     transport = httpx.ASGITransport(app=app)
@@ -90,13 +99,32 @@ async def app_client(session, alice, monkeypatch):
     app.dependency_overrides.clear()
 
 
-async def _project(session, user, name="api-debate"):
-    return await project_service.create_project(session, ProjectCreate(name=name), user)
+FORUM_URL = "https://example.invalid/forum.git"
+
+
+async def _project(session, user, name="api-debate", forum_repo_url=FORUM_URL):
+    """
+    A project with a Hypothesis Lab, unless the caller asks for one without.
+
+    The forum directory is made here rather than through `ensure_forum`, which
+    would shell out to git and then sync: these tests are about the API, and the
+    setup path has its own file.
+    """
+    project = await project_service.create_project(
+        session, ProjectCreate(name=name, forum_repo_url=forum_repo_url), user
+    )
+    if forum_repo_url:
+        (forum_root(project.id) / ".git" / ".h5i").mkdir(parents=True, exist_ok=True)
+    return project
+
+
+def _forum(project) -> ForumClient:
+    return build_client_for(project)
 
 
 async def _run(session, user, project, *, topic="why does the knee move?"):
     """A debate row with a real forum thread behind it."""
-    client = ForumClient(settings.forum, confirm_delay=0.0)
+    client = ForumClient(forum_config_for(project), confirm_delay=0.0)
     thread_id = await client.create_thread(topic, body="Debate it.")
     run = await debate_service.create_debate(
         session,
@@ -826,7 +854,9 @@ async def test_enrolled_origins_are_offered_for_naming_a_machine(
     invite reading "jqyin wrote this" out of a record that only supports "this
     came from a machine jqyin enrolled".
     """
-    (forum_config.repo_root / ".fake-forum.json").write_text(
+    project = await _project(session, alice)
+    # The fake keeps its state in the forum root, which is this project's own.
+    (forum_root(project.id) / ".fake-forum.json").write_text(
         json.dumps(
             {
                 "threads": {},
@@ -844,7 +874,6 @@ async def test_enrolled_origins_are_offered_for_naming_a_machine(
             }
         )
     )
-    project = await _project(session, alice)
     run, _, _ = await _run(session, alice, project)
 
     body = (await app_client.get(f"/projects/{project.name}/debates/{run.id}")).json()
@@ -863,8 +892,11 @@ async def test_enrolled_origins_are_offered_for_naming_a_machine(
 
 
 @pytest.mark.anyio
-async def test_forum_status_reports_a_local_only_forum(forum_config, app_client):
-    resp = await app_client.get("/forum/status")
+async def test_forum_status_reports_a_local_only_forum(
+    forum_config, app_client, session, alice
+):
+    project = await _project(session, alice)
+    resp = await app_client.get(f"/projects/{project.name}/forum/status")
     assert resp.status_code == 200
     body = resp.json()
     assert body["enabled"] and not body["shared"]
@@ -872,65 +904,18 @@ async def test_forum_status_reports_a_local_only_forum(forum_config, app_client)
 
 
 @pytest.mark.anyio
-async def test_forum_status_says_when_votes_are_being_discarded(
-    forum_config, app_client, monkeypatch
+async def test_forum_status_says_this_project_has_no_lab(
+    forum_config, app_client, session, alice
 ):
     """
-    The state this endpoint exists for. `principal` with nobody enrolled throws
-    away every vote on the forum — the agents' included — and nothing about a
-    thread shows it. Silence here would mean a debate whose votes do nothing and
-    an interface that never says so.
+    How the page knows to say so instead of offering a debate.
+
+    A project with no repository has nowhere to publish, and `enabled: false` is
+    the whole signal — the same shape the deployment-wide switch used to produce,
+    now answered per project.
     """
-    from vista_backend.config import settings
-    from vista_backend.services.h5i_forum import ForumClient, VotePolicy
-
-    client = ForumClient(settings.forum, confirm_delay=0.0)
-    await client.set_vote_policy(VotePolicy.PRINCIPAL)
-
-    resp = await app_client.get("/forum/status")
-    body = resp.json()
-
-    assert body["vote_policy"] == "principal"
-    assert body["enrolled"] == 0
-    assert body["votes_counting"] is False
-
-
-@pytest.mark.anyio
-async def test_forum_status_does_not_call_a_forum_shared_on_the_settings_alone(
-    forum_config, app_client, monkeypatch
-):
-    """
-    A configured `remote_url` is an intention, not a fact. `ensure_federation`
-    logs and carries on when the remote is unreachable at boot, so the setting
-    can name a remote the forum never adopted — and reporting `shared: true`
-    there tells the operator outsiders can reach a forum that is still purely
-    local. h5i's own answer is the one that counts.
-    """
-    from vista_backend.config import ForumSettings, settings
-
-    monkeypatch.setattr(
-        settings,
-        "forum",
-        ForumSettings(
-            enabled=True,
-            binary=forum_config.binary,
-            repo_root=forum_config.repo_root,
-            remote_url="git@github.com:someone/never-applied.git",
-        ),
-    )
-
-    body = (await app_client.get("/forum/status")).json()
-
-    assert body["shared"] is False
-    assert body["remote"] is None, "do not advertise a remote the forum has not taken"
-
-
-@pytest.mark.anyio
-async def test_forum_status_is_quiet_when_the_forum_is_off(app_client, monkeypatch):
-    from vista_backend.config import ForumSettings, settings
-
-    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=False))
-    body = (await app_client.get("/forum/status")).json()
+    project = await _project(session, alice, name="no-lab", forum_repo_url=None)
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
     assert body == {
         "enabled": False,
         "shared": False,
@@ -942,20 +927,69 @@ async def test_forum_status_is_quiet_when_the_forum_is_off(app_client, monkeypat
 
 
 @pytest.mark.anyio
-async def test_forum_status_survives_an_unreadable_forum(
-    forum_config, app_client, monkeypatch
+async def test_one_projects_lab_does_not_answer_for_another(
+    forum_config, app_client, session, alice
 ):
-    """An endpoint whose job is reporting bad states must not fail on one."""
+    """
+    Two projects, two rooms. A forum is a room whose guest list is the push
+    access on its repository, so answering with a neighbour's state would tell
+    someone their debate is published where it is not.
+    """
+    with_lab = await _project(session, alice, name="has-lab")
+    without = await _project(session, alice, name="has-none", forum_repo_url=None)
+
+    assert (await app_client.get(f"/projects/{with_lab.name}/forum/status")).json()[
+        "enabled"
+    ]
+    assert not (await app_client.get(f"/projects/{without.name}/forum/status")).json()[
+        "enabled"
+    ]
+
+
+@pytest.mark.anyio
+async def test_forum_status_does_not_call_a_forum_shared_on_the_project_alone(
+    forum_config, app_client, session, alice
+):
+    """
+    A URL saved on the project is an intention, not a fact. The forum can still
+    be publishing only to its local bare repo — reporting `shared: true` there
+    tells the operator outsiders can reach something they cannot. h5i's own
+    answer is the one that counts.
+    """
+    project = await _project(session, alice)
+    # Created without `ensure_forum`, so the remote was never applied.
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+
+    assert body["shared"] is False
+    assert body["remote"] is None, "do not advertise a remote the forum has not taken"
+
+
+@pytest.mark.anyio
+async def test_forum_status_is_quiet_when_the_feature_is_off(
+    app_client, session, alice, monkeypatch
+):
     from vista_backend.config import ForumSettings, settings
 
+    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=False))
+    project = await _project(session, alice)
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+    assert body["enabled"] is False
+
+
+@pytest.mark.anyio
+async def test_forum_status_survives_an_unreadable_forum(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """An endpoint whose job is reporting bad states must not fail on one."""
+    from vista_backend.config import settings
+
+    project = await _project(session, alice)
     monkeypatch.setattr(
         settings,
         "forum",
-        ForumSettings(
-            enabled=True, binary="/nonexistent/h5i", repo_root=forum_config.repo_root
-        ),
+        settings.forum.model_copy(update={"binary": "/nonexistent/h5i"}),
     )
-    resp = await app_client.get("/forum/status")
+    resp = await app_client.get(f"/projects/{project.name}/forum/status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
 

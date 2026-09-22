@@ -236,9 +236,11 @@ async function unwrap<T>(response: Response): Promise<T> {
 }
 
 export async function fetchForumStatus(
+  projectName: string,
   signal?: AbortSignal
 ): Promise<ForumStatus> {
-  return unwrap(await fetch("/api/forum/status", { signal }));
+  const query = new URLSearchParams({ project_name: projectName });
+  return unwrap(await fetch(`/api/forum/status?${query}`, { signal }));
 }
 
 export async function listDebates(

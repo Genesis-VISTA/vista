@@ -442,6 +442,7 @@ function ProjectModal({
   const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
+  const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -500,6 +501,7 @@ function ProjectModal({
         systemPrompt: systemPrompt.trim(),
         skills: Array.from(skills),
         knowledgeBases: Array.from(kbs),
+        forumRepoUrl: forumRepoUrl.trim(),
         tools: splitTags(toolsRaw),
         // PUT is a full overwrite on the backend — echo the existing usage
         // limits so they aren't reset on edit.
@@ -612,6 +614,25 @@ function ProjectModal({
               )}
             </div>
           </div>
+
+          <label className="project-modal-label">
+            Hypothesis Lab{" "}
+            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+              (git repository the debates publish to; leave blank to turn it off)
+            </span>
+            <input
+              className="input"
+              value={forumRepoUrl}
+              onChange={(e) => setForumRepoUrl(e.target.value)}
+              placeholder="https://github.com/your-org/your-forum.git"
+            />
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+              Everyone with push access to this repository can post to the
+              project&rsquo;s debates, so it is the guest list for the room. The
+              repository must already exist; saving checks it can be reached and
+              pulls in any threads it already holds.
+            </span>
+          </label>
 
           <label className="project-modal-label">
             Tools{" "}

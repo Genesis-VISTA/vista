@@ -43,32 +43,48 @@ An empty repo is exactly right; the debate agents need no code in it.
 gh repo create <org>/vista-hypothesis-forum --private
 ```
 
-## 2. Point VISTA's forum at it
+## 2. Point a project at it
 
-Set it in the backend's configuration:
+The repository belongs to a **project**, not to the deployment. A forum is a
+room, and who may post to it is who has push access to that repository — a
+different set of people for every line of work, and a decision the project's
+owners should be making rather than whoever can edit a `.env`.
+
+The deployment only turns the feature on at all:
 
 ```bash
 VISTA_BACKEND_FORUM__ENABLED=true
-VISTA_BACKEND_FORUM__REPO_ROOT=/var/lib/vista/forum
-VISTA_BACKEND_FORUM__REMOTE_URL=git@github.com:<org>/vista-hypothesis-forum.git
 ```
 
-`ensure_federation` applies this at startup and then runs a `sync` to prove the
-remote is reachable. That check is deliberate: `h5i forum remote` accepts any
-string, so a typo is not discovered until something tries to reach it, and a
-debate that silently publishes nowhere is worse than a loud warning at boot. An
-unreachable remote logs and does not stop the backend.
+Then, in the VISTA UI, open **Projects → (your project) → Edit** and paste the
+repository under **Hypothesis Lab**. Saving creates that project's own forum
+working copy under `data/forums/<project-id>/`, applies the remote, and runs a
+`sync`.
 
-To do it by hand instead:
+That sync is the point of doing it at save time: `h5i forum remote` accepts any
+string, so a typo is not discovered until something tries to reach it. A URL
+that cannot be reached **fails the save**, with the git error, while the person
+who can fix it is still looking at the dialog. It also pulls whatever threads
+the repository already holds, so pointing a project at an existing forum joins
+that conversation instead of starting an empty one beside it.
+
+A project with no repository has no Hypothesis Lab, and the page says so.
+
+> **Upgrading.** `VISTA_BACKEND_FORUM__REPO_ROOT` and `__REMOTE_URL` no longer
+> select a forum. They are ignored, and logged as ignored at boot; move the URL
+> onto the project that should use it and delete the lines. The threads are in
+> the repository, so the project picks them up on its first sync.
+
+To do it by hand instead, in that project's forum directory:
 
 ```bash
-cd /var/lib/vista/forum
+cd data/forums/<project-id>
 h5i forum remote git@github.com:<org>/vista-hypothesis-forum.git --branch-refs
 h5i forum sync          # this is the step that actually tells you it works
 ```
 
 `--branch-refs` is **not** h5i's default — pass it. (VISTA's `set_remote`
-defaults it on, so the startup path already does.) It publishes threads at
+defaults it on, so saving the project already does.) It publishes threads at
 `refs/heads/h5i-forum/threads/<id>`, which is the only namespace a forge can
 protect — branch rules reach `refs/heads/**` and nothing else. Under the custom
 namespace, anyone with push access can delete or force-push a thread and nothing
@@ -158,7 +174,7 @@ VISTA_BACKEND_FORUM__VOTE_POLICY=principal
 
 `principal` counts one vote per enrolled forge account **and nothing at all from
 an unenrolled machine**. Setting it early therefore discards every vote on the
-forum, the debate agents' own included. `ensure_federation` refuses to apply it
+forum, the debate agents' own included. `ensure_forum` refuses to apply it
 while `h5i forum enrollments` is empty and says so in the log — but that is a
 guard, not a substitute for asking participants to enroll first.
 

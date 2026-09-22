@@ -16,6 +16,7 @@ The MCP `invoke` builder and the sim-skill parser factory are injected, so every
 is unit-testable with fakes; production uses `build_mcp_invoke` + the LLM skill parser.
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -24,11 +25,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from pydantic_ai.models import Model
 
-from ...db.schemas import HpcJobTable, UserPublicWithConfig, UserTable
+from ...db.schemas import (
+    HpcJobTable,
+    ProjectTable,
+    UserPublicWithConfig,
+    UserTable,
+)
 from ...services import campaign as campaign_service
 from ..forum import simulation
 from ..forum.simulation import DEBATE_DOMAIN
-from ..forum.wiring import build_client as build_forum_client
+from ..forum.project_forum import build_client_for
 from ...services.campaign_monitor import CampaignMonitor, normalize_state
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
@@ -36,6 +42,9 @@ from .mcp_invoke import build_mcp_invoke, project_paths_for
 from ..inference import build_model_for
 from .planner import CampaignPlanner, build_subagents
 from .subagent import ResultParser
+
+
+logger = logging.getLogger(__name__)
 
 
 _STATE_RE = re.compile(r"\bSTATE[=:]\s*(\S+)")
@@ -183,7 +192,18 @@ def build_debate_aware_collector(
             await campaign_service.get_campaign(session, step.run_id) if step else None
         )
         if run is not None and run.domain == DEBATE_DOMAIN:
-            client = build_forum_client()
+            # The forum belongs to the campaign's project, which is the same
+            # project the debate that commissioned this job belongs to. There is
+            # no deployment-wide forum to post into any more.
+            project = await session.get(ProjectTable, run.project_id)
+            if project is None:
+                logger.warning(
+                    "job %s: its campaign has no project, so its result has no "
+                    "forum to go to",
+                    job.job_id,
+                )
+                return
+            client = build_client_for(project)
             # Failures are posted too. `post_result` has always written them
             # correctly — "did not complete", with the log attached — but the
             # monitor only ever called it on success, so a debate that lost a run

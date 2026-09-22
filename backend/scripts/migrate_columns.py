@@ -1,5 +1,5 @@
 """
-Add any debate columns the live database is missing.
+Add any columns the live database is missing.
 
 The app creates tables with `SQLModel.metadata.create_all`, which adds missing
 *tables* and never missing *columns*. So a deployment that ran an earlier version
@@ -7,12 +7,12 @@ keeps its `debate_post` exactly as it was, and the first query naming a new
 column fails with "no such column" — at read time, in the API, rather than at
 startup where it would be obvious.
 
-This reconciles the debate tables against the models. It is additive and
+This reconciles those tables against the models. It is additive and
 idempotent: it only ever issues `ADD COLUMN` for a column the table lacks, never
 drops, renames, or backfills. Safe to run repeatedly, and safe to run on a
 database that is already current.
 
-    uv run python scripts/migrate_debate_columns.py [--dry-run]
+    uv run python scripts/migrate_columns.py [--dry-run]
 
 SQLite only, which is what `database_url` defaults to. On Postgres, use a real
 migration tool.
@@ -32,11 +32,20 @@ from vista_backend.db.schemas import (  # noqa: F401 — imported to register me
     DebateParticipantTable,
     DebatePostTable,
     DebateRunTable,
+    ProjectTable,
 )
 from sqlmodel import SQLModel
 
 
-TABLES = ("debate_run", "debate_participant", "debate_post")
+TABLES = ("project", "debate_run", "debate_participant", "debate_post")
+"""
+Tables whose columns this reconciles.
+
+`project` joined the list when the Hypothesis Lab's repository moved onto the
+project: a deployment upgrading across that change has a `project` table with no
+`forum_repo_url`, and every project read would fail with "no such column" at the
+first request rather than at startup.
+"""
 
 
 async def main() -> int:
@@ -80,7 +89,7 @@ async def main() -> int:
                 added += 1
 
     if added == 0:
-        print("nothing to do — the debate tables are current")
+        print("nothing to do — the tables are current")
     elif args.dry_run:
         print(f"{added} column(s) missing; re-run without --dry-run to add them")
     else:

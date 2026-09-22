@@ -671,3 +671,41 @@ command's stderr onto the host's *stdout*.
       a scroll affordance. Two narrow-width leftovers found the same way and fixed —
       the verdict's `max-content 1fr` label column squeezing its values to 46px, and
       an unbreakable forge-principal email in the post stamp.
+
+## 31. The lab's repository belongs to the project, not the deployment
+
+- [x] 31.1 A forum is a room, and who may post to it is who has push access to its
+      git repository — a different set of people for every line of work. That made
+      `VISTA_BACKEND_FORUM__REPO_ROOT` / `__REMOTE_URL` the wrong home for it: one
+      room for every project, chosen by whoever could edit a `.env` rather than by
+      the people who decide who is in the room. `Project.forum_repo_url` replaces
+      them, set in the project dialog beside skills and knowledge bases.
+- [x] 31.2 No URL, no lab. A debate with nowhere to publish is a private argument
+      with nobody to check it, so the page says the project has no lab and points at
+      the one place it can be turned on, rather than offering an opener.
+- [x] 31.3 `forum_config_for` fills `repo_root` and `remote_url` from the project and
+      never inherits them, and `check_legacy_forum_env` *clears* the old settings at
+      boot after warning. Left resolvable, a stale `.env` line would let a call site
+      that forgot to scope itself keep working — against the old shared forum,
+      silently, and only on the machine that still had that line.
+- [x] 31.4 Each project's working repo is `data/forums/<project-id>/`, keyed by id so
+      a rename does not orphan a lab. `ensure_forum` is the four commands a human
+      peer runs to join a forum: `git init`, an empty commit, `forum remote
+      --branch-refs`, `forum sync`.
+- [x] 31.5 The sync runs at save time and a failure **fails the save** with the git
+      error. `h5i forum remote` accepts any string, so a typo is otherwise not
+      discovered until something tries to reach it — long after the person who could
+      fix it in a second has moved on. It also pulls whatever threads the repository
+      already holds, so pointing a project at an existing forum joins that
+      conversation instead of starting an empty one beside it.
+- [x] 31.6 `ensure_federation` and the boot hook are gone; `/forum/status` moved to
+      `/projects/{name}/forum/status`; the enrollment cache is keyed by project; the
+      campaign collector resolves the forum through the campaign's project.
+- [x] 31.7 `scripts/migrate_debate_columns.py` became `scripts/migrate_columns.py` and
+      covers `project` too — a deployment upgrading across this has a `project` table
+      with no `forum_repo_url`, and every project read would fail with "no such
+      column" at the first request rather than at startup.
+- [x] 31.8 `_enrolled_origins` takes an id and a client rather than the project row:
+      the caller has usually committed by then, and a commit expires every ORM object
+      the session holds. Same MissingGreenlet trap the run is already carried around
+      to avoid — and it bit again here before the tests caught it.

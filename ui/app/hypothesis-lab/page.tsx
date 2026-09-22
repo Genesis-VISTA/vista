@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import DebateThread from "@/components/DebateThread";
@@ -197,14 +198,18 @@ function DebatesPage() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!projectName) {
+      setForum(null);
+      return;
+    }
     const controller = new AbortController();
-    fetchForumStatus(controller.signal)
+    fetchForumStatus(projectName, controller.signal)
       .then(setForum)
       .catch(() => {
         /* the banner is advisory; its absence should not shout */
       });
     return () => controller.abort();
-  }, []);
+  }, [projectName]);
 
   useEffect(() => {
     if (!projectName || !selectedId) {
@@ -362,6 +367,35 @@ function DebatesPage() {
 
   if (!projectName) {
     return <main className="debate-page"><p>Select a project first.</p></main>;
+  }
+
+  // A project with no forum repository has no lab, and the honest thing is to
+  // say so and point at the one place it can be turned on. Rendering the opener
+  // would offer a debate with nowhere to publish — a private argument with
+  // nobody to check it, which is the opposite of what this is for.
+  if (forum !== null && !forum.enabled) {
+    return (
+      <main className="debate-page">
+        <header className="debate-page__header">
+          <h1>Hypothesis Lab</h1>
+          <p className="debate-page__lede">
+            <strong>{projectName}</strong> has no lab yet.
+          </p>
+          <p className="debate-page__lede debate-page__lede--muted">
+            A lab needs a git repository to publish its debates to: push access
+            to that repository is who may post, so it is the guest list for the
+            room. Add one under <strong>Hypothesis Lab</strong> in the project&rsquo;s
+            settings and this page turns on — along with any threads the
+            repository already holds.
+          </p>
+          <p className="debate-page__lede">
+            <Link className="debate-link" href="/projects">
+              Open project settings
+            </Link>
+          </p>
+        </header>
+      </main>
+    );
   }
 
   return (

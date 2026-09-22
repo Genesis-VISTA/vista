@@ -40,6 +40,22 @@ class ProjectBase(SQLModel):
     everything else is an allow pattern. A tool is allowed iff at least one allow pattern matches
     and no deny pattern matches. If there are no allow_patterns, assume allow "*".
     """
+    forum_repo_url: str | None = None
+    """
+    Git remote the project's Hypothesis Lab publishes to, or None for no lab.
+
+    The lab is per project because a forum is a *room*: who may post to it is who
+    has push access to this repository, and that is a different set of people for
+    every line of work. A single deployment-wide forum made one room for everyone
+    and put the decision in a `.env` file, where the people who choose who is in
+    the room cannot reach it.
+
+    None — or blank — turns the Hypothesis Lab off for this project. That is the
+    honest default: without somewhere to publish, a debate is a private argument
+    with nobody to check it, and offering the feature would promise a peer review
+    that cannot arrive.
+    """
+
     usage_limits: A[dict, Field(default_factory=dict, sa_column=Column(JSON))]
     """
     Limits on the agent such as tool call depth

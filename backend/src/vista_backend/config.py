@@ -59,9 +59,13 @@ class ForumSettings(BaseModel):
 
     repo_root: Path | None = None
     """
-    Git repository that owns the forum. h5i stores the forum under this repo's
-    `.git/.h5i/`, and every host-side command runs with this as cwd. `None` means
-    the feature is unusable even when enabled — the service says so.
+    The one repository a `ForumClient` instance works in. Not configuration.
+
+    Filled in per project by `forum_config_for`; a `ForumSettings` read from the
+    environment always leaves it `None`, and a client built on one refuses to run
+    rather than guessing. `VISTA_BACKEND_FORUM__REPO_ROOT` no longer selects a
+    deployment-wide forum — see `check_legacy_forum_env`, which says so out loud
+    at boot rather than letting a stale line look like it still works.
     """
 
     box_profile: str = "default"
@@ -118,12 +122,14 @@ class ForumSettings(BaseModel):
 
     remote_url: str | None = None
     """
-    Git URL the forum publishes to. `None` keeps it on this machine.
+    Git URL this client's forum publishes to. Not configuration, like `repo_root`.
 
-    Once set, push access to that repository is the whole authorization model:
-    anyone who can push can post under any identity they like. h5i's honesty is
-    in labelling those posts `peer-claimed`, not in preventing them — so the
-    repository's collaborator list is the security boundary.
+    Filled in per project from `Project.forum_repo_url`. Push access to that
+    repository is the whole authorization model: anyone who can push can post
+    under any identity they like. h5i's honesty is in labelling those posts
+    `peer-claimed`, not in preventing them — so the repository's collaborator
+    list is the security boundary, and it is the project's owners who should be
+    choosing it, not whoever can edit a `.env`.
     """
 
     vote_policy: str | None = None
@@ -282,6 +288,18 @@ class Settings(BaseSettings):
         relative to `data_dir`.
         """
         return self.data_dir / "storage"
+
+    @property
+    def forums_dir(self) -> Path:
+        """
+        Root for each project's forum working repository, one directory per project.
+
+        A forum is a room, and who may post to it is who has push access to its
+        repository — a different set of people for every line of work. So the
+        repository is chosen per project (`Project.forum_repo_url`) and the
+        working copy for it lands here, under that project's id.
+        """
+        return self.data_dir / "forums"
 
     database_url: A[
         str,

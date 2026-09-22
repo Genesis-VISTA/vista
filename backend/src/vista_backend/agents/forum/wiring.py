@@ -28,14 +28,14 @@ from ...services.files import _get_file, _kind_dir
 from ...services.project_agent import get_project_agent_key, project_agent_pool
 from ...utils.misc import path_is_under
 from ...services import skills as skills_service
-from ...services.h5i_forum import ForumClient
+from ...services.h5i_forum import ForumClient, ForumDisabled
 from ..campaign.hpc_tools import McpHpcTools
 from ..campaign.mcp_invoke import build_mcp_invoke, project_paths_for
 from . import simulation
 from .debate import DebateOrchestrator
+from .project_forum import build_client_for
 from .grounding import Grounding, WebReader
 from .roles import RoleAgents
-from ...services.h5i_forum import VotePolicy
 from .simulation import (
     SimulationCommissioner,
     clusters_for,
@@ -48,8 +48,18 @@ from .simulation import (
 logger = logging.getLogger(__name__)
 
 
-def build_client() -> ForumClient:
-    return ForumClient(settings.forum)
+async def client_for_run(session: AsyncSession, run: DebateRunTable) -> ForumClient:
+    """
+    The forum client for the project this debate belongs to.
+
+    Every path into the forum goes through a project, because that is where the
+    repository is chosen. A debate whose project has since had its lab turned off
+    raises `ForumDisabled` here rather than posting into a forum nobody agreed to.
+    """
+    project = await session.get(ProjectTable, run.project_id)
+    if project is None:
+        raise ForumDisabled(f"debate {run.id} has no project to find a forum through")
+    return build_client_for(project)
 
 
 async def _read_skill_body(name: str) -> str:
@@ -266,72 +276,6 @@ async def knowledge_bases_for(session: AsyncSession, run: DebateRunTable) -> lis
     return list(project.knowledge_bases or []) if project is not None else []
 
 
-async def ensure_federation(client: ForumClient | None = None) -> None:
-    """
-    Bring the forum's remote and vote policy in line with configuration.
-
-    Both live in the forum's own store rather than in our settings, so this
-    reconciles rather than sets: it is safe to run on every boot and does nothing
-    when they already agree.
-
-    Applying the remote is checked with a `sync`, because `forum remote` accepts
-    any string — a typo is not discovered until something tries to reach it, and
-    a debate silently publishing nowhere is worse than a loud startup warning.
-
-    The vote policy is only tightened once it would mean something. `principal`
-    counts one vote per enrolled account and *nothing* from an unenrolled
-    machine, so setting it on a forum where nobody has run `h5i forum enroll`
-    silently zeroes every vote, our own agents' included.
-    """
-    config = settings.forum
-    if not config.enabled or config.repo_root is None:
-        return
-    client = client or build_client()
-
-    if config.remote_url:
-        try:
-            current = await client.remote()
-            if config.remote_url not in current:
-                await client.set_remote(config.remote_url)
-                logger.info("forum: publishing to %s", config.remote_url)
-            result = await client.sync()
-            logger.info(
-                "forum: remote reachable (%d pulled, %d pushed)",
-                result.pulled,
-                result.pushed,
-            )
-        except Exception as exc:  # noqa: BLE001 — an unreachable remote must not stop boot
-            # The cause goes on the warning line, not only in the traceback below
-            # it. A boot warning is read in a scrolling launch log where the
-            # traceback is the part that gets skipped, and "could not reach" alone
-            # does not distinguish a missing repo from a firewalled port — which
-            # is the difference between creating a repo and changing a URL.
-            logger.warning(
-                "forum: could not reach %s (%s) — debates will run locally and "
-                "publish nothing until it is fixed",
-                config.remote_url,
-                exc,
-                exc_info=True,
-            )
-
-    if config.vote_policy:
-        try:
-            wanted = VotePolicy(config.vote_policy)
-            if await client.vote_policy() == wanted:
-                return
-            if wanted is VotePolicy.PRINCIPAL and not await client.enrollments():
-                logger.warning(
-                    "forum: leaving the vote policy alone — `principal` counts "
-                    "nothing from an unenrolled machine, and nobody has run "
-                    "`h5i forum enroll` yet, so every vote would be discarded"
-                )
-                return
-            await client.set_vote_policy(wanted)
-            logger.info("forum: vote policy is now %s", wanted)
-        except Exception:  # noqa: BLE001
-            logger.warning("forum: could not set the vote policy", exc_info=True)
-
-
 async def _commit(session: AsyncSession) -> None:
     await session.commit()
 
@@ -525,6 +469,7 @@ async def build_simulation(
 
 
 def build_orchestrator(
+    client: ForumClient,
     *,
     on_post=None,
     checkpoint=None,
@@ -533,7 +478,14 @@ def build_orchestrator(
     job_usage: dict[str, str] | None = None,
     knowledge_bases: list[str] | None = None,
 ) -> DebateOrchestrator:
-    client = build_client()
+    """
+    The orchestrator for one debate, on that debate's project's forum.
+
+    The client is an argument and not a default, because there is no longer a
+    deployment-wide forum to default to: a debate belongs to a project, and the
+    project names the repository. Passing it in is what makes forgetting to
+    scope a type error instead of a post in the wrong room.
+    """
     grounding = grounding if grounding is not None else build_grounding(client)
     return DebateOrchestrator(
         client=client,
@@ -568,12 +520,13 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
         try:
             run = await debate_service.require_debate(session, run_id)
 
-            client = build_client()
+            client = await client_for_run(session, run)
             grounding = await build_run_grounding(session, run, client)
             commissioner, runnable = await build_simulation(session, run)
             grounding.simulation = commissioner
 
             await build_orchestrator(
+                client,
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
@@ -604,7 +557,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
         try:
             run = await debate_service.require_debate(session, run_id)
 
-            client = build_client()
+            client = await client_for_run(session, run)
             grounding = await build_run_grounding(session, run, client)
             commissioner, runnable = await build_simulation(session, run)
             grounding.simulation = commissioner
@@ -613,6 +566,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
             # stream, another worker — sees nothing of an uncommitted debate,
             # so without this the live view only goes live once it is over.
             await build_orchestrator(
+                client,
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,

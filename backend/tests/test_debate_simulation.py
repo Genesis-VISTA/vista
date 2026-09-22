@@ -545,7 +545,7 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_forum_client", lambda: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
@@ -612,7 +612,7 @@ async def test_a_failed_run_is_posted_to_the_thread_too(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_forum_client", lambda: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
@@ -1044,112 +1044,10 @@ def test_usage_covers_only_the_jobs_asked_for(tmp_path):
     assert set(usage) == {"wanted"}
 
 
-# --------------------------------------------------------------------------- #
-# Federation settings actually applying
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.anyio
-async def test_federation_is_a_no_op_when_the_forum_is_off(monkeypatch):
-    from vista_backend.agents.forum.wiring import ensure_federation
-    from vista_backend.config import ForumSettings as FS
-    from vista_backend.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "forum", FS(enabled=False))
-
-    class _Explode:
-        def __getattr__(self, name):  # pragma: no cover - guard
-            raise AssertionError("nothing should touch the forum when it is off")
-
-    await ensure_federation(_Explode())
-
-
-@pytest.mark.anyio
-async def test_the_configured_remote_is_applied_and_checked(client, monkeypatch):
-    """
-    `forum remote` accepts any string, so a typo is only found when something
-    tries to reach it. Applying it is followed by a sync for that reason.
-    """
-    from vista_backend.agents.forum.wiring import ensure_federation
-    from vista_backend.config import settings as app_settings
-
-    monkeypatch.setattr(
-        app_settings,
-        "forum",
-        client.config.model_copy(update={"remote_url": "git@github.com:org/forum.git"}),
-    )
-    await ensure_federation(client)
-
-    assert "git@github.com:org/forum.git" in await client.remote()
-
-
-@pytest.mark.anyio
-async def test_an_unreachable_remote_does_not_stop_the_backend(client, monkeypatch):
-    """A backend that will not boot because a git host is down is worse than late posts."""
-    from vista_backend.agents.forum.wiring import ensure_federation
-    from vista_backend.config import settings as app_settings
-    from vista_backend.services.h5i_forum import ForumCommandError
-
-    monkeypatch.setattr(
-        app_settings,
-        "forum",
-        client.config.model_copy(update={"remote_url": "git@example.invalid:x.git"}),
-    )
-
-    async def boom():
-        raise ForumCommandError(["h5i", "forum", "sync"], 1, "", "unreachable")
-
-    monkeypatch.setattr(client, "sync", boom)
-    await ensure_federation(client)  # must not raise
-
-
-@pytest.mark.anyio
-async def test_principal_is_not_set_while_nobody_is_enrolled(client, monkeypatch):
-    """
-    The trap this guard exists for: `principal` counts nothing from an unenrolled
-    machine, so switching before anyone enrolls discards every vote on the forum
-    — including the debate agents' own.
-    """
-    from vista_backend.agents.forum.wiring import ensure_federation
-    from vista_backend.config import settings as app_settings
-    from vista_backend.services.h5i_forum import VotePolicy
-
-    monkeypatch.setattr(
-        app_settings,
-        "forum",
-        client.config.model_copy(update={"vote_policy": "principal"}),
-    )
-    assert await client.enrollments() == []
-
-    await ensure_federation(client)
-
-    assert await client.vote_policy() == VotePolicy.ORIGIN, "left alone, deliberately"
-
-
-@pytest.mark.anyio
-async def test_principal_is_set_once_somebody_is_enrolled(client, monkeypatch):
-    from vista_backend.agents.forum.wiring import ensure_federation
-    from vista_backend.config import settings as app_settings
-    from vista_backend.services.h5i_forum import Enrollment, VotePolicy
-
-    monkeypatch.setattr(
-        app_settings,
-        "forum",
-        client.config.model_copy(update={"vote_policy": "principal"}),
-    )
-
-    async def enrolled():
-        return [Enrollment(principal="github.com/someone/1", origin="host-a")]
-
-    monkeypatch.setattr(client, "enrollments", enrolled)
-    await ensure_federation(client)
-
-    assert await client.vote_policy() == VotePolicy.PRINCIPAL
-
-
-# --------------------------------------------------------------------------- #
-# Seeing what became of a commissioned run
-# --------------------------------------------------------------------------- #
+# Federation used to be reconciled here, deployment-wide, at boot. It is now a
+# property of each project — see tests/test_project_forum.py, which pins the same
+# behaviours against `ensure_forum`: the remote being applied and checked with a
+# sync, and `principal` being withheld until somebody is enrolled.
 
 
 @pytest.mark.anyio

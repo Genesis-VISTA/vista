@@ -301,49 +301,55 @@ async def test_a_peer_can_wear_one_of_our_role_identities(tmp_path):
         await beta.remove_participant(impostor)
 
 
-async def test_federation_startup_against_a_real_remote(tmp_path, monkeypatch):
+async def test_setting_up_a_projects_forum_against_a_real_remote(tmp_path, monkeypatch):
     """
-    `ensure_federation` against real h5i and a real remote.
+    `ensure_forum` against real h5i and a real remote.
 
-    Everything except the forge itself: setting the remote, proving it reachable
-    with a sync, and the vote policy refusing to tighten while nobody is
-    enrolled. Authentication and forge ref-protection are what remain untested,
-    and they need an actual GitHub repository.
+    Everything except the forge itself: creating the project's repository from
+    nothing, setting the remote, proving it reachable with a sync, and the vote
+    policy refusing to tighten while nobody is enrolled. Authentication and forge
+    ref-protection are what remain untested, and they need an actual GitHub
+    repository.
+
+    The repository is created here, not seeded: that is the whole of what a
+    person has to do to get a lab — paste a URL — and the four commands behind it
+    are the same four a human peer runs to join a forum.
     """
     if H5I is None:
         pytest.skip("h5i is not installed")
 
-    from vista_backend.agents.forum.wiring import ensure_federation
+    from vista_backend.agents.forum.project_forum import (
+        ensure_forum,
+        forum_config_for,
+        forum_root,
+    )
     from vista_backend.config import settings as app_settings
+    from vista_backend.db.schemas import ProjectTable
     from vista_backend.services.h5i_forum import VotePolicy
 
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
 
-    root = tmp_path / "host"
-    root.mkdir()
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    for key, value in (("user.email", "host@local"), ("user.name", "host")):
-        subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
-    (root / "README.md").write_text("forum\n")
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
-
-    config = ForumSettings(
-        enabled=True,
-        binary=H5I,
-        repo_root=root,
-        box_isolation="process",
-        timeout=120.0,
-        remote_url=str(remote),
-        vote_policy="principal",
+    monkeypatch.setattr(app_settings, "data_dir", tmp_path)
+    monkeypatch.setattr(
+        app_settings,
+        "forum",
+        ForumSettings(
+            enabled=True,
+            binary=H5I,
+            box_isolation="process",
+            timeout=120.0,
+            vote_policy="principal",
+        ),
     )
-    monkeypatch.setattr(app_settings, "forum", config)
-    client = ForumClient(config)
+    project = ProjectTable(name="live-forum", forum_repo_url=str(remote))
 
-    await ensure_federation(client)
+    await ensure_forum(project)
 
-    assert str(remote) in await client.remote(), "the configured remote was applied"
+    root = forum_root(project.id)
+    assert (root / ".git").is_dir(), "the project's repository was created"
+    client = ForumClient(forum_config_for(project))
+    assert str(remote) in await client.remote(), "the project's remote was applied"
     assert await client.vote_policy() == VotePolicy.ORIGIN, (
         "principal is refused while nobody is enrolled — it would discard every "
         "vote on the forum, the agents' own included"
