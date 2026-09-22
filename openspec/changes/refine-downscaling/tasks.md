@@ -89,17 +89,21 @@
 
 ## 5. Hermetic tests
 
-- [ ] 5.1 `mcp_servers/vista_mcp_server/tests/test_refine_downscaling_job.py`:
+- [x] 5.1 `mcp_servers/vista_mcp_server/tests/test_refine_downscaling_job.py`:
       catalog entry validity, `cluster_defaults.json` parse + required env keys,
       `script_args` -> argv mapping per mode, the `--plots`/mode rejection, and the
       day guardrail. Markers: `unit` — **must stay out of** the `hpc`/`live` lanes
-- [ ] 5.2 `results.json` composition tested against captured fixtures of the three
+- [x] 5.2 `results.json` composition tested against captured fixtures of the three
       upstream JSON files (copied from `docs/reference_1990/`), including the
       hard-failure path when one is missing or malformed
-- [ ] 5.3 `backend/tests/test_refine_downscaling_skill.py`: SKILL.md frontmatter
+- [x] 5.3 `backend/tests/test_refine_downscaling_skill.py`: SKILL.md frontmatter
       parses, the skill seeds onto the `water4energy` project alongside the
       diagnostic, seed snapshot updated, and the project tool policy is unchanged
-- [ ] 5.4 `./scripts/ci-local.sh` green (backend + mcp lint and test)
+- [x] 5.4 Lint and test green as CI runs them (ruff 0.15.7 per `.gitlab-ci.yml`,
+      hermetic marker filter). Verified in a clean checkout: backend 393 passed,
+      vista-mcp 140 passed. **Note:** `./scripts/ci-local.sh` fails in a working
+      tree containing stray `__pycache__`-only dirs under `hpc_jobs/` or
+      `db/skills/` — the catalog and seed scanners reject them
 
 ## 6. Frontier validation (manual — NOT in PR CI)
 
