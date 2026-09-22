@@ -31,6 +31,7 @@ const PROJECT: Project = {
   systemPrompt: "",
   skills: [],
   knowledgeBases: [],
+  forumRepoUrl: "",
   tools: [],
   usageLimits: {},
 };

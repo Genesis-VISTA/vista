@@ -261,16 +261,18 @@ class Settings(BaseSettings):
     )
     """ Directory for data such as sandbox volumes and other created files """
 
-    hpc_jobs_dir: A[ResolvedPath, Field(validation_alias="VISTA_HPC_JOBS_DIR")] = Path(
-        "../hpc_jobs"
-    )
-    """
-    The `hpc_jobs/` catalog, used to check a job exists before it is submitted.
+    @property
+    def hpc_jobs_catalog(self) -> Path:
+        """
+        The `hpc_jobs/` catalog on disk, configured or derived.
 
-    The MCP server remains the authority on what actually runs; this is read only
-    so a debate can refuse a job name that is not there, with a message the agent
-    can act on, instead of spending a submission to find out.
-    """
+        `hpc_jobs_dir` is the override and may be unset; this is what callers
+        want. Two readers need it for different reasons — seeding writes the
+        MSTDB CSV a job template needs, and a debate checks a job name exists
+        before spending a submission to find out it does not — and resolving the
+        fallback separately in each is how the two come to disagree.
+        """
+        return self.hpc_jobs_dir or Path(__file__).resolve().parents[3] / "hpc_jobs"
 
     @property
     def knowledge_bases_dir(self) -> Path:

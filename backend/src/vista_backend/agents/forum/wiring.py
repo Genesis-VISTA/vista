@@ -333,13 +333,13 @@ async def build_simulation(
         return None, {}
 
     runnable = runnable_simulations(
-        list(project.skills or []), settings.hpc_jobs_dir, clusters
+        list(project.skills or []), settings.hpc_jobs_catalog, clusters
     )
     if not runnable:
         # Distinguishes the two ways this comes out empty, because they call for
         # different actions: load a simulation skill, or get a credential for a
         # cluster the jobs you have actually support.
-        offered = runnable_jobs(list(project.skills or []), settings.hpc_jobs_dir)
+        offered = runnable_jobs(list(project.skills or []), settings.hpc_jobs_catalog)
         if offered:
             logger.info(
                 "debate %s: no HPC — %s can reach %s, and no job in %s has a "
@@ -530,7 +530,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
-                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_dir),
+                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).resume(session, run=run, extra_rounds=extra_rounds)
             await session.commit()
@@ -570,7 +570,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
-                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_dir),
+                job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
             ).run(session, run)
             await session.commit()

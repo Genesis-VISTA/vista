@@ -209,11 +209,11 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text()))
     globus = FakeGlobusClient()
-    globus.remote_files["/gpfs/out/44039/log-44039.out"] = (
-        "[setup_odo] OK: run_state_point.py present\n"
+    globus.files["/gpfs/out/44039/log-44039.out"] = (
+        b"[setup_odo] OK: run_state_point.py present\n"
     )
-    globus.remote_files["/gpfs/out/44039/log-44039.err"] = (
-        "run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
+    globus.files["/gpfs/out/44039/log-44039.err"] = (
+        b"run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
     _patch_clients(monkeypatch, iri=iri, globus=globus)
     _record_submitted_job(
@@ -232,11 +232,9 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     assert "run_state_point.py present" in text
     assert "--- STDERR ---" in text
     assert "unrecognized arguments: --salt flibe_90Li6" in text
-    # One Globus task, both files. The ~10-30s is per task, not per file, so
-    # stderr genuinely costs nothing here.
-    assert len(globus.transfers) == 1
-    fetched = {item[0] for item in globus.transfers[0]["items"]}
-    assert fetched == {
+    # Both streams are tailed the same incremental way, so stderr costs one more
+    # HEAD and one more ranged GET — not a second transfer task.
+    assert {path for path, _start, _end in globus.range_reads} == {
         "/gpfs/out/44039/log-44039.out",
         "/gpfs/out/44039/log-44039.err",
     }
@@ -248,15 +246,17 @@ async def test_odo_status_distinguishes_empty_stderr_from_no_stderr(
     """
     "nothing on stderr" is a fact about the job; "no stderr path" is one about us.
 
-    A job that succeeded writes no stderr file at all, and a reader must not take
-    our own missing bookkeeping for the job having reported no error.
+    Slurm creates the stderr file only when something writes to it, so a job that
+    succeeded leaves none — the fake raises `GlobusFileNotFound` for it, exactly
+    as a real collection does. A reader must not take our own missing bookkeeping
+    for the job having reported no error.
     """
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text()))
     globus = FakeGlobusClient()
-    globus.remote_files["/gpfs/out/1/log-1.out"] = "TBR = 1.14\n"
+    globus.files["/gpfs/out/1/log-1.out"] = b"TBR = 1.14\n"
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
     _record_submitted_job(
@@ -285,26 +285,32 @@ async def test_odo_status_distinguishes_empty_stderr_from_no_stderr(
     assert "no stderr path cached" in legacy
 
 
-async def test_odo_status_says_when_the_logs_could_not_be_fetched(
+async def test_odo_status_says_when_stderr_could_not_be_fetched(
     monkeypatch, user_cfg, tmp_path
 ):
     """
     "We could not look" must never render as "there was nothing there".
 
-    Both come out as an empty file locally, and collapsing them would let a
-    Globus outage be read as a job that printed no error — the exact mistake this
-    whole line of work exists to stop.
+    A file that does not exist and a collection that would not answer both leave
+    us with nothing locally, and collapsing them would let an outage be read as a
+    job that printed no error — the exact mistake this line of work exists to
+    stop. Only the first is `(nothing on stderr)`.
     """
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text()))
     globus = FakeGlobusClient()
+    globus.files["/gpfs/out/3/log-3.out"] = b"setup ok\n"
 
-    async def _refuse(**kwargs):
-        raise RuntimeError("endpoint activation expired")
+    real_stat = globus.stat
 
-    globus.transfer_and_wait = _refuse  # type: ignore[method-assign]
+    async def _refuse(*, collection_id: str, remote_path: str) -> int:
+        if remote_path.endswith(".err"):
+            raise RuntimeError("endpoint activation expired")
+        return await real_stat(collection_id=collection_id, remote_path=remote_path)
+
+    globus.stat = _refuse  # type: ignore[method-assign]
     _patch_clients(monkeypatch, iri=iri, globus=globus)
     _record_submitted_job(
         "3",
