@@ -19,33 +19,34 @@
       before `module load` (design decision 10); MIOpen caches go on node-local
       `/tmp` tagged by job id, not on Lustre (design decision 8)
 - [ ] 1.4 Confirm no `#SBATCH` directive is relied on (inert — design decision 9)
-      and that the GPU actually binds (log `torch.cuda.is_available()` and the
-      device name into provenance)
+      and that the GPU actually binds. Wrapper side is done: provenance carries
+      `cuda_available`, `gpu`, `torch`, and `rocm`, and a CPU fallback raises a
+      warning. **Confirming a real binding needs Frontier — see task 6.1.**
 
 ## 2. Wrapper and structured metrics
 
-- [ ] 2.1 Add `run_downscaling.py`: arg parsing for `--mode`, `--days`,
+- [x] 2.1 Add `run_downscaling.py`: arg parsing for `--mode`, `--days`,
       `--start-date`, `--split`, `--max-days`, `--plots`, `--allow-large`,
       `--batch-size`, `--checksum-inputs`
-- [ ] 2.2 Preflight every required path (demo root, data dir, checkpoint, env,
+- [x] 2.2 Preflight every required path (demo root, data dir, checkpoint, env,
       per-variable input NetCDFs) with an actionable one-line error naming the
       exact missing path; verify the checkpoint SHA256 against the model registry
-- [ ] 2.3 Enforce the day guardrail: default 1, refuse `> 31` without
+- [x] 2.3 Enforce the day guardrail: default 1, refuse `> 31` without
       `--allow-large`, and state the projected output size in the refusal
       (spec: *Bounded output volume*)
-- [ ] 2.4 Reject `--plots` without `--mode evaluate` before any work
+- [x] 2.4 Reject `--plots` without `--mode evaluate` before any work
       (spec: *Single catalog entry with an explicit mode*)
-- [ ] 2.5 Invoke the upstream pipelines unmodified with absolute paths, writing
+- [x] 2.5 Invoke the upstream pipelines unmodified with absolute paths, writing
       only into `$VISTA_OUT`; propagate a non-zero exit
-- [ ] 2.6 Compose `results.json` (`vista/refine-downscaling/results/v1`) from
+- [x] 2.6 Compose `results.json` (`vista/refine-downscaling/results/v1`) from
       `<output>.nc.json`, `evaluation_summary.json`, and
       `spatial_statistics_index.json` — never from stdout; hard-fail on a missing
       or unparseable upstream JSON rather than emitting nulls
-- [ ] 2.7 Record provenance: checkpoint path + SHA256, env path, torch/ROCm
+- [x] 2.7 Record provenance: checkpoint path + SHA256, env path, torch/ROCm
       versions, GPU name, resolved pipeline argv, wall time, Slurm job id
-- [ ] 2.8 Record bulk artifacts (NetCDF, retained predictions) as path + byte size
+- [x] 2.8 Record bulk artifacts (NetCDF, retained predictions) as path + byte size
       instead of promoting them into the fetchable set
-- [ ] 2.9 Render the `infer` quicklook: one coarse-vs-downscaled PNG per variable
+- [x] 2.9 Render the `infer` quicklook: one coarse-vs-downscaled PNG per variable
       for the first timestep (presentation only — computes no metric)
 
 ## 3. SKILL.md

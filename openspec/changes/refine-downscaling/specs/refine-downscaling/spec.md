@@ -90,14 +90,29 @@ rather than moving them into the fetchable set by default.
 ### Requirement: Every run yields a displayable figure
 
 Each mode SHALL produce at least one PNG in `$VISTA_OUT` so the agent has something
-to `display_file` alongside the metrics.
+to `display_file` alongside the metrics. Figure rendering is presentation only and
+SHALL NOT compute any metric, and a rendering failure SHALL NOT discard an
+otherwise successful pipeline run.
 
 #### Scenario: Inference produces a quicklook
 
 - **WHEN** `--mode infer` completes
 - **THEN** the wrapper SHALL write one coarse-input vs downscaled-output PNG per
-  variable for the first timestep
+  variable for the first timestep, on a shared color scale
 - **AND** `results.json` SHALL list those figures
+
+#### Scenario: Evaluation without plots still has a figure
+
+- **WHEN** `--mode evaluate` completes without `--plots`
+- **THEN** the wrapper SHALL write a model vs bilinear-baseline comparison chart
+  rendered from `evaluation_summary.json`
+
+#### Scenario: A rendering failure degrades instead of failing the run
+
+- **WHEN** plotting dependencies are unavailable, or figure rendering raises after
+  the pipeline has already succeeded
+- **THEN** the job SHALL still exit zero and write `results.json`
+- **AND** `results.json` SHALL carry an explicit `warnings` entry naming the cause
 
 ### Requirement: Skill guidance and project wiring
 
