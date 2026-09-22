@@ -93,6 +93,12 @@
       catalog entry validity, `cluster_defaults.json` parse + required env keys,
       `script_args` -> argv mapping per mode, the `--plots`/mode rejection, and the
       day guardrail. Markers: `unit` — **must stay out of** the `hpc`/`live` lanes
+- [x] 5.5 Same file: assemble the real Frontier IRI JobSpec through
+      `_submit_frontier_job` with `FakeIriClient`/`FakeGlobusClient` — account,
+      queue, exclusive GPU node, every `REFINE_*` env var, the script inlined after
+      vista's preamble, `set --` forwarding of `script_args`, and the wrapper being
+      staged to `$RUN_DIR_Frontier`. This is the last thing that can be wrong before
+      a real submission, so it is checked before spending queue time
 - [x] 5.2 `results.json` composition tested against captured fixtures of the three
       upstream JSON files (copied from `docs/reference_1990/`), including the
       hard-failure path when one is missing or malformed

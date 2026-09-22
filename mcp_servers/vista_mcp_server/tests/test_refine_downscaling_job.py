@@ -697,3 +697,150 @@ def test_a_figure_failure_never_discards_a_successful_run(demo, monkeypatch):
     assert results["status"] == "ok"
     assert results["figures"] == []
     assert any("quicklook" in w for w in results["warnings"])
+
+
+# --- the real JobSpec ------------------------------------------------------
+#
+# Everything above tests the job's own files. These test what vista actually
+# hands IRI for this job, with IRI and Globus faked — the last thing that can be
+# wrong before a real Frontier submission, and the cheapest place to catch it.
+
+
+@pytest.fixture
+def _frontier_submit(monkeypatch):
+    """Patch IRI/Globus/settings the way test_submit_job_spec.py does."""
+    import vista_mcp_server.submit_job_mcp as submit_job_mcp
+    from fakes import FakeGlobusClient, FakeIriClient
+    from vista_mcp_server.config import settings
+    from vista_mcp_server.lib.user_config import UserConfig
+    from vista_mcp_server.submit_job_mcp import _submit_frontier_job, _submitted_jobs
+
+    monkeypatch.setattr(settings, "local_hpc_jobs_dir", REPO_ROOT / "hpc_jobs")
+    monkeypatch.setattr(settings, "vista_globus_collection_id", "vista-gcs-id")
+    monkeypatch.setattr(
+        settings, "frontier_globus_collection_id", "frontier-collection"
+    )
+    monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
+    monkeypatch.setattr(settings, "frontier_account", "chm243")
+    monkeypatch.setattr(settings, "session_id", "test-session")
+    monkeypatch.setattr(settings, "frontier_globus_refresh_token", "fake-refresh")
+
+    iri = FakeIriClient(job_id="fr-refine-1")
+    globus = FakeGlobusClient()
+
+    async def _olcf(*, iri_token: str):
+        return iri
+
+    async def _noop_access(cfg, cluster):
+        return None
+
+    monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
+    monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kw: globus)
+    monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
+    _submitted_jobs.clear()
+
+    async def submit(script_args=None):
+        return await _submit_frontier_job(
+            UserConfig(frontier_s3m_token="frontier-token"),
+            "refine-downscaling",
+            node_count=None,
+            duration_int=None,
+            script_args=script_args,
+        )
+
+    yield submit, iri, globus
+    _submitted_jobs.clear()
+
+
+@pytest.mark.anyio
+async def test_the_jobspec_asks_for_one_exclusive_gpu_node_on_the_shared_account(
+    _frontier_submit,
+):
+    submit, iri, _ = _frontier_submit
+    job_id, _log, _out, nodes, duration = await submit()
+
+    assert job_id == "fr-refine-1"
+    assert (nodes, duration) == (1, 1800)
+    spec, _ = iri.submitted[0]
+    assert spec["resources"]["node_count"] == 1
+    assert spec["resources"]["process_count"] == 1
+    assert spec["resources"]["exclusive_node_use"] is True
+    attributes = spec["attributes"]
+    assert attributes["queue_name"] == "batch"
+    # vista submits under its own shared project, never the demo's cli138.
+    assert attributes["account"] == "chm243"
+
+
+@pytest.mark.anyio
+async def test_the_jobspec_carries_every_staged_path_into_the_job_environment(
+    _frontier_submit,
+):
+    submit, iri, _ = _frontier_submit
+    await submit()
+    environment = iri.submitted[0][0]["attributes"]["environment"]
+
+    assert environment["RUN_DIR_Frontier"].endswith("/refine-downscaling/src")
+    for key in (
+        "REFINE_BASE_DIR",
+        "REFINE_ENV",
+        "REFINE_CHECKPOINT",
+        "REFINE_DATA_DIR",
+        "REFINE_INPUT_DIR",
+    ):
+        assert environment[key].startswith("/lustre/orion/"), key
+
+
+@pytest.mark.anyio
+async def test_the_job_script_is_inlined_verbatim_after_the_vista_preamble(
+    _frontier_submit,
+):
+    submit, iri, _ = _frontier_submit
+    await submit()
+    job_cmd = iri.submitted[0][0]["arguments"][2]
+
+    assert (JOB_DIR / "job.frontier.slurm").read_text() in job_cmd
+    # The dispatcher's preamble has to land before our script, since the script
+    # reads VISTA_OUT and relies on the purge.
+    assert job_cmd.index("VISTA_OUT=") < job_cmd.index("#!/bin/bash -l")
+    assert "module purge" in job_cmd
+
+
+@pytest.mark.anyio
+async def test_script_args_reach_the_script_as_positional_parameters(
+    _frontier_submit,
+):
+    """
+    The wrapper is invoked with `"$@"`, so script_args only work if the dispatcher
+    sets them with `set --` ahead of the inlined script.
+    """
+    submit, iri, _ = _frontier_submit
+    await submit("--mode evaluate --max-days 3 --plots")
+    job_cmd = iri.submitted[0][0]["arguments"][2]
+
+    assert "set -- --mode evaluate --max-days 3 --plots" in job_cmd
+    assert job_cmd.index("set --") < job_cmd.index("#!/bin/bash -l")
+
+
+@pytest.mark.anyio
+async def test_no_script_args_means_no_positional_parameters_at_all(
+    _frontier_submit,
+):
+    """
+    With nothing to forward the dispatcher emits no `set --` line at all, so the
+    script's `"$@"` expands to nothing and the wrapper applies its own defaults.
+    (Bash special-cases an unset `$@` under `set -u`, so this is safe either way —
+    the point is that the default submission carries no arguments.)
+    """
+    submit, iri, _ = _frontier_submit
+    await submit(None)
+    assert "set --" not in iri.submitted[0][0]["arguments"][2]
+
+
+@pytest.mark.anyio
+async def test_the_wrapper_is_staged_to_the_run_dir(_frontier_submit):
+    """`job.frontier.slurm` runs $RUN_DIR_Frontier/run_downscaling.py, so it has
+    to have been shipped there."""
+    submit, _iri, globus = _frontier_submit
+    await submit()
+    transferred = " ".join(str(t) for t in globus.transfers)
+    assert "run_downscaling.py" in transferred
