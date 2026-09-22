@@ -62,6 +62,8 @@ async def test_seed_registers_skills_that_do_not_need_vista_data(seeded):
     assert {
         "alloy-tc-planner",
         "alloy-thermo-mc",
+        "deepthermo-wl",
+        "vae-orderparam",
         "datacard-generation",
         "salt-chemistry-md",
         "salt-neutronics-tbr",
@@ -76,7 +78,12 @@ async def test_seed_registers_skills_that_do_not_need_vista_data(seeded):
 async def test_alloy_design_seed_snapshot(seeded):
     project = await _project(seeded, "alloy-design")
 
-    assert project.skills == ["alloy-tc-planner", "alloy-thermo-mc"]
+    assert project.skills == [
+        "alloy-tc-planner",
+        "alloy-thermo-mc",
+        "deepthermo-wl",
+        "vae-orderparam",
+    ]
     assert project.knowledge_bases == []
     assert project.usage_limits.get("request_limit") == 600
 

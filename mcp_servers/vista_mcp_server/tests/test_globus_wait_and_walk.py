@@ -153,3 +153,53 @@ def test_non_recursive_ls_makes_exactly_one_call():
     entries = _client(tc)._operation_ls("ep", "/out", False, (), 200)
     assert tc.ls_calls == ["/out"]
     assert len(entries) == 2
+
+
+# --- ACTIVE + a fatal nice_status must not be waited out -----------------------
+
+
+def test_file_not_found_fails_fast_instead_of_retrying_for_an_hour():
+    """
+    Observed live (2026-09-21): an output fetch for a job that was still RUNNING sat
+    `ACTIVE / nice_status=FILE_NOT_FOUND`. Globus retries a missing source file until
+    its own deadline rather than failing, so the wait loop polled silently and the tool
+    call looked hung.
+    """
+    tc = _FakeTransferClient(
+        task_states=[{"status": "ACTIVE", "nice_status": "FILE_NOT_FOUND"}]
+    )
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as exc:
+        _client(tc)._wait_for_task("t", poll_seconds=10, timeout_seconds=3600)
+    assert "FILE_NOT_FOUND" in str(exc.value)
+    assert "still running" in str(exc.value)     # names the usual cause
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    "nice", ["PERMISSION_DENIED", "NO_CREDENTIALS", "EXPIRED_CREDENTIALS", "PATH_NOT_ALLOWED"]
+)
+def test_other_unrecoverable_nice_statuses_also_fail_fast(nice):
+    tc = _FakeTransferClient(task_states=[{"status": "ACTIVE", "nice_status": nice}])
+    with pytest.raises(RuntimeError, match=nice):
+        _client(tc)._wait_for_task("t", poll_seconds=10, timeout_seconds=3600)
+
+
+def test_ordinary_active_still_waits():
+    """A genuinely-progressing transfer must not be aborted."""
+    tc = _FakeTransferClient(
+        task_states=[
+            {"status": "ACTIVE", "nice_status": None},
+            {"status": "ACTIVE", "nice_status": "QUEUED"},
+            {"status": "SUCCEEDED"},
+        ]
+    )
+    got = _client(tc)._wait_for_task("t", poll_seconds=0, timeout_seconds=60)
+    assert got["status"] == "SUCCEEDED"
+
+
+def test_transient_connect_failure_is_not_treated_as_fatal():
+    tc = _FakeTransferClient(
+        task_states=[{"status": "ACTIVE", "nice_status": "CONNECT_FAILED"}, {"status": "SUCCEEDED"}]
+    )
+    assert _client(tc)._wait_for_task("t", poll_seconds=0, timeout_seconds=60)["status"] == "SUCCEEDED"

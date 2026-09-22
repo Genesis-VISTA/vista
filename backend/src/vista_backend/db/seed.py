@@ -343,13 +343,22 @@ async def seed_db(engine: AsyncEngine) -> None:
                     "(alloy-tc-planner): a multi-cycle, human-in-the-loop search for the "
                     "MoNbTaW composition with the highest order-disorder transition "
                     "temperature, evaluated by parallel-tempering Monte Carlo on HPC "
-                    "(alloy-thermo-mc)."
+                    "(alloy-thermo-mc). Also runs DeepThermo Wang-Landau sampling with a "
+                    "VAE-learned order parameter (deepthermo-wl, vae-orderparam)."
                 ),
                 # encoding kept explicit per the UTF-8 portability pass on main.
                 system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(
                     encoding="utf-8"
                 ),
-                skills=sorted({"alloy-tc-planner", "alloy-thermo-mc"} - skipped_skills),
+                skills=sorted(
+                    {
+                        "alloy-tc-planner",
+                        "alloy-thermo-mc",
+                        "deepthermo-wl",
+                        "vae-orderparam",
+                    }
+                    - skipped_skills
+                ),
                 knowledge_bases=[],
                 # The campaign dispatches + monitors HPC jobs through the standard HPC
                 # toolchain, so those must be ALLOWED here (they used to be denied, back
