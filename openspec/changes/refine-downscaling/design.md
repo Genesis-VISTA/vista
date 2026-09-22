@@ -91,14 +91,27 @@ makes this work at all**: the demo's own launchers use `-A cli138` and a
    timestep. This is the only new science-adjacent code in the change, and it is
    presentation only — it computes no metric.
 
-8. **GPU shape.** 1 node, `exclusive_node_use: true`. Frontier's prolog binds all 8
-   GCDs and the pipelines use one; `--amp` and `--enforce-temperature-order` are on,
-   matching the demo's own launcher. `MIOPEN_USER_DB_PATH` goes under `$VISTA_OUT`
-   so the MIOpen cache never collides between jobs.
+8. **GPU shape.** 1 node, `exclusive_node_use: true`, with an inner
+   `srun -N1 -n1 -c7 --gpus-per-task=1 --gpu-bind=closest` to actually bind a GCD —
+   Frontier's IRI service launches the script once on the head node and leaves task
+   placement to us. `--amp` and `--enforce-temperature-order` are on, matching the
+   demo's own launcher. **MIOpen caches go on node-local `/tmp`, tagged by Slurm job
+   id — not under `$VISTA_OUT`.** MIOpen keeps a SQLite perf database, and SQLite
+   over Lustre locks badly; both the demo's own launcher and `salt-chemistry-md` use
+   `/tmp` for exactly this reason. The job-id tag gives the same collision safety
+   `$VISTA_OUT` would have.
 
 9. **`#SBATCH` headers are inert** — same as `water4energy-diagnostic` decision 3.
    Walltime is `frontier.duration`, queue is `frontier.iri.queue_name`. No shared
    dispatch code changes.
+
+10. **`unset PYTHONPATH` before `module load`.** The dispatcher leaves
+    `inherit_environment` at its default so Slurm's `SLURM_*` vars reach the batch
+    step, which also drags the IRI service host's `PYTHONPATH` along. A foreign
+    `PYTHONPATH` ahead of a ROCm torch is a segfault at import, not an ImportError,
+    so the script drops it and re-exports it to the demo root only after
+    `conda activate`. `PYTHONNOUSERSITE=1` and `HOME=$VISTA_OUT` close the same
+    class of hazard for `~/.local` and conda's activation hooks.
 
 ## Risks / Trade-offs
 

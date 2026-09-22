@@ -1,20 +1,23 @@
 ## 1. HPC job package
 
-- [ ] 1.1 Create `hpc_jobs/refine-downscaling/README.md` (must start with
+- [x] 1.1 Create `hpc_jobs/refine-downscaling/README.md` (must start with
       `# refine-downscaling` — catalog contract) documenting the mode/`script_args`
       contract, the `results.json` schema, the outputs, and the pre-staged-asset
       prerequisite
-- [ ] 1.2 Add `cluster_defaults.json`: `frontier` only — `duration: 1800`,
+- [x] 1.2 Add `cluster_defaults.json`: `frontier` only — `duration: 1800`,
       `node_count: 1`, `exclusive_node_use: true`, `queue_name: "batch"`, and
       `iri.environment` carrying `REFINE_BASE_DIR`
       (`/lustre/orion/world-shared/cli138/haoran/GM_Downscaling_demo1`),
       `REFINE_ENV` (`/lustre/orion/world-shared/cli138/haoran/envs/torch_rocm`),
       `REFINE_CHECKPOINT`, and `REFINE_DATA_DIR`
-- [ ] 1.3 Add `job.frontier.slurm`: require `VISTA_OUT` / `RUN_DIR_Frontier` /
+- [x] 1.3 Add `job.frontier.slurm`: require `VISTA_OUT` / `RUN_DIR_Frontier` /
       `REFINE_BASE_DIR`, load `PrgEnv-gnu/8.6.0` + `rocm/6.4.1` +
       `craype-accel-amd-gfx90a` + `miniforge3`, `conda activate $REFINE_ENV`, set
       `PYTHONPATH` to the demo root, point `MIOPEN_USER_DB_PATH` and
-      `MPLCONFIGDIR` under `$VISTA_OUT`, then run the wrapper with `"$@"`
+      `MPLCONFIGDIR` appropriately, then run the wrapper with `"$@"` behind an
+      inner `srun ... --gpus-per-task=1 --gpu-bind=closest`. `unset PYTHONPATH`
+      before `module load` (design decision 10); MIOpen caches go on node-local
+      `/tmp` tagged by job id, not on Lustre (design decision 8)
 - [ ] 1.4 Confirm no `#SBATCH` directive is relied on (inert — design decision 9)
       and that the GPU actually binds (log `torch.cuda.is_available()` and the
       device name into provenance)

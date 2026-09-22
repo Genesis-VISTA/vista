@@ -1,0 +1,19 @@
+{
+  "frontier": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "REFINE_BASE_DIR": "/lustre/orion/world-shared/cli138/haoran/GM_Downscaling_demo1",
+        "REFINE_ENV": "/lustre/orion/world-shared/cli138/haoran/envs/torch_rocm",
+        "REFINE_CHECKPOINT": "/lustre/orion/world-shared/cli138/haoran/GM_Downscaling_demo1/artifacts/runs/refine_stage2_v1/best.pt",
+        "REFINE_DATA_DIR": "/lustre/orion/world-shared/cli138/haoran/GM_Downscaling_demo1/daymet/prepared",
+        "REFINE_INPUT_DIR": "/lustre/orion/world-shared/cli138/haoran/GM_Downscaling_demo1/daymet/data"
+      }
+    }
+  }
+}
