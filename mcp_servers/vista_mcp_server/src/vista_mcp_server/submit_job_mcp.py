@@ -3,9 +3,15 @@ MCP for remote HPC job submission. Dispatches between:
 - Odo (OLCF, open enclave) via the AmSC IRI API (`lib/iri.py`) + Globus file ops (`lib/globus.py`)
 - Frontier (OLCF, moderate enclave) via the AmSC IRI API + Globus file ops
 - Perlmutter (NERSC) via the NERSC IRI API and amscrot SDK (`lib/iri.py`)
+
+The OLCF file ops are HTTPS `GET`/`PUT` straight against the cluster's own
+Globus collection, with directory listing and `mkdir` still on the Transfer API
+(see `lib/globus.py`). VISTA runs no Globus endpoint of its own, so there is no
+second collection to own, to start, or to have been created by the wrong
+identity.
 """
 from __future__ import annotations
-import json, logging, os, shlex, textwrap, time, dataclasses
+import json, logging, os, shlex, textwrap, dataclasses
 from pathlib import Path
 from typing import Literal
 
@@ -18,7 +24,9 @@ from .config import settings
 from .lib.iri import (
     IriClient, IriDefaults, create_iri_client, create_odo_iri_client, create_olcf_iri_client,
 )
-from .lib.globus import GlobusClient, create_globus_client
+from .lib.globus import (
+    GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
+)
 from .lib.olcf_token import require_s3m_project
 from .lib.user_config import UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
@@ -113,12 +121,20 @@ def build_job_descriptions() -> str:
 MAX_NODES = 64
 MAX_TIME = int(parse_time_limit("4:00:00").total_seconds())
 
-_LOG_CACHE_TTL_S = 30
+_LOG_TAIL_LINES = 200
 """
-How long `_get_olcf_job_status` will serve a previously-fetched log file
-from the local filesystem before re-fetching via Globus. Trades log freshness
-for fast back-to-back status calls within a single chat turn. Set to 0 to
-disable caching (always re-fetch).
+How much of an OLCF job log a status query returns -- the LAST this many lines.
+
+The head was what the old whole-file fetch could afford. For a running or
+failed job it is module loads and startup noise; what the researcher is looking
+for is at the other end. Ranged reads make the other end the cheap one.
+"""
+
+_LOG_TAIL_BYTES = 256 * 1024
+"""
+How much of the accumulated local log to read back off disk to find those
+lines. A ceiling on the read, not on the fetch: a job that emits a megabyte
+between two polls still has all of it kept locally.
 """
 
 _PRE_RUN_STATES = {"NEW", "QUEUED", "PENDING", "HELD"}
@@ -398,13 +414,6 @@ async def _submit_odo_job(
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
-    if not settings.vista_globus_collection_id:
-        raise ToolError(
-            "Vista's Globus collection is not set up on this deployment. "
-            "Odo file ops go through Globus; run ./scripts/launch_globus.py to expose a "
-            "Globus collection covering both local_hpc_jobs_dir and output_dir."
-        )
-
     local_job_dir = settings.local_hpc_jobs_dir / job
     job_script_path = local_job_dir / ODO_JOB_SCRIPT
     if not job_script_path.exists():
@@ -415,7 +424,9 @@ async def _submit_odo_job(
 
     await _require_olcf_access(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
-    globus = create_globus_client(refresh_token=settings.require_globus_token("odo"))
+    globus = create_globus_client(
+        tokens=cfg.require_globus_token("odo"), cluster="odo",
+    )
     base = settings.odo_remote_dir.rstrip('/')
     # No session prefix: job ids are unique, and the out dir must be the
     # pre-created group-writable one — a fresh per-session dir would have to be
@@ -523,6 +534,9 @@ async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str)
         entries = await globus.operation_ls(
             endpoint=settings.odo_globus_collection_id, path=base,
         )
+    except GlobusSessionExpired:
+        # Says what to do about it; the message below would say the wrong thing.
+        raise
     except Exception as e:
         raise ToolError(
             f"Cannot list {base} on the Odo Globus collection ({e}). Check that "
@@ -719,16 +733,11 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    if not settings.vista_globus_collection_id:
-        raise ToolError(
-            "Vista's Globus collection is not set up on this deployment. "
-            "Frontier file ops go through Globus; run ./scripts/launch_globus.py to expose a "
-            "Globus collection covering both local_hpc_jobs_dir and output_dir."
-        )
-
     await _require_olcf_access(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
-    globus = create_globus_client(refresh_token=settings.require_globus_token("frontier"))
+    globus = create_globus_client(
+        tokens=cfg.require_globus_token("frontier"), cluster="frontier",
+    )
     base = settings.frontier_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
@@ -857,11 +866,11 @@ async def _sync_job_sources(
     globus: GlobusClient, job: str, src_dir: str, *, base: str, remote_endpoint: str,
 ) -> None:
     """
-    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir` via a
-    single Globus transfer task (Vista's GCS → `remote_endpoint`). Shared by the
-    Odo and Frontier dispatchers — they differ only in which OLCF collection
-    `remote_endpoint` points at. Idempotent: if `src_dir` already has entries,
-    the upload is skipped.
+    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir`, one
+    HTTPS `PUT` per file. Shared by the Odo and Frontier dispatchers — they
+    differ only in which OLCF collection `remote_endpoint` points at.
+    Idempotent: files already on the collection are not re-sent, and a
+    submission that follows a partly-failed one uploads only what is missing.
 
     `base` is the cluster's remote base dir (assumed pre-existing); we use it
     as the parents_below floor for the recursive mkdir.
@@ -875,41 +884,133 @@ async def _sync_job_sources(
     Pre-creating `<base>/<job>/src` manually also works — the mkdir here is
     idempotent and the transfer just adds files.
     """
-    # Probe the remote collection: if src_dir exists and contains entries, skip upload.
-    try:
-        existing = await globus.operation_ls(endpoint=remote_endpoint, path=src_dir)
-        if existing:
-            logging.debug(f"src dir {src_dir} already populated; skipping upload")
-            return
-    except Exception as e:
-        # src_dir doesn't exist yet (or is unreachable for some other reason);
-        # fall through to mkdir + transfer.
-        logging.debug(f"src dir {src_dir} not yet readable ({e}); creating + uploading")
-
-    # mkdir -p `<base>/<job>/src` — Globus needs both levels created explicitly.
-    await globus.operation_mkdir_p(endpoint=remote_endpoint, path=src_dir, parents_below=base)
-
     # Stage the upload set: scan local_hpc_jobs_dir/<job> for files to push.
-    # Vista's GCS sees the same paths Python sees (the deployment is expected to
-    # expose at least the entire `local_hpc_jobs_dir` tree via the collection).
     local_job_dir = settings.local_hpc_jobs_dir / job
-    items: list[tuple[str, str, bool]] = []
-    for f in sorted(local_job_dir.iterdir()):
-        if not f.is_file() or f.name.startswith(".") or f.name in _HPC_JOB_METADATA_FILES:
-            continue
-        items.append((str(f), f"{src_dir}/{f.name}", False))
+    sources = [
+        f for f in sorted(local_job_dir.iterdir())
+        if f.is_file() and not f.name.startswith(".")
+        and f.name not in _HPC_JOB_METADATA_FILES
+    ]
 
-    if not items:
+    if not sources:
         logging.warning(f"no source files to upload from {local_job_dir} (only metadata?)")
         return
 
-    await globus.transfer_and_wait(
-        src_endpoint=settings.vista_globus_collection_id,
-        dst_endpoint=remote_endpoint,
-        items=items,
-        label=f"vista source upload: {job}",
-    )
-    logging.info(f"Uploaded {len(items)} source file(s) to {src_dir}: {[Path(s).name for s, _, _ in items]}")
+    # Probe the remote collection, and skip only when EVERY source is already
+    # there AT ITS FULL LENGTH. "Any entries at all" was enough when one Globus
+    # transfer task moved the whole set atomically. One PUT per file is not
+    # atomic: a failure part way leaves src_dir non-empty, and a probe that
+    # asked only whether it was empty would skip the upload on the next
+    # submission and run the job against half a source tree — which fails on the
+    # cluster, saying nothing about why. A file left TRUNCATED by an interrupted
+    # PUT keeps its name, so name alone is the same mistake one level down, and
+    # the size Transfer reports is the only thing that tells them apart (the
+    # HTTPS interface has no checksum, so this is also as far as verification
+    # goes). An entry with no size at all — which Transfer does not do for a
+    # file — counts as stale, since re-sending is the harmless direction.
+    try:
+        existing = {
+            e.get("name"): e.get("size")
+            for e in await globus.operation_ls(endpoint=remote_endpoint, path=src_dir)
+            if e.get("type") == "file"
+        }
+        stale = [f for f in sources if existing.get(f.name) != f.stat().st_size]
+        if not stale:
+            logging.debug(f"src dir {src_dir} already holds every source; skipping upload")
+            return
+        if existing:
+            logging.info(
+                f"src dir {src_dir} is missing or truncated for {len(stale)} of "
+                f"{len(sources)} source file(s); uploading {[f.name for f in stale]}"
+            )
+        sources = stale
+    except GlobusSessionExpired:
+        # Not "the directory is not there yet". Letting this fall through to the
+        # upload below would spend the whole submission discovering the same
+        # thing one PUT at a time, and report it as a failed upload.
+        raise
+    except Exception as e:
+        # src_dir doesn't exist yet (or is unreachable for some other reason);
+        # fall through to mkdir + upload.
+        logging.debug(f"src dir {src_dir} not yet readable ({e}); creating + uploading")
+
+    # mkdir -p `<base>/<job>/src` — Globus needs both levels created explicitly,
+    # and a PUT into a missing parent is a 404, so this has to come first.
+    await globus.operation_mkdir_p(endpoint=remote_endpoint, path=src_dir, parents_below=base)
+
+    for f in sources:
+        await globus.upload_file(
+            collection_id=remote_endpoint,
+            local_path=f,
+            remote_path=f"{src_dir}/{f.name}",
+        )
+    logging.info(f"Uploaded {len(sources)} source file(s) to {src_dir}: {[f.name for f in sources]}")
+
+
+async def _tail_remote_log(
+    globus: GlobusClient, *, collection_id: str, remote_path: str, local_path: Path,
+) -> str:
+    """Fetch what is new in a growing remote log, and return its tail.
+
+    Two requests: `HEAD` for the current size, then one `GET` for the bytes
+    between what is already held locally and that size. The local file both
+    accumulates the log and *is* the offset, so nothing has to be remembered
+    between calls and a restart picks up where it left off.
+
+    Safe against a file still being written. A range computed from a size that
+    went stale between the two requests is still inside the file, and whatever
+    was appended in between arrives on the next poll. `HEAD` is the only source
+    of the size: a plain `GET` on these collections returns no `Content-Length`
+    and a `206` reports its total as `*`.
+
+    A remote file SHORTER than the local copy means it is not the same file --
+    a rerun writing to the same path, or a truncation. Starting over is the
+    only reading of that which cannot splice two different logs together.
+    """
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    have = local_path.stat().st_size if local_path.exists() else 0
+    size = await globus.stat(collection_id=collection_id, remote_path=remote_path)
+
+    if size < have:
+        logging.info(f"remote log {remote_path} shrank ({have} -> {size}); refetching")
+        local_path.unlink(missing_ok=True)
+        have = 0
+
+    if size > have:
+        new = await globus.read_range(
+            collection_id=collection_id,
+            remote_path=remote_path,
+            start=have,
+            end=size - 1,
+        )
+        with local_path.open("ab" if have else "wb") as handle:
+            handle.write(new)
+        logging.debug(f"appended {len(new)} byte(s) of {remote_path} at offset {have}")
+
+    return _read_log_tail(local_path)
+
+
+def _read_log_tail(path: Path) -> str:
+    """The last `_LOG_TAIL_LINES` lines of a local log file.
+
+    Reads only the final `_LOG_TAIL_BYTES` off disk -- a job can write far more
+    than anyone wants to see, and the accumulated file keeps all of it.
+    """
+    if not path.exists():
+        return ""
+    with path.open("rb") as handle:
+        size = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, size - _LOG_TAIL_BYTES))
+        raw = handle.read()
+    text = raw.decode("utf-8", errors="replace")
+    if size > _LOG_TAIL_BYTES and "\n" in text:
+        # The window almost certainly opened mid-line; a truncated first line
+        # reads as corrupt output rather than as a window. Guarded on there
+        # being a newline at all: one line longer than the window is better
+        # shown truncated than dropped entirely.
+        _, _, text = text.partition("\n")
+    lines = text.splitlines()
+    return "\n".join(lines[-_LOG_TAIL_LINES:])
 
 
 async def _create_olcf_iri_for(cluster: Cluster, cfg: UserConfig) -> IriClient:
@@ -929,10 +1030,10 @@ def _olcf_collection_id(cluster: Cluster) -> str:
 async def _require_olcf_access(cfg: UserConfig, cluster: Cluster) -> None:
     """
     Verify the user's S3M token belongs to the cluster's OLCF project before
-    any file op. Globus transfers run under Vista's own identity against
-    project-shared directories, so this introspection is what authorizes the
-    user — it must guard every path that touches Globus, including
-    `_get_olcf_job_outputs`, which never calls IRI.
+    any file op. A researcher who has not connected their own Globus account
+    falls back to the deployment's shared identity, so this introspection is
+    what authorizes them — it must guard every path that touches Globus,
+    including `_get_olcf_job_outputs`, which never calls IRI.
     """
     if cluster == "odo":
         account, url = settings.odo_account, settings.odo_introspect_url
@@ -971,8 +1072,8 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
             return dry_run.status_text(job_id)
         if cluster == "perlmutter":
             return await _get_perlmutter_job_status(cfg, job_id)
-        # Odo/Frontier cache the log file to disk for the 30s TTL; need the per-agent
-        # output dir from project_paths to know where to land it.
+        # Odo/Frontier accumulate the job's log on disk and tail it from there;
+        # need the per-agent output dir from project_paths to know where it lands.
         host_output_dir = Path(meta.project_paths.require_output_dir())
         return await _get_olcf_job_status(cfg, host_output_dir, job_id, cluster=cluster)
 
@@ -1026,15 +1127,15 @@ async def _get_olcf_job_status(
     cfg: UserConfig, host_output_dir: Path, job_id: str, *, cluster: Cluster,
 ) -> str:
     """
-    Shared Odo/Frontier status: IRI for state, Globus for log fetch + output
+    Shared Odo/Frontier status: IRI for state, Globus for the log tail + output
     file listing. The two clusters differ only in IRI endpoint and Globus
     collection (see `_create_olcf_iri_for` / `_olcf_collection_id`).
 
-    Each status query transfers the log file once from the cluster's collection
-    to the Vista server's local output_dir (overwrites any previous copy) and
-    reads its first 200 lines locally. This is meaningfully slower than the old
-    SSH `head` (~30s of Globus task overhead per call) but matches the
-    "no SSH" architecture choice; see README.
+    The log is tailed incrementally: a `HEAD` for the current size, then one
+    ranged `GET` for whatever is new since the last poll. Each query therefore
+    costs the log output since the previous one rather than the whole log, and
+    what comes back is the END of it — which is what a researcher watching a
+    running or failed job is looking for.
     """
     await _require_olcf_access(cfg, cluster)
     remote_collection = _olcf_collection_id(cluster)
@@ -1061,62 +1162,73 @@ async def _get_olcf_job_status(
         ])
 
     # While the job is still waiting for resources, neither the log file nor the
-    # output dir exists — a Globus fetch would just burn ~10-30s of task overhead
-    # to learn that. Answer from the IRI state alone.
+    # output dir exists. Answer from the IRI state alone — and, since this comes
+    # before the Globus client is built, without needing a Globus credential at
+    # all to watch a queued job.
     if state in _PRE_RUN_STATES:
         return "\n\n".join([
             "\n".join(f"{k}={v}" for k, v in metadata.items()),
             "(job has not started yet; logs and outputs will appear once it runs)",
         ])
 
-    # Pull the log file across Globus, then read locally. The local landing
-    # spot doubles as the cached log for subsequent reads — if it was fetched
-    # within `_LOG_CACHE_TTL_S`, skip the Globus call entirely. Trades some
-    # log freshness for sub-second response on back-to-back status calls in
-    # a single chat turn (e.g. status + outputs together).
+    # A status query is the one tool that must keep answering when Globus is
+    # not connected. Whether the job succeeded is knowable from IRI alone, and
+    # refusing the whole call would hide it behind a credential problem — which
+    # is the same confusion, pointing the other way. So an absent or incomplete
+    # credential degrades the logs and the file listing and nothing else.
+    # An *expired* one still raises: that names a connection to redo, and is
+    # raised from inside the client rather than here.
+    #
+    # BOTH halves have to say so. "(no output files yet)" under a job that
+    # finished is the original bug's sentence, and a credential VISTA never had
+    # renders it just as well as one that lapsed. The listing carries its own
+    # reason for the same reason the log tail does.
+    globus: GlobusClient | None = None
     logs = "(no logs yet)"
+    listing = "(no output files yet)"
+    try:
+        globus = create_globus_client(
+            tokens=cfg.require_globus_token(cluster), cluster=cluster,
+        )
+    except ToolError as e:
+        logs = f"(logs unavailable: {e})"
+        listing = f"(output files unavailable: {e})"
+
+    # Tail the log: HEAD for the size, one ranged GET for what is new. The
+    # local copy is the offset — its size is how much of the remote file we
+    # already hold — so the state survives a server restart and needs no
+    # registry of its own.
     local_log_path = host_output_dir / job_id / Path(submitted.log_path).name
-    local_log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_age = (
-        time.time() - local_log_path.stat().st_mtime
-        if local_log_path.exists() else float("inf")
-    )
-    if log_age >= _LOG_CACHE_TTL_S:
+    if globus is not None:
         try:
-            globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
-            await globus.transfer_and_wait(
-                src_endpoint=remote_collection,
-                dst_endpoint=settings.vista_globus_collection_id,
-                items=[(submitted.log_path, str(local_log_path), False)],
-                label=f"vista log fetch: {job_id}",
-                sync_level="mtime",  # log file grows; mtime is cheaper than checksum
-                poll_seconds=3,      # logs are small; don't sit out the default 10s poll
-                timeout_seconds=120, # fail fast instead of hanging the chat turn
+            logs = await _tail_remote_log(
+                globus,
+                collection_id=remote_collection,
+                remote_path=submitted.log_path,
+                local_path=local_log_path,
             )
+        except GlobusFileNotFound:
+            # The job has started but Slurm has not opened the log yet. Genuinely
+            # "no logs yet", and distinguishable from an expired session by status
+            # code alone — which is the point of the HTTPS interface here.
+            pass
+        except GlobusSessionExpired:
+            # Says which connection to redo. Reported as a log-fetch failure it
+            # would read as a broken job.
+            raise
         except Exception as e:
             logs = f"(unable to fetch logs: {e})"
-    else:
-        logging.debug(f"serving log from local cache ({log_age:.1f}s old, ttl={_LOG_CACHE_TTL_S}s)")
-    if local_log_path.exists():
-        try:
-            with open(local_log_path) as f:
-                lines = []
-                for i, line in enumerate(f):
-                    if i >= 200:
-                        break
-                    lines.append(line)
-                logs = "".join(lines)
-        except Exception as e:
-            logs = f"(unable to read cached log: {e})"
 
     # List the output dir on the cluster's collection via Globus operation_ls
-    # (recursive BFS-walk; see lib/globus.py). Drop venv/pycache noise.
+    # (recursive BFS-walk; see lib/globus.py). The HTTPS interface has no
+    # listing, so this stays on Transfer. Drop venv/pycache noise.
     files: list[str] = []
-    if submitted.output_dir:
+    if not submitted.output_dir:
+        listing = "(no output directory recorded for this job)"
+    elif globus is not None:
         excludes = (".venv", "__pycache__")
         try:
-            ls_globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
-            entries = await ls_globus.operation_ls(
+            entries = await globus.operation_ls(
                 endpoint=remote_collection,
                 path=submitted.output_dir,
                 recursive=True,
@@ -1130,15 +1242,23 @@ async def _get_olcf_job_status(
                 rel = p[len(submitted.output_dir):].lstrip("/")
                 files.append(rel)
             files = files[:20]
+        except GlobusSessionExpired:
+            raise
         except Exception as e:
-            logging.info(f"output dir not readable yet ({submitted.output_dir}): {e}")
+            # NOT "not readable yet": a recursive walk answers a directory that
+            # does not exist with an empty list (the 404 is swallowed per
+            # subtree in `lib/globus.py`), so reaching here is a real failure —
+            # a 403, a collection that is down, a transport error — and it is
+            # reported rather than dressed up as an empty directory.
+            logging.warning(f"could not list output dir {submitted.output_dir}: {e}")
+            listing = f"(output files unavailable: {e})"
 
     return "\n\n".join([
         "\n".join(f"{k}={v}" for k, v in metadata.items()),
         "--- LOGS ---",
         logs.strip() if logs.strip() else "(no logs yet)",
         "--- OUTPUT FILES ---",
-        "\n".join(files) if files else "(no output files yet)",
+        "\n".join(files) if files else listing,
     ])
 
 
@@ -1231,15 +1351,17 @@ async def _get_olcf_job_outputs(
     cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str], *, cluster: Cluster,
 ) -> str:
     """
-    Shared Odo/Frontier output retrieval via a single Globus transfer task
-    (cluster collection → Vista's GCS). Binary files (.pt checkpoints etc.)
-    work natively.
+    Shared Odo/Frontier output retrieval: one streaming HTTPS `GET` per file off
+    the cluster's own collection. Binary files (.pt checkpoints etc.) work
+    natively — this is a byte stream, not a text API.
+
+    No size cap, deliberately. Bulk data is meant to stay on the cluster and be
+    processed by another job there; this tool exists for the small artifacts an
+    agent works on locally, and a cap would be a guess at which is which.
 
     Files already present locally under host_output_dir/<job_id>/ are NOT
-    re-fetched — Globus has multi-second per-task overhead and would otherwise
-    blow past the UI's /api/chat timeout for follow-up `display_file` calls.
-    To force a fresh pull (e.g. checkpoint updated mid-training), delete the
-    local copy first.
+    re-fetched, so a follow-up `display_file` costs nothing. To force a fresh
+    pull (e.g. a checkpoint updated mid-training), delete the local copy first.
     """
     await _require_olcf_access(cfg, cluster)
     submitted = _submitted_jobs.get(job_id)
@@ -1253,12 +1375,14 @@ async def _get_olcf_job_outputs(
     sandbox_out_dir = Path("/mnt/data/output") / job_id
     remote_out_dir = submitted.output_dir.rstrip("/")
 
-    items: list[tuple[str, str, bool]] = []
+    wanted: list[tuple[str, Path]] = []
     sandbox_paths: list[str] = []
     cached_paths: list[str] = []
     for file in files:
-        # Globus runs as Vista's shared OLCF identity, so this relative-path check + the
-        # server-defined remote_out_dir confine the transfer to the resolved output dir.
+        # The HTTPS interface acts as the researcher's own mapped POSIX identity,
+        # so the facility enforces what they may read. This relative-path check
+        # plus the server-defined remote_out_dir confine the fetch to the
+        # resolved output dir on top of that.
         # NOTE: users can still request jobs from other users by job id. But since we are limiting
         # access to only gen150-vista and chm245 the jobs all run as a service account the users
         # would have had access to anyways. When OLCF supports IRI file transfer, we can remove
@@ -1271,20 +1395,19 @@ async def _get_olcf_job_outputs(
         if local_path.exists() and local_path.stat().st_size > 0:
             cached_paths.append(str(sandbox_path))
             continue
-        remote_path = f"{remote_out_dir}/{file}"
-        # Globus only creates the LEAF file via transfer — ensure local parent dirs exist.
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-        items.append((remote_path, str(local_path), False))
+        wanted.append((f"{remote_out_dir}/{file}", local_path))
 
-    if items:
-        globus = create_globus_client(refresh_token=settings.require_globus_token(cluster))
-        await globus.transfer_and_wait(
-            src_endpoint=_olcf_collection_id(cluster),
-            dst_endpoint=settings.vista_globus_collection_id,
-            items=items,
-            label=f"vista output download: {job_id}",
+    if wanted:
+        globus = create_globus_client(
+            tokens=cfg.require_globus_token(cluster), cluster=cluster,
         )
-        logging.info(f"Globus-fetched {len(items)} file(s); served {len(cached_paths)} from local cache")
+        for remote_path, local_path in wanted:
+            await globus.download_file(
+                collection_id=_olcf_collection_id(cluster),
+                remote_path=remote_path,
+                local_path=local_path,
+            )
+        logging.info(f"Globus-fetched {len(wanted)} file(s); served {len(cached_paths)} from local cache")
     else:
         logging.info(f"All {len(cached_paths)} requested files served from local cache (no Globus call)")
 

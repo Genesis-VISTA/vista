@@ -173,7 +173,23 @@ vista-mcp:lint:
 
 vista-mcp:test:
   stage: test
-  <<: [*python-image, *cache-uv-vista-mcp]
+  <<: *python-image
+  # Also caches dev_mcp_server's own venv, spelled out here rather than by
+  # merging *cache-uv-dev-mcp too: a `<<:` merge only keeps the first `cache:`
+  # key when two merged anchors each define one, so the second would be
+  # silently dropped instead of adding a second cache entry. And each of
+  # *cache-uv-vista-mcp's and *cache-uv-dev-mcp's own value is itself a
+  # `{cache: {key, paths}}` map (one cache entry, not a list item's own
+  # `key`/`paths`), so merging either directly into a list item here would
+  # nest one level too deep instead of producing a `{key, paths}` entry.
+  cache:
+    - key:
+        prefix: uv-vista-mcp
+        files:
+          - mcp_servers/vista_mcp_server/uv.lock
+      paths:
+        - .uv-cache/
+        - mcp_servers/vista_mcp_server/.venv/
   # Required job — must NOT set allow_failure.
   script:
     - cd mcp_servers/vista_mcp_server

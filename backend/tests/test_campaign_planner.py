@@ -6,6 +6,7 @@ No live LLM or MCP: the HPC boundary and the result parsers are injected.
 import pytest
 
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools, parse_submit_summary
+from vista_backend.agents.inference import build_inference_model
 from vista_backend.agents.campaign.manifest import CampaignManifest
 from vista_backend.agents.campaign.planner import (
     CampaignPlanner,
@@ -147,6 +148,33 @@ def test_build_subagents_one_per_role():
     )
     assert set(subagents) == {"alpha", "beta"}
     assert subagents["alpha"].role == "alpha"
+
+
+def test_build_subagents_threads_the_resolved_model_to_every_parser(tmp_path):
+    """
+    A resolved `Model` reaches each role's real parser agent.
+
+    Built without a `parser_factory` so the production `build_skill_parser`
+    path runs: it used to resolve its own model from `Settings`, which cannot
+    see a key from the user's settings row, so a campaign's parsers reached a
+    different endpoint than the agent that dispatched the job.
+    """
+    for role in ("alpha", "beta"):
+        skill_dir = tmp_path / f"{role}-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n"
+        )
+
+    model = build_inference_model(
+        "openai-chat:test-model", api_key="row-key", base_url="https://user.example/v1"
+    )
+    subagents = build_subagents(
+        _manifest(), hpc=FakeHpcTools(), skills_dir=tmp_path, model=model
+    )
+
+    for role in ("alpha", "beta"):
+        assert subagents[role].parser.agent.model is model, f"{role} built its own"
 
 
 # --- CampaignPlanner -------------------------------------------------------

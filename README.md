@@ -1,5 +1,187 @@
 # VISTA (Visual Intelligence for Scientific & Tooling Assistant)
 
+Instructions below cover running or building a prebuilt package. For a
+**development checkout** instead, skip to [Prerequisites](#prerequisites).
+
+## Running a prebuilt package
+
+```bash
+shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
+mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
+cd ~/vista/vista-<version>-<platform> && ./vista
+```
+
+Extract with the platform's own `tar`. macOS `bsdtar` stores extended
+attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
+bundled `msb` binary's adhoc code signature, without which the code-execution
+sandbox cannot create microVMs.
+
+First run copies the corpus, vector store, and embedding weights into the
+state directory (~1 GB), imports the sandbox image, and seeds the database.
+That takes a few minutes, with each step logged as it happens. It then prints
+`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
+Later runs skip every setup step and start in seconds.
+
+Open the UI and paste your inference API key into the settings modal. It takes
+effect immediately; no restart.
+
+On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
+the launcher refuses to start without it. A bare-metal workstation has it; a
+virtual machine needs nested virtualisation enabled by its host; and access is
+usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
+login is the common fix.
+
+All state lives in the state directory: `vista.db`, uploads, the corpus, the
+sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
+`setup.log`). The unpacked package tree is disposable. Upgrading is replacing
+that directory, and starting over is deleting the state directory.
+
+| Variable             | Description                                                                                                                                             | Default    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `VISTA_HOME`         | State directory. Keep the path under 60 characters. The sandbox derives a Unix socket path from it and the kernel caps that at 104 bytes. Checked at startup. | `~/.vista` |
+| `VISTA_UI_PORT`      | Web interface                                                                                                                                           | `3000`     |
+| `VISTA_MCP_PORT`     | MCP server                                                                                                                                              | `8000`     |
+| `VISTA_BACKEND_PORT` | Backend                                                                                                                                                 | `8001`     |
+
+`./vista --help` prints the same list.
+
+## Building a prebuilt package
+
+The build host needs the credentials and tooling so the recipient does not.
+
+### Build-host requirements
+
+All verified by `--check`:
+
+- `uv`, `npm`, `git`
+- Docker or Podman
+- Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
+  `amscrot-py` that HPC job submission needs; see
+  [Prerequisites](#prerequisites) for the `url.insteadOf` rewrite. Nothing is
+  read out of your credential store and nothing is written to `.env`. The
+  preflight only asks git whether the fetch would succeed.
+- Network access to `pypi.org`, `registry.npmjs.org`, `huggingface.co`, and
+  `nodejs.org`; add `code.ornl.gov` only when fetching the corpus with a
+  token. Probed per host, because a network that allows PyPI and blocks
+  HuggingFace is a real configuration worth finding out about in seconds
+  rather than an hour in.
+
+### Build-host env vars
+
+Read from the repo-root `.env`, the same way the backend reads it. A value
+already exported in your environment wins over the file.
+
+| Variable                                                                          | Needed for                                                                                                    | Skip it with                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `VISTA_DATA_TOKEN`                                                                | Fetching the molten-salt corpus from `v28/vista-data` on code.ornl.gov                                        | `--payload DIR`, an already-unpacked `vista-data` tree           |
+| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` to reuse a built store, or `--without-citations` |
+| `VISTA_VERSION`                                                                   | Overriding the commit-derived version stamp                                                                   | Optional; omit it                                                |
+
+The preflight treats a missing citation credential as an error, not a
+warning. Without it, the shipped corpus retrieves passages that cite nothing,
+and the recipient has no way to fix that, since the citations are baked into
+the store they receive.
+
+Run the preflight first. It checks every prerequisite in one pass, reports
+all the misses together, and installs or configures nothing:
+
+```bash
+./scripts/build_local_package.sh --check
+```
+
+Then build. The archive lands in `dist/` with a `.sha256` and a
+`.manifest.json` beside it:
+
+```bash
+./scripts/build_local_package.sh
+```
+
+Build from a clean, committed tree. The version is stamped from the commit as
+`0.1.0+<short-sha>` (plus `-dirty` when the tree is not clean) and recorded in
+the manifest along with the runtime versions and payload inventory. Budget
+about 7 GB in the output directory, the staging tree plus the archive, for a
+~2 GB result. The build finishes by unpacking the archive somewhere else and
+running the launcher against it, so a green finish means the artifact has
+been started and queried, not just assembled; a failed smoke test fails the
+build.
+
+Cross-compiling is not supported. The package carries a platform-specific
+interpreter and compiled libraries, and the launcher refuses to run where
+`os-arch` does not match its manifest. Build on each platform you ship.
+
+### Build options
+
+| Flag                             | Effect                                                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--check`                        | Run the preflight and exit; builds nothing                                                                                |
+| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
+| `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
+| `--archive-format gz\|zstd\|none` | `gz` is the default and needs no extra tool; `zstd` is faster for a local round trip; `none` leaves the tree unpacked      |
+| `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
+| `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
+| `--without-hpc`                  | Omit `amscrot-py`. HPC job submission will not work in the result, and the manifest records that                          |
+| `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
+| `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
+
+A typical rebuild, once you have a corpus clone and a vector store worth reusing:
+
+```bash
+./scripts/build_local_package.sh \
+  --payload ~/.vista-build/vista-data \
+  --vector-store ~/.vista-build/rag_db
+```
+
+That still downloads the embedding weights, runs `npm ci`, and builds the UI and
+the MCP app; it skips only the indexing pass and its per-paper model calls.
+
+### Building for another platform
+
+Cross-compiling is not possible here, so the build runs inside a container of
+the target platform instead, under emulation:
+
+```bash
+./scripts/build_in_docker.sh --payload ~/.vista-build/vista-data \
+                             --vector-store ~/.vista-build/rag_db
+```
+
+Defaults to `linux/amd64`; pass `--platform` for another. Every other flag goes
+straight through to `build_local_package.sh`, and host paths given to
+`--payload` and `--vector-store` are mounted in automatically. Run
+`--check` first, as with a native build.
+
+Three things differ from a native build.
+
+The container builds from `git archive HEAD`, not from your working copy,
+because `stage_ui` and `build_mcp_app` run `npm` *inside* the source tree and
+skip the install when `node_modules` already exists. A mounted checkout would
+have its macOS `node_modules` reused under Linux. So the wrapper refuses a
+dirty tree unless you pass `--allow-dirty`, and uncommitted work is excluded
+either way.
+
+Credentials come from the environment rather than `.env`, since the extracted
+tree has no `.env` in it. `VISTA_DATA_TOKEN` and the inference variables are
+forwarded when set. `amscrot-py` needs one addition. Your keychain credential
+for gitlab.com is unreachable from a Linux container, so set `AMSC_GIT_TOKEN`
+to a gitlab.com token that can read the amsc2 repository, or build
+`--without-hpc`.
+
+**On a network that inspects TLS**, the container fails where the host
+succeeds. It has its own trust store and cannot read your system keychain, so
+downloads from any inspected host stop with `self-signed certificate in
+certificate chain` even though the same URL works outside the container. Find
+which CA is doing it, export that root, and pass it in:
+
+```bash
+openssl s_client -connect nodejs.org:443 -servername nodejs.org </dev/null 2>/dev/null | grep 'i:'
+security find-certificate -a -c <CA name> -p /Library/Keychains/System.keychain > ~/root-ca.pem
+./scripts/build_in_docker.sh --ca-bundle ~/root-ca.pem ...
+```
+
+Set `VISTA_BUILD_CA_BUNDLE` to avoid repeating the flag. The build's failure
+message walks through this too, including the case where the bundle you
+supplied turns out to hold an intermediate rather than a root. Keep the PEM out
+of the repository; it belongs in your home directory.
+
 ## Architecture
 
 - `./mcp_servers`
@@ -28,18 +210,20 @@ are in [`openspec/specs/`](openspec/specs/), with open changes under
 
 - Node.js 20+
 - [uv](https://docs.astral.sh/uv/)
-- Docker
-- [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m)
-    - VISTA will automatically download the model, but you need to sign up for access to it on [hugging face](https://huggingface.co/google/embeddinggemma-300m)
-    - Once authorized, log in using the [hf cli](https://huggingface.co/docs/huggingface_hub/en/guides/cli): `hf auth login` (Or add HF_TOKEN to .env)
+- Docker or Podman — for the agent's code-execution sandbox image, which a
+  checkout builds on first launch. Not needed at all by a prebuilt package,
+  which ships the image already built
+- [microsoft/harrier-oss-v1-270m](https://huggingface.co/microsoft/harrier-oss-v1-270m)
+    - VISTA downloads the embedding model automatically. It is MIT-licensed and
+      ungated, so no HuggingFace account, terms acceptance, or `HF_TOKEN` is needed.
 - [git lfs](https://git-lfs.com/) (for the rag db)
     - If cloned the repo before installing git lfs, run `git lfs pull` to pull the files
-- [globusprotectpersonal](https://docs.globus.org/globus-connect-personal/install/mac/) (if on MacOS)
 
-On MacOS, you may need to install `libmagic` first as well:
-```bash
-brew install libmagic
-```
+Globus Connect Personal is **not** a prerequisite on any platform, and VISTA
+does not run a Globus endpoint of its own. Odo and Frontier file operations are
+HTTPS requests straight against each cluster's own Globus collection,
+authorized by the researcher's token — there is no second collection for VISTA
+to own, install, or keep running.
 
 To install the NERSC/OLCF IRI dependencies (`amscrot-py`), sync the optional
 `hpc` extra (needs access to
@@ -67,12 +251,15 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`      | None    |
-| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Globus Transfer refresh token. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None    |
+| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Deployment-wide Globus Transfer fallback for Odo — directory listings and `mkdir`. Used only when a researcher has not connected their own in the UI. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`, which writes this and the next one together | None |
+| VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN | The other half: Odo's collection over the Globus HTTPS interface, which is what reads and writes the files. Both or neither — one alone finds an output directory it cannot open | None |
+| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Same pair, for Frontier. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None |
+| VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN | " | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
-Per-user HPC credentials (S3M token, NERSC IRI token) are **not** env vars — each
-user sets them in the UI under User settings. S3M tokens follow the
+Per-user HPC credentials (S3M token, NERSC IRI token, and Globus for Odo/Frontier) are **not**
+env vars — each user connects them in the UI under User settings. Globus is a one-time
+authorization per cluster; S3M tokens follow the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
@@ -81,7 +268,11 @@ The launch script will build all dependencies and launch both the MCP server and
 ```bash
 ./launch.sh
 ```
-Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox Docker image).
+Wait for both to be ready (the MCP server can take a few minutes the first launch as it will build the sandbox image).
+
+Globus for Odo and Frontier is untouched by this script: nothing to export first, and nothing
+gated on it starting. Connect it per cluster in the UI once VISTA is running, under User
+settings — there is no endpoint to bring up, only a credential to authorize.
 Then go to https://localhost:3000
 
 You can use
@@ -108,7 +299,7 @@ cd ./mcp_servers/vista_mcp_server && uv run vista-mcp-server --transport=http
 ## Jobs
 The agent can only submit from a pre-configured list of jobs. These jobs are in the `./hpc_jobs` directory. Each job lives in its own subdirectory and requires a `README.md` plus at least one per-cluster job script. A job opts in to a cluster by providing the matching script (and, optionally, a section in `cluster_defaults.json`).
 
-All three clusters follow the same submission architecture: compute goes through an IRI service (OLCF AmSC IRI for Odo/Frontier, NERSC IRI for Perlmutter) and file transfer goes through Globus on OLCF clusters (or the IRI Filesystem API on Perlmutter). No SSH is involved.
+All three clusters follow the same submission architecture: compute goes through an IRI service (OLCF AmSC IRI for Odo/Frontier, NERSC IRI for Perlmutter) and file operations go through Globus on OLCF clusters (or the IRI Filesystem API on Perlmutter). On OLCF that means HTTPS `GET`/`PUT` against the cluster's own Globus collection for file contents, with the Transfer API still doing directory listings and `mkdir`. No SSH is involved.
 
 ### Directory layout
 ```

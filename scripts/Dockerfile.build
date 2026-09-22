@@ -1,0 +1,95 @@
+# Build environment for producing a VISTA package for a platform other than
+# the build host's. Driven by scripts/build_in_docker.sh, which builds this
+# image for the target platform and runs build_local_package.sh inside it.
+#
+# ubuntu:24.04 because microsandbox leaves no choice. Its wheel is tagged
+# manylinux_2_28, which describes the Python extension modules inside it and
+# says nothing about the `msb` executable it also bundles -- and that binary
+# needs GLIBC_2.39. 22.04 was tried first, on the strength of that wheel tag,
+# and the build ran to completion before the smoke test failed on
+# `version GLIBC_2.38 not found`.
+#
+# So the artifact's floor is 2.39 wherever it is built, and an older base
+# widens nothing while breaking the sandbox. That means Ubuntu 24.04+,
+# Debian 13+ and RHEL 10+; notably not Ubuntu 22.04 or RHEL 9. It also matches
+# the base the sandbox image itself uses.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# perl is not incidental: the build writes the archive's checksum with
+# `shasum`, which on Debian-family systems ships with perl rather than
+# coreutils. build-essential is here so that a dependency without a wheel for
+# this platform builds from its sdist instead of failing an hour in.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gzip \
+      perl \
+      python3 \
+      rsync \
+      tar \
+      xz-utils \
+      zstd \
+      build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Extra trust anchors, for a network that inspects TLS. A macOS host keeps its
+# organisation's root in the keychain, which a Linux container cannot read, so
+# without this every download from an inspected host fails with `self-signed
+# certificate in certificate chain` while the same URL works on the host.
+#
+# build_in_docker.sh stages this directory: empty for a normal network, or
+# holding the PEM given to --ca-bundle. `update-ca-certificates` only reads
+# files ending in .crt, so the placeholder is ignored.
+COPY ca/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
+# Every toolchain in here is pointed at that one store, because each would
+# otherwise use its own: uv honours UV_SYSTEM_CERTS, Node reads
+# NODE_EXTRA_CA_CERTS, and Python libraries read SSL_CERT_FILE or
+# REQUESTS_CA_BUNDLE rather than the system store. When no extra CA is
+# supplied these all name Ubuntu's ordinary bundle, so they cost nothing.
+ENV UV_SYSTEM_CERTS=1 \
+    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Node builds the UI and the MCP app. Taken from the official tarball rather
+# than NodeSource, for two reasons. It pins an exact version, matching the
+# runtime build_local_package.sh bundles, so the standalone output is produced
+# by the same Node line that will run it. And NodeSource fails openly here:
+# `curl ... | bash -` reports the *pipe's* status, so when the script cannot
+# reach its key server the repository is silently never added, and the
+# following `apt-get install nodejs` quietly installs whatever the
+# distribution happens to carry. That is how the sandbox image ended up on
+# Node 18 while its Dockerfile asked for 24.
+ARG NODE_VERSION=24.20.0
+RUN set -eu; \
+    case "$(uname -m)" in \
+      x86_64)  node_arch=linux-x64 ;; \
+      aarch64) node_arch=linux-arm64 ;; \
+      *) echo "no Node build published for $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/node.tar.xz \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-${node_arch}.tar.xz"; \
+    mkdir -p /opt/node; \
+    tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1; \
+    rm /tmp/node.tar.xz; \
+    /opt/node/bin/node --version
+ENV PATH="/opt/node/bin:${PATH}"
+
+# uv has to be installed in here rather than mounted from the host.
+# `bundle_runtime` copies `command -v uv` into the package, so a mounted host
+# binary would put the build host's architecture inside the artifact -- and
+# since the launcher only ever reaches it through `uv run` when spawning the
+# sandbox server, that would break on the recipient's first agent session
+# rather than during the build.
+ARG UV_VERSION=0.12.8
+RUN curl -fsSL "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+    && /root/.local/bin/uv --version
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Where build_in_docker.sh mounts the source it extracted from git.
+WORKDIR /build

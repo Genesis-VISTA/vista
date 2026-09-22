@@ -7,9 +7,10 @@
  * Two views:
  *   - `UserPublic` — id/email/is_admin only. Cached module-level and used
  *     by the nav rail; fetched on first mount, never carries secrets.
- *   - `UserPublicWithConfig` — adds the per-user config (NERSC account,
- *     decrypted S3M / IRI tokens). Fetched on demand by the settings modal
- *     so we don't decrypt or surface secrets on every page load.
+ *   - `UserPublicWithConfig` — adds the per-user config (inference model /
+ *     endpoint / key, NERSC account, decrypted S3M / IRI tokens). Fetched on
+ *     demand by the settings modal so we don't decrypt or surface secrets on
+ *     every page load.
  */
 
 import { useEffect, useReducer } from "react";
@@ -23,11 +24,32 @@ export type UserPublic = {
 
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
 export type UserPublicWithConfig = UserPublic & {
+  inference_model: string | null;
+  inference_base_url: string | null;
+  inference_api_key: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   s3m_token: string | null;
   nersc_iri_token: string | null;
+  /**
+   * File-transfer credentials, read only to tell whether a cluster is
+   * connected. They are deliberately absent from `UserSelfUpdate`: a Globus
+   * credential arrives from an authorization, not from something typed into
+   * the form, so there is nothing here for the save diff to carry.
+   */
   globus_token: string | null;
+  odo_globus_token: string | null;
+  frontier_globus_token: string | null;
+  /**
+   * The second half of each credential: the OLCF collection's own token, which
+   * is what reads and writes file contents over the Globus HTTPS interface.
+   * A cluster counts as connected only with both — a connection made before
+   * VISTA moved to that interface has the Transfer token alone and has to be
+   * made again.
+   */
+  globus_https_token: string | null;
+  odo_globus_https_token: string | null;
+  frontier_globus_https_token: string | null;
 };
 
 /**
@@ -36,11 +58,13 @@ export type UserPublicWithConfig = UserPublic & {
  * `null` to clear it.
  */
 export type UserSelfUpdate = {
+  inference_model?: string | null;
+  inference_base_url?: string | null;
+  inference_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
   s3m_token?: string | null;
   nersc_iri_token?: string | null;
-  globus_token?: string | null;
 };
 
 let userCache: UserPublic | null = null;
@@ -176,6 +200,64 @@ export async function updateCurrentUser(
   userError = null;
   notifyUser();
   return updated;
+}
+
+/**
+ * The OLCF enclaves VISTA transfers files to. Each is authorized on its own:
+ * they sit behind different identity providers, and a researcher may have an
+ * account on one and not the other.
+ */
+export type GlobusCluster = "odo" | "frontier";
+
+/** Which field on the user holds a cluster's credential. */
+export const GLOBUS_TOKEN_FIELD: Record<GlobusCluster, keyof UserPublicWithConfig> = {
+  odo: "odo_globus_token",
+  frontier: "frontier_globus_token",
+};
+
+/** Backend `GlobusLoginStarted`. */
+export type GlobusLoginStarted = {
+  authorize_url: string;
+};
+
+/** Backend `GlobusConnected`. */
+export type GlobusConnected = {
+  cluster: GlobusCluster;
+  identity: string;
+};
+
+/**
+ * Begin an authorization and get the address to send the researcher to.
+ *
+ * Starting again abandons any address already outstanding for this cluster,
+ * so only the most recent one will produce a code the backend accepts.
+ */
+export async function startGlobusLogin(
+  cluster: GlobusCluster,
+): Promise<GlobusLoginStarted> {
+  const res = await fetch(`/api/users/me/globus/${cluster}/login`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return (await res.json()) as GlobusLoginStarted;
+}
+
+/**
+ * Hand over the code the researcher pasted. On success the credential is
+ * stored server-side and the reply names the Globus account it belongs to.
+ */
+export async function completeGlobusLogin(
+  cluster: GlobusCluster,
+  code: string,
+): Promise<GlobusConnected> {
+  const res = await fetch(`/api/users/me/globus/${cluster}/code`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return (await res.json()) as GlobusConnected;
 }
 
 /**

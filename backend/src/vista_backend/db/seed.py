@@ -88,6 +88,73 @@ class GitlabRepoClient:
             await self.download_file(blob["path"], out)
 
 
+class LocalRepoClient:
+    """
+    A stand-in for `GitlabRepoClient` reading an already-unpacked copy of the
+    vista-data repository from disk.
+
+    The prebuilt package ships the payload instead of a token, so seeding has to
+    resolve the same repo-relative paths (`mstdb/...`, `molten-salt-papers/...`)
+    without reaching `code.ornl.gov`. Deliberately the same two-method surface
+    and the same skip-if-present behavior as its GitLab counterpart, so the four
+    downstream truthiness gates in `seed_db` treat the two identically.
+
+    A missing path raises rather than warns: unlike a failed network fetch, an
+    absent file in a bundled payload is a packaging defect, and every caller
+    here asks only for files the payload is supposed to contain.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    async def __aenter__(self) -> "LocalRepoClient":
+        if not self._root.is_dir():
+            raise FileNotFoundError(
+                f"Bundled data payload directory does not exist: {self._root}"
+            )
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    def _resolve(self, repo_path: str) -> Path:
+        src = (self._root / repo_path).resolve()
+        if not src.is_relative_to(self._root):
+            raise ValueError(f"Payload path escapes the payload root: {repo_path}")
+        return src
+
+    async def download_file(self, repo_path: str, dest: Path) -> None:
+        src = self._resolve(repo_path)
+        if not src.is_file():
+            raise FileNotFoundError(f"Bundled data payload is missing {repo_path}")
+        logging.info(f"Copying {repo_path} from the bundled payload to {dest}..")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Written to a sibling and renamed, matching the GitLab client: seeding
+        # is resumable, and a half-copied file left behind by an interrupted run
+        # would be skipped as "already fetched" on the next one.
+        tmp = dest.with_name(dest.name + ".part")
+        shutil.copyfile(src, tmp)
+        tmp.replace(dest)
+
+    async def download_dir(self, repo_dir: str, dest: Path) -> None:
+        src_dir = self._resolve(repo_dir)
+        if not src_dir.is_dir():
+            raise FileNotFoundError(
+                f"Bundled data payload is missing the {repo_dir} directory"
+            )
+        dest = dest.resolve()
+        logging.info(f"Copying {repo_dir} from the bundled payload to {dest}..")
+        for src in sorted(p for p in src_dir.rglob("*") if p.is_file()):
+            out = (dest / src.relative_to(src_dir)).resolve()
+            if not out.is_relative_to(dest):
+                raise ValueError(f"Payload entry escapes destination: {src}")
+            if out.exists():
+                continue  # already copied on a prior run
+            await self.download_file(
+                str(src.relative_to(self._root)).replace("\\", "/"), out
+            )
+
+
 async def _build_knowledge_base(kb_dir: Path):
     """
     Build the ChromaDB store under `kb_dir/rag_db` by embedding the PDFs in
@@ -107,10 +174,17 @@ async def _build_knowledge_base(kb_dir: Path):
     logging.info(
         f"Embedding {len(filenames)} PDF(s) into the knowledge base at {rag_db}."
     )
+    # No user exists yet at first-run seeding, so this resolves from
+    # `Settings` alone. It matters for a plain checkout indexing the corpus
+    # itself; the prebuilt package ships a store that already has citations,
+    # so `_build_knowledge_base` returns before reaching this.
+    from ..agents.inference import citation_credentials
+
     results = await indexer.index_publications(
         rag_db_path=str(rag_db),
         pdfs_dir=str(pdfs_dir),
         filenames=filenames,
+        llm_credentials=citation_credentials(),
     )
 
     failed = [r.get("filename") for r in results if r.get("status") == "failed"]
@@ -119,6 +193,56 @@ async def _build_knowledge_base(kb_dir: Path):
             f"Knowledge base: {len(failed)} PDF(s) failed to index: {failed}"
         )
     logging.info(f"Knowledge base built at {rag_db}")
+
+
+def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
+    """
+    Refuse to record a knowledge base whose vector store holds nothing.
+
+    The row below hardcodes `build_status="ready"`, so an absent or empty store
+    produces a knowledge base that reports itself healthy and returns no
+    passages -- the one failure in the seeding path a researcher could not
+    diagnose from the interface. It matters most for the prebuilt package, where
+    the store is copied in rather than built here (`_build_knowledge_base`
+    returns early when `chroma.sqlite3` exists), so a packaging mistake would
+    otherwise ship silently.
+
+    Counted through Chroma's own API rather than by reading `chroma.sqlite3`,
+    whose table layout is internal. `get_collection` attaches Chroma's default
+    embedding function, but that only reaches the network inside `__call__` and
+    `count()` never calls it -- the same invariant `build_rag.py` documents at
+    its `get_or_create_collection` calls.
+    """
+    import chromadb
+    from chromadb.config import Settings as ChromaSettings
+
+    rag_db = kb_dir / "rag_db"
+    corpus = f"{kb_dir.name} ({rag_db})"
+
+    if not (rag_db / "chroma.sqlite3").is_file():
+        raise RuntimeError(
+            f"Knowledge base {corpus} has no vector store; refusing to seed it "
+            "as ready. Expected either a prebuilt store or PDFs to index in "
+            f"{kb_dir / 'pdfs'}."
+        )
+
+    client = chromadb.PersistentClient(
+        path=str(rag_db), settings=ChromaSettings(anonymized_telemetry=False)
+    )
+    try:
+        count = client.get_collection("text_chunks").count()
+    except Exception as exc:  # noqa: BLE001 -- chroma raises several types here
+        raise RuntimeError(
+            f"Knowledge base {corpus} has an unreadable vector store: {exc}"
+        ) from exc
+
+    if count == 0:
+        raise RuntimeError(
+            f"Knowledge base {corpus} has an empty vector store; refusing to "
+            "seed it as ready. Retrieval would return nothing while the "
+            "interface reported the corpus as built."
+        )
+    logging.info(f"Knowledge base {kb_dir.name} holds {count} indexed chunk(s).")
 
 
 async def seed_db(engine: AsyncEngine) -> None:
@@ -137,22 +261,29 @@ async def seed_db(engine: AsyncEngine) -> None:
     )
     molten_salt_kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
 
-    if settings.vista_data_token:
+    # Payload before token: when both are configured the payload is already on
+    # disk, so fetching over the network could only produce the same files more
+    # slowly. Ordered explicitly rather than left to whichever happens to be
+    # checked first, because the prebuilt package sets the payload path while a
+    # developer's inherited `.env` may still carry a token.
+    if settings.vista_data_payload_dir:
+        ctx_manager = LocalRepoClient(settings.vista_data_payload_dir)
+    elif settings.vista_data_token:
         ctx_manager = GitlabRepoClient(
             "code.ornl.gov", "v28/vista-data", token=settings.vista_data_token
         )
     else:
         ctx_manager = nullcontext()
         logging.warning(
-            "No vista_data_token configured; skipping vista-data fetch: seeding only public data"
+            "Neither vista_data_payload_dir nor vista_data_token configured; "
+            "skipping vista-data fetch: seeding only public data"
         )
     async with ctx_manager as vista_data_client, AsyncSession(engine) as session:
         if vista_data_client:
             # TODO This is not really where we should handle the hpc_jobs files, but it will work for now
             job_mstdb_file = (
-                REPO_ROOT
-                / "hpc_jobs/forge-tune/Molten_Salt_Thermophysical_Properties.csv"
-            )
+                settings.hpc_jobs_dir or REPO_ROOT / "hpc_jobs"
+            ) / "forge-tune/Molten_Salt_Thermophysical_Properties.csv"
             if not job_mstdb_file.exists():
                 await vista_data_client.download_file(
                     "mstdb/Molten_Salt_Thermophysical_Properties.csv", job_mstdb_file
@@ -250,6 +381,7 @@ async def seed_db(engine: AsyncEngine) -> None:
         session.add_all(projects)
 
         if vista_data_client:
+            _assert_knowledge_base_indexed(molten_salt_kb_dir)
             session.add(
                 KnowledgeBaseTable(
                     id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),

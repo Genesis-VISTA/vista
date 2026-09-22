@@ -389,6 +389,9 @@ class UserBase(SQLModel):
 # Treat "" the same as None for the optional config fields so a cleared frontend
 # input doesn't end up as a non-null-but-empty token/account in the DB
 _USER_CONFIG_NULLABLE_FIELDS = (
+    "inference_model",
+    "inference_base_url",
+    "inference_api_key",
     "nersc_account",
     "nersc_remote_dir",
     "frontier_account",
@@ -396,6 +399,11 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "s3m_token",
     "nersc_iri_token",
     "globus_token",
+    "odo_globus_token",
+    "frontier_globus_token",
+    "globus_https_token",
+    "odo_globus_https_token",
+    "frontier_globus_https_token",
 )
 
 
@@ -407,6 +415,9 @@ class UserCreate(UserBase):
     email: str
     is_admin: bool = False
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+    inference_model: str | None = None
+    inference_base_url: str | None = None
+    inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
@@ -414,6 +425,11 @@ class UserCreate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
+    globus_https_token: str | None = None
+    odo_globus_https_token: str | None = None
+    frontier_globus_https_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -424,6 +440,9 @@ class UserCreate(UserBase):
 class UserUpdate(UserBase):
     is_admin: bool | None = None
     remote_hpc_jobs_dir: str | None
+    inference_model: str | None = None
+    inference_base_url: str | None = None
+    inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
@@ -431,6 +450,11 @@ class UserUpdate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
+    globus_https_token: str | None = None
+    odo_globus_https_token: str | None = None
+    frontier_globus_https_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -440,6 +464,9 @@ class UserUpdate(UserBase):
 
 class UserSelfUpdate(UserBase):
     remote_hpc_jobs_dir: str | None = None
+    inference_model: str | None = None
+    inference_base_url: str | None = None
+    inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
@@ -447,6 +474,11 @@ class UserSelfUpdate(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
+    globus_https_token: str | None = None
+    odo_globus_https_token: str | None = None
+    frontier_globus_https_token: str | None = None
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -467,6 +499,9 @@ class UserPublicWithConfig(UserBase):
     email: str
     is_admin: bool = False
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+    inference_model: str | None = None
+    inference_base_url: str | None = None
+    inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
@@ -474,6 +509,11 @@ class UserPublicWithConfig(UserBase):
     s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
+    odo_globus_token: str | None = None
+    frontier_globus_token: str | None = None
+    globus_https_token: str | None = None
+    odo_globus_https_token: str | None = None
+    frontier_globus_https_token: str | None = None
 
 
 class UserTable(SQLModel, table=True):
@@ -483,6 +523,28 @@ class UserTable(SQLModel, table=True):
     is_admin: bool = False
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     """ Folder on the HPC cluster (Odo) where hpc_jobs will be copied. """
+    inference_model: str | None = None
+    """
+    Chat model for this user, as `provider:name`. Overrides
+    `Settings.model` when set. Not a secret -- stored in the clear.
+    """
+    inference_base_url: str | None = None
+    """
+    OpenAI-compatible endpoint for this user. Overrides
+    `Settings.openai_base_url` when set. Not a secret.
+    """
+    inference_api_key: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Access key for `inference_base_url`. Encrypted at rest.
+
+    On a single-user install this row *is* the deployment configuration: it is
+    where a researcher's key lands when they paste it into the settings modal,
+    and it takes precedence over `Settings.openai_api_key`. Changing it evicts
+    this user's pooled agents through `update_user`'s `invalidate_agents` call,
+    so the next message picks it up with no restart.
+    """
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None
@@ -516,14 +578,45 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    Globus Transfer refresh token, used for Frontier file ops via the OLCF
-    DTN collection. Long-lived; the MCP server mints short-lived access
-    tokens from it on each submission via `globus_sdk.RefreshTokenAuthorizer`.
-    Encrypted at rest.
-    Obtain with: python OLCF-Globus-Transfer/get_olcf_token.py --force-login
-                       --session-domain sso.ccs.ornl.gov
-    Then copy the "refresh_token" field from ~/.globus/olcf_tokens.json.
+    Globus Transfer refresh token used for OLCF directory listings and `mkdir`
+    when no cluster-specific one is set. Long-lived; the MCP server mints
+    short-lived access tokens from it on each submission via
+    `globus_sdk.RefreshTokenAuthorizer`. Encrypted at rest.
     """
+    odo_globus_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Odo's Globus Transfer refresh token. Encrypted at rest. Separate from
+    Frontier's because the two enclaves authenticate against different SSO
+    domains -- opensso.ccs.ornl.gov and sso.ccs.ornl.gov -- and can be
+    different identities, so one token cannot be assumed to authorize the
+    other's file operations.
+    """
+    frontier_globus_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ Frontier's Globus Transfer refresh token. Encrypted at rest. """
+    globus_https_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    The shared counterpart to `globus_token`: a refresh token for the OLCF
+    collection itself, over the Globus HTTPS interface. Encrypted at rest.
+
+    A second token per credential because Globus issues one per resource
+    server, and file *contents* belong to the collection rather than to
+    Transfer. Both halves are needed: the Transfer token lists a directory, and
+    this one reads what is in it. See `lib/globus.py` in the MCP server.
+    """
+    odo_globus_https_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ Odo collection's HTTPS refresh token. Encrypted at rest. """
+    frontier_globus_https_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ Frontier collection's HTTPS refresh token. Encrypted at rest. """
 
 
 # ---------------------------------------------------------------------------

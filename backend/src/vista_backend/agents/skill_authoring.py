@@ -11,9 +11,8 @@ the actual `POST /skills` write.
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import infer_model
-
-from ..config import settings
+from .inference import build_model_for
+from ..db.schemas import UserPublicWithConfig
 
 
 class SkillDraft(BaseModel):
@@ -52,6 +51,7 @@ Output strictly:
 async def generate_skill_draft(
     message_history: list[ModelMessage],
     hint: str | None = None,
+    user: UserPublicWithConfig | None = None,
 ) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation.
@@ -61,12 +61,15 @@ async def generate_skill_draft(
             through to the drafting agent so it sees the full transcript.
         hint: Optional user-supplied focus (e.g. "focus on the phase-diagram
             step"). Becomes part of the user prompt.
+        user: The signed-in user, whose settings row supplies the model,
+            endpoint, and credential. Without it this falls back to `Settings`,
+            which on an install configured only through the UI has no key.
 
     Returns:
         A `SkillDraft` the caller can edit before persisting via `POST /skills`.
     """
     agent = Agent(
-        model=infer_model(settings.model),
+        model=build_model_for(user),
         system_prompt=_SYSTEM_PROMPT,
         output_type=SkillDraft,
     )

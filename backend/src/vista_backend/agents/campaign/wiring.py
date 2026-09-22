@@ -22,12 +22,15 @@ from typing import Awaitable, Callable
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from pydantic_ai.models import Model
+
 from ...db.schemas import HpcJobTable, UserPublicWithConfig, UserTable
 from ...services import campaign as campaign_service
 from ...services.campaign_monitor import CampaignMonitor
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
 from .mcp_invoke import build_mcp_invoke, project_paths_for
+from ..inference import build_model_for
 from .planner import CampaignPlanner, build_subagents
 from .subagent import ResultParser
 
@@ -82,9 +85,18 @@ async def build_planner_for_job(
     *,
     invoke_builder: InvokeBuilder = build_mcp_invoke,
     parser_factory: ParserFactory | None = None,
-    model: str | None = None,
+    model: str | Model | None = None,
 ) -> CampaignPlanner:
-    """Reconstruct the planner for a job's campaign from its planner skill + manifest."""
+    """
+    Reconstruct the planner for a job's campaign from its planner skill + manifest.
+
+    With no explicit `model`, this resolves one from the job's own user row, so
+    a parser built here reaches the same endpoint and credential as the agent
+    that dispatched the job. The monitor runs in the background with no request
+    context and never passes a model, which is the path that made this matter:
+    without it the parser fell back to `Settings` alone and could not see a key
+    entered in the settings modal.
+    """
     run, user, paths = await _job_run_user_paths(session, job)
     skills_dir = paths["skills_dir"]
     manifest = load_manifest(Path(skills_dir) / run.planner_skill)
@@ -94,7 +106,7 @@ async def build_planner_for_job(
         hpc=hpc,
         skills_dir=skills_dir,
         parser_factory=parser_factory,
-        model=model,
+        model=model or build_model_for(user),
     )
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 

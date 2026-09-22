@@ -39,6 +39,25 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_vista_data(monkeypatch):
+    """
+    Detach every test from whatever vista-data source the host happens to have
+    configured.
+
+    Seeding picks its source from two settings -- a bundled payload directory
+    and a GitLab token -- and both are read from the environment, including from
+    any `.env` above the working directory. A packaging build machine has the
+    payload path exported, which would silently move the offline seeding tests
+    onto the payload branch. Tests that want a source set one themselves; this
+    only removes the ambient one.
+    """
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "vista_data_payload_dir", None)
+    monkeypatch.setattr(settings, "vista_data_token", None)
+
+
 @pytest.fixture
 async def session():
     """A fresh in-memory SQLite DB with all tables created, shared across the test."""

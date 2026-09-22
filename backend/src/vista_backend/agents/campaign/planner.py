@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from pydantic_ai.models import Model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...services import campaign as campaign_service
@@ -56,9 +57,15 @@ def build_subagents(
     hpc: HpcTools,
     skills_dir: Path | str,
     parser_factory: Callable[[Path, str], ResultParser] | None = None,
-    model: str | None = None,
+    model: str | Model | None = None,
 ) -> dict[str, SubAgent]:
-    """Build one `SubAgent` per manifest role, each specialized by its sim skill's parser."""
+    """
+    Build one `SubAgent` per manifest role, each specialized by its sim skill's parser.
+
+    `model` is forwarded to `build_skill_parser`, so pass the same resolved
+    `Model` the request's other agents use. Ignored when `parser_factory` is
+    supplied, which is how the tests inject a parser with no LLM at all.
+    """
     factory = parser_factory or (
         lambda skill_dir, role: build_skill_parser(skill_dir, role, model)
     )

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from typing import Annotated as A, Literal
-from pydantic import BaseModel, Field, ByteSize, SecretStr
+from pydantic import AliasChoices, BaseModel, Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
@@ -69,12 +69,56 @@ class Settings(BaseSettings):
 
     log_level: LogLevel = "INFO"
 
-    model: str
+    model: str = "openai:claude-sonnet"
     """
     LLM to use.
     
     This is passed to Pydantic AI, see https://pydantic.dev/docs/ai/api/pydantic-ai/providers/ for
     other env vars to set for specific providers
+
+    Defaults to the AmSC-served `claude-sonnet` reached over the
+    OpenAI-compatible endpoint in `openai_base_url`, so a fresh install has a
+    working inference target with no configuration and only the access key is
+    outstanding. Written with the `openai:` provider prefix to match
+    `.env.sample` and the parsing in `utils/indexer.py:_parse_backend_model`,
+    which keys the citation extractor off this same value.
+    """
+
+    openai_base_url: A[
+        str,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_BACKEND_OPENAI_BASE_URL", "OPENAI_BASE_URL"
+            )
+        ),
+    ] = "https://api.i2-core.american-science-cloud.org"
+    """
+    Base URL of the OpenAI-compatible inference endpoint. Defaults to the AmSC
+    Inference API.
+
+    Resolved here rather than left to the OpenAI SDK's own `OPENAI_BASE_URL`
+    lookup, whose fallback is `api.openai.com` — a host where the default model
+    does not exist. `agents/inference.py` passes this value explicitly when it
+    builds the provider, so the endpoint no longer depends on a `.env` being
+    present. The bare `OPENAI_BASE_URL` name is still accepted so existing
+    deployments configured from `.env.sample` are unaffected.
+    """
+
+    openai_api_key: A[
+        SecretStr | None,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_BACKEND_OPENAI_API_KEY", "OPENAI_API_KEY"
+            )
+        ),
+    ] = None
+    """
+    Access key for `openai_base_url`.
+
+    Optional: with no key configured every service still starts and the missing
+    credential is reported when inference is first attempted. On a single-user
+    install this is normally supplied through the settings UI instead, which
+    takes precedence over this value.
     """
 
     mcp_url: str = Field(
@@ -153,6 +197,68 @@ class Settings(BaseSettings):
     """
     Optional GitLab personal access token, used to fetch private data. Needs Developer role and read_api and
     read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
+    """
+
+    version: A[str, Field(validation_alias="VISTA_VERSION")] = "dev"
+    """
+    Human-readable build identifier, surfaced as the API's version.
+
+    Set by the prebuilt package's launcher from the `VERSION` file beside it,
+    so the same string appears in the artifact's manifest, in the launcher's
+    output, and in `/openapi.json` from the running service -- which is how a
+    researcher reporting a problem can say which build they have. `dev` on a
+    checkout.
+    """
+
+    hpc_jobs_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_HPC_JOBS_DIR")
+    ] = None
+    """
+    Directory holding the HPC job templates, or `None` to derive it from the
+    repository layout.
+
+    Seeding drops the MSTDB CSV that `hpc_jobs/forge-tune` needs into this
+    directory. It has to be configurable because the derived path is
+    `db/seed.py`'s own location walked up five levels, which is correct only
+    while `vista_backend` sits in `backend/src/`: installed non-editably -- as
+    it is inside the prebuilt package -- that resolves inside the virtual
+    environment, and the CSV would be written where nothing reads it. Point it
+    at the same directory as the MCP server's
+    `VISTA_MCP_LOCAL_HPC_JOBS_DIR`.
+    """
+
+    build_rag_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_BUILD_RAG_DIR")
+    ] = None
+    """
+    Directory containing `build_rag.py`, or `None` to derive it from the
+    repository layout.
+
+    Same reason as `hpc_jobs_dir`: `utils/indexer.py` locates the module by
+    walking up from itself, which finds the repository root from
+    `backend/src/` and the virtual environment's `lib/` from a non-editable
+    install. Without this, indexing a knowledge base inside the prebuilt
+    package fails with "Could not locate build_rag.py".
+    """
+
+    vista_data_payload_dir: A[
+        ResolvedPath | None, Field(validation_alias="VISTA_DATA_PAYLOAD_DIR")
+    ] = None
+    """
+    Optional directory holding an already-unpacked copy of the vista-data
+    repository, used instead of `vista_data_token` to seed on first run.
+
+    Set by the prebuilt package's launcher, which ships the payload rather than
+    a token: a researcher gets the molten-salt corpus and the MSTDB assets with
+    no access to `code.ornl.gov`. The layout is repo-relative and identical to
+    what the GitLab client fetches -- `mstdb/...`, `molten-salt-papers/...` --
+    because `LocalRepoClient` in `db/seed.py` is a drop-in for
+    `GitlabRepoClient` and resolves the same paths against this root.
+
+    Takes precedence over `vista_data_token` when both are set: a local payload
+    is already on disk, so preferring it avoids a network fetch that could only
+    produce the same files. Unset on a normal checkout, where seeding behaves
+    exactly as before.
     """
 
     email: EmailSettings = Field(default_factory=EmailSettings)

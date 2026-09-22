@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from "react";
 import {
+  completeGlobusLogin,
   fetchCurrentUserWithConfig,
+  startGlobusLogin,
   updateCurrentUser,
+  type GlobusCluster,
   type UserPublicWithConfig,
   type UserSelfUpdate,
 } from "@/lib/user";
@@ -93,11 +96,15 @@ function UserSettingsForm({
   user: UserPublicWithConfig;
   onClose: () => void;
 }) {
+  const [inferenceApiKey, setInferenceApiKey] = useState(user.inference_api_key ?? "");
+  const [inferenceModel, setInferenceModel] = useState(user.inference_model ?? "");
+  const [inferenceBaseUrl, setInferenceBaseUrl] = useState(
+    user.inference_base_url ?? "",
+  );
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
   const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
-  const [globusToken, setGlobusToken] = useState(user.globus_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -109,11 +116,21 @@ function UserSettingsForm({
     const nullableCandidates: Array<
       [keyof UserSelfUpdate, string | null, string | null]
     > = [
+      [
+        "inference_api_key",
+        user.inference_api_key ?? null,
+        blankToNull(inferenceApiKey),
+      ],
+      ["inference_model", user.inference_model ?? null, blankToNull(inferenceModel)],
+      [
+        "inference_base_url",
+        user.inference_base_url ?? null,
+        blankToNull(inferenceBaseUrl),
+      ],
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
       ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
-      ["globus_token", user.globus_token ?? null, blankToNull(globusToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
       if (prev !== next) {
@@ -146,6 +163,62 @@ function UserSettingsForm({
       </div>
 
       <label className="project-modal-label">
+        Inference API key
+        <input
+          className="input"
+          type="password"
+          value={inferenceApiKey}
+          onChange={(e) => setInferenceApiKey(e.target.value)}
+          placeholder="API key"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Key for the inference endpoint below. Required to chat; everything
+          else works without it. Stored encrypted at rest, and picked up on your
+          next message without a restart.{" "}
+          <a
+            href="https://api.i2-core.american-science-cloud.org"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a key
+          </a>
+          .
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Model
+        <input
+          className="input"
+          value={inferenceModel}
+          onChange={(e) => setInferenceModel(e.target.value)}
+          placeholder="openai:claude-sonnet"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Optional override, as <code>provider:name</code>. Leave blank to use
+          the server default.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Inference endpoint
+        <input
+          className="input"
+          value={inferenceBaseUrl}
+          onChange={(e) => setInferenceBaseUrl(e.target.value)}
+          placeholder="https://api.i2-core.american-science-cloud.org"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Optional override for the OpenAI-compatible endpoint. Leave blank to
+          use the server default.
+        </span>
+      </label>
+
+      <label className="project-modal-label">
         S3M token
         <input
           className="input"
@@ -157,26 +230,34 @@ function UserSettingsForm({
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.
+          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.{" "}
+          <a
+            href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a token
+          </a>
+          . Expires in 24 hours.
         </span>
       </label>
 
-      <label className="project-modal-label">
-        Frontier Globus token
-        <input
-          className="input"
-          type="password"
-          value={globusToken}
-          onChange={(e) => setGlobusToken(e.target.value)}
-          placeholder="Refresh token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Globus Transfer refresh token used for Frontier file operations.
-          Stored encrypted at rest.
-        </span>
-      </label>
+      <div className="user-settings-section-label">File transfer</div>
+      <div className="user-settings-hint" style={{ marginTop: -4 }}>
+        Odo and Frontier move files through Globus, which needs your permission
+        once per cluster. Connecting opens a Globus login and gives you a code
+        to paste back here.
+      </div>
+      <GlobusConnect
+        cluster="odo"
+        label="Odo"
+        initiallyConnected={globusConnected(user, "odo")}
+      />
+      <GlobusConnect
+        cluster="frontier"
+        label="Frontier"
+        initiallyConnected={globusConnected(user, "frontier")}
+      />
 
       <label className="project-modal-label">
         NERSC account
@@ -254,5 +335,218 @@ function UserSettingsForm({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Whether a cluster has a *whole* Globus credential.
+ *
+ * Both halves or neither: the Transfer token lists the cluster's directories
+ * and the collection token reads what is in them, and one without the other
+ * finds an output directory it cannot open. A connection made before VISTA
+ * moved to the HTTPS interface has only the first, so it reads as unconnected
+ * here — which is the prompt to connect again, and the only honest answer.
+ */
+function globusConnected(
+  user: UserPublicWithConfig,
+  cluster: GlobusCluster,
+): boolean {
+  const transfer =
+    cluster === "odo" ? user.odo_globus_token : user.frontier_globus_token;
+  const https =
+    cluster === "odo"
+      ? user.odo_globus_https_token
+      : user.frontier_globus_https_token;
+  return Boolean(
+    (transfer && https) || (user.globus_token && user.globus_https_token),
+  );
+}
+
+/**
+ * Connect one cluster's Globus account.
+ *
+ * Deliberately outside the form's save diff: this is an exchange, not a value.
+ * The credential never reaches the browser, what the researcher pastes is
+ * single-use, and the backend stores the result itself — so Save has nothing to
+ * carry, and a connection in progress survives saving the rest of the form.
+ *
+ * `initiallyConnected` seeds the display from the loaded user and is not read
+ * again. Re-fetching after a connection would rebuild the form and discard any
+ * unsaved edits in the fields above.
+ */
+function GlobusConnect({
+  cluster,
+  label,
+  initiallyConnected,
+}: {
+  cluster: GlobusCluster;
+  label: string;
+  initiallyConnected: boolean;
+}) {
+  const [connected, setConnected] = useState(initiallyConnected);
+  const [identity, setIdentity] = useState<string | null>(null);
+  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState<"starting" | "finishing" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Between clicking Connect and pasting the code the researcher leaves for a
+  // browser, and closing the modal in the meantime is easy to do -- saving
+  // another field closes it outright. The backend keeps the flow alive for
+  // fifteen minutes either way, so the address is worth keeping too: without
+  // it, coming back means logging in to Globus a second time for nothing.
+  // Read in an effect rather than in the initial state so the server-rendered
+  // markup and the first client render agree.
+  const stashKey = `vista.globus.authorize.${cluster}`;
+  useEffect(() => {
+    try {
+      const stashed = window.sessionStorage.getItem(stashKey);
+      if (stashed) setAuthorizeUrl(stashed);
+    } catch {
+      // Storage can be unavailable. Costs the researcher a second login, and
+      // nothing else, so there is nothing to report.
+    }
+  }, [stashKey]);
+
+  function stash(url: string | null) {
+    try {
+      if (url === null) window.sessionStorage.removeItem(stashKey);
+      else window.sessionStorage.setItem(stashKey, url);
+    } catch {
+      // As above.
+    }
+  }
+
+  function forget() {
+    setAuthorizeUrl(null);
+    stash(null);
+    setCode("");
+  }
+
+  async function start() {
+    setBusy("starting");
+    setError(null);
+    try {
+      const started = await startGlobusLogin(cluster);
+      setAuthorizeUrl(started.authorize_url);
+      stash(started.authorize_url);
+      setCode("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start the connection.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function finish() {
+    setBusy("finishing");
+    setError(null);
+    try {
+      const result = await completeGlobusLogin(cluster, code);
+      setConnected(true);
+      setIdentity(result.identity);
+      forget();
+    } catch (e) {
+      // The address stays on screen. A rejected code is usually a mistyped or
+      // half-copied one, and making the researcher start the login again to
+      // try a second time would be the wrong lesson to draw from it.
+      setError(e instanceof Error ? e.message : "That code was not accepted.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const pending = authorizeUrl !== null;
+  const status = pending
+    ? "Waiting for your code"
+    : identity
+      ? `Connected as ${identity}`
+      : connected
+        ? "Connected"
+        : "Not connected";
+
+  return (
+    <div className="user-settings-globus">
+      <div className="user-settings-globus-head">
+        <span className="user-settings-globus-cluster">{label}</span>
+        <span
+          className={`user-settings-globus-status ${
+            pending ? "pending" : connected ? "connected" : "absent"
+          }`}
+        >
+          {status}
+        </span>
+        {!pending && (
+          <button
+            type="button"
+            className="button ghost button-xs"
+            onClick={() => void start()}
+            disabled={busy !== null}
+          >
+            {busy === "starting"
+              ? "Starting…"
+              : connected
+                ? "Reconnect"
+                : "Connect"}
+          </button>
+        )}
+      </div>
+
+      {pending && (
+        <>
+          <div className="user-settings-hint">
+            Open this address, log in to {label}, and paste the code Globus gives
+            you. Use only this address: starting again replaces it, and a code
+            from an older one will not be accepted.
+          </div>
+          <div className="user-settings-globus-url">{authorizeUrl}</div>
+          <div className="user-settings-globus-actions">
+            <a
+              className="button ghost button-xs"
+              href={authorizeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open in browser
+            </a>
+            <button
+              type="button"
+              className="button ghost button-xs"
+              onClick={() => {
+                forget();
+                setError(null);
+              }}
+              disabled={busy !== null}
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="user-settings-globus-actions">
+            <input
+              className="input"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Paste the code from Globus"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="button button-xs"
+              onClick={() => void finish()}
+              disabled={busy !== null || code.trim() === ""}
+            >
+              {busy === "finishing" ? "Connecting…" : "Finish"}
+            </button>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div className="error" style={{ fontSize: 11, lineHeight: 1.4 }}>
+          {error}
+        </div>
+      )}
+    </div>
   );
 }

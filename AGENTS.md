@@ -110,11 +110,39 @@ curl http://localhost:3000/api/mcp/health       # Smoke test
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
 
 The vista MCP server boots without any interactive login — HPC job submission authenticates
-with per-user tokens (S3M / NERSC IRI) supplied via the UI at tool-call time, plus
-deployment-wide Globus refresh tokens (`VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` for Odo's open
-enclave, `VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN` for Frontier's moderate enclave) for file
-ops. Set
+with per-user tokens (S3M / NERSC IRI for compute, Globus for file ops) supplied via the UI, each
+connected once per cluster in the settings modal rather than exported anywhere. Set
 `VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
+
+Odo and Frontier file operations go through Globus, split across two of its surfaces
+([`lib/globus.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/globus.py)). **File
+contents** move over the **HTTPS interface** — ordinary `GET`/`PUT` against the cluster's own
+collection, authorized by a bearer token. **Directory listings and `mkdir`** stay on the
+**Transfer API**, which the HTTPS interface has no answer for. An HTTPS request needs no
+collection on VISTA's side, so VISTA runs no Globus endpoint of its own: nothing to install,
+nothing to start, and no second collection that could have been created by the wrong identity.
+
+Two consequences worth knowing before touching that module, both established by probing the live
+collections. `HEAD` is the only way to learn a file's size — a plain `GET` returns no
+`Content-Length` and a ranged `206` reports its total as `*`. And only explicit `start-end`
+ranges work; a suffix range (`bytes=-N`) answers `416`, because the server streams from the
+filesystem without seeking to the end. Job logs are therefore tailed incrementally: `HEAD` for
+the size, one range for what is new since the last poll.
+
+Both OLCF collections are High Assurance with a 3-day authentication timeout that refreshing a
+token does **not** reset, and a Frontier queue wait routinely exceeds it. So an expired session
+is an expected outcome, not an exceptional one, and it must never be reported as an empty output
+directory — that confusion is the bug this transport exists to remove. `GlobusSessionExpired`
+(401, from either surface) and `GlobusFileNotFound` (404) are separate types for exactly that
+reason; branch on them rather than on a message.
+
+The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
+per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
+falling back to one shared pair connected for both, and only then to the deployment-wide
+`VISTA_MCP_{ODO,FRONTIER}_GLOBUS_REFRESH_TOKEN` / `..._GLOBUS_HTTPS_REFRESH_TOKEN` env vars —
+what keeps a hosted, multi-user deployment working for everyone who has not connected their own.
+Each source counts only when it has both halves: one alone lists a directory it cannot read.
+Absent Globus is never fatal; it costs only Odo and Frontier's file operations, nothing else.
 
 ## NextJS
 ALWAYS read docs before coding

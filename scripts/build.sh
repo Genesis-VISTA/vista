@@ -2,8 +2,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-# Source the .env file
-set -o allexport; source "$REPO_ROOT/.env" 2>/dev/null || true; set +o allexport
+# Source the .env file if there is one. Guarded with a file test rather than
+# `source ... || true`: bash treats a missing *script* file as fatal and exits
+# the shell before the `||` is ever considered, so the tolerant-looking form
+# silently killed this script on any checkout without a .env.
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
+fi
 
 PROD=false
 for arg in "$@"; do

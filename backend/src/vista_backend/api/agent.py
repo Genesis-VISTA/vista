@@ -21,6 +21,7 @@ from ..services.project_agent import (
     project_agent_pool,
     register_elicitation,
 )
+from ..agents.inference import require_inference_credential
 from ..services.auth import UserDep
 
 router = APIRouter()
@@ -75,6 +76,11 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
+    # Checked before either branch: in the streaming case the response status
+    # is committed the moment `EventSourceResponse` is returned, so a raise
+    # from inside the generator could only surface as a truncated stream.
+    require_inference_credential(user)
+
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
     agent_key = await get_project_agent_key(

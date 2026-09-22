@@ -4,13 +4,15 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 import uvicorn
 
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..agents.agents import get_vista_mcp_server
+from ..agents.inference import MissingInferenceCredential
 from ..agents.campaign.wiring import build_default_monitor
 from .agent import router as agent_router
 from .campaign import router as campaign_router
@@ -66,9 +68,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="vista-backend",
+    version=settings.version,
     lifespan=lifespan,
     dependencies=[Depends(get_user)],  # Require login for all routes
 )
+
+
+@app.exception_handler(MissingInferenceCredential)
+async def _missing_inference_credential(
+    request: Request, exc: MissingInferenceCredential
+) -> JSONResponse:
+    """
+    Report a missing inference credential as a named condition.
+
+    409 rather than a 5xx: nothing has failed. On a fresh install this is the
+    expected state, and the request cannot be satisfied until the researcher
+    supplies a value the server has no way to obtain. `detail` carries the
+    message naming the setting and where to enter it, which is the shape
+    `ui/lib/user.ts:extractError` already surfaces.
+    """
+    return JSONResponse(status_code=409, content={"detail": exc.detail})
+
+
 app.include_router(agent_router)
 app.include_router(campaign_router)
 app.include_router(chat_sessions_router)

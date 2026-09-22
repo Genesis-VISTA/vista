@@ -22,7 +22,8 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models import infer_model
+from pydantic_ai.models import Model
+from ..inference import build_inference_model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
@@ -183,12 +184,21 @@ class AgentResultParser:
 
 
 def build_skill_parser(
-    skill_dir, role: str, model: str | None = None
+    skill_dir, role: str, model: str | Model | None = None
 ) -> AgentResultParser:
-    """Construct the LLM-backed parser for a role, specialized by its sim skill."""
+    """
+    Construct the LLM-backed parser for a role, specialized by its sim skill.
+
+    `model` accepts an already-resolved `Model` as well as a `provider:name`
+    string, and callers should pass one: the parser's endpoint and credential
+    have to match the rest of the request. Left as `None` this falls back to
+    `Settings` alone, which on a single-user install cannot see the key the
+    researcher entered in the settings modal -- so the parser would fail, or
+    reach a different model than the agent that dispatched the job.
+    """
     system_prompt = build_subagent_system_prompt(skill_dir, role)
     agent = Agent(
-        model=infer_model(model or settings.model),
+        model=build_inference_model(model or settings.model),
         output_type=ParsedResult,
         system_prompt=system_prompt,
     )

@@ -35,7 +35,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 @pytest.fixture(autouse=True)
 def _hpc_jobs_and_registry(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
-    monkeypatch.setattr(settings, "vista_globus_collection_id", "vista-gcs-id")
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"
@@ -83,6 +82,10 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     monkeypatch.setattr(
         settings, "frontier_globus_refresh_token", "fake-frontier-refresh"
     )
+    monkeypatch.setattr(settings, "odo_globus_https_refresh_token", "fake-odo-https")
+    monkeypatch.setattr(
+        settings, "frontier_globus_https_refresh_token", "fake-frontier-https"
+    )
 
 
 async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg):
@@ -119,7 +122,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     env = spec["attributes"]["environment"]
     assert env["RUN_DIR_Odo"] == "/fake/odo/vista/example/src"
     assert spec["attributes"]["account"] == "gen150-vista"
-    assert globus.transfers, "expected Globus source upload"
+    assert globus.uploads, "expected Globus source upload"
 
 
 async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user_cfg):
@@ -180,7 +183,7 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     run_dir = spec["attributes"]["environment"].get("RUN_DIR_Frontier")
     assert run_dir is not None and run_dir.endswith("/example/src")
     assert globus.mkdir_p_calls
-    assert globus.transfers
+    assert globus.uploads
 
 
 async def test_perlmutter_status_formats_golden_fixture(

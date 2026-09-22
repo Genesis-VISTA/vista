@@ -28,6 +28,7 @@ Legacy variables ENDPOINT_URL and DEPLOYMENT_NAME are still honored as
 fallbacks but log a deprecation warning the first time they're used.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
@@ -151,6 +152,32 @@ CITATION_FIELDS = [
 _warned_legacy_vars = False
 
 
+@dataclass(frozen=True)
+class LLMCredentials:
+    """
+    An explicitly supplied inference credential for citation extraction.
+
+    Everything below resolves the LLM from the process environment, which is
+    right for a deployment configured through `.env` but cannot see a key the
+    researcher typed into the settings modal -- that lives encrypted in their
+    database row, and `vista_backend.agents.inference` is what knows how to
+    resolve it. Passing one of these in lets the caller do that resolution and
+    hand down the answer, so a user-created knowledge base gets citations
+    instead of silently getting none.
+
+    `api_key` is what makes an instance usable; with it unset the env chain
+    runs as before.
+    """
+
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+
+    @property
+    def is_usable(self) -> bool:
+        return bool(self.api_key)
+
+
 def _parse_backend_model() -> tuple[str | None, str | None]:
     """
     Parse VISTA_BACKEND_MODEL (the canonical chat-agent config in
@@ -192,12 +219,38 @@ class _LLMConfig:
         self.endpoint = endpoint
 
 
-def _resolve_llm_config(timeout: float) -> _LLMConfig:
+def _resolve_llm_config(
+    timeout: float, credentials: "LLMCredentials | None" = None
+) -> _LLMConfig:
     """
     Decide which LLM provider to use and build the corresponding client.
     See the comment block above for the resolution order.
+
+    A usable `credentials` wins outright and skips that order entirely: the
+    caller has already decided which endpoint and key to use -- typically from
+    a user's settings row -- and re-deriving it from the environment could only
+    contradict them.
     """
     global _warned_legacy_vars
+
+    if credentials is not None and credentials.is_usable:
+        base_url = (credentials.base_url or "https://api.openai.com/v1").rstrip("/")
+        model = credentials.model or _parse_backend_model()[1] or "gpt-4o-mini"
+        log.info(
+            "  LLM provider: OpenAI-compatible (supplied) | base_url=%s | model=%s",
+            base_url, model,
+        )
+        return _LLMConfig(
+            provider="openai",
+            model=model,
+            client=OpenAI(
+                base_url=base_url,
+                api_key=credentials.api_key,
+                timeout=timeout,
+                max_retries=1,
+            ),
+            endpoint=base_url,
+        )
 
     azure_endpoint = (os.getenv("AZURE_OPENAI_ENDPOINT") or "").rstrip("/")
     azure_key = os.getenv("AZURE_OPENAI_API_KEY") or ""
@@ -466,6 +519,7 @@ def send_prompt_to_chatgpt(
     *,
     max_tokens: int = 4096,
     timeout: float = 60.0,
+    credentials: "LLMCredentials | None" = None,
 ) -> str:
     """
     Send a prompt to the configured LLM and return the response text.
@@ -492,7 +546,7 @@ def send_prompt_to_chatgpt(
     (prompt_tokens / completion_tokens / reasoning_tokens) on the
     response so empty-output failures are diagnosable.
     """
-    config = _resolve_llm_config(timeout)
+    config = _resolve_llm_config(timeout, credentials)
 
     prompt_chars = len(prompt)
     is_reasoning = _is_reasoning_model(config.model)
@@ -637,11 +691,17 @@ class TextRAG:
         self,
         pdf_folder: str,
         db_path: str = "./chroma_db",
-        text_model: str = "google/embeddinggemma-300m",
+        # Ungated (MIT) and 640-dimension. Kept byte-identical to
+        # `vista_mcp_server.config.Settings.rag_model`, which is the *query*
+        # encoder: a Chroma collection locks to the dimension of its first
+        # insert, so the two names must never diverge. Change one, change
+        # the other.
+        text_model: str = "microsoft/harrier-oss-v1-270m",
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
         citation_max_chars: int = 12_000,
+        llm_credentials: "LLMCredentials | None" = None,
     ):
         """
         Initialize text-only RAG system with optional citation extraction.
@@ -658,6 +718,9 @@ class TextRAG:
                                 citation extraction.
             citation_max_chars: Max characters of front-matter text to send
                                 to the LLM.
+            llm_credentials:    Inference credential for citation extraction.
+                                When omitted, resolved from the environment.
+                                See `LLMCredentials`.
         """
         self.pdf_folder = Path(pdf_folder)
         self.db_path = db_path
@@ -665,10 +728,22 @@ class TextRAG:
         self.extract_citations = extract_citations
         self.citation_max_pages = citation_max_pages
         self.citation_max_chars = citation_max_chars
+        self.llm_credentials = llm_credentials
 
-        # Text embedding model
-        log.info("Loading text model: %s", text_model)
-        self.text_encoder = SentenceTransformer(text_model, device="cpu")
+        # Text embedding model.
+        #
+        # `device=None` lets sentence-transformers pick the best available
+        # accelerator -- cuda, then mps, then cpu. Previously pinned to cpu,
+        # which measured at 28s per batch of 8 chunks against 0.5s on mps:
+        # hours versus minutes to index the molten-salt corpus, paid on every
+        # packaging build and on any first run that has to index. Set
+        # `VISTA_EMBED_DEVICE` to force one (e.g. `cpu`) if an accelerator
+        # misbehaves. The same variable pins the *query* encoder in
+        # `vista_mcp_server.rag_mcp`; the device changes only how fast the
+        # vectors are computed, not what they are, so the two need not agree.
+        device = os.environ.get("VISTA_EMBED_DEVICE") or None
+        log.info("Loading text model: %s (device=%s)", text_model, device or "auto")
+        self.text_encoder = SentenceTransformer(text_model, device=device)
 
         self.client = chromadb.PersistentClient(
             path=db_path,
@@ -678,6 +753,14 @@ class TextRAG:
         self.db_exists = self._check_database_exists()
 
         # Collections
+        # Both collections are created without an `embedding_function`, so
+        # Chroma attaches its default (`ONNXMiniLM_L6_V2`). That default
+        # downloads an ONNX archive from a public S3 bucket -- but only inside
+        # its `__call__`, which never fires because every write below passes
+        # `embeddings=` and every read passes `query_embeddings=`, computed by
+        # `embed_text` from `self.text_model`. Do not add a call that omits
+        # them: it would reach the network on a machine meant to work offline,
+        # and write 384-dimension vectors into a 640-dimension collection.
         self.text_collection = self.client.get_or_create_collection(
             name="text_chunks",
             metadata={"hnsw:space": "cosine"},
@@ -780,7 +863,9 @@ class TextRAG:
             filename=pdf_path.name,
         )
         try:
-            raw = send_prompt_to_chatgpt(prompt, max_tokens=4096)
+            raw = send_prompt_to_chatgpt(
+                prompt, max_tokens=4096, credentials=self.llm_credentials
+            )
         except Exception as exc:  # noqa: BLE001
             log.error("  Citation API call failed for %s: %s", pdf_path.name, exc)
             return None

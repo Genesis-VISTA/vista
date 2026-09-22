@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Annotated as A, TypeVar
+from typing import Annotated as A, NamedTuple, TypeVar
 from pydantic import AfterValidator, BeforeValidator
 from pydantic_settings.sources.types import NoDecode
 
@@ -40,3 +40,21 @@ CommaSeparatedList = A[
     BeforeValidator(_validate_comma_separated_list),
     NoDecode, # So env vars aren't parsed as JSON before calling our BeforeValidator
 ]
+
+
+class GlobusTokens(NamedTuple):
+    """The two refresh tokens one cluster's file operations need.
+
+    Globus issues one refresh token per resource server, and VISTA now talks to
+    two: the Transfer API for directory listings and `mkdir`, and the OLCF
+    collection itself for the bytes. `transfer`'s resource server is
+    `transfer.api.globus.org`; `https`'s is the collection UUID, which is why
+    the pair is per-cluster rather than global.
+
+    They are resolved together and never mixed between sources -- a transfer
+    token from the researcher and an HTTPS token from the deployment would act
+    as two different POSIX identities on the same cluster.
+    """
+
+    transfer: str
+    https: str

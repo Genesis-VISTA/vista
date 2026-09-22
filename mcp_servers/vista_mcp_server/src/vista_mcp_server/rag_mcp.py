@@ -15,7 +15,11 @@ Environment variables:
                                     (`<data_dir>/knowledge-bases`) is derived
                                     from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
-                                    Default: google/embeddinggemma-300m
+                                    Default: microsoft/harrier-oss-v1-270m
+    VISTA_EMBED_DEVICE             Torch device for the encoder. Unset lets
+                                    sentence-transformers choose (cuda, then
+                                    mps, then cpu). `build_rag.py` reads the
+                                    same variable when indexing.
 """
 import json
 import logging
@@ -111,8 +115,12 @@ async def app_lifespan(server):
     """Load the embedding model and open ChromaDB collections at startup."""
     global _encoder
 
-    logger.info("RAG: loading embedding model %s", settings.rag_model)
-    _encoder = SentenceTransformer(settings.rag_model, device="cpu")
+    logger.info(
+        "RAG: loading embedding model %s (device=%s)",
+        settings.rag_model,
+        settings.embed_device or "auto",
+    )
+    _encoder = SentenceTransformer(settings.rag_model, device=settings.embed_device)
 
     discovered = _discover_kb_paths()
     if not discovered:
@@ -139,6 +147,12 @@ async def app_lifespan(server):
         # scary ERROR on every boot. Matching `hnsw:space=cosine` to what
         # build_rag.py uses so a later indexing run finds compatible
         # collections rather than re-creating them.
+        # No `embedding_function` is passed, so Chroma attaches its default
+        # (`ONNXMiniLM_L6_V2`), which downloads an ONNX archive from a public
+        # S3 bucket. It never fires: `__call__` is the only thing that
+        # downloads, and every read below passes `query_embeddings=` from
+        # `_embed`. Do not add a call that omits them -- it would reach the
+        # network on an offline machine and encode with the wrong model.
         try:
             text_collection = client.get_or_create_collection(
                 name="text_chunks",

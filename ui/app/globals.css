@@ -2613,6 +2613,81 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.4;
 }
 
+.user-settings-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+.user-settings-globus {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.user-settings-globus-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-settings-globus-cluster {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.user-settings-globus-status {
+  flex: 1;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.user-settings-globus-status.connected {
+  color: var(--ok, #1a7f4b);
+}
+
+.user-settings-globus-status.pending {
+  color: var(--ink);
+}
+
+.user-settings-globus-status.absent {
+  color: var(--muted);
+}
+
+/* The authorization address. Long, and the researcher may need to select it by
+   hand on a machine where the browser cannot be opened for them. */
+.user-settings-globus-url {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.user-settings-globus-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-settings-globus-actions .input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Standalone page wrapper (used by /datasets, /skills)               */
 /* ------------------------------------------------------------------ */
