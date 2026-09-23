@@ -380,7 +380,7 @@ class TestViewPath:
     async def test_text_file(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "hello.txt"
-        f.write_text("line 1\nline 2\nline 3\n")
+        f.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
         result = await view_path(sandbox, "/test/hello.txt")
         assert "line 1" in result
         assert "line 2" in result
@@ -390,7 +390,7 @@ class TestViewPath:
     async def test_text_file_line_numbers(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "nums.txt"
-        f.write_text("\n".join(f"line {i}" for i in range(1, 6)))
+        f.write_text("\n".join(f"line {i}" for i in range(1, 6)), encoding="utf-8")
         lines = (await view_path(sandbox, "/test/nums.txt")).splitlines()
         assert lines[0].split("\t")[0].strip() == "1"
         assert lines[4].split("\t")[0].strip() == "5"
@@ -399,7 +399,7 @@ class TestViewPath:
     async def test_text_file_with_range(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "range.txt"
-        f.write_text("\n".join(f"line {i}" for i in range(1, 11)))
+        f.write_text("\n".join(f"line {i}" for i in range(1, 11)), encoding="utf-8")
         result = await view_path(sandbox, "/test/range.txt", (3, 5))
         assert "line 3" in result
         assert "line 5" in result
@@ -410,7 +410,7 @@ class TestViewPath:
     async def test_text_file_negative_range(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "neg.txt"
-        f.write_text("a\nb\nc\nd\ne")
+        f.write_text("a\nb\nc\nd\ne", encoding="utf-8")
         result = await view_path(sandbox, "/test/neg.txt", (-2, -1))
         assert "d" in result
         assert "e" in result
@@ -428,8 +428,10 @@ class TestViewPath:
     async def test_directory(self, sb):
         sandbox, tmp_path = sb
         (tmp_path / "dir/src").mkdir(parents=True)
-        (tmp_path / "dir/src" / "main.py").write_text("print('hello')")
-        (tmp_path / "dir/README.md").write_text("# Readme")
+        (tmp_path / "dir/src" / "main.py").write_text(
+            "print('hello')", encoding="utf-8"
+        )
+        (tmp_path / "dir/README.md").write_text("# Readme", encoding="utf-8")
         result = await view_path(sandbox, "/test/dir")
         assert "src/" in result
         assert "README.md" in result
@@ -444,7 +446,7 @@ class TestViewPath:
     async def test_invalid_range_returns_error(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "f.txt"
-        f.write_text("a\nb\nc")
+        f.write_text("a\nb\nc", encoding="utf-8")
         result = await view_path(sandbox, "/test/f.txt", (10, 20))
         assert result.startswith("Error:")
 
@@ -453,7 +455,9 @@ class TestViewPath:
         sandbox, tmp_path = sb
         # depth from /test: a=1, b=2, c=3, d=4 — 'd' and its contents are beyond -maxdepth 3
         (tmp_path / "a" / "b" / "c" / "d").mkdir(parents=True)
-        (tmp_path / "a" / "b" / "c" / "d" / "deep.txt").write_text("deep")
+        (tmp_path / "a" / "b" / "c" / "d" / "deep.txt").write_text(
+            "deep", encoding="utf-8"
+        )
         result = await view_path(sandbox, "/test")
         assert "deep.txt" not in result
         assert "a/" in result

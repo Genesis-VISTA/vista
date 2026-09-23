@@ -29,15 +29,15 @@ Tasks marked **(not PR CI)** need a live sandbox, a live inference key or a real
 
 ## 2. Host-portability code fixes
 
-- [ ] 2.1 [mac] Replace the `chmod -R o+rX` subprocess at `backend/src/vista_backend/agents/agents.py:657` with an in-process `os.walk`/`os.chmod`, and add `exist_ok=True` to the `mkdir` at `:649` (D7). Add `backend/tests/test_skills_volume.py`, asserting that files are o+r and directories o+rx, and that no subprocess is spawned. Verify with `uv run --extra dev pytest tests/test_skills_volume.py`.
-- [ ] 2.2 [mac] Keep guest paths POSIX in `backend/src/vista_backend/agents/skills.py:208`: resolve only host keys, and keep guest values as `PurePosixPath` (D4). Extend `backend/tests/test_skills_prompt.py` to assert that locations read `/mnt/skills/<name>/SKILL.md`, with no drive letter or backslash, including when the host side is a `PureWindowsPath`-shaped string.
-- [ ] 2.3 [mac] Build and parse `file://` URIs host-independently in `mcp_servers/vista_mcp_server/src/vista_mcp_server/display_file_mcp.py:34-38` (D4). Extend `tests/test_display_file.py` with `/mnt/data/output/plot.png`, and assert that relative paths and `..` are still rejected.
-- [ ] 2.4 [mac] In `submit_job_mcp.py`, make `sandbox_out_dir` a `PurePosixPath` at `:1334` and `:1375`, and route both download loops (`:1338`, `:1390`) through one shared validator (D5). Add `mcp_servers/vista_mcp_server/tests/test_output_paths.py`:
+- [x] 2.1 [mac] Replace the `chmod -R o+rX` subprocess at `backend/src/vista_backend/agents/agents.py:657` with an in-process `os.walk`/`os.chmod`, and add `exist_ok=True` to the `mkdir` at `:649` (D7). Add `backend/tests/test_skills_volume.py`, asserting that files are o+r and directories o+rx, and that no subprocess is spawned. Verify with `uv run --extra dev pytest tests/test_skills_volume.py`. *(done: `_make_readable_by_others` in `agents.py`. `tests/test_skills_volume.py` checks the modes, and the `_setup_volumes` test in `test_skills_prompt.py` now fails if a subprocess is spawned.)*
+- [x] 2.2 [mac] Keep guest paths POSIX in `backend/src/vista_backend/agents/skills.py:208`: resolve only host keys, and keep guest values as `PurePosixPath` (D4). Extend `backend/tests/test_skills_prompt.py` to assert that locations read `/mnt/skills/<name>/SKILL.md`, with no drive letter or backslash, including when the host side is a `PureWindowsPath`-shaped string. *(done: the sandbox side is a `PurePosixPath` and is never resolved, and host-relative parts are joined through `_in_sandbox`. New tests: `/tmp/skills` stays `/tmp/skills` (the old code turned it into `/private/tmp` on macOS), and a `PureWindowsPath` relative path maps to `/mnt/skills/...`.)*
+- [x] 2.3 [mac] Build and parse `file://` URIs host-independently in `mcp_servers/vista_mcp_server/src/vista_mcp_server/display_file_mcp.py:34-38` (D4). Extend `tests/test_display_file.py` with `/mnt/data/output/plot.png`, and assert that relative paths and `..` are still rejected. *(done: URIs are built with `quote` and parsed with `urlsplit` and `PurePosixPath`, and the module no longer imports `Path`. Refusals now also cover `.` segments, `file:` relative paths and non-local hosts.)*
+- [x] 2.4 [mac] In `submit_job_mcp.py`, make `sandbox_out_dir` a `PurePosixPath` at `:1334` and `:1375`, and route both download loops (`:1338`, `:1390`) through one shared validator (D5). Add `mcp_servers/vista_mcp_server/tests/test_output_paths.py`:
   - rejected: `/etc/x`, `C:\x`, `C:x`, `\\host\share\x`, `../x`, `..\x`, and a symlink that escapes
   - accepted: `results/summary.csv`
   - returned paths contain only forward slashes
-  Verify with `uv run --extra dev pytest tests/test_output_paths.py`.
-- [ ] 2.5 [mac] Add `encoding="utf-8"` to every text read and write (D6). This covers at least:
+  Verify with `uv run --extra dev pytest tests/test_output_paths.py`. *(done: `_job_output_paths` and `SANDBOX_OUTPUT_DIR`. `tests/test_output_paths.py` has 12 cases, including `\\x` and an escaping symlink.)*
+- [x] 2.5 [mac] Add `encoding="utf-8"` to every text read and write (D6). This covers at least:
   - `agents/skills.py:134`
   - `db/seed.py:323`, `:342`, `:364`
   - `services/skills.py:214`, `:246`
@@ -45,10 +45,10 @@ Tasks marked **(not PR CI)** need a live sandbox, a live inference key or a real
   - `agenthpc/config.py:23`
   - whatever the sweep in 2.6 finds
 
-  Verify with `git grep -nE "open\(|read_text\(|write_text\("` reviewed file by file, and with 2.6 passing.
-- [ ] 2.6 [mac] Run all three hermetic suites with `PYTHONWARNDEFAULTENCODING=1` and `-W error::EncodingWarning`, filtered to VISTA packages. Wire it into the test targets in `scripts/ci-local.sh` and the matching `.gitlab-ci.yml` jobs. Verify with `./scripts/ci-local.sh test` passing.
-- [ ] 2.7 [mac] Delete the dead `mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/dns.py` and `tests/test_dns.py`. Verify with `git grep -n "lib.dns\|from .dns"` returning nothing, and the vista_mcp_server suite passing.
-- [ ] 2.8 [mac] Run the hermetic suites and compare with the baselines. Pass counts must be at least the baseline plus the new tests, with no new skips: backend 369, vista_mcp_server 153 (less the tests removed in 2.7), dev_mcp_server 50. Verify with `./scripts/ci-local.sh test`.
+  Verify with `git grep -nE "open\(|read_text\(|write_text\("` reviewed file by file, and with 2.6 passing. *(done: the listed files, plus `agents.py:83`, `campaign/manifest.py`, `backend/scripts/{metrics_report,amortization_report}.py`, and every test-fixture read and write in the three suites. Left alone: the skill scripts under `db/skills/*/scripts`, which run in the Linux sandbox; `lib/ssh.py`'s `/dev/tty`, which is POSIX-only; and `lib/dns.py`, which 2.7 deletes.)*
+- [x] 2.6 [mac] Run all three hermetic suites with `PYTHONWARNDEFAULTENCODING=1` and `-W error::EncodingWarning`, filtered to VISTA packages. Wire it into the test targets in `scripts/ci-local.sh` and the matching `.gitlab-ci.yml` jobs. Verify with `./scripts/ci-local.sh test` passing. *(done: `filterwarnings` in each project's pytest config errors on `EncodingWarning`, except the one the third-party `regex` package raises when imported. `PYTHONWARNDEFAULTENCODING=1` is exported in `ci-local.sh` and set on the three GitLab test jobs. A per-module filter can't isolate VISTA code, because `pathlib` is where the warning is attributed, so test code is held to the rule too.)*
+- [x] 2.7 [mac] Delete the dead `mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/dns.py` and `tests/test_dns.py`. Verify with `git grep -n "lib.dns\|from .dns"` returning nothing, and the vista_mcp_server suite passing. *(done: 11 tests removed with it.)*
+- [x] 2.8 [mac] Run the hermetic suites and compare with the baselines. Pass counts must be at least the baseline plus the new tests, with no new skips: backend 369, vista_mcp_server 153 (less the tests removed in 2.7), dev_mcp_server 50. Verify with `./scripts/ci-local.sh test`. *(done: backend 373 (369 + 4 new), vista_mcp_server 159 (153 − 11 DNS + 17 new), dev_mcp_server 49 hermetic, the same set as before; lint and pyright are clean.)*
 
 ## 3. Sandbox store migration (D3: in place)
 

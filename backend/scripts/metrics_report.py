@@ -67,7 +67,7 @@ def load_events(paths: list[Path]) -> list[dict]:
     for path in paths:
         if not path.exists():
             continue
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             event = json.loads(line)

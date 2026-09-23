@@ -115,7 +115,7 @@ class TestWhichEndIsReturned:
         """A traceback is at the end. The 200 lines of module loading that a
         head read spent itself on are not what anyone is looking for."""
         local = tmp_path / "log.out"
-        local.write_text("".join(f"line {i}\n" for i in range(500)))
+        local.write_text("".join(f"line {i}\n" for i in range(500)), encoding="utf-8")
 
         lines = _read_log_tail(local).splitlines()
 
@@ -124,7 +124,7 @@ class TestWhichEndIsReturned:
 
     def test_a_short_log_comes_back_whole(self, tmp_path):
         local = tmp_path / "log.out"
-        local.write_text("only\nthese\n")
+        local.write_text("only\nthese\n", encoding="utf-8")
 
         assert _read_log_tail(local) == "only\nthese"
 

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import uuid
 import asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
@@ -79,7 +80,9 @@ from .campaign.mcp_invoke import build_invoke
 from .campaign.planner import CampaignPlanner, build_subagents
 
 
-BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
+BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text(
+    encoding="utf-8"
+)
 
 
 class LogEntry(BaseModel):
@@ -162,6 +165,29 @@ class EgressWarning(BaseModel):
     """ `warning` (annotate) or `error` (block mode). """
     message: str
     """ Rendered blurb, already formatted for display. """
+
+
+def _make_readable_by_others(root: Path) -> None:
+    """
+    In-process `chmod -R o+rX`, so the sandbox can read skills whatever user it runs as.
+    Directories become traversable, and files become readable (and executable when already
+    executable by someone). Symlinks are left alone, as `chmod -R` leaves them.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root):
+        _add_mode(Path(dirpath), stat.S_IROTH | stat.S_IXOTH)
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            mode = path.stat().st_mode
+            executable = mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            _add_mode(path, stat.S_IROTH | (stat.S_IXOTH if executable else 0))
+
+
+def _add_mode(path: Path, bits: int) -> None:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & bits != bits:
+        os.chmod(path, mode | bits)
 
 
 class ProjectAgentResult(BaseModel):
@@ -647,17 +673,14 @@ class ProjectAgent:
         }
 
         shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
-        self.skills_volume_dir.mkdir()
+        self.skills_volume_dir.mkdir(exist_ok=True)
         for name in self.project.skills:
             src = skill_dirs.get(name)
             if src is None or not src.is_dir():
                 logging.warning(f"Skill {name!r} not found at {src}; skipping")
                 continue
             shutil.copytree(src, self.skills_volume_dir / name, symlinks=True)
-        proc = await asyncio.create_subprocess_exec(
-            "chmod", "-R", "o+rX", str(self.skills_volume_dir)
-        )
-        await proc.wait()
+        _make_readable_by_others(self.skills_volume_dir)
 
     def _attribute_skill(self, tool_name: str, args_blob: str | None) -> str | None:
         """

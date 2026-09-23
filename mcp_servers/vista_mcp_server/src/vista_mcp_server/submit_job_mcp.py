@@ -12,7 +12,7 @@ identity.
 """
 from __future__ import annotations
 import json, logging, os, shlex, textwrap, dataclasses
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
 from fastmcp import FastMCP, Context
@@ -95,12 +95,12 @@ def get_available_jobs() -> dict[str, JobInfo]:
             readme = file / "README.md"
             if not readme.exists():
                 raise ValueError(f"No README.md in {file}")
-            description = readme.read_text().strip()
+            description = readme.read_text(encoding="utf-8").strip()
             if not description.startswith(f"# {file.name}"):
                 raise ValueError(f'Job README.md should start with "# {file.name}" header')
             cluster_defaults_file = file / "cluster_defaults.json"
             if cluster_defaults_file.exists():
-                cluster_defaults = ClusterDefaults.model_validate_json(cluster_defaults_file.read_text())
+                cluster_defaults = ClusterDefaults.model_validate_json(cluster_defaults_file.read_text(encoding="utf-8"))
             else:
                 cluster_defaults = ClusterDefaults()
             jobs[file.name] = JobInfo(
@@ -196,7 +196,7 @@ def _load_submitted_jobs(path: Path | None = None) -> dict[str, SubmittedJob]:
     """ Read the persisted registry. Missing or corrupt file -> empty dict (best-effort). """
     path = path or _registry_path()
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
         return {}
@@ -214,7 +214,7 @@ def _persist_submitted_jobs(path: Path | None = None) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(_serialize_jobs(_submitted_jobs), f)
         os.replace(tmp, path)
     except OSError as e:
@@ -440,10 +440,10 @@ async def _submit_odo_job(
         remote_endpoint=settings.odo_globus_collection_id,
     )
 
-    job_script_text = job_script_path.read_text()
+    job_script_text = job_script_path.read_text(encoding="utf-8")
     setup_script_path = local_job_dir / ODO_SETUP_SCRIPT
     pre_launch = (
-        f"bash -lc {shlex.quote(setup_script_path.read_text())}"
+        f"bash -lc {shlex.quote(setup_script_path.read_text(encoding='utf-8'))}"
         if setup_script_path.exists() else None
     )
 
@@ -599,10 +599,10 @@ async def _submit_perlmutter_job(
     await iri_client.mkdir(out_dir)
     await _sync_perlmutter_sources(iri_client, job, src_dir)
 
-    job_script_text = job_script_path.read_text()
+    job_script_text = job_script_path.read_text(encoding="utf-8")
     setup_script_path = local_job_dir / PERLMUTTER_SETUP_SCRIPT
     pre_launch = (
-        f"bash -lc {shlex.quote(setup_script_path.read_text())}"
+        f"bash -lc {shlex.quote(setup_script_path.read_text(encoding='utf-8'))}"
         if setup_script_path.exists() else None
     )
 
@@ -762,10 +762,10 @@ async def _submit_frontier_job(
         remote_endpoint=settings.frontier_globus_collection_id,
     )
 
-    job_script_text = job_script_path.read_text()
+    job_script_text = job_script_path.read_text(encoding="utf-8")
     setup_script_path = local_job_dir / FRONTIER_SETUP_SCRIPT
     pre_launch = (
-        f"bash -lc {shlex.quote(setup_script_path.read_text())}"
+        f"bash -lc {shlex.quote(setup_script_path.read_text(encoding='utf-8'))}"
         if setup_script_path.exists() else None
     )
 
@@ -1320,6 +1320,35 @@ async def get_hpc_job_outputs(
     return await _get_olcf_job_outputs(cfg, host_output_dir, job_id, files, cluster=cluster)
 
 
+SANDBOX_OUTPUT_DIR = PurePosixPath("/mnt/data/output")
+"""Where job outputs appear inside the sandbox. A sandbox path, so POSIX on every host."""
+
+
+def _job_output_paths(
+    local_out_dir: Path, sandbox_out_dir: PurePosixPath, file: str
+) -> tuple[Path, PurePosixPath]:
+    """
+    Map a requested output file name to its local download path and its sandbox path.
+
+    The name must be relative and stay inside the job's output directory. It is checked as
+    both a POSIX and a Windows path, because either reading could escape: on Windows
+    `/etc/x` is not absolute, and on POSIX `..\\x` is not a parent reference.
+    """
+    posix, windows = PurePosixPath(file), PureWindowsPath(file)
+    if (
+        not file
+        or posix.is_absolute()
+        or windows.anchor
+        or ".." in posix.parts
+        or ".." in windows.parts
+    ):
+        raise ValueError(f'Invalid path "{file}"')
+    local_path = local_out_dir.joinpath(*posix.parts)
+    if not local_path.resolve().is_relative_to(local_out_dir.resolve()):
+        raise ValueError(f'Invalid path "{file}"')
+    return local_path, sandbox_out_dir.joinpath(*posix.parts)
+
+
 async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
     # IRI filesystem download is currently text-only; binary checkpoints are not supported here.
     submitted = _submitted_jobs.get(job_id)
@@ -1331,15 +1360,12 @@ async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, jo
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     local_out_dir = host_output_dir / job_id
-    sandbox_out_dir = Path("/mnt/data/output") / job_id
+    sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
 
     downloaded = []
     for file in files:
-        if ".." in Path(file).parts or Path(file).is_absolute():
-            raise ValueError(f'Invalid path "{file}"')
+        local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
         remote_path = f"{submitted.output_dir.rstrip('/')}/{file}"
-        local_path = local_out_dir / file
-        sandbox_path = sandbox_out_dir / file
         local_path.parent.mkdir(parents=True, exist_ok=True)
         await iri_client.download(remote_path, local_path)
         downloaded.append(str(sandbox_path))
@@ -1372,7 +1398,7 @@ async def _get_olcf_job_outputs(
         )
 
     local_out_dir = host_output_dir / job_id
-    sandbox_out_dir = Path("/mnt/data/output") / job_id
+    sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
     remote_out_dir = submitted.output_dir.rstrip("/")
 
     wanted: list[tuple[str, Path]] = []
@@ -1387,10 +1413,7 @@ async def _get_olcf_job_outputs(
         # access to only gen150-vista and chm245 the jobs all run as a service account the users
         # would have had access to anyways. When OLCF supports IRI file transfer, we can remove
         # globus and rely on the S3M token for restricting file access.
-        if ".." in Path(file).parts or Path(file).is_absolute():
-            raise ValueError(f'Invalid path "{file}"')
-        local_path = local_out_dir / file
-        sandbox_path = sandbox_out_dir / file
+        local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
         sandbox_paths.append(str(sandbox_path))
         if local_path.exists() and local_path.stat().st_size > 0:
             cached_paths.append(str(sandbox_path))

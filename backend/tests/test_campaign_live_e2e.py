@@ -159,7 +159,9 @@ async def test_live_path_dispatch_then_monitor_resume(
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
     skills_dir = Path(project_paths_for(project.id, alice.id)["skills_dir"])
     (skills_dir / "mock-planner").mkdir(parents=True)
-    (skills_dir / "mock-planner" / "campaign.yaml").write_text(MANIFEST_YAML)
+    (skills_dir / "mock-planner" / "campaign.yaml").write_text(
+        MANIFEST_YAML, encoding="utf-8"
+    )
 
     # One fake MCP invoke: submit returns a parseable summary (unique ids); status says done.
     submits = {"n": 0}

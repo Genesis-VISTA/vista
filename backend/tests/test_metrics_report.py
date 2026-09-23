@@ -69,7 +69,8 @@ def logs(tmp_path):
                 "duration_ms": 1.5,
             }
         )
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
     return metrics_path, provenance_path, run_id
 

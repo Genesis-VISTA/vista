@@ -41,7 +41,9 @@ def test_indexing_encoder_names_the_same_model() -> None:
     """
     build_rag = Path(__file__).resolve().parents[3] / "build_rag.py"
     assert build_rag.is_file(), f"expected build_rag.py at {build_rag}"
-    assert f'text_model: str = "{EXPECTED_MODEL}"' in build_rag.read_text(), (
+    assert f'text_model: str = "{EXPECTED_MODEL}"' in build_rag.read_text(
+        encoding="utf-8"
+    ), (
         f"build_rag.py's text_model default has drifted from "
         f"settings.rag_model ({settings.rag_model!r})"
     )

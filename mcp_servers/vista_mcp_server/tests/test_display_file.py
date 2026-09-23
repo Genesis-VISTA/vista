@@ -71,3 +71,27 @@ def test_spaces_in_a_filename_survive_as_percent_escapes():
         resolve_uri("/mnt/data/output/phase diagram.png", URI_MAP)
         == "/api/files/outputs/phase%20diagram.png?project_name=molten-salt"
     )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "/mnt/data/output/../../etc/passwd",
+        "/mnt/data/output/./plot.png",
+        "file:mnt/data/output/plot.png",
+        "file://otherhost/mnt/data/output/plot.png",
+    ],
+)
+def test_non_absolute_or_remote_paths_are_refused(uri):
+    with pytest.raises(ValueError, match="not absolute"):
+        resolve_uri(uri, URI_MAP)
+
+
+def test_sandbox_paths_are_not_host_paths():
+    """
+    `Path` is a WindowsPath on Windows, where `/mnt/...` has no drive and cannot become a
+    `file://` URI. Sandbox paths are POSIX, so resolution must not go through `Path`.
+    """
+    import vista_mcp_server.display_file_mcp as module
+
+    assert not hasattr(module, "Path")
