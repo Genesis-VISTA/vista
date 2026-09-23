@@ -111,11 +111,12 @@ async def run_bash(
     Avoid commands that produce a large amount of output — pipe to files instead.
     """
     proc = await sandbox.exec("bash", args=["-c", command], combine_streams=True)
-    # `msb exec` forwards its stdin to the guest and won't exit until that pipe closes.
+    # A command that reads stdin would otherwise wait on it forever.
     if proc.stdin and not proc.stdin.is_closing():
         proc.stdin.close()
     lines = []
     while True:
+        # The guest terminal that keeps output line-buffered also turns \n into \r\n.
         line = (await proc.stdout.readline()).decode().replace("\r\n", "\n")
         if not line:
             break

@@ -1,10 +1,26 @@
 import abc
 import asyncio
-from typing import Literal
-from pathlib import Path
+from typing import Any, Literal, Protocol
+from pathlib import Path, PurePosixPath
 
 
-Volume = tuple[Path | str, Path | str, Literal["r", "w"]]
+Volume = tuple[Path | str, PurePosixPath | str, Literal["r", "w"]]
+""" (host path, sandbox path, mode). The sandbox path is always POSIX, whatever the host OS. """
+
+
+class SandboxProcess(Protocol):
+    """The part of `asyncio.subprocess.Process` that callers of `Sandbox.exec` rely on."""
+
+    stdin: Any
+    stdout: asyncio.StreamReader
+    stderr: asyncio.StreamReader | None
+    returncode: int | None
+
+    async def wait(self) -> int: ...
+
+    async def communicate(
+        self, input: bytes | None = None
+    ) -> tuple[bytes, bytes | None]: ...
 
 # TODO: Maybe should simplify these awkward abstract classmethods with a abstract "SandboxSpawner"
 # class.
@@ -32,7 +48,7 @@ class Sandbox(abc.ABC):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         combine_streams: bool = False,
-    ) -> asyncio.subprocess.Process:
+    ) -> SandboxProcess:
         """
         Execute a command inside the sandbox.
 
