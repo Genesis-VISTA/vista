@@ -39,6 +39,14 @@ class AppSettings(BaseSettings):
 
 settings = AppSettings()
 
+# TEMPORARY(windows-support): remove before merge.
+# microsandbox 0.7 migrates its store one way, and every checkout shares ~/.microsandbox, so a
+# single run of this branch would stop checkouts still on 0.5.7 starting a sandbox. Until the
+# upgrade merges, default to a separate store. Set here, before the SDK or any `msb`
+# subprocess starts, so both inherit it. An explicit MSB_HOME wins.
+INTERIM_MSB_HOME = Path.home() / ".microsandbox-interim"
+os.environ.setdefault("MSB_HOME", str(INTERIM_MSB_HOME))
+
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ["FASTMCP_ENABLE_RICH_LOGGING"] = "false"
 logging.basicConfig(

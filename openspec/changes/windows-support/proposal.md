@@ -30,6 +30,7 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 - Cross-building Windows artifacts from macOS or Linux.
 - WSL2 as a supported route.
 - The Electron window shell on Windows.
+- The AWS deployment. There is none today; a future one would port the unmerged `beta-deployment-3` sandbox changes onto this change's SDK path.
 - VISTAGuard.
 
 ## Impact
@@ -39,4 +40,3 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 - **vista_mcp_server:** `display_file_mcp.py`, `submit_job_mcp.py`, `agenthpc/config.py`. The dead `lib/dns.py` is removed.
 - **Scripts:** `package_launcher.sh`, `build_local_package.sh`. New: a PowerShell launcher and a Windows build path.
 - **Repo:** new `.gitattributes` rules.
-- **Deployment:** AWS's `/data/msb` store migrates on the first 0.7 deploy.

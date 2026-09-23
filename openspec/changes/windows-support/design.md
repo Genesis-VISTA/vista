@@ -8,11 +8,10 @@ See [proposal.md](proposal.md) for the motivation. The facts that shape the appr
   - Edge cases also pass on 0.7.2: Python output streaming, a missing program, separate byte-exact streams, and cwd and env.
   - Hermetic tests: 50 pass, down from 61; the 11 missing are the removed DNS tests.
   - The live-check scripts were in the session scratchpad, which has since been cleared. Task 1.9 restores them as marker-gated tests.
-- **The 0.7 store migration is one-way.** Once 0.7.2 opens a 0.5.7 store, 0.5.7 fails with `Migration file … is missing`. Three stores exist today:
+- **The 0.7 store migration is one-way.** Once 0.7.2 opens a 0.5.7 store, 0.5.7 fails with `Migration file … is missing`. Two stores are in use today:
   - Dev checkouts share `~/.microsandbox`, the default, because nothing sets `MSB_HOME`.
   - Packages use `$VISTA_HOME/microsandbox`, set by `package_launcher.sh`.
-  - AWS uses `/data/msb`, set in `aws/Dockerfile.server`.
-- **0.7's socket-path limit** needs `MSB_HOME` at about 53 characters or less on macOS. The launcher's `SOCKET_BUDGET` is 60.
+- **0.7's socket-path limit** needs `MSB_HOME` at 51 characters or less on macOS: msb rejects a derived socket path of 102 bytes or more (measured 2026-09-23 with 0.7.2; 52 characters fails, independent of the sandbox name). The launcher's `SOCKET_BUDGET` was 60.
 - **Windows specifics:**
   - The runtime needs the Windows Hypervisor Platform feature, not `VirtualMachinePlatform`. Enabling it needs admin rights and a restart, and `msb doctor --fix` can do it.
   - Upstream labels Windows support as preview.
@@ -56,13 +55,12 @@ msb 0.7 reads the host's resolver configuration itself: SCDynamicStore on macOS,
 
 ### D3. Migrate the sandbox store in place
 
-Every consumer keeps its current store path: `~/.microsandbox` for dev, `$VISTA_HOME/microsandbox` for packages, `/data/msb` for AWS. 0.7 migrates each one the first time it opens it. A migration test on a copy of `~/.microsandbox` succeeded. Task 3.5 confirms that the images survive, so nothing is re-imported or rebuilt.
+Every consumer keeps its current store path: `~/.microsandbox` for dev, `$VISTA_HOME/microsandbox` for packages. 0.7 migrates each one the first time it opens it. A migration test on a copy of `~/.microsandbox` succeeded. Task 3.5 confirms that the images survive, so nothing is re-imported or rebuilt.
 
 The cost is rollback. Once migrated, a store no longer opens under 0.5.7 (`Migration file … is missing`). The reset is to delete the store directory, after which the old version re-imports or rebuilds its image on next start. The consequences:
 
 - **Dev worktrees are one-way from the first run.** The first time any worktree runs on 0.7, `~/.microsandbox` migrates, and every worktree still on 0.5.7 (main included, until this merges) fails to start its sandbox until it rebases or resets. To avoid that before merge, the branch carries a temporary default: when `MSB_HOME` is unset, the dev server sets it to a separate interim store, `~/.microsandbox-interim`, before the SDK or any `msb` subprocess starts. Every live run on the branch then leaves `~/.microsandbox` alone without anyone having to remember an export. The default is removed as the last commit before merge (task 8.1), and from then on the permanent in-place migration applies. The interim store can be deleted after merge.
 - **Packages:** upgrading needs no action. Rolling back means deleting `$VISTA_HOME/microsandbox`, which the release notes say.
-- **AWS:** the first 0.7 deploy migrates `/data/msb`. Rolling back that deploy needs the same reset on the data volume.
 
 Why this and not a separate store: the store path stays the same everywhere, there is no roughly 855 MB duplicate per consumer, and there is no stale directory to clean up. Chosen by the project owner on 2026-09-23 over a version-scoped store (`~/.microsandbox-0.7` and so on), which would have kept rollback reset-free.
 
@@ -154,7 +152,7 @@ The laptop-distribution delta records this exception to cross-building.
 - **[The SDK stub and the runtime disagree (`name`)]** → A unit test pins the awaitable-property behavior, so an SDK change that makes `name` a method fails loudly.
 - **[Rollback needs a manual store reset]** → The release notes and the Windows install notes give the one reset step (delete the store directory). Task 3.5 checks that the step actually restores the old version.
 - **[One live run on this branch against the shared `~/.microsandbox` breaks every 0.5.7 worktree]** → The branch's interim-store default (D3) until merge, then announce the migration when the change merges.
-- **[AWS sets `VISTA_DEV_MCP_OCI_IMAGE_TAR`, but no code reads it]** → Check how the AWS image actually reaches the store, and confirm that `/data/msb` migrates cleanly on the first 0.7 deploy (task 3.4).
+- **[`aws/` still targets the 0.5.7 sandbox code]** → Out of scope: there is no current AWS deployment. Task 3.4 found that `aws/Dockerfile.server`'s `VISTA_DEV_MCP_OCI_IMAGE_TAR` is implemented only on unmerged branches (`f618a12` on `origin/beta-deployment-3` and `origin/s3-job-output`), which rewrite `microsandbox_sandbox.py` against the 0.5.7 CLI. If a deployment goes ahead, those branches are ported to this change's SDK path: their tar seeding becomes `Image.load` plus the existing digest comparison.
 - **[Linux live sandbox is untested in this change]** → Hermetic tests only. Run the live sandbox tests (task 1.9) on a Linux host with KVM before release.
 - **[The resolv.conf that microsandbox writes has mode 0700]** → This is an existing TODO. The sandbox image stays root until it is fixed upstream.
 
@@ -163,7 +161,6 @@ The laptop-distribution delta records this exception to cross-building.
 1. Until merge, the branch's dev server defaults to `~/.microsandbox-interim` (D3). Packages built from the branch are tested only under a throwaway `VISTA_HOME`, never `~/.vista`.
 2. Remove the interim default as the last commit, then merge to main in one MR, and tell developers that the first run migrates `~/.microsandbox`. Any worktree still on 0.5.7 must rebase, or delete `~/.microsandbox` and rebuild on its next start.
 3. Packages: the next release migrates `$VISTA_HOME/microsandbox` on first run. The release notes give the rollback reset.
-4. AWS: the first 0.7 deploy migrates `/data/msb`. Rolling back redeploys the previous image, and then needs `/data/msb` deleted.
 
 ## Open Questions
 

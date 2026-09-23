@@ -1,11 +1,12 @@
 """Live checks of the dev MCP server's tools against a real microsandbox microVM.
 
 Covers the scenarios in openspec/changes/windows-support/specs/code-execution-sandbox.
-Opt-in: `VISTA_RUN_SANDBOX=1 MSB_HOME=~/.msb-live uv run pytest -m sandbox`. The first run
-builds the sandbox image with docker or podman and loads it into that store.
+Opt-in: `VISTA_RUN_SANDBOX=1 uv run pytest -m sandbox`. The first run builds the sandbox image
+with docker or podman and loads it into the store.
 
-`MSB_HOME` must be set so these tests never open (and migrate) the shared
-`~/.microsandbox` that other checkouts may still be using.
+`MSB_HOME` must be set so these tests never open (and migrate) the shared `~/.microsandbox`
+that other checkouts may still be using. Until the upgrade merges, the dev server's config
+defaults it to an interim store; pass it explicitly to use another.
 """
 
 import asyncio
