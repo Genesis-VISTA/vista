@@ -15,9 +15,9 @@ from microsandbox import (
     Sandbox as MsbSandbox,
     Stdin,
     Volume as MsbVolume,
+    resolve_runtime,
 )
 from microsandbox.errors import ImageNotFoundError
-from microsandbox._runtime import msb_path as _msb_path
 
 from .sandbox import Sandbox, SandboxProcess, Volume
 from .util import check_output, parse_output
@@ -111,7 +111,9 @@ class _ExecProcess(SandboxProcess):
         assert self.returncode is not None
         return self.returncode
 
-    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes | None]:
+    async def communicate(
+        self, input: bytes | None = None
+    ) -> tuple[bytes, bytes | None]:
         if self.stdin:
             if input:
                 self.stdin.write(input)
@@ -172,7 +174,7 @@ class MicrosandboxSandbox(Sandbox):
             if await _msb_image_digest(image) is None:
                 logging.info(f"Pulling sandbox image {image}...")
                 # The SDK only pulls as part of creating a sandbox, and build() must not create one.
-                await check_output(str(_msb_path()), "pull", image)
+                await check_output(resolve_runtime().msb_path, "pull", image)
         else:
             raise ValueError("You must specify image or dockerfile")
 

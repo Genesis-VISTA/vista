@@ -22,6 +22,7 @@ class SandboxProcess(Protocol):
         self, input: bytes | None = None
     ) -> tuple[bytes, bytes | None]: ...
 
+
 # TODO: Maybe should simplify these awkward abstract classmethods with a abstract "SandboxSpawner"
 # class.
 

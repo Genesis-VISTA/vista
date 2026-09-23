@@ -16,16 +16,16 @@ Tasks marked **(not PR CI)** need a live sandbox, a live inference key or a real
 - [x] 1.6 [mac] Delete `dev_mcp_server/lib/dns.py` and `tests/test_dns.py`, and stage both deletions (D2). *(done)*
 - [x] 1.7 [mac] Make `close()` stop the sandbox, then `MsbSandbox.remove` it, awaiting `name` as a property. `tests/test_microsandbox_sandbox.py` passes unchanged. *(done)*
 - [x] 1.8 [mac] **(not PR CI)** Live checks against a real microVM in an isolated `MSB_HOME`. 0.7.2 passed 10 of 10: streaming about 1 s apart, stderr merged, exit code 7, `create_file` round trip, `view` on a file and a directory, the bind volume in both directions, DNS, HTTPS 200, and `close` removal. The edge cases passed too. The 0.5.7 baseline passed 9 of 10, with `create_file` hanging. *(done; the scripts were lost with the scratchpad, see 1.9)*
-- [ ] 1.9 [mac] **(not PR CI)** Restore the live checks as `@pytest.mark.sandbox` tests in `mcp_servers/dev_mcp_server/tests/test_sandbox_live.py`. They must use the interim store from 3.1, or an explicit `MSB_HOME` of 53 characters or less, and cover every scenario in `specs/code-execution-sandbox`. Verify with `uv run pytest -m sandbox` passing on macOS, and confirm that the hermetic marker filter skips the file.
-- [ ] 1.10 [mac] Add hermetic unit tests in `tests/test_microsandbox_sandbox.py` for `_ExecProcess` and `_ExecStdin`, driven by a fake `ExecHandle`. Cover:
+- [x] 1.9 [mac] **(not PR CI)** Restore the live checks as `@pytest.mark.sandbox` tests in `mcp_servers/dev_mcp_server/tests/test_sandbox_live.py`. They must use the interim store from 3.1, or an explicit `MSB_HOME` of 53 characters or less, and cover every scenario in `specs/code-execution-sandbox`. Verify with `uv run pytest -m sandbox` passing on macOS, and confirm that the hermetic marker filter skips the file. *(done 2026-09-23: 14 tests, opt-in with `VISTA_RUN_SANDBOX=1`, and they skip unless `MSB_HOME` is set. `VISTA_RUN_SANDBOX=1 MSB_HOME=~/.msb-live uv run pytest -m sandbox` passed 14 of 14. `~/.microsandbox` was untouched (same db mtime), no sandboxes were left behind, and they are deselected under the hermetic filter.)*
+- [x] 1.10 [mac] Add hermetic unit tests in `tests/test_microsandbox_sandbox.py` for `_ExecProcess` and `_ExecStdin`, driven by a fake `ExecHandle`. Cover:
   - write order is preserved
   - `communicate(input)` closes stdin
   - a `FAILED` event sets the return code
   - `wait()` falls back to the handle when no `EXITED` event arrives
   - `stderr is None` when streams are combined
   - `MsbSandbox.name` is awaited as a property
-  Verify with `uv run pytest` in dev_mcp_server.
-- [ ] 1.11 [mac] Stop importing the private `microsandbox._runtime.msb_path`. The spike still imports it, from both `microsandbox_sandbox.py` and `container_sandbox.py`. Either use a public API if 0.7.2 has one, or wrap the import in one helper that resolves `msb`/`msb.exe` beside the SDK package, with a unit test for both names. Verify with the dev_mcp_server tests.
+  Verify with `uv run pytest` in dev_mcp_server. *(done: 7 `TestExecProcess` cases; the existing close test already pins `name` as an awaitable property.)*
+- [x] 1.11 [mac] Stop importing the private `microsandbox._runtime.msb_path` from `microsandbox_sandbox.py`. Use a public API if 0.7.2 has one; otherwise wrap the import in one helper that resolves `msb`/`msb.exe` beside the SDK package, with a unit test for both names. Verify with the dev_mcp_server tests. *(done: uses the public `resolve_runtime().msb_path`, which returns `msb.exe` on Windows and honours `MSB_PATH`. `TestMicrosandboxBuild` pins it. `container_sandbox.py` never imported `_runtime`.)*
 
 ## 2. Host-portability code fixes
 
