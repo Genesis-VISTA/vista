@@ -1,1 +1,37 @@
+# Line endings: store text as LF and check it out as LF on every platform. Shell scripts,
+# Python and Slurm job templates are uploaded to clusters verbatim, where a carriage return
+# breaks them, and Git for Windows would otherwise check them out as CRLF.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary formats: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.tar binary
+*.gz binary
+*.tgz binary
+*.zip binary
+*.whl binary
+*.pt binary
+*.pth binary
+*.npy binary
+*.npz binary
+*.h5 binary
+*.db binary
+*.sqlite binary
+
+# Git LFS. Last, so it takes precedence over the rules above.
 rag_db/** filter=lfs diff=lfs merge=lfs -text

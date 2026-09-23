@@ -67,8 +67,8 @@ Tasks marked **(not PR CI)** need a live sandbox, a live inference key or a real
 
 ## 4. Repository line endings
 
-- [ ] 4.1 [mac] Add the `.gitattributes` rules from D8, keeping the `rag_db/**` LFS rule after the text rules. Verify that `git add --renormalize .` followed by `git status` shows only `.gitattributes` changed, and that `git ls-files --eol` shows no `i/crlf` entries.
-- [ ] 4.2 [mac→windows] Confirmed by 6.2: a fresh Windows clone contains no carriage returns in `*.sh`, `*.py` or job templates.
+- [x] 4.1 [mac] Add the `.gitattributes` rules from D8, keeping the `rag_db/**` LFS rule after the text rules. Verify that `git add --renormalize .` followed by `git status` shows only `.gitattributes` changed, and that `git ls-files --eol` shows no `i/crlf` entries. *(done: `git add --renormalize .` staged only `.gitattributes`. The index has 451 `i/lf`, 11 empty and 4 binary files, and no `i/crlf`. `git check-attr` confirms `.sh` as `text=auto eol=lf`, `.pdf` as binary, `rag_db/**` as LFS and `.ps1` as `eol=crlf`.)*
+- [ ] 4.2 [mac→windows] Confirmed by 6.2: a fresh Windows clone contains no carriage returns in `*.sh`, `*.py` or job templates. *(simulated on macOS: `checkout-index` with `core.autocrlf=true`, the Git for Windows default, wrote 0 files with a CR. The control, a clone of the previous commit with the same setting and without the rules, put CRLF into all 451 text files, `scripts/*.sh` included. A real Windows clone is still confirmed in 6.2.)*
 
 ## 5. macOS end-to-end verification
 
