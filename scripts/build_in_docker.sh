@@ -28,7 +28,7 @@
 #   -h, --help        Show this help
 #
 # Everything else is passed straight to build_local_package.sh, so
-# --payload, --vector-store, --without-hpc, --without-citations,
+# --payload, --vector-store, --without-citations,
 # --archive-format and --skip-smoke-test all work as documented there.
 # Host paths given to --payload and --vector-store are mounted into the
 # container automatically.
@@ -40,7 +40,7 @@
 #   AMSC_GIT_TOKEN  -- a gitlab.com token that can read the amsc2 repository
 #                      providing amscrot-py. Your macOS keychain credential is
 #                      unreachable from a Linux container, so without this the
-#                      preflight fails and asks for --without-hpc.
+#                      preflight fails.
 #   PALISADE_GITHUB_TOKEN -- a read-only, fine-grained GitHub PAT scoped to
 #                      herronej/palisade_siege_agentic_security, the private
 #                      repo `palisade` is a git dependency of. Your own git

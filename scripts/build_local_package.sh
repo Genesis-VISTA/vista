@@ -22,8 +22,6 @@
 #                         with VISTA_DATA_TOKEN
 #   --output-dir DIR     Archive destination (default: dist/)
 #   --archive-format FMT gz (default), zstd, or none to leave the tree unpacked
-#   --without-hpc        Build without amscrot-py; HPC job submission will not
-#                         work in the result, and the manifest records that
 #   --without-citations  Build the vector store without citation metadata
 #                         (titles, authors, DOIs), and record that
 #   --vector-store DIR   Reuse an already-built vector store instead of
@@ -102,7 +100,6 @@ CHECK_ONLY=false
 PAYLOAD_DIR=''
 OUTPUT_DIR="$REPO_ROOT/dist"
 ARCHIVE_FORMAT=gz
-WITHOUT_HPC=false
 WITHOUT_CITATIONS=false
 REUSE_STORE=''
 SANDBOX_IMAGE_TAR=''
@@ -113,7 +110,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --check) CHECK_ONLY=true ;;
-    --without-hpc) WITHOUT_HPC=true ;;
     --without-citations) WITHOUT_CITATIONS=true ;;
     --vector-store)
       [[ $# -ge 2 ]] || die "--vector-store needs a directory"
@@ -307,10 +303,7 @@ for v28/vista-data) or pass --payload with an already-unpacked copy")
   # the url.insteadOf rewrite in README.md, or a stored HTTPS credential.
   # Nothing is read out of the credential store and nothing is written to .env
   # -- the answer needed here is only whether the fetch will work.
-  if [[ "$WITHOUT_HPC" == true ]]; then
-    warn "--without-hpc: amscrot-py will be omitted and HPC job submission \
-will not work in the resulting package"
-  elif [[ -z "$AMSC_GIT_URL" ]]; then
+  if [[ -z "$AMSC_GIT_URL" ]]; then
     failures+=("could not read the amscrot-py URL from \
 mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
   elif ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/true \
@@ -319,8 +312,7 @@ mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
     $AMSC_GIT_URL
   The package bundles this dependency so researchers never need amsc2
   credentials, which means this build host does. Configure git access to
-  gitlab.com/amsc2 (see README.md), or pass --without-hpc to build a package
-  with HPC job submission disabled.")
+  gitlab.com/amsc2 (see README.md).")
   fi
 
   # An inference credential, for the citation metadata the vector store
@@ -402,11 +394,7 @@ requested — gz needs no extra tool and is the default for that reason") ;;
     echo "container runtime : ${runtime}"
   fi
   echo "corpus source     : ${PAYLOAD_DIR:-VISTA_DATA_TOKEN (code.ornl.gov)}"
-  if [[ "$WITHOUT_HPC" == true ]]; then
-    echo "amscrot-py        : omitted (--without-hpc)"
-  else
-    echo "amscrot-py        : reachable"
-  fi
+  echo "amscrot-py        : reachable"
   if [[ -n "$REUSE_STORE" ]]; then
     echo "vector store      : reusing $REUSE_STORE (no indexing, no model calls)"
   elif [[ "$WITHOUT_CITATIONS" == true ]]; then
@@ -1040,10 +1028,9 @@ export_sandbox_image() {
 # package and beside the archive.
 #
 # Two audiences. A researcher gets to see what they were given and which
-# version. And a deliberately incomplete build -- `--without-hpc`,
-# `--without-citations` -- has to be identifiable from this file alone, because
-# the resulting package looks entirely healthy right up to the moment someone
-# submits a job or reads a citation.
+# version. And a deliberately incomplete build -- `--without-citations` -- has
+# to be identifiable from this file alone, because the resulting package looks
+# entirely healthy right up to the moment someone reads a citation.
 # The oldest system libraries the artifact can run against. Everything
 # compiled into it inherits the build environment's floor, so on Linux this is
 # the build container's glibc -- ubuntu:24.04 puts it at 2.39, which is also
@@ -1121,7 +1108,6 @@ PYCOUNT
     "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") }
   },
   "completeness": {
-    "hpc_job_submission": $([[ "$WITHOUT_HPC" == true ]] && echo false || echo true),
     "corpus_citations": $([[ "$citations" -gt 0 ]] && echo true || echo false)
   }
 }

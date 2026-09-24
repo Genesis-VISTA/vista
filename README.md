@@ -119,7 +119,6 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--archive-format gz\|zstd\|none` | `gz` is the default and needs no extra tool; `zstd` is faster for a local round trip; `none` leaves the tree unpacked      |
 | `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
-| `--without-hpc`                  | Omit `amscrot-py`. HPC job submission will not work in the result, and the manifest records that                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
 
@@ -162,8 +161,7 @@ Credentials come from the environment rather than `.env`, since the extracted
 tree has no `.env` in it. `VISTA_DATA_TOKEN` and the inference variables are
 forwarded when set. `amscrot-py` needs one addition. Your keychain credential
 for gitlab.com is unreachable from a Linux container, so set `AMSC_GIT_TOKEN`
-to a gitlab.com token that can read the amsc2 repository, or build
-`--without-hpc`.
+to a gitlab.com token that can read the amsc2 repository.
 
 **On a network that inspects TLS**, the container fails where the host
 succeeds. It has its own trust store and cannot read your system keychain, so
@@ -196,7 +194,7 @@ the container:
 
 | Variable                                                  | Needed for                                                                                                  | Skip it with                                       |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `AMSC_GIT_TOKEN`                                          | Bundling `amscrot-py`: a gitlab.com token with read access to the amsc2 repository                          | `--without-hpc`                                    |
+| `AMSC_GIT_TOKEN`                                          | Bundling `amscrot-py`: a gitlab.com token with read access to the amsc2 repository                          | Nothing; `amscrot-py` is always bundled            |
 | `PALISADE_GITHUB_TOKEN`                                   | Installing the backend's `palisade` dependency: a GitHub PAT with read access to `herronej/palisade_siege_agentic_security` | Nothing; the backend cannot be built without it   |
 | `VISTA_DATA_TOKEN`                                        | Fetching the corpus from code.ornl.gov                                                                      | `--payload DIR`                                    |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` (or the `AZURE_OPENAI_*` trio) | Citation metadata while indexing                                                 | `--vector-store DIR` or `--without-citations`      |
