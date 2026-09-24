@@ -1,0 +1,38 @@
+## 1. Close the spike's open checks (manual, macOS, before any code)
+
+- [ ] 1.1 Build a throwaway rebranded Electron 44 bundle, ad-hoc re-sign it, and stage it as a plain folder `window/` (no `.app` suffix). Run its binary against a running dev stack. Verify and record what the Dock and menu bar show for name and icon. If either is generic, switch B1 to `app/window/VISTA.app` in `design.md` before group 4. (manual, needs a display)
+- [ ] 1.2 Tar that folder with a stub `vista` that runs `xattr -dr com.apple.quarantine`, download it through Safari, and unpack it in Finder. Run `./vista` from **Terminal.app**. Record whether macOS asks for "App Management" permission. If it does, add the one-time grant to README task 6.2. (manual)
+
+## 2. Electron shell (`electron/`)
+
+- [ ] 2.1 Create `electron/package.json` (ESM, `electron@44` and `@electron/packager` as dev dependencies, `typescript` for checking), `electron/tsconfig.json` (`checkJs`, `noEmit`) and `.gitignore` entries. Verify that `cd electron && npm ci && npx tsc --noEmit` passes on an empty `src/main.js`.
+- [ ] 2.2 Implement `electron/src/routing.js`: pure `classify(origin, url, {kind: 'open' | 'navigate'})` returning `in-app | external | deny` per design W3. Verify with `electron/test/routing.test.js` under `node --test`, covering same origin, other port, `localhost` vs `127.0.0.1`, `https`, `mailto`, `file:`, `javascript:` and malformed URLs.
+- [ ] 2.3 Implement `electron/src/main.js`: `--url`/`--dev`/`--smoke-test` argument parsing, single-instance lock, locked-down `webPreferences` (W4), permission handler that denies everything, `setWindowOpenHandler` / `will-navigate` / `will-redirect` wired to `classify` and applied to child windows too, `will-download` defaulting to `~/Downloads`, role-based menu (W5), and quit on `window-all-closed` and on `SIGTERM`. Verify manually with `npx electron . --dev --url=http://localhost:3000` against `./launch.sh`. The window loads, Cmd-C/V work in a settings field, the DOI link opens Safari, and a PDF opens a child window.
+- [ ] 2.4 Implement `--smoke-test` (exit 0 on load with a non-empty title, 1 on failure or after 30 s). Verify that the exit code is 0 against the dev stack and 1 against a closed port.
+- [ ] 2.5 Add `electron/test/window.e2e.js`: Playwright `_electron.launch` against a static fixture server in the test. Cover external `_blank` (stubbed `shell.openExternal` called, no window), same-origin `_blank` (child window), off-origin navigation (URL unchanged), a second instance (exits, the first is focused) and smoke-test exit codes. Verify with `npx playwright test -c electron/playwright.config.js` on macOS. **Not PR CI**: needs a display (validation lane).
+
+## 3. Launchers
+
+- [ ] 3.1 `scripts/package_launcher.sh`: `set -m`; stop by process group with TERM, a 10 s grace period, then KILL; add `HUP` to the trap (L2). Verify by starting `./vista --browser` from a built package, opening a chat so a sandbox starts, and pressing Ctrl-C. Then `pgrep -fl "$PACKAGE"` is empty and ports 3000/8000/8001 are free. Repeat by closing the Terminal window. (manual, `sandbox`)
+- [ ] 3.2 `scripts/package_launcher.sh`: add a `--browser` flag and window mode as the default (L1). Resolve `app/window/Contents/MacOS/VISTA`; fall back to browser mode with one line when it is missing or there is no GUI session (first confirm `launchctl managername` over SSH ≠ `Aqua`). Run the shell as a tracked child and exit when it exits. Print `127.0.0.1` in browser mode. Update `--help`. Verify that closing the window leaves nothing running (same check as 3.1), that Ctrl-C closes the window, and that `ssh localhost ./vista` falls back. (manual, `sandbox`)
+- [ ] 3.3 `scripts/launch.sh` and `scripts/build.sh`: add an `--electron` flag (L3). `build.sh --electron` runs `npm ci` in `electron/`, and `launch.sh --electron` in `logs` mode runs the shell with `--dev` as a service whose exit triggers `cleanup`. `tmux`/`terminal` modes reject the flag. Verify that `./launch.sh --electron` opens the window, an edit to `ui/app/page.tsx` hot-reloads in it, and closing it stops all three services.
+
+## 4. Package build (macOS)
+
+- [ ] 4.1 `scripts/build_local_package.sh`: add a `stage_window` step after `stage_ui`, for `macos-*` only. It runs `npm ci` in `electron/` and `@electron/packager` (name `VISTA`, bundle ID `gov.ornl.vista`, `asar`, `osxSign: false`), then moves the result to `$STAGING/app/window` (or `app/window/VISTA.app`, per 1.1). Add Electron's download host to the preflight. Verify with `./scripts/build_local_package.sh --check` and a build that has `--skip-smoke-test --keep-staging`: `app/window` exists.
+- [ ] 4.2 Ad-hoc sign only `app/window` (`codesign --force --deep --sign -`, then `--verify --deep --strict`). Add a build-time guard that fails if any other `codesign` invocation exists in the script. Verify that `codesign --verify` on the staged `msb` is unchanged from before the step (compare `codesign -dv` output).
+- [ ] 4.3 Manifest: add `components.window` (size) and `versions.electron`, and require `window` in the validator for `macos-*`. Verify that the manifest validator passes on macOS and that a Linux build via `build_in_docker.sh --check` still validates without `window`.
+- [ ] 4.4 `scripts/smoke_test_package.sh`: run `vista --browser`. On macOS with a GUI session, also run the shell with `--smoke-test` against the unpacked UI; otherwise warn and skip. Verify that a full `./scripts/build_local_package.sh` passes its smoke test, including the window check.
+
+## 5. UI (minimal)
+
+- [ ] 5.1 Add `download` to the same-origin "Download" links at `ui/app/page.tsx:1637` and `ui/components/ImageLightbox.tsx:49` (external URLs unchanged), and update the comment at `ImageLightbox.tsx:44`. Verify that `cd ui && npm run lint && npm run typecheck && npm test` pass, that the browser saves the file rather than opening a tab, and that in the window a save dialog appears.
+
+## 6. CI and docs
+
+- [ ] 6.1 Add an `electron:test` job to `.gitlab-ci.yml` (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`, `tsc --noEmit`, `node --test test/routing.test.js`) and an `electron` target to `scripts/ci-local.sh`. Verify with `./scripts/ci-local.sh electron test` locally and on the MR pipeline.
+- [ ] 6.2 README: under "Running a prebuilt package", describe the window, `--browser`, "run from Terminal, don't double-click", and the App Management note if 1.2 found one. Under development, describe `./launch.sh --electron` and `./scripts/build.sh --electron`. Add a T2/T3/T4 walk-through to `docs/validation-lane.md`. Also update the "Common Commands" section in `AGENTS.md`. Verify that the docs render and the commands in them run as written.
+
+## 7. End-to-end validation (manual, macOS, validation lane)
+
+- [ ] 7.1 On a fresh account or with `VISTA_HOME` pointing at an empty directory, download a built package through Safari, unpack it in Finder, and run `./vista` in Terminal.app. Walk the `desktop-window` spec scenarios (T4): Globus link in the system browser, then paste the code back; DOI; PDF child window; dataset and agent-file downloads; paste an API key; second launch focuses the first. Then do T3 cleanup for all three stop paths. Record the results in this change. (manual, `live`, `sandbox`)
