@@ -6,7 +6,7 @@ Basically a port of https://github.com/agentskills/agentskills/blob/main/skills-
 
 import html
 from typing import Annotated as A
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from pydantic import BaseModel, Field
 from typing import Iterable
 import logging
@@ -131,7 +131,7 @@ def read_skill(skill_dir: Path | str) -> Skill:
     skill_md = find_skill_md(skill_dir)
     if skill_md is None:
         raise ParseError(f"SKILL.md not found in {skill_dir}")
-    return parse_skill(skill_md.read_text())
+    return parse_skill(skill_md.read_text(encoding="utf-8"))
 
 
 def skill_to_markdown(skill: Skill) -> str:
@@ -171,13 +171,21 @@ def write_skill(skill_dir: Path | str, skill: Skill) -> Skill:
     """
     skill_dir = Path(skill_dir).resolve()
     skill_dir.mkdir(parents=True, exist_ok=False)
-    (skill_dir / "SKILL.md").write_text(skill_to_markdown(skill))
+    (skill_dir / "SKILL.md").write_text(skill_to_markdown(skill), encoding="utf-8")
     return read_skill(skill_dir)
+
+
+def _in_sandbox(mount: PurePosixPath, relative: PurePath) -> PurePosixPath:
+    """
+    Join a host-relative path onto a sandbox mount point component by component, so a
+    Windows host's backslash-separated path still comes out as a POSIX sandbox path.
+    """
+    return mount.joinpath(*relative.parts)
 
 
 def to_prompt(
     skill_dirs: list[Path | str],
-    path_mapping: dict[Path | str, Path | str] | None = None,
+    path_mapping: dict[Path | str, PurePosixPath | str] | None = None,
 ) -> str:
     """
     Generate the <available_skills> XML block for inclusion in agent prompts.
@@ -188,7 +196,8 @@ def to_prompt(
 
     Args:
         skill_dirs: List of paths to skill directories
-        path_mapping: Show a different path in the prompt than the skill_dirs passed in (so the prompt so the path in the container)
+        path_mapping: Show a different path in the prompt than the skill_dirs passed in, mapping
+            a host directory to where it is mounted in the sandbox (always a POSIX path)
 
     Returns:
         XML string with <available_skills> block containing each skill's
@@ -205,8 +214,8 @@ def to_prompt(
     """
     if not skill_dirs:
         return ""
-    path_mapping = {
-        Path(k).resolve(): Path(v).resolve() for k, v in (path_mapping or {}).items()
+    mounts = {
+        Path(k).resolve(): PurePosixPath(v) for k, v in (path_mapping or {}).items()
     }
 
     # instructions for how to use skills for models not pretrained with them
@@ -229,9 +238,9 @@ def to_prompt(
             logging.warning(f"No skill {skill_dir} found")
             continue
         skill_md = skill_md.resolve()
-        for prefix, replacement in (path_mapping or {}).items():
+        for prefix, replacement in mounts.items():
             if skill_md.is_relative_to(prefix):
-                skill_md = replacement / skill_md.relative_to(prefix)
+                skill_md = _in_sandbox(replacement, skill_md.relative_to(prefix))
                 break
         lines.extend(
             [

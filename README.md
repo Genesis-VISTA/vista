@@ -195,6 +195,54 @@ message walks through this too, including the case where the bundle you
 supplied turns out to hold an intermediate rather than a root. Keep the PEM out
 of the repository; it belongs in your home directory.
 
+#### A complete Linux build from a Mac
+
+This is for building a Linux package on a macOS host. On a Linux build host,
+skip all of this: run `./scripts/build_local_package.sh` directly, as in
+[Building a prebuilt package](#building-a-prebuilt-package), and it reads `.env`
+and your git credentials like any native build.
+
+From a Mac, the build runs in a Linux container. The container gets nothing
+from `.env` or from your git credential helpers, so each of these has to be
+exported in the shell that runs the build. Only these names are forwarded into
+the container:
+
+| Variable                                                  | Needed for                                                                                                  | Skip it with                                       |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `AMSC_GIT_TOKEN`                                          | Bundling `amscrot-py`: a gitlab.com token with read access to the amsc2 repository                          | `--without-hpc`                                    |
+| `PALISADE_GITHUB_TOKEN`                                   | Installing the backend's `palisade` dependency: a GitHub PAT with read access to `herronej/palisade_siege_agentic_security` | Nothing; the backend cannot be built without it   |
+| `VISTA_DATA_TOKEN`                                        | Fetching the corpus from code.ornl.gov                                                                      | `--payload DIR`                                    |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` (or the `AZURE_OPENAI_*` trio) | Citation metadata while indexing                                                 | `--vector-store DIR` or `--without-citations`      |
+| `VISTA_BUILD_CA_BUNDLE`                                   | Only behind TLS inspection: the inspecting root CA as a PEM (same as `--ca-bundle`)                         | Omit it on an uninspected network                  |
+
+```bash
+# Tokens: however you store them, get them into these two variables.
+export AMSC_GIT_TOKEN=...          # gitlab.com, read access to amsc2
+export PALISADE_GITHUB_TOKEN=...   # GitHub, read access to palisade_siege_agentic_security
+
+# The corpus and inference variables can come straight from your .env.
+set -a; . ./.env; set +a
+
+# Behind TLS inspection (see above):
+export VISTA_BUILD_CA_BUNDLE=~/root-ca.pem
+
+./scripts/build_in_docker.sh --check \
+  --payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db
+./scripts/build_in_docker.sh \
+  --payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db
+```
+
+`--payload` and `--vector-store` point at an unpacked corpus and a built
+Chroma store (any `knowledge-bases/<kb>/rag_db` from an existing install
+works); drop them to fetch and index from scratch. Add `--platform
+linux/arm64` for ARM, and `--allow-dirty` to build `HEAD` while the working
+tree has uncommitted changes. The archive lands in `dist/`, named
+`vista-<version>-linux-x86_64.tar.gz` (or `-aarch64`). On an Apple Silicon
+Mac, the default `linux/amd64` build runs under emulation; with a reused vector
+store it took about 15 minutes. The smoke test runs in a container without
+`/dev/kvm`, so it skips the retrieval check, which needs the sandbox; verify
+that on a Linux host with KVM.
+
 ## Architecture
 
 - `./mcp_servers`

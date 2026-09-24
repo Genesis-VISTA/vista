@@ -43,7 +43,9 @@ def scan_tree(root: Path, needle: str) -> list[Path]:
     """Every file under `root` whose content contains `needle`."""
     hits = []
     for path in root.rglob("*"):
-        if path.is_file() and needle in path.read_text(errors="ignore"):
+        if path.is_file() and needle in path.read_text(
+            errors="ignore", encoding="utf-8"
+        ):
             hits.append(path)
     return hits
 
@@ -78,7 +80,7 @@ async def seed_skill(session, tenant_env: Path, name: str) -> None:
     skill_dir = tenant_env / "storage" / name
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: test skill\n---\nbody\n"
+        f"---\nname: {name}\ndescription: test skill\n---\nbody\n", encoding="utf-8"
     )
     session.add(SkillTable(name=name, description="test skill", path=f"storage/{name}"))
     await session.flush()
@@ -147,7 +149,9 @@ async def test_volume_isolation_and_canary_on_disk(
 
     # A campaign artifact containing A's credential never crosses trees.
     agent_a.output_dir.mkdir(parents=True, exist_ok=True)
-    (agent_a.output_dir / "job.log").write_text(f"submitted with token {CANARY}")
+    (agent_a.output_dir / "job.log").write_text(
+        f"submitted with token {CANARY}", encoding="utf-8"
+    )
     assert scan_tree(agent_a.volume_root, CANARY)  # positive control
     assert scan_tree(agent_b.volume_root, CANARY) == []
 
@@ -179,7 +183,7 @@ async def test_concurrent_campaigns_isolate_credentials_and_metrics(
     # The shared metrics log never captures the credential, and every
     # event carries its own tenant's correlation ids — concurrency does
     # not mix streams.
-    metrics_text = (tenant_env / "metrics.jsonl").read_text()
+    metrics_text = (tenant_env / "metrics.jsonl").read_text(encoding="utf-8")
     assert CANARY not in metrics_text
     events = [json.loads(line) for line in metrics_text.splitlines()]
     tool_events = [e for e in events if e["event_type"] == "tool_call.client"]

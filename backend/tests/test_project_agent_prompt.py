@@ -94,7 +94,8 @@ async def test_system_prompt_includes_skills_block(monkeypatch, tmp_path: Path):
         ---
 
         Run the analysis script.
-        """)
+        """),
+        encoding="utf-8",
     )
 
     prompt = await _system_prompt_for(project, user)
@@ -124,7 +125,8 @@ async def test_system_prompt_composes_all_layers_in_order(monkeypatch, tmp_path:
     )
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
-        "---\nname: salt-analysis\ndescription: Analyze salts.\n---\n\nBody.\n"
+        "---\nname: salt-analysis\ndescription: Analyze salts.\n---\n\nBody.\n",
+        encoding="utf-8",
     )
 
     prompt = await _system_prompt_for(project, user)

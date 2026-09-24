@@ -8,7 +8,7 @@ config → what the model is offered — without starting MCP servers.
 
 import logging
 import textwrap
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart
@@ -16,7 +16,7 @@ from pydantic_ai.models.function import AgentInfo
 
 from harness import agent_under_test, make_project, make_user, scripted_model
 from vista_backend.agents.agents import ProjectAgent
-from vista_backend.agents.skills import read_skill, to_prompt
+from vista_backend.agents.skills import _in_sandbox, read_skill, to_prompt
 from vista_backend.config import settings
 
 pytestmark = [pytest.mark.anyio, pytest.mark.unit]
@@ -66,7 +66,8 @@ def _write_skill(root: Path, name: str, description: str) -> Path:
         ---
 
         Instructions for {name}.
-        """)
+        """),
+        encoding="utf-8",
     )
     return skill_dir
 
@@ -101,6 +102,23 @@ def test_to_prompt_renders_available_skills_xml(tmp_path: Path):
     assert "<name>" in block and "salt-analysis" in block
     assert "Analyze molten salts." in block
     assert "/mnt/skills/salt-analysis/SKILL.md" in block
+
+
+def test_to_prompt_keeps_the_sandbox_path_as_given(tmp_path: Path):
+    """
+    The sandbox side is never resolved on the host: on Windows that would turn `/mnt/skills`
+    into `C:\\mnt\\skills`, and on macOS `/tmp` would become `/private/tmp`.
+    """
+    skill_dir = _write_skill(tmp_path, "salt-analysis", "Analyze molten salts.")
+    block = to_prompt([skill_dir], {tmp_path: "/tmp/skills"})
+    assert "<location>\n/tmp/skills/salt-analysis/SKILL.md\n</location>" in block
+
+
+def test_sandbox_paths_are_posix_for_windows_host_paths():
+    relative = PureWindowsPath("salt-analysis\\docs\\SKILL.md")
+    assert _in_sandbox(PurePosixPath("/mnt/skills"), relative) == PurePosixPath(
+        "/mnt/skills/salt-analysis/docs/SKILL.md"
+    )
 
 
 async def test_project_skills_appear_in_the_system_prompt(monkeypatch, tmp_path: Path):
@@ -176,6 +194,14 @@ async def test_setup_volumes_skips_unknown_skill_with_a_warning(
         await conn.run_sync(SQLModel.metadata.create_all)
 
     monkeypatch.setattr("vista_backend.agents.agents.get_engine", lambda: engine)
+
+    async def no_subprocess(*args, **kwargs):
+        raise AssertionError(f"_setup_volumes spawned {args}")
+
+    # Staging must not shell out (no `chmod` on Windows).
+    monkeypatch.setattr(
+        "vista_backend.agents.agents.asyncio.create_subprocess_exec", no_subprocess
+    )
 
     project = make_project(skills=["ghost-skill"])
     agent = ProjectAgent(project, make_user())

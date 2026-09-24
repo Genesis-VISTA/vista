@@ -141,6 +141,9 @@ backend:security:
 
 backend:test:
   stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
   <<: [*python-image, *cache-uv-backend]
   before_script:
     # uv shells out to git to fetch the PALISADE sidecar at its release tag, and
@@ -173,6 +176,9 @@ vista-mcp:lint:
 
 vista-mcp:test:
   stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
   <<: *python-image
   # Also caches dev_mcp_server's own venv, spelled out here rather than by
   # merging *cache-uv-dev-mcp too: a `<<:` merge only keeps the first `cache:`
@@ -216,6 +222,9 @@ dev-mcp:lint:
 
 dev-mcp:test:
   stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
   <<: [*python-image, *cache-uv-dev-mcp]
   before_script:
     # python-magic (dep of dev_mcp_server) requires the libmagic system library

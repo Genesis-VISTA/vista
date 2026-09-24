@@ -125,7 +125,7 @@ def head_loc(repo: Path, paths: list[str], exclude: list[str]) -> tuple[int, int
     loc = 0
     for f in files:
         try:
-            loc += len((repo / f).read_text(errors="strict").splitlines())
+            loc += len((repo / f).read_text(encoding="utf-8", errors="strict").splitlines())
         except (UnicodeDecodeError, FileNotFoundError):
             continue  # binary or sparse checkout
     return len(files), loc
@@ -214,7 +214,7 @@ def snapshot(repo: Path, cfg: dict) -> dict[str, tuple[int, int]]:
             continue
         bucket = classify(f, cfg["subsystems"])
         try:
-            loc = len((repo / f).read_text(errors="strict").splitlines())
+            loc = len((repo / f).read_text(encoding="utf-8", errors="strict").splitlines())
         except (UnicodeDecodeError, FileNotFoundError):
             continue
         totals[bucket][0] += 1
@@ -274,7 +274,7 @@ def main() -> None:
     args = parser.parse_args()
 
     global CONFIG
-    CONFIG = yaml.safe_load(Path(args.config).read_text())
+    CONFIG = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     repo = Path(git(Path(args.config).parent, "rev-parse", "--show-toplevel").strip())
     head = git(repo, "rev-parse", "--short", "HEAD").strip()
     print(f"# VISTA amortization report (M9) — {CONFIG.get('branch', 'main')} @ {head}")

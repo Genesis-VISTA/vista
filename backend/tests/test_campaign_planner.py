@@ -163,7 +163,8 @@ def test_build_subagents_threads_the_resolved_model_to_every_parser(tmp_path):
         skill_dir = tmp_path / f"{role}-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n"
+            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n",
+            encoding="utf-8",
         )
 
     model = build_inference_model(
@@ -248,7 +249,7 @@ async def test_collect_job_raises_for_unknown_role(session, alice):
 def test_build_planner_system_prompt_inlines_playbook(tmp_path):
     skill_dir = tmp_path / "test-planner"
     skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(PLANNER_SKILL_MD)
+    (skill_dir / "SKILL.md").write_text(PLANNER_SKILL_MD, encoding="utf-8")
 
     prompt = build_planner_system_prompt(skill_dir)
     assert "planner agent orchestrating" in prompt

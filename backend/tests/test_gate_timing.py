@@ -35,7 +35,9 @@ def make_recorder(
 def read_events(log_path: Path) -> list[dict]:
     if not log_path.exists():
         return []
-    return [json.loads(line) for line in log_path.read_text().splitlines()]
+    return [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 @pytest.fixture
@@ -157,7 +159,7 @@ def test_emit_gate_decision_carries_duration(tmp_path):
     emitter.emit_gate_decision("G3", GateDecision(allow=False, reason="deny"))
 
     with_duration, without = [
-        json.loads(line) for line in log_path.read_text().splitlines()
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
     ]
     assert with_duration["duration_ms"] == 1.25
     assert "duration_ms" not in without

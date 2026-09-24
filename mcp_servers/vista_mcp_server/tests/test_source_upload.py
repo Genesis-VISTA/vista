@@ -34,9 +34,9 @@ def job_dir(monkeypatch, tmp_path) -> Path:
     jobs = tmp_path / "hpc_jobs"
     demo = jobs / "demo"
     demo.mkdir(parents=True)
-    (demo / "run.py").write_text("print('run')\n")
-    (demo / "helper.py").write_text("print('helper')\n")
-    (demo / "README.md").write_text("# demo\n")
+    (demo / "run.py").write_text("print('run')\n", encoding="utf-8")
+    (demo / "helper.py").write_text("print('helper')\n", encoding="utf-8")
+    (demo / "README.md").write_text("# demo\n", encoding="utf-8")
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", jobs)
     return demo
 
@@ -173,7 +173,7 @@ async def test_an_expired_session_is_not_read_as_an_absent_directory(job_dir):
 async def test_a_job_with_only_metadata_uploads_nothing(monkeypatch, tmp_path):
     jobs = tmp_path / "hpc_jobs"
     (jobs / "demo").mkdir(parents=True)
-    (jobs / "demo" / "README.md").write_text("# demo\n")
+    (jobs / "demo" / "README.md").write_text("# demo\n", encoding="utf-8")
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", jobs)
     globus = FakeGlobusClient()
 

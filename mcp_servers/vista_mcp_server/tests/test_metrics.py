@@ -34,7 +34,9 @@ def make_recorder(
 def read_events(log_path: Path) -> list[dict]:
     if not log_path.exists():
         return []
-    return [json.loads(line) for line in log_path.read_text().splitlines()]
+    return [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 # ---------------------------------------------------------------------------
