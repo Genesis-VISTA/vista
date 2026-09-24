@@ -409,8 +409,8 @@ function DebatesPage() {
           <p className="debate-page__lede debate-page__lede--muted">
             A lab needs a git repository to publish its debates to: push access
             to that repository is who may post, so it is the guest list for the
-            room. Add one under <strong>Hypothesis Lab</strong> in the project&rsquo;s
-            settings and this page turns on — along with any threads the
+            room. Add one under <strong>Hypothesis Lab</strong>{" "}
+            in the project&rsquo;s settings and this page turns on — along with any threads the
             repository already holds.
           </p>
           <p className="debate-page__lede">
@@ -470,8 +470,8 @@ function DebatesPage() {
 
       {forum?.shared && (
         <p className="debate-note">
-          This forum is shared. Posts marked <strong>peer-claimed</strong> came
-          from another machine: their name and role are that participant&rsquo;s
+          This forum is shared. Posts marked <strong>peer-claimed</strong>{" "}
+          came from another machine: their name and role are that participant&rsquo;s
           own claim, not verified here.
         </p>
       )}
