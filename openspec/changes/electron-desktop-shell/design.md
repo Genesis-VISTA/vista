@@ -214,9 +214,13 @@ unchanged, since `next dev`'s HMR WebSocket is same-origin.
   `codesign --verify --deep --strict`. This is scoped to that path. The build greps its own
   source to confirm no other `codesign` call exists, so R2 ("do not re-sign `msb`") can't
   regress. The manifest gains a top-level `window` object: `exe`, the executable
-  relative to the package root (`app/window/VISTA.app/Contents/MacOS/VISTA` on macOS), and
-  `electron`, the version. `components` also gains `window` (size). The validator
-  requires `window` on macOS and checks that `window.exe` exists and is executable.
+  relative to the package root (`app/window/VISTA.app/Contents/MacOS/VISTA` on macOS),
+  `electron`, the version, and `bytes`. The size is recorded there rather than as a
+  `components` entry, because `components.app` already includes `app/window`. A target
+  without a window records `"window": null`. The validator requires `window` on macOS
+  and checks that `window.exe` exists and is executable. Packaging itself is
+  `electron/scripts/package.js` (`--platform --arch --out`), which never signs, so a
+  Linux branch can reuse it.
 - **B3** `smoke_test_package.sh` runs `vista --browser` (`:103`). Once the UI is healthy,
   on macOS it also runs `window.exe --smoke-test --url=…`. That proves the
   unpacked, relocated, re-signed shell loads the real UI. The check is skipped with a

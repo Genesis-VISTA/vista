@@ -368,6 +368,24 @@ shipped corpus returns passages that cite nothing. Pass \
       failures+=("cannot reach $probe_host — needed for $probe_why")
     fi
   done
+  # The VISTA window: Electron's binary comes from GitHub releases, and it is
+  # re-signed ad hoc here. Only on targets that have a window.
+  if [[ "$TARGET_OS" == macos ]]; then
+    if ! curl -fsS -m 15 --head -o /dev/null https://github.com/electron/electron/releases 2>/dev/null; then
+      failures+=("cannot reach github.com — needed to download Electron for the VISTA window")
+    fi
+    command -v codesign >/dev/null 2>&1 \
+      || failures+=("codesign is not available — needed to re-sign the VISTA window")
+    # Exactly one signing call, the window's. Any other would risk re-signing
+    # `msb` and stripping the hypervisor entitlement the sandbox needs (R2).
+    local signing_calls
+    signing_calls="$(grep -cE '^[[:space:]]*codesign[[:space:]].*--sign' "$REPO_ROOT/scripts/build_local_package.sh")"
+    if [[ "$signing_calls" != 1 ]]; then
+      failures+=("build_local_package.sh has $signing_calls codesign --sign calls; only the \
+VISTA window's may exist, so nothing else (msb above all) is ever re-signed")
+    fi
+  fi
+
   if [[ -z "$PAYLOAD_DIR" ]] \
      && ! curl -fsS -m 15 --head -o /dev/null https://code.ornl.gov 2>/dev/null; then
     failures+=("cannot reach code.ornl.gov — needed to fetch the corpus with \
@@ -786,6 +804,62 @@ stage_ui() {
   echo "ui          : $(du -sh "$STAGING_APP/ui" | cut -f1)"
 }
 
+# ─── the VISTA window ───────────────────────────────────────────────────────
+
+# The window `vista` opens once the services are up (electron/, design B1).
+# The launcher finds it through the manifest's `window.exe` rather than a
+# hard-coded path, so a target with no window simply records none and its
+# package opens in a browser, as before.
+WINDOW_EXE=''
+ELECTRON_VERSION="$(sed -nE 's/.*"electron": "([^"]+)".*/\1/p' "$REPO_ROOT/electron/package.json")"
+
+stage_window() {
+  case "$TARGET_OS" in
+    macos) stage_window_macos ;;
+    *) log "no VISTA window for $TARGET_OS-$TARGET_ARCH yet; the package opens in a browser" ;;
+  esac
+}
+
+stage_window_macos() {
+  log "building the VISTA window (Electron $ELECTRON_VERSION)"
+  local arch
+  case "$TARGET_ARCH" in
+    arm64) arch=arm64 ;;
+    x86_64) arch=x64 ;;
+    *) die "no Electron build known for macos-$TARGET_ARCH" ;;
+  esac
+
+  local out built
+  out="$(mktemp -d)"
+  (
+    cd "$REPO_ROOT/electron"
+    npm ci --prefer-offline >/dev/null
+  )
+  built="$(node "$REPO_ROOT/electron/scripts/package.js" \
+    --platform darwin --arch "$arch" --out "$out" | tail -1)"
+  [[ -d "$built" ]] || die "the window packager produced nothing at $built"
+
+  # Kept as a `.app`, one level down (task 1.1): without the suffix macOS shows
+  # the folder's icon and name in the Dock and the app switcher.
+  local app="$STAGING_APP/window/VISTA.app"
+  mkdir -p "$STAGING_APP/window"
+  mv "$built" "$app"
+  rm -rf "$out"
+
+  # Renaming the app invalidates Electron's own ad-hoc signature, and an
+  # invalid one is killed on launch. Re-signed ad hoc -- no Developer ID -- and
+  # only this path: `msb` carries a hypervisor entitlement that re-signing
+  # would strip (design R2), which is also why preflight refuses any other
+  # `codesign` in this script.
+  codesign --force --deep --sign - "$app"
+  codesign --verify --deep --strict "$app" \
+    || die "the VISTA window's signature does not verify after signing"
+
+  WINDOW_EXE="app/window/VISTA.app/Contents/MacOS/VISTA"
+  [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
+  echo "window      : $(du -sh "$app" | cut -f1) (Electron $ELECTRON_VERSION)"
+}
+
 # ─── corpus payload ─────────────────────────────────────────────────────────
 
 # The vista-data files, the vector store built from them, and the embedding
@@ -1095,6 +1169,15 @@ PYCOUNT
   local size_of
   size_of() { du -sk "$1" 2>/dev/null | cut -f1 | awk '{printf "%d", $1 * 1024}'; }
 
+  # Where the launcher finds the window, relative to the package root, or null
+  # on a target that has none. Kept on one line: the launcher reads `exe` with
+  # the same `sed` field reader as the platform guard. Its bytes are part of
+  # `components.app` already, so they are not counted there twice.
+  local window_json=null
+  if [[ -n "$WINDOW_EXE" ]]; then
+    window_json="{ \"exe\": \"$WINDOW_EXE\", \"electron\": \"$ELECTRON_VERSION\", \"bytes\": $(size_of "$STAGING_APP/window") }"
+  fi
+
   cat > "$STAGING/manifest.json" <<EOF
 {
   "name": "$PACKAGE_NAME",
@@ -1120,6 +1203,7 @@ PYCOUNT
     "vector_store": { "text_chunks": $chunks, "citations": $citations, "bytes": $(size_of "$kb/rag_db") },
     "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") }
   },
+  "window": $window_json,
   "completeness": {
     "hpc_job_submission": $([[ "$WITHOUT_HPC" == true ]] && echo false || echo true),
     "corpus_citations": $([[ "$citations" -gt 0 ]] && echo true || echo false)
@@ -1129,11 +1213,24 @@ EOF
   echo "$VERSION" > "$STAGING/VERSION"
 
   # Fail rather than ship a manifest that claims something untrue.
-  "$STAGING_APP/backend/.venv/bin/python" - "$STAGING/manifest.json" <<'PYVALID'
+  "$STAGING_APP/backend/.venv/bin/python" - "$STAGING/manifest.json" "$TARGET_OS" <<'PYVALID'
 import json
+import os
 import sys
+from pathlib import Path
 
 manifest = json.loads(open(sys.argv[1]).read())
+target_os = sys.argv[2]
+
+# A macOS package without its window would still start -- in a browser --
+# which is exactly how a packaging mistake would go unnoticed.
+window = manifest.get("window")
+if target_os == "macos" and not window:
+    sys.exit("manifest has no window on macOS")
+if window:
+    exe = Path(sys.argv[1]).parent / window["exe"]
+    if not (exe.is_file() and os.access(exe, os.X_OK)):
+        sys.exit(f"manifest names a window executable that is not there: {window['exe']}")
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),
@@ -1282,6 +1379,7 @@ bundle_node
 build_mcp_app
 stage_sources
 stage_ui
+stage_window
 create_environments
 stage_payload
 stage_embedding_weights

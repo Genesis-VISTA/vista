@@ -199,6 +199,28 @@ version_is_consistent() {
 }
 check "version matches across manifest, launcher and app" version_is_consistent
 
+# The window, as unpacked here -- relocated, and carrying the signature the
+# build gave it through the archive round trip -- loads the running UI. Its
+# --smoke-test mode never shows anything and takes no single-instance lock, so
+# a VISTA the builder has open cannot turn this into a false failure. It still
+# needs a GUI session to start at all, which a build over SSH does not have.
+WINDOW_EXE="$(
+  "$PACKAGE/app/backend/.venv/bin/python" -c \
+    'import json,sys; w=json.load(open(sys.argv[1])).get("window"); print(w["exe"] if w else "")' \
+    "$PACKAGE/manifest.json"
+)"
+window_loads_the_ui() {
+  "$PACKAGE/$WINDOW_EXE" --smoke-test --url="http://127.0.0.1:$UI_PORT/" \
+    > "$LOGS/window-smoke.log" 2>&1
+}
+if [[ -z "$WINDOW_EXE" ]]; then
+  skip "the window loads the UI" "this package has no window"
+elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
+  skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
+else
+  check "the window loads the UI" window_loads_the_ui
+fi
+
 log "shutting down"
 cleanup
 
