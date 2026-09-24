@@ -32,8 +32,8 @@ The same two the Linux build needs (README, "A complete Linux build from a Mac")
 
 ## Things to know
 
-- **Interim store.** Until 8.1, the dev server defaults `MSB_HOME` to `%USERPROFILE%\.microsandbox-interim` (`Path.home()`). The Windows machine has no older store to protect, but live runs still land there.
-- **Live tests.** `VISTA_RUN_SANDBOX=1 uv run pytest -m sandbox` in `mcp_servers/dev_mcp_server` (6.6). They skip unless `MSB_HOME` is set; the interim default sets it.
+- **Sandbox store.** 8.1 removed the interim-store default, so with `MSB_HOME` unset the dev server uses microsandbox's own `%USERPROFILE%\.microsandbox`.
+- **Live tests.** `VISTA_RUN_SANDBOX=1 MSB_HOME=%USERPROFILE%\.msb-live uv run pytest -m sandbox` in `mcp_servers/dev_mcp_server` (6.6). They skip unless `MSB_HOME` is set explicitly.
 - **Encoding.** Hermetic suites must pass with `PYTHONWARNDEFAULTENCODING=1`; the pytest config turns the warning into an error (6.4). A failure there is a real Windows bug, not noise.
 - **Store-path budget.** 51 characters on macOS, measured. Whether Windows has any such limit is open question 6.8. Don't assume the check applies until that is answered.
 - **TLS inspection (untested on Windows).** ORNL traffic passes through Netskope. On the Mac this only broke the Linux build container, which has its own trust store. On Windows the root is probably in the system certificate store, but uv and Node may not read it by default. If downloads fail with certificate errors, try `UV_NATIVE_TLS=1` for uv and `NODE_USE_SYSTEM_CA=1` for Node before anything else.

@@ -110,5 +110,5 @@ Tasks marked **(not PR CI)** need a live sandbox, a live inference key or a real
 
 ## 8. Close-out
 
-- [ ] 8.1 [mac] As the last commit before merge, remove the interim-store default from 3.1 and its test. Verify that `git grep -n "TEMPORARY(windows-support)"` returns nothing, and that the dev server with `MSB_HOME` unset uses `~/.microsandbox`.
+- [x] 8.1 [mac] As the last commit before merge, remove the interim-store default from 3.1 and its test. Verify that `git grep -n "TEMPORARY(windows-support)"` returns nothing, and that the dev server with `MSB_HOME` unset uses `~/.microsandbox`. *(done 2026-09-24: removed the default from `config.py` and deleted `tests/test_interim_store.py`. The only `TEMPORARY(windows-support)` matches left are this file's own task text. With `MSB_HOME` unset, importing the dev server leaves it unset, so microsandbox uses `~/.microsandbox`. The live-test docstring and the handoff now say to pass `MSB_HOME` explicitly. Dev MCP hermetic suite 49 passed, MCP lint clean.)*
 - [ ] 8.2 [mac] Run `openspec validate windows-support --strict` and `./scripts/ci-local.sh`, and verify that both pass. Then open one MR, with the migration note from 3.6 in its description.
