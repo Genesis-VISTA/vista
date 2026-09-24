@@ -230,13 +230,16 @@ def test_job_defaults(job_env):
     make, train = recorded()
     train_dir = "/lustre/vista/forge-pretrain/forge/train"
     assert make.startswith("python -u /lustre/vista/forge-pretrain/src/make_config.py ")
-    assert f"{train_dir}/configs/forge-s.yml {train_dir}/configs/lux.yml" in make
+    # Defaults: forge-l, no checkpoint.
+    assert f"{train_dir}/configs/forge-l.yml {train_dir}/configs/lux.yml" in make
     assert (
-        f"--out-dir {out} --data-dir {DATA} --train-iters 50 --log-interval 1" in make
+        f"--out-dir {out} --data-dir /lustre/vista/forge-pretrain/data"
+        " --train-iters 50 --log-interval 1"
+        " --save-interval 0" in make
     )
-    assert "--save-interval" not in make and "--load-dir" not in make
+    assert "--load-dir" not in make
     assert train == (
-        f"python -u {train_dir}/deepy.py {train_dir}/train.py {out}/config/forge-s.yml"
+        f"python -u {train_dir}/deepy.py {train_dir}/train.py {out}/config/forge-l.yml"
     )
     assert (out / "hostfile").read_text(encoding="utf-8") == (
         "lux001 slots=8\nlux002 slots=8\n"
@@ -248,18 +251,18 @@ def test_job_defaults(job_env):
 def test_job_script_args(job_env):
     run, recorded, out = job_env
     r = run(
-        "MODEL=forge-l",
+        "MODEL=forge-m",
         "TRAIN_ITERS=100",
-        "SAVE_INTERVAL=0",
+        "SAVE_INTERVAL=100",
         "LOAD_DIR=/prev/ckpt",
     )
     assert r.returncode == 0, r.stderr
     make, train = recorded()
-    assert "configs/forge-l.yml" in make
+    assert "configs/forge-m.yml" in make
     assert "--train-iters 100" in make
-    assert "--save-interval 0" in make
+    assert "--save-interval 100" in make
     assert "--load-dir /prev/ckpt" in make
-    assert train.endswith(f"{out}/config/forge-l.yml")
+    assert train.endswith(f"{out}/config/forge-m.yml")
 
 
 @needs_bash
@@ -330,7 +333,7 @@ case "$*" in *"log -1"*) echo "abc1234 2026-09-14 add lux config";; esac""",
 
 @needs_bash
 def test_setup_clones_then_updates_to_latest(setup_env):
-    run, git_calls, job_dir, _ = setup_env
+    run, git_calls, job_dir, data = setup_env
     r = run()
     assert r.returncode == 0, r.stderr
     assert any(
@@ -341,6 +344,12 @@ def test_setup_clones_then_updates_to_latest(setup_env):
     assert not (job_dir / "forge.tmp").exists()
     assert (job_dir / "torch_extensions").is_dir()
     assert "abc1234" in r.stdout and "data and env OK" in r.stdout
+    # NeoX writes index maps next to the data prefix: it must be a writable dir
+    # of links, not the read-only corpus dir.
+    links = job_dir / "data"
+    for f in ("all_text_document.bin", "all_text_document.idx", "all_vocab.json"):
+        assert (links / f).is_symlink()
+        assert (links / f).resolve() == (data / f).resolve()
 
     before = len(git_calls())
     r = run()

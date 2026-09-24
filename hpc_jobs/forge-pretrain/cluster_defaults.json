@@ -1,0 +1,17 @@
+{
+  "lux": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 16,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "environment": {
+        "FORGE_REPO_URL": "https://github.com/at-aaims/forge.git",
+        "FORGE_BRANCH": "lux",
+        "FORGE_DATA_DIR": "/lustre/orion/world-shared/stf218/junqi/data/forge",
+        "LUX_ENV_SCRIPT": "/lustre/orion/world-shared/stf218/junqi/lux/lux_env.sh"
+      }
+    }
+  }
+}
