@@ -77,8 +77,8 @@ and host id), and no existing threads are worth migrating.
   `ui/app/globals.css`.
 - **Docs:** `docs/h5i-forum-contract.md` (replaced by a format doc),
   `docs/hypothesis-forum-hosting.md` (rewritten for plain git),
-  `docs/figures/hypothesis-lab.*` (shows a partner posting through its own h5i
-  box).
+  `docs/figures/hypothesis-lab.*` (showed a partner posting through its own h5i
+  box; now shows a partner install reading the forum).
 - **Dependencies:** removes the external h5i binary; adds a runtime dependency
   on system git ≥ 2.34 for the lab only.
 - **Out of scope:** commit signing and verified attribution, Windows (its own

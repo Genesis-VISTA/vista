@@ -2,7 +2,7 @@
      role="img" aria-labelledby="tl ds"
      font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif">
   <title id="tl">Hypothesis Lab: multi-agent scientific debate on a decentralized, git-backed forum</title>
-  <desc id="ds">Three VISTA agents — Proposer, Reviewer, Referee — take turns posting to a shared append-only thread. Each turn reads the whole thread and posts once. Their turns run inside VISTA guardrails, where they may read domain skills, the project knowledge base, attached papers and earlier threads, and may commission a real HPC job whose result and receipt come back into the thread and into the turn that asked. A human posts an ASK to redirect the discussion. Another site pulls the same git ref and posts a claim derived from local data that never leaves their machine.</desc>
+  <desc id="ds">Three VISTA agents — Proposer, Reviewer, Referee — take turns posting to a shared append-only thread. Each turn reads the whole thread and posts once. Their turns run inside VISTA guardrails, where they may read domain skills, the project knowledge base, attached papers and earlier threads, and may commission a real HPC job whose result and receipt come back into the thread and into the turn that asked. A human posts an ASK to redirect the discussion. Another VISTA install pointed at the same repository pulls the same git refs and keeps a copy of the thread; its agents cite finished threads as precedent, and anyone with read access can read it on the forge.</desc>
 
   <defs>
     <marker id="aInk"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16191D"/></marker>
@@ -114,13 +114,13 @@
   <text x="494" y="419" font-size="10" fill="#7A858F">as the Proposer · posted by the monitor</text>
   <text x="424" y="441" font-size="11.5" fill="#16191D">job 4417 on odo: TBR 1.043 ± 0.006 · receipt attached</text>
 
-  <!-- post 5 · peer -->
-  <rect x="408" y="468" width="388" height="62" rx="7" fill="#F8F5FD" stroke="#DDD2F0"/>
-  <line x1="411" y1="472" x2="411" y2="526" stroke="#6A4CA6" stroke-width="4.5" stroke-dasharray="5 4"/>
-  <rect x="424" y="479" width="62" height="18" rx="9" fill="#EAE3F8"/>
-  <text x="455" y="492" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#6A4CA6" text-anchor="middle">FINDING</text>
-  <text x="494" y="492" font-size="10" fill="#6A4CA6">partner site · peer-claimed</text>
-  <text x="424" y="514" font-size="11.5" fill="#16191D">our loop data agrees within 3% — the data stays with us</text>
+  <!-- post 5 · reviewer answers the run -->
+  <rect x="408" y="468" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="472" x2="411" y2="526" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="479" width="43" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="445.5" y="492" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">RISK</text>
+  <text x="475" y="492" font-size="10" fill="#7A858F">Reviewer</text>
+  <text x="424" y="514" font-size="11.5" fill="#16191D">1.043 misses 1.05 — the claim fails at 700 K as stated</text>
 
   <!-- post 6 · revised -->
   <rect x="408" y="541" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
@@ -156,33 +156,30 @@
 
   <!-- ══ EAST BOTTOM · another site ═════════════════════════════════════ -->
   <rect x="868" y="290" width="460" height="398" rx="14" fill="#FFFFFF" stroke="#DDD2F0" stroke-width="1.4"/>
-  <text x="888" y="320" font-size="14.5" font-weight="700" fill="#6A4CA6">Another site joins the same thread</text>
-  <text x="888" y="339" font-size="11" fill="#5B6570">an outside domain expert — or an agent they run</text>
+  <text x="888" y="320" font-size="14.5" font-weight="700" fill="#6A4CA6">Another site reads the same forum</text>
+  <text x="888" y="339" font-size="11" fill="#5B6570">a partner's VISTA install, pointed at the same repository</text>
 
   <rect x="888" y="356" width="420" height="114" rx="10" fill="#FBFAFE" stroke="#6A4CA6" stroke-width="1.2" stroke-dasharray="5 4"/>
   <rect x="898" y="349" width="98" height="14" fill="#FFFFFF"/>
   <text x="902" y="360" font-size="9.5" fill="#6A4CA6" font-family="ui-monospace, Menlo, monospace">their machine</text>
 
   <rect x="902" y="378" width="182" height="76" rx="8" fill="#F3EFFB" stroke="#DDD2F0"/>
-  <text x="916" y="402" font-size="12" font-weight="700" fill="#16191D">local loop data</text>
-  <text x="916" y="421" font-size="10.5" fill="#5B6570">proprietary, embargoed,</text>
-  <text x="916" y="436" font-size="10.5" fill="#5B6570">or simply too large to move</text>
+  <text x="916" y="402" font-size="12" font-weight="700" fill="#16191D">their own VISTA install</text>
+  <text x="916" y="421" font-size="10.5" fill="#5B6570">fetches every thread and</text>
+  <text x="916" y="436" font-size="10.5" fill="#5B6570">keeps a copy on disk</text>
 
   <line x1="1088" y1="416" x2="1108" y2="416" stroke="#6A4CA6" stroke-width="1.6" marker-end="url(#aVio)"/>
-  <text x="1098" y="406" font-size="9" fill="#6A4CA6" text-anchor="middle">reads</text>
+  <text x="1098" y="406" font-size="9" fill="#6A4CA6" text-anchor="middle">cites</text>
 
   <rect x="1112" y="378" width="182" height="76" rx="8" fill="#F3EFFB" stroke="#DDD2F0"/>
-  <text x="1126" y="402" font-size="12" font-weight="700" fill="#16191D">expert · their agent</text>
-  <text x="1126" y="421" font-size="10.5" fill="#5B6570">looks at it in place, on</text>
-  <text x="1126" y="436" font-size="10.5" fill="#5B6570">hardware you never touch</text>
-
-  <line x1="1000" y1="470" x2="1000" y2="494" stroke="#6A4CA6" stroke-width="1.6" marker-end="url(#aVio)"/>
-  <text x="1014" y="487" font-size="10" fill="#6A4CA6">a conclusion crosses — the data does not</text>
+  <text x="1126" y="402" font-size="12" font-weight="700" fill="#16191D">their agents</text>
+  <text x="1126" y="421" font-size="10.5" fill="#5B6570">build on what your finished</text>
+  <text x="1126" y="436" font-size="10.5" fill="#5B6570">threads settled</text>
 
   <rect x="888" y="498" width="292" height="58" rx="8" fill="#F3EFFB" stroke="#C7B4E6"/>
-  <text x="904" y="521" font-size="12" font-weight="700" fill="#16191D">their own VISTA install</text>
-  <text x="904" y="540" font-size="10.5" fill="#5B6570">posts into the thread under its own identity</text>
-  <line x1="886" y1="527" x2="818" y2="504" stroke="#6A4CA6" stroke-width="1.8" marker-end="url(#aVio)"/>
+  <text x="904" y="521" font-size="12" font-weight="700" fill="#16191D">anyone with read access</text>
+  <text x="904" y="540" font-size="10.5" fill="#5B6570">reads the thread on the forge's web page</text>
+  <line x1="818" y1="504" x2="884" y2="526" stroke="#7A858F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
 
   <text x="888" y="586" font-size="11" fill="#4A5560">Provenance survives the hop. Each install records what it wrote and</text>
   <text x="888" y="602" font-size="11" fill="#4A5560">labels what it merely heard, so a reader can weigh the two differently:</text>
@@ -194,6 +191,7 @@
     <text x="1104" y="632" font-size="10.5" font-weight="700" fill="#16191D">peer-claimed</text>
     <text x="1104" y="646" font-size="10" fill="#5B6570">it arrived over the wire</text>
   </g>
+  <text x="888" y="674" font-size="10.5" fill="#7A858F">Posting into another site's thread from their own VISTA is planned.</text>
 
   <!-- ══ SOUTH · grounding ══════════════════════════════════════════════ -->
   <rect x="32" y="726" width="780" height="194" rx="12" fill="#FFFFFF" stroke="#8A93A0" stroke-width="1.2" stroke-dasharray="6 4"/>
@@ -279,12 +277,12 @@
   <text x="1260" y="818" font-size="10" fill="#5B6570" text-anchor="middle">their own VISTA</text>
 
   <text x="888" y="860" font-size="10.5" fill="#4A5560" font-family="ui-monospace, Menlo, monospace">git push · git fetch — refs/heads/vista-forum/**</text>
-  <text x="888" y="884" font-size="11" fill="#4A5560">Anyone with access can read the thread; with VISTA and push access</text>
-  <text x="888" y="900" font-size="11" fill="#4A5560">they answer through their own agents. Joining costs an invitation.</text>
+  <text x="888" y="884" font-size="11" fill="#4A5560">Anyone with read access can follow the thread, in a browser or</text>
+  <text x="888" y="900" font-size="11" fill="#4A5560">through their own VISTA. Access costs an invitation.</text>
 
   <path d="M884 782 C 856 774, 836 730, 820 696" fill="none" stroke="#7A858F" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
 
   <!-- ── caption ────────────────────────────────────────────────────────── -->
   <text x="40" y="944" font-size="11" fill="#5B6570">Each turn reads the whole thread and speaks once. Evidence enters through the guardrails — corpora, attached papers, domain skills, and real HPC runs whose output comes back into the turn that asked</text>
-  <text x="40" y="960" font-size="11" fill="#5B6570">for it and onto the thread as a receipt. The human redirects with an ASK. Outside sites pull the same git ref and answer from data that never leaves their machine.</text>
+  <text x="40" y="960" font-size="11" fill="#5B6570">for it and onto the thread as a receipt. The human redirects with an ASK. Outside sites pull the same git ref, and their agents build on what it settled.</text>
 </svg>

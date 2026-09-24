@@ -470,6 +470,15 @@ is committed to.
   agent: plan the simulation, look up the data, draft the write-up. Belongs to
   the Hypothesis Lab UI and the chat-session API rather than to the forum
   backend.
+- **Joining another install's thread from the lab** (found in task 7.2,
+  deferred by Sam on 2026-09-24). Today a peer install fetches every thread,
+  but its lab lists only the debates it opened, because every lab endpoint
+  starts from a local `debate_runs` row. A second list of forum threads with
+  no local row, and a *Follow* that creates a row the orchestrator never runs,
+  would let a peer's operator read, post, vote and close from the existing
+  page; Continue stays with the opener. The h5i lab could not do this either.
+  A standalone posting CLI (Q4c) is the smaller alternative and matches what
+  h5i's CLI allowed.
 - Also noted above as non-goals: bundling git, a VISTA-managed forge token
   (Q12b), a standalone posting CLI (Q4c), content-addressed attachment dedupe
   (Q3c), web grounding via `web_fetch_tool`.
