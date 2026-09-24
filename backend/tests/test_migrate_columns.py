@@ -95,3 +95,53 @@ async def test_the_box_columns_are_dropped_and_inserts_work_again(tmp_path):
     async with engine.begin() as conn:
         assert await migrate.reconcile(conn, dry_run=False) == (0, 0), "idempotent"
     await engine.dispose()
+
+
+async def test_outbox_rows_move_to_each_projects_file(tmp_path, monkeypatch):
+    """
+    An early build kept the outbox in `vista.db`. Its rows move to the per-project
+    files, so posts this install wrote keep their host-observed lane, and the
+    table goes.
+    """
+    from vista_backend.config import settings
+    from vista_backend.services.forum_git import OUTBOX_FILE, FileOutbox
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'old.db'}")
+    p1, p2 = uuid.uuid4(), uuid.uuid4()
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE forum_outbox (post_id VARCHAR PRIMARY KEY, "
+                "project_id CHAR(32), thread_id VARCHAR, created_at VARCHAR, "
+                "published_at VARCHAR)"
+            )
+        )
+        for post, project, published in (
+            ("a", p1, "t"),
+            ("b", p1, None),
+            ("c", p2, None),
+        ):
+            await conn.execute(
+                text("INSERT INTO forum_outbox VALUES (:p, :proj, 'th', 'now', :pub)"),
+                {"p": post, "proj": project.hex, "pub": published},
+            )
+    migrate = _script()
+
+    async with engine.begin() as conn:
+        assert await migrate.move_outbox(conn, dry_run=True) == 3
+    assert not settings.forum_git_dir.exists(), "a dry run writes nothing"
+
+    async with engine.begin() as conn:
+        assert await migrate.move_outbox(conn, dry_run=False) == 3
+        assert await migrate.move_outbox(conn, dry_run=False) == 0, "idempotent"
+
+    one = FileOutbox(settings.forum_git_dir / str(p1) / OUTBOX_FILE)
+    two = FileOutbox(settings.forum_git_dir / str(p2) / OUTBOX_FILE)
+    assert await one.ours(["a", "b", "c"]) == {"a", "b"}
+    assert await one.published(["a", "b"]) == {"a"}
+    assert await two.ours(["a", "b", "c"]) == {"c"}
+    async with engine.connect() as conn:
+        tables = await conn.execute(text("SELECT name FROM sqlite_master"))
+        assert "forum_outbox" not in {row[0] for row in tables}
+    await engine.dispose()

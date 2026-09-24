@@ -20,16 +20,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel
 
 from vista_backend.config import ForumSettings, settings
-from vista_backend.db import schemas  # noqa: F401  (registers forum_outbox)
 from vista_backend.services import forum_git
 from vista_backend.services.forum_git import (
     HOST_ID_FILE,
     THREAD_PREFIX,
-    DbOutbox,
+    FileOutbox,
+    OUTBOX_FILE,
     ForumClient,
     ForumCommandError,
     InvalidKind,
@@ -83,35 +81,26 @@ def remote(tmp_path) -> Path:
 
 
 async def _host(root: Path, remote_url: str | None) -> ForumClient:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{root / 'vista.db'}")
-    root.mkdir(parents=True, exist_ok=True)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    """An install: its own data root, host id and outbox file, like a real one."""
     client = ForumClient(
         ForumSettings(
             enabled=True, repo_root=root / "forum-git" / str(PROJECT), timeout=30.0
-        ),
-        outbox=DbOutbox(engine, PROJECT),
+        )
     )
     await client.ensure_repo()
     if remote_url is not None:
         await client.set_remote(remote_url)
-    client._test_engine = engine  # type: ignore[attr-defined]
     return client
 
 
 @pytest.fixture
 async def a(tmp_path, remote):
-    client = await _host(tmp_path / "host-a", str(remote))
-    yield client
-    await client._test_engine.dispose()
+    return await _host(tmp_path / "host-a", str(remote))
 
 
 @pytest.fixture
 async def b(tmp_path, remote):
-    client = await _host(tmp_path / "host-b", str(remote))
-    yield client
-    await client._test_engine.dispose()
+    return await _host(tmp_path / "host-b", str(remote))
 
 
 def remote_refs(remote: Path) -> list[str]:
@@ -304,11 +293,8 @@ async def test_the_remote_round_trips(a, tmp_path):
 @pytest.mark.anyio
 async def test_an_unreachable_remote_fails_the_first_sync(tmp_path):
     client = await _host(tmp_path / "lonely", str(tmp_path / "does-not-exist.git"))
-    try:
-        with pytest.raises(ForumCommandError, match="does-not-exist"):
-            await client.sync()
-    finally:
-        await client._test_engine.dispose()
+    with pytest.raises(ForumCommandError, match="does-not-exist"):
+        await client.sync()
 
 
 @pytest.mark.anyio
@@ -372,20 +358,15 @@ async def test_an_invalid_kind_creates_no_commit(a):
 @pytest.mark.anyio
 async def test_a_post_is_committed_locally_without_the_network(tmp_path):
     offline = await _host(tmp_path / "offline", str(tmp_path / "unreachable.git"))
-    try:
-        thread = await offline.create_thread("offline debate")
-        post = await offline.post_as(
-            PROPOSER, thread, "a claim", kind=PostKind.PROPOSAL
-        )
-        assert post.sender == PROPOSER.identity
-        assert post.role == "proposer"
-        assert post.origin == offline.host_id
-        assert await offline.unpublished(thread) == 1
-        read = await offline.read_thread(thread)
-        assert [p.id for p in read.posts] == [post.id]
-        assert read.lane(post.id) == VouchLane.OBSERVED
-    finally:
-        await offline._test_engine.dispose()
+    thread = await offline.create_thread("offline debate")
+    post = await offline.post_as(PROPOSER, thread, "a claim", kind=PostKind.PROPOSAL)
+    assert post.sender == PROPOSER.identity
+    assert post.role == "proposer"
+    assert post.origin == offline.host_id
+    assert await offline.unpublished(thread) == 1
+    read = await offline.read_thread(thread)
+    assert [p.id for p in read.posts] == [post.id]
+    assert read.lane(post.id) == VouchLane.OBSERVED
 
 
 @pytest.mark.anyio
@@ -836,14 +817,11 @@ async def test_an_unknown_or_h5i_era_thread_is_missing(a):
 async def test_an_unpublished_thread_is_not_missing(tmp_path, remote):
     """Offline-created, then the remote is reachable: it is published, not lost."""
     host = await _host(tmp_path / "late", str(tmp_path / "offline.git"))
-    try:
-        thread = await host.create_thread("made offline", body="frame")
-        await host.set_remote(str(remote))
-        assert len((await host.read_thread(thread)).posts) == 1
-        await host.sync()
-        assert remote_refs(remote) == [THREAD_PREFIX + thread]
-    finally:
-        await host._test_engine.dispose()
+    thread = await host.create_thread("made offline", body="frame")
+    await host.set_remote(str(remote))
+    assert len((await host.read_thread(thread)).posts) == 1
+    await host.sync()
+    assert remote_refs(remote) == [THREAD_PREFIX + thread]
 
 
 @pytest.mark.anyio
@@ -860,3 +838,83 @@ async def test_concurrent_posts_from_one_host_all_land(a, b, remote):
     assert set(remote_post_ids(remote, thread)) == {p.id for p in posts[:5]}
     assert remote_post_ids(remote, other) == [posts[5].id]
     assert len((await b.read_thread(thread)).posts) == 5
+
+
+# --------------------------------------------------------------------------- #
+# The outbox's own file (task 3.7)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_the_outbox_lives_beside_the_repository(a):
+    thread = await a.create_thread("t")
+    await a.post_as(PROPOSER, thread, "x", kind=PostKind.PROPOSAL)
+    assert (a.repo_root / OUTBOX_FILE).is_file()
+    assert isinstance(a.outbox, FileOutbox)
+
+
+@pytest.mark.anyio
+async def test_posting_works_while_the_caller_holds_an_app_db_write(a, tmp_path):
+    """
+    The regression. The campaign monitor records a job's result and then posts
+    it, inside one uncommitted transaction; a project save flushes and then
+    syncs. With the outbox in the app database that post waited on the caller's
+    own write until "database is locked". It must now go straight through.
+    """
+    import time
+
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlmodel import SQLModel
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from vista_backend.db.schemas import ProjectTable
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'vista.db'}")
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _pragmas(conn, _):  # production pragmas, with a short timeout
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=2000")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    thread = await a.create_thread("t")
+    try:
+        async with AsyncSession(engine) as session:
+            session.add(ProjectTable(name="held"))
+            await session.flush()  # the app database's write lock is now held
+            started = time.perf_counter()
+            post = await a.post_as(PROPOSER, thread, "result", kind=PostKind.FINDING)
+            assert time.perf_counter() - started < 1.5, "the post waited on a lock"
+            await session.commit()
+    finally:
+        await engine.dispose()
+    assert (await a.read_thread(thread)).lane(post.id) == VouchLane.OBSERVED
+
+
+@pytest.mark.anyio
+async def test_file_outbox_round_trip(tmp_path):
+    box = FileOutbox(tmp_path / "p" / OUTBOX_FILE)
+    ids = [f"post-{i}" for i in range(1200)]  # more than one IN chunk
+    for i, post_id in enumerate(ids):
+        await box.record(post_id, "t1" if i % 2 else "t2", f"2026-09-24T00:00:{i:04d}")
+    assert await box.ours(ids + ["stranger"]) == set(ids)
+    assert await box.unpublished_count() == 1200
+    assert await box.unpublished_count("t1") == 600
+
+    await box.mark_published(ids[:700], "now")
+    assert await box.published(ids) == set(ids[:700])
+    await box.mark_published(ids[:10], "later")  # already published: untouched
+    await box.mark_unpublished(ids[:5])
+    assert await box.unpublished_count() == 505
+    await box.forget(ids[-3:])
+    assert await box.ours(ids) == set(ids[:-3])
+
+
+def test_file_outbox_import_keeps_existing_rows(tmp_path):
+    box = FileOutbox(tmp_path / OUTBOX_FILE)
+    assert box.insert_rows([("p1", "t", "a", None), ("p2", "t", "b", "c")]) == 2
+    assert box.insert_rows([("p1", "t", "a", "changed"), ("p3", "t", "d", None)]) == 1

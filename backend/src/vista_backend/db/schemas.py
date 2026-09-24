@@ -1120,32 +1120,6 @@ class DebatePostTable(DebatePostBase, table=True):
     run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
 
 
-class ForumOutboxTable(SQLModel, table=True):
-    """
-    Every forum post this install wrote, and whether the remote has it.
-
-    The one thing a post file cannot tell us is whether *we* wrote it: its
-    `origin` and `identity` are text a peer can copy. So authorship is recorded
-    here, at the moment of the local commit, and a post is `host-observed` only
-    if its id is in this table. It is also the publish queue — a row with no
-    `published_at` is replayed onto the remote on the next sync.
-
-    Keyed by post id alone: post ids are uuid7s, unique across every install.
-    """
-
-    __tablename__: str = "forum_outbox"
-
-    post_id: str = Field(primary_key=True)
-    project_id: uuid.UUID = Field(
-        foreign_key="project.id", ondelete="CASCADE", index=True
-    )
-    thread_id: str = Field(index=True)
-    created_at: str
-    """ When the post was committed locally (RFC 3339). Also the replay order. """
-    published_at: str | None = None
-    """ When a push containing it was accepted. None means not yet published. """
-
-
 class DebateCreate(BaseModel):
     """Fields a user supplies to open a debate (the project comes from the URL)."""
 

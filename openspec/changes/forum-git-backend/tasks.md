@@ -7,7 +7,7 @@ with `uv run --extra dev pytest …`; lint with `./scripts/ci-local.sh backend l
 - [x] 1.1 Add the git check (D9): resolve `git`, on macOS gate `/usr/bin/git` on `xcode-select -p`, require ≥ 2.34, cache the result; verify with `test_git_check.py` covering absent git, too-old git, and the macOS shim (stubbed `xcode-select` returning 1 and asserting `/usr/bin/git` is never executed)
 - [x] 1.2 Update `ForumSettings` (D10): add `git_binary`, `push_retries=5`, `attachment_cap_bytes=1_048_576`; add `settings.forum_git_dir` (`data/forum-git/`). The h5i fields and `forums_dir` stay until 3.6 deletes h5i, so the suite stays green between groups; verify the settings tests and that `uv run vista-backend` gets through config and `init_db`
 - [x] 1.3 Host id (D4): create `data/forum-git/host_id` once (uuid4 hex, mode 0600) and reuse it; verify with a test that two reads return the same id and a fresh data dir gets a new one
-- [x] 1.4 Add the `forum_outbox` table (D4) and the `published` / `on_remote` post columns (D5); verify `init_db` creates them on a fresh DB and `_add_missing_columns` adds the post columns to an existing one
+- [x] 1.4 Add the outbox (D4; now a per-project file, see 3.7) and the `published` / `on_remote` post columns (D5); verify `init_db` creates them on a fresh DB and `_add_missing_columns` adds the post columns to an existing one
 
 ## 2. Git forum client (D1–D3, D5, D7)
 
@@ -39,7 +39,7 @@ grounding tests use `tests/harness/fake_forum.py`.
 - [x] 3.5 Remove `WebReader`, `ENFORCING_TIERS`, `read_web_page` and `Grounding.browser` from `agents/forum/grounding.py` and `wiring.py`; verify `test_debate_grounding.py` passes with those cases deleted
 - [x] 3.6 Delete `services/h5i_forum.py`, `tests/test_h5i_forum.py`, `tests/test_h5i_forum_live.py` and the fake h5i shim/fixtures; remove `ForumSettings.binary`, `box_profile`, `box_isolation`, `egress`, `vote_policy` and `settings.forums_dir` (deferred from 1.2); add `FakeForumClient` for orchestrator/API tests; verify `uv run --extra dev pytest -m "not live and not hpc and not sandbox"` is green and `grep -rni h5i backend/src` finds only intentional mentions (none expected)
 
-- [ ] 3.7 Found during 5.2: `DbOutbox` writes through its own connection, so a caller holding an uncommitted write on the app DB blocks it until SQLite's 30 s busy timeout (`database is locked`). `simulation.post_result` does exactly this (`update_step` flushes, then `post_as`), so a finished simulation's result would fail to post. Fix approach to be decided; verify with a test that posts through `DbOutbox` from inside an open write transaction
+- [x] 3.7 Found during 5.2: the outbox, as a `forum_outbox` table in `vista.db` written through its own connection, deadlocked with a caller's uncommitted write until SQLite's busy timeout (`simulation.post_result`: `update_step` flushes, then `post_as`; also a project save with posts waiting to publish). Moved to a per-project `outbox.db` beside `repo.git` (`FileOutbox`, D4); `migrate_columns.py` moves existing rows and drops the table; verified by a real-git test that posts while an app-DB write is held open
 
 ## 4. Roster without boxes or stints (D6)
 

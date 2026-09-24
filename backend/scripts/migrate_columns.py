@@ -7,7 +7,7 @@ keeps its `debate_post` exactly as it was, and the first query naming a new
 column fails with "no such column" — at read time, in the API, rather than at
 startup where it would be obvious.
 
-Two steps, both idempotent:
+Three steps, all idempotent:
 
   - **Add** any column a table lacks (`ADD COLUMN`).
   - **Drop** the columns the h5i-era forum wrote and nothing reads any more
@@ -15,6 +15,10 @@ Two steps, both idempotent:
     were NOT NULL: on a branch tester's database every new participant insert
     fails until they are gone. Startup never drops anything, so this is the only
     place it happens.
+  - **Move** the forum outbox out of this database. An early build of the git
+    forum kept it in a `forum_outbox` table; it now lives in each project's
+    `data/forum-git/<project-id>/outbox.db`. Rows are copied there (so posts
+    this install wrote keep reading as host-observed) and the table is dropped.
 
 Safe to run repeatedly, and safe to run on a database that is already current.
 
@@ -29,12 +33,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import uuid
+from collections import defaultdict
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vista_backend.config import settings
 from vista_backend.db.db import get_engine
+from vista_backend.services.forum_git import OUTBOX_FILE, FileOutbox
 from vista_backend.db.schemas import (  # noqa: F401 — imported to register metadata
     DebateParticipantTable,
     DebatePostTable,
@@ -101,6 +108,45 @@ async def reconcile(conn: AsyncConnection, *, dry_run: bool) -> tuple[int, int]:
     return added, dropped
 
 
+async def move_outbox(conn: AsyncConnection, *, dry_run: bool) -> int:
+    """Copy `forum_outbox` rows into per-project outbox files, then drop it."""
+    exists = (
+        await conn.execute(
+            text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='forum_outbox'"
+            )
+        )
+    ).first()
+    if exists is None:
+        return 0
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT project_id, post_id, thread_id, created_at, published_at "
+                "FROM forum_outbox"
+            )
+        )
+    ).all()
+    by_project: dict[str, list[tuple[str, str, str, str | None]]] = defaultdict(list)
+    for project_id, post_id, thread_id, created_at, published_at in rows:
+        by_project[str(uuid.UUID(str(project_id)))].append(
+            (post_id, thread_id, created_at, published_at)
+        )
+    for project_id, project_rows in sorted(by_project.items()):
+        target = settings.forum_git_dir / project_id / OUTBOX_FILE
+        if dry_run:
+            print(f"would copy {len(project_rows)} outbox row(s) to {target}")
+        else:
+            added = FileOutbox(target).insert_rows(project_rows)
+            print(f"copied {added} outbox row(s) to {target}")
+    if dry_run:
+        print("would run: DROP TABLE forum_outbox")
+    else:
+        await conn.execute(text("DROP TABLE forum_outbox"))
+        print("dropped forum_outbox")
+    return len(rows)
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -116,17 +162,20 @@ async def main() -> int:
 
     async with get_engine().begin() as conn:
         added, dropped = await reconcile(conn, dry_run=args.dry_run)
+        moved = await move_outbox(conn, dry_run=args.dry_run)
 
-    changed = added + dropped
+    changed = added + dropped + moved
     if changed == 0:
         print("nothing to do — the tables are current")
     elif args.dry_run:
         print(
-            f"{added} column(s) to add, {dropped} to drop; "
-            "re-run without --dry-run to apply"
+            f"{added} column(s) to add, {dropped} to drop, {moved} outbox row(s) "
+            "to move; re-run without --dry-run to apply"
         )
     else:
-        print(f"{added} column(s) added, {dropped} dropped")
+        print(
+            f"{added} column(s) added, {dropped} dropped, {moved} outbox row(s) moved"
+        )
     return 0
 
 

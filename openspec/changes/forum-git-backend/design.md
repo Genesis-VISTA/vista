@@ -123,6 +123,7 @@ data/forum-git/
   host_id                       # Q2: random id, created once per install
   <project-id>/
     repo.git/                   # bare working repo
+    outbox.db                   # D4: which posts are ours, and which are published
     attachments/<post-id>/<name>  # full copies of truncated attachments (Q3b)
 ```
 
@@ -236,16 +237,31 @@ git notes (poorly supported by forges); a custom ref namespace outside
   (`git remote add/set-url forum <url>`). `remote()` returns it;
   `set_remote()` sets it.
 
-### D4. Provenance lanes from an outbox table (Q1, Q2)
+### D4. Provenance lanes from an outbox (Q1, Q2)
 
-New table `forum_outbox`: `post_id` (PK), `project_id`, `thread_id`,
-`created_at`, `published_at` (nullable). The row is written just before the
-local ref moves (and removed if the compare-and-swap fails), so a crash leaves
-at worst a row naming no post, never an unrecorded post of ours. The client
-reaches it through an `Outbox` protocol: `DbOutbox` in the app, one SQLite file
-per host in the real-git tests, `MemoryOutbox` for the fake client.
+An outbox per project, in its own SQLite file beside the repository:
+`data/forum-git/<project-id>/outbox.db`, one table `outbox(post_id PK,
+thread_id, created_at, published_at nullable)`. The row is written just before
+the local ref moves (and removed if the compare-and-swap fails), so a crash
+leaves at worst a row naming no post, never an unrecorded post of ours. The
+client reaches it through an `Outbox` protocol: `FileOutbox` in the app and the
+real-git tests, `MemoryOutbox` for the fake client.
 
-- `host-observed` ⇔ `post_id` is in `forum_outbox`. Never decided from
+**Why not a table in `vista.db`** (the first build did that; task 3.7): SQLite
+has one write lock per file, and the forum is written from code that is often
+inside its own uncommitted transaction on the app database. The campaign
+monitor records a job's result and then posts it; a project save flushes and
+then syncs. An outbox on a second connection to the same file waited for the
+caller's write, which could not commit until the post returned, until SQLite's
+busy timeout failed it with "database is locked": a late simulation result
+never reached its thread. A separate file has its own lock, held for the
+milliseconds of each outbox call, so no caller's transaction can block it.
+Alternatives: have callers commit before posting (fragile; nothing enforces
+it), or record ours as local-only refs in the same `update-ref` transaction as
+the post (atomic and database-free, but a larger rework — a good later step).
+`scripts/migrate_columns.py` moves rows from the old table into the files.
+
+- `host-observed` ⇔ `post_id` is in the outbox. Never decided from
   `origin`, which a peer can copy.
 - `unattributed` ⇔ not in the outbox and `origin` is missing or not a
   well-formed host id.
@@ -254,8 +270,9 @@ per host in the real-git tests, `MemoryOutbox` for the fake client.
 
 `Thread.vouch` keeps its `post_id → lane` shape, so `Thread.is_observed`,
 `is_operator`, `is_peer`, `tally_split` and the UI's `closedBy` keep working.
-If the local DB is lost, this install's old posts read as `peer-claimed`;
-accepted and documented.
+If a project's outbox file is lost, this install's old posts read as
+`peer-claimed`; accepted and documented. It lives beside `repo.git`, so the two
+are normally lost or kept together.
 
 Host id (Q2): `data/forum-git/host_id`, a uuid4 hex written once with mode
 0600, read at startup. Alternatives rejected: `git config user.email` (leaks,
@@ -414,7 +431,7 @@ helpers and ssh-agent still work, prompts never hang the backend),
   unchanged from h5i. Lanes label rather than prevent; the missing-thread path
   and replay keep VISTA's own view intact. Signing (D8, deferred) would add
   verifiable attribution.
-- [Local DB loss makes our own old posts read as `peer-claimed`] → accepted;
+- [Losing a project's `outbox.db` makes our own old posts read as `peer-claimed`] → accepted;
   documented in the format doc.
 - [Repo growth from full receipts] → 1 MB cap per attachment; dedupe later.
 - [A peer's close and our post race] → our post is committed after `CLOSED`

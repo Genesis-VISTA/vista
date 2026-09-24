@@ -60,16 +60,7 @@ def forum_home(tmp_path, monkeypatch, git_ok):
 
 
 @pytest.fixture
-async def outbox_db(engine, monkeypatch):
-    """Real clients record their posts in the test database's outbox."""
-    from vista_backend.db import db
-
-    monkeypatch.setattr(db, "get_engine", lambda: engine)
-    return engine
-
-
-@pytest.fixture
-async def app_client(session, alice, outbox_db):
+async def app_client(session, alice):
     """
     An HTTP client over the real app, sharing the test's session and identity.
 
@@ -225,7 +216,7 @@ def test_the_legacy_env_is_disowned_out_loud(forum_home, monkeypatch, caplog):
 
 
 async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
-    forum_home, forge, outbox_db
+    forum_home, forge
 ):
     project = _project(str(forge))
     await ensure_forum(project)
@@ -235,7 +226,7 @@ async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
     assert await client.remote() == str(forge)
 
 
-async def test_ensure_forum_is_idempotent(forum_home, forge, outbox_db):
+async def test_ensure_forum_is_idempotent(forum_home, forge):
     """Called on every save, and on first use. Twice must be the same as once."""
     project = _project(str(forge))
     await ensure_forum(project)
@@ -244,9 +235,7 @@ async def test_ensure_forum_is_idempotent(forum_home, forge, outbox_db):
     assert (forum_root(project.id) / REPO_DIR / "config").read_text() == config
 
 
-async def test_changing_the_url_moves_the_remote(
-    forum_home, forge, tmp_path, outbox_db
-):
+async def test_changing_the_url_moves_the_remote(forum_home, forge, tmp_path):
     other = tmp_path / "forge" / "other.git"
     subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
     project = _project(str(forge))
@@ -287,9 +276,7 @@ async def test_saving_without_git_says_the_lab_needs_it(forum_home, monkeypatch)
         await ensure_forum(_project())
 
 
-async def test_joining_an_existing_forum_lists_its_threads(
-    forum_home, forge, tmp_path, outbox_db
-):
+async def test_joining_an_existing_forum_lists_its_threads(forum_home, forge, tmp_path):
     """Pointing a new project at a repository that holds threads joins them."""
     from vista_backend.services.forum_git import MemoryOutbox
 

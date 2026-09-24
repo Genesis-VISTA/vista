@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import shlex
+import sqlite3
 import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -44,9 +45,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlmodel import col, select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import ForumSettings, settings
 
@@ -516,40 +514,112 @@ class MemoryOutbox:
         )
 
 
-class DbOutbox:
-    """The outbox in the `forum_outbox` table, scoped to one project."""
+OUTBOX_FILE = "outbox.db"
 
-    def __init__(self, engine: AsyncEngine, project_id: uuid.UUID) -> None:
-        self.engine = engine
-        self.project_id = project_id
+_OUTBOX_SCHEMA = """
+CREATE TABLE IF NOT EXISTS outbox (
+    post_id      TEXT PRIMARY KEY,
+    thread_id    TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    published_at TEXT
+)
+"""
+
+_IN_CHUNK = 500
+""" Ids per `IN (...)` clause, well under SQLite's bound-variable limit. """
+
+
+class FileOutbox:
+    """
+    The outbox in its own SQLite file beside the repository it describes,
+    `<repo_root>/outbox.db`, one per project.
+
+    Deliberately **not** a table in `vista.db`. SQLite has one write lock per
+    database file, and the forum is written from code that is often in the
+    middle of its own transaction on the app database — the campaign monitor
+    records a job's result and then posts it; a project save flushes and then
+    syncs. An outbox in that file waited on the caller's uncommitted write,
+    which could not commit until the post returned, until SQLite gave up with
+    "database is locked" (task 3.7). Its own file has its own lock, held only
+    for the few milliseconds of each call here, so no caller's transaction can
+    block it.
+
+    Living beside `repo.git` also keeps "which posts are ours" with the commits
+    it describes: losing one loses the other, rather than leaving our own posts
+    in a repository that no longer knows they are ours.
+
+    Each call opens a short-lived connection in a worker thread; there is no
+    long-lived connection to share between the clients the API builds per
+    request.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def _connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(_OUTBOX_SCHEMA)
+        return conn
+
+    def _call(self, fn: Any) -> Any:
+        conn = self._connect()
+        try:
+            with conn:  # one transaction: committed on success, rolled back on error
+                return fn(conn)
+        finally:
+            conn.close()
+
+    async def _run(self, fn: Any) -> Any:
+        return await asyncio.to_thread(self._call, fn)
+
+    @staticmethod
+    def _chunks(post_ids: Iterable[str]) -> list[list[str]]:
+        ids = list(dict.fromkeys(post_ids))
+        return [ids[i : i + _IN_CHUNK] for i in range(0, len(ids), _IN_CHUNK)]
+
+    def insert_rows(self, rows: Iterable[tuple[str, str, str, str | None]]) -> int:
+        """
+        Add (post_id, thread_id, created_at, published_at) rows, keeping any that
+        exist. Synchronous, for `scripts/migrate_columns.py`. Returns rows added.
+        """
+
+        def go(conn: sqlite3.Connection) -> int:
+            before = conn.total_changes
+            conn.executemany(
+                "INSERT OR IGNORE INTO outbox VALUES (?, ?, ?, ?)", list(rows)
+            )
+            return conn.total_changes - before
+
+        return self._call(go)
 
     async def record(self, post_id: str, thread_id: str, created_at: str) -> None:
-        from ..db.schemas import ForumOutboxTable
-
-        async with AsyncSession(self.engine) as session:
-            session.add(
-                ForumOutboxTable(
-                    post_id=post_id,
-                    project_id=self.project_id,
-                    thread_id=thread_id,
-                    created_at=created_at,
-                )
+        await self._run(
+            lambda c: c.execute(
+                "INSERT INTO outbox (post_id, thread_id, created_at) VALUES (?, ?, ?)",
+                (post_id, thread_id, created_at),
             )
-            await session.commit()
+        )
 
     async def _select(self, post_ids: Iterable[str], *, published: bool) -> set[str]:
-        from ..db.schemas import ForumOutboxTable as T
-
-        ids = list(post_ids)
-        if not ids:
+        chunks = self._chunks(post_ids)
+        if not chunks:
             return set()
-        query = select(T.post_id).where(
-            T.project_id == self.project_id, col(T.post_id).in_(ids)
-        )
-        if published:
-            query = query.where(col(T.published_at).is_not(None))
-        async with AsyncSession(self.engine) as session:
-            return set((await session.exec(query)).all())
+        extra = " AND published_at IS NOT NULL" if published else ""
+
+        def go(conn: sqlite3.Connection) -> set[str]:
+            found: set[str] = set()
+            for chunk in chunks:
+                marks = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT post_id FROM outbox WHERE post_id IN ({marks}){extra}",
+                    chunk,
+                )
+                found.update(r[0] for r in rows)
+            return found
+
+        return await self._run(go)
 
     async def ours(self, post_ids: Iterable[str]) -> set[str]:
         return await self._select(post_ids, published=False)
@@ -557,52 +627,43 @@ class DbOutbox:
     async def published(self, post_ids: Iterable[str]) -> set[str]:
         return await self._select(post_ids, published=True)
 
-    async def _set_published(self, post_ids: Iterable[str], at: str | None) -> None:
-        from ..db.schemas import ForumOutboxTable as T
-
-        ids = list(post_ids)
-        if not ids:
+    async def _update(self, post_ids: Iterable[str], sql: str, *args: Any) -> None:
+        chunks = self._chunks(post_ids)
+        if not chunks:
             return
-        async with AsyncSession(self.engine) as session:
-            query = select(T).where(
-                T.project_id == self.project_id, col(T.post_id).in_(ids)
-            )
-            for row in (await session.exec(query)).all():
-                if at is None or row.published_at is None:
-                    row.published_at = at
-                    session.add(row)
-            await session.commit()
+
+        def go(conn: sqlite3.Connection) -> None:
+            for chunk in chunks:
+                marks = ",".join("?" * len(chunk))
+                conn.execute(sql.format(marks=marks), (*args, *chunk))
+
+        await self._run(go)
 
     async def mark_published(self, post_ids: Iterable[str], at: str) -> None:
-        await self._set_published(post_ids, at)
+        await self._update(
+            post_ids,
+            "UPDATE outbox SET published_at = ? "
+            "WHERE post_id IN ({marks}) AND published_at IS NULL",
+            at,
+        )
 
     async def mark_unpublished(self, post_ids: Iterable[str]) -> None:
-        await self._set_published(post_ids, None)
+        await self._update(
+            post_ids,
+            "UPDATE outbox SET published_at = NULL "
+            "WHERE post_id IN ({marks}) AND published_at IS NOT NULL",
+        )
 
     async def forget(self, post_ids: Iterable[str]) -> None:
-        from ..db.schemas import ForumOutboxTable as T
-
-        ids = list(post_ids)
-        if not ids:
-            return
-        async with AsyncSession(self.engine) as session:
-            query = select(T).where(
-                T.project_id == self.project_id, col(T.post_id).in_(ids)
-            )
-            for row in (await session.exec(query)).all():
-                await session.delete(row)
-            await session.commit()
+        await self._update(post_ids, "DELETE FROM outbox WHERE post_id IN ({marks})")
 
     async def unpublished_count(self, thread_id: str | None = None) -> int:
-        from ..db.schemas import ForumOutboxTable as T
-
-        query = select(T.post_id).where(
-            T.project_id == self.project_id, col(T.published_at).is_(None)
-        )
-        if thread_id is not None:
-            query = query.where(T.thread_id == thread_id)
-        async with AsyncSession(self.engine) as session:
-            return len((await session.exec(query)).all())
+        if thread_id is None:
+            sql, args = "SELECT COUNT(*) FROM outbox WHERE published_at IS NULL", ()
+        else:
+            sql = "SELECT COUNT(*) FROM outbox WHERE published_at IS NULL AND thread_id = ?"
+            args = (thread_id,)
+        return await self._run(lambda c: c.execute(sql, args).fetchone()[0])
 
 
 # --------------------------------------------------------------------------- #
@@ -782,9 +843,7 @@ class ForumClient:
     @property
     def outbox(self) -> Outbox:
         if self._outbox is None:
-            from ..db.db import get_engine
-
-            self._outbox = DbOutbox(get_engine(), uuid.UUID(self.repo_root.name))
+            self._outbox = FileOutbox(self.repo_root / OUTBOX_FILE)
         return self._outbox
 
     # -- the git runner ---------------------------------------------------- #
