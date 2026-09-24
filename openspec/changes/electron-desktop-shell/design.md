@@ -51,6 +51,8 @@ Current state and constraints that shape the approach:
 - Porting any launcher logic into Electron. Electron does not know the stack exists.
 - Rewriting UI links for Electron. Routing lives in the shell. UI edits are limited to
   what also improves the browser case.
+- A Linux or Windows window. The known follow-ups are recorded in P1 so they aren't
+  rediscovered.
 
 ## Decisions
 
@@ -136,12 +138,17 @@ beside the database and make `rm -rf ~/.vista` the only way to reset it.
 
 `package_launcher.sh` gains `--browser`. After the UI health wait, window mode:
 
-1. Resolves `$PACKAGE/app/window/Contents/MacOS/VISTA`. If it is absent (a Linux
-   package) or there is no display, it logs one line and falls through to
-   browser mode (spec: "Window mode where it cannot run"). "No display" means the
-   launcher is not running in a macOS GUI login session, typically SSH. The check is
-   `launchctl managername` returning something other than `Aqua`, and task 3.2
-   confirms that value over SSH before the design relies on it.
+1. Reads the window executable's package-relative path from the manifest
+   (`window.exe`, written by B1), using the same `sed` field reader as the platform
+   guard. The launcher never hard-codes a macOS bundle path. If the field or the file
+   is missing (a Linux package), or `can_show_window` says no, it logs one line and
+   falls through to browser mode (spec: "Window mode where it cannot run").
+   `can_show_window` is one function with a `case "$HOST_OS"`, and only the `macos`
+   branch is implemented. That branch checks for a macOS GUI login session, which
+   rules out SSH: `launchctl managername` must return `Aqua`, and task 3.2 confirms
+   the value it returns over SSH before the design relies on it. Every other OS
+   answers "no" until its window exists. Linux adds a `DISPLAY`/`WAYLAND_DISPLAY`
+   branch.
 2. Runs it with `--url=http://127.0.0.1:$UI_PORT`, backgrounded and added to `PIDS`,
    then `wait`s for *that* PID. When it returns, `exit 0` runs `stop`.
 
@@ -173,21 +180,54 @@ unchanged, since `next dev`'s HMR WebSocket is same-origin.
 
 ### B1–B3. Package build (macOS only)
 
-- **B1** A new `stage_window` step runs after `stage_ui`, on `macos-*` targets only.
-  `npm ci` in `electron/`, then `@electron/packager` with name `VISTA`, bundle ID
-  `gov.ornl.vista`, `electron/assets/icon.icns` (Electron's default icon until one
-  exists), `asar: true` and `osxSign: false`. Then
-  rename `VISTA.app` → `$STAGING/app/window`.
-- **B2** `codesign --force --deep --sign - "$STAGING/app/window"`, then
+- **B1** A new `stage_window` step runs after `stage_ui`. It dispatches on the target:
+  `stage_window_macos` is implemented, and every other target logs "no window for
+  <target>" and returns. The shared part is `npm ci` in `electron/` and
+  `@electron/packager` (name `VISTA`, `asar: true`). The macOS branch adds bundle ID
+  `gov.ornl.vista`, `electron/assets/icon.icns` if present (otherwise Electron's
+  default), and `osxSign: false`. It moves `VISTA.app` to `$STAGING/app/window` and
+  signs it (B2). Signing lives only inside the macOS branch.
+- **B2** (inside `stage_window_macos`) `codesign --force --deep --sign - "$STAGING/app/window"`, then
   `codesign --verify --deep --strict`. This is scoped to that path. The build greps its own
   source to confirm no other `codesign` call exists, so R2 ("do not re-sign `msb`") can't
-  regress. The manifest's `components` gains `window` (size), and `versions` gains
-  `electron`. The validator requires `window` on macOS.
+  regress. The manifest gains a top-level `window` object: `exe`, the executable
+  relative to the package root (`app/window/Contents/MacOS/VISTA` on macOS), and
+  `electron`, the version. `components` also gains `window` (size). The validator
+  requires `window` on macOS and checks that `window.exe` exists and is executable.
 - **B3** `smoke_test_package.sh` runs `vista --browser` (`:103`). Once the UI is healthy,
   on macOS it also runs `app/window/.../VISTA --smoke-test --url=…`. That proves the
   unpacked, relocated, re-signed shell loads the real UI. The check is skipped with a
   warning, not failed, when the build host has no GUI session. The Linux
   cross-build container never runs it.
+
+### P1. Portability seams for Linux and Windows (follow-up changes, not this one)
+
+The shell (`electron/src/`) and the lifecycle contract are OS-neutral. What each port
+still needs:
+
+- **Linux.**
+  - On Ubuntu 24.04, AppArmor restricts unprivileged user namespaces, and Chromium's
+    sandbox needs them. A window launched from a tarball crashes at start-up.
+  - The fix is a one-time `sudo` step that installs an AppArmor profile for
+    `app/window/VISTA`, or a `.deb`/`.rpm` that installs it. This is comparable to the
+    existing one-time `usermod -aG kvm`. Do not use `--no-sandbox`. Debian 13 and
+    RHEL 10 don't need the step.
+  - Otherwise the port adds a `linux` branch to `can_show_window` (`DISPLAY` /
+    `WAYLAND_DISPLAY`) and a `stage_window_linux` that writes `window.exe`.
+  - The window smoke test (B3) needs `xvfb-run` in the amd64 build container.
+  - Process-group stop and `HUP` (L2) already apply.
+- **Windows.**
+  - The window becomes one more child of the `windows-support` change's PowerShell
+    launcher (its D9). That launcher's job object replaces L2's process groups and
+    signals. It reads `window.exe` (`app\window\VISTA.exe`) from the same manifest
+    field.
+  - Staging moves into its `build_windows_package.ps1` (its D10), not this script.
+  - An unsigned `VISTA.exe` meets SmartScreen, the same accepted risk as its unsigned
+    `msb.exe`.
+  - On Windows, W5's menu becomes a window menu bar, and quit is File → Exit or Alt-F4.
+
+These seams are why L1 reads the executable from the manifest and dispatches the
+display check per OS, and why B1 dispatches per target with signing confined to macOS.
 
 ### T1–T4. Testing lanes
 
