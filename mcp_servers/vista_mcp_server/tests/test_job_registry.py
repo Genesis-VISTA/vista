@@ -55,7 +55,7 @@ def test_load_missing_file_returns_empty(tmp_path):
 
 def test_load_corrupt_file_returns_empty(tmp_path):
     path = tmp_path / "bad.json"
-    path.write_text("{ this is not valid json")
+    path.write_text("{ this is not valid json", encoding="utf-8")
     assert _load_submitted_jobs(path) == {}
 
 

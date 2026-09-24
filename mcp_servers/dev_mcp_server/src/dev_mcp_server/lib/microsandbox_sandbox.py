@@ -1,19 +1,154 @@
 import asyncio
 import logging
-import os
-import pty
 import tempfile
 import uuid
 from pathlib import Path
 
-from microsandbox import Sandbox as MsbSandbox, Volume as MsbVolume, Network, PullPolicy
-from microsandbox.types import DnsConfig  # not re-exported from package root
-from microsandbox._runtime import msb_path as _msb_path
+from microsandbox import (
+    ExecEventType,
+    ExecHandle,
+    ExecSink,
+    Image,
+    Network,
+    NetworkProfile,
+    PullPolicy,
+    Sandbox as MsbSandbox,
+    Stdin,
+    Volume as MsbVolume,
+    resolve_runtime,
+)
+from microsandbox.errors import ImageNotFoundError, MicrosandboxError
 
-from .dns import host_nameservers
-from .sandbox import Sandbox, Volume
+from .sandbox import Sandbox, SandboxProcess, Volume
 from .util import check_output, parse_output
 from .container_sandbox import resolve_container_runtime
+
+
+async def _msb_image_digest(image: str) -> str | None:
+    """Config digest of an image in the microsandbox store, or None if it isn't there."""
+    try:
+        detail = await Image.inspect(image)
+    except ImageNotFoundError:
+        return None
+    except MicrosandboxError:
+        # Raised rather than treated as absent: re-loading or pulling over a store that can't be
+        # read would only hide the problem.
+        logging.error(
+            f"Could not inspect sandbox image {image} in the microsandbox store"
+        )
+        raise
+    return detail.config.digest.split(":")[-1] if detail.config else None
+
+
+_STDIN_CHUNK = 1 << 20
+"""Largest stdin write sent in one piece. The agent protocol caps a frame at 4 MiB, header
+included, and a larger write fails and ends the exec session."""
+
+
+class _ExecStdin:
+    """The subset of `asyncio.StreamWriter` that callers use on `proc.stdin`.
+
+    `ExecSink` is async-only, while `StreamWriter.write` and `.close` are synchronous, so writes
+    and the close are chained onto one task to keep them in order.
+    """
+
+    def __init__(self, sink: ExecSink):
+        self._sink = sink
+        self._closing = False
+        self._tail: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._tail.set_result(None)
+
+    def _chain(self, op) -> None:
+        previous = self._tail
+
+        async def run():
+            await previous
+            await op()
+
+        self._tail = asyncio.ensure_future(run())
+
+    def write(self, data: bytes) -> None:
+        for start in range(0, len(data), _STDIN_CHUNK):
+            chunk = data[start : start + _STDIN_CHUNK]
+            self._chain(lambda chunk=chunk: self._sink.write(chunk))
+
+    async def drain(self) -> None:
+        await self._tail
+
+    def close(self) -> None:
+        if not self._closing:
+            self._closing = True
+            self._chain(self._sink.close)
+
+    def is_closing(self) -> bool:
+        return self._closing
+
+    async def wait_closed(self) -> None:
+        await self._tail
+
+
+class _ExecProcess(SandboxProcess):
+    """An `asyncio.subprocess.Process` look-alike over a microsandbox `ExecHandle`."""
+
+    def __init__(self, handle: ExecHandle, combine_streams: bool):
+        self._handle = handle
+        self.returncode: int | None = None
+        self.stdout = asyncio.StreamReader()
+        self.stderr = None if combine_streams else asyncio.StreamReader()
+        sink = handle.take_stdin()
+        self.stdin = _ExecStdin(sink) if sink else None
+        self._pump = asyncio.ensure_future(self._pump_events())
+
+    async def _pump_events(self) -> None:
+        stderr = self.stderr or self.stdout
+        try:
+            async for event in self._handle:
+                if event.event_type == ExecEventType.STDOUT and event.data:
+                    self.stdout.feed_data(event.data)
+                elif event.event_type == ExecEventType.STDERR and event.data:
+                    stderr.feed_data(event.data)
+                elif event.event_type == ExecEventType.EXITED:
+                    self.returncode = event.code
+                elif event.event_type == ExecEventType.FAILED:
+                    if event.data:
+                        stderr.feed_data(event.data)
+                    self.returncode = event.code if event.code is not None else -1
+                elif event.event_type == ExecEventType.STDIN_ERROR:
+                    # The guest couldn't deliver stdin, e.g. the process closed it or exited.
+                    # `asyncio`'s communicate() ignores a broken pipe too, so this is only
+                    # logged; the exit code says whether the command failed.
+                    logging.warning(
+                        f"Sandbox process stdin error: {(event.data or b'').decode(errors='replace')}"
+                    )
+            if self.returncode is None:
+                self.returncode, _ = await self._handle.wait()
+        finally:
+            self.stdout.feed_eof()
+            if self.stderr:
+                self.stderr.feed_eof()
+
+    async def wait(self) -> int:
+        await self._pump
+        assert self.returncode is not None
+        return self.returncode
+
+    async def communicate(
+        self, input: bytes | None = None
+    ) -> tuple[bytes, bytes | None]:
+        if self.stdin:
+            if input:
+                self.stdin.write(input)
+            self.stdin.close()
+            await self.stdin.wait_closed()
+        stdout, stderr = await asyncio.gather(
+            self.stdout.read(),
+            self.stderr.read() if self.stderr else asyncio.sleep(0, result=None),
+        )
+        await self.wait()
+        return stdout, stderr
+
+    async def kill(self) -> None:
+        await self._handle.kill()
 
 
 class MicrosandboxSandbox(Sandbox):
@@ -51,27 +186,16 @@ class MicrosandboxSandbox(Sandbox):
             oci_digest = oci_inspect[0]["Id"].split(":")[
                 -1
             ]  # podman doesn't prefix sha256:
-            # TODO: in microsandbox 0.5.5, we should be able to use the python SDK for this
-            msb_inspect = await parse_output(
-                str(_msb_path()), "image", "inspect", "--format=json", image
-            )
-            msb_digest = (
-                msb_inspect["config"]["digest"].split(":")[-1] if msb_inspect else None
-            )
-            if msb_digest != oci_digest:
+            if await _msb_image_digest(image) != oci_digest:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     archive = str(Path(tmpdir) / "image.tar")
                     await check_output(runtime, "save", "-o", archive, image)
-                    await check_output(
-                        str(_msb_path()), "load", "-i", archive, "-t", image
-                    )
+                    await Image.load(archive, tag=image)
         elif image:
-            msb_inspect = await parse_output(
-                str(_msb_path()), "image", "inspect", "--format=json", image
-            )
-            if not msb_inspect:
+            if await _msb_image_digest(image) is None:
                 logging.info(f"Pulling sandbox image {image}...")
-                await check_output(str(_msb_path()), "pull", image)
+                # The SDK only pulls as part of creating a sandbox, and build() must not create one.
+                await check_output(resolve_runtime().msb_path, "pull", image)
         else:
             raise ValueError("You must specify image or dockerfile")
 
@@ -116,18 +240,11 @@ class MicrosandboxSandbox(Sandbox):
             shell="/bin/bash",
             volumes=msb_volumes,
             env=dict(env) if env else {},
+            # DNS is left to microsandbox, which follows the host's own resolver on every
+            # platform (SCDynamicStore on macOS, resolv.conf on Linux, the DNS Client on Windows),
+            # including VPN split-DNS that a flattened nameserver list would bypass.
             # TODO: Note, there's currently and issue where microsandbox writes /etc/resolv.conf with mode 0700, so if we make the sandbox image non root dns fails
-            network=Network(
-                # policy=NetworkPolicy(
-                #     default_egress=Action.DENY,
-                #     rules=tuple([
-                #         *Rule.allow_dns(),
-                #         *[Rule.allow(direction=Direction.EGRESS, destination=Destination.domain(d), port=443, protocol=Protocol.TCP) for d in ["www.example.com"]],
-                #     ]),
-                # ),
-                policy="public_only",
-                dns=DnsConfig(nameservers=host_nameservers()),
-            ),
+            network=Network.from_profiles(NetworkProfile.PUBLIC),
         )
         return cls(sandbox=sandbox)
 
@@ -138,39 +255,19 @@ class MicrosandboxSandbox(Sandbox):
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         combine_streams: bool = False,
-    ) -> asyncio.subprocess.Process:
-        cmd = [str(_msb_path()), "exec", "--quiet", await self._sandbox.name]
-        if cwd:
-            cmd += ["--workdir", cwd]
-        for key, value in (env or {}).items():
-            cmd += ["--env", f"{key}={value}"]
-        cmd += ["--", command]
-        cmd += args or []
-        # msb allocates a guest PTY (enabling line-by-line streaming) only when its
-        # own stdin is a TTY. We give it a pty slave so isatty(stdin) is true while
-        # keeping proc.stdout as a normal pipe for async readline.
-        master, slave = pty.openpty()
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=slave,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
-                if combine_streams
-                else asyncio.subprocess.PIPE,
-            )
-        except:
-            os.close(master)
-            raise
-        finally:
-            os.close(slave)
-
-        async def _close_master(proc: asyncio.subprocess.Process, fd: int) -> None:
-            await proc.wait()
-            os.close(fd)
-
-        proc._pty_cleanup = asyncio.ensure_future(_close_master(proc, master))  # type: ignore[attr-defined]
-        return proc
+    ) -> SandboxProcess:
+        handle = await self._sandbox.exec_stream(
+            command,
+            list(args or []),
+            cwd=cwd,
+            env=env,
+            stdin=Stdin.pipe(),
+            # A guest terminal makes programs line-buffer, so a combined stream arrives line by
+            # line. It also merges stderr into stdout, which is why only combined execs get one:
+            # the others need the two streams apart and the bytes unaltered.
+            tty=combine_streams,
+        )
+        return _ExecProcess(handle, combine_streams=combine_streams)
 
     async def close(self) -> None:
         name = await self._sandbox.name

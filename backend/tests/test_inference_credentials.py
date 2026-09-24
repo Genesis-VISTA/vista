@@ -293,7 +293,7 @@ def test_the_globus_credential_is_read_by_something():
     user_config = (
         Path(__file__).resolve().parents[2]
         / "mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/user_config.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
     for field in (
         "odo_globus_token",

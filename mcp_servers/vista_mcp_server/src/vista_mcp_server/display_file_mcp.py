@@ -6,9 +6,9 @@ render the file directly -- no binary data is sent back through the model contex
 import re
 import logging
 import mimetypes
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Annotated as A
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from fastmcp import FastMCP, Context
 from mcp.types import ToolAnnotations
@@ -31,12 +31,20 @@ def resolve_uri(uri: str, uri_map: dict[str, str]) -> str:
     }
     
     """
+    # Sandbox paths are POSIX whatever the host is, so they're never built or parsed with
+    # `Path`, which is a WindowsPath on Windows.
     if uri.startswith("/"):
-        uri = Path(uri).as_uri()
+        uri = "file://" + quote(uri)
 
-    if uri.startswith("file://"):
-        path = Path.from_uri(uri)
-        if not path.is_absolute() or ".." in path.parts or "." in path.parts:
+    if uri.startswith("file:"):
+        parts = urlsplit(uri)
+        path = PurePosixPath(unquote(parts.path))
+        if (
+            parts.netloc not in ("", "localhost")
+            or not path.is_absolute()
+            or ".." in path.parts
+            or "." in parts.path.split("/")
+        ):
             raise ValueError(f"URI is not absolute {uri}")
 
     for src_template, repl_template in uri_map.items():
@@ -53,6 +61,16 @@ def resolve_uri(uri: str, uri_map: dict[str, str]) -> str:
             return repl_template.replace("{path}", rest)
 
     raise ValueError(f"No download URL is configured for {uri}")
+
+
+
+def display_filename(uri: str) -> str:
+    """
+    The file's name, for display. In a bare path `#` and `?` are ordinary characters, so only a
+    `file:` URI is split into path, query and fragment.
+    """
+    path = uri if uri.startswith("/") else unquote(urlsplit(uri).path)
+    return PurePosixPath(path).name
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
@@ -73,4 +91,4 @@ async def display_file(
 
     mime_type = mimetypes.guess_type(uri)[0] or "application/octet-stream"
     await ctx.info(f"display_file {uri} -> {resolved}")
-    return {"uri": resolved, "mime_type": mime_type, "filename": Path(uri).name}
+    return {"uri": resolved, "mime_type": mime_type, "filename": display_filename(uri)}

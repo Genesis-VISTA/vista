@@ -339,7 +339,9 @@ async def seed_db(engine: AsyncEngine) -> None:
                 id=uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661"),
                 name="alloy-design",
                 description="High Entropy Alloy Design — agentic optimization of refractory MoNbTaW compositions on the Andes HPC cluster.",
-                system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(),
+                system_prompt=(SYSTEM_PROMPTS / "alloy-design.md").read_text(
+                    encoding="utf-8"
+                ),
                 skills=sorted({"alloy-design"} - skipped_skills),
                 knowledge_bases=[],
                 tools=[
@@ -361,7 +363,9 @@ async def seed_db(engine: AsyncEngine) -> None:
                     "human-in-the-loop optimization of a fusion molten-salt blanket composition "
                     "(maximize TBR via salt-neutronics-tbr, gated on density via salt-chemistry-md)."
                 ),
-                system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(),
+                system_prompt=(SYSTEM_PROMPTS / "molten-salt.md").read_text(
+                    encoding="utf-8"
+                ),
                 skills=sorted(
                     {
                         "salt-analysis",

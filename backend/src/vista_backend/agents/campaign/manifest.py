@@ -72,7 +72,7 @@ def load_manifest(planner_skill_dir: Path | str) -> CampaignManifest:
         raise FileNotFoundError(
             f"No {CAMPAIGN_MANIFEST_FILENAME} found in planner skill {planner_skill_dir}"
         )
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{path} must be a YAML mapping")
     return CampaignManifest.model_validate(data)

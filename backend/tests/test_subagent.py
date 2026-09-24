@@ -170,7 +170,7 @@ async def test_collect_marks_step_failed_when_parse_not_ok(session, alice):
 def test_build_subagent_system_prompt_inlines_skill(tmp_path):
     skill_dir = tmp_path / "mock-neutronics"
     skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(MOCK_SKILL_MD)
+    (skill_dir / "SKILL.md").write_text(MOCK_SKILL_MD, encoding="utf-8")
 
     prompt = build_subagent_system_prompt(skill_dir, role="neutronics")
     assert "neutronics subagent" in prompt
@@ -181,7 +181,7 @@ def test_build_subagent_system_prompt_inlines_skill(tmp_path):
 def test_build_skill_parser_constructs_specialized_parser(tmp_path):
     skill_dir = tmp_path / "mock-neutronics"
     skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(MOCK_SKILL_MD)
+    (skill_dir / "SKILL.md").write_text(MOCK_SKILL_MD, encoding="utf-8")
 
     parser = build_skill_parser(skill_dir, role="neutronics")
     assert isinstance(parser, AgentResultParser)

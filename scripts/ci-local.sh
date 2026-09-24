@@ -111,6 +111,9 @@ backend_lint() {
 }
 
 PYTEST_HERMETIC_MARKERS='not live and not hpc and not sandbox'
+# Surface text I/O that relies on the locale's encoding; the pytest config turns it into
+# an error. Matches the test jobs in .gitlab-ci.yml.
+export PYTHONWARNDEFAULTENCODING=1
 
 backend_test() {
   ensure_uv

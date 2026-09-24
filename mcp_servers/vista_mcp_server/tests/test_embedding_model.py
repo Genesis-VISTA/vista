@@ -39,7 +39,7 @@ BUILD_RAG = Path(__file__).resolve().parents[3] / "build_rag.py"
 
 def _build_rag_module() -> ast.Module:
     assert BUILD_RAG.is_file(), f"expected build_rag.py at {BUILD_RAG}"
-    return ast.parse(BUILD_RAG.read_text())
+    return ast.parse(BUILD_RAG.read_text(encoding="utf-8"))
 
 
 def _build_rag_constant(name: str) -> str:
@@ -74,7 +74,9 @@ def test_indexing_encoder_names_the_same_model() -> None:
     repo root and is not importable from here, so it is asserted by reading it.
     """
     assert BUILD_RAG.is_file(), f"expected build_rag.py at {BUILD_RAG}"
-    assert f'text_model: str = "{EXPECTED_MODEL}"' in BUILD_RAG.read_text(), (
+    assert f'text_model: str = "{EXPECTED_MODEL}"' in BUILD_RAG.read_text(
+        encoding="utf-8"
+    ), (
         f"build_rag.py's text_model default has drifted from "
         f"settings.rag_model ({settings.rag_model!r})"
     )
