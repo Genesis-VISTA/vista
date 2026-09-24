@@ -56,9 +56,9 @@ grounding tests use `tests/harness/fake_forum.py`.
 
 ## 6. Docs
 
-- [ ] 6.1 Replace `docs/h5i-forum-contract.md` with `docs/forum-git-format.md` (refs, `thread.json`, post fields, ordering, lanes, close, votes, attachment cap, "only VISTA posts today"); verify every field in design.md D2 is documented
-- [ ] 6.2 Rewrite `docs/hypothesis-forum-hosting.md` for plain git: create the repo, point a project at it, protect `refs/heads/vista-forum/**`, landing README, no h5i onboarding, git ≥ 2.34 required, old `h5i-forum/**` refs and `data/forums/` can be deleted; verify no remaining h5i instructions
-- [ ] 6.3 Update `docs/figures/hypothesis-lab.*` so a partner site takes part by running VISTA rather than "their own h5i box", and add a short forum section to `AGENTS.md` noting the git requirement; verify the figure text no longer mentions h5i
+- [x] 6.1 Replace `docs/h5i-forum-contract.md` with `docs/forum-git-format.md` (refs, `thread.json`, post fields, ordering, lanes, close, votes, attachment cap, "only VISTA posts today"); verify every field in design.md D2 is documented
+- [x] 6.2 Rewrite `docs/hypothesis-forum-hosting.md` for plain git: create the repo, point a project at it, protect `refs/heads/vista-forum/**`, landing README, no h5i onboarding, git ≥ 2.34 required, old `h5i-forum/**` refs and `data/forums/` can be deleted; verify no remaining h5i instructions
+- [x] 6.3 Update `docs/figures/hypothesis-lab.*` so a partner site takes part by running VISTA rather than "their own h5i box", and add a short forum section to `AGENTS.md` noting the git requirement; verify the figure text no longer mentions h5i
 
 ## 7. Integration check
 

@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 /**
  * The human speaking into a live debate.
  *
- * Attributed to `human` by the h5i host, which is the point: agent posts carry
- * their own identity, and this one must not be able to borrow one.
+ * Posted as `human`, which is the point: agent posts carry their own identity,
+ * and this one must not be able to borrow one.
  */
 export async function POST(request: Request) {
   const params = new URL(request.url).searchParams;
