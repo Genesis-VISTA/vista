@@ -525,8 +525,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 )
 """
 
-_IN_CHUNK = 500
-""" Ids per `IN (...)` clause, well under SQLite's bound-variable limit. """
+# A set of post ids travels as one bound parameter, a JSON array, read back with
+# `IN (SELECT value FROM json_each(?))`. So every statement below is a fixed
+# string — nothing, not even a run of `?` placeholders, is spliced into SQL —
+# and any number of ids fits in one call.
 
 
 class FileOutbox:
@@ -575,9 +577,9 @@ class FileOutbox:
         return await asyncio.to_thread(self._call, fn)
 
     @staticmethod
-    def _chunks(post_ids: Iterable[str]) -> list[list[str]]:
+    def _ids(post_ids: Iterable[str]) -> str | None:
         ids = list(dict.fromkeys(post_ids))
-        return [ids[i : i + _IN_CHUNK] for i in range(0, len(ids), _IN_CHUNK)]
+        return json.dumps(ids) if ids else None
 
     def insert_rows(self, rows: Iterable[tuple[str, str, str, str | None]]) -> int:
         """
@@ -602,60 +604,50 @@ class FileOutbox:
             )
         )
 
-    async def _select(self, post_ids: Iterable[str], *, published: bool) -> set[str]:
-        chunks = self._chunks(post_ids)
-        if not chunks:
+    async def _select(self, sql: str, post_ids: Iterable[str]) -> set[str]:
+        ids = self._ids(post_ids)
+        if ids is None:
             return set()
-        extra = " AND published_at IS NOT NULL" if published else ""
-
-        def go(conn: sqlite3.Connection) -> set[str]:
-            found: set[str] = set()
-            for chunk in chunks:
-                marks = ",".join("?" * len(chunk))
-                rows = conn.execute(
-                    f"SELECT post_id FROM outbox WHERE post_id IN ({marks}){extra}",
-                    chunk,
-                )
-                found.update(r[0] for r in rows)
-            return found
-
-        return await self._run(go)
+        return await self._run(lambda c: {r[0] for r in c.execute(sql, (ids,))})
 
     async def ours(self, post_ids: Iterable[str]) -> set[str]:
-        return await self._select(post_ids, published=False)
+        return await self._select(
+            "SELECT post_id FROM outbox WHERE post_id IN (SELECT value FROM json_each(?))",
+            post_ids,
+        )
 
     async def published(self, post_ids: Iterable[str]) -> set[str]:
-        return await self._select(post_ids, published=True)
+        return await self._select(
+            "SELECT post_id FROM outbox WHERE published_at IS NOT NULL "
+            "AND post_id IN (SELECT value FROM json_each(?))",
+            post_ids,
+        )
 
-    async def _update(self, post_ids: Iterable[str], sql: str, *args: Any) -> None:
-        chunks = self._chunks(post_ids)
-        if not chunks:
-            return
-
-        def go(conn: sqlite3.Connection) -> None:
-            for chunk in chunks:
-                marks = ",".join("?" * len(chunk))
-                conn.execute(sql.format(marks=marks), (*args, *chunk))
-
-        await self._run(go)
+    async def _update(self, sql: str, post_ids: Iterable[str], *args: Any) -> None:
+        ids = self._ids(post_ids)
+        if ids is not None:
+            await self._run(lambda c: c.execute(sql, (*args, ids)))
 
     async def mark_published(self, post_ids: Iterable[str], at: str) -> None:
         await self._update(
-            post_ids,
             "UPDATE outbox SET published_at = ? "
-            "WHERE post_id IN ({marks}) AND published_at IS NULL",
+            "WHERE published_at IS NULL AND post_id IN (SELECT value FROM json_each(?))",
+            post_ids,
             at,
         )
 
     async def mark_unpublished(self, post_ids: Iterable[str]) -> None:
         await self._update(
-            post_ids,
             "UPDATE outbox SET published_at = NULL "
-            "WHERE post_id IN ({marks}) AND published_at IS NOT NULL",
+            "WHERE published_at IS NOT NULL AND post_id IN (SELECT value FROM json_each(?))",
+            post_ids,
         )
 
     async def forget(self, post_ids: Iterable[str]) -> None:
-        await self._update(post_ids, "DELETE FROM outbox WHERE post_id IN ({marks})")
+        await self._update(
+            "DELETE FROM outbox WHERE post_id IN (SELECT value FROM json_each(?))",
+            post_ids,
+        )
 
     async def unpublished_count(self, thread_id: str | None = None) -> int:
         if thread_id is None:
