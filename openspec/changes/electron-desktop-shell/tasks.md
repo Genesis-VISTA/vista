@@ -61,12 +61,27 @@
 
 ## 5. UI (minimal)
 
-- [ ] 5.1 Add `download` to the same-origin "Download" links at `ui/app/page.tsx:1637` and `ui/components/ImageLightbox.tsx:49` (external URLs unchanged), and update the comment at `ImageLightbox.tsx:44`. Verify that `cd ui && npm run lint && npm run typecheck && npm test` pass, that the browser saves the file rather than opening a tab, and that in the window a save dialog appears.
+- [x] 5.1 Add `download` to the same-origin "Download" links at `ui/app/page.tsx:1637` and `ui/components/ImageLightbox.tsx:49` (external URLs unchanged), and update the comment at `ImageLightbox.tsx:44`. Verify that `cd ui && npm run lint && npm run typecheck && npm test` pass, that the browser saves the file rather than opening a tab, and that in the window a save dialog appears.
+  - **Done (2026-09-24):** a new `ui/lib/file-links.ts` `fileLinkProps(url)` gives VISTA's own paths (`/…`, not `//…`) `download` and **no** `target`, so the window can never open a child window for them. Other URLs keep `target="_blank" rel="noreferrer"`. It decides from the string alone, so the server and client renders agree. It is used at both sites; the lightbox comment is updated.
+    - Tests: new `ui/tests/file-links.test.ts`, and `ImageLightbox.test.tsx` now asserts `download` for VISTA's files and `_blank` for external images.
+    - `npm run lint` passes with 0 errors; its 3 warnings are the existing `<img>` ones. `npm run typecheck` passes, and `npm test` passes 115/115.
+    - The window's handling of a same-origin `<a download>` is covered by 2.5's download test.
+    - **By eye, left for 7.1:** the real chat artifact and lightbox links, which need an agent run that produces a file.
 
 ## 6. CI and docs
 
-- [ ] 6.1 Add an `electron:test` job to `.gitlab-ci.yml` (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`, `tsc --noEmit`, `node --test test/routing.test.js`) and an `electron` target to `scripts/ci-local.sh`. Verify with `./scripts/ci-local.sh electron test` locally and on the MR pipeline.
-- [ ] 6.2 README: under "Running a prebuilt package", describe the window, `--browser`, "run from Terminal, don't double-click", and the App Management note if 1.2 found one. Under development, describe `./launch.sh --electron` and `./scripts/build.sh --electron`. Add a T2/T3/T4 walk-through to `docs/validation-lane.md`. Also update the "Common Commands" section in `AGENTS.md`. Verify that the docs render and the commands in them run as written.
+- [x] 6.1 Add an `electron:test` job to `.gitlab-ci.yml` (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`, `tsc --noEmit`, `node --test test/routing.test.js`) and an `electron` target to `scripts/ci-local.sh`. Verify with `./scripts/ci-local.sh electron test` locally and on the MR pipeline.
+  - **Done:** `.gitlab-ci.yml` gains `electron:typecheck` (lint stage) and `electron:test` (test stage, required) on `node:22-slim`, with `ELECTRON_SKIP_BINARY_DOWNLOAD=1` and an `npm-electron` cache keyed on `electron/package-lock.json`. The YAML parses (pyyaml).
+    - `./scripts/ci-local.sh electron` passes: typecheck plus 29/29 tests. The target is also part of `all`.
+    - The job's commands passed in a clean `node:22-slim` container from the committed tree, with no Electron binary downloaded.
+    - The MR pipeline itself has not run yet; it needs the push.
+- [x] 6.2 README: under "Running a prebuilt package", describe the window, `--browser`, "run from Terminal, don't double-click", and the App Management note if 1.2 found one. Under development, describe `./launch.sh --electron` and `./scripts/build.sh --electron`. Add a T2/T3/T4 walk-through to `docs/validation-lane.md`. Also update the "Common Commands" section in `AGENTS.md`. Verify that the docs render and the commands in them run as written.
+  - **Done:**
+    - README "Running a prebuilt package": start from a terminal, don't double-click; the window, and what stops it; `--browser` and the no-display and Linux fallback; links, PDFs and downloads; `window.log` and the window's own cache location. No App Management note, per 1.2.
+    - README "Launch": `./launch.sh logs --electron` and `build.sh --electron`.
+    - `docs/validation-lane.md`: a new "VISTA window" lane covering the e2e command, the three-way stop and cleanup check, and the spec walk-through.
+    - `AGENTS.md`: a "VISTA window (Electron)" section and the `electron` ci-local target.
+    - Every command in them was run in groups 2–4 or here.
 
 ## 7. End-to-end validation (manual, macOS, validation lane)
 

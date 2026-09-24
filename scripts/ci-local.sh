@@ -9,6 +9,7 @@
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
+#   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -196,6 +197,39 @@ ui_test() {
   )
 }
 
+# The VISTA window (electron/). Mirrors electron:typecheck and electron:test:
+# neither needs the Electron binary, so a fresh install skips downloading it.
+electron_install() {
+  if [[ "$FAST" == true && -d node_modules ]]; then
+    return 0
+  fi
+  if [[ -d node_modules ]]; then
+    npm ci --prefer-offline
+  else
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --prefer-offline
+  fi
+}
+
+electron_lint() {
+  ensure_npm
+  log "electron:typecheck"
+  (
+    cd "$REPO_ROOT/electron"
+    electron_install
+    npm run typecheck
+  )
+}
+
+electron_test() {
+  ensure_npm
+  log "electron:test"
+  (
+    cd "$REPO_ROOT/electron"
+    electron_install
+    npm test
+  )
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -220,7 +254,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|all)
+    backend|ui|mcp|electron|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -315,6 +349,12 @@ if want_target ui && want_action lint; then
 fi
 if want_target ui && want_action test; then
   ui_test
+fi
+if want_target electron && want_action lint; then
+  run_section "electron lint" electron_lint
+fi
+if want_target electron && want_action test; then
+  run_section "electron test" electron_test
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then

@@ -10,6 +10,7 @@ lane never blocks merges.
 | Nightly validation | GitLab schedule or `./scripts/nightly-validation.sh` | schedule vars only | **no** |
 | Weekly real HPC | weekly schedule / manual | HPC tokens | **no** |
 | Playwright smoke | schedule / manual | none beyond running UI | **no** |
+| VISTA window | manual, macOS with a display | none | **no** |
 
 OpenSpec: [`openspec/changes/milestone-d-validation-lane/`](../openspec/changes/milestone-d-validation-lane/).
 
@@ -109,6 +110,49 @@ npx playwright test -c playwright.config.ts
 Flow: open app → open Projects → activate a project → send a chat message →
 observe a tool-call bubble and/or elicitation modal. Selectors prefer
 role/text. **Not** part of required MR CI.
+
+## VISTA window (macOS, manual)
+
+The window's routing rules run in PR CI (`electron:test`). Its behaviour in a
+real window needs a display, so it is checked here instead.
+
+**Window tests** (fixture server, no services, ~10 s):
+
+```bash
+cd electron && npm ci && npm run test:e2e
+```
+
+This covers external links and `window.open` going to the system browser, off-origin
+navigation and redirects being refused, `file:` links, same-origin pop-ups and PDFs
+opening child windows, downloads, the page having no Node access, the single-instance
+lock, and `--smoke-test` exit codes.
+
+**Stopping and cleanup** (a built package, ideally with a chat started so a sandbox
+exists). Start `./vista`, then stop it each of these three ways:
+
+1. Close the window, or press Cmd-Q.
+2. Press Ctrl-C in the terminal.
+3. Close the Terminal window.
+
+After each one, run this from the package directory to check that nothing is left:
+
+```bash
+pgrep -fl "$PWD" ; lsof -nP -iTCP:3000 -iTCP:8000 -iTCP:8001 -sTCP:LISTEN
+```
+
+Both commands should print nothing.
+
+**Walk-through in the window** (`openspec/specs/desktop-window`):
+
+- The Globus "Open in browser" link opens the system browser, and pasting the code
+  back completes the connection.
+- A DOI link and the settings token links open the system browser.
+- "Open PDF" opens a second window.
+- Dataset and agent-file downloads show a save dialog.
+- Cmd-V into a settings field pastes.
+- Dropping a file outside an upload area leaves the page alone.
+- A second `./vista` or `npm start` exits and brings the first window forward.
+- Over SSH, `./vista` says it has no display and prints the address instead.
 
 ## Weekly / manual real HPC (`hpc_jobs/example`)
 

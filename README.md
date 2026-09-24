@@ -16,14 +16,26 @@ attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
 bundled `msb` binary's adhoc code signature, without which the code-execution
 sandbox cannot create microVMs.
 
+Start it from a terminal, as above. Don't double-click `vista` or anything
+inside the package: a downloaded file carries macOS's quarantine flag, which
+`./vista` removes before running anything else, and a double-click is blocked
+before it gets the chance.
+
 First run copies the corpus, vector store, and embedding weights into the
 state directory (~1 GB), imports the sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. It then prints
-`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
-Later runs skip every setup step and start in seconds.
+That takes a few minutes, with each step logged as it happens. Later runs skip
+every setup step and start in seconds.
 
-Open the UI and paste your inference API key into the settings modal. It takes
-effect immediately; no restart.
+On macOS, VISTA then opens in its own window. Closing the window stops VISTA,
+and so do Ctrl-C in the terminal and closing the terminal. `./vista --browser`
+prints `VISTA is running at http://127.0.0.1:3000` instead, for use in a
+browser. So does any session with no display, such as SSH, and the Linux
+package, which has no window yet. In both cases Ctrl-C stops every service.
+
+Paste your inference API key into the settings modal. It takes effect
+immediately; no restart. Links to other sites, including the Globus login,
+open in your default browser; VISTA's own PDFs open in a second VISTA window,
+and downloads ask where to save.
 
 On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
@@ -33,7 +45,8 @@ login is the common fix.
 
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
-`setup.log`). The unpacked package tree is disposable. Upgrading is replacing
+`window.log`, `setup.log`). The window's own browser cache is kept apart, in
+`~/Library/Application Support/VISTA`. The unpacked package tree is disposable. Upgrading is replacing
 that directory, and starting over is deleting the state directory.
 
 | Variable             | Description                                                                                                                                             | Default    |
@@ -280,6 +293,17 @@ You can use
 ./launch.sh terminal
 ```
 to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+
+To develop against the VISTA window rather than a browser tab:
+```bash
+./launch.sh logs --electron
+```
+This installs the window (`./scripts/build.sh --electron`, a ~290 MB Electron download the
+default build skips) and opens `http://localhost:3000` in it once the UI answers. Hot reload
+works as in a browser, DevTools are in the View menu, and closing the window stops the stack.
+It is `logs` mode only, since tmux and terminal modes don't own the services' lifetime.
+From the macOS Dock and app switcher the window reads "Electron" in development; only the
+packaged build is named VISTA. The window's code and tests are in [`electron/`](electron/).
 
 ### Manual launch
 Run:

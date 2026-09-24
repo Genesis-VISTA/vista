@@ -54,6 +54,19 @@ To build everything without launching, run
 ./scripts/build.sh
 ```
 
+### VISTA window (Electron)
+`electron/` is a window onto the UI and nothing else: it loads the `--url` it is given and never
+starts services. The launchers own its lifetime, and closing it stops VISTA.
+```bash
+./launch.sh logs --electron   # dev stack in the window (installs it via build.sh --electron)
+cd electron && npm test       # routing rules (hermetic, in PR CI)
+cd electron && npm run test:e2e  # window behaviour via Playwright; needs a display
+```
+Where a link goes is decided by origin alone in `electron/src/routing.js`: VISTA's own origin
+stays in the app, other http(s) goes to the system browser, and everything else is refused. So
+UI links need no Electron-specific code. The prebuilt macOS package ships it as
+`app/window/VISTA.app`, found through the manifest's `window.exe`. `./vista --browser` skips it.
+
 ### MCP Server (vista_mcp_server)
 Launches vista_mcp_server on :8000/mcp (HPC, RAG, display_file tools)
 ```bash
@@ -89,12 +102,13 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
 ./scripts/ci-local.sh backend test     # backend pytest only
 ./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
+./scripts/ci-local.sh electron         # window typecheck + routing tests
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
 
