@@ -15,21 +15,35 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
 fi
 
-# Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
+# Args: an optional mode (tmux|terminal|logs) plus optional flags
 MODE="logs"
 PROD=''
 NO_BUILD=false
+ELECTRON=''
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
     --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
+    --electron) ELECTRON=true ;; # Open the UI in the VISTA window; closing it stops the stack.
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--electron]" >&2; exit 1 ;;
   esac
 done
 
+# The window's lifetime is the stack's, which only `logs` mode owns: tmux and
+# terminal hand the services to other windows and return.
+if [[ -n "$ELECTRON" && "$MODE" != logs ]]; then
+  echo "--electron works in logs mode only; $MODE mode does not own the services' lifetime." >&2
+  exit 1
+fi
+
 if [[ "$NO_BUILD" != true ]]; then
-  ./scripts/build.sh ${PROD:+--prod}
+  ./scripts/build.sh ${PROD:+--prod} ${ELECTRON:+--electron}
+fi
+
+if [[ -n "$ELECTRON" && ! -x "$REPO_ROOT/electron/node_modules/.bin/electron" ]]; then
+  echo "The VISTA window is not installed; run ./scripts/build.sh --electron first." >&2
+  exit 1
 fi
 
 cd "$REPO_ROOT/backend"
@@ -66,6 +80,16 @@ UI_CMD="
   echo 'Waiting for backend...' &&
   until curl -s -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
   $UI_RUN_CMD;
+"
+
+# localhost, not 127.0.0.1: that is where `next dev` answers. --dev keeps
+# DevTools and force-reload in the window's menu.
+UI_URL="http://localhost:3000"
+WINDOW_CMD="
+  cd '$REPO_ROOT/electron' &&
+  echo 'Waiting for UI...' &&
+  until curl -s -o /dev/null '$UI_URL'; do sleep 1; done &&
+  ./node_modules/.bin/electron . --dev --url='$UI_URL';
 "
 
 
@@ -142,6 +166,14 @@ case "$MODE" in
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"
+
+    if [[ -n "$ELECTRON" ]]; then
+      echo "  Window:     $LOG_DIR/window.log (close it to stop everything)"
+      run_service window "$LOG_DIR/window.log" "$WINDOW_CMD"
+      # Only the window ends the session; the EXIT trap then stops the rest.
+      wait "${pids[${#pids[@]}-1]}" || true
+      exit 0
+    fi
 
     wait
     ;;

@@ -100,7 +100,9 @@ BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 mkdir -p "$STATE" "$LOGS"
 
 log "starting the package launcher"
-"$PACKAGE/vista" > "$LOGS/launcher.log" 2>&1 &
+# --browser: a build has no one to look at a window, and the check below waits
+# for the address line that only browser mode prints.
+"$PACKAGE/vista" --browser > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
 # The launcher prints one address line when every service is up.

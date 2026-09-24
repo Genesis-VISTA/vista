@@ -19,16 +19,35 @@
 
 ## 3. Launchers
 
-- [ ] 3.1 `scripts/package_launcher.sh`: `set -m`; stop by process group with TERM, a 10 s grace period, then KILL; add `HUP` to the trap (L2). Verify by starting `./vista --browser` from a built package, opening a chat so a sandbox starts, and pressing Ctrl-C. Then `pgrep -fl "$PACKAGE"` is empty and ports 3000/8000/8001 are free. Repeat by closing the Terminal window. (manual, `sandbox`)
-- [ ] 3.2 `scripts/package_launcher.sh`: add a `--browser` flag and window mode as the default (L1). Read `window.exe` from `manifest.json` with the existing `sed` field reader, and never hard-code the bundle path. Add a `can_show_window` function with `case "$HOST_OS"` (implement only `macos`; other OSes answer no). Fall back to browser mode with one line when the field or the file is missing or `can_show_window` says no (first confirm that `launchctl managername` over SSH ≠ `Aqua`). Run the shell as a tracked child and exit when it exits. Print `127.0.0.1` in browser mode. Update `--help`. Verify that closing the window leaves nothing running (same check as 3.1), that Ctrl-C closes the window, and that `ssh localhost ./vista` falls back. (manual, `sandbox`)
-- [ ] 3.3 `scripts/launch.sh` and `scripts/build.sh`: add an `--electron` flag (L3). `build.sh --electron` runs `npm ci` in `electron/`, and `launch.sh --electron` in `logs` mode runs the shell with `--dev` as a service whose exit triggers `cleanup`. `tmux`/`terminal` modes reject the flag. Verify that `./launch.sh --electron` opens the window, an edit to `ui/app/page.tsx` hot-reloads in it, and closing it stops all three services.
+- [x] 3.1 `scripts/package_launcher.sh`: `set -m`; stop by process group with TERM, a 10 s grace period, then KILL; add `HUP` to the trap (L2). Verify by starting `./vista --browser` from a built package, opening a chat so a sandbox starts, and pressing Ctrl-C. Then `pgrep -fl "$PACKAGE"` is empty and ports 3000/8000/8001 are free. Repeat by closing the Terminal window. (manual, `sandbox`)
+  - **Done (2026-09-24),** on an APFS clone of the 2026-09-08 package (`~/.e2e/v1/...a94a263`, left untouched) with ports 3100/8100/8101 and `VISTA_HOME=~/.vista-g3`, under macOS `/bin/bash` 3.2. A sandbox was started by a chat with a *dummy* inference key (the agent starts its tools, then the model call fails). **Finding:** the sandbox server runs in its own process group, not the backend's (see design L2), so `stop` also collects every descendant's group. Results:
+    - Ctrl-C: everything stopped within 14 s, sandbox included.
+    - Backend frozen with SIGSTOP, then Ctrl-C: the launcher exited after 11 s and nothing survived.
+    - HUP in window mode: everything stopped within 1 s.
+    - In every case the ports were free afterwards. Closing a real Terminal.app window is left for 7.1.
+- [x] 3.2 `scripts/package_launcher.sh`: add a `--browser` flag and window mode as the default (L1). Read `window.exe` from `manifest.json` with the existing `sed` field reader, and never hard-code the bundle path. Add a `can_show_window` function with `case "$HOST_OS"` (implement only `macos`; other OSes answer no). Fall back to browser mode with one line when the field or the file is missing or `can_show_window` says no (first confirm that `launchctl managername` over SSH ≠ `Aqua`). Run the shell as a tracked child and exit when it exits. Print `127.0.0.1` in browser mode. Update `--help`. Verify that closing the window leaves nothing running (same check as 3.1), that Ctrl-C closes the window, and that `ssh localhost ./vista` falls back. (manual, `sandbox`)
+  - **Done:** with the real `electron/` window staged into the clone at `app/window/VISTA.app` (signed) and `window.exe` in its manifest. Results:
+    - The default mode opened the window. Quitting the app made the launcher exit 0 within 1 s with nothing left.
+    - `--browser` prints `http://127.0.0.1:3100`.
+    - Without `window.exe` (the unmodified package), it prints the address.
+    - With a stand-in `launchctl` reporting `Background` on PATH, it prints "Not opening the VISTA window: this session has no display (launchctl reports 'Background', not Aqua; over SSH, for example)", keeps the services up, starts no window, and cleans up on Ctrl-C.
+    - The real value over SSH is **not yet confirmed**: key auth to localhost is not set up. Left for 7.1.
+    - Task 4.4's `--browser` in `smoke_test_package.sh` was done here, so the build never opens a window.
+- [x] 3.3 `scripts/launch.sh` and `scripts/build.sh`: add an `--electron` flag (L3). `build.sh --electron` runs `npm ci` in `electron/`, and `launch.sh --electron` in `logs` mode runs the shell with `--dev` as a service whose exit triggers `cleanup`. `tmux`/`terminal` modes reject the flag. Verify that `./launch.sh --electron` opens the window, an edit to `ui/app/page.tsx` hot-reloads in it, and closing it stops all three services.
+  - **Done:**
+    - `./launch.sh tmux --electron` exits 1 with a reason.
+    - `./launch.sh logs --electron` ran `build.sh --electron` (`npm ci` in `electron/`) and opened the dev window on `http://localhost:3000`, which served real requests.
+    - Closing the window: "Shutting down...", exit 0, all three ports free.
+    - `--no-build` then Ctrl-C: the window and stack stopped at once.
+    - In dev the window runs from Electron's stock app bundle, so the Dock says "Electron"; only the packaged build is branded.
+    - **Hot reload in the window is not yet checked by eye** (Sam).
 
 ## 4. Package build (macOS)
 
 - [ ] 4.1 `scripts/build_local_package.sh`: add a `stage_window` step after `stage_ui` that dispatches on the target (B1). `stage_window_macos` is implemented; other targets log "no window for <target>" and return. It runs `npm ci` in `electron/` and `@electron/packager` (name `VISTA`, bundle ID `gov.ornl.vista`, `asar`, `osxSign: false`), then moves the result to `$STAGING/app/window/VISTA.app` (per 1.1). Add Electron's download host to the preflight. Verify with `./scripts/build_local_package.sh --check` and a build that has `--skip-smoke-test --keep-staging`: `app/window/VISTA.app` exists.
 - [ ] 4.2 Inside `stage_window_macos` only, ad-hoc sign `app/window/VISTA.app` (`codesign --force --deep --sign -`, then `--verify --deep --strict`). Add a build-time guard that fails if any other `codesign` invocation exists in the script. Verify that `codesign --verify` on the staged `msb` is unchanged from before the step (compare `codesign -dv` output).
 - [ ] 4.3 Manifest: add a top-level `window` object (`exe`, relative to the package root, and `electron`, the version) plus `components.window` (size). The validator requires `window` for `macos-*` and checks that `window.exe` exists and is executable. Verify that the manifest validator passes on macOS and that a Linux build via `build_in_docker.sh --check` still validates without `window`.
-- [ ] 4.4 `scripts/smoke_test_package.sh`: run `vista --browser`. On macOS with a GUI session, also run the shell with `--smoke-test` against the unpacked UI; otherwise warn and skip. Verify that a full `./scripts/build_local_package.sh` passes its smoke test, including the window check.
+- [ ] 4.4 `scripts/smoke_test_package.sh`: run `vista --browser` (already done in 3.2). On macOS with a GUI session, also run the shell with `--smoke-test` against the unpacked UI; otherwise warn and skip. Verify that a full `./scripts/build_local_package.sh` passes its smoke test, including the window check.
 
 ## 5. UI (minimal)
 

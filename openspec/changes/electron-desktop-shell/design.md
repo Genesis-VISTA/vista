@@ -172,9 +172,20 @@ the one deliberate difference from today's output, and it fixes the same mismatc
 The launcher runs `set -m` so each background service leads its own process group,
 matching `scripts/launch.sh:3,122`. `stop` sends `kill -- -$pid`, with a fallback to
 `kill $pid`, then `TERM` and a 10 s grace period, then `KILL`. `HUP` joins the trap, since
-closing Terminal sends it. The group kill is what reaches `uv run dev-mcp-server` and its
-`msb` microVMs. Verification is by listing processes whose command line contains the
-package path after stop (T3).
+closing Terminal sends it. Verification is by listing processes whose command line
+contains the package path after stop (T3).
+
+*Found in task 3.1:* the backend's MCP stdio client starts each sandbox server
+(`uv run dev-mcp-server`, its Python and `msb`) in a **new process group**. So the
+backend's group kill does not reach it. On TERM the backend closes those clients itself,
+which is measured: they are gone within 14 s. The case that matters is a backend that
+does not exit, where the final KILL has to reach the sandbox group directly. So `stop`
+first collects the process group of every descendant of each service, while the tree
+still links them, and it KILLs any of those groups still alive after the grace period.
+It never signals the launcher's own group. This was checked with the backend frozen by
+SIGSTOP: the launcher exited after 11 s and no sandbox process survived. Job-control
+notices ("Terminated: 15") are silenced by sending `stop`'s stderr to `/dev/null` once
+it has logged.
 
 *Deferred:* a PID file for recovering from `kill -9` of the launcher itself. The port
 preflight already names the conflict in that case.

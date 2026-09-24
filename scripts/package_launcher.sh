@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Start VISTA from an unpacked package. Installed at the package root as `vista`.
 #
-#   ./vista            first-run setup if needed, then start
+#   ./vista            first-run setup if needed, then start and open the window
+#   ./vista --browser  the same, but print the address to open in a browser
 #   ./vista --help     show this
+#
+# Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
+# terminal. Where no window can be shown -- a package without one, or a
+# session with no display, such as SSH -- it says so and behaves as --browser.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -39,11 +44,17 @@ VERSION="$(cat "$PACKAGE/VERSION" 2>/dev/null || echo unknown)"
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
-  exit 0
-fi
-[[ $# -eq 0 ]] || die "unexpected argument: $1 (try --help)"
+BROWSER_MODE=false
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+      exit 0
+      ;;
+    --browser) BROWSER_MODE=true ;;
+    *) die "unexpected argument: $arg (try --help)" ;;
+  esac
+done
 
 # ─── platform guard ─────────────────────────────────────────────────────────
 
@@ -269,18 +280,75 @@ load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
 
 # ─── services ───────────────────────────────────────────────────────────────
 
+# Every service is started as the leader of its own process group, so stopping
+# it reaches everything it started, not only the process we hold a PID for. The
+# backend starts a sandbox server through `uv run` for each agent session, and
+# that starts microVMs: killed by PID alone, those outlive the launcher and hold
+# ports, and the next start refuses with "port in use".
+set -m
+
 PIDS=()
+STOP_GRACE_SECONDS=10
+
+# Signals every group, waits for them to go, then kills what is left. Services
+# are stopped in reverse start order, so the window closes first and the MCP
+# server, which the others talk to, last.
+#
+# HUP is trapped with the rest because closing the Terminal window sends it,
+# and every output line here is guarded because that terminal may already be
+# gone: a write error inside the trap would otherwise abort it under `set -e`
+# with the services still running.
+#
+# A service's own group is not always enough. The backend's MCP client starts
+# each sandbox server (`uv run dev-mcp-server`, its Python, its `msb`) in a new
+# group of its own. On TERM the backend closes those itself, but if it has to
+# be killed they would be orphaned. So every group below each service is
+# collected first, while the process tree still links them, and anything left
+# in any of them after the grace period is killed.
+descendant_groups() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    ps -o pgid= -p "$child" 2>/dev/null | tr -d ' '
+    descendant_groups "$child"
+  done
+}
+
 stop() {
-  trap - INT TERM EXIT
-  log ""
-  log "Stopping VISTA..."
-  local pid
+  trap - INT TERM HUP EXIT
+  { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
+  # Job control reports each service it sees die ("line 301: 78461
+  # Terminated: 15 ..."), which reads like a failure. Nothing after this point
+  # has anything to say on stderr, and this is the script's last act.
+  exec 2>/dev/null
+  local i pid group groups=() own_group
+  # Never our own group: that one holds the shell this was started from.
+  own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
+    groups+=("$pid")
+    for group in $(descendant_groups "$pid"); do
+      [[ "$group" == "$own_group" || " ${groups[*]} " == *" $group "* ]] || groups+=("$group")
+    done
+  done
+  for (( i = ${#PIDS[@]} - 1; i >= 0; i-- )); do
+    pid="${PIDS[i]}"
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  done
+  local waited=0 alive
+  while (( waited < STOP_GRACE_SECONDS * 4 )); do
+    alive=false
+    for group in ${groups[@]+"${groups[@]}"}; do
+      kill -0 -- "-$group" 2>/dev/null && alive=true && break
+    done
+    [[ "$alive" == true ]] || break
+    perl -e 'select(undef, undef, undef, 0.25)' 2>/dev/null || sleep 1
+    waited=$(( waited + 1 ))
+  done
+  for group in ${groups[@]+"${groups[@]}"}; do
+    kill -KILL -- "-$group" 2>/dev/null || true
   done
   wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
 }
-trap stop INT TERM EXIT
+trap stop INT TERM HUP EXIT
 
 wait_for() {
   local url="$1" seconds="$2" logfile="$3" what="$4" i
@@ -317,8 +385,59 @@ PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
 PIDS+=($!)
 wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
 
+# ─── window or address ──────────────────────────────────────────────────────
+
+# 127.0.0.1, not localhost: it is what the UI binds, and localhost can resolve
+# to ::1 first. It is also the origin the window's storage is kept under, so it
+# has to be the same on every run.
+UI_URL="http://127.0.0.1:$UI_PORT"
+
+# Whether this session can show a window at all, with the reason on stdout when
+# it cannot. One branch per OS, so a port adds a case rather than reworking this.
+can_show_window() {
+  case "$HOST_OS" in
+    macos)
+      # "Aqua" is a GUI login session; SSH and other background sessions
+      # report something else, and a window started there never appears.
+      local session
+      session="$(launchctl managername 2>/dev/null || true)"
+      [[ "$session" == Aqua ]] && return 0
+      echo "this session has no display (launchctl reports '${session:-nothing}', not Aqua; over SSH, for example)"
+      return 1
+      ;;
+    *)
+      echo "VISTA has no window on $HOST_OS yet"
+      return 1
+      ;;
+  esac
+}
+
+# The package says where its window is; the launcher does not assume a layout.
+WINDOW_EXE="$(manifest_field exe)"
+WINDOW_PID=''
+if [[ "$BROWSER_MODE" != true ]]; then
+  if [[ -z "$WINDOW_EXE" || ! -x "$PACKAGE/$WINDOW_EXE" ]]; then
+    log "This package has no VISTA window; open the address below in a browser."
+  elif ! reason="$(can_show_window)"; then
+    log "Not opening the VISTA window: $reason."
+  else
+    "$PACKAGE/$WINDOW_EXE" --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
+    WINDOW_PID=$!
+    PIDS+=("$WINDOW_PID")
+  fi
+fi
+
 log ""
-log "VISTA is running at http://localhost:$UI_PORT"
+if [[ -n "$WINDOW_PID" ]]; then
+  log "VISTA is open in its own window ($UI_URL)."
+  log "Close the window, or press Ctrl-C here, to stop."
+  # Only the window's exit ends the session. A trapped signal interrupts this
+  # wait and runs `stop` first; either way the EXIT trap stops everything else.
+  wait "$WINDOW_PID" || true
+  exit 0
+fi
+
+log "VISTA is running at $UI_URL"
 log "Press Ctrl-C to stop."
 
 wait
