@@ -131,3 +131,12 @@ async def test_seed_project_ids_are_stable(seeded):
     molten = await _project(seeded, "molten-salt")
     assert str(alloy.id) == "f855bdd8-c433-423e-ab5c-3a9a63b6e661"
     assert str(molten.id) == "282531e7-1e05-4369-a339-9d1b4f20aa89"
+
+
+async def test_llm_pretraining_is_a_library_skill_in_no_project(seeded):
+    """Seeded into the public skill library (no vista-data assets needed), but not
+    attached to any default project: users opt their own project into it."""
+    names = {s.name for s in (await seeded.exec(select(SkillTable))).all()}
+    assert "llm-pretraining" in names
+    for project in (await seeded.exec(select(ProjectTable))).all():
+        assert "llm-pretraining" not in project.skills, project.name
