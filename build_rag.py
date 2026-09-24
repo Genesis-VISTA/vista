@@ -126,6 +126,42 @@ CITATION_FIELDS = [
 
 
 # ---------------------------------------------------------------------------
+# Retrieval instructions
+# ---------------------------------------------------------------------------
+# The embedding model is instruction-tuned. Its model card's FAQ: "Do I need
+# to add instructions to the query? Yes, this is how the model is trained,
+# otherwise you will see a performance degradation." Its
+# `config_sentence_transformers.json` leaves `default_prompt_name` null, so
+# sentence-transformers prepends nothing unless a caller passes `prompt`.
+#
+# The same FAQ: "there is no need to add instructions to the document side."
+# So `embed_text` and `embed_text_batched` encode chunks bare, and only the
+# `query*` methods pass a prompt. That asymmetry is what makes this safe to
+# add to an existing deployment: no stored vector changes, so no reindex.
+#
+# QUERY_INSTRUCTION is kept byte-identical to
+# `vista_mcp_server.config.Settings.rag_query_instruction`, which is the
+# *query* encoder the MCP server actually serves `rag_search` from.
+# `test_embedding_model.py` fails if the two drift. It names no subject
+# matter: Knowledge Bases are user-built and may hold any corpus.
+QUERY_INSTRUCTION = (
+    "Given a search query, retrieve relevant passages from documents"
+)
+
+# The citation collection holds "Title. Authors. Journal (Year). DOI"
+# strings, not prose, so searching it is a different task than searching
+# chunks and gets its own instruction.
+CITATION_QUERY_INSTRUCTION = (
+    "Given a description of a document, retrieve its bibliographic record"
+)
+
+
+def query_prompt(instruction: str) -> str:
+    """Wrap a task description in the format the encoder was trained on."""
+    return f"Instruct: {instruction.strip()}\nQuery: "
+
+
+# ---------------------------------------------------------------------------
 # Azure OpenAI helper
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -907,8 +943,17 @@ class TextRAG:
     # ------------------------------------------------------------------
     # Embedding
     # ------------------------------------------------------------------
-    def embed_text(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.text_encoder.encode(texts, convert_to_numpy=True)
+    def embed_text(
+        self, texts: List[str], *, prompt: Optional[str] = None
+    ) -> List[List[float]]:
+        """
+        Encode `texts`. `prompt` defaults to None, which is what every
+        indexing call wants: the model card says documents take no
+        instruction. Query callers pass `query_prompt(...)`.
+        """
+        embeddings = self.text_encoder.encode(
+            texts, prompt=prompt, convert_to_numpy=True
+        )
         return embeddings.tolist()
 
     def embed_text_batched(
@@ -1337,7 +1382,9 @@ class TextRAG:
 
     def query(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search text chunks collection."""
-        query_embedding = self.embed_text([query])[0]
+        query_embedding = self.embed_text(
+            [query], prompt=query_prompt(QUERY_INSTRUCTION)
+        )[0]
         return self.text_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
@@ -1345,7 +1392,9 @@ class TextRAG:
 
     def query_citations(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search the citation metadata collection."""
-        query_embedding = self.embed_text([query])[0]
+        query_embedding = self.embed_text(
+            [query], prompt=query_prompt(CITATION_QUERY_INSTRUCTION)
+        )[0]
         return self.citation_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,

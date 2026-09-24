@@ -16,6 +16,13 @@ Environment variables:
                                     from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
                                     Default: microsoft/harrier-oss-v1-270m
+    VISTA_MCP_RAG_QUERY_INSTRUCTION
+                                   One-sentence task description prepended to
+                                    every query as `Instruct: ...\\nQuery: `.
+                                    The model is instruction-tuned and its
+                                    card warns that a bare query degrades
+                                    retrieval. Documents are indexed without
+                                    one, so changing this needs no reindex.
     VISTA_EMBED_DEVICE             Torch device for the encoder. Unset lets
                                     sentence-transformers choose (cuda, then
                                     mps, then cpu). `build_rag.py` reads the
@@ -205,10 +212,30 @@ async def app_lifespan(server):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def query_prompt() -> str:
+    """
+    The `Instruct: ...\\nQuery: ` prefix every query is encoded with.
+
+    Built per call rather than cached at import so a test can vary
+    `settings.rag_query_instruction` without reloading the module.
+    """
+    return f"Instruct: {settings.rag_query_instruction.strip()}\nQuery: "
+
+
 def _embed(text: str) -> list[float]:
-    """Embed a single query string."""
+    """
+    Embed a single query string, prefixed with the retriever's task
+    instruction.
+
+    `settings.rag_model` is instruction-tuned and its
+    `config_sentence_transformers.json` sets `default_prompt_name` to null,
+    so sentence-transformers prepends nothing unless we pass `prompt`.
+    Queries get it; the documents `build_rag.py` indexed do not, which is
+    what the model card prescribes and why adding this needed no reindex.
+    Do not reuse this function to encode documents.
+    """
     assert _encoder is not None, "Embedding model not loaded"
-    vec = _encoder.encode([text], convert_to_numpy=True)
+    vec = _encoder.encode([text], prompt=query_prompt(), convert_to_numpy=True)
     return vec[0].tolist()
 
 
