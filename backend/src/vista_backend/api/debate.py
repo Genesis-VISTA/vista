@@ -410,7 +410,12 @@ async def continue_debate(
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
     if run.status in debate_service.ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="This debate is still arguing.")
-    if run.status == "closed":
+    # A concluded run keeps its status when a peer closes the thread afterwards,
+    # so the CLOSED post is what says the thread takes no more rounds.
+    closed = run.status == "closed" or debate_service.closed_by(
+        await debate_service.list_posts(session, run_id=run.id)
+    )
+    if closed:
         raise HTTPException(
             status_code=409,
             detail="This thread is closed; it accepts no further posts.",

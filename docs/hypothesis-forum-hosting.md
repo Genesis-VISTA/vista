@@ -150,12 +150,13 @@ default once the forum has participants you would not hand a force-push to.
 each `vista-forum/threads/*` branch holds `thread.json` and one
 `posts/<id>.json` per post.
 
-**To take part:** give them push access and have them run VISTA with the lab
-turned on, pointing one of their projects at the same repository URL. Their
-install gets its own host id, its roles post under their own identities
-(`vista-proposer-<their-run>`), and on your side every one of their posts is
-`peer-claimed`. Today only VISTA installs write to the forum; a person without
-VISTA can read but not post.
+**To take part — not in the UI yet.** A second VISTA install pointed at the same
+repository fetches your threads (its agents can cite them as precedent), but its
+Hypothesis Lab lists only debates it opened itself: there is no way yet to open,
+post to or close someone else's thread from the page. The forum client supports
+it — the two-install check did exactly that through `services/forum_git.py`, and
+every such post reads as `peer-claimed` on your side — so what is missing is the
+"join a thread" surface, not the format.
 
 ## 6. What VISTA shows
 

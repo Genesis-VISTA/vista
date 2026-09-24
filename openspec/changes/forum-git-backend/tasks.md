@@ -62,6 +62,7 @@ grounding tests use `tests/harness/fake_forum.py`.
 
 ## 7. Integration check
 
-- [ ] 7.1 Run `./scripts/ci-local.sh` (backend, ui, mcp; lint + test) and confirm green
-- [ ] 7.2 Manual end-to-end on this Mac with two installs' data dirs (or two backend instances with different `data/` roots) against one local bare repo: start a debate on A, see it and post as a peer from B, close from B, confirm A shows "Ended by a peer"; record the result in this task
-- [ ] 7.3 `openspec validate forum-git-backend --strict` passes
+- [x] 7.1 Run `./scripts/ci-local.sh` (backend, ui, mcp; lint + test) and confirm green
+- [x] 7.2 Manual end-to-end on this Mac with two installs' data dirs (or two backend instances with different `data/` roots) against one local bare repo: start a debate on A, see it and post as a peer from B, close from B, confirm A shows "Ended by a peer"; record the result in this task. **Result (2026-09-24):** install A was a real stack (alternate ports, copy of the DB) on a scratch bare repo; A ran a real 1-round debate (converged, all posts published). Install B, a second data root driven through `forum_git.ForumClient` (the UI has no way to join another install's thread; see 7.4), listed and read A's thread (all `peer-claimed` from B), posted a FINDING and closed it. A's page showed both as `peer-claimed` from B's host id. Found: a *converged* run closed afterwards by a peer kept offering Continue and the posting box (both 409) — fixed; it now reads "Concluded · closed by a peer". "Ended by a peer" (close while arguing) is pinned by `test_a_peers_close_ends_the_debate`
+- [x] 7.3 `openspec validate forum-git-backend --strict` passes
+- [ ] 7.4 Open question for Sam/Junqi, found in 7.2: a second install cannot open, post to or close another install's thread from the UI (under h5i a peer used the h5i CLI). Options: a "join a thread" view in the lab (list forum threads not in this DB, follow and post as the operator), a standalone posting CLI (Q4c), or accept read-only peers for now. The figure's "Another site joins the same thread" panel shows the intended behaviour, not today's

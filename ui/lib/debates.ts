@@ -372,8 +372,8 @@ export function isActive(status: DebateStatus): boolean {
  * `closed` is excluded because a closed thread takes no further posts, and a
  * thread no longer on the forum has nothing left to read.
  */
-export function watchesForPeerPosts(run: DebateRun): boolean {
-  return !isActive(run.status) && run.status !== "closed" && !run.thread_missing;
+export function watchesForPeerPosts(run: DebateRun, posts: DebatePost[]): boolean {
+  return !isActive(run.status) && acceptsPosts(run, posts);
 }
 
 /**
@@ -381,8 +381,11 @@ export function watchesForPeerPosts(run: DebateRun): boolean {
  * every post (readers would never show one written after the close), and a
  * thread no longer on the forum has nowhere to put it.
  */
-export function acceptsPosts(run: DebateRun): boolean {
-  return run.status !== "closed" && !run.thread_missing;
+export function acceptsPosts(run: DebateRun, posts: DebatePost[]): boolean {
+  // The CLOSED post, not only the status: a debate that concluded and was then
+  // closed by a peer keeps its "converged" status, and its thread is closed all
+  // the same.
+  return run.status !== "closed" && !run.thread_missing && closedBy(posts) === null;
 }
 
 /**

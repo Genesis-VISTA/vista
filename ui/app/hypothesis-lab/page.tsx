@@ -51,8 +51,14 @@ const STATUS_LABEL: Record<DebateRun["status"], string> = {
  */
 function statusLabel(run: DebateRun, posts: DebatePost[]): string {
   if (run.thread_missing) return "No longer on the forum";
-  if (run.status !== "closed") return STATUS_LABEL[run.status];
-  return closedBy(posts) === "peer" ? "Ended by a peer" : "Ended early";
+  const closer = closedBy(posts);
+  if (run.status !== "closed") {
+    // Concluded, then closed afterwards: the verdict stands, and so does the close.
+    if (closer === "peer") return `${STATUS_LABEL[run.status]} · closed by a peer`;
+    if (closer === "operator") return `${STATUS_LABEL[run.status]} · closed`;
+    return STATUS_LABEL[run.status];
+  }
+  return closer === "peer" ? "Ended by a peer" : "Ended early";
 }
 
 /* ---------------------------------------------------------------------- */
@@ -237,7 +243,7 @@ function DebatesPage() {
   //
   // Re-fetching is what makes the server read the forum; the backend throttles
   // that to one fetch per thread per interval however many people are watching.
-  const watched = state ? watchesForPeerPosts(state.run) : false;
+  const watched = state ? watchesForPeerPosts(state.run, state.posts) : false;
   useEffect(() => {
     if (!projectName || !selectedId || !watched) return;
 
@@ -544,7 +550,7 @@ function DebatesPage() {
                     End this debate
                   </button>
                 )}
-                {watchesForPeerPosts(state.run) && (
+                {watchesForPeerPosts(state.run, posts) && (
                   <span className="debate-detail__continue">
                     <label>
                       <input
@@ -634,7 +640,7 @@ function DebatesPage() {
 
               <DebateThread posts={posts} />
 
-              {acceptsPosts(state.run) && (
+              {acceptsPosts(state.run, posts) && (
               <div className="debate-say">
                 <label>
                   Say something into this debate

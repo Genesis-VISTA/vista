@@ -674,6 +674,37 @@ async def test_opening_a_debate_is_503_when_the_forum_is_off(
 
 
 @pytest.mark.anyio
+async def test_a_concluded_debate_a_peer_closed_cannot_be_continued(
+    forum_config, app_client, session, alice
+):
+    """
+    Found in the two-install check (task 7.2). A converged run keeps its status
+    when a peer closes the thread afterwards, so the CLOSED post is what has to
+    refuse more rounds — the status alone would let a roster start that could
+    not post.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    run_id, thread_id, project_name = run.id, run.thread_id, project.name
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+    client.peer_close(thread_id)
+
+    body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
+    assert body["run"]["status"] == "converged", "a verdict is not undone by a close"
+    assert body["posts"][-1]["kind"] == "CLOSED"
+
+    resp = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue", json={"rounds": 1}
+    )
+    assert resp.status_code == 409
+    post = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/posts", json={"body": "hi"}
+    )
+    assert post.status_code == 409
+
+
+@pytest.mark.anyio
 async def test_continue_raises_the_budget_and_spawns_the_argument(
     forum_config, app_client, session, alice, monkeypatch
 ):
