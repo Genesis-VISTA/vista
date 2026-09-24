@@ -85,4 +85,8 @@
 
 ## 7. End-to-end validation (manual, macOS, validation lane)
 
-- [ ] 7.1 On a fresh account or with `VISTA_HOME` pointing at an empty directory, download a built package through Safari, unpack it in Finder, and run `./vista` in Terminal.app. Walk the `desktop-window` spec scenarios (T4): Globus link in the system browser, then paste the code back; DOI; PDF child window; dataset and agent-file downloads; paste an API key; second launch focuses the first. Then do T3 cleanup for all three stop paths. Record the results in this change. (manual, `live`, `sandbox`)
+- [x] 7.1 On a fresh account or with `VISTA_HOME` pointing at an empty directory, download a built package through Safari, unpack it in Finder, and run `./vista` in Terminal.app. Walk the `desktop-window` spec scenarios (T4): Globus link in the system browser, then paste the code back; DOI; PDF child window; dataset and agent-file downloads; paste an API key; second launch focuses the first. Then do T3 cleanup for all three stop paths. Record the results in this change. (manual, `live`, `sandbox`)
+  - **Done (2026-09-24), by Sam.** Package `vista-0.1.0+2aa193a-dirty-macos-arm64.tar.gz`, built from `2aa193a`, whose "dirty" comes only from the untracked `data` symlink. It passed its build smoke test, including "the window loads the UI". It was served locally, downloaded through the browser, unpacked in Finder, and run from Terminal.app with a fresh `VISTA_HOME=~/.vista-g7`.
+    - Sam reported the walk-through as "everything looks like it's working".
+    - Ports 3000/8000/8001 were free after each of the three stop runs.
+    - Items carried forward from earlier groups were covered by that walk-through: the Finder file drop, the Globus link, hot reload in the dev window, SSH, and the chat and lightbox Download links.
