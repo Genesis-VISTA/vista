@@ -1,48 +1,34 @@
 """
 Tests for debate grounding: what each role can look at, and what it must not.
 
-Two things here are security properties rather than features, and they are the
-reason most of this file exists:
+One thing here is a security property rather than a feature: retrieved text is
+fenced and labelled as data, because a paper or a peer's old post can contain
+something shaped like an instruction.
 
-  - retrieved text is fenced and labelled as data, because a paper or a peer's
-    old post can contain something shaped like an instruction; and
-  - web reads refuse to run at a tier where the egress allowlist does not bind,
-    because h5i prints an allowlist at every tier and only enforces it at two.
-
-Hermetic: every source is an injected callable, and the h5i binary is the fake.
+Hermetic: every source is an injected callable, and the forum is the in-memory
+fake.
 """
 
 import json
 import uuid
-from pathlib import Path
 
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from vista_backend.agents.forum.grounding import (
-    ENFORCING_TIERS,
     Grounding,
-    WebReader,
-    _first_json_object,
     build_toolset,
     build_toolsets,
     fence,
 )
 from vista_backend.agents.forum.roles import DebateDeps, RoleAgents
 from vista_backend.config import ForumSettings
-from vista_backend.services.h5i_forum import ForumClient, Participant, ParticipantRole
+from vista_backend.services.forum_git import Participant
+from harness.fake_forum import FakeForumClient as ForumClient
 
-
-FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
-
-PARTICIPANT = Participant(
-    identity="vista-proposer",
-    role=ParticipantRole.WORKER,
-    box_slug="proposer",
-    box_id="env/human/proposer",
-    policy_digest="16f7e744",
-)
+PARTICIPANT = Participant(identity="vista-proposer-1a2b3c4d", role="proposer")
+REFEREE = Participant(identity="vista-referee-1a2b3c4d", role="referee")
 
 HYPOTHESIS = {
     "note": "Rigidity sets the knee — percolation. No shear dependence if so.",
@@ -56,7 +42,7 @@ HYPOTHESIS = {
 
 def _settings(tmp_path, **overrides) -> ForumSettings:
     return ForumSettings(
-        enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0, **overrides
+        enabled=True, repo_root=tmp_path / "forum", timeout=30.0, **overrides
     )
 
 
@@ -140,76 +126,6 @@ def test_no_sources_means_no_toolset():
     assert build_toolsets(Grounding()) == {}
 
 
-# --------------------------------------------------------------------------- #
-# The web reader, and the tier that does not bind
-# --------------------------------------------------------------------------- #
-
-
-def test_web_reads_refuse_without_an_allowlist(tmp_path):
-    reader = WebReader(ForumClient(_settings(tmp_path)), _settings(tmp_path, egress=[]))
-    assert reader.refusal is not None
-    assert "no egress allowlist" in reader.refusal
-
-
-def test_web_reads_refuse_at_a_tier_that_does_not_enforce(tmp_path):
-    """
-    The finding this guard exists for: on macOS a `supervised` box reports
-    `egress : example.com` and then reads any host it likes. h5i warns that
-    mem/procs/wall are unenforced there but says nothing about egress, so a
-    config that looks restricted is not. Believing it would hand the debate an
-    unrestricted fetcher.
-    """
-    config = _settings(tmp_path, egress=["example.com"], box_isolation="supervised")
-    reader = WebReader(ForumClient(config), config)
-
-    assert reader.refusal is not None
-    assert "does not enforce" in reader.refusal
-    assert "supervised" in reader.refusal
-
-
-@pytest.mark.parametrize("tier", sorted(ENFORCING_TIERS))
-def test_web_reads_are_allowed_only_where_the_allowlist_binds(tmp_path, tier):
-    config = _settings(tmp_path, egress=["example.com"], box_isolation=tier)
-    assert WebReader(ForumClient(config), config).refusal is None
-
-
-@pytest.mark.anyio
-async def test_a_refused_web_read_raises_rather_than_fetching(tmp_path):
-    config = _settings(tmp_path, egress=["example.com"], box_isolation="process")
-    reader = WebReader(ForumClient(config), config)
-    with pytest.raises(PermissionError):
-        await reader.read(PARTICIPANT, "http://example.com/")
-
-
-@pytest.mark.anyio
-async def test_the_tool_reports_a_refusal_instead_of_failing_the_turn(tmp_path):
-    """
-    "This host is not reachable" is a fact the agent should be able to report and
-    work around, not an exception that loses its turn.
-
-    This once asserted that a refusal recorded nothing, on the reasoning that you
-    cannot cite what you did not read. That is right about citations and wrong
-    about provenance, and `tool_calls` now feeds both: an agent that tried to
-    check a source and was blocked must not look like one that never looked. The
-    entry is marked `refused` so it cannot be mistaken for a source.
-    """
-    config = _settings(tmp_path, egress=[], box_isolation="process")
-    toolset = build_toolset(
-        "proposer", Grounding(browser=WebReader(ForumClient(config), config))
-    )
-    assert toolset is not None
-
-    tool = toolset.tools["read_web_page"]
-    deps = DebateDeps(topic="t", participant=PARTICIPANT)
-    out = await _call(tool, deps, url="http://example.com/")
-    assert "disabled here" in out
-
-    (attempt,) = deps.tool_calls
-    assert attempt.tool == "read_web_page"
-    assert "refused" in attempt.detail, "a refusal must not read as a source"
-    assert attempt.receipt is not None and "example.com" in attempt.receipt
-
-
 async def _call(tool, deps, **kwargs):
     """Invoke a FunctionToolset tool directly with a stub RunContext."""
     from pydantic_ai import RunContext
@@ -217,100 +133,6 @@ async def _call(tool, deps, **kwargs):
 
     ctx = RunContext(deps=deps, model=None, usage=RunUsage())  # type: ignore[arg-type]
     return await tool.function(ctx, **kwargs)
-
-
-# --------------------------------------------------------------------------- #
-# Receipts
-# --------------------------------------------------------------------------- #
-
-
-def test_the_browser_json_is_found_between_h5i_banners():
-    """
-    `browser read --json` prints a confinement banner before the payload and an
-    engine summary after it, so the JSON is embedded rather than alone on stdout.
-    """
-    raw = (
-        "  confined : process (files and environment)\n\n"
-        '{"ok": true, "url": "http://example.com/", "text": "a {nested} brace",\n'
-        ' "confinement": {"kind": "process"}}\n'
-        "h5i browser engine: done\n"
-    )
-    payload = _first_json_object(raw)
-    assert payload["ok"] is True
-    assert payload["confinement"] == {"kind": "process"}
-    assert payload["text"] == "a {nested} brace", (
-        "braces inside strings do not confuse it"
-    )
-
-
-def test_a_truncated_payload_does_not_raise():
-    assert _first_json_object('{"ok": true, "url":') == {}
-    assert _first_json_object("no json here") == {}
-
-
-@pytest.mark.anyio
-async def test_a_successful_read_records_a_checkable_receipt(tmp_path, monkeypatch):
-    """
-    The point of the receipt: a citation is checkable because the fetch that
-    produced it — and the confinement it ran under — is in the record.
-    """
-    config = _settings(tmp_path, egress=["example.com"], box_isolation="container")
-    client = ForumClient(config)
-    reader = WebReader(client, config)
-
-    async def fake_run(*args, check=True):
-        return (
-            0,
-            json.dumps(
-                {
-                    "ok": True,
-                    "url": "http://example.com/",
-                    "text": "Example Domain",
-                    "confinement": {"kind": "box"},
-                }
-            ),
-            "",
-        )
-
-    monkeypatch.setattr(client, "_run", fake_run)
-    text, receipt = await reader.read(PARTICIPANT, "http://example.com/")
-
-    assert text == "Example Domain"
-    parsed = json.loads(receipt)
-    assert parsed["ok"] is True
-    assert parsed["url"] == "http://example.com/"
-    assert parsed["confinement"] == {"kind": "box"}
-    assert parsed["box"] == "env/human/proposer"
-    assert parsed["policy_digest"] == "16f7e744"
-
-
-@pytest.mark.anyio
-async def test_a_failed_fetch_still_produces_a_receipt(tmp_path, monkeypatch):
-    """
-    What the debate could not reach is part of the record too. A fetch that
-    failed and left no trace would let a claim look uncited when it was actually
-    unsupported.
-    """
-    config = _settings(tmp_path, egress=["example.com"], box_isolation="container")
-    client = ForumClient(config)
-    reader = WebReader(client, config)
-
-    async def fake_run(*args, check=True):
-        return (
-            1,
-            json.dumps(
-                {"ok": False, "url": "http://blocked/", "error": "refused by policy"}
-            ),
-            "",
-        )
-
-    monkeypatch.setattr(client, "_run", fake_run)
-    text, receipt = await reader.read(PARTICIPANT, "http://blocked/")
-
-    assert "did not succeed" in text
-    parsed = json.loads(receipt)
-    assert parsed["ok"] is False
-    assert parsed["error"] == "refused by policy"
 
 
 # --------------------------------------------------------------------------- #
@@ -362,20 +184,13 @@ def _searching_model(payload: dict) -> FunctionModel:
 
 
 def _empty_thread():
-    from vista_backend.services.h5i_forum import Thread
+    from vista_backend.services.forum_git import Thread, ThreadHeader
 
-    return Thread.from_json(
-        {
-            "header": {
-                "id": "t1",
-                "title": "t",
-                "created_at": "2026-08-27T00:00:00Z",
-                "created_by": "human",
-            },
-            "status": "open",
-            "posts": [],
-            "vouch": [],
-        }
+    return Thread(
+        header=ThreadHeader(
+            id="t1", title="t", created_at="2026-08-27T00:00:00Z", created_by="a" * 32
+        ),
+        status="open",
     )
 
 
@@ -409,36 +224,6 @@ async def test_every_tool_records_that_it_was_used(tmp_path):
         ("read_domain_guidance", "salt-chemistry"),
         ("read_attached_paper", "cantor2019.pdf"),
     ]
-
-
-@pytest.mark.anyio
-async def test_a_web_read_records_both_the_call_and_its_receipt(tmp_path, monkeypatch):
-    """The name is for the reader; the receipt is what makes the citation checkable."""
-    import json as _json
-
-    from vista_backend.agents.forum.roles import DebateDeps
-
-    config = _settings(tmp_path, egress=["example.com"], box_isolation="container")
-    client = ForumClient(config)
-
-    async def fake_run(*args, check=True):
-        return (
-            0,
-            _json.dumps({"ok": True, "url": "http://example.com/", "text": "hi"}),
-            "",
-        )
-
-    monkeypatch.setattr(client, "_run", fake_run)
-    toolset = build_toolset("proposer", Grounding(browser=WebReader(client, config)))
-    assert toolset is not None
-    deps = DebateDeps(topic="t", participant=PARTICIPANT)
-
-    await _call(toolset.tools["read_web_page"], deps, url="http://example.com/")
-
-    (call,) = deps.tool_calls
-    assert call.tool == "read_web_page"
-    assert call.detail == "http://example.com/"
-    assert call.receipt and _json.loads(call.receipt)["ok"] is True
 
 
 def test_grants_are_recorded_per_role():
@@ -841,12 +626,7 @@ def test_a_verdict_in_an_unfamiliar_format_is_clipped_not_dropped():
 async def _finished(client, title: str, verdict: str) -> str:
     """A thread that reached a verdict, which is what counts as precedent."""
     thread = await client.create_thread(title, body="go")
-    participant = await client.create_participant(
-        box_slug=f"referee-{title[:8].replace(' ', '-')}",
-        identity=f"vista-referee-{title[:8].replace(' ', '-')}",
-        role=ParticipantRole.WORKER,
-    )
-    await client.post_as(participant, thread, verdict, kind="DONE")
+    await client.post_as(REFEREE, thread, verdict, kind="DONE")
     return thread
 
 
@@ -864,7 +644,7 @@ async def test_only_the_closest_few_debates_are_quoted(tmp_path):
         _summarise_prior,
     )
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     for i in range(PRIOR_DEBATE_LIMIT + 2):
         await _finished(
             client, f"FLiBe question {i}", f"## Verdict\n\n**1. answer {i}**"
@@ -913,7 +693,7 @@ async def test_the_lookup_returns_the_digest_and_not_the_whole_verdict(tmp_path)
     body = verdict.to_post_body()
     assert len(body) > 3000, "the fixture has to be big enough for this to matter"
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     await _finished(client, "FLiBe operability window", body)
 
     out = await _summarise_prior(client, "FLiBe operability")
@@ -936,7 +716,7 @@ async def test_the_most_overlapping_title_wins_the_slot(tmp_path):
     """
     from vista_backend.agents.forum.grounding import _summarise_prior
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     await _finished(
         client, "FLiBe corrosion of steel", "## Verdict\n\n**1. CORROSION-ANSWER**"
     )
@@ -966,20 +746,17 @@ async def test_a_concluded_debate_counts_as_prior_even_though_its_thread_is_open
     """
     The bug behind four BLOCKED reviewer turns.
 
-    A concluded VISTA debate posts its verdict and leaves the h5i thread *open* —
-    h5i reports it `done`, and `closed` only ever means somebody explicitly put it
-    in the attic. Filtering on `closed` therefore selected for a state VISTA
-    hardly ever produces, so this answered "nothing matches" on a forum full of
-    finished debates. Verified against the real CLI: `done` threads are listed
-    without `--all`.
+    A concluded VISTA debate posts its verdict and leaves the thread *open* —
+    the forum reports it `done`, and `closed` only ever means somebody
+    explicitly closed it. Filtering on `closed` therefore selected for a state
+    VISTA hardly ever produces, so this answered "nothing matches" on a forum
+    full of finished debates.
     """
     from vista_backend.agents.forum.grounding import _summarise_prior
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     thread = await client.create_thread("viscosity knee in FLiBe", body="go")
-    participant = await client.create_participant(
-        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
-    )
+    participant = REFEREE
     await client.post_as(
         participant, thread, "## Verdict\n\nrigidity stands", kind="DONE"
     )
@@ -1000,11 +777,9 @@ async def test_no_match_lists_what_is_there_instead_of_just_saying_no(tmp_path):
     """
     from vista_backend.agents.forum.grounding import _summarise_prior
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     thread = await client.create_thread("viscosity knee in FLiBe", body="go")
-    participant = await client.create_participant(
-        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
-    )
+    participant = REFEREE
     await client.post_as(participant, thread, "## Verdict\n\nstands", kind="DONE")
 
     out = await _summarise_prior(client, "beryllium supply chain economics")
@@ -1023,11 +798,9 @@ async def test_a_role_does_not_find_its_own_debate_as_precedent(tmp_path):
     """
     from vista_backend.agents.forum.grounding import _summarise_prior
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     thread = await client.create_thread("viscosity knee in FLiBe", body="go")
-    participant = await client.create_participant(
-        box_slug="referee", identity="vista-referee", role=ParticipantRole.WORKER
-    )
+    participant = REFEREE
     await client.post_as(participant, thread, "## Verdict\n\nstands", kind="DONE")
 
     out = await _summarise_prior(client, "viscosity knee", exclude=thread)
@@ -1038,7 +811,7 @@ async def test_a_role_does_not_find_its_own_debate_as_precedent(tmp_path):
 async def test_an_empty_forum_says_not_to_search_again(tmp_path):
     from vista_backend.agents.forum.grounding import _summarise_prior
 
-    client = ForumClient(_settings(tmp_path), confirm_delay=0.0)
+    client = ForumClient(_settings(tmp_path))
     out = await _summarise_prior(client, "anything")
     assert "no finished debates yet" in out
     assert "Do not search again" in out

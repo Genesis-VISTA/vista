@@ -12,24 +12,30 @@ A project with no `forum_repo_url` has no lab. That is the honest default: a
 debate with nowhere to publish is a private argument with nobody to check it,
 and offering the feature anyway would promise a peer review that cannot arrive.
 
-Initialising one is four commands, and they are the same four a human peer runs
-to join a forum (docs/hypothesis-forum-hosting.md §5) — which is the point: this
-deployment is a participant in that repository, not its owner.
+The lab also needs git on this machine (`services/git_check.py`). Without it
+every project's lab is off, and saving a forum URL says why.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from pathlib import Path
 
 from ...config import ForumSettings, settings
 from ...db.schemas import ProjectTable
-from ...services.h5i_forum import ForumClient, ForumDisabled, VotePolicy
+from ...services.forum_git import ForumClient, ForumDisabled
+from ...services.git_check import git_status
 
 
 logger = logging.getLogger(__name__)
+
+
+client_factory: type[ForumClient] = ForumClient
+"""
+What `build_client_for` constructs. Tests put an in-memory fake here; nothing
+else should change it.
+"""
 
 
 class ForumSetupError(RuntimeError):
@@ -44,13 +50,12 @@ class ForumSetupError(RuntimeError):
 
 def forum_root(project_id: uuid.UUID) -> Path:
     """
-    Where this project's forum working repository lives.
+    Where this project's forum lives: its bare repository and kept attachments.
 
     Keyed by id rather than name so renaming a project does not orphan its
-    forum — the h5i state lives in this directory's `.git/.h5i/`, and a rename
-    would otherwise read as "this project has no lab, initialise a new one".
+    forum.
     """
-    return settings.forums_dir / str(project_id)
+    return settings.forum_git_dir / str(project_id)
 
 
 def forum_url_of(project: ProjectTable) -> str | None:
@@ -63,13 +68,15 @@ def forum_config_for(project: ProjectTable) -> ForumSettings | None:
     """
     This project's forum settings, or None when the project has no lab.
 
-    Every field that names a repository is set here from the project, never
-    inherited: a `ForumSettings` read from the environment carries no repository
-    at all, so a caller that forgets to scope gets a client that refuses rather
-    than one quietly working in some other project's forum.
+    None when the forum is disabled, the project has no URL, or this machine has
+    no usable git. Every field that names a repository is set here from the
+    project, never inherited: a `ForumSettings` read from the environment
+    carries no repository at all, so a caller that forgets to scope gets a
+    client that refuses rather than one quietly working in some other project's
+    forum.
     """
     url = forum_url_of(project)
-    if url is None or not settings.forum.enabled:
+    if url is None or not settings.forum.enabled or not git_status().ok:
         return None
     return settings.forum.model_copy(
         update={"repo_root": forum_root(project.id), "remote_url": url}
@@ -80,11 +87,14 @@ def build_client_for(project: ProjectTable) -> ForumClient:
     """A forum client scoped to this project. Raises when the project has no lab."""
     config = forum_config_for(project)
     if config is None:
-        raise ForumDisabled(
-            f"project {project.name!r} has no Hypothesis Lab: set a forum "
-            "repository on the project to turn it on"
+        git = git_status()
+        why = (
+            git.reason
+            if forum_url_of(project) and settings.forum.enabled and not git.ok
+            else "set a forum repository on the project to turn it on"
         )
-    return ForumClient(config)
+        raise ForumDisabled(f"project {project.name!r} has no Hypothesis Lab: {why}")
+    return client_factory(config)
 
 
 def lab_enabled(project: ProjectTable) -> bool:
@@ -92,62 +102,34 @@ def lab_enabled(project: ProjectTable) -> bool:
     return forum_config_for(project) is not None
 
 
-async def _git(root: Path, *args: str) -> None:
-    """One git command in the forum repo, with its stderr kept for the caller."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        *args,
-        cwd=str(root),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, err = await proc.communicate()
-    if proc.returncode != 0:
-        raise ForumSetupError(
-            f"git {' '.join(args)} failed: {err.decode(errors='replace').strip()}"
-        )
-
-
 async def ensure_forum(project: ProjectTable) -> None:
     """
     Make this project's forum exist and point at its repository. Idempotent.
 
-    Safe to call on every save and on first use. The git steps are skipped once
-    the directory is a repository, and `forum remote` is only issued when it
-    would change something — h5i accepts a redundant set, but a log line saying
-    the remote moved when it did not is a lie a reader has to disprove.
-
-    The `sync` is not decoration. `forum remote` accepts any string, so a typo
-    is not discovered until something tries to reach it; syncing here is what
-    turns a bad URL into an error in the dialog the person is looking at. It
-    also pulls whatever threads the repository already holds, so pointing a new
-    project at an existing forum joins that conversation rather than starting an
-    empty one beside it.
+    Safe to call on every save and on first use. The `sync` is not decoration:
+    git accepts any string as a remote URL, so a typo is not discovered until
+    something tries to reach it, and syncing here is what turns a bad URL into
+    an error in the dialog the person is looking at. It also pulls whatever
+    threads the repository already holds, so pointing a new project at an
+    existing forum joins that conversation rather than starting an empty one
+    beside it.
     """
-    config = forum_config_for(project)
-    if config is None:
+    if forum_url_of(project) is None or not settings.forum.enabled:
         return
-    root = config.repo_root
-    assert root is not None and config.remote_url is not None  # forum_config_for
+    git = git_status()
+    if not git.ok:
+        raise ForumSetupError(f"The Hypothesis Lab needs git. {git.reason}")
+    config = forum_config_for(project)
+    assert config is not None and config.remote_url is not None
 
+    client = client_factory(config)
     try:
-        if not (root / ".git").is_dir():
-            root.mkdir(parents=True, exist_ok=True)
-            await _git(root, "init", "-q")
-            # An empty commit, because h5i stores the forum under `.git/.h5i/` of
-            # a repository that has a HEAD. A fresh `git init` has none.
-            await _git(root, "commit", "-q", "--allow-empty", "-m", "forum")
-            logger.info("forum: created a repository for %r at %s", project.name, root)
-    except ForumSetupError:
-        raise
-    except OSError as exc:
-        raise ForumSetupError(f"could not create {root}: {exc}") from exc
-
-    client = ForumClient(config)
-    try:
-        if config.remote_url not in await client.remote():
+        await client.ensure_repo()
+        if await client.remote() != config.remote_url:
             await client.set_remote(config.remote_url)
         result = await client.sync()
+    except OSError as exc:
+        raise ForumSetupError(f"could not create {config.repo_root}: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 — the reason belongs in the dialog
         raise ForumSetupError(f"could not reach {config.remote_url}: {exc}") from exc
     logger.info(
@@ -157,38 +139,6 @@ async def ensure_forum(project: ProjectTable) -> None:
         result.pulled,
         result.pushed,
     )
-
-    await _apply_vote_policy(client)
-
-
-async def _apply_vote_policy(client: ForumClient) -> None:
-    """
-    Tighten the vote policy, but only once it would mean something.
-
-    `principal` counts one vote per enrolled forge account and *nothing* from an
-    unenrolled machine, so setting it on a forum where nobody has run
-    `h5i forum enroll` silently zeroes every vote, our own agents' included.
-
-    Failures here are logged, not raised: the forum is already usable, and a
-    policy that could not be set is not a reason to refuse the project.
-    """
-    if not settings.forum.vote_policy:
-        return
-    try:
-        wanted = VotePolicy(settings.forum.vote_policy)
-        if await client.vote_policy() == wanted:
-            return
-        if wanted is VotePolicy.PRINCIPAL and not await client.enrollments():
-            logger.warning(
-                "forum: leaving the vote policy alone — `principal` counts "
-                "nothing from an unenrolled machine, and nobody has run "
-                "`h5i forum enroll` yet, so every vote would be discarded"
-            )
-            return
-        await client.set_vote_policy(wanted)
-        logger.info("forum: vote policy is now %s", wanted)
-    except Exception:  # noqa: BLE001
-        logger.warning("forum: could not set the vote policy", exc_info=True)
 
 
 def check_legacy_forum_env() -> None:

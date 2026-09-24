@@ -25,7 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 from ..agents.forum import simulation
 from ..agents.forum.project_forum import (
     build_client_for,
-    forum_config_for,
+    forum_url_of,
     lab_enabled,
 )
 from ..agents.forum.wiring import continue_debate_task, run_debate_task
@@ -36,18 +36,19 @@ from ..db.schemas import (
     DebatePostPublic,
     DebateRunPublic,
     DebateStatePublic,
-    EnrolledOrigin,
 )
 from ..services import debate as debate_service
 from ..services import project as project_service
 from ..services.auth import UserDep
-from ..services.h5i_forum import (
+from ..services.forum_git import (
     POSTABLE_KINDS,
     ForumClient,
     ForumDisabled,
     PostKind,
-    VotePolicy,
+    ThreadClosed,
+    ThreadMissing,
 )
+from ..services.git_check import git_status
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 
@@ -56,26 +57,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["debates"])
 
 
-# The forum's configuration is deployment-wide rather than per-project, so it
-# gets its own prefix instead of hiding global state under a project path.
 class ForumStatus(BaseModel):
-    """Whether this forum is shared, and whether its votes are being counted."""
+    """Whether this project's lab can run, and whether its forum is shared."""
 
     enabled: bool
+    """The lab is usable: the forum is on, the project has a URL, and git works."""
+
     shared: bool
-    """Publishing to a remote — i.e. outside participants can reach it."""
+    """Publishing to the project's remote — i.e. outside participants can reach it."""
 
     remote: str | None = None
-    vote_policy: str | None = None
-    enrolled: int = 0
-    votes_counting: bool = True
-    """
-    False when the policy is `principal` and nobody has enrolled.
+    git_ok: bool
+    git_reason: str | None = None
+    """Why git is unusable, in words for the page. None when `git_ok`."""
 
-    That combination discards every vote on the forum, including the debate
-    agents' own, and nothing about a thread shows it — which is exactly why it
-    is surfaced here.
-    """
+    unpublished: int = 0
+    """This install's posts the remote does not have yet — e.g. written offline."""
 
 
 @router.get("/{project_name}/forum/status")
@@ -83,47 +80,41 @@ async def forum_status(
     project_name: str, session: SessionDep, user: UserDep
 ) -> ForumStatus:
     """
-    This project's forum state, for the UI to warn about.
+    This project's forum state, for the page to explain itself with.
 
     Project-scoped because the repository is: a project with no forum URL has no
     Hypothesis Lab, and `enabled: false` is how the page knows to say so rather
-    than offering a debate that has nowhere to publish.
+    than offering a debate that has nowhere to publish. `git_ok: false` is the
+    other reason the lab can be off, and `git_reason` says what to do about it.
 
     Never raises on a forum that is off or unreachable: this endpoint exists to
     report bad states, so failing on one would defeat it.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
-    config = forum_config_for(project)
-    if config is None:
-        return ForumStatus(enabled=False, shared=False)
+    git = git_status()
+    if not lab_enabled(project):
+        return ForumStatus(
+            enabled=False, shared=False, git_ok=git.ok, git_reason=git.reason
+        )
 
-    client = ForumClient(config)
+    client = build_client_for(project)
+    url = forum_url_of(project)
     try:
-        described = await client.remote()
-        policy = await client.vote_policy()
-        enrolled = len(await client.enrollments())
+        # The repository's own remote, not the project row's intention: they
+        # disagree exactly when it matters, e.g. a save that could not set it.
+        remote = await client.remote()
+        unpublished = await client.unpublished()
     except Exception:  # noqa: BLE001
-        logger.warning("forum: could not read federation status", exc_info=True)
-        return ForumStatus(enabled=True, shared=bool(config.remote_url))
+        logger.warning("forum: could not read forum status", exc_info=True)
+        return ForumStatus(enabled=True, shared=False, git_ok=True)
 
-    # Whether the forum is shared is h5i's answer, not the project's. The two
-    # disagree exactly when it matters: a URL saved on the project is an
-    # intention, and a forum whose `sync` has since started failing still has it
-    # recorded. Trust the project row and this endpoint reports a shared forum
-    # that nobody can reach.
-    #
-    # Matching the URL rather than h5i's prose also catches the remote being
-    # pointed somewhere else — by hand, or by an earlier run under a different
-    # setting.
-    shared = bool(config.remote_url) and config.remote_url in described
-
+    shared = remote is not None and remote == url
     return ForumStatus(
         enabled=True,
         shared=shared,
-        remote=config.remote_url if shared else None,
-        vote_policy=str(policy),
-        enrolled=enrolled,
-        votes_counting=not (policy == VotePolicy.PRINCIPAL and enrolled == 0),
+        remote=remote if shared else None,
+        git_ok=True,
+        unpublished=unpublished,
     )
 
 
@@ -161,66 +152,15 @@ FORUM_REFRESH_SECONDS = 10.0
 """
 How often a watched debate is re-read from the forum itself.
 
-Much slower than the DB poll below, and deliberately. A forum read spawns a
-subprocess and, on a shared remote, a git fetch — cheap locally, not free across
-a network. Our own agents' posts reach the projection through the debate task
-without any of this; the refresh is what makes a *peer's* comment appear, and ten
+Much slower than the DB poll below, and deliberately. A forum read runs git
+and, on a shared remote, a fetch — cheap locally, not free across a network. Our own agents' posts reach the projection through the debate
+task without any of this; the refresh is what makes a *peer's* comment appear, and ten
 seconds is fast enough for a human conversation.
 """
 
 
 _last_refresh: dict[str, float] = {}
 _refresh_locks: dict[str, asyncio.Lock] = {}
-
-
-ENROLLMENT_CACHE_SECONDS = 60.0
-"""
-How long the origin→account map is reused.
-
-Enrollment is a once-per-machine act, so this changes on the timescale of people
-joining a forum, not of posts arriving. Reading it is another subprocess on a
-path that already pays for a forum read, and the cost of being a minute stale is
-that one new participant's name appears a minute late.
-"""
-
-_enrollments: dict[uuid.UUID, tuple[float, dict[str, EnrolledOrigin]]] = {}
-"""Keyed by project: each forum has its own participants, so each has its own map."""
-
-
-async def _enrolled_origins(
-    project_id: uuid.UUID, forum: ForumClient | None
-) -> dict[str, EnrolledOrigin]:
-    """
-    Which machines have bound themselves to a forge account, on this forum.
-
-    Takes an id and a client rather than the project row, because the caller has
-    usually committed by the time it gets here — and a commit expires every ORM
-    object the session holds, so reading `project.id` inside would be async IO
-    in a context that cannot await. Same trap the run is already carried around.
-
-    Returns an empty map on any failure, and for a project with no lab. Naming is
-    a courtesy on top of a readable thread; a forum whose enrollments cannot be
-    read should still show its posts, with origins unresolved exactly as they
-    were before.
-    """
-    if forum is None:
-        return {}
-    now = asyncio.get_running_loop().time()
-    cached = _enrollments.get(project_id)
-    if cached is not None and now - cached[0] < ENROLLMENT_CACHE_SECONDS:
-        return cached[1]
-    try:
-        rows = await forum.enrollments()
-    except Exception:  # noqa: BLE001
-        logger.warning("forum: could not read enrollments", exc_info=True)
-        return {}
-    resolved = {
-        row.origin: EnrolledOrigin(principal=row.principal, name=row.name)
-        for row in rows
-        if row.origin and row.principal
-    }
-    _enrollments[project_id] = (now, resolved)
-    return resolved
 
 
 async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> bool:
@@ -275,12 +215,11 @@ class HumanPost(BaseModel):
     @classmethod
     def _postable(cls, kind: PostKind) -> PostKind:
         """
-        Refuse a kind h5i would accept and then drop.
+        Refuse a kind the operator may not post.
 
-        `CLAIM` and friends are real kinds that appear in threads but are
-        produced by other verbs; `post --kind CLAIM` exits 0 and publishes
-        nothing. Rejecting here turns that into a 422 instead of a post the
-        client is told about and can never see.
+        `TASK`, `CLOSED` and the votes are real kinds that appear in threads but
+        are written by their own verbs. Rejecting here makes that a 422 rather
+        than a forum error.
         """
         if kind not in POSTABLE_KINDS:
             raise ValueError(
@@ -369,7 +308,6 @@ async def get_debate(
             DebatePostPublic.model_validate(p)
             for p in await debate_service.list_posts(session, run_id=run.id)
         ],
-        enrolled_origins=await _enrolled_origins(project_id, lab),
         simulations=[
             record.model_dump()
             for record in await simulation.commissioned_runs(
@@ -390,24 +328,30 @@ async def post_to_debate(
     """
     Say something into a live debate, as the human.
 
-    This is the one legitimate use of host-side posting: it is attributed to
-    `human`, which is exactly right here and exactly wrong for an agent. The
-    agents pick it up when they next read the thread — there is no separate
-    inbox, because the thread already is one.
+    Attributed to `human`, which is exactly right here and exactly wrong for an
+    agent. The agents pick it up when they next read the thread — there is no
+    separate inbox, because the thread already is one.
 
-    A closed debate still accepts the human's posts, because h5i's own rule is
-    that closing removes the thread from every *box's* inbox and leaves the
-    host's write path open. Closing is the human's verb; it ends the argument,
-    not their ability to annotate the record.
+    A closed thread takes no more posts, from anyone: readers ignore anything
+    after the first CLOSED, so a post there would be written and never shown.
+    A thread no longer on the forum takes none either.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
     run = await _require(session, run_id, project.id)
+    if run.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     client = build_client_for(project)
     try:
         post = await client.post_as_human(run.thread_id, body.body, kind=body.kind)
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except ThreadClosed:
+        raise HTTPException(status_code=409, detail="This thread is closed.")
+    except ThreadMissing:
+        await debate_service.mark_thread_missing(session, run_id=run.id)
+        await session.commit()
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     thread = await client.read_thread(run.thread_id)
     await debate_service.project_thread(session, run_id=run.id, thread=thread)
@@ -424,7 +368,7 @@ async def post_to_debate(
         raise HTTPException(status_code=500, detail="The post did not reach the thread")
 
     # We know who this was: the request was authenticated. The forum cannot carry
-    # that — h5i stamps `sender="human"` and has nowhere to put a name — so it is
+    # that — the post says `human` and has nowhere to put a name — so it is
     # recorded here, on the one path where it is knowledge rather than a claim.
     await debate_service.record_author(
         session, run_id=run.id, post_id=post.id, authored_by=user.email
@@ -455,19 +399,21 @@ async def continue_debate(
     answered. Opening a fresh debate would lose the argument that produced the
     objection; this keeps the thread and picks it up.
 
-    Refused on a debate that is still arguing, and on a closed one. Closing is
-    final in h5i — the thread is in the attic and accepts no posts — so a
-    "continue" there would attach a roster that could not speak.
+    Refused on a debate that is still arguing, on a closed one — a closed thread
+    takes no more posts, so a roster there could not speak — and on one whose
+    thread is no longer on the forum.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
     run = await _require(session, run_id, project.id)
 
+    if run.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
     if run.status in debate_service.ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="This debate is still arguing.")
     if run.status == "closed":
         raise HTTPException(
             status_code=409,
-            detail="This thread is closed; h5i accepts no further posts on it.",
+            detail="This thread is closed; it accepts no further posts.",
         )
     if not lab_enabled(project):
         raise HTTPException(
@@ -489,18 +435,24 @@ async def close_debate(
     """
     End a debate early.
 
-    Closing is h5i's, not the orchestrator's: the thread leaves every box's inbox
-    and the next agent post is refused, so the running loop finds out by being
-    told no. The status is set here so a client sees the change immediately
-    rather than waiting for the loop to notice.
+    Closing is the forum's, not the orchestrator's: it writes a CLOSED post, and
+    the next agent post is refused, so the running loop finds out by being told
+    no. The status is set here so a client sees the change immediately rather
+    than waiting for the loop to notice.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
     run = await _require(session, run_id, project.id)
+    if run.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     try:
         await build_client_for(project).close_thread(run.thread_id)
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except ThreadMissing:
+        await debate_service.mark_thread_missing(session, run_id=run.id)
+        await session.commit()
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     run = await debate_service.set_status(session, run_id=run.id, status="closed")
     return DebateRunPublic.model_validate(run)
@@ -598,6 +550,9 @@ async def debate_events(
                 await asyncio.sleep(STREAM_POLL_SECONDS)
 
     return EventSourceResponse(events())
+
+
+THREAD_MISSING = "This thread is no longer on the forum."
 
 
 async def _require(session, run_id: uuid.UUID, project_id: uuid.UUID):

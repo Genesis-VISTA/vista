@@ -1,8 +1,8 @@
 """
 Tests for the debate API.
 
-Real HTTP through an ASGI transport, a real DB session, and the fake h5i binary,
-so the routes, the access boundary and the event stream are all exercised. The
+Real HTTP through an ASGI transport, a real DB session, and the in-memory fake
+forum, so the routes, the access boundary and the event stream are all exercised. The
 background argument is not started here — these test the surface a client sees,
 and the loop has its own driver tests.
 """
@@ -10,38 +10,31 @@ and the loop has its own driver tests.
 import asyncio
 import json
 import uuid
-from pathlib import Path
 
 import anyio
 import httpx
 import pytest
 
-from vista_backend.agents.forum.project_forum import (
-    build_client_for,
-    forum_config_for,
-    forum_root,
-)
+from vista_backend.agents.forum.project_forum import build_client_for
 from vista_backend.config import ForumSettings, settings
 from vista_backend.db.schemas import ProjectCreate
 from vista_backend.services import debate as debate_service
 from vista_backend.services import project as project_service
-from vista_backend.services.h5i_forum import ForumClient, ParticipantRole, PostKind
-
-
-FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
+from vista_backend.services.forum_git import Participant
+from vista_backend.services.git_check import GitCheck
 
 
 @pytest.fixture
-def forum_config(tmp_path, monkeypatch) -> ForumSettings:
+def forum_config(tmp_path, monkeypatch, fake_forum) -> ForumSettings:
     """
-    Point the whole app at throwaway per-project forums backed by the fake binary.
+    Point the whole app at throwaway per-project forums, all of them the fake.
 
     `data_dir` and not `repo_root`: the repository is a property of the project
     now, so what a deployment configures is where project forums live, and each
     project's own root falls out of its id.
     """
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    config = ForumSettings(enabled=True, binary=str(FAKE), timeout=30.0)
+    config = ForumSettings(enabled=True, timeout=30.0)
     monkeypatch.setattr(settings, "forum", config)
     return config
 
@@ -82,15 +75,10 @@ async def app_client(session, alice, monkeypatch):
 
     monkeypatch.setattr(debate_api, "stream_session_factory", _stream_session)
     monkeypatch.setattr(debate_api, "STREAM_POLL_SECONDS", 0.01)
-    # Three module globals outlive a test and would leak between them.
-    #
-    # The enrollment map is cached for a minute, so whichever test ran first
-    # would decide what the others saw. The refresh throttle is keyed by thread
-    # id — and the fake numbers threads from a per-repo sequence, so every test
-    # gets the *same* id. Left alone, the second test to use a given id is told
-    # its thread was refreshed milliseconds ago and skips the read, which reads
-    # as "the peer's post never arrived".
-    monkeypatch.setattr(debate_api, "_enrollments", {})
+    # The refresh throttle outlives a test. Left alone, a test that reads a
+    # thread right after another test refreshed it is told it was refreshed
+    # moments ago and skips the read, which reads as "the peer's post never
+    # arrived".
     monkeypatch.setattr(debate_api, "_last_refresh", {})
     monkeypatch.setattr(debate_api, "_refresh_locks", {})
     transport = httpx.ASGITransport(app=app)
@@ -106,25 +94,17 @@ async def _project(session, user, name="api-debate", forum_repo_url=FORUM_URL):
     """
     A project with a Hypothesis Lab, unless the caller asks for one without.
 
-    The forum directory is made here rather than through `ensure_forum`, which
-    would shell out to git and then sync: these tests are about the API, and the
-    setup path has its own file.
+    Not through `ensure_forum`, which would run git and sync: these tests are
+    about the API, and the setup path has its own file.
     """
-    project = await project_service.create_project(
+    return await project_service.create_project(
         session, ProjectCreate(name=name, forum_repo_url=forum_repo_url), user
     )
-    if forum_repo_url:
-        (forum_root(project.id) / ".git" / ".h5i").mkdir(parents=True, exist_ok=True)
-    return project
-
-
-def _forum(project) -> ForumClient:
-    return build_client_for(project)
 
 
 async def _run(session, user, project, *, topic="why does the knee move?"):
     """A debate row with a real forum thread behind it."""
-    client = ForumClient(forum_config_for(project), confirm_delay=0.0)
+    client = build_client_for(project)
     thread_id = await client.create_thread(topic, body="Debate it.")
     run = await debate_service.create_debate(
         session,
@@ -135,10 +115,8 @@ async def _run(session, user, project, *, topic="why does the knee move?"):
         framing="Debate it.",
         rounds=2,
     )
-    participant = await client.create_participant(
-        box_slug=f"proposer-{str(run.id)[:8]}",
-        identity=f"vista-proposer-{str(run.id)[:8]}",
-        role=ParticipantRole.WORKER,
+    participant = Participant(
+        identity=f"vista-proposer-{str(run.id)[:8]}", role="proposer"
     )
     await debate_service.add_participant(
         session, run_id=run.id, participant=participant, debate_role="proposer"
@@ -178,9 +156,7 @@ async def test_get_picks_up_a_peer_post_on_a_finished_debate(
     await session.commit()
 
     # A peer publishes to the remote; nothing local knows yet.
-    await client.post_as_human(
-        thread_id, "the 803 K figure is from a fit", kind=PostKind.FINDING
-    )
+    client.peer_post(thread_id, "the 803 K figure is from a fit", kind="FINDING")
 
     body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
 
@@ -213,8 +189,8 @@ async def test_the_post_payload_keeps_provenance_visible(
     forum_config, app_client, session, alice
 ):
     """
-    The UI has to be able to draw the host/claim boundary, so the API must not
-    flatten it into one blob of text.
+    The UI has to be able to draw the known/claimed boundary, so the API must
+    not flatten it into one blob of text.
     """
     project = await _project(session, alice)
     run, client, participant = await _run(session, alice, project)
@@ -229,9 +205,11 @@ async def test_the_post_payload_keeps_provenance_visible(
     proposal = next(p for p in resp.json()["posts"] if p["kind"] == "PROPOSAL")
 
     assert proposal["body"] == "rigidity sets the knee"
-    for host_stamped in ("sender", "forum_role", "box_id", "policy_digest"):
-        assert proposal[host_stamped], f"{host_stamped} must reach the client"
+    for field in ("sender", "forum_role", "origin"):
+        assert proposal[field], f"{field} must reach the client"
     assert proposal["vouch_lane"] == "host-observed"
+    # No remote was set on this forum, so our post is honestly not yet published.
+    assert proposal["published"] is False
 
 
 @pytest.mark.anyio
@@ -298,14 +276,12 @@ async def test_the_human_can_post_into_a_live_debate(
 
 
 @pytest.mark.anyio
-async def test_the_human_can_still_annotate_a_closed_debate(
+async def test_a_closed_thread_refuses_the_humans_post_too(
     forum_config, app_client, session, alice
 ):
     """
-    Verified against real h5i: closing removes the thread from every *box's*
-    inbox and leaves the host's write path open, so the human's post lands on a
-    closed thread. Closing ends the argument, not the operator's access to the
-    record — the agents are the ones who are stopped.
+    Readers ignore everything after the first CLOSED, so a post there would be
+    written and never shown. Saying no is the honest answer.
     """
     project = await _project(session, alice)
     run, client, _ = await _run(session, alice, project)
@@ -315,25 +291,25 @@ async def test_the_human_can_still_annotate_a_closed_debate(
         f"/projects/{project.name}/debates/{run.id}/posts",
         json={"body": "for the record: we stopped because of the shear data"},
     )
-    assert resp.status_code == 200
-    assert resp.json()["sender"] == "human"
+    assert resp.status_code == 409
+    assert "closed" in resp.json()["detail"]
 
 
 @pytest.mark.anyio
 async def test_an_unpostable_kind_is_rejected(forum_config, app_client, session, alice):
     """
-    `CLAIM` is a real forum kind that `post --kind` accepts and then discards, so
-    the API must refuse it rather than return a post that will never exist.
+    `CLOSED` is a real kind, written only by closing; `CLAIM` is not a kind at
+    all. Neither may be posted.
     """
     project = await _project(session, alice)
     run, _, _ = await _run(session, alice, project)
 
-    resp = await app_client.post(
-        f"/projects/{project.name}/debates/{run.id}/posts",
-        json={"body": "mine now", "kind": "CLAIM"},
-    )
-    assert resp.status_code in (400, 422, 500)
-    assert resp.status_code != 200
+    for kind in ("CLAIM", "CLOSED", "UPVOTE"):
+        resp = await app_client.post(
+            f"/projects/{project.name}/debates/{run.id}/posts",
+            json={"body": "mine now", "kind": kind},
+        )
+        assert resp.status_code == 422, kind
 
 
 # --------------------------------------------------------------------------- #
@@ -675,14 +651,14 @@ async def test_opening_a_debate_attaches_the_whole_roster(
 
     rows = await debate_service.list_participants(session, run_id=run_id)
     assert {r.debate_role for r in rows} == {"proposer", "reviewer", "referee"}
-    assert all(r.policy_digest for r in rows)
+    assert all(r.identity.endswith(str(run_id)[:8]) for r in rows)
 
 
 @pytest.mark.anyio
 async def test_opening_a_debate_is_503_when_the_forum_is_off(
     app_client, session, alice, monkeypatch
 ):
-    """A deployment without h5i should say so, not fail deep in a subprocess."""
+    """A deployment with the forum off should say so, not fail deep in git."""
     monkeypatch.setattr(settings, "forum", ForumSettings(enabled=False))
     project = await _project(session, alice)
 
@@ -753,8 +729,8 @@ async def test_continue_is_refused_on_a_closed_thread(
     forum_config, app_client, session, alice
 ):
     """
-    h5i moves a closed thread to the attic and it accepts no posts. Continuing
-    would attach a roster that could not speak, then fail a round in.
+    A closed thread accepts no posts. Continuing would start a roster that
+    could not speak, then fail a round in.
     """
     project = await _project(session, alice)
     run, _, _ = await _run(session, alice, project)
@@ -778,8 +754,8 @@ async def test_a_human_post_records_the_account_that_wrote_it(
     forum_config, app_client, session, alice
 ):
     """
-    h5i has nowhere to put a name: every operator's post is stamped
-    `sender="human"`, which is why a peer's post is byte-identical to ours. But
+    The forum has nowhere to put a name: every operator's post says
+    `sender="human"`, which is why a peer's post looks just like ours. But
     the request that made *this* post was authenticated, so who wrote it is
     knowledge here even though the forum cannot carry it.
     """
@@ -825,65 +801,21 @@ async def test_a_peer_post_is_never_given_an_author(
 ):
     """
     The distinction the whole feature rests on. A peer's post arrives as
-    `sender="human"` exactly like ours, and there is nothing in it we know. The
-    most an enrollment can say is which *machine* it came from — so the post row
-    stays anonymous and the mapping is offered separately.
+    `sender="human"` exactly like ours, and there is nothing in it we know, so
+    the post row stays anonymous.
     """
     project = await _project(session, alice)
     run, client, _ = await _run(session, alice, project)
-    # Posted straight to the forum, bypassing the authenticated endpoint: this is
-    # what someone else's host looks like from here.
-    await client.post_as_human(run.thread_id, "the fit is not a measurement")
+    # Arrived over the remote: this is what someone else's install looks like.
+    client.peer_post(
+        run.thread_id, "the fit is not a measurement", identity="human", role="human"
+    )
 
     body = (await app_client.get(f"/projects/{project.name}/debates/{run.id}")).json()
 
     posted = next((p for p in body["posts"] if "not a measurement" in p["body"]), None)
     assert posted is not None, "the peer's post never reached the projection"
     assert posted["authored_by"] is None
-
-
-@pytest.mark.anyio
-async def test_enrolled_origins_are_offered_for_naming_a_machine(
-    forum_config, app_client, session, alice
-):
-    """
-    What an enrollment can honestly say, and where it is put.
-
-    It binds a machine to a forge account, so it is returned as a map from origin
-    rather than stamped onto posts — a field called `author` on a post would
-    invite reading "jqyin wrote this" out of a record that only supports "this
-    came from a machine jqyin enrolled".
-    """
-    project = await _project(session, alice)
-    # The fake keeps its state in the forum root, which is this project's own.
-    (forum_root(project.id) / ".fake-forum.json").write_text(
-        json.dumps(
-            {
-                "threads": {},
-                "boxes": {},
-                "participants": {},
-                "views": {},
-                "seq": 0,
-                "enrollments": [
-                    {
-                        "principal": "github.com/user/19734876",
-                        "display_name": "jqyin",
-                        "origin": "host-504de42f20b4dd28",
-                    }
-                ],
-            }
-        )
-    )
-    run, _, _ = await _run(session, alice, project)
-
-    body = (await app_client.get(f"/projects/{project.name}/debates/{run.id}")).json()
-
-    assert body["enrolled_origins"] == {
-        "host-504de42f20b4dd28": {
-            "principal": "github.com/user/19734876",
-            "name": "jqyin",
-        }
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -900,7 +832,8 @@ async def test_forum_status_reports_a_local_only_forum(
     assert resp.status_code == 200
     body = resp.json()
     assert body["enabled"] and not body["shared"]
-    assert body["votes_counting"], "origin counts every machine's vote"
+    assert body["git_ok"] and body["git_reason"] is None
+    assert body["unpublished"] == 0
 
 
 @pytest.mark.anyio
@@ -920,9 +853,9 @@ async def test_forum_status_says_this_project_has_no_lab(
         "enabled": False,
         "shared": False,
         "remote": None,
-        "vote_policy": None,
-        "enrolled": 0,
-        "votes_counting": True,
+        "git_ok": True,
+        "git_reason": None,
+        "unpublished": 0,
     }
 
 
@@ -953,8 +886,8 @@ async def test_forum_status_does_not_call_a_forum_shared_on_the_project_alone(
     """
     A URL saved on the project is an intention, not a fact. The forum can still
     be publishing only to its local bare repo — reporting `shared: true` there
-    tells the operator outsiders can reach something they cannot. h5i's own
-    answer is the one that counts.
+    tells the operator outsiders can reach something they cannot. The
+    repository's own remote is the one that counts.
     """
     project = await _project(session, alice)
     # Created without `ensure_forum`, so the remote was never applied.
@@ -981,17 +914,120 @@ async def test_forum_status_survives_an_unreadable_forum(
     forum_config, app_client, session, alice, monkeypatch
 ):
     """An endpoint whose job is reporting bad states must not fail on one."""
-    from vista_backend.config import settings
-
     project = await _project(session, alice)
-    monkeypatch.setattr(
-        settings,
-        "forum",
-        settings.forum.model_copy(update={"binary": "/nonexistent/h5i"}),
-    )
+
+    async def unreadable(self):
+        raise RuntimeError("the repository is gone")
+
+    monkeypatch.setattr(forum_config_client(), "remote", unreadable)
     resp = await app_client.get(f"/projects/{project.name}/forum/status")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
+
+
+def forum_config_client():
+    from harness.fake_forum import FakeForumClient
+
+    return FakeForumClient
+
+
+@pytest.mark.anyio
+async def test_forum_status_names_a_missing_git(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """The lab is off without git, and the page is told why in words."""
+    from vista_backend.agents.forum import project_forum
+    from vista_backend.api import debate as debate_api
+
+    missing = GitCheck(ok=False, reason="Git is not installed.")
+    monkeypatch.setattr(project_forum, "git_status", lambda: missing)
+    monkeypatch.setattr(debate_api, "git_status", lambda: missing)
+    project = await _project(session, alice)
+
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+    assert body["enabled"] is False
+    assert body["git_ok"] is False
+    assert body["git_reason"] == "Git is not installed."
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates", json={"topic": "t"}
+    )
+    assert resp.status_code == 503
+    assert "Git is not installed." in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_forum_status_counts_posts_waiting_to_publish(
+    forum_config, app_client, session, alice
+):
+    project = await _project(session, alice)
+    run, client, participant = await _run(session, alice, project)
+    client.go_offline()
+    await client.post_as(participant, run.thread_id, "written offline", kind="FINDING")
+
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+    assert body["unpublished"] == 2, "the framing post and the finding"
+
+
+# --------------------------------------------------------------------------- #
+# A thread that is no longer on the forum
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_deleted_thread_shows_its_stored_posts_and_says_so(
+    forum_config, app_client, session, alice
+):
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    run_id, thread_id, project_name = run.id, run.thread_id, project.name
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+    client.delete_thread(thread_id)
+
+    body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
+    assert body["run"]["thread_missing"] is True
+    assert [p["kind"] for p in body["posts"]] == ["TASK"], "the stored copy is shown"
+
+    post = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/posts", json={"body": "hello?"}
+    )
+    assert post.status_code == 409
+    cont = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue", json={"rounds": 1}
+    )
+    assert cont.status_code == 409
+    close = await app_client.post(f"/projects/{project_name}/debates/{run_id}/close")
+    assert close.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_a_debate_from_the_h5i_era_behaves_as_a_missing_thread(
+    forum_config, app_client, session, alice
+):
+    project = await _project(session, alice)
+    run = await debate_service.create_debate(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        topic="an old one",
+        thread_id="7f3a9c",  # an h5i id: not a thread this forum can name
+        rounds=2,
+    )
+    await debate_service.set_status(session, run_id=run.id, status="converged")
+    run_id, project_name = run.id, project.name
+    await session.commit()
+
+    resp = await app_client.get(f"/projects/{project_name}/debates/{run_id}")
+    assert resp.status_code == 200
+    assert resp.json()["run"]["thread_missing"] is True
+    post = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/posts", json={"body": "hi"}
+    )
+    assert post.status_code == 409
 
 
 # --------------------------------------------------------------------------- #

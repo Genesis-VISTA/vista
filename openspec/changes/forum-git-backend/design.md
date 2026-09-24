@@ -278,6 +278,12 @@ collides across two installs); the VISTA account (not per-install).
   endpoint and event stream catch it: return the stored posts with `thread_missing: true` on the
   run's public state, stop polling, and refuse post/continue with 409. The UI
   shows "This thread is no longer on the forum." h5i-era runs take this path.
+  Implemented as a nullable `DebateRunBase.thread_missing` column, set once
+  (an arguing run also becomes `failed`); refresh never reads that thread
+  again. Close also answers 409.
+- **Human posts to a closed thread** are refused (409) like any other post:
+  readers ignore everything after the first CLOSED, so a post there would be
+  written and never shown. (h5i let the operator annotate a closed thread.)
 - **DB columns:** remove `box_slug`, `box_id`, `policy_digest` from
   `DebateParticipantBase` and `box_id`, `policy_digest` from `DebatePostBase`;
   add `DebatePostBase.published: bool | None` (from the outbox, for the UI) and
@@ -293,7 +299,10 @@ collides across two installs); the VISTA account (not per-install).
 `Participant` shrinks to `identity`, `role` (proposer/reviewer/referee/human).
 `create_participant` / `remove_participant` go away; `DebateOrchestrator.start`
 writes three `debate_participant` rows with identities
-`vista-<role>-<run-id[:8]>`. `resume`/continue reuse the active rows; the
+`vista-<role>-<run-id[:8]>` (`debate.identity_for`), and `forum_role` equals
+the debate role. The `active` column stays for older rows and is always true
+for new ones; `reap_after_collection` and `deactivate_participant` are gone.
+`simulation.participant_from_identity` recovers the role from the identity. `resume`/continue reuse the active rows; the
 stint suffix logic (`debate.py:236–243`), `_retire`'s forum revoke, and
 §13.4/13.6/13.7's multi-stint bookkeeping are deleted. The campaign step spec
 keeps `commissioned_by` (the identity) and `thread_id`/`reply_to`, and drops
@@ -386,8 +395,11 @@ helpers and ssh-agent still work, prompts never hang the backend),
   and two client instances with separate `data/forum-git` roots and host ids
   ("host A", "host B"). Default PR markers (not `live`). Covers each scenario
   in specs/agent-forum/spec.md that belongs to the client.
-- A `FakeForumClient` (in-memory, same interface) replaces the fake h5i shim
-  for `test_debate_*.py`, `test_project_forum.py` and API tests.
+- A `FakeForumClient` (`tests/harness/fake_forum.py`, in-memory, same
+  interface, reusing the real `Thread`/`Post` models) replaces the fake h5i
+  shim for `test_debate_*.py` and API tests; `project_forum.client_factory` is
+  the seam. `test_project_forum.py` uses real git against a local bare remote,
+  since it tests the setup path.
 - `test_git_check.py` for D9 with `PATH` manipulation and a stub
   `xcode-select`.
 

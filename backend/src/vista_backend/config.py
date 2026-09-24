@@ -43,12 +43,12 @@ class CampaignSettings(BaseModel):
 
 class ForumSettings(BaseModel):
     """
-    Agent-forum settings — the h5i-backed debate forum (see
-    `docs/h5i-forum-contract.md` and `openspec/changes/agent-forum/`).
+    Agent-forum settings — the git-backed debate forum (see
+    `docs/forum-git-format.md` and `openspec/changes/forum-git-backend/`).
 
     Off by default: with `enabled=False` the service raises a clear error rather
-    than shelling out, so a deployment without the h5i binary behaves predictably
-    instead of failing deep in a subprocess. Override via
+    than running git, and a project's lab is off. With it on, the lab also needs
+    a usable system git (`services/git_check.py`). Override via
     `VISTA_BACKEND_FORUM__ENABLED=true` etc.
     """
 
@@ -78,9 +78,6 @@ class ForumSettings(BaseModel):
     Every peer downloads every attachment, so this is what bounds the repository.
     """
 
-    binary: str = "h5i"
-    """ h5i executable; resolved on PATH unless an absolute path is given. Removed with h5i. """
-
     repo_root: Path | None = None
     """
     The one repository a `ForumClient` instance works in. Not configuration.
@@ -92,26 +89,11 @@ class ForumSettings(BaseModel):
     at boot rather than letting a stale line look like it still works.
     """
 
-    box_profile: str = "default"
-    """ Policy profile for role boxes. Built-ins need no `env.toml`. """
-
-    box_isolation: str = "process"
-    """
-    Isolation tier for role boxes. `process` is the strongest tier available on a
-    macOS dev host; deployments with rootless Podman should use `container`.
-    h5i fails closed rather than downgrading, so an unsatisfiable tier errors.
-    """
-
-    egress: list[str] = Field(default_factory=list)
-    """
-    Hosts a debate's browser sessions may reach. Empty means no web grounding:
-    everything else is refused, and the refusal stays in the session record.
-    """
-
     timeout: float = 60.0
     """
-    Per-command timeout in seconds. Box-side verbs measured at ~30ms and setup at
-    ~0.5s, so this only bounds a hang.
+    Per-command timeout in seconds for each git call. Local plumbing takes
+    milliseconds; this bounds a fetch or push to a remote that has stopped
+    answering.
     """
 
     max_job_wait_seconds: float = 1800.0
@@ -150,20 +132,10 @@ class ForumSettings(BaseModel):
 
     Filled in per project from `Project.forum_repo_url`. Push access to that
     repository is the whole authorization model: anyone who can push can post
-    under any identity they like. h5i's honesty is in labelling those posts
-    `peer-claimed`, not in preventing them — so the repository's collaborator
+    under any identity they like. The forum's honesty is in labelling those
+    posts `peer-claimed`, not in preventing them — so the repository's collaborator
     list is the security boundary, and it is the project's owners who should be
     choosing it, not whoever can edit a `.env`.
-    """
-
-    vote_policy: str | None = None
-    """
-    `origin` (per machine) or `principal` (per enrolled forge account).
-
-    `None` leaves whatever the forum already has. Setting `principal` before
-    participants run `h5i forum enroll` makes every vote count for nothing,
-    including our own agents' — so it is applied only alongside a check that
-    somebody is enrolled.
     """
 
     max_simulations: int = 2
@@ -316,25 +288,14 @@ class Settings(BaseSettings):
         return self.data_dir / "storage"
 
     @property
-    def forums_dir(self) -> Path:
-        """
-        Root for each project's forum working repository, one directory per project.
-
-        A forum is a room, and who may post to it is who has push access to its
-        repository — a different set of people for every line of work. So the
-        repository is chosen per project (`Project.forum_repo_url`) and the
-        working copy for it lands here, under that project's id.
-        """
-        return self.data_dir / "forums"
-
-    @property
     def forum_git_dir(self) -> Path:
         """
         Root of the git-backed forum: this install's `host_id`, and per project
         (by id) a bare `repo.git` plus full copies of truncated attachments.
 
-        Replaces `forums_dir`, which held h5i working repos. Nothing here reads
-        that directory; it can be deleted once h5i is gone.
+        Keyed by project id, not name, so renaming a project keeps its forum.
+        The older `data/forums/` (h5i working repos) is not read by anything
+        and can be deleted.
         """
         return self.data_dir / "forum-git"
 
@@ -451,8 +412,8 @@ class Settings(BaseSettings):
 
     forum: ForumSettings = Field(default_factory=ForumSettings)
     """
-    Agent-forum (h5i debate) settings; see `ForumSettings`. Disabled by default,
-    so the backend runs unchanged without the h5i binary installed.
+    Agent-forum (debate) settings; see `ForumSettings`. Disabled by default,
+    so the backend runs unchanged without git installed.
     """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)

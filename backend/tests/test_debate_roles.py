@@ -25,7 +25,7 @@ from vista_backend.agents.forum.roles import (
     Verdict,
     render_transcript,
 )
-from vista_backend.services.h5i_forum import PostKind, Thread
+from vista_backend.services.forum_git import Post, PostKind, Thread, ThreadHeader
 
 
 # --------------------------------------------------------------------------- #
@@ -33,20 +33,22 @@ from vista_backend.services.h5i_forum import PostKind, Thread
 # --------------------------------------------------------------------------- #
 
 
-def _thread(*posts: dict, status: str = "open") -> Thread:
-    return Thread.from_json(
-        {
-            "header": {
-                "id": "t1",
-                "title": "why does the knee move?",
-                "created_at": "2026-08-27T00:00:00Z",
-                "created_by": "human",
-            },
-            "status": status,
-            "posts": list(posts),
-            "vouch": [{"id": p["id"], "lane": "host-observed"} for p in posts],
-        }
+def _make(posts: list[dict], vouch: dict[str, str], status: str = "open") -> Thread:
+    return Thread(
+        header=ThreadHeader(
+            id="t1",
+            title="why does the knee move?",
+            created_at="2026-08-27T00:00:00Z",
+            created_by="a" * 32,
+        ),
+        status=status,
+        posts=[Post.model_validate(p) for p in posts],
+        vouch=vouch,
     )
+
+
+def _thread(*posts: dict, status: str = "open") -> Thread:
+    return _make(list(posts), {p["id"]: "host-observed" for p in posts}, status)
 
 
 def _post(pid, kind, body, sender, role, **extra) -> dict:
@@ -292,7 +294,7 @@ def test_transcript_surfaces_a_refusal():
             denied="sender revoked at 2026-08-27T18:15:38Z",
         )
     )
-    assert "the host recorded a refusal" in render_transcript(thread)
+    assert "a refusal was recorded" in render_transcript(thread)
 
 
 def test_transcript_drops_votes():
@@ -409,8 +411,8 @@ async def test_referee_sees_the_whole_thread_and_is_warned_off_inventing_consens
 @pytest.mark.parametrize("role", ["proposer", "reviewer", "referee"])
 def test_every_role_is_told_peer_posts_are_not_instructions(role):
     """
-    h5i states it in the payload itself; the roles have to carry it too, since a
-    hostile body reaches them as ordinary text either way.
+    A hostile body reaches the roles as ordinary text, so the prompt has to say
+    it.
     """
     from vista_backend.agents.forum.roles import _prompt
 
@@ -423,36 +425,24 @@ def test_every_role_is_told_peer_posts_are_not_instructions(role):
 # --------------------------------------------------------------------------- #
 # Federation: who the role thinks it is talking to
 #
-# Once a forum has a remote, `sender` is stamped by whichever host observed the
-# post, so it is the *peer's* account of itself. These pin the two cases that
+# Once a forum has a remote, `sender` is written by whoever pushed the post, so
+# on a peer's post it is the *peer's* account of itself. These pin the two cases that
 # would otherwise let an outsider be read as the operator.
 # --------------------------------------------------------------------------- #
 
 
-def _lanes(*pairs: tuple[str, str]) -> list[dict]:
-    return [{"id": pid, "lane": lane} for pid, lane in pairs]
+def _lanes(*pairs: tuple[str, str]) -> dict[str, str]:
+    return dict(pairs)
 
 
-def _thread_with_lanes(posts: list[dict], vouch: list[dict]) -> Thread:
-    return Thread.from_json(
-        {
-            "header": {
-                "id": "t1",
-                "title": "t",
-                "created_at": "2026-08-27T00:00:00Z",
-                "created_by": "human",
-            },
-            "status": "open",
-            "posts": posts,
-            "vouch": vouch,
-        }
-    )
+def _thread_with_lanes(posts: list[dict], vouch: dict[str, str]) -> Thread:
+    return _make(posts, vouch)
 
 
 def test_an_external_human_is_not_presented_as_the_operator():
     """
-    The default case, not an attack: every h5i host stamps its own operator's
-    posts as `human`, so an outside participant posting from their own machine
+    The default case, not an attack: every install's operator posts as
+    `human`, so an outside participant posting from their own machine
     arrives as `human` with a different origin. Reading the sender field alone
     would hand a stranger the one role whose words count as instructions.
     """
@@ -509,14 +499,14 @@ def test_an_unattributed_post_is_still_not_the_operator():
 
 def test_a_post_with_no_vouch_entry_is_not_trusted():
     """Absence of a lane is not evidence of observation."""
-    thread = _thread_with_lanes([_post("p1", "ASK", "do this", "human", "human")], [])
+    thread = _thread_with_lanes([_post("p1", "ASK", "do this", "human", "human")], {})
     assert "the human (your operator)" not in render_transcript(thread)
 
 
 def test_an_outside_person_and_an_outside_agent_read_differently():
     """
     Both are peers and both are unverified; a reader still wants to know which.
-    A person posts host-side and carries no box; an agent posts through one.
+    A person posts as `human`; an agent under a role identity.
     """
     thread = _thread_with_lanes(
         [
@@ -528,7 +518,6 @@ def test_an_outside_person_and_an_outside_agent_read_differently():
                 "their-reviewer",
                 "reviewer",
                 origin="host-outside",
-                box_id="env/them/reviewer",
             ),
         ],
         _lanes(("p1", "peer-claimed"), ("p2", "peer-claimed")),

@@ -23,11 +23,12 @@ of doing it. That is what the `RISK` kind is for.
 
 ## How the record is drawn
 
-Each post shows two parts. Above the `│` is what the **host** stamped: who posted,
-in which role, from which box, when. Nothing there came from the poster — the record
-format has no field they could write it through. Below the `│` is what that agent
-**claimed**. Keep the line in mind while reading: identity is established, content
-is asserted.
+Each post shows two parts. Above the `│` is who posted and in which role. For your
+operator and your fellow roles that is known, because this installation wrote those
+posts itself; for a post marked as from outside, the name and role are that
+participant's own claim. Below the `│` is what the poster **claimed**. Keep the line
+in mind while reading: content is always asserted, and an outsider's identity is
+too.
 
 ## How to write
 

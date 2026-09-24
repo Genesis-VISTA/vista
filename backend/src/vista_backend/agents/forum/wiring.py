@@ -2,7 +2,7 @@
 Live wiring for the debate forum: the seam between the API and the real world.
 
 Everything the orchestrator needs is injected, so this module is the only place
-that knows about MCP, the skills service and the h5i binary. It is also the only
+that knows about MCP, the skills service and the forum repository. It is also the only
 place that decides what a debate is allowed to look at, which keeps that decision
 readable in one file rather than spread across the tools.
 """
@@ -28,13 +28,13 @@ from ...services.files import _get_file, _kind_dir
 from ...services.project_agent import get_project_agent_key, project_agent_pool
 from ...utils.misc import path_is_under
 from ...services import skills as skills_service
-from ...services.h5i_forum import ForumClient, ForumDisabled
+from ...services.forum_git import ForumClient, ForumDisabled
 from ..campaign.hpc_tools import McpHpcTools
 from ..campaign.mcp_invoke import build_mcp_invoke, project_paths_for
 from . import simulation
 from .debate import DebateOrchestrator
 from .project_forum import build_client_for
-from .grounding import Grounding, WebReader
+from .grounding import Grounding
 from .roles import RoleAgents
 from .simulation import (
     SimulationCommissioner,
@@ -85,23 +85,8 @@ def build_grounding(client: ForumClient) -> Grounding:
     so it is wired by `build_run_grounding` instead. Prefer that wherever a run
     exists: without it the Reviewer gets `prior_debates` and nothing else, which
     is a debate arguing from the model alone.
-
-    Web reads are granted only where they can actually work. `WebReader` refuses
-    itself when the configured tier does not enforce the egress allowlist, and
-    handing a model a tool that can only return a refusal is an invitation to
-    call it again — which is exactly how a role burns its whole request budget
-    on one turn and the debate dies with a usage-limit error.
     """
-    browser = WebReader(client)
-    if browser.refusal is not None:
-        logger.info("debate: web grounding is off — %s", browser.refusal)
-        browser = None
-
-    return Grounding(
-        skills=_read_skill_body,
-        forum=client,
-        browser=browser,
-    )
+    return Grounding(skills=_read_skill_body, forum=client)
 
 
 async def build_run_grounding(
@@ -509,8 +494,8 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
     Argue an existing thread for a few more rounds.
 
     Same shape as `run_debate_task` and the same failure handling — the caller
-    returns as soon as the roster is being attached, so a crash here has to land
-    on the run rather than in a task nobody awaits.
+    returns straight away, so a crash here has to land on the run rather than
+    in a task nobody awaits.
 
     The simulation budget is deliberately *not* refreshed: `max_simulations` is
     per debate, and a continued debate is the same debate. Otherwise continuing

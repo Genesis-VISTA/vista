@@ -341,6 +341,8 @@ class Thread(BaseModel):
     status: str
     posts: list[Post] = Field(default_factory=list)
     vouch: dict[str, str] = Field(default_factory=dict)
+    published: dict[str, bool] = Field(default_factory=dict)
+    """ For posts this install wrote: whether the remote has them yet. """
 
     @property
     def id(self) -> str:
@@ -390,6 +392,24 @@ class Thread(BaseModel):
     def tally(self, post_id: str) -> int:
         """Net votes on a post, both lanes together."""
         return sum(self.tally_split(post_id))
+
+
+def thread_status(posts: Sequence[Post]) -> str:
+    """
+    `closed` once a CLOSED post exists; otherwise `done` or `blocked` when the
+    last thing said was a verdict or a role giving up; otherwise `open`.
+
+    A concluded debate posts its verdict and stays open, so `done` is what marks
+    it finished for precedent searches — `closed` only means someone ended it.
+    """
+    if any(p.kind == PostKind.CLOSED for p in posts):
+        return "closed"
+    said = [p for p in posts if not p.is_vote]
+    if said and said[-1].kind == PostKind.DONE:
+        return "done"
+    if said and said[-1].kind == PostKind.BLOCKED:
+        return "blocked"
+    return "open"
 
 
 class ThreadSummary(BaseModel):
@@ -1288,7 +1308,7 @@ class ForumClient:
             if history.header is None:
                 continue
             visible = history.visible()
-            status = "closed" if history.closed else "open"
+            status = thread_status(visible)
             if status == "closed" and not include_closed:
                 continue
             rows.append(
@@ -1328,11 +1348,13 @@ class ForumClient:
                 vouch[post.id] = VouchLane.PEER_CLAIMED.value
             else:
                 vouch[post.id] = VouchLane.UNATTRIBUTED.value
+        published = await self.outbox.published(ours)
         return Thread(
             header=history.header,
-            status="closed" if history.closed else "open",
+            status=thread_status(visible),
             posts=visible,
             vouch=vouch,
+            published={post_id: post_id in published for post_id in ours},
         )
 
     async def close_thread(self, thread: str) -> None:

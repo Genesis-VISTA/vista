@@ -217,7 +217,6 @@ def build_debate_aware_collector(
                 ok=ok,
                 outputs=raw_status,
             )
-            await simulation.reap_after_collection(session, client, job)
             return
         await campaign_collect(session, job, raw_status, ok)
 

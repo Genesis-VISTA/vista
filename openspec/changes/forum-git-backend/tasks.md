@@ -26,19 +26,25 @@ with `uv run --extra dev pytest …`; lint with `./scripts/ci-local.sh backend l
 
 ## 3. Wire it in and remove h5i
 
-- [ ] 3.1 Point `agents/forum/project_forum.py` at the new client: `forum_config_for` also requires the git check, `ensure_forum` creates the bare repo, sets the remote and syncs; verify `test_project_forum.py` (moved to a fake or real-git client) passes, including a bad URL failing the save with git's error
-- [ ] 3.2 Replace imports of `services/h5i_forum` across `agents/forum/*`, `agents/campaign/wiring.py`, `services/debate.py`, `api/{debate,projects,api}.py`; verify `grep -rn h5i_forum backend/src` returns nothing
-- [ ] 3.3 Handle `ThreadMissing` in `services/debate.refresh_from_forum`, the detail endpoint and the event stream: stored posts, `thread_missing: true`, no retry loop, 409 on post/continue; verify with API tests for a deleted thread and for a run whose `thread_id` is an h5i-style id
-- [ ] 3.4 Project `published` / `on_remote` into `DebatePostTable` during refresh; verify an offline post projects as unpublished and flips after a sync
-- [ ] 3.5 Remove `WebReader`, `ENFORCING_TIERS`, `read_web_page` and `Grounding.browser` from `agents/forum/grounding.py` and `wiring.py`; verify `test_debate_grounding.py` passes with those cases deleted
-- [ ] 3.6 Delete `services/h5i_forum.py`, `tests/test_h5i_forum.py`, `tests/test_h5i_forum_live.py` and the fake h5i shim/fixtures; remove `ForumSettings.binary`, `box_profile`, `box_isolation`, `egress`, `vote_policy` and `settings.forums_dir` (deferred from 1.2); add `FakeForumClient` for orchestrator/API tests; verify `uv run --extra dev pytest -m "not live and not hpc and not sandbox"` is green and `grep -rni h5i backend/src` finds only intentional mentions (none expected)
+Done together with section 4: deleting h5i (3.6) removes the box and
+vote-policy calls the roster and forum status depend on, so neither
+section is green without the other. `test_project_forum.py` runs real git
+against a local bare remote; the orchestrator, API, simulation and
+grounding tests use `tests/harness/fake_forum.py`.
+
+- [x] 3.1 Point `agents/forum/project_forum.py` at the new client: `forum_config_for` also requires the git check, `ensure_forum` creates the bare repo, sets the remote and syncs; verify `test_project_forum.py` (moved to a fake or real-git client) passes, including a bad URL failing the save with git's error
+- [x] 3.2 Replace imports of `services/h5i_forum` across `agents/forum/*`, `agents/campaign/wiring.py`, `services/debate.py`, `api/{debate,projects,api}.py`; verify `grep -rn h5i_forum backend/src` returns nothing
+- [x] 3.3 Handle `ThreadMissing` in `services/debate.refresh_from_forum`, the detail endpoint and the event stream: stored posts, `thread_missing: true`, no retry loop, 409 on post/continue; verify with API tests for a deleted thread and for a run whose `thread_id` is an h5i-style id
+- [x] 3.4 Project `published` / `on_remote` into `DebatePostTable` during refresh; verify an offline post projects as unpublished and flips after a sync
+- [x] 3.5 Remove `WebReader`, `ENFORCING_TIERS`, `read_web_page` and `Grounding.browser` from `agents/forum/grounding.py` and `wiring.py`; verify `test_debate_grounding.py` passes with those cases deleted
+- [x] 3.6 Delete `services/h5i_forum.py`, `tests/test_h5i_forum.py`, `tests/test_h5i_forum_live.py` and the fake h5i shim/fixtures; remove `ForumSettings.binary`, `box_profile`, `box_isolation`, `egress`, `vote_policy` and `settings.forums_dir` (deferred from 1.2); add `FakeForumClient` for orchestrator/API tests; verify `uv run --extra dev pytest -m "not live and not hpc and not sandbox"` is green and `grep -rni h5i backend/src` finds only intentional mentions (none expected)
 
 ## 4. Roster without boxes or stints (D6)
 
-- [ ] 4.1 Remove `box_slug`, `box_id`, `policy_digest` from `DebateParticipantBase` and `box_id`, `policy_digest` from `DebatePostBase`; add a drop step for them to `scripts/migrate_columns.py` (idempotent, `--dry-run`); verify on a copy of a branch-era DB that inserts work after the script and a second run is a no-op
-- [ ] 4.2 Simplify `DebateOrchestrator.start`/`resume`/continue to one roster (`vista-<role>-<run-id[:8]>`), deleting stint suffixes, forum revoke in `_retire`, and multi-stint filtering; verify `test_debate_driver.py` shows a continued debate reusing its identities
-- [ ] 4.3 Drop `box_slug`/`box_id` from the campaign step spec and rebuild the late-result `Participant` from `commissioned_by`; verify `test_debate_simulation.py`'s post-back test posts under the commissioning identity
-- [ ] 4.4 Remove `vote_policy`/`set_vote_policy`/`enrollments` callers, `_apply_vote_policy`, `_enrolled_origins`, `DebateStatePublic.enrolled_origins`, and reshape `ForumStatus` to `{enabled, shared, remote, git_ok, git_reason, unpublished}`; verify the forum status API test covers git absent and unpublished counts
+- [x] 4.1 Remove `box_slug`, `box_id`, `policy_digest` from `DebateParticipantBase` and `box_id`, `policy_digest` from `DebatePostBase`; add a drop step for them to `scripts/migrate_columns.py` (idempotent, `--dry-run`); verify on a copy of a branch-era DB that inserts work after the script and a second run is a no-op
+- [x] 4.2 Simplify `DebateOrchestrator.start`/`resume`/continue to one roster (`vista-<role>-<run-id[:8]>`), deleting stint suffixes, forum revoke in `_retire`, and multi-stint filtering; verify `test_debate_driver.py` shows a continued debate reusing its identities
+- [x] 4.3 Drop `box_slug`/`box_id` from the campaign step spec and rebuild the late-result `Participant` from `commissioned_by`; verify `test_debate_simulation.py`'s post-back test posts under the commissioning identity
+- [x] 4.4 Remove `vote_policy`/`set_vote_policy`/`enrollments` callers, `_apply_vote_policy`, `_enrolled_origins`, `DebateStatePublic.enrolled_origins`, and reshape `ForumStatus` to `{enabled, shared, remote, git_ok, git_reason, unpublished}`; verify the forum status API test covers git absent and unpublished counts
 
 ## 5. UI
 
