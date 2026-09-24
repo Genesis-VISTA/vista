@@ -28,10 +28,17 @@ Current state and constraints that shape the approach:
 - **Spike findings (2026-09-22, session `e4e8ae5d`).** Electron 44 works. Rebranding
   (name, bundle ID) invalidates Electron's ad-hoc signature, and `codesign --force --deep
   --sign -` on *that bundle only* restores it, surviving tar, download and unpack. A
-  bundle staged as a folder without the `.app` suffix keeps a valid signature and runs. Finder
-  treats it as a plain folder, so nothing in the package looks double-clickable except
-  `vista`. A double-clicked quarantined `vista` is blocked by Gatekeeper. That is
-  pre-existing, documented, and out of scope. The spike's code was not kept.
+  double-clicked quarantined `vista` is blocked by Gatekeeper. That is pre-existing,
+  documented, and out of scope. The spike's code was not kept.
+- **Re-spike (2026-09-24, task 1.1), with Electron 44.4.5 and @electron/packager 20.3.0.**
+  A bundle staged as a plain folder `window/` (no `.app`) runs and keeps its signature.
+  macOS then shows a Finder folder icon in the Dock, and "window" in the hover label and
+  in Cmd-Tab, because it takes the name from the folder. The menu bar still said VISTA.
+  Staged as `window/VISTA.app`, the Dock shows the app's icon and the hover label and
+  Cmd-Tab say VISTA. **The layout is therefore `app/window/VISTA.app`.** Separately, the
+  About and Quit items used the `package.json` `name` ("vista-window-spike"), so the
+  shell's `package.json` needs `"productName": "VISTA"`. Paste and Cmd-Q worked in both
+  layouts.
 - **`MSB_HOME` ≤ 60 chars** rules out Electron's usual `~/Library/Application Support`
   state location. The shell holds no VISTA state anyway. See W6.
 
@@ -185,17 +192,18 @@ unchanged, since `next dev`'s HMR WebSocket is same-origin.
   <target>" and returns. The shared part is `npm ci` in `electron/` and
   `@electron/packager` (name `VISTA`, `asar: true`). The macOS branch adds bundle ID
   `gov.ornl.vista`, `electron/assets/icon.icns` if present (otherwise Electron's
-  default), and `osxSign: false`. It moves `VISTA.app` to `$STAGING/app/window` and
-  signs it (B2). Signing lives only inside the macOS branch.
-- **B2** (inside `stage_window_macos`) `codesign --force --deep --sign - "$STAGING/app/window"`, then
+  default), and `osxSign: false`. It moves the bundle to `$STAGING/app/window/VISTA.app`,
+  keeping the `.app` suffix (see the task 1.1 re-spike in Context), and signs it (B2).
+  Signing lives only inside the macOS branch.
+- **B2** (inside `stage_window_macos`) `codesign --force --deep --sign - "$STAGING/app/window/VISTA.app"`, then
   `codesign --verify --deep --strict`. This is scoped to that path. The build greps its own
   source to confirm no other `codesign` call exists, so R2 ("do not re-sign `msb`") can't
   regress. The manifest gains a top-level `window` object: `exe`, the executable
-  relative to the package root (`app/window/Contents/MacOS/VISTA` on macOS), and
+  relative to the package root (`app/window/VISTA.app/Contents/MacOS/VISTA` on macOS), and
   `electron`, the version. `components` also gains `window` (size). The validator
   requires `window` on macOS and checks that `window.exe` exists and is executable.
 - **B3** `smoke_test_package.sh` runs `vista --browser` (`:103`). Once the UI is healthy,
-  on macOS it also runs `app/window/.../VISTA --smoke-test --url=…`. That proves the
+  on macOS it also runs `window.exe --smoke-test --url=…`. That proves the
   unpacked, relocated, re-signed shell loads the real UI. The check is skipped with a
   warning, not failed, when the build host has no GUI session. The Linux
   cross-build container never runs it.
@@ -251,14 +259,14 @@ display check per OS, and why B1 dispatches per target with signing confined to 
 
 ## Risks / Trade-offs
 
-- **Dock/menu-bar name and icon when run from a non-`.app` folder are unverified.**
-  The spike ran hidden. → Task 1 checks this first. If macOS shows a generic
-  name or icon, the fallback is staging `app/window/VISTA.app`. That is one level deeper,
-  still not at the package root, and it shows a double-clickable icon only to someone who
-  browses into `app/`.
+- **A `.app` inside `app/window/` is double-clickable for someone who browses there.**
+  The plain-folder layout that would have avoided this showed the wrong Dock identity
+  (task 1.1). → It is two levels below the package root. In a quarantined unpack,
+  double-clicking it gets a Gatekeeper block, which is the same accepted outcome as the
+  buried binary below. The README says to start VISTA with `./vista` only.
 - **Terminal may prompt for "App Management"** when `xattr -dr` touches an app bundle on
-  recent macOS. That was untested from Terminal.app in the spike. → Task 1 runs a real
-  Safari download from Terminal.app. If it prompts, the README documents the one-time
+  recent macOS. *Checked in task 1.2 on macOS 26.7 (Chrome download, Terminal.app): no
+  prompt.* → If a later macOS starts prompting, the README documents the one-time
   grant.
 - **The buried binary is still double-clickable.** Doing so inside a quarantined unpack
   gets a Gatekeeper prompt. Only signing prevents that, and it is accepted.

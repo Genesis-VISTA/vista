@@ -26,7 +26,7 @@ terminal launcher stays the entry point.
   holding a port.
 - `./launch.sh --electron` opens the dev server (`next dev`, hot reload) in the same
   shell, so Electron-only behaviour is exercised before it ships.
-- `build_local_package.sh` stages the shell on macOS as a plain folder `app/window/`. It
+- `build_local_package.sh` stages the shell on macOS as `app/window/VISTA.app`. It
   is rebranded and ad-hoc re-signed on its own, and `msb` is left untouched. The shell's
   version and size go into the manifest, and the build smoke-tests that it loads a page.
 
