@@ -9,6 +9,7 @@ import pytest
 from vista_mcp_server.config import settings
 from vista_mcp_server.submit_job_mcp import (
     FRONTIER_JOB_SCRIPT,
+    LUX_JOB_SCRIPT,
     ODO_JOB_SCRIPT,
     PERLMUTTER_JOB_SCRIPT,
     ClusterDefaults,
@@ -17,7 +18,12 @@ from vista_mcp_server.submit_job_mcp import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HPC_JOBS_DIR = REPO_ROOT / "hpc_jobs"
-CLUSTER_SCRIPTS = (ODO_JOB_SCRIPT, PERLMUTTER_JOB_SCRIPT, FRONTIER_JOB_SCRIPT)
+CLUSTER_SCRIPTS = (
+    ODO_JOB_SCRIPT,
+    PERLMUTTER_JOB_SCRIPT,
+    FRONTIER_JOB_SCRIPT,
+    LUX_JOB_SCRIPT,
+)
 
 pytestmark = pytest.mark.unit
 

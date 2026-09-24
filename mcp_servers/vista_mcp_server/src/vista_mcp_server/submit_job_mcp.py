@@ -1001,7 +1001,9 @@ async def _submit_lux_job(
         stderr_path=stderr_template,
         workdir=session_dir,
         body="\n".join(body_lines) + "\n",
-        queue=defaults.iri.queue_name,
+        # queue_name has an IRI-side default ("regular", Perlmutter's QOS); on Lux
+        # only a queue the job's JSON names explicitly is passed to Slurm.
+        queue=defaults.iri.queue_name if "queue_name" in defaults.iri.model_fields_set else None,
         constraint=defaults.iri.constraint,
         exclusive=bool(defaults.resources.exclusive_node_use),
     )

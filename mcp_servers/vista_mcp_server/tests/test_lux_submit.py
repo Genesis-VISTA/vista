@@ -100,6 +100,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
         f"#SBATCH --chdir={session}",
     ]
     assert "#SBATCH --exclusive" in header
+    assert not any(
+        line.startswith("#SBATCH -q") for line in header
+    )  # no IRI default queue
     # The job's own directive comes after commands, so Slurm ignores it.
     assert script.index("#SBATCH -A ignored") > script.index("export RUN_DIR_Lux")
     assert f"export RUN_DIR_Lux={BASE}/lux-demo/src" in script
