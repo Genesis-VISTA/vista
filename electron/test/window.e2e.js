@@ -114,6 +114,20 @@ test('a same-origin target=_blank link opens a child window', async () => {
   expect(app.windows()).toHaveLength(1);
 });
 
+test('a same-origin PDF opens in a child window and is viewed, not downloaded', async () => {
+  const [child] = await Promise.all([app.waitForEvent('window'), page.click('#pdf-blank')]);
+  await child.waitForLoadState('load');
+  expect(child.url()).toBe(`${origin}/paper.pdf`);
+  expect(await child.evaluate(() => document.contentType)).toBe('application/pdf');
+  if (process.env.VISTA_WINDOW_SHOTS) {
+    await child.waitForTimeout(1500);
+    await child.screenshot({ path: path.join(process.env.VISTA_WINDOW_SHOTS, 'pdf-child.png') });
+  }
+  expect(await app.evaluate(() => /** @type {any} */ (globalThis).downloaded)).toEqual([]);
+  await child.close();
+  expect(app.windows()).toHaveLength(1);
+});
+
 test('same-origin navigation stays in the window', async () => {
   await page.click('#same-origin-nav');
   await page.waitForURL(`${origin}/child`);

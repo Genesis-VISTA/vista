@@ -13,7 +13,8 @@ const INDEX = `<!doctype html>
   <h1>fixture</h1>
   <a id="external-blank" href="${EXTERNAL}/doi" target="_blank" rel="noopener noreferrer">DOI</a>
   <a id="external-nav" href="${EXTERNAL}/nav">navigate away</a>
-  <a id="same-origin-blank" href="/child" target="_blank" rel="noopener noreferrer">PDF-like</a>
+  <a id="same-origin-blank" href="/child" target="_blank" rel="noopener noreferrer">child page</a>
+  <a id="pdf-blank" href="/paper.pdf" target="_blank" rel="noreferrer">Open PDF</a>
   <a id="same-origin-nav" href="/child">same-origin page</a>
   <a id="download" href="/file.txt" download>download</a>
   <a id="redirect-out" href="/redirect-out">redirects to another site</a>
@@ -25,6 +26,33 @@ const INDEX = `<!doctype html>
 
 const CHILD = `<!doctype html><html><head><title>VISTA child</title></head><body>child</body></html>`;
 
+// A one-page PDF, served inline the way the knowledge-base publication route
+// serves papers, so the test exercises Electron's built-in viewer.
+const PDF = pdfWithText('fixture paper');
+
+/** @param {string} text */
+function pdfWithText(text) {
+  const stream = `BT /F1 24 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let body = '%PDF-1.4\n';
+  const offsets = objects.map((object, i) => {
+    const offset = body.length;
+    body += `${i + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = body.length;
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body, 'latin1');
+}
+
 /** @returns {http.Server} */
 export function createFixtureServer() {
   return http.createServer((req, res) => {
@@ -34,6 +62,12 @@ export function createFixtureServer() {
         return;
       case '/child':
         res.writeHead(200, { 'content-type': 'text/html' }).end(CHILD);
+        return;
+      case '/paper.pdf':
+        res.writeHead(200, {
+          'content-type': 'application/pdf',
+          'content-disposition': 'inline; filename="paper.pdf"',
+        }).end(PDF);
         return;
       case '/file.txt':
         res.writeHead(200, {
