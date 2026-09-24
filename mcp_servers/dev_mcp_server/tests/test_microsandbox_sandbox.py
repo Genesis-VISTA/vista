@@ -4,7 +4,11 @@ import types
 import pytest
 from microsandbox import ExecEventType
 
-from dev_mcp_server.lib.microsandbox_sandbox import MicrosandboxSandbox, _ExecProcess
+from dev_mcp_server.lib.microsandbox_sandbox import (
+    _STDIN_CHUNK,
+    MicrosandboxSandbox,
+    _ExecProcess,
+)
 
 
 class _AwaitableValue:
@@ -162,6 +166,32 @@ class TestExecProcess:
         proc = _ExecProcess(handle, combine_streams=False)
         assert await proc.wait() == 5
         assert handle.wait_calls == 1
+
+    async def test_large_input_is_written_in_chunks(self):
+        """One write over the protocol's 4 MiB frame limit would fail and end the exec."""
+        handle = _FakeHandle([_Event(ExecEventType.EXITED, code=0)])
+        proc = _ExecProcess(handle, combine_streams=False)
+        data = bytes(range(256)) * (_STDIN_CHUNK // 256 * 5 // 2)
+        await proc.communicate(data)
+        *chunks, close = handle.sink.ops
+        assert close == "close"
+        assert [len(c) for c in chunks] == [
+            _STDIN_CHUNK,
+            _STDIN_CHUNK,
+            _STDIN_CHUNK // 2,
+        ]
+        assert b"".join(chunks) == data
+
+    async def test_stdin_error_is_not_output_and_keeps_exit_code(self):
+        handle = _FakeHandle(
+            [
+                _Event(ExecEventType.STDIN_ERROR, b"io error: Broken pipe", code=32),
+                _Event(ExecEventType.EXITED, code=0),
+            ]
+        )
+        proc = _ExecProcess(handle, combine_streams=False)
+        assert await proc.communicate(b"ignored") == (b"", b"")
+        assert proc.returncode == 0
 
     async def test_no_stdin(self):
         handle = _FakeHandle([_Event(ExecEventType.EXITED, code=0)], stdin=False)

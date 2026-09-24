@@ -127,6 +127,18 @@ async def test_create_file_round_trips(sandbox):
     assert "written by create_file" in out
 
 
+async def test_create_file_larger_than_one_protocol_frame(sandbox):
+    content = "0123456789abcdef\n" * (5 * 1024 * 1024 // 17)
+    await asyncio.wait_for(server.create_file("/mnt/big.txt", content), 60)
+    out = await asyncio.wait_for(server.run_bash("wc -c < /mnt/big.txt", _Ctx()), 30)
+    assert int(out) == len(content)
+
+
+async def test_create_file_reports_failure(sandbox):
+    with pytest.raises(ValueError, match="No such file or directory"):
+        await asyncio.wait_for(server.create_file("/nonexistent/x.txt", "hi\n"), 30)
+
+
 async def test_no_input_supplied_sees_eof(sandbox):
     proc = await sandbox.exec("cat")
     stdout, _ = await asyncio.wait_for(proc.communicate(), 30)

@@ -33,6 +33,11 @@ async def _msb_image_digest(image: str) -> str | None:
     return detail.config.digest.split(":")[-1] if detail.config else None
 
 
+_STDIN_CHUNK = 1 << 20
+"""Largest stdin write sent in one piece. The agent protocol caps a frame at 4 MiB, header
+included, and a larger write fails and ends the exec session."""
+
+
 class _ExecStdin:
     """The subset of `asyncio.StreamWriter` that callers use on `proc.stdin`.
 
@@ -56,7 +61,9 @@ class _ExecStdin:
         self._tail = asyncio.ensure_future(run())
 
     def write(self, data: bytes) -> None:
-        self._chain(lambda: self._sink.write(data))
+        for start in range(0, len(data), _STDIN_CHUNK):
+            chunk = data[start : start + _STDIN_CHUNK]
+            self._chain(lambda chunk=chunk: self._sink.write(chunk))
 
     async def drain(self) -> None:
         await self._tail
@@ -99,6 +106,13 @@ class _ExecProcess(SandboxProcess):
                     if event.data:
                         stderr.feed_data(event.data)
                     self.returncode = event.code if event.code is not None else -1
+                elif event.event_type == ExecEventType.STDIN_ERROR:
+                    # The guest couldn't deliver stdin, e.g. the process closed it or exited.
+                    # `asyncio`'s communicate() ignores a broken pipe too, so this is only
+                    # logged; the exit code says whether the command failed.
+                    logging.warning(
+                        f"Sandbox process stdin error: {(event.data or b'').decode(errors='replace')}"
+                    )
             if self.returncode is None:
                 self.returncode, _ = await self._handle.wait()
         finally:

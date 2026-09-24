@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from vista_backend.agents.agents import _make_readable_by_others
+from vista_backend.agents.agents import _make_readable_by_others, _reset_dir
 
 pytestmark = [pytest.mark.unit]
 
@@ -55,3 +55,27 @@ def test_does_not_spawn_a_process(tmp_path: Path, monkeypatch):
     (tmp_path / "SKILL.md").write_text("x", encoding="utf-8")
 
     _make_readable_by_others(tmp_path)
+
+
+def test_reset_dir_creates_and_empties(tmp_path: Path):
+    root = tmp_path / "skills"
+    _reset_dir(root)
+    assert root.is_dir() and not any(root.iterdir())
+
+    (root / "removed-skill").mkdir()
+    (root / "removed-skill" / "SKILL.md").write_text("x", encoding="utf-8")
+    _reset_dir(root)
+    assert root.is_dir() and not any(root.iterdir())
+
+
+def test_reset_dir_raises_when_cleanup_fails(tmp_path: Path, monkeypatch):
+    """A skill left behind by a failed cleanup would stay mounted in the sandbox."""
+    root = tmp_path / "skills"
+    (root / "removed-skill").mkdir(parents=True)
+
+    def fail(path, *args, **kwargs):
+        raise PermissionError(f"in use: {path}")
+
+    monkeypatch.setattr("shutil.rmtree", fail)
+    with pytest.raises(PermissionError):
+        _reset_dir(root)

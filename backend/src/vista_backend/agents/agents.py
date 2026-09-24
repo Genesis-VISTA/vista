@@ -190,6 +190,16 @@ def _add_mode(path: Path, bits: int) -> None:
         os.chmod(path, mode | bits)
 
 
+def _reset_dir(path: Path) -> None:
+    """
+    Empty `path`, creating it if needed. A failed cleanup raises rather than being ignored:
+    whatever it left behind would stay mounted in the sandbox.
+    """
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir()
+
+
 class ProjectAgentResult(BaseModel):
     """
     Result of a single agent turn (`ProjectAgent.run`, or the terminal event
@@ -672,8 +682,7 @@ class ProjectAgent:
             row.name: row.allowed_tools for row in rows if row.allowed_tools
         }
 
-        shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
-        self.skills_volume_dir.mkdir(exist_ok=True)
+        _reset_dir(self.skills_volume_dir)
         for name in self.project.skills:
             src = skill_dirs.get(name)
             if src is None or not src.is_dir():

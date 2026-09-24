@@ -11,7 +11,7 @@ pins the exact map it sends, and this pins that such a map resolves.
 
 import pytest
 
-from vista_mcp_server.display_file_mcp import resolve_uri
+from vista_mcp_server.display_file_mcp import display_filename, resolve_uri
 
 pytestmark = pytest.mark.unit
 
@@ -95,3 +95,18 @@ def test_sandbox_paths_are_not_host_paths():
     import vista_mcp_server.display_file_mcp as module
 
     assert not hasattr(module, "Path")
+
+
+@pytest.mark.parametrize(
+    "uri, name",
+    [
+        ("/mnt/data/output/plot.png", "plot.png"),
+        ("/mnt/data/output/fig#1.png", "fig#1.png"),
+        ("/mnt/data/output/a?b.png", "a?b.png"),
+        ("file:///mnt/data/output/my%20plot.png", "my plot.png"),
+        ("file:///mnt/data/output/fig%231.png", "fig#1.png"),
+    ],
+)
+def test_filename_keeps_characters_a_bare_path_allows(uri, name):
+    """`#` and `?` only mean fragment and query inside a URI, not in a bare path."""
+    assert display_filename(uri) == name

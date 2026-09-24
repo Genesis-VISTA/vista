@@ -63,6 +63,16 @@ def resolve_uri(uri: str, uri_map: dict[str, str]) -> str:
     raise ValueError(f"No download URL is configured for {uri}")
 
 
+
+def display_filename(uri: str) -> str:
+    """
+    The file's name, for display. In a bare path `#` and `?` are ordinary characters, so only a
+    `file:` URI is split into path, query and fragment.
+    """
+    path = uri if uri.startswith("/") else unquote(urlsplit(uri).path)
+    return PurePosixPath(path).name
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
 async def display_file(
     ctx: Context,
@@ -81,4 +91,4 @@ async def display_file(
 
     mime_type = mimetypes.guess_type(uri)[0] or "application/octet-stream"
     await ctx.info(f"display_file {uri} -> {resolved}")
-    return {"uri": resolved, "mime_type": mime_type, "filename": PurePosixPath(urlsplit(uri).path).name}
+    return {"uri": resolved, "mime_type": mime_type, "filename": display_filename(uri)}

@@ -139,7 +139,11 @@ async def create_file(
     Create a new file.
     """
     proc = await sandbox.exec("tee", args=[path])
-    await proc.communicate(content.encode())
+    _, stderr = await proc.communicate(content.encode())
+    if proc.returncode:
+        raise ValueError(
+            f"Failed to create {path}: {(stderr or b'').decode(errors='replace').strip()}"
+        )
     return f"Successfully created {path}"
 
 
