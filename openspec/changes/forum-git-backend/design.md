@@ -436,6 +436,27 @@ helpers and ssh-agent still work, prompts never hang the backend),
 - Rollback: revert the branch commits; nothing outside the branch depends on
   the forum.
 
+## Future work
+
+Ideas raised while building this change and deliberately left out of it. None
+is committed to.
+
+- **Commit signing and verified attribution** (D8). Sign post commits with SSH
+  and verify them against the keys a forge publishes for an account, so a
+  peer's post can read "signed by <login>" and votes can be counted once per
+  person. Deferred by Junqi on 2026-09-24; the notes in D8 are the starting
+  point. Readers already ignore unknown post fields, so adding `signer` needs no
+  format bump.
+- **"Add to chat" from a verdict** (Sam, 2026-09-24). A button on a debate's
+  verdict that opens a new chat session seeded with it, so the researcher can
+  carry the ranked hypothesis and its predictions straight into the project
+  agent: plan the simulation, look up the data, draft the write-up. Belongs to
+  the Hypothesis Lab UI and the chat-session API rather than to the forum
+  backend.
+- Also noted above as non-goals: bundling git, a VISTA-managed forge token
+  (Q12b), a standalone posting CLI (Q4c), content-addressed attachment dedupe
+  (Q3c), web grounding via `web_fetch_tool`.
+
 ## Open Questions
 
 None.
