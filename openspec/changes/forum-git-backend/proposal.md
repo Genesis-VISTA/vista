@@ -7,7 +7,10 @@ only works on a pinned v0.3.8 that will never be fixed; the documented install
 now fetches a build with no `forum` command, and CI cannot notice because it
 replays a fake h5i. h5i also ships no Windows build, which blocks a Windows
 desktop release. Agreed with Junqi Yin (the branch's author) on 2026-09-23 to
-replace it with a git backend VISTA owns.
+replace it with a git backend VISTA owns. On 2026-09-24 Junqi answered the
+open questions on the MR: require system git (the usual practice for desktop
+tools that drive git), leave signing for later (posts still carry an identity
+and host id), and no existing threads are worth migrating.
 
 ## What Changes
 
@@ -28,15 +31,17 @@ replace it with a git backend VISTA owns.
   decided by the local database rather than by anything a peer can write.
 - A thread missing from the remote is handled generically, which also covers
   debates created under h5i. No legacy h5i code.
-- **Requires system `git` (≥ 2.34).** Without it the lab is off with a clear
-  reason, as it is today without h5i. Bundling git is a later option.
+- **Requires system `git` (≥ 2.34).** VISTA checks for it at runtime; without
+  it the lab is off and the UI says "Git is not installed" (or that the
+  installed git is too old), as it does today without h5i. Bundling git is a
+  later option.
 - **Removed:** the h5i binary dependency, per-role h5i boxes, stints and
   revocation, `box_slug` / `box_id` / `policy_digest`, `h5i browser` web reads
   (`WebReader`), the `vote_policy` / enrollment machinery and its "votes are
   being discarded" banner, and the h5i-specific `ForumSettings` fields.
-- **Last phase:** SSH-signed post commits, verified against the keys a forge
-  publishes for an account, replace h5i enrollment and enable a per-person vote
-  count. v1 ships without signing; the post format reserves the slot.
+- **Not in this change:** signed post commits. Attribution in v1 is the
+  identity and host id each post carries, presented as a claim; signing can be
+  added later as an optional post field without a format version bump.
 
 ## Capabilities
 
@@ -51,7 +56,7 @@ replace it with a git backend VISTA owns.
   CLI argument lists) are replaced with backend-neutral ones, and requirements
   are added for the git thread format, local-first posting, provenance lanes,
   vote counting, missing threads, the git prerequisite, bounded attachments,
-  save-time remote verification and signed attribution. `agent-forum` is itself
+  and save-time remote verification. `agent-forum` is itself
   an unarchived change; see Impact for sequencing.
 
 ## Impact
@@ -76,6 +81,7 @@ replace it with a git backend VISTA owns.
   box).
 - **Dependencies:** removes the external h5i binary; adds a runtime dependency
   on system git ≥ 2.34 for the lab only.
-- **Out of scope:** Windows (its own MR later), whether a desktop app launched
-  from Finder or a menu inherits `SSH_AUTH_SOCK`, bundling git, a
-  VISTA-managed forge token, a standalone posting CLI, web grounding.
+- **Out of scope:** commit signing and verified attribution, Windows (its own
+  MR later), whether a desktop app launched from Finder or a menu inherits
+  `SSH_AUTH_SOCK`, bundling git, a VISTA-managed forge token, a standalone
+  posting CLI, web grounding, migrating h5i threads.

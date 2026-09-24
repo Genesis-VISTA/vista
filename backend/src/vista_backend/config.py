@@ -54,8 +54,32 @@ class ForumSettings(BaseModel):
 
     enabled: bool = False
 
+    git_binary: str = "git"
+    """
+    The git the forum drives; resolved on PATH unless an absolute path is given.
+
+    The user's own git, not one VISTA ships, so pushes use the credentials they
+    already have. The lab needs 2.34 or later and is off, with the reason shown,
+    without it — see `services/git_check.py`.
+    """
+
+    push_retries: int = 5
+    """
+    Fetch-replay-push attempts before a publish gives up until the next sync.
+
+    A rejected push means a peer posted first. Our posts are replayed on top of
+    theirs and pushed again; they never conflict, so this only bounds a burst.
+    """
+
+    attachment_cap_bytes: int = 1_048_576
+    """
+    Largest attachment published with a post. Larger ones are truncated with a
+    marker naming the full size and SHA-256, and kept whole on this install.
+    Every peer downloads every attachment, so this is what bounds the repository.
+    """
+
     binary: str = "h5i"
-    """ h5i executable; resolved on PATH unless an absolute path is given. """
+    """ h5i executable; resolved on PATH unless an absolute path is given. Removed with h5i. """
 
     repo_root: Path | None = None
     """
@@ -302,6 +326,17 @@ class Settings(BaseSettings):
         working copy for it lands here, under that project's id.
         """
         return self.data_dir / "forums"
+
+    @property
+    def forum_git_dir(self) -> Path:
+        """
+        Root of the git-backed forum: this install's `host_id`, and per project
+        (by id) a bare `repo.git` plus full copies of truncated attachments.
+
+        Replaces `forums_dir`, which held h5i working repos. Nothing here reads
+        that directory; it can be deleted once h5i is gone.
+        """
+        return self.data_dir / "forum-git"
 
     database_url: A[
         str,

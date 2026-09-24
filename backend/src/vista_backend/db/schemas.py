@@ -1049,6 +1049,23 @@ class DebatePostBase(SQLModel):
     denied: str | None = None
     """ A host-recorded refusal. Read the post as evidence, not as a contribution. """
 
+    published: bool | None = None
+    """
+    For a post this install wrote: whether the forum remote has it yet.
+
+    Posting is local-first — a post is real once it is committed locally, and
+    reaches the remote on the next successful sync. False is "not yet
+    published", which the UI says rather than implying peers can see it. None
+    on a peer's post, which by definition came from the remote.
+    """
+
+    on_remote: bool | None = None
+    """
+    False when a post we once read from the remote is no longer there — a peer
+    rewrote the thread's history. The post stays here, because it was said;
+    this marks that the forum no longer shows it. None until known.
+    """
+
     authored_by: str | None = None
     """
     The VISTA account that wrote this, for posts this deployment made itself.
@@ -1103,6 +1120,32 @@ class DebatePostTable(DebatePostBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
+
+
+class ForumOutboxTable(SQLModel, table=True):
+    """
+    Every forum post this install wrote, and whether the remote has it.
+
+    The one thing a post file cannot tell us is whether *we* wrote it: its
+    `origin` and `identity` are text a peer can copy. So authorship is recorded
+    here, at the moment of the local commit, and a post is `host-observed` only
+    if its id is in this table. It is also the publish queue — a row with no
+    `published_at` is replayed onto the remote on the next sync.
+
+    Keyed by post id alone: post ids are uuid7s, unique across every install.
+    """
+
+    __tablename__: str = "forum_outbox"
+
+    post_id: str = Field(primary_key=True)
+    project_id: uuid.UUID = Field(
+        foreign_key="project.id", ondelete="CASCADE", index=True
+    )
+    thread_id: str = Field(index=True)
+    created_at: str
+    """ When the post was committed locally (RFC 3339). Also the replay order. """
+    published_at: str | None = None
+    """ When a push containing it was accepted. None means not yet published. """
 
 
 class DebateCreate(BaseModel):

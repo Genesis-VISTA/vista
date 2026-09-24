@@ -140,8 +140,9 @@ to debates created before this change, whose threads were written by h5i.
 
 ### Requirement: Git is a prerequisite, checked honestly
 
-The lab SHALL require a working system `git`, version 2.34 or later. VISTA SHALL
-check it without triggering an operating-system install prompt: on macOS, a
+The lab SHALL require a working system `git`, version 2.34 or later; VISTA does
+not ship its own. VISTA SHALL check for it at runtime without triggering an
+operating-system install prompt: on macOS, a
 `/usr/bin/git` whose developer tools are not installed MUST be treated as git
 absent. When git is absent or too old, every project's lab SHALL be off with the
 reason stated in the forum status and in the project dialog, and saving a forum
@@ -157,7 +158,14 @@ repository SHALL fail with that reason. The rest of VISTA MUST keep working.
 
 - **GIVEN** a host with no git on `PATH`
 - **WHEN** a user opens the Hypothesis Lab
-- **THEN** it SHALL say the lab needs git, and other VISTA features SHALL be unaffected
+- **THEN** it SHALL say that git is not installed and that the lab needs it
+- **AND** other VISTA features SHALL be unaffected
+
+#### Scenario: Git too old
+
+- **GIVEN** a host whose git is older than 2.34
+- **WHEN** a user opens the Hypothesis Lab
+- **THEN** it SHALL name the installed version and the version required
 
 ### Requirement: Attachments are bounded
 
@@ -192,29 +200,6 @@ Pointing a project at a repository that already holds threads SHALL join them.
 - **GIVEN** a forum repository that already holds threads from another install
 - **WHEN** a user saves a project pointing at it
 - **THEN** those threads SHALL be listed for the project
-
-### Requirement: Signed peer attribution
-
-VISTA SHALL sign the commits of posts it writes with SSH, using the key the user
-pushes with through `ssh-agent`, or a VISTA-generated key the user registered on
-the forge when no agent key is available. A post whose commit signature verifies
-against the keys the forge publishes for the named account SHALL be shown as
-signed by that account; an unsigned post, or one whose signature does not
-verify, SHALL stay `peer-claimed`. Once signing is available, votes SHALL also be
-countable once per signed account. This requirement is delivered in the change's
-final phase; until then posts carry no signature.
-
-#### Scenario: A signed peer post
-
-- **GIVEN** a peer post signed by a key the forge lists for account `jqyin`
-- **WHEN** VISTA reads the thread
-- **THEN** the post SHALL be shown as signed by `jqyin`
-
-#### Scenario: A forged signer claim
-
-- **GIVEN** a peer post that names `jqyin` as signer but is signed by a key the forge does not list for `jqyin`
-- **WHEN** VISTA reads the thread
-- **THEN** the post SHALL NOT be shown as signed by `jqyin` and SHALL stay `peer-claimed`
 
 ### Requirement: Hermetic tests against real git
 
@@ -330,7 +315,7 @@ added no real separation: all roles run inside the backend.
 
 **Migration**: Replaced by "Per-role attribution on each post" (identity in the
 post file) and "Provenance lanes" (what this install observed). Verifiable
-attribution comes from "Signed peer attribution".
+attribution (signed commits) is deferred to a later change.
 
 ### Requirement: Hermetic tests without the h5i binary
 

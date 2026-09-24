@@ -8,7 +8,9 @@ replaces only the layer that talks to h5i. Everything above `ForumClient`
 Decisions below were settled in a grilling session with Sam Baumann on
 2026-09-23 and are numbered Q1–Q14 to match the review doc "Forum Git Backend —
 Design Summary" (a Claude Docs page Sam owns). This file is self-contained;
-the doc is not needed to implement.
+the doc is not needed to implement. Junqi's MR reply (2026-09-24) settled the
+remaining questions: system git is required, signing is out of this change
+(D8), and no threads are migrated.
 
 ```mermaid
 flowchart LR
@@ -85,8 +87,8 @@ Current-state facts the design relies on (verified in the code on 2026-09-23):
 
 **Non-Goals:**
 
-- Windows. It lands as its own MR; anything Windows-specific (e.g.
-  `ssh-keygen` availability for signing) is resolved there.
+- Commit signing and verified attribution (D8). Deferred to a later change.
+- Windows. It lands as its own MR; anything Windows-specific is resolved there.
 - Whether a GUI-launched desktop app inherits `SSH_AUTH_SOCK`. Out of scope;
   v1 relies on whatever environment the backend process has.
 - Bundling git (future option), a VISTA-managed forge token (future option,
@@ -111,8 +113,8 @@ Why: several debates and roles post concurrently from one process. A checkout
 has one index and one HEAD; plumbing on refs is safe per thread with a CAS and
 an `asyncio.Lock` per (project, thread). Alternatives: a non-bare clone with
 `git add/commit` (index contention, needs serialising the whole repo);
-dulwich (pure Python, but push auth and SSH signing support unverified, and
-real git behaviour is what the tests should pin).
+dulwich (pure Python, but push auth support unverified, and real git
+behaviour is what the tests should pin).
 
 Layout under `data/forum-git/`:
 
@@ -124,7 +126,7 @@ data/forum-git/
     attachments/<post-id>/<name>  # full copies of truncated attachments (Q3b)
 ```
 
-`settings.forums_dir` moves to `data/forum-git/`. Old `data/forums/` h5i
+`settings.forum_git_dir` (`data/forum-git/`) replaces `settings.forums_dir`. Old `data/forums/` h5i
 directories are left untouched (Q13); nothing reads them.
 
 ### D2. Thread and post format (v1)
@@ -151,12 +153,12 @@ Every later commit adds exactly one `posts/<post-id>.json` and optionally
   "kind": "PROPOSAL",
   "body": "...",
   "identity": "vista-proposer-1a2b3c4d",
+  "role": "proposer",
   "origin": "<host-id>",
   "ts": "<RFC 3339, informational>",
   "reply_to": null,
   "attachments": [{"name": "citations.json", "kind": "text", "size": 1234,
-                   "sha256": "...", "truncated": false}],
-  "signer": null
+                   "sha256": "...", "truncated": false}]
 }
 ```
 
@@ -166,16 +168,27 @@ Every later commit adds exactly one `posts/<post-id>.json` and optionally
   stays as the validation set for role posts.
 - `identity` replaces h5i's `sender`; the operator is `human`. The API keeps
   exposing it as `sender` so the UI contract does not move.
-- `signer` is the reserved slot for D8: null in v1; later `"<forge-host>/<login>"`.
-  The signature itself is the commit's SSH signature, not a field.
+- Readers ignore keys they do not know, so optional fields (for example a
+  future `signer`, D8) can be added without bumping `v`. `v` changes only for
+  an incompatible change.
 - Order is `git rev-list --reverse --first-parent <ref>`: the order the remote
   accepted commits. A commit is mapped to the post file it adds; a peer commit
   adding several post files contributes them in path order; a commit adding
   none is ignored. `ts` is display-only.
+- `role` is the display role shown beside the identity (proposer, reviewer,
+  referee, human). Added during implementation: the prompts and the UI show it,
+  and it is as much a claim as `identity`.
 - Commit author/committer: `vista-forum <host-id@vista-forum.invalid>`, passed
-  with `-c user.name=… -c user.email=…`. Never the user's `git config`, which
+  as `GIT_AUTHOR_*` / `GIT_COMMITTER_*` environment variables (which also
+  override any the user has exported). Never the user's `git config`, which
   would publish their email (the concern that ruled out email-based host ids in
   Q2).
+- Local plumbing runs with `GIT_CONFIG_GLOBAL=/dev/null` and
+  `GIT_CONFIG_NOSYSTEM=1`, so user settings such as `commit.gpgSign`,
+  `log.showSignature` or `core.hooksPath` cannot change what is written or how
+  output parses. Only `fetch` and `push` read the user's config (credentials,
+  `insteadOf`, SSH), and they run with `core.hooksPath` pointed at an empty
+  path so the user's own pre-push hooks never run on a forum push.
 - Readers skip and log any file under `posts/` that is not valid JSON, has an
   unknown `v`, an unknown `kind`, or a mismatched `id`/`thread`.
 
@@ -197,8 +210,12 @@ git notes (poorly supported by forges); a custom ref namespace outside
   their original order) as new commits on top of the remote tip, reusing the
   same blobs, and move the local ref there. Post paths are unique, so replay
   never conflicts. Then `git push <remote> <local-ref>:<remote-ref>` (never
-  `--force`). On a non-fast-forward rejection, repeat fetch-replay-push up to
-  `ForumSettings.push_retries` (default 5). Mark pushed posts published.
+  `--force`). On a non-fast-forward rejection — or a ref-lock failure, which is
+  how a forge reports two pushes arriving at the same instant — repeat
+  fetch-replay-push up to `ForumSettings.push_retries` (default 5). Mark pushed
+  posts published. A post attempts this straight after committing, but only if
+  its pre-post fetch succeeded, so an offline turn never waits on the network
+  twice.
 - **Read:** `read_thread` fetches, merges as above without pushing, and reads
   the local ref. Callers already throttle it: `api/debate.py`
   (`FORUM_REFRESH_SECONDS = 10.0`, per-run locks, shared with the event stream)
@@ -206,7 +223,14 @@ git notes (poorly supported by forges); a custom ref namespace outside
   GitHub (agent-forum §12.16). A failed fetch reads local state and reports it as possibly stale.
 - **History rewritten on the remote:** when the remote tip does not contain a
   post this install already published, that post is simply unpublished again
-  and replayed on the next publish. Peer posts that vanished from the remote
+  and replayed on the next publish. A peer post the remote dropped is left out
+  of the rebuilt local ref, even when the remote was merely reset to an
+  ancestor, so VISTA never re-publishes a peer's post someone removed.
+- **Missing vs. not yet published:** after a *successful* fetch, a thread the
+  remote lacks is missing if the local copy holds any peer post or any of our
+  posts marked published; a thread holding only our unpublished posts is simply
+  not published yet and is pushed. A failed fetch never decides either way. A
+  missing thread is never pushed back (no resurrection). Peer posts that vanished from the remote
   stay in the DB projection, marked `on_remote = false` (D5).
 - **Remote URL:** stored in the bare repo as remote `forum`
   (`git remote add/set-url forum <url>`). `remote()` returns it;
@@ -215,8 +239,11 @@ git notes (poorly supported by forges); a custom ref namespace outside
 ### D4. Provenance lanes from an outbox table (Q1, Q2)
 
 New table `forum_outbox`: `post_id` (PK), `project_id`, `thread_id`,
-`created_at`, `published_at` (nullable). A row is written in the same step as
-the local commit.
+`created_at`, `published_at` (nullable). The row is written just before the
+local ref moves (and removed if the compare-and-swap fails), so a crash leaves
+at worst a row naming no post, never an unrecorded post of ours. The client
+reaches it through an `Outbox` protocol: `DbOutbox` in the app, one SQLite file
+per host in the real-git tests, `MemoryOutbox` for the fake client.
 
 - `host-observed` ⇔ `post_id` is in `forum_outbox`. Never decided from
   `origin`, which a peer can copy.
@@ -292,24 +319,19 @@ reduced to a basename and must not start with `.` (as today).
 Alternatives: no cap (repos grow without bound, every peer downloads it all);
 content-addressed `blobs/<sha256>` dedupe (deferred, Q3c).
 
-### D8. Signing (Q1b, Q11) — final phase
+### D8. Signing — out of scope
 
-- Sign with `git commit-tree -S` under `-c gpg.format=ssh
-  -c user.signingkey=<key>`. Key choice: the first key `ssh-add -L` lists
-  that the user selects in settings (stored as the literal public key, which
-  `ssh-keygen -Y sign` resolves through the agent); fallback, a VISTA-generated
-  ed25519 key at `data/forum-git/signing_key`, whose public half the UI shows
-  for the user to add to their forge account as a signing key.
-- `signer` in the post file names the claimed account, `"<forge-host>/<login>"`.
-- Verify by fetching the account's public keys from the forge, caching them,
-  writing a per-project allowed-signers file, and running `git verify-commit`
-  with `gpg.ssh.allowedSignersFile`. To confirm during that phase: GitHub's
-  `https://github.com/<login>.keys` lists *authentication* keys only, so
-  signing keys also need `GET /users/<login>/ssh_signing_keys`. GitLab's
-  `/<login>.keys` behaviour for signing-only keys needs checking the same way.
-- Display "signed by <login>" only on a successful verify. Votes gain an
-  optional per-signer count. Requires git ≥ 2.34 (SSH signing), which is why D9
-  sets that floor now.
+Signed post commits (SSH signing verified against keys the forge publishes for
+an account, and a per-signer vote count) were planned as a final phase and are
+now out of this change (Junqi, 2026-09-24). v1 attribution is the `identity`
+and `origin` in each post, shown as the poster's claim, plus this install's
+own lanes (D4). Notes from the grilling session, for whoever picks it up:
+sign with `git commit-tree -S` under `gpg.format=ssh`; key from `ssh-agent` or
+a VISTA-generated key the user registers; add an optional `signer` field
+(`"<forge-host>/<login>"`); verify with `git verify-commit` and an
+allowed-signers file built from the forge's keys (GitHub's `/<login>.keys`
+lists authentication keys only; signing keys need
+`GET /users/<login>/ssh_signing_keys`).
 
 ### D9. Git prerequisite (proposal: system git)
 
@@ -320,6 +342,17 @@ once at startup, with a 5 s timeout:
    non-zero exit means the developer tools are missing, so report absent
    **without** running `/usr/bin/git` (running it pops the install dialog).
 2. Run `git --version`, parse `major.minor`, require ≥ 2.34.
+
+The result is a small value, `GitCheck{ok, path, version, reason}`, cached for
+the process. `reason` is the user-facing text: `"Git is not installed."` when
+no git is found (including the macOS shim case), `"Git <x.y> is too old; the
+Hypothesis Lab needs 2.34 or later."`, or git's own error if `--version`
+fails. The UI shows `reason` verbatim.
+
+2.34 is not required by anything v1 does (plumbing, CAS `update-ref` and
+refspec fetches are much older); it is kept so that adding SSH signing later
+(D8) does not raise the requirement on users. Lowering it is a one-line
+change if it excludes someone.
 
 The result feeds `forum_config_for` (lab off when absent), `ForumStatus`
 (`git_ok`, `git_reason`) and `_open_the_lab` (save fails with the reason).
@@ -342,8 +375,7 @@ helpers and ssh-agent still work, prompts never hang the backend),
 - `ForumStatus` becomes `{enabled, shared, remote, git_ok, git_reason,
   unpublished}`; `vote_policy`, `enrolled`, `votes_counting` are removed, and
   with them the UI banner.
-- `DebateStatePublic.enrolled_origins` and `_enrolled_origins` are removed
-  (D8 later adds signer display per post instead).
+- `DebateStatePublic.enrolled_origins` and `_enrolled_origins` are removed.
 - `WebReader`, `ENFORCING_TIERS` and the `read_web_page` tool are removed from
   `agents/forum/grounding.py`; `Grounding.browser` goes.
 
@@ -368,8 +400,8 @@ helpers and ssh-agent still work, prompts never hang the backend),
 - [Anyone with push access can post as anyone, close threads or delete refs;
   free private GitHub repos cannot protect refs (agent-forum §12.8c)] →
   unchanged from h5i. Lanes label rather than prevent; the missing-thread path
-  and replay keep VISTA's own view intact. Signing (D8) adds verifiable
-  attribution.
+  and replay keep VISTA's own view intact. Signing (D8, deferred) would add
+  verifiable attribution.
 - [Local DB loss makes our own old posts read as `peer-claimed`] → accepted;
   documented in the format doc.
 - [Repo growth from full receipts] → 1 MB cap per attachment; dedupe later.
@@ -378,7 +410,7 @@ helpers and ssh-agent still work, prompts never hang the backend),
 - [Fetch latency on every read (~1.5 s)] → the existing 10 s refresh throttle
   in `api/debate.py` is kept; reads never block on a failed fetch.
 - [git < 2.34 on some Linux distros] → lab off with a clear reason; the floor
-  only matters for D8 and can be revisited if it bites.
+  exists for future signing (D8) and can be lowered if it bites.
 
 ## Migration Plan
 
@@ -394,6 +426,4 @@ helpers and ssh-agent still work, prompts never hang the backend),
 
 ## Open Questions
 
-- The exact forge endpoints that list SSH signing keys (GitHub, GitLab,
-  `code.ornl.gov`) — answered when D8 is implemented; does not change earlier
-  phases.
+None.
