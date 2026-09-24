@@ -3,11 +3,13 @@ import types
 
 import pytest
 from microsandbox import ExecEventType
+from microsandbox.errors import ImageNotFoundError, MicrosandboxError
 
 from dev_mcp_server.lib.microsandbox_sandbox import (
     _STDIN_CHUNK,
     MicrosandboxSandbox,
     _ExecProcess,
+    _msb_image_digest,
 )
 
 
@@ -225,3 +227,30 @@ class TestMicrosandboxBuild:
 
         await MicrosandboxSandbox.build(image="example:latest")
         assert calls == [("/opt/msb/msb.exe", "pull", "example:latest")]
+
+
+@pytest.mark.anyio
+class TestMsbImageDigest:
+    @pytest.fixture
+    def anyio_backend(self):
+        return "asyncio"
+
+    async def test_missing_image_is_absent(self, monkeypatch):
+        async def inspect(image):
+            raise ImageNotFoundError(image)
+
+        monkeypatch.setattr(
+            "dev_mcp_server.lib.microsandbox_sandbox.Image.inspect", inspect
+        )
+        assert await _msb_image_digest("example:latest") is None
+
+    async def test_other_store_errors_are_logged_and_raised(self, monkeypatch, caplog):
+        async def inspect(image):
+            raise MicrosandboxError("database is locked")
+
+        monkeypatch.setattr(
+            "dev_mcp_server.lib.microsandbox_sandbox.Image.inspect", inspect
+        )
+        with pytest.raises(MicrosandboxError, match="database is locked"):
+            await _msb_image_digest("example:latest")
+        assert "Could not inspect sandbox image example:latest" in caplog.text

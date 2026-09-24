@@ -17,7 +17,7 @@ from microsandbox import (
     Volume as MsbVolume,
     resolve_runtime,
 )
-from microsandbox.errors import ImageNotFoundError
+from microsandbox.errors import ImageNotFoundError, MicrosandboxError
 
 from .sandbox import Sandbox, SandboxProcess, Volume
 from .util import check_output, parse_output
@@ -30,6 +30,13 @@ async def _msb_image_digest(image: str) -> str | None:
         detail = await Image.inspect(image)
     except ImageNotFoundError:
         return None
+    except MicrosandboxError:
+        # Raised rather than treated as absent: re-loading or pulling over a store that can't be
+        # read would only hide the problem.
+        logging.error(
+            f"Could not inspect sandbox image {image} in the microsandbox store"
+        )
+        raise
     return detail.config.digest.split(":")[-1] if detail.config else None
 
 

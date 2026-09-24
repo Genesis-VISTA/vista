@@ -25,6 +25,7 @@ SANDBOX_JOB_DIR = SANDBOX_OUTPUT_DIR / "12345"
         "../x",
         "..\\x",
         "results/../../x",
+        "results\\plot.png",
         "",
     ],
 )

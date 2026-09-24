@@ -1332,11 +1332,14 @@ def _job_output_paths(
 
     The name must be relative and stay inside the job's output directory. It is checked as
     both a POSIX and a Windows path, because either reading could escape: on Windows
-    `/etc/x` is not absolute, and on POSIX `..\\x` is not a parent reference.
+    `/etc/x` is not absolute, and on POSIX `..\\x` is not a parent reference. A backslash is
+    refused outright: a Windows host would save `a\\b` as `a/b`, while the reported sandbox
+    path would still say `a\\b`, a file that doesn't exist.
     """
     posix, windows = PurePosixPath(file), PureWindowsPath(file)
     if (
         not file
+        or "\\" in file
         or posix.is_absolute()
         or windows.anchor
         or ".." in posix.parts
