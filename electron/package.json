@@ -1,0 +1,22 @@
+{
+  "name": "vista-window",
+  "productName": "VISTA",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The window VISTA's launchers open onto the running UI. It never starts services.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron . --dev --url=http://localhost:3000",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/routing.test.js",
+    "test:e2e": "playwright test -c playwright.config.js"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@playwright/test": "1.62.1",
+    "@types/node": "^24.0.0",
+    "electron": "44.4.5",
+    "typescript": "^5.9.3"
+  }
+}

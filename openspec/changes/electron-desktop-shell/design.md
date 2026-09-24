@@ -132,6 +132,10 @@ with no preload script. `session.setPermissionRequestHandler` denies everything.
 - The launcher's Ctrl-C/HUP path sends `TERM` to the shell, which then quits normally.
 - `--smoke-test`: load the URL, exit 0 on `did-finish-load` with a non-empty title,
   exit 1 on `did-fail-load` or after 30 s. This is used by the package build (B3).
+  It takes no single-instance lock, so an open VISTA window can't fail a build.
+- `--user-data-dir=<dir>` moves Electron's profile, and with it the single-instance
+  lock. Tests use it so they never collide with a real VISTA window. Launchers don't
+  pass it.
 
 ### W6. Electron state stays out of `~/.vista`
 
