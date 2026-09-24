@@ -7,7 +7,7 @@ REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 # the shell before the `||` is ever considered, so the tolerant-looking form
 # silently killed this script on any checkout without a .env.
 if [[ -f "$REPO_ROOT/.env" ]]; then
-  set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
+  set -o allexport; source <(tr -d '\r' < "$REPO_ROOT/.env"); set +o allexport # strip \r for Windows compat
 fi
 
 PROD=false
