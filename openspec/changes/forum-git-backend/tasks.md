@@ -39,6 +39,8 @@ grounding tests use `tests/harness/fake_forum.py`.
 - [x] 3.5 Remove `WebReader`, `ENFORCING_TIERS`, `read_web_page` and `Grounding.browser` from `agents/forum/grounding.py` and `wiring.py`; verify `test_debate_grounding.py` passes with those cases deleted
 - [x] 3.6 Delete `services/h5i_forum.py`, `tests/test_h5i_forum.py`, `tests/test_h5i_forum_live.py` and the fake h5i shim/fixtures; remove `ForumSettings.binary`, `box_profile`, `box_isolation`, `egress`, `vote_policy` and `settings.forums_dir` (deferred from 1.2); add `FakeForumClient` for orchestrator/API tests; verify `uv run --extra dev pytest -m "not live and not hpc and not sandbox"` is green and `grep -rni h5i backend/src` finds only intentional mentions (none expected)
 
+- [ ] 3.7 Found during 5.2: `DbOutbox` writes through its own connection, so a caller holding an uncommitted write on the app DB blocks it until SQLite's 30 s busy timeout (`database is locked`). `simulation.post_result` does exactly this (`update_step` flushes, then `post_as`), so a finished simulation's result would fail to post. Fix approach to be decided; verify with a test that posts through `DbOutbox` from inside an open write transaction
+
 ## 4. Roster without boxes or stints (D6)
 
 - [x] 4.1 Remove `box_slug`, `box_id`, `policy_digest` from `DebateParticipantBase` and `box_id`, `policy_digest` from `DebatePostBase`; add a drop step for them to `scripts/migrate_columns.py` (idempotent, `--dry-run`); verify on a copy of a branch-era DB that inserts work after the script and a second run is a no-op
@@ -48,9 +50,9 @@ grounding tests use `tests/harness/fake_forum.py`.
 
 ## 5. UI
 
-- [ ] 5.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` before editing (AGENTS.md rule), then update `ui/lib/debates.ts` types: drop `box_id`, `policy_digest`, enrollment types and `votes_counting`; add `published`, `on_remote`, `thread_missing`, `git_ok`, `git_reason`; verify `npm run lint` and `npx tsc --noEmit`
-- [ ] 5.2 Update `ui/components/DebateThread.tsx` and `ui/app/hypothesis-lab/page.tsx`: remove box/policy chips and the "votes are being discarded" banner, show "not yet published" on unpublished posts, the "no longer on the forum" state with post/continue disabled, and the lab-off message with `git_reason` (e.g. "Git is not installed.") when `git_ok` is false; verify in the browser against a running backend (Playwright screenshot of each state)
-- [ ] 5.3 Update `ui/app/api/forum/status/route.ts` for the new `ForumStatus` and remove now-unused styles from `ui/app/globals.css`; verify `npm run lint` and the page still renders with a project that has no forum URL
+- [x] 5.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` before editing (AGENTS.md rule), then update `ui/lib/debates.ts` types: drop `box_id`, `policy_digest`, enrollment types and `votes_counting`; add `published`, `on_remote`, `thread_missing`, `git_ok`, `git_reason`; verify `npm run lint` and `npx tsc --noEmit`
+- [x] 5.2 Update `ui/components/DebateThread.tsx` and `ui/app/hypothesis-lab/page.tsx`: remove box/policy chips and the "votes are being discarded" banner, show "not yet published" on unpublished posts, the "no longer on the forum" state with post/continue disabled, and the lab-off message with `git_reason` (e.g. "Git is not installed.") when `git_ok` is false; verify in the browser against a running backend (Playwright screenshot of each state)
+- [x] 5.3 Update `ui/app/api/forum/status/route.ts` for the new `ForumStatus` and remove now-unused styles from `ui/app/globals.css`; verify `npm run lint` and the page still renders with a project that has no forum URL
 
 ## 6. Docs
 

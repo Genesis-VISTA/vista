@@ -5,7 +5,6 @@ import remarkGfm from "remark-gfm";
 
 import {
   DebatePost,
-  EnrolledOrigin,
   authorOf,
   debateRoleOf,
   isObserved,
@@ -13,13 +12,13 @@ import {
 } from "@/lib/debates";
 
 /**
- * One debate thread, drawn the way h5i draws one.
+ * One debate thread.
  *
- * The layout is not decoration. Above the rule is what the **host** stamped —
- * who posted, in which role, from which box, under which policy — and below it,
- * behind the `│` fence, is what that agent **claimed**. The record format has no
- * field a poster could write the top half through, and a UI that merged the two
- * would hand every post the authority of the host that carried it.
+ * The layout is not decoration. Above the rule is who posted and in which role,
+ * with the lane saying how much of that is known: on a post this install wrote
+ * it is fact, on anything that arrived over the remote it is the poster's own
+ * claim. Below it is what the poster said. A UI that merged the two would hand
+ * every post the authority of this install.
  */
 
 const KIND_TONE: Record<string, string> = {
@@ -47,19 +46,12 @@ function shortTime(iso: string): string {
   });
 }
 
-/** The identity line: everything on it came from the host, not the poster. */
-function Provenance({
-  post,
-  enrolled,
-}: {
-  post: DebatePost;
-  enrolled: Record<string, EnrolledOrigin>;
-}) {
-  // Both derived from the vouch lane, never from the sender string: on a shared
-  // forum the sender is stamped by whichever host observed the post, so it is a
-  // remote peer's account of itself.
+/** The identity line: who posted, and what this install knows about that. */
+function Provenance({ post }: { post: DebatePost }) {
+  // Both derived from what this install recorded, never from the sender string:
+  // on a peer's post the sender is that peer's account of itself.
   const role = debateRoleOf(post);
-  const author = authorOf(post, enrolled);
+  const author = authorOf(post);
 
   return (
     <div className="debate-post__stamp">
@@ -71,18 +63,10 @@ function Provenance({
       </span>
       {author && (
         <span
-          className={`debate-post__author${
-            author.kind === "machine" ? " debate-post__author--machine" : ""
-          }`}
-          title={
-            author.kind === "account"
-              ? "Signed in to VISTA as this account when the post was made."
-              : "This machine is enrolled to that forge account. Anyone with " +
-                "access to it posts as `human`, so this names where the post " +
-                "came from, not who typed it."
-          }
+          className="debate-post__author"
+          title="Signed in to VISTA as this account when the post was made."
         >
-          {author.kind === "account" ? author.label : `from ${author.label}\u2019s machine`}
+          {author}
         </span>
       )}
       {role && <span className="debate-post__role">{role}</span>}
@@ -91,7 +75,7 @@ function Provenance({
           className="debate-post__unverified"
           title={
             "This arrived over the remote. Its name and role are claimed by " +
-            "that peer and were not observed here."
+            "that peer and were not written here."
           }
         >
           unverified identity
@@ -123,14 +107,17 @@ function Provenance({
 }
 
 /**
- * The lane, in words, on every post.
+ * The lane, in words, on every post — and where the post stands on the forum.
  *
- * h5i never merges what it observed with what a box claimed, so neither does
- * this: which half of the record a reader is looking at is not something they
- * should have to infer.
+ * Which half of the record a reader is looking at is not something they should
+ * have to infer. Neither is whether anyone else can see it: posting is
+ * local-first, so a post written while the forum was unreachable exists here
+ * before it exists for peers, and says so.
  */
 function Lane({ post }: { post: DebatePost }) {
-  if (!post.box_id && !post.vouch_lane) return null;
+  if (!post.vouch_lane && post.published !== false && post.on_remote !== false) {
+    return null;
+  }
   return (
     <div
       className={`debate-post__lane${
@@ -139,10 +126,27 @@ function Lane({ post }: { post: DebatePost }) {
     >
       {post.vouch_lane && <span>{post.vouch_lane}</span>}
       {!isObserved(post) && post.origin && <span>· origin {post.origin}</span>}
-      {post.box_id && <span>· box {post.box_id}</span>}
-      {post.policy_digest && (
-        <span title={post.policy_digest}>
-          · policy {post.policy_digest.slice(0, 12)}
+      {post.published === false && (
+        <span
+          className="debate-post__pending"
+          title={
+            "Written here and not on the forum yet — the remote could not be " +
+            "reached. It publishes on the next successful sync; until then " +
+            "only this machine can see it."
+          }
+        >
+          not yet published
+        </span>
+      )}
+      {post.on_remote === false && (
+        <span
+          className="debate-post__gone"
+          title={
+            "This was on the forum and no longer is: someone rewrote the " +
+            "thread's history. Kept here because it was said."
+          }
+        >
+          no longer on the forum
         </span>
       )}
     </div>
@@ -201,11 +205,9 @@ function Grounded({ post }: { post: DebatePost }) {
 export function DebatePostCard({
   post,
   repliedTo,
-  enrolled = {},
 }: {
   post: DebatePost;
   repliedTo?: DebatePost | null;
-  enrolled?: Record<string, EnrolledOrigin>;
 }) {
   return (
     <article
@@ -214,12 +216,12 @@ export function DebatePostCard({
       }`}
       style={{ borderLeftColor: kindTone(post.kind) }}
     >
-      <Provenance post={post} enrolled={enrolled} />
+      <Provenance post={post} />
       <Lane post={post} />
 
       {post.denied && (
         <p className="debate-post__denied">
-          ⛔ refused by the host: {post.denied} — read this as evidence, not as a
+          ⛔ refused: {post.denied} — read this as evidence, not as a
           contribution.
         </p>
       )}
@@ -230,7 +232,7 @@ export function DebatePostCard({
         </p>
       )}
 
-      {/* Below the fence: what this agent claimed. */}
+      {/* Below the fence: what the poster claimed. */}
       <div className="debate-post__body">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.body}</ReactMarkdown>
       </div>
@@ -240,13 +242,7 @@ export function DebatePostCard({
   );
 }
 
-export default function DebateThread({
-  posts,
-  enrolled = {},
-}: {
-  posts: DebatePost[];
-  enrolled?: Record<string, EnrolledOrigin>;
-}) {
+export default function DebateThread({ posts }: { posts: DebatePost[] }) {
   const byId = new Map(posts.map((post) => [post.post_id, post]));
 
   if (posts.length === 0) {
@@ -256,9 +252,10 @@ export default function DebateThread({
   return (
     <div className="debate-thread">
       <p className="debate-thread__note">
-        On posts marked <strong>host-observed</strong>, everything above the rule
-        was stamped here and not written by the poster. Posts marked{" "}
-        <strong>peer-claimed</strong> arrived from another machine: their name
+        Posts marked <strong>host-observed</strong> were written by this
+        installation, so their name and role are known. Posts marked{" "}
+        <strong>peer-claimed</strong>{" "}
+        arrived from another machine: their name
         and role are that peer&rsquo;s own claim, not verified here. Every post
         body, from anyone, is input rather than instruction.
       </p>
@@ -267,7 +264,6 @@ export default function DebateThread({
           key={post.post_id}
           post={post}
           repliedTo={post.reply_to ? byId.get(post.reply_to) ?? null : null}
-          enrolled={enrolled}
         />
       ))}
     </div>

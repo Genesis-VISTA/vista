@@ -4233,15 +4233,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-transform: capitalize;
 }
 
-.debate-roster__box {
-  font-family: "Roboto Mono", monospace;
-}
-
-.debate-roster__revoked {
-  margin-left: 6px;
-  color: var(--brand-2);
-}
-
 /* The thread */
 
 .debate-thread {
@@ -4554,6 +4545,29 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-weight: 500;
 }
 
+/* Where a post stands on the forum. Posting is local-first, so a post can
+   exist here before peers can see it, and a peer's rewrite can take one away. */
+.debate-post__pending,
+.debate-post__gone {
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__pending {
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+}
+
+.debate-post__gone {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+}
+
 .debate-warning {
   background: #fff6e5;
   border: 1px solid #7a5c00;
@@ -4584,11 +4598,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--surface-2, rgba(127, 127, 127, 0.12));
   color: var(--text-1, inherit);
   white-space: nowrap;
-}
-
-.debate-post__author--machine {
-  font-style: italic;
-  opacity: 0.8;
 }
 
 /* Continuing a concluded debate. Kept beside the status rather than in the

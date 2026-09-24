@@ -5,12 +5,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * A project's forum state, for the UI to warn about.
+ * A project's forum state, for the UI to warn about: whether the lab is on,
+ * whether this machine has a usable git (`git_ok`, `git_reason`), whether the
+ * forum is shared, and how many of our posts are still waiting to publish.
  *
  * Project-scoped, because the repository is: a forum is a room, and who may
  * post to it is who has push access to that repository — a different set of
  * people for every line of work. A project with no repository has no Hypothesis
- * Lab, and this is where the page finds that out.
+ * Lab, and this is where the page finds that out. Passed through unchanged; the
+ * shape is `ForumStatus` in `lib/debates.ts`.
  */
 export async function GET(request: Request) {
   const projectName = new URL(request.url).searchParams.get("project_name");
