@@ -153,6 +153,8 @@ export function NavRail() {
   const activeProject = useActiveProject();
   const { user, loading: userLoading } = useCurrentUser();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Set when settings were opened from a cluster's card, to expand only that section. */
+  const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const collapsed = useSyncExternalStore(
     railSubscribe,
@@ -267,8 +269,9 @@ export function NavRail() {
     ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
     : [];
 
-  function openSettingsFor(_cluster: HpcCluster) {
+  function openSettingsFor(cluster: HpcCluster) {
     setTip(null);
+    setSettingsCluster(cluster);
     setSettingsOpen(true);
   }
 
@@ -373,7 +376,10 @@ export function NavRail() {
       <button
         type="button"
         className="nav-rail-settings"
-        onClick={() => setSettingsOpen(true)}
+        onClick={() => {
+          setSettingsCluster(undefined);
+          setSettingsOpen(true);
+        }}
         disabled={!user}
         aria-label="Open settings"
         {...tipProps(settingsHint)}
@@ -395,7 +401,12 @@ export function NavRail() {
         </div>
       )}
 
-      {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <UserSettingsModal
+          initialCluster={settingsCluster}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </aside>
   );
 }

@@ -76,6 +76,8 @@ export type UserSelfUpdate = {
   odo_s3m_token?: string | null;
   frontier_s3m_token?: string | null;
   nersc_iri_token?: string | null;
+  /** Clusters to leave out of the NavRail. `[]` shows them all. */
+  hpc_hidden_clusters?: string[] | null;
 };
 
 let userCache: UserPublic | null = null;
@@ -206,7 +208,14 @@ export async function updateCurrentUser(
   });
   if (!res.ok) throw new Error(await extractError(res));
   const updated = (await res.json()) as UserPublicWithConfig;
-  userCache = { id: updated.id, email: updated.email, is_admin: updated.is_admin };
+  userCache = {
+    id: updated.id,
+    email: updated.email,
+    is_admin: updated.is_admin,
+    // The rail reads this from the light view; leaving it out would show a
+    // cluster the researcher had just hidden until the next page load.
+    hpc_hidden_clusters: updated.hpc_hidden_clusters ?? [],
+  };
   userLoaded = true;
   userError = null;
   notifyUser();

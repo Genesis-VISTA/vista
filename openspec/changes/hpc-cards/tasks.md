@@ -33,10 +33,10 @@
 
 ## 5. UI: settings modal rework
 
-- [ ] 5.1 Restructure `UserSettingsModal.tsx` into identity and model settings at the top, then one collapsible section per cluster. Each section has its status in the header, a "Show in sidebar" switch, and that cluster's credentials: the S3M token and Globus Connect for Odo/Frontier; account, remote dir, and IRI token for Perlmutter. Verify with `ui/tests/UserSettingsModal.test.tsx`: all sections collapsed by default, and each field in its cluster's section
-- [ ] 5.2 Add the `initialCluster` prop and wire the popover's Settings link through `NavRail`. Verify in `ui/e2e-hermetic/shell.spec.ts` that the Frontier card → Settings opens with only Frontier expanded
-- [ ] 5.3 Recheck the cluster after its credentials are saved or Globus Connect completes. Verify in `ui/tests/UserSettingsModal.test.tsx` that `recheck("odo")` is called once after saving an Odo token
-- [ ] 5.4 Verify in `ui/e2e-hermetic/shell.spec.ts` that hiding Perlmutter removes its card across a reload and leaves its token untouched
+- [x] 5.1 Restructure `UserSettingsModal.tsx` into identity and model settings at the top, then one collapsible section per cluster. Each section has its status in the header, a "Show in sidebar" switch, and that cluster's credentials: the S3M token and Globus Connect for Odo/Frontier; account, remote dir, and IRI token for Perlmutter. Verify with `ui/tests/UserSettingsModal.test.tsx`: all sections collapsed by default, and each field in its cluster's section
+- [x] 5.2 Add the `initialCluster` prop and wire the popover's Settings link through `NavRail`. Verify in `ui/e2e-hermetic/shell.spec.ts` that the Frontier card → Settings opens with only Frontier expanded
+- [x] 5.3 Recheck the cluster after its credentials are saved or Globus Connect completes. Verify in `ui/tests/UserSettingsModal.test.tsx` that `recheck("odo")` is called once after saving an Odo token
+- [x] 5.4 Verify in `ui/e2e-hermetic/shell.spec.ts` that hiding Perlmutter removes its card across a reload and leaves its token untouched
 
 ## 6. Integration and visual check
 

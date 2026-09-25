@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   completeGlobusLogin,
   fetchCurrentUserWithConfig,
@@ -11,6 +11,15 @@ import {
   type UserSelfUpdate,
 } from "@/lib/user";
 import { displayModelName, qualifyModelInput } from "@/lib/models";
+import {
+  HPC_CLUSTERS,
+  HPC_CLUSTER_TITLES,
+  recheckHpcStatus,
+  refreshHpcStatus,
+  useHpcStatus,
+  type HpcCluster,
+} from "@/lib/hpc-status";
+import { HpcStatusDot, STATE_LABELS } from "./HpcStatusSection";
 
 /**
  * Modal for editing the authenticated user's per-user config. Fetches the
@@ -18,8 +27,19 @@ import { displayModelName, qualifyModelInput } from "@/lib/models";
  * nav-rail's cached user is the light view, which intentionally omits
  * secrets — and writes back through `PUT /users/me`, which returns the
  * updated record so we don't need a follow-up GET.
+ *
+ * Account and model settings sit at the top; below them each HPC cluster has
+ * its own collapsible section holding everything about it. Opened from a
+ * cluster's card in the rail (`initialCluster`), only that cluster's section
+ * starts expanded.
  */
-export function UserSettingsModal({ onClose }: { onClose: () => void }) {
+export function UserSettingsModal({
+  onClose,
+  initialCluster,
+}: {
+  onClose: () => void;
+  initialCluster?: HpcCluster;
+}) {
   const [user, setUser] = useState<UserPublicWithConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -83,19 +103,35 @@ export function UserSettingsModal({ onClose }: { onClose: () => void }) {
           {/* Key on user.id so the form's local draft state is rebuilt cleanly
               if the underlying user identity ever changes (e.g. after the
               cache is wiped and a different SSO user signs in). */}
-          {user && <UserSettingsForm key={user.id} user={user} onClose={onClose} />}
+          {user && (
+            <UserSettingsForm
+              key={user.id}
+              user={user}
+              onClose={onClose}
+              initialCluster={initialCluster}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+/** The fields each cluster's checks read, so a save rechecks only what changed. */
+const CREDENTIAL_FIELDS: Record<HpcCluster, Array<keyof UserSelfUpdate>> = {
+  odo: ["odo_s3m_token"],
+  frontier: ["frontier_s3m_token"],
+  perlmutter: ["nersc_iri_token"],
+};
+
 function UserSettingsForm({
   user,
   onClose,
+  initialCluster,
 }: {
   user: UserPublicWithConfig;
   onClose: () => void;
+  initialCluster?: HpcCluster;
 }) {
   const [inferenceApiKey, setInferenceApiKey] = useState(user.inference_api_key ?? "");
   const [inferenceModel, setInferenceModel] = useState(
@@ -111,8 +147,31 @@ function UserSettingsForm({
     user.frontier_s3m_token ?? "",
   );
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
+  const initiallyHidden = user.hpc_hidden_clusters ?? [];
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set(initiallyHidden));
+  const [expanded, setExpanded] = useState<Set<HpcCluster>>(
+    () => new Set(initialCluster ? [initialCluster] : []),
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  function toggleExpanded(cluster: HpcCluster) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(cluster)) next.delete(cluster);
+      else next.add(cluster);
+      return next;
+    });
+  }
+
+  function setShown(cluster: HpcCluster, shown: boolean) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (shown) next.delete(cluster);
+      else next.add(cluster);
+      return next;
+    });
+  }
 
   async function save() {
     // Build a minimal diff against the loaded user so we only send fields
@@ -152,6 +211,12 @@ function UserSettingsForm({
         (diff as Record<string, string | null>)[key] = next;
       }
     }
+    // In rail order, so the stored list does not churn with click order.
+    const nextHidden = HPC_CLUSTERS.filter((c) => hidden.has(c));
+    const hiddenChanged =
+      nextHidden.join() !== HPC_CLUSTERS.filter((c) => initiallyHidden.includes(c)).join();
+    if (hiddenChanged) diff.hpc_hidden_clusters = nextHidden;
+
     if (Object.keys(diff).length === 0) {
       onClose();
       return;
@@ -160,6 +225,14 @@ function UserSettingsForm({
     setSaveError(null);
     try {
       await updateCurrentUser(diff);
+      // Fix a credential and see it straight away: recheck just the clusters
+      // whose credentials changed rather than wait for the next poll.
+      const changed = HPC_CLUSTERS.filter(
+        (c) => !hidden.has(c) && CREDENTIAL_FIELDS[c].some((field) => field in diff),
+      );
+      if (changed.length === 1) void recheckHpcStatus(changed[0]);
+      else if (changed.length > 1) void recheckHpcStatus();
+      else if (hiddenChanged) void refreshHpcStatus();
       onClose();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save settings.");
@@ -233,107 +306,99 @@ function UserSettingsForm({
         </span>
       </label>
 
-      <label className="project-modal-label">
-        Odo S3M token
-        <input
-          className="input"
-          type="password"
-          value={odoS3mToken}
-          onChange={(e) => setOdoS3mToken(e.target.value)}
-          placeholder="Bearer token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Minted in Odo&apos;s OLCF project. Stored encrypted at rest.{" "}
-          <a
-            href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
-            target="_blank"
-            rel="noopener noreferrer"
+      <div className="user-settings-section-label">Clusters</div>
+      <div className="user-settings-clusters">
+        {HPC_CLUSTERS.map((cluster) => (
+          <ClusterSection
+            key={cluster}
+            cluster={cluster}
+            expanded={expanded.has(cluster)}
+            onToggle={() => toggleExpanded(cluster)}
+            shown={!hidden.has(cluster)}
+            onShownChange={(shown) => setShown(cluster, shown)}
           >
-            Get a token
-          </a>
-          .
-        </span>
-      </label>
+            {cluster === "odo" && (
+              <>
+                <S3mTokenField
+                  label="Odo S3M token"
+                  value={odoS3mToken}
+                  onChange={setOdoS3mToken}
+                  hint="Minted in Odo's OLCF project."
+                />
+                <GlobusConnect
+                  cluster="odo"
+                  label="Odo"
+                  initiallyConnected={globusConnected(user, "odo")}
+                  onConnected={() => void recheckHpcStatus("odo")}
+                />
+              </>
+            )}
+            {cluster === "frontier" && (
+              <>
+                <S3mTokenField
+                  label="Frontier S3M token"
+                  value={frontierS3mToken}
+                  onChange={setFrontierS3mToken}
+                  hint="Minted in Frontier's OLCF project, a different project from Odo's, so it needs its own token."
+                />
+                <GlobusConnect
+                  cluster="frontier"
+                  label="Frontier"
+                  initiallyConnected={globusConnected(user, "frontier")}
+                  onConnected={() => void recheckHpcStatus("frontier")}
+                />
+              </>
+            )}
+            {cluster === "perlmutter" && (
+              <>
+                <label className="project-modal-label">
+                  NERSC account
+                  <input
+                    className="input"
+                    value={nerscAccount}
+                    onChange={(e) => setNerscAccount(e.target.value)}
+                    placeholder="e.g. m1234"
+                    spellCheck={false}
+                  />
+                  <span className="user-settings-hint">
+                    NERSC project account for Slurm submission.
+                  </span>
+                </label>
 
-      <label className="project-modal-label">
-        Frontier S3M token
-        <input
-          className="input"
-          type="password"
-          value={frontierS3mToken}
-          onChange={(e) => setFrontierS3mToken(e.target.value)}
-          placeholder="Bearer token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Minted in Frontier&apos;s OLCF project, which is a different project
-          from Odo&apos;s, so it needs its own token. Stored encrypted at rest.
-        </span>
-      </label>
+                <label className="project-modal-label">
+                  NERSC remote directory
+                  <input
+                    className="input"
+                    value={nerscRemoteDir}
+                    onChange={(e) => setNerscRemoteDir(e.target.value)}
+                    placeholder="/pscratch/sd/<u>/<user>/.vista"
+                    spellCheck={false}
+                  />
+                  <span className="user-settings-hint">
+                    Absolute remote dir on the NERSC machine. Required for Perlmutter.
+                  </span>
+                </label>
 
-      <div className="user-settings-section-label">File transfer</div>
-      <div className="user-settings-hint" style={{ marginTop: -4 }}>
-        Odo and Frontier move files through Globus, which needs your permission
-        once per cluster. Connecting opens a Globus login and gives you a code
-        to paste back here.
+                <label className="project-modal-label">
+                  NERSC IRI token
+                  <input
+                    className="input"
+                    type="password"
+                    value={nerscIriToken}
+                    onChange={(e) => setNerscIriToken(e.target.value)}
+                    placeholder="Globus access token"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <span className="user-settings-hint">
+                    Globus access token for NERSC IRI. Stored encrypted at rest.
+                  </span>
+                </label>
+              </>
+            )}
+          </ClusterSection>
+        ))}
       </div>
-      <GlobusConnect
-        cluster="odo"
-        label="Odo"
-        initiallyConnected={globusConnected(user, "odo")}
-      />
-      <GlobusConnect
-        cluster="frontier"
-        label="Frontier"
-        initiallyConnected={globusConnected(user, "frontier")}
-      />
-
-      <label className="project-modal-label">
-        NERSC account
-        <input
-          className="input"
-          value={nerscAccount}
-          onChange={(e) => setNerscAccount(e.target.value)}
-          placeholder="e.g. m1234"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          NERSC project account for Slurm submission.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        NERSC remote directory
-        <input
-          className="input"
-          value={nerscRemoteDir}
-          onChange={(e) => setNerscRemoteDir(e.target.value)}
-          placeholder="/pscratch/sd/<u>/<user>/.vista"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Absolute remote dir on the NERSC machine. Required for Perlmutter.
-        </span>
-      </label>
-
-      <label className="project-modal-label">
-        NERSC IRI token
-        <input
-          className="input"
-          type="password"
-          value={nerscIriToken}
-          onChange={(e) => setNerscIriToken(e.target.value)}
-          placeholder="Globus access token"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span className="user-settings-hint">
-          Globus access token for NERSC IRI. Expires ~48h; stored encrypted at rest.
-        </span>
-      </label>
 
       {saveError && (
         <div className="error" style={{ fontSize: 12 }}>
@@ -367,6 +432,127 @@ function UserSettingsForm({
         </button>
       </div>
     </>
+  );
+}
+
+function S3mTokenField({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  hint: string;
+}) {
+  return (
+    <label className="project-modal-label">
+      {label}
+      <input
+        className="input"
+        type="password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Bearer token"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <span className="user-settings-hint">
+        {hint} Stored encrypted at rest.{" "}
+        <a
+          href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Get a token
+        </a>
+        .
+      </span>
+    </label>
+  );
+}
+
+/**
+ * One cluster's collapsible section. The header carries the same dot and
+ * status word as the rail's card, read from the same store, so fixing a
+ * credential here shows its effect without leaving the modal.
+ */
+function ClusterSection({
+  cluster,
+  expanded,
+  onToggle,
+  shown,
+  onShownChange,
+  children,
+}: {
+  cluster: HpcCluster;
+  expanded: boolean;
+  onToggle: () => void;
+  shown: boolean;
+  onShownChange: (shown: boolean) => void;
+  children: ReactNode;
+}) {
+  const view = useHpcStatus();
+  const bodyId = useId();
+  const title = HPC_CLUSTER_TITLES[cluster];
+  const entry = view.clusters?.find((c) => c.cluster === cluster);
+  // A cluster hidden when the status was fetched has no entry: the backend
+  // does not check hidden clusters at all.
+  const state = entry ? entry.state : view.clusters === null && !view.unavailable ? "checking" : null;
+
+  return (
+    <section className={`user-settings-cluster${expanded ? " expanded" : ""}`} aria-label={title}>
+      <h3 className="user-settings-cluster-heading">
+        <button
+          type="button"
+          className="user-settings-cluster-head"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          // Spelled out: the visible parts would otherwise run together as
+          // one word, "FrontierReady", for a screen reader.
+          aria-label={[title, shown ? null : "hidden from sidebar", state ? STATE_LABELS[state] : null]
+            .filter(Boolean)
+            .join(", ")}
+          onClick={onToggle}
+        >
+          <svg className="user-settings-cluster-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <polyline points="9,6 15,12 9,18" />
+          </svg>
+          <span className="user-settings-cluster-name">{title}</span>
+          {!shown && <span className="user-settings-cluster-tag">Hidden from sidebar</span>}
+          {state && (
+            <span className="user-settings-cluster-status">
+              <HpcStatusDot state={state} />
+              {STATE_LABELS[state]}
+            </span>
+          )}
+        </button>
+      </h3>
+      {expanded && (
+        <div id={bodyId} className="user-settings-cluster-body">
+          <div className="user-settings-switch-row">
+            <span className="user-settings-switch-text">
+              <span className="user-settings-switch-label">Show in sidebar</span>
+              <span className="user-settings-hint">
+                Hiding it also stops VISTA checking {title}. Its credentials are kept.
+              </span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={shown}
+              aria-label={`Show ${title} in sidebar`}
+              className="user-settings-switch"
+              onClick={() => onShownChange(!shown)}
+            >
+              <span className="user-settings-switch-thumb" aria-hidden="true" />
+            </button>
+          </div>
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -410,10 +596,13 @@ function GlobusConnect({
   cluster,
   label,
   initiallyConnected,
+  onConnected,
 }: {
   cluster: GlobusCluster;
   label: string;
   initiallyConnected: boolean;
+  /** After a connection completes, e.g. to recheck the cluster's card. */
+  onConnected?: () => void;
 }) {
   const [connected, setConnected] = useState(initiallyConnected);
   const [identity, setIdentity] = useState<string | null>(null);
@@ -478,6 +667,7 @@ function GlobusConnect({
       setConnected(true);
       setIdentity(result.identity);
       forget();
+      onConnected?.();
     } catch (e) {
       // The address stays on screen. A rejected code is usually a mistyped or
       // half-copied one, and making the researcher start the login again to
