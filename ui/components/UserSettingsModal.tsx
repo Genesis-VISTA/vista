@@ -19,7 +19,7 @@ import {
   useHpcStatus,
   type HpcCluster,
 } from "@/lib/hpc-status";
-import { HpcStatusDot, STATE_LABELS } from "./HpcStatusSection";
+import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
 /**
  * Modal for editing the authenticated user's per-user config. Fetches the
@@ -522,7 +522,9 @@ function ClusterSection({
           <span className="user-settings-cluster-name">{title}</span>
           {!shown && <span className="user-settings-cluster-tag">Hidden from sidebar</span>}
           {state && (
-            <span className="user-settings-cluster-status">
+            <span
+              className={`user-settings-cluster-status${WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}
+            >
               <HpcStatusDot state={state} />
               {STATE_LABELS[state]}
             </span>

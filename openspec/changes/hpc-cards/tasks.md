@@ -40,8 +40,8 @@
 
 ## 6. Integration and visual check
 
-- [ ] 6.1 Run `./scripts/ci-local.sh lint` and `./scripts/ci-local.sh test`, and verify all targets (backend, ui, mcp) are green
-- [ ] 6.2 With `./launch.sh logs`, take Playwright screenshots of the expanded rail, the collapsed rail, an open popover, and the settings modal deep-linked to one cluster. Compare them against the HPC Availability Cards canvas, and verify the tokens and focus rings
+- [x] 6.1 Run `./scripts/ci-local.sh lint` and `./scripts/ci-local.sh test`, and verify all targets (backend, ui, mcp) are green
+- [x] 6.2 With `./launch.sh logs`, take Playwright screenshots of the expanded rail, the collapsed rail, an open popover, and the settings modal deep-linked to one cluster. Compare them against the HPC Availability Cards canvas, and verify the tokens and focus rings
 
 ## 7. Live verification (manual; `live` marker, excluded from PR CI)
 

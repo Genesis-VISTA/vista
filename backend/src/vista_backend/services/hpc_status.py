@@ -415,15 +415,15 @@ class HpcStatusService:
             ),
         )
         resources.raise_for_status()
-        if incidents.status_code == 404:
-            feed = (resources.json(), [])
-        else:
+        rows: Any = resources.json()
+        active: Any = []
+        if incidents.status_code != 404:
             incidents.raise_for_status()
-            feed = (resources.json(), incidents.json())
-        if not (isinstance(feed[0], list) and isinstance(feed[1], list)):
+            active = incidents.json()
+        if not (isinstance(rows, list) and isinstance(active, list)):
             raise ValueError("status feed is not a list")
-        self._facility_feeds[base] = (self._monotonic(), *feed)
-        return feed
+        self._facility_feeds[base] = (self._monotonic(), rows, active)
+        return rows, active
 
     def _match_resource(self, cluster: HpcCluster, rows: list[dict]) -> dict | None:
         for row in rows:

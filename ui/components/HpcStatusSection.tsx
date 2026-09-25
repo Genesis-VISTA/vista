@@ -32,7 +32,8 @@ export const STATE_LABELS: Record<HpcDisplayState, string> = {
   globus_session_expired: "Globus session expired",
 };
 
-const WORD_TONE: Partial<Record<HpcDisplayState, "warn" | "urgent">> = {
+/** Status words the researcher must act on are colored; the rest stay muted. */
+export const WORD_TONE: Partial<Record<HpcDisplayState, "warn" | "urgent">> = {
   degraded: "warn",
   rejected: "urgent",
   wrong_project: "urgent",
