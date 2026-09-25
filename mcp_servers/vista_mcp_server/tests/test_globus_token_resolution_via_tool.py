@@ -38,7 +38,7 @@ def _odo_environment(monkeypatch):
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
 
-    async def _noop_access(cfg, cluster):
+    async def _noop_access(cfg, cluster, account=None):
         return None
 
     async def _odo_iri(*, iri_token: str):

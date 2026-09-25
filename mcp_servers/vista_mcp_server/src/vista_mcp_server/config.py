@@ -163,13 +163,13 @@ class AppSettings(BaseSettings):
     not public yet, hence the hub hop; each hop asks the researcher for their own
     PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
     """
-    lux_account: str = "csc708"
+    lux_account: str = "stf218"
     """ OLCF project name used as the Slurm account for Lux jobs. """
-    lux_remote_dir: str = "/lustre/orion/csc708/proj-shared/vista"
+    lux_remote_dir: str = "/lustre/orion/stf218/proj-shared/vista"
     """
     Base dir on Lux (Orion Lustre, also mounted on Frontier) where job sources
     and outputs live. Jobs run as the researcher, so it only needs to be writable
-    by csc708 members.
+    by `lux_account` members.
     """
     lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
     """

@@ -70,7 +70,7 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     async def _nersc(*, iri_token: str):
         return iri
 
-    async def _noop_access(cfg, cluster):
+    async def _noop_access(cfg, cluster, account=None):
         return None
 
     monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo)

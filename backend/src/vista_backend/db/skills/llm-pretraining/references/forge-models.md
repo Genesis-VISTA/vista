@@ -14,7 +14,8 @@ Approximate parameter counts (12·L·h², excluding embeddings): forge-s ≈ 1.2
 forge-m ≈ 13B, forge-l ≈ 22B.
 
 forge-l is the config tuned for Lux: its upstream settings are `train-iters` 50
-and `log-interval` 1. forge-s and forge-m have `train-iters` 15300 upstream. Here
+and `log-interval` 1. It is the default on Lux. On Frontier, whose GPUs have less
+memory, the default is forge-s. forge-s and forge-m have `train-iters` 15300 upstream. Here
 every model trains `TRAIN_ITERS` (default 50) iterations.
 
 ## Global batch and data parallelism

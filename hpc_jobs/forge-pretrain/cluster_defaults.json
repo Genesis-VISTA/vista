@@ -3,6 +3,8 @@
     "duration": 1800,
     "resources": {
       "node_count": 16,
+      "processes_per_node": 8,
+      "gpus_per_node": 8,
       "exclusive_node_use": true
     },
     "iri": {
@@ -10,7 +12,24 @@
         "FORGE_REPO_URL": "https://github.com/at-aaims/forge.git",
         "FORGE_BRANCH": "lux",
         "FORGE_DATA_DIR": "/lustre/orion/world-shared/stf218/junqi/data/forge",
+        "FORGE_DEFAULT_MODEL": "forge-l",
         "LUX_ENV_SCRIPT": "/lustre/orion/world-shared/stf218/junqi/lux/lux_env.sh"
+      }
+    }
+  },
+  "frontier": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 16,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "FORGE_REPO_URL": "https://github.com/at-aaims/forge.git",
+        "FORGE_BRANCH": "lux",
+        "FORGE_DATA_DIR": "/lustre/orion/world-shared/stf218/junqi/data/forge",
+        "FORGE_DEFAULT_MODEL": "forge-s"
       }
     }
   }

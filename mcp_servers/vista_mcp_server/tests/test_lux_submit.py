@@ -19,7 +19,7 @@ from fakes import FakeSshConn
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
-BASE = "/lustre/orion/csc708/proj-shared/vista"
+BASE = "/lustre/orion/stf218/proj-shared/vista"
 
 
 def _write_job(root: Path, *, setup: str | None = "echo setup-ran\n") -> Path:
@@ -54,7 +54,7 @@ def lux(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", jobs_dir)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
     monkeypatch.setattr(settings, "lux_remote_dir", BASE)
-    monkeypatch.setattr(settings, "lux_account", "csc708")
+    monkeypatch.setattr(settings, "lux_account", "stf218")
     monkeypatch.setattr(settings, "lux_proxy", "http://proxy.ccs.ornl.gov:3128")
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(m, "_submitted_jobs", {})
@@ -92,7 +92,7 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
     assert header[:7] == [
         "#SBATCH -J vista-lux-demo",
-        "#SBATCH -A csc708",
+        "#SBATCH -A stf218",
         "#SBATCH -N 16",
         "#SBATCH -t 0:30:00",
         f"#SBATCH -o {session}/out/log-%j.out",
@@ -100,6 +100,8 @@ async def test_submit_renders_sbatch_header_and_env(lux):
         f"#SBATCH --chdir={session}",
     ]
     assert "#SBATCH --exclusive" in header
+    # Not requested by the demo job: no per-node tasks / GPUs directives.
+    assert not any("--ntasks-per-node" in line or "--gpus" in line for line in header)
     assert not any(
         line.startswith("#SBATCH -q") for line in header
     )  # no IRI default queue
@@ -311,3 +313,20 @@ async def test_render_batch_script_optional_directives():
     assert "--exclusive" not in script
     assert script.startswith("#!/bin/bash -l\n")
     assert script.endswith("echo hi\n")
+
+
+async def test_render_batch_script_tasks_and_gpus_per_node():
+    script = slurm_ssh.render_batch_script(
+        job_name="j",
+        account="a",
+        node_count=2,
+        duration_s=60,
+        stdout_path="o",
+        stderr_path="e",
+        workdir="w",
+        body="",
+        ntasks_per_node=8,
+        gpus_per_node=8,
+    )
+    assert "#SBATCH --ntasks-per-node=8" in script
+    assert "#SBATCH --gpus-per-node=8" in script

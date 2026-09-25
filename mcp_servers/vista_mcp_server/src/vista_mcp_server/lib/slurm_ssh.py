@@ -88,6 +88,8 @@ def render_batch_script(
     queue: str | None = None,
     constraint: str | None = None,
     exclusive: bool = False,
+    ntasks_per_node: int | None = None,
+    gpus_per_node: int | None = None,
 ) -> str:
     """
     Build the batch script handed to `sbatch` on stdin.
@@ -113,6 +115,13 @@ def render_batch_script(
         directives.append(f"-C {constraint}")
     if exclusive:
         directives.append("--exclusive")
+    # Launchers that srun with --export=ALL (DeepSpeed's slurm runner) pass the
+    # batch env to every rank, so SLURM_NTASKS there must already be the full
+    # task count -- which only an allocation that states tasks per node sets.
+    if ntasks_per_node:
+        directives.append(f"--ntasks-per-node={ntasks_per_node}")
+    if gpus_per_node:
+        directives.append(f"--gpus-per-node={gpus_per_node}")
     header = "\n".join(f"#SBATCH {d}" for d in directives)
     return f"#!/bin/bash -l\n{header}\n\n{body}"
 

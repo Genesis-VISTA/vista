@@ -3,17 +3,22 @@
 Pre-train a FORGE scientific LLM (GPT-NeoX / DeepSpeed) from scratch on the FORGE
 tokenized scientific corpus. Code is the `lux` branch of
 https://github.com/at-aaims/forge, cloned and updated to the latest commit on
-every submission. Runs under the csc708 OLCF project.
+every submission.
 
-Supported clusters: Lux (OLCF, Slurm over SSH; the user is asked to log in through
-the hub once per session). Defaults: forge-l, 16 nodes x 8 GPUs, 30 minutes, 50
-training iterations, no checkpoint.
+Supported clusters:
+- Lux (OLCF, Slurm over SSH, project stf218; the user is asked to log in through
+  the hub once per session).
+- Frontier (OLCF, IRI + Globus, project chm243, the same setup as forge-tune).
+
+Defaults: forge-l on Lux and forge-s on Frontier (smaller GPU memory), 16 nodes x
+8 GPUs, 30 minutes, 50 training iterations, no checkpoint.
 
 ## Script args
 
 `script_args` is a space-separated list of `KEY=VALUE` pairs. All are optional:
 
-- `MODEL=forge-s|forge-m|forge-l`: model architecture (default `forge-l`).
+- `MODEL=forge-s|forge-m|forge-l`: model architecture (default `forge-l` on Lux,
+  `forge-s` on Frontier).
   forge-s: 24 layers, hidden 2064, model-parallel 1. forge-m: 40 layers, hidden
   5120, model-parallel 2. forge-l: 48 layers, hidden 6144, model-parallel 2.
 - `TRAIN_ITERS=<n>`: training iterations (default 50).

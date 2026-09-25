@@ -14,10 +14,23 @@ Usage:
 
 Everything the run writes goes under --out-dir, so concurrent runs from the one
 shared checkout never touch each other's hostfile, checkpoints, or logs.
+
+The output is plain JSON (under a .yml name, which NeoX requires). NeoX hands the
+raw text of every config file to the DeepSpeed launcher, and DeeperSpeed's Slurm
+launcher `json.loads` each one ("SLURM is picky and needs you to use plain json
+for your configs"). forge's own configs are written as JSON for that reason;
+YAML output fails there with `JSONDecodeError: Expecting value`.
+
+NeoX itself reads the file with PyYAML, so the text must also mean the same
+thing as YAML. JSON nearly is YAML, with one trap: PyYAML (YAML 1.1) reads a
+float with no dot in its mantissa, like Python's `1e-08`, as the STRING
+"1e-08". `dumps_json_yaml` therefore writes every float with a dot (`1.0e-08`),
+as forge's configs do.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -32,6 +45,41 @@ def load(path: str) -> dict:
     if not isinstance(data, dict):
         sys.exit(f"{path}: expected a mapping at the top level")
     return data
+
+
+def _float_text(x: float) -> str:
+    """A float both JSON and PyYAML read back as the same float: `1e-08` -> `1.0e-08`."""
+    if x != x or x in (float("inf"), float("-inf")):
+        raise ValueError(f"{x!r} has no JSON form")
+    text = repr(x)
+    mantissa, e, exponent = text.partition("e")
+    if e and "." not in mantissa:
+        text = f"{mantissa}.0e{exponent}"
+    return text
+
+
+def dumps_json_yaml(value, indent: int = 2, _level: int = 0) -> str:
+    """
+    Serialize to plain JSON that PyYAML also parses to the same value. Only
+    floats need care (see `_float_text`); everything else is `json.dumps`.
+    """
+    pad, inner = " " * (indent * _level), " " * (indent * (_level + 1))
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = [
+            f"{inner}{json.dumps(str(k))}: {dumps_json_yaml(v, indent, _level + 1)}"
+            for k, v in value.items()
+        ]
+        return "{\n" + ",\n".join(items) + f"\n{pad}}}"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "[]"
+        items = [f"{inner}{dumps_json_yaml(v, indent, _level + 1)}" for v in value]
+        return "[\n" + ",\n".join(items) + f"\n{pad}]"
+    if isinstance(value, float):
+        return _float_text(value)
+    return json.dumps(value)
 
 
 def _norm(key: str) -> str:
@@ -105,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out_yml)), exist_ok=True)
     with open(args.out_yml, "w", encoding="utf-8") as f:
-        yaml.safe_dump(merged, f, sort_keys=False, default_flow_style=False)
+        f.write(dumps_json_yaml(merged) + "\n")
     print(f"[make_config] wrote {args.out_yml}")
     for k in ("train-iters", "checkpoint-factor", "save", "load", "data-path"):
         print(f"[make_config]   {k}: {merged.get(k)}")
