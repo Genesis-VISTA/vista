@@ -18,6 +18,7 @@ from ..services.auth import get_user
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
+from .debate import router as debate_router
 from .chat_sessions import router as chat_sessions_router
 from .files import router as files_router
 from .knowledge_bases import router as knowledge_bases_router
@@ -32,6 +33,15 @@ from .users import router as users_router
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+
+    # The Hypothesis Lab's repository is a property of each project now, so
+    # there is nothing deployment-wide to reconcile at boot — a project's forum
+    # is initialised when its URL is saved, and repaired on first use. This only
+    # disowns the settings that used to select one, so a stale `.env` line
+    # cannot quietly keep working on the one machine that still has it.
+    from ..agents.forum.project_forum import check_legacy_forum_env
+
+    check_legacy_forum_env()
 
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
@@ -93,6 +103,7 @@ async def _missing_inference_credential(
 
 app.include_router(agent_router)
 app.include_router(campaign_router)
+app.include_router(debate_router)
 app.include_router(chat_sessions_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)

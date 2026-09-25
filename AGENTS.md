@@ -144,6 +144,35 @@ what keeps a hosted, multi-user deployment working for everyone who has not conn
 Each source counts only when it has both halves: one alone lists a directory it cannot read.
 Absent Globus is never fatal; it costs only Odo and Frontier's file operations, nothing else.
 
+## Hypothesis Lab forum
+
+The Hypothesis Lab's debates live in a plain git repository per project (the
+project's `forum_repo_url`); the forge is the only server. The client is
+[`services/forum_git.py`](backend/src/vista_backend/services/forum_git.py), the format
+is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
+[`docs/hypothesis-forum-hosting.md`](docs/hypothesis-forum-hosting.md).
+
+- **It needs system git ≥ 2.34** and `VISTA_BACKEND_FORUM__ENABLED=true`. Without
+  git the lab is off with the reason on the page; nothing else in VISTA depends on
+  it. `services/git_check.py` does the check without ever running macOS's
+  `/usr/bin/git` install shim.
+- **Posting is local-first.** A post is a commit in
+  `data/forum-git/<project-id>/repo.git`, published by fetch–replay–push, never
+  force-pushed. Which posts are *ours* lives in that directory's `outbox.db`, not in
+  `vista.db`: the forum is written from code inside open app-DB transactions, and
+  an outbox there deadlocked on them. Keep it out.
+- **Tests.** `test_forum_git.py` runs the real client against temporary bare
+  repositories as two installs; orchestrator/API/simulation tests use
+  `tests/harness/fake_forum.py` (the `fake_forum` / `client` fixtures).
+
+## Text encoding
+
+Always pass an explicit `encoding="utf-8"` to anything that reads or writes text in
+Python: `open()`, `Path.read_text()` / `write_text()`, `os.fdopen(..., "w")`, and
+`subprocess` calls with `text=True`. The default encoding is the locale's, which is not
+UTF-8 on Windows, so leaving it out breaks there. The backend and both MCP servers set
+`error::EncodingWarning` in their pytest config, so any call that omits it fails CI.
+
 ## NextJS
 ALWAYS read docs before coding
 

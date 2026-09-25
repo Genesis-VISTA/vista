@@ -27,6 +27,14 @@ export interface Project {
   systemPrompt: string;
   skills: string[];
   knowledgeBases: string[];
+  /**
+   * Git remote the project's Hypothesis Lab publishes to; "" means no lab.
+   *
+   * Per project because a forum is a room: who may post to it is who has push
+   * access to that repository, and that is a different set of people for every
+   * line of work.
+   */
+  forumRepoUrl: string;
   tools: string[];
   usageLimits: Record<string, unknown>;
 }
@@ -41,6 +49,7 @@ function fromPublic(p: ProjectPublic): Project {
     systemPrompt: p.system_prompt ?? "",
     skills: Array.isArray(p.skills) ? p.skills : [],
     knowledgeBases: Array.isArray(p.knowledge_bases) ? p.knowledge_bases : [],
+    forumRepoUrl: p.forum_repo_url ?? "",
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
   };
@@ -54,6 +63,7 @@ export function toCreate(project: Omit<Project, "id">): ProjectCreate {
     system_prompt: project.systemPrompt || null,
     skills: project.skills,
     knowledge_bases: project.knowledgeBases,
+    forum_repo_url: project.forumRepoUrl.trim() || null,
     tools: project.tools,
     usage_limits: project.usageLimits ?? {},
   };

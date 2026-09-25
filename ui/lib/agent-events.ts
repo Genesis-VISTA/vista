@@ -182,6 +182,8 @@ export type ProjectPublic = {
   system_prompt: string | null;
   skills: string[];
   knowledge_bases: string[];
+  /** Git remote the project's Hypothesis Lab publishes to; null means no lab. */
+  forum_repo_url: string | null;
   tools: string[];
   usage_limits: Record<string, unknown>;
 };
@@ -200,6 +202,7 @@ export type ProjectCreate = {
   system_prompt: string | null;
   skills: string[];
   knowledge_bases: string[];
+  forum_repo_url: string | null;
   tools: string[];
   usage_limits: Record<string, unknown>;
 };
