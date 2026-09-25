@@ -344,7 +344,10 @@ def test_render_flags_excludes_unmapped_variables():
 def test_render_gives_each_role_its_own_subset():
     m = _render_manifest()
     candidate = {"a": 1, "b": 2, "c": 3}
-    assert render_script_args(m, m.subagent("alpha"), candidate) == "--ay 1 --bee 2 --fixed 3"
+    assert (
+        render_script_args(m, m.subagent("alpha"), candidate)
+        == "--ay 1 --bee 2 --fixed 3"
+    )
     assert render_script_args(m, m.subagent("beta"), candidate) == "--see 3"
 
 
@@ -364,7 +367,9 @@ def test_render_without_args_block_is_byte_identical_to_pre_change_behavior():
 
     m = _render_manifest()
     candidate = {"a": 1, "b": 2.5, "c": "x"}
-    assert render_script_args(m, m.subagent("gamma"), candidate) == json.dumps(candidate)
+    assert render_script_args(m, m.subagent("gamma"), candidate) == json.dumps(
+        candidate
+    )
 
 
 def test_render_without_args_block_and_empty_candidate_is_none():
@@ -394,8 +399,11 @@ async def test_dispatch_candidate_submits_rendered_flags(session, alice):
     async def recording_submit(*, job, cluster, node_count, duration, script_args):
         hpc.script_args_seen.append((job, script_args))
         return await original_submit(
-            job=job, cluster=cluster, node_count=node_count,
-            duration=duration, script_args=script_args,
+            job=job,
+            cluster=cluster,
+            node_count=node_count,
+            duration=duration,
+            script_args=script_args,
         )
 
     hpc.submit = recording_submit
@@ -411,8 +419,11 @@ async def test_dispatch_candidate_submits_rendered_flags(session, alice):
     run = await _make_run(session, alice)
 
     await planner.dispatch_candidate(
-        session, run_id=run.id, user_id=alice.id,
-        candidate={"a": 1, "b": 2, "c": 3}, cycle=0,
+        session,
+        run_id=run.id,
+        user_id=alice.id,
+        candidate={"a": 1, "b": 2, "c": 3},
+        cycle=0,
     )
 
     seen = dict(hpc.script_args_seen)

@@ -17,10 +17,16 @@ pytestmark = pytest.mark.unit
 
 def test_tail_is_kept_not_just_the_head(tmp_path):
     log = tmp_path / "log-1.out"
-    log.write_text("\n".join([f"[{i}%] Building CXX object..." for i in range(500)]
-                             + ["error: the actual failure"]))
+    log.write_text(
+        "\n".join(
+            [f"[{i}%] Building CXX object..." for i in range(500)]
+            + ["error: the actual failure"]
+        )
+    )
     out = _head_and_tail(log)
-    assert "error: the actual failure" in out, "the failure message must survive truncation"
+    assert "error: the actual failure" in out, (
+        "the failure message must survive truncation"
+    )
     assert "[0%]" in out, "the start is still useful context"
     assert "lines elided" in out
 

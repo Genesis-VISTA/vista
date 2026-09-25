@@ -1,4 +1,5 @@
 """Job sources must be re-uploaded when they change on disk."""
+
 import pytest
 from pathlib import Path
 from vista_mcp_server import submit_job_mcp as m
@@ -18,7 +19,9 @@ class _FakeGlobus:
     async def operation_mkdir_p(self, *, endpoint, path, parents_below):
         self.mkdirs.append(path)
 
-    async def transfer_and_wait(self, *, src_endpoint, dst_endpoint, items, label, **kw):
+    async def transfer_and_wait(
+        self, *, src_endpoint, dst_endpoint, items, label, **kw
+    ):
         self.transfers.append({"items": items, "label": label, "kw": kw})
         return {"status": "SUCCEEDED"}
 
@@ -42,8 +45,9 @@ async def test_sources_are_uploaded_even_when_the_remote_dir_is_populated(job_di
     cluster, silently.
     """
     g = _FakeGlobus(existing=[{"name": "run_stage.py", "type": "file"}])
-    await m._sync_job_sources(g, "myjob", "/base/myjob/src", base="/base",
-                              remote_endpoint="ep")
+    await m._sync_job_sources(
+        g, "myjob", "/base/myjob/src", base="/base", remote_endpoint="ep"
+    )
     assert g.transfers, "populated src_dir must not skip the upload"
     names = {Path(src).name for src, _dst, _r in g.transfers[0]["items"]}
     assert "run_stage.py" in names
@@ -52,16 +56,18 @@ async def test_sources_are_uploaded_even_when_the_remote_dir_is_populated(job_di
 @pytest.mark.anyio
 async def test_upload_uses_checksum_sync_so_unchanged_files_are_free(job_dir):
     g = _FakeGlobus()
-    await m._sync_job_sources(g, "myjob", "/base/myjob/src", base="/base",
-                              remote_endpoint="ep")
+    await m._sync_job_sources(
+        g, "myjob", "/base/myjob/src", base="/base", remote_endpoint="ep"
+    )
     assert g.transfers[0]["kw"].get("sync_level") == "checksum"
 
 
 @pytest.mark.anyio
 async def test_orchestration_metadata_is_not_uploaded(job_dir):
     g = _FakeGlobus()
-    await m._sync_job_sources(g, "myjob", "/base/myjob/src", base="/base",
-                              remote_endpoint="ep")
+    await m._sync_job_sources(
+        g, "myjob", "/base/myjob/src", base="/base", remote_endpoint="ep"
+    )
     names = {Path(src).name for src, _dst, _r in g.transfers[0]["items"]}
     assert "run_stage.py" in names
     assert "cluster_defaults.json" not in names

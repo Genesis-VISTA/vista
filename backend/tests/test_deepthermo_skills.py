@@ -83,7 +83,9 @@ def test_both_wrappers_agree_with_the_engine_grid_rule(stage, train, n):
     assert train.engine_grid(n) == _reference_grid(n)
 
 
-@pytest.mark.parametrize("n,grid", [(4, 16), (5, 15), (6, 16), (10, 32), (16, 48), (20, 64)])
+@pytest.mark.parametrize(
+    "n,grid", [(4, 16), (5, 15), (6, 16), (10, 32), (16, 48), (20, 64)]
+)
 def test_grid_matches_the_published_table(stage, n, grid):
     """N=5 -> 15 is the case that breaks a 'round up to 16' implementation."""
     assert stage.engine_grid(n)[0] == grid
@@ -96,12 +98,32 @@ def _args(stage_mod, **kw):
     import types
 
     base = dict(
-        mode="collect", n=10, sh=6, nb_interaction=1, coupling_file="coupling.input",
-        intercept=-1.27, z_r=0.1, bin_width=0.0055, e_min=-1.2808, e_max=-1.2770,
-        flatness=0.6, mod_factor_init=1.0, iteration_factor=2.0, mod_factor_final=1e-6,
-        production_bin_samps=10, t_init=10.0, t_final=2000.0, dt=0.1, samples=400,
-        sep=10, drop=100, snapshot_stride=1, snapshot_lowe=False,
-        thermo_t_init=100, thermo_t_final=3000, thermo_dt=2,
+        mode="collect",
+        n=10,
+        sh=6,
+        nb_interaction=1,
+        coupling_file="coupling.input",
+        intercept=-1.27,
+        z_r=0.1,
+        bin_width=0.0055,
+        e_min=-1.2808,
+        e_max=-1.2770,
+        flatness=0.6,
+        mod_factor_init=1.0,
+        iteration_factor=2.0,
+        mod_factor_final=1e-6,
+        production_bin_samps=10,
+        t_init=10.0,
+        t_final=2000.0,
+        dt=0.1,
+        samples=400,
+        sep=10,
+        drop=100,
+        snapshot_stride=1,
+        snapshot_lowe=False,
+        thermo_t_init=100,
+        thermo_t_final=3000,
+        thermo_dt=2,
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
@@ -109,7 +131,9 @@ def _args(stage_mod, **kw):
 
 def test_collect_mode_short_circuits_the_wl_loop(stage):
     """initWL()'s relax loop must exit immediately so all the work is the PT warm-up."""
-    cfg = stage.build_config(_args(stage, mode="collect"), ["Mo", "Nb", "Ta", "W"], [0.25] * 4)
+    cfg = stage.build_config(
+        _args(stage, mode="collect"), ["Mo", "Nb", "Ta", "W"], [0.25] * 4
+    )
     init = float(cfg.split("mod_factor_init      = ")[1].split("\n")[0])
     final = float(cfg.split("mod_factor_final     = ")[1].split("\n")[0])
     assert init < final, "collect mode must have mod_factor_init < mod_factor_final"
@@ -117,7 +141,9 @@ def test_collect_mode_short_circuits_the_wl_loop(stage):
 
 
 def test_sample_mode_enables_the_wl_loop_and_captures_nothing(stage):
-    cfg = stage.build_config(_args(stage, mode="sample"), ["Mo", "Nb", "Ta", "W"], [0.25] * 4)
+    cfg = stage.build_config(
+        _args(stage, mode="sample"), ["Mo", "Nb", "Ta", "W"], [0.25] * 4
+    )
     init = float(cfg.split("mod_factor_init      = ")[1].split("\n")[0])
     final = float(cfg.split("mod_factor_final     = ")[1].split("\n")[0])
     assert init > final, "sample mode must have mod_factor_init > mod_factor_final"
@@ -135,7 +161,9 @@ def test_element_order_is_preserved_into_the_config(stage):
 
 def test_vae_dat_last_row_becomes_the_acceptance_metric(stage, tmp_path):
     f = tmp_path / "vae.dat"
-    f.write_text("# sweeps lnwlf att acc ratio\n100 1.0 1000 600 0.6\n200 0.5 29146 17275 0.593\n")
+    f.write_text(
+        "# sweeps lnwlf att acc ratio\n100 1.0 1000 600 0.6\n200 0.5 29146 17275 0.593\n"
+    )
     got = stage.parse_vae_dat(f)
     assert got["vae_attempts"] == 29146
     assert got["vae_accepts"] == 17275
@@ -155,23 +183,35 @@ def test_dedupe_removes_cold_replica_repeats_without_leaking(train, tmp_path):
     for r in range(4):
         if r == 0:  # a frozen cold replica repeating one configuration
             base = np.ones((2, 2, 2, 2), dtype="int16")
-            frames += [base] * 90 + [np.full((2, 2, 2, 2), i, dtype="int16") for i in range(10)]
+            frames += [base] * 90 + [
+                np.full((2, 2, 2, 2), i, dtype="int16") for i in range(10)
+            ]
         else:
-            frames += [np.full((2, 2, 2, 2), 100 * r + i, dtype="int16") for i in range(100)]
+            frames += [
+                np.full((2, 2, 2, 2), 100 * r + i, dtype="int16") for i in range(100)
+            ]
     np.save(tmp_path / "in.npy", np.stack(frames))
 
     stats = train.dedupe_and_split(
-        tmp_path / "in.npy", tmp_path / "tr.npy", tmp_path / "va.npy",
-        n_ranks=4, val_fraction=0.1, seed=6,
+        tmp_path / "in.npy",
+        tmp_path / "tr.npy",
+        tmp_path / "va.npy",
+        n_ranks=4,
+        val_fraction=0.1,
+        seed=6,
     )
     assert stats["frames_total"] == 400
-    assert stats["frames_unique"] < 400, "duplicate cold-replica frames were not removed"
+    assert stats["frames_unique"] < 400, (
+        "duplicate cold-replica frames were not removed"
+    )
 
     import hashlib
 
     tr = {hashlib.md5(x.tobytes()).digest() for x in np.load(tmp_path / "tr.npy")}
     va = np.load(tmp_path / "va.npy")
-    assert not any(hashlib.md5(x.tobytes()).digest() in tr for x in va), "val leaked into train"
+    assert not any(hashlib.md5(x.tobytes()).digest() in tr for x in va), (
+        "val leaked into train"
+    )
 
 
 def test_unsplittable_dataset_is_rejected(train, tmp_path):
@@ -180,8 +220,12 @@ def test_unsplittable_dataset_is_rejected(train, tmp_path):
     np.save(tmp_path / "tiny.npy", np.zeros((2, 2, 2, 2, 2), dtype="int8"))
     with pytest.raises(SystemExit, match="not enough frames"):
         train.dedupe_and_split(
-            tmp_path / "tiny.npy", tmp_path / "a.npy", tmp_path / "b.npy",
-            n_ranks=8, val_fraction=0.1, seed=1,
+            tmp_path / "tiny.npy",
+            tmp_path / "a.npy",
+            tmp_path / "b.npy",
+            n_ranks=8,
+            val_fraction=0.1,
+            seed=1,
         )
 
 
@@ -198,7 +242,7 @@ def test_training_curve_parsing(train):
 def test_window_is_derived_from_the_engines_observed_energies(stage):
     """ptEmin/ptEmax are TOTAL energies; the [wang_landau] window is per-site."""
     out = "chatter\nptEmin = -1281.0321  ptEmax = -1277.6024\nmore\n"
-    w = stage.observed_energy_window(out, 10)          # N=10 -> 1000 sites
+    w = stage.observed_energy_window(out, 10)  # N=10 -> 1000 sites
     assert w["pt_e_total_DO_NOT_USE_AS_WINDOW"] == [-1281.0321, -1277.6024]
     assert w["pt_e_per_site"][0] == pytest.approx(-1.2810321)
     assert w["pt_e_per_site"][1] == pytest.approx(-1.2776024)
@@ -244,7 +288,9 @@ def test_sample_mode_has_no_hardcoded_energy_window(stage):
 @pytest.fixture
 def recorded(stage):
     """What the collect stage records for MoNbTaW @ N=10 (upstream's own energies)."""
-    return stage.observed_energy_window("ptEmin = -1281.0321  ptEmax = -1277.6024\n", 10)
+    return stage.observed_energy_window(
+        "ptEmin = -1281.0321  ptEmax = -1277.6024\n", 10
+    )
 
 
 def test_total_energies_passed_as_a_window_are_rejected(stage, recorded):
@@ -304,7 +350,8 @@ def test_skill_example_does_not_teach_passing_a_window():
 
 def test_progress_mirror_copies_dos_and_diagnostics(stage, tmp_path):
     run, out = tmp_path / "run", tmp_path / "out"
-    run.mkdir(); out.mkdir()
+    run.mkdir()
+    out.mkdir()
     for n in ("DOS_H_iter001.dat", "DOS_H_iter002.dat", "vae.dat", "misc0.dat"):
         (run / n).write_text("x\n" * 10)
     copied = stage.sync_progress(run, out)
@@ -314,7 +361,8 @@ def test_progress_mirror_copies_dos_and_diagnostics(stage, tmp_path):
 def test_progress_mirror_never_copies_snapshots(stage, tmp_path):
     """Snapshots stay in the workspace: $VISTA_OUT is recursively listed over Globus."""
     run, out = tmp_path / "run", tmp_path / "out"
-    run.mkdir(); out.mkdir()
+    run.mkdir()
+    out.mkdir()
     (run / "snap_0_0.xyz").write_text("big\n" * 1000)
     (run / "DOS_H_iter001.dat").write_text("ok\n")
     stage.sync_progress(run, out)
@@ -325,7 +373,8 @@ def test_progress_mirror_never_copies_snapshots(stage, tmp_path):
 def test_progress_mirror_is_idempotent(stage, tmp_path):
     """An unchanged file must not be re-copied every pass."""
     run, out = tmp_path / "run", tmp_path / "out"
-    run.mkdir(); out.mkdir()
+    run.mkdir()
+    out.mkdir()
     (run / "DOS_H_iter001.dat").write_text("x\n")
     assert stage.sync_progress(run, out) == ["DOS_H_iter001.dat"]
     assert stage.sync_progress(run, out) == []
@@ -333,15 +382,17 @@ def test_progress_mirror_is_idempotent(stage, tmp_path):
 
 def test_progress_mirror_refreshes_an_updated_file(stage, tmp_path):
     """DOS_H_iter<N>.dat is rewritten in place every 100 sweeps — updates must land."""
-    import os, time
+    import os
+    import time
 
     run, out = tmp_path / "run", tmp_path / "out"
-    run.mkdir(); out.mkdir()
+    run.mkdir()
+    out.mkdir()
     f = run / "DOS_H_iter002.dat"
     f.write_text("first\n")
     stage.sync_progress(run, out)
     f.write_text("second\n")
-    os.utime(f, (time.time() + 5, time.time() + 5))   # unambiguously newer
+    os.utime(f, (time.time() + 5, time.time() + 5))  # unambiguously newer
     assert stage.sync_progress(run, out) == ["DOS_H_iter002.dat"]
     assert (out / "DOS_H_iter002.dat").read_text() == "second\n"
 
@@ -349,7 +400,8 @@ def test_progress_mirror_refreshes_an_updated_file(stage, tmp_path):
 def test_progress_mirror_is_bounded(stage, tmp_path):
     """Unbounded mirroring would make get_hpc_job_status' recursive Globus ls crawl."""
     run, out = tmp_path / "run", tmp_path / "out"
-    run.mkdir(); out.mkdir()
+    run.mkdir()
+    out.mkdir()
     for i in range(300):
         (run / f"DOS_H_iter{i:03d}.dat").write_text("y\n")
     assert len(stage.sync_progress(run, out)) <= stage.PROGRESS_MAX_FILES
@@ -383,7 +435,7 @@ def test_workspace_inventory_reports_what_each_stage_left(stage, tmp_path):
     inv = stage.workspace_inventory(ws)
     assert inv["exists"] is True
     assert inv["collect"]["n_files"] == 9
-    assert inv["collect"]["truncated"] is True          # names are capped
+    assert inv["collect"]["truncated"] is True  # names are capped
     assert inv["models_present"] is True
     assert inv["encoders"] == ["encoder_MoNbTaW.pt"]
     assert inv["sample"]["n_files"] == 2
@@ -419,8 +471,15 @@ def test_reset_clears_previous_run_artifacts(stage, tmp_path):
     """
     run = tmp_path / "sample"
     run.mkdir()
-    stale = ["DOS_H_iter001.dat", "DOS_H_iter020.dat", "vae.dat", "misc0.dat",
-             "stat0.dat", "snap_0_0.xyz", "engine.log"]
+    stale = [
+        "DOS_H_iter001.dat",
+        "DOS_H_iter020.dat",
+        "vae.dat",
+        "misc0.dat",
+        "stat0.dat",
+        "snap_0_0.xyz",
+        "engine.log",
+    ]
     for f in stale:
         (run / f).write_text("old")
     removed = stage.reset_run_dir(run)

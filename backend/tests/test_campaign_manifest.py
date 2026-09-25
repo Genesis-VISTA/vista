@@ -107,7 +107,9 @@ subagents:
 
 
 def test_args_and_collect_files_round_trip(tmp_path):
-    manifest = load_manifest(_write_manifest(tmp_path / "planner-skill", ARGS_MANIFEST_YAML))
+    manifest = load_manifest(
+        _write_manifest(tmp_path / "planner-skill", ARGS_MANIFEST_YAML)
+    )
     alpha = manifest.subagent("alpha")
     assert alpha.collect_files == ["results.json", "summary.md"]
     assert alpha.args.encoding == "flags"
@@ -117,7 +119,9 @@ def test_args_and_collect_files_round_trip(tmp_path):
 
 def test_subagent_without_args_block_keeps_pre_contract_defaults(tmp_path):
     """A role that does not opt in must be indistinguishable from before the change."""
-    manifest = load_manifest(_write_manifest(tmp_path / "planner-skill", ARGS_MANIFEST_YAML))
+    manifest = load_manifest(
+        _write_manifest(tmp_path / "planner-skill", ARGS_MANIFEST_YAML)
+    )
     beta = manifest.subagent("beta")
     assert beta.args is None
     assert beta.collect_files == []
@@ -131,7 +135,9 @@ def test_unknown_encoding_is_rejected(tmp_path):
 
 def test_every_shipped_manifest_still_loads_unmodified():
     """Strict backward compatibility: no shipped campaign.yaml needs editing."""
-    skills_dir = Path(__file__).resolve().parents[1] / "src" / "vista_backend" / "db" / "skills"
+    skills_dir = (
+        Path(__file__).resolve().parents[1] / "src" / "vista_backend" / "db" / "skills"
+    )
     shipped = sorted(skills_dir.glob("*/campaign.yaml"))
     assert shipped, f"no shipped campaign.yaml found under {skills_dir}"
     for path in shipped:

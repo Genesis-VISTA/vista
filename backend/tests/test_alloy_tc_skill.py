@@ -10,8 +10,12 @@ from vista_backend.agents.campaign.manifest import load_manifest, render_script_
 
 
 SKILL_DIR = Path(vista_backend.__file__).parent / "db" / "skills" / "alloy-tc-planner"
-SIM_SKILL_DIR = Path(vista_backend.__file__).parent / "db" / "skills" / "alloy-thermo-mc"
-HPC_JOB_DIR = Path(vista_backend.__file__).resolve().parents[3] / "hpc_jobs" / "alloy-thermo-mc"
+SIM_SKILL_DIR = (
+    Path(vista_backend.__file__).parent / "db" / "skills" / "alloy-thermo-mc"
+)
+HPC_JOB_DIR = (
+    Path(vista_backend.__file__).resolve().parents[3] / "hpc_jobs" / "alloy-thermo-mc"
+)
 
 
 def _load_scorer():
@@ -22,13 +26,26 @@ def _load_scorer():
     return module
 
 
-def _candidate(mo=0.30, nb=0.25, ta=0.25, w=0.20, *, tc=1180.0, alpha=-0.31,
-               bracketed=True, agree=True, swap=0.28):
+def _candidate(
+    mo=0.30,
+    nb=0.25,
+    ta=0.25,
+    w=0.20,
+    *,
+    tc=1180.0,
+    alpha=-0.31,
+    bracketed=True,
+    agree=True,
+    swap=0.28,
+):
     return {
         "params": {"mo": mo, "nb": nb, "ta": ta, "w": w},
         "metrics": {
-            "Tc_cv_K": tc, "Tc_chi_K": tc + 60.0, "sro_alpha1": alpha,
-            "swap_accept_mean": swap, "peak_bracketed": bracketed,
+            "Tc_cv_K": tc,
+            "Tc_chi_K": tc + 60.0,
+            "sro_alpha1": alpha,
+            "swap_accept_mean": swap,
+            "peak_bracketed": bracketed,
             "estimators_agree": agree,
         },
     }
@@ -55,7 +72,9 @@ def test_manifest_renders_flags_the_job_wrapper_actually_accepts():
     """The rendered script_args must parse against run_state_point.py's real parser."""
     manifest = load_manifest(SKILL_DIR)
     rendered = render_script_args(
-        manifest, manifest.subagent("thermo"), {"mo": 0.30, "nb": 0.25, "ta": 0.25, "w": 0.20}
+        manifest,
+        manifest.subagent("thermo"),
+        {"mo": 0.30, "nb": 0.25, "ta": 0.25, "w": 0.20},
     )
     assert rendered == "--mo 0.3 --nb 0.25 --ta 0.25 --w 0.2"
 
@@ -69,9 +88,14 @@ def test_manifest_renders_flags_the_job_wrapper_actually_accepts():
     # wrong parsed value. Both are caught here.
     args = wrapper.build_parser().parse_args(
         rendered.split()
-        + ["--skill-root", "/tmp/clone",
-           "--engine-bin", "/tmp/clone/engine/alloy_mc",
-           "--output-dir", "/tmp/out"]
+        + [
+            "--skill-root",
+            "/tmp/clone",
+            "--engine-bin",
+            "/tmp/clone/engine/alloy_mc",
+            "--output-dir",
+            "/tmp/out",
+        ]
     )
     assert (args.mo, args.nb, args.ta, args.w) == (0.30, 0.25, 0.25, 0.20)
 
@@ -84,12 +108,17 @@ def test_every_mapped_flag_is_a_real_wrapper_option():
     )
     wrapper = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(wrapper)
-    known = {opt for action in wrapper.build_parser()._actions for opt in action.option_strings}
+    known = {
+        opt
+        for action in wrapper.build_parser()._actions
+        for opt in action.option_strings
+    }
 
     thermo = manifest.subagent("thermo")
     for variable, flag in thermo.args.map.items():
-        assert flag in known, f"manifest maps {variable} -> {flag}, not a wrapper option"
-
+        assert flag in known, (
+            f"manifest maps {variable} -> {flag}, not a wrapper option"
+        )
 
 
 def test_sim_skill_and_job_exist_for_the_bound_role():
@@ -118,8 +147,9 @@ def test_negative_fraction_is_infeasible():
 
 def test_user_bounds_are_enforced():
     s = _load_scorer()
-    result = s.score_candidates([_candidate(mo=0.10, nb=0.30, ta=0.30, w=0.30)],
-                                bounds={"mo": [0.2, 1.0]})
+    result = s.score_candidates(
+        [_candidate(mo=0.10, nb=0.30, ta=0.30, w=0.30)], bounds={"mo": [0.2, 1.0]}
+    )
     assert result["best"] is None
     assert "outside requested bounds" in result["infeasible"][0]["reasons"][0]
 
@@ -152,7 +182,9 @@ def test_missing_sro_is_infeasible():
 def test_sro_floor_is_configurable():
     s = _load_scorer()
     assert s.score_candidates([_candidate(alpha=-0.08)])["best"] is not None
-    assert s.score_candidates([_candidate(alpha=-0.08)], sro_alpha_min=0.2)["best"] is None
+    assert (
+        s.score_candidates([_candidate(alpha=-0.08)], sro_alpha_min=0.2)["best"] is None
+    )
 
 
 # --- scorer: bracketing gate -----------------------------------------------
@@ -181,19 +213,27 @@ def test_bracketing_gate_can_be_demoted_to_advisory():
 
 def test_ranks_feasible_candidates_by_tc_descending():
     s = _load_scorer()
-    result = s.score_candidates([
-        _candidate(mo=0.30, tc=1100.0),
-        _candidate(mo=0.28, nb=0.24, ta=0.24, w=0.24, tc=1300.0),
-        _candidate(mo=0.26, nb=0.26, ta=0.26, w=0.22, tc=1200.0),
-    ])
+    result = s.score_candidates(
+        [
+            _candidate(mo=0.30, tc=1100.0),
+            _candidate(mo=0.28, nb=0.24, ta=0.24, w=0.24, tc=1300.0),
+            _candidate(mo=0.26, nb=0.26, ta=0.26, w=0.22, tc=1200.0),
+        ]
+    )
     assert [e["tc"] for e in result["ranked"]] == [1300.0, 1200.0, 1100.0]
     assert result["best"]["tc"] == 1300.0
 
 
 def test_target_met_reflects_the_users_threshold():
     s = _load_scorer()
-    assert s.score_candidates([_candidate(tc=1300.0)], tc_target=1250.0)["target_met"] is True
-    assert s.score_candidates([_candidate(tc=1200.0)], tc_target=1250.0)["target_met"] is False
+    assert (
+        s.score_candidates([_candidate(tc=1300.0)], tc_target=1250.0)["target_met"]
+        is True
+    )
+    assert (
+        s.score_candidates([_candidate(tc=1200.0)], tc_target=1250.0)["target_met"]
+        is False
+    )
 
 
 def test_advisory_signals_are_reported_but_never_gate():

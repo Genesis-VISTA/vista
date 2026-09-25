@@ -30,7 +30,9 @@ class _FakeTransferClient:
         self.ls_calls: list[str] = []
 
     def get_task(self, task_id):
-        state = self._task_states.pop(0) if self._task_states else {"status": "SUCCEEDED"}
+        state = (
+            self._task_states.pop(0) if self._task_states else {"status": "SUCCEEDED"}
+        )
 
         class _Resp(dict):
             @property
@@ -172,12 +174,13 @@ def test_file_not_found_fails_fast_instead_of_retrying_for_an_hour():
     with pytest.raises(RuntimeError) as exc:
         _client(tc)._wait_for_task("t", poll_seconds=10, timeout_seconds=3600)
     assert "FILE_NOT_FOUND" in str(exc.value)
-    assert "still running" in str(exc.value)     # names the usual cause
+    assert "still running" in str(exc.value)  # names the usual cause
     assert time.monotonic() - started < 1.0
 
 
 @pytest.mark.parametrize(
-    "nice", ["PERMISSION_DENIED", "NO_CREDENTIALS", "EXPIRED_CREDENTIALS", "PATH_NOT_ALLOWED"]
+    "nice",
+    ["PERMISSION_DENIED", "NO_CREDENTIALS", "EXPIRED_CREDENTIALS", "PATH_NOT_ALLOWED"],
 )
 def test_other_unrecoverable_nice_statuses_also_fail_fast(nice):
     tc = _FakeTransferClient(task_states=[{"status": "ACTIVE", "nice_status": nice}])
@@ -200,6 +203,12 @@ def test_ordinary_active_still_waits():
 
 def test_transient_connect_failure_is_not_treated_as_fatal():
     tc = _FakeTransferClient(
-        task_states=[{"status": "ACTIVE", "nice_status": "CONNECT_FAILED"}, {"status": "SUCCEEDED"}]
+        task_states=[
+            {"status": "ACTIVE", "nice_status": "CONNECT_FAILED"},
+            {"status": "SUCCEEDED"},
+        ]
     )
-    assert _client(tc)._wait_for_task("t", poll_seconds=0, timeout_seconds=60)["status"] == "SUCCEEDED"
+    assert (
+        _client(tc)._wait_for_task("t", poll_seconds=0, timeout_seconds=60)["status"]
+        == "SUCCEEDED"
+    )

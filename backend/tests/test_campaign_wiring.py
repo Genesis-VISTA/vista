@@ -368,7 +368,9 @@ def test_collect_files_for_role_reads_the_manifest():
 
 
 @pytest.mark.anyio
-async def test_collector_fetches_declared_files_and_parser_receives_them(session, alice):
+async def test_collector_fetches_declared_files_and_parser_receives_them(
+    session, alice
+):
     _project, _run, _step, job = await _make_run_step_job(session, alice)
     hpc = _RecordingHpc(payload='{"Tc": 1180}')
     seen: list[str] = []
@@ -393,8 +395,12 @@ async def test_collector_without_declared_files_fetches_nothing(session, alice):
         session, project_id=project.id, user_id=alice.id
     )
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, session_id=chat.id,
-        domain="testdomain", planner_skill="mock-planner",
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="testdomain",
+        planner_skill="mock-planner",
     )
     step = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="gamma", candidate={"x": 1}
@@ -410,8 +416,8 @@ async def test_collector_without_declared_files_fetches_nothing(session, alice):
     collect = build_collector(planner_provider=lambda _s, _j: _async(planner))
     await collect(session, job, "STATE=COMPLETED")
 
-    assert hpc.fetched == []          # no fetch_outputs call at all
-    assert seen == [""]               # parser sees empty outputs, as today
+    assert hpc.fetched == []  # no fetch_outputs call at all
+    assert seen == [""]  # parser sees empty outputs, as today
 
 
 @pytest.mark.anyio
