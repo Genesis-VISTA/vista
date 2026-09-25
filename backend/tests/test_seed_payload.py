@@ -50,7 +50,7 @@ def make_payload(root):
     for rel, text in PAYLOAD_FILES.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
     return root
 
 
@@ -143,7 +143,7 @@ async def test_local_client_copies_a_file(tmp_path):
             "mstdb/Molten_Salt_Thermophysical_Properties.csv", dest
         )
     assert (
-        dest.read_text()
+        dest.read_text(encoding="utf-8")
         == (PAYLOAD_FILES["mstdb/Molten_Salt_Thermophysical_Properties.csv"])
     )
     # The rename-from-.part staging leaves nothing behind.
@@ -155,8 +155,10 @@ async def test_local_client_copies_a_nested_directory_tree(tmp_path):
     dest = tmp_path / "out" / "pdfs"
     async with LocalRepoClient(payload) as client:
         await client.download_dir("molten-salt-papers", dest)
-    assert (dest / "paper-one.pdf").read_text() == "%PDF-1.4 one"
-    assert (dest / "nested" / "paper-two.pdf").read_text() == "%PDF-1.4 two"
+    assert (dest / "paper-one.pdf").read_text(encoding="utf-8") == "%PDF-1.4 one"
+    assert (dest / "nested" / "paper-two.pdf").read_text(
+        encoding="utf-8"
+    ) == "%PDF-1.4 two"
 
 
 async def test_local_client_skips_files_already_on_disk(tmp_path):
@@ -164,13 +166,17 @@ async def test_local_client_skips_files_already_on_disk(tmp_path):
     payload = make_payload(tmp_path / "payload")
     dest = tmp_path / "out" / "pdfs"
     (dest / "nested").mkdir(parents=True)
-    (dest / "nested" / "paper-two.pdf").write_text("kept from a prior run")
+    (dest / "nested" / "paper-two.pdf").write_text(
+        "kept from a prior run", encoding="utf-8"
+    )
 
     async with LocalRepoClient(payload) as client:
         await client.download_dir("molten-salt-papers", dest)
 
-    assert (dest / "nested" / "paper-two.pdf").read_text() == "kept from a prior run"
-    assert (dest / "paper-one.pdf").read_text() == "%PDF-1.4 one"
+    assert (dest / "nested" / "paper-two.pdf").read_text(
+        encoding="utf-8"
+    ) == "kept from a prior run"
+    assert (dest / "paper-one.pdf").read_text(encoding="utf-8") == "%PDF-1.4 one"
 
 
 async def test_local_client_reports_a_missing_payload_file(tmp_path):
@@ -188,7 +194,7 @@ async def test_local_client_reports_a_missing_payload_root(tmp_path):
 
 async def test_local_client_refuses_a_path_escaping_the_payload(tmp_path):
     payload = make_payload(tmp_path / "payload")
-    (tmp_path / "outside.txt").write_text("secret")
+    (tmp_path / "outside.txt").write_text("secret", encoding="utf-8")
     async with LocalRepoClient(payload) as client:
         with pytest.raises(ValueError, match="escapes the payload root"):
             await client.download_file("../outside.txt", tmp_path / "out.txt")

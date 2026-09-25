@@ -53,7 +53,8 @@ file, run one command, and paste one API key.
 ## Non-goals
 
 VISTAGuard; Globus/GCP and therefore Odo and Frontier (deferred to the S3 replacement,
-Perlmutter stays in scope); native Windows (no microsandbox wheel — WSL2 documented);
+Perlmutter stays in scope); native Windows (no microsandbox wheel at the time; now taken up by
+[`windows-support`](../windows-support/proposal.md));
 Intel Macs and musl-only Linux; multi-user deployment and SSO; the microsandbox 0.6
-upgrade; query-side prompt prefixes; unifying the embedding-model name into one setting; a
+upgrade (done in `windows-support`, to 0.7.2); query-side prompt prefixes; unifying the embedding-model name into one setting; a
 dimension-mismatch guard for existing vector stores; the `README.md` rewrite.

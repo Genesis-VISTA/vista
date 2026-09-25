@@ -211,7 +211,7 @@ async def update_skill(
         skill_md_path = find_skill_md(directory)
         if skill_md_path is None:
             raise ParseError(f"SKILL.md not found in {directory}")
-        original_text = skill_md_path.read_text()
+        original_text = skill_md_path.read_text(encoding="utf-8")
         current = parse_skill(original_text)
         # Re-validate the merged result (model_copy skips validators) so a PATCH
         # can't store a value that POST would reject, e.g. an unstripped
@@ -221,7 +221,7 @@ async def update_skill(
             merged = Skill.model_validate({**current.model_dump(), **spec_updates})
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        skill_md_path.write_text(skill_to_markdown(merged))
+        skill_md_path.write_text(skill_to_markdown(merged), encoding="utf-8")
         # Re-sync mirrored spec metadata from the regenerated document.
         skill.description = merged.description
         skill.license = merged.license
@@ -243,7 +243,7 @@ async def update_skill(
     except Exception:
         await session.rollback()
         if skill_md_path is not None and original_text is not None:
-            skill_md_path.write_text(original_text)
+            skill_md_path.write_text(original_text, encoding="utf-8")
         raise
     await session.refresh(skill)
     return skill

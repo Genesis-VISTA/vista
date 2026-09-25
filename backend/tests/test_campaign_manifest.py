@@ -23,7 +23,7 @@ search:
 
 def _write_manifest(skill_dir, text=MANIFEST_YAML):
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "campaign.yaml").write_text(text)
+    (skill_dir / "campaign.yaml").write_text(text, encoding="utf-8")
     return skill_dir
 
 

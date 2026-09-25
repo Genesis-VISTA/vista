@@ -165,21 +165,21 @@ fi
 
 # The sandbox runtime derives a Unix domain socket path from its store
 # directory, and those have a hard length limit in the kernel -- 104 bytes on
-# macOS and BSD, 108 on Linux. msb adds about 40 bytes of its own beneath the
-# store, so a state directory much past 60 characters makes the socket
-# unaddressable.
+# macOS and BSD, 108 on Linux. msb 0.7 adds about 50 bytes of its own beneath
+# the store and rejects any socket path of 102 bytes or more, so a store path
+# past 51 characters makes the sandbox unstartable (measured with msb 0.7.2).
 #
 # Reported here because the alternative is discovering it on the first agent
 # message, as `InvalidConfigError: agent relay socket path is too long`, long
 # after startup said everything was fine. The default `~/.vista` is around 30
 # bytes; this only bites a deliberately deep `VISTA_HOME`.
 MSB_STORE="$STATE/microsandbox"
-SOCKET_BUDGET=60
+SOCKET_BUDGET=51
 if (( ${#MSB_STORE} > SOCKET_BUDGET )); then
   die "the state directory path is too long for the code-execution sandbox:
     $MSB_STORE
   is ${#MSB_STORE} characters and has to be at most $SOCKET_BUDGET. The sandbox \
-runtime appends about 40 bytes to it to build a Unix socket path, which the \
+runtime appends about 50 bytes to it to build a Unix socket path, which the \
 kernel caps at 104 bytes. Set VISTA_HOME to a shorter directory -- the default, \
 ~/.vista, is about 30 -- and re-run."
 fi
@@ -248,7 +248,6 @@ done
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
   -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
-export VISTA_MSB_PATH="$MSB"
 
 # Imports the sandbox image from the payload -- the only one the package ships.
 # The `image inspect` guard is what makes a second run cheap: the load costs a

@@ -41,7 +41,7 @@ async def test_nested_pdfs_are_passed_as_relative_paths(tmp_path, indexer_calls)
     _pdf(pdfs / "top.pdf")
     _pdf(pdfs / "thermo/nested.pdf")
     _pdf(pdfs / "thermo/2024/deep.pdf")
-    (pdfs / "thermo/README.md").write_text("not a paper")
+    (pdfs / "thermo/README.md").write_text("not a paper", encoding="utf-8")
 
     await _build_knowledge_base(kb_dir)
 

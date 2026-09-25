@@ -120,7 +120,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     job_cmd = spec["arguments"][2]
     assert 'export VISTA_OUT="/fake/odo/vista/out/$SLURM_JOB_ID"' in job_cmd
     # Slurm script body is inlined
-    slurm = (HPC_JOBS_DIR / "example" / "job.odo.slurm").read_text()
+    slurm = (HPC_JOBS_DIR / "example" / "job.odo.slurm").read_text(encoding="utf-8")
     assert slurm in job_cmd
     assert "set -- a b" in job_cmd
     env = spec["attributes"]["environment"]
@@ -153,7 +153,9 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     assert name == "vista-forge-tune"
     job_cmd = spec["arguments"][2]
     assert "export VISTA_OUT=" in job_cmd
-    slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text()
+    slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
+        encoding="utf-8"
+    )
     assert slurm in job_cmd
     # setup_perlmutter.sh exists → pre_launch set
     assert "pre_launch" in spec["attributes"]
@@ -185,7 +187,9 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     spec, _ = iri.submitted[0]
     job_cmd = spec["arguments"][2]
     assert "VISTA_OUT=" in job_cmd
-    assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text() in job_cmd
+    assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(
+        encoding="utf-8"
+    ) in job_cmd
     run_dir = spec["attributes"]["environment"].get("RUN_DIR_Frontier")
     assert run_dir is not None and run_dir.endswith("/example/src")
     assert globus.mkdir_p_calls
@@ -334,7 +338,7 @@ async def test_perlmutter_status_formats_golden_fixture(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     import json
 
-    status = json.loads(fixture.read_text())
+    status = json.loads(fixture.read_text(encoding="utf-8"))
     iri = FakeIriClient(status=status)
     iri.head_content["/remote/log.out"] = "line1\nline2\n"
 

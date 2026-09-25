@@ -142,7 +142,9 @@ async def test_build_planner_for_job_reconstructs_from_skill(
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
     skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
-    (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
+    (skills_dir / run.planner_skill / "campaign.yaml").write_text(
+        MANIFEST_YAML, encoding="utf-8"
+    )
 
     async def _noop_invoke(name, args):
         return ""
@@ -185,11 +187,14 @@ async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
 
     skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
-    (skills_dir / run.planner_skill / "campaign.yaml").write_text(MANIFEST_YAML)
+    (skills_dir / run.planner_skill / "campaign.yaml").write_text(
+        MANIFEST_YAML, encoding="utf-8"
+    )
     for role in ("alpha", "beta"):
         (skills_dir / f"{role}-skill").mkdir(parents=True)
         (skills_dir / f"{role}-skill" / "SKILL.md").write_text(
-            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n"
+            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n",
+            encoding="utf-8",
         )
 
     async def _noop_invoke(name, args):

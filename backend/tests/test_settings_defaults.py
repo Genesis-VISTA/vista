@@ -55,6 +55,7 @@ def _probe(tmp_path: Path, script: str, extra: dict[str, str] | None = None) -> 
         env=_clean_env(extra),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, f"probe failed:\n{proc.stderr}"
     return json.loads(proc.stdout.strip().splitlines()[-1])
