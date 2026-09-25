@@ -6,14 +6,33 @@
   - Run `./VISTA --url=http://127.0.0.1:8000/`.
 
   Record:
-  - that it aborts with the `chrome-sandbox` / "No usable sandbox" message and a non-zero exit;
+  - that it aborts with the `chrome-sandbox` "SUID sandbox helper binary was found, but is not configured correctly" message and a non-zero exit;
   - that `--no-sandbox` opens it;
   - that after installing design D2's profile it opens *without* `--no-sandbox`;
   - the value of `/proc/sys/kernel/apparmor_restrict_unprivileged_userns`;
   - whether it came up under Wayland or XWayland.
 
   If any of these differs from the design's Context, update D1/D2 before group 2. (manual, needs a display)
+
+  - **Container part done (2026-09-25); the real-host part is deferred until a Linux machine is available.**
+    - How it was run: the arm64 build was made on the Mac with `package.js --platform linux --arch arm64`. It ran in scratch `ubuntu:24.04` images on Docker Desktop, which uses a LinuxKit 7.0 kernel with no AppArmor, under `xvfb-run -a … --smoke-test`.
+    - Results:
+      - **Non-root, namespaces blocked** (Docker's default seccomp standing in for Ubuntu's restriction): `FATAL … The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make sure that /w/chrome-sandbox is owned by root and has mode 4755.` with **exit 133** (SIGTRAP). That is non-zero, as D5 needs.
+      - **`--no-sandbox`:** loads the page and exits 0. The renderer shares the browser's user namespace, so it is not sandboxed.
+      - **Root without the flag:** `Running as root without --no-sandbox is not supported`, exit 133. That confirms D1's rule 1.
+      - **D2's profile** parses with Ubuntu 24.04's `apparmor_parser` 4.0.1 (`-Q -K`) as profile `vista-window`, `userns`, mode unconfined.
+    - D1 and D2 are unchanged. The container run raised one open question about D1, recorded in design.md's Open Questions: probe `unshare` instead of reading the sysctl.
+    - **Still deferred (needs a real Ubuntu 24.04 host):**
+      - the abort caused by the AppArmor restriction itself;
+      - that the loaded profile lets it open without `--no-sandbox`, including that the profile's path glob attaches to `app/window/VISTA`;
+      - the sysctl value (the file is absent under LinuxKit);
+      - Wayland versus XWayland.
 - [ ] 1.2 Repeat the run without `--no-sandbox` on Debian 13 or Fedora, and record that it opens sandboxed with no profile. (manual)
+  - **Container part done (2026-09-25):**
+    - `debian:trixie` (Debian 13) and `fedora:latest` (Fedora 44) ran non-root with `--security-opt seccomp=unconfined`, so user namespaces were permitted, and with no flag and no profile.
+    - Both loaded the page and exited 0, with the renderer in its own user namespace, so it was sandboxed. Ubuntu 24.04 did the same under those conditions.
+    - Fedora's image needed `~/root-ca.pem` trusted, because this network's TLS inspection blocks dnf. apt over http was unaffected.
+    - **Deferred:** a real desktop session on either distro.
 
 ## 2. Window (`electron/`)
 

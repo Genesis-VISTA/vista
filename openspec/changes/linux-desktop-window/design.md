@@ -270,3 +270,12 @@ on with no code change.
 
 - How reliably the smoke test runs under `linux/amd64` emulation. It is measured in task
   3.3, and either outcome fits D7.
+- Whether D1 should probe rather than read the sysctl. Task 1.1's container run showed
+  that user namespaces can be blocked by something other than Ubuntu's sysctl: Docker's
+  default seccomp profile blocks them for a non-root user, and the window then aborts
+  exactly as on Ubuntu (exit 133), while D1's rule adds nothing because the sysctl is
+  absent. D5 turns that into browser mode, so nothing breaks. A probe would catch it:
+  `unshare -Ur true` exited 1 there and 0 with namespaces permitted. The probe would
+  replace rule 2, and the profile check (rule 3) would still come before `--no-sandbox`,
+  because on Ubuntu `unshare` itself has no profile and fails even when VISTA's is
+  installed. Undecided; D1 stands until then.
