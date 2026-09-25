@@ -211,7 +211,7 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
-    iri = FakeIriClient(status=json.loads(fixture.read_text()))
+    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
     globus.files["/gpfs/out/44039/log-44039.out"] = (
         b"[setup_odo] OK: run_state_point.py present\n"
@@ -258,7 +258,7 @@ async def test_odo_status_distinguishes_empty_stderr_from_no_stderr(
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
-    iri = FakeIriClient(status=json.loads(fixture.read_text()))
+    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
     globus.files["/gpfs/out/1/log-1.out"] = b"TBR = 1.14\n"
     _patch_clients(monkeypatch, iri=iri, globus=globus)
@@ -303,7 +303,7 @@ async def test_odo_status_says_when_stderr_could_not_be_fetched(
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
-    iri = FakeIriClient(status=json.loads(fixture.read_text()))
+    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
     globus.files["/gpfs/out/3/log-3.out"] = b"setup ok\n"
 
@@ -372,7 +372,7 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     import json
 
-    iri = FakeIriClient(status=json.loads(fixture.read_text()))
+    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     iri.head_content["/remote/log.out"] = "setup ok\n"
     iri.head_content["/remote/log.err"] = (
         "run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
@@ -407,7 +407,7 @@ async def test_perlmutter_status_says_when_there_is_no_stderr(monkeypatch, user_
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     import json
 
-    iri = FakeIriClient(status=json.loads(fixture.read_text()))
+    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     iri.head_content["/remote/log.out"] = "setup ok\n"
 
     async def _nersc(*, iri_token: str):

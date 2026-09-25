@@ -231,7 +231,7 @@ def _read_as_text(path: Path) -> str:
             text = "\n\n".join(pages)
     else:
         try:
-            text = path.read_text(errors="strict")
+            text = path.read_text(encoding="utf-8", errors="strict")
         except UnicodeDecodeError, ValueError:
             size = path.stat().st_size
             return (

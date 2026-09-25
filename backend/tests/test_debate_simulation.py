@@ -743,7 +743,7 @@ async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
     for name, clusters in catalogue.items():
         (tmp_path / name).mkdir(exist_ok=True)
         (tmp_path / name / "cluster_defaults.json").write_text(
-            json.dumps({c: {"nodes": 1} for c in clusters})
+            json.dumps({c: {"nodes": 1} for c in clusters}), encoding="utf-8"
         )
     monkeypatch.setattr(app_settings, "hpc_jobs_dir", tmp_path)
 
@@ -919,7 +919,7 @@ async def test_the_budget_stops_a_third_simulation(
 def _job_with_readme(tmp_path, name: str, readme: str) -> Path:
     catalog = tmp_path / "hpc_jobs"
     (catalog / name).mkdir(parents=True, exist_ok=True)
-    (catalog / name / "README.md").write_text(readme)
+    (catalog / name / "README.md").write_text(readme, encoding="utf-8")
     return catalog
 
 

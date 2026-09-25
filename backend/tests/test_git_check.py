@@ -26,7 +26,7 @@ from vista_backend.services.git_check import (
 
 def _stub(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\n" + body + "\n")
+    path.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
 
@@ -146,7 +146,7 @@ def test_a_found_git_is_cached(tmp_path, bin_dir):
     _stub(bin_dir / "git", f'echo x >> "{calls}"; echo "git version 2.47.0"')
     assert git_status("git").ok
     assert git_status("git").ok
-    assert calls.read_text().count("x") == 1
+    assert calls.read_text(encoding="utf-8").count("x") == 1
 
 
 def test_git_status_defaults_to_the_configured_binary(tmp_path, bin_dir, monkeypatch):

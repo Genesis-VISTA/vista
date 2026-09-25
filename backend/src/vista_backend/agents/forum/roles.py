@@ -37,8 +37,8 @@ DebateRole = Literal["proposer", "reviewer", "referee"]
 @cache
 def _prompt(name: str) -> str:
     """The shared framing plus one role's brief. Cached: these are read-only files."""
-    shared = (PROMPTS / "_shared.md").read_text()
-    return f"{shared}\n\n{(PROMPTS / f'{name}.md').read_text()}"
+    shared = (PROMPTS / "_shared.md").read_text(encoding="utf-8")
+    return f"{shared}\n\n{(PROMPTS / f'{name}.md').read_text(encoding='utf-8')}"
 
 
 # --------------------------------------------------------------------------- #

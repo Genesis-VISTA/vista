@@ -436,7 +436,7 @@ def test_a_long_attachment_is_truncated_and_says_so(tmp_path):
     from vista_backend.agents.forum.wiring import UPLOAD_TEXT_LIMIT, _read_as_text
 
     paper = tmp_path / "paper.txt"
-    paper.write_text("x" * (UPLOAD_TEXT_LIMIT + 500))
+    paper.write_text("x" * (UPLOAD_TEXT_LIMIT + 500), encoding="utf-8")
 
     out = _read_as_text(paper)
     assert "truncated" in out
@@ -480,9 +480,9 @@ def test_the_listing_names_what_is_attached(tmp_path):
     """A role cannot ask for a file it does not know exists."""
     from vista_backend.agents.forum.wiring import _listing
 
-    (tmp_path / "a.pdf").write_text("a")
+    (tmp_path / "a.pdf").write_text("a", encoding="utf-8")
     (tmp_path / "nested").mkdir()
-    (tmp_path / "nested" / "b.csv").write_text("b")
+    (tmp_path / "nested" / "b.csv").write_text("b", encoding="utf-8")
 
     out = _listing(tmp_path)
     assert "- a.pdf" in out
@@ -515,8 +515,8 @@ async def test_a_role_cannot_read_outside_the_projects_uploads(tmp_path, monkeyp
 
     uploads = tmp_path / "uploads"
     uploads.mkdir()
-    (uploads / "paper.txt").write_text("the knee is at 803 K")
-    (tmp_path / "secret.txt").write_text("not for the debate")
+    (uploads / "paper.txt").write_text("the knee is at 803 K", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("not for the debate", encoding="utf-8")
 
     @asynccontextmanager
     async def fake_get(_key):

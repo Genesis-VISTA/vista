@@ -118,6 +118,7 @@ def check_git(binary: str = "git") -> GitCheck:
             [path, "--version"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=CHECK_TIMEOUT,
             env=_env(),
         )

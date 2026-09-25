@@ -230,9 +230,11 @@ async def test_ensure_forum_is_idempotent(forum_home, forge):
     """Called on every save, and on first use. Twice must be the same as once."""
     project = _project(str(forge))
     await ensure_forum(project)
-    config = (forum_root(project.id) / REPO_DIR / "config").read_text()
+    config = (forum_root(project.id) / REPO_DIR / "config").read_text(encoding="utf-8")
     await ensure_forum(project)
-    assert (forum_root(project.id) / REPO_DIR / "config").read_text() == config
+    assert (forum_root(project.id) / REPO_DIR / "config").read_text(
+        encoding="utf-8"
+    ) == config
 
 
 async def test_changing_the_url_moves_the_remote(forum_home, forge, tmp_path):

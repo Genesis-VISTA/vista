@@ -133,7 +133,7 @@ def clusters_for_job(job: str, catalog: Path) -> list[str]:
     """
     path = catalog / job / "cluster_defaults.json"
     try:
-        defaults = json.loads(path.read_text())
+        defaults = json.loads(path.read_text(encoding="utf-8"))
     except OSError, json.JSONDecodeError:
         return []
     return sorted(defaults) if isinstance(defaults, dict) else []
@@ -201,7 +201,7 @@ def usage_for_job(job: str, catalog: Path) -> str:
     """
     readme = catalog / job / "README.md"
     try:
-        text = readme.read_text()
+        text = readme.read_text(encoding="utf-8")
     except OSError:
         return ""
     lines = [line.rstrip() for line in text.splitlines() if _FLAG.search(line)]

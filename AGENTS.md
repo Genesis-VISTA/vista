@@ -165,6 +165,14 @@ is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
   repositories as two installs; orchestrator/API/simulation tests use
   `tests/harness/fake_forum.py` (the `fake_forum` / `client` fixtures).
 
+## Text encoding
+
+Always pass an explicit `encoding="utf-8"` to anything that reads or writes text in
+Python: `open()`, `Path.read_text()` / `write_text()`, `os.fdopen(..., "w")`, and
+`subprocess` calls with `text=True`. The default encoding is the locale's, which is not
+UTF-8 on Windows, so leaving it out breaks there. The backend and both MCP servers set
+`error::EncodingWarning` in their pytest config, so any call that omits it fails CI.
+
 ## NextJS
 ALWAYS read docs before coding
 

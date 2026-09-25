@@ -112,7 +112,7 @@ def load_host_id(root: Path) -> str:
         new = uuid.uuid4().hex
         tmp = root / f".{HOST_ID_FILE}.{new}"
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(new + "\n")
         try:
             # A hard link appears complete or not at all and refuses to replace
@@ -126,7 +126,7 @@ def load_host_id(root: Path) -> str:
         finally:
             tmp.unlink()
 
-    value = path.read_text().strip()
+    value = path.read_text(encoding="utf-8").strip()
     if not is_host_id(value):
         raise RuntimeError(
             f"{path} does not hold a host id ({value[:40]!r}). Delete it and "

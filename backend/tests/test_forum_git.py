@@ -190,7 +190,7 @@ def test_the_host_id_is_created_once_and_reused(tmp_path):
     first = load_host_id(tmp_path)
     assert is_host_id(first)
     assert load_host_id(tmp_path) == first
-    assert (tmp_path / HOST_ID_FILE).read_text().strip() == first
+    assert (tmp_path / HOST_ID_FILE).read_text(encoding="utf-8").strip() == first
 
 
 def test_the_host_id_is_private_to_the_user(tmp_path):
@@ -218,10 +218,10 @@ def test_concurrent_first_reads_agree_on_one_id(tmp_path):
 
 
 def test_a_corrupt_host_id_is_refused_not_replaced(tmp_path):
-    (tmp_path / HOST_ID_FILE).write_text("not-a-host-id\n")
+    (tmp_path / HOST_ID_FILE).write_text("not-a-host-id\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="does not hold a host id"):
         load_host_id(tmp_path)
-    assert (tmp_path / HOST_ID_FILE).read_text() == "not-a-host-id\n"
+    assert (tmp_path / HOST_ID_FILE).read_text(encoding="utf-8") == "not-a-host-id\n"
 
 
 @pytest.mark.parametrize(
