@@ -47,7 +47,12 @@ CLUSTERS: tuple[HpcCluster, ...] = ("frontier", "odo", "perlmutter")
 """ In the order the rail shows them. """
 
 HTTP_TIMEOUT = 5.0
-""" Per outbound HTTP call. A facility that has not answered by then is down as far as a researcher is concerned. """
+""" Per authenticated call. A facility that has not answered by then is down as far as a researcher is concerned. """
+FACILITY_TIMEOUT = 10.0
+"""
+Per public status call. NERSC's incident feed takes ~1.6 s on its own and
+several times that while the other clusters' checks run beside it.
+"""
 GLOBUS_TIMEOUT = 10.0
 """ Two token exchanges and a listing, each its own round trip. """
 RESULT_TTL = 60.0
@@ -398,13 +403,23 @@ class HpcStatusService:
         cached = self._facility_feeds.get(base)
         if not fresh and cached and self._monotonic() - cached[0] < FACILITY_TTL:
             return cached[1], cached[2]
+        # Only incidents active now. Unfiltered, NERSC returns its *oldest*
+        # hundred, which never include a current one; OLCF answers "none
+        # active" with a 404 rather than an empty list.
         resources, incidents = await asyncio.gather(
-            client.get(f"{base}/api/v1/status/resources"),
-            client.get(f"{base}/api/v1/status/incidents"),
+            client.get(f"{base}/api/v1/status/resources", timeout=FACILITY_TIMEOUT),
+            client.get(
+                f"{base}/api/v1/status/incidents",
+                params={"time": self._now().strftime("%Y-%m-%dT%H:%M:%SZ")},
+                timeout=FACILITY_TIMEOUT,
+            ),
         )
         resources.raise_for_status()
-        incidents.raise_for_status()
-        feed = (resources.json(), incidents.json())
+        if incidents.status_code == 404:
+            feed = (resources.json(), [])
+        else:
+            incidents.raise_for_status()
+            feed = (resources.json(), incidents.json())
         if not (isinstance(feed[0], list) and isinstance(feed[1], list)):
             raise ValueError("status feed is not a list")
         self._facility_feeds[base] = (self._monotonic(), *feed)

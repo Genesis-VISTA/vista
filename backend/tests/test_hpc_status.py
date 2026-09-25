@@ -123,10 +123,16 @@ class Facilities:
                 },
             )
         assert base, url
-        path = url[len(base) :]
+        path = request.url.path
         if path == "/api/v1/status/resources":
             return httpx.Response(200, json=self.resources(base))
         if path == "/api/v1/status/incidents":
+            # Only incidents active now are asked for; unfiltered, NERSC
+            # returns its oldest hundred.
+            assert request.url.params.get("time") == "2026-09-25T15:00:00Z"
+            if not self.incidents[base]:
+                # What OLCF really answers when nothing is active.
+                return httpx.Response(404, json={"detail": "No incidents found"})
             return httpx.Response(200, json=self.incidents[base])
         if path == "/api/v1/compute/resources":
             status = self.iri.get((base, token), 401)
