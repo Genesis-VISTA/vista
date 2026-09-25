@@ -312,8 +312,10 @@ descendant_groups() {
   done
 }
 
+STOPPING=false
 stop() {
   trap - INT TERM HUP EXIT
+  STOPPING=true
   { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
   # Job control reports each service it sees die ("line 301: 78461
   # Terminated: 15 ..."), which reads like a failure. Nothing after this point
@@ -404,11 +406,50 @@ can_show_window() {
       echo "this session has no display (launchctl reports '${session:-nothing}', not Aqua; over SSH, for example)"
       return 1
       ;;
+    linux)
+      # linux-desktop-window D4. X forwarding would put the window on the far
+      # end of an SSH session, and someone there wants the address anyway.
+      if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]]; then
+        echo "this is a remote shell session"
+        return 1
+      fi
+      if [[ "$(id -u)" == 0 ]]; then
+        echo "the window does not run as root"
+        return 1
+      fi
+      if [[ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+        echo "there is no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)"
+        return 1
+      fi
+      # D6: name what is missing rather than start a window that cannot load.
+      # A desktop has all of these; a minimal server or container may not.
+      # A bare system lacks all 26 at once, so only the first few are named.
+      local missing
+      missing="$(ldd "$PACKAGE/$WINDOW_EXE" 2>/dev/null | awk '/not found/ { print $1 }' | sort -u \
+        | awk '{ n++; if (n <= 5) names = names (n > 1 ? " " : "") $1 }
+               END { if (n) printf "%s%s", names, (n > 5 ? " and " (n - 5) " more" : "") }')"
+      if [[ -n "$missing" ]]; then
+        echo "the window needs system libraries this host lacks ($missing); on Ubuntu or Debian install libgtk-3-0t64 libnss3 libasound2t64 libgbm1, on Fedora or RHEL gtk3 nss alsa-lib mesa-libgbm"
+        return 1
+      fi
+      return 0
+      ;;
     *)
       echo "VISTA has no window on $HOST_OS yet"
       return 1
       ;;
   esac
+}
+
+# D1: the arguments the window needs on this host -- nothing, or --no-sandbox
+# where the host blocks Chromium's sandbox. window-sandbox says why, and on
+# Ubuntu how to turn it back on, and that is shown on every start that needs it.
+window_sandbox_args() {
+  [[ "$HOST_OS" == linux ]] || return 0
+  local script
+  script="$(dirname "$PACKAGE/$WINDOW_EXE")/window-sandbox"
+  [[ -x "$script" ]] || return 0
+  "$script" 2> "$LOGS/window-sandbox.log" || true
 }
 
 # The package says where its window is; the launcher does not assume a layout.
@@ -420,7 +461,14 @@ if [[ "$BROWSER_MODE" != true ]]; then
   elif ! reason="$(can_show_window)"; then
     log "Not opening the VISTA window: $reason."
   else
-    "$PACKAGE/$WINDOW_EXE" --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
+    WINDOW_ARGS=()
+    sandbox_arg="$(window_sandbox_args)"
+    if [[ -n "$sandbox_arg" ]]; then
+      WINDOW_ARGS+=("$sandbox_arg")
+      log ""
+      while IFS= read -r line; do log "$line"; done < "$LOGS/window-sandbox.log"
+    fi
+    "$PACKAGE/$WINDOW_EXE" ${WINDOW_ARGS[@]+"${WINDOW_ARGS[@]}"} --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
     WINDOW_PID=$!
     PIDS+=("$WINDOW_PID")
   fi
@@ -430,10 +478,20 @@ log ""
 if [[ -n "$WINDOW_PID" ]]; then
   log "VISTA is open in its own window ($UI_URL)."
   log "Close the window, or press Ctrl-C here, to stop."
-  # Only the window's exit ends the session. A trapped signal interrupts this
-  # wait and runs `stop` first; either way the EXIT trap stops everything else.
-  wait "$WINDOW_PID" || true
-  exit 0
+  # The window closing or quitting ends the session; the EXIT trap stops the
+  # rest. A trapped signal interrupts this wait and runs `stop` first, and the
+  # script then carries on here -- so STOPPING, not the status, says whether it
+  # was a stop.
+  window_status=0
+  wait "$WINDOW_PID" || window_status=$?
+  if [[ "$window_status" == 0 || "$STOPPING" == true ]]; then
+    exit 0
+  fi
+  # D5: a window that fails -- at start or mid-session -- is not a reason to
+  # stop the services under it. Carry on as browser mode does.
+  log ""
+  log "The VISTA window stopped unexpectedly (exit $window_status); see $LOGS/window.log."
+  log "The services are still running."
 fi
 
 log "VISTA is running at $UI_URL"

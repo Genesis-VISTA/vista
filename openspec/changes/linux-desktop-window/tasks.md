@@ -122,19 +122,47 @@
 
 ## 4. Launchers
 
-- [ ] 4.1 `scripts/package_launcher.sh`: add the `linux` branch of `can_show_window`, covering SSH, root, display and the `ldd` library check (D4, D6). Each "no" gives its reason and browser mode. Verify in the 3.3 Linux package inside a container:
+- [x] 4.1 `scripts/package_launcher.sh`: add the `linux` branch of `can_show_window`, covering SSH, root, display and the `ldd` library check (D4, D6). Each "no" gives its reason and browser mode. Verify in the 3.3 Linux package inside a container:
   - no `DISPLAY` → "no graphical display";
   - `SSH_CONNECTION=x` → "remote shell session";
   - root → "does not run as root";
   - with a library removed (`LD_LIBRARY_PATH` is not enough; use a container without `libgtk-3-0t64`) → that library is named.
   Each keeps the services running. (container, `VISTA_ALLOW_NO_KVM=1`)
+  - **Done (2026-09-25).**
+    - The checks run in this order: SSH (`SSH_CONNECTION` or `SSH_TTY`), root, display (`DISPLAY` or `WAYLAND_DISPLAY`), then `ldd` on the window executable. The library reason names the first five missing libraries, adds "and N more" for the rest, and gives the Ubuntu/Debian and Fedora/RHEL package lists.
+    - Verified against the 3.3 arm64 package unpacked into a Docker volume, with this launcher mounted over its `vista`, `VISTA_ALLOW_NO_KVM=1`, and a non-root user except in the root case:
+      - no display → "there is no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)";
+      - `SSH_CONNECTION=x` → "this is a remote shell session";
+      - root → "the window does not run as root";
+      - a bare `ubuntu:24.04` image (no GTK, NSS, ALSA or GBM) → the missing libraries by name, plus the install lines.
+    - In every case the launcher printed the address, the services answered on 3000, TERM stopped it, and ports 3000/8000/8001 were free afterwards.
+    - Found and fixed: `stage_window_linux` shipped `app/window` as 0700, because `mktemp -d` makes it so and `mv` keeps the mode. Anyone other than the user who unpacked the package got "This package has no VISTA window". It now runs `chmod 755` on the directory. The two 3.3 archives in `dist/` predate the fix.
 - [ ] 4.2 `scripts/package_launcher.sh`: start the window with `window-sandbox`'s arguments, and on branch 4 print the reason and the D2 install command, with the package's absolute path. Verify on the Ubuntu 24.04 desktop from 1.1 as part of 7.2.
-- [ ] 4.3 `scripts/package_launcher.sh`: keep the window's exit status (D5). On 0, exit; on non-zero, log the failure and `window.log`, print the address and wait as in browser mode. Verify on macOS with a built package:
+  - **Implemented; the Ubuntu desktop check stays with 7.2.**
+    - The launcher runs the `window-sandbox` next to the window, sending its stderr to `logs/window-sandbox.log`. It prints each line of that log and passes the stdout words to the window.
+    - Container checks against the same package, with Xvfb:
+      - default seccomp, where namespaces are blocked → the "host does not allow unprivileged user namespaces" reason, and `window.log` shows `renderer sandbox: off (--no-sandbox)`;
+      - `--security-opt seccomp=unconfined` → no message and `renderer sandbox: on`;
+      - `VISTA_WINDOW_SANDBOX_SYSCTL` pointing at a file containing `1` (Ubuntu's restriction, simulated) → the Ubuntu message, with `sudo install -m 644 '<package>/app/window/vista-window.apparmor' /etc/apparmor.d/vista-window` and the `apparmor_parser` line using the package's absolute path.
+- [x] 4.3 `scripts/package_launcher.sh`: keep the window's exit status (D5). On 0, exit; on non-zero, log the failure and `window.log`, print the address and wait as in browser mode. Verify on macOS with a built package:
   - `kill -SEGV <window pid>` leaves the services answering, and the launcher prints the address;
   - Ctrl-C afterwards stops everything;
   - quitting the window normally still exits and leaves ports 3000/8000/8001 free.
   (manual, `sandbox`)
-- [ ] 4.4 `scripts/launch.sh`: `WINDOW_CMD` appends `window-sandbox`'s arguments on Linux and prints the reason (D8). The same exit-status rule is not needed there, since a developer restarts. Verify on macOS that `./launch.sh logs --electron` is unchanged. Verify on Linux as part of 7.2.
+  - **Done (2026-09-25).**
+    - The launcher now keeps the window's exit status:
+      - 0 exits as before;
+      - non-zero logs "The VISTA window stopped unexpectedly (exit N); see …/window.log." and "The services are still running.", then falls through to "VISTA is running at …" and waits as in browser mode.
+    - `stop()` sets `STOPPING=true`. Bash resumes after an interrupted `wait` once its trap has run, so without that flag a Ctrl-C would read as a crash.
+    - **macOS:** `vista-0.1.0+0f0eac8-macos-arm64` was built with `--archive-format none`, reusing the payload and vector store. It was run with the ports moved to 23000/28000/28001, because 8000 was taken locally. Ctrl-C was sent as SIGINT to the launcher's own process group, as a terminal does.
+      - `kill -SEGV <window>` gave "stopped unexpectedly (exit 139)" and the address, and the services kept answering. Ctrl-C then stopped everything, with the ports free.
+      - A normal quit (SIGTERM to the window, which `main.js` turns into `app.quit()`) made the launcher exit, with the ports free and no "unexpectedly" line.
+      - Ctrl-C with the window open gave a clean exit, the ports free, and no "unexpectedly" line.
+    - **Linux** (container, arm64 package, Xvfb): the same three results. The crash case had the renderer sandbox on (`seccomp=unconfined`), the quit case had it off (default seccomp), and a stop there was sent as TERM.
+- [x] 4.4 `scripts/launch.sh`: `WINDOW_CMD` appends `window-sandbox`'s arguments on Linux and prints the reason (D8). The same exit-status rule is not needed there, since a developer restarts. Verify on macOS that `./launch.sh logs --electron` is unchanged. Verify on Linux as part of 7.2.
+  - **Done for macOS (2026-09-25); Linux stays with 7.2.**
+    - `WINDOW_SANDBOX` is `'$(./linux/window-sandbox)'` on Linux, and is expanded by the window's own shell after `cd electron`. Elsewhere it is empty.
+    - On macOS, `WINDOW_CMD` was evaluated from both `0f0eac8^` and `0f0eac8` and compared after word splitting. The only difference is a space before the final `;`, so the command run is the same. `bash -n` passes. The full `./launch.sh logs --electron` was not started, because port 8000 was already in use by an unrelated local process.
 
 ## 5. CI
 

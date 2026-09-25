@@ -852,6 +852,9 @@ stage_window_linux() {
   rm -rf "$window"
   mv "$built" "$window"
   rm -rf "$out"
+  # The packager's output directory is created 0700, and the move keeps that,
+  # which hides the window from anyone but the unpacking user.
+  chmod 755 "$window"
   install -m 755 "$REPO_ROOT/electron/linux/window-sandbox" "$window/window-sandbox"
   install -m 644 "$REPO_ROOT/electron/linux/vista-window.apparmor" "$window/vista-window.apparmor"
 

@@ -85,11 +85,20 @@ UI_CMD="
 # localhost, not 127.0.0.1: that is where `next dev` answers. --dev keeps
 # DevTools and force-reload in the window's menu.
 UI_URL="http://localhost:3000"
+# On Linux, the same sandbox decision the package makes (linux-desktop-window
+# D8): window-sandbox prints nothing or --no-sandbox, and says why on stderr,
+# which shows with the window's other output. Left for the window's own shell
+# to run, so the single quotes keep it unexpanded here.
+WINDOW_SANDBOX=''
+if [[ "$(uname -s)" == Linux ]]; then
+  # shellcheck disable=SC2016
+  WINDOW_SANDBOX='$(./linux/window-sandbox)'
+fi
 WINDOW_CMD="
   cd '$REPO_ROOT/electron' &&
   echo 'Waiting for UI...' &&
   until curl -s -o /dev/null '$UI_URL'; do sleep 1; done &&
-  ./node_modules/.bin/electron . --dev --url='$UI_URL';
+  ./node_modules/.bin/electron . --dev --url='$UI_URL' $WINDOW_SANDBOX;
 "
 
 
