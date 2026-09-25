@@ -98,3 +98,48 @@ def test_existing_database_gains_the_new_columns(tmp_path):
 
     assert {"odo_s3m_token", "frontier_s3m_token"} <= columns
     assert legacy == "old"  # left in place, not migrated or dropped
+
+
+# ---------------------------------------------------------------------------
+# Which clusters the NavRail shows
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_hidden_clusters_default_to_none_hidden(session, alice):
+    row = await session.get(UserTable, alice.id)
+    assert (await get_me(row)).hpc_hidden_clusters == []
+    assert (await get_me(row, config=True)).hpc_hidden_clusters == []
+
+
+@pytest.mark.anyio
+async def test_hidden_clusters_round_trip(session, alice):
+    row = await session.get(UserTable, alice.id)
+    await update_me(UserSelfUpdate(nersc_iri_token="iri-tok"), session, row)
+    saved = await update_me(
+        UserSelfUpdate(hpc_hidden_clusters=["perlmutter", "perlmutter"]), session, row
+    )
+    assert saved.hpc_hidden_clusters == ["perlmutter"]
+    # Hiding a cluster leaves its credential alone.
+    assert saved.nersc_iri_token == "iri-tok"
+    # The light view carries it too: the rail reads that one.
+    assert (await get_me(row)).hpc_hidden_clusters == ["perlmutter"]
+
+    shown_again = await update_me(UserSelfUpdate(hpc_hidden_clusters=[]), session, row)
+    assert shown_again.hpc_hidden_clusters == []
+
+
+def test_unknown_cluster_is_rejected():
+    with pytest.raises(ValueError, match="hpc_hidden_clusters"):
+        UserSelfUpdate.model_validate({"hpc_hidden_clusters": ["lux"]})
+
+
+def test_existing_database_gains_the_hidden_clusters_column(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE app_user (id CHAR(32) PRIMARY KEY, email VARCHAR)")
+        )
+        _add_missing_columns(conn)
+        columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
+    assert "hpc_hidden_clusters" in columns

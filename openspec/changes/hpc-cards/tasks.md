@@ -7,9 +7,9 @@
 
 ## 2. Backend: settings and visibility column
 
-- [ ] 2.1 Add backend settings for cluster endpoints, read from the same `VISTA_MCP_*` env var names as the MCP server: IRI URLs, S3M introspect URL, Odo/Frontier accounts, resource match names, Globus collection ids, and deployment Globus pairs. Verify with a new case in `backend/tests/test_settings_defaults.py`
-- [ ] 2.2 Add a hermetic parity test, `backend/tests/test_hpc_config_parity.py`, that parses `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py` and asserts the backend defaults match. Verify it fails when one default is edited
-- [ ] 2.3 Add `hpc_hidden_clusters` (nullable JSON list) to `app_user` and expose it on `GET/PUT /users/me`, rejecting unknown cluster names. Verify with a round-trip test and a rejection test
+- [x] 2.1 Add backend settings for cluster endpoints, read from the same `VISTA_MCP_*` env var names as the MCP server: IRI URLs, S3M introspect URL, Odo/Frontier accounts, resource match names, Globus collection ids, and deployment Globus pairs. Verify with a new case in `backend/tests/test_settings_defaults.py`
+- [x] 2.2 Add a hermetic parity test, `backend/tests/test_hpc_config_parity.py`, that parses `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py` and asserts the backend defaults match. Verify it fails when one default is edited
+- [x] 2.3 Add `hpc_hidden_clusters` (nullable JSON list) to `app_user` and expose it on `GET/PUT /users/me`, rejecting unknown cluster names. Verify with a round-trip test and a rejection test
 
 ## 3. Backend: checks and state resolution
 
