@@ -29,7 +29,12 @@ export type UserPublicWithConfig = UserPublic & {
   inference_api_key: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
-  s3m_token: string | null;
+  /**
+   * One S3M token per OLCF cluster: a token is scoped to a single project,
+   * so one field could only ever authorize one of Odo and Frontier.
+   */
+  odo_s3m_token: string | null;
+  frontier_s3m_token: string | null;
   nersc_iri_token: string | null;
   /**
    * File-transfer credentials, read only to tell whether a cluster is
@@ -63,7 +68,8 @@ export type UserSelfUpdate = {
   inference_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
-  s3m_token?: string | null;
+  odo_s3m_token?: string | null;
+  frontier_s3m_token?: string | null;
   nersc_iri_token?: string | null;
 };
 

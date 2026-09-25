@@ -106,7 +106,10 @@ function UserSettingsForm({
   );
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
-  const [s3mToken, setS3mToken] = useState(user.s3m_token ?? "");
+  const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
+  const [frontierS3mToken, setFrontierS3mToken] = useState(
+    user.frontier_s3m_token ?? "",
+  );
   const [nerscIriToken, setNerscIriToken] = useState(user.nersc_iri_token ?? "");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -136,7 +139,12 @@ function UserSettingsForm({
       ],
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
-      ["s3m_token", user.s3m_token ?? null, blankToNull(s3mToken)],
+      ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
+      [
+        "frontier_s3m_token",
+        user.frontier_s3m_token ?? null,
+        blankToNull(frontierS3mToken),
+      ],
       ["nersc_iri_token", user.nersc_iri_token ?? null, blankToNull(nerscIriToken)],
     ];
     for (const [key, prev, next] of nullableCandidates) {
@@ -226,18 +234,18 @@ function UserSettingsForm({
       </label>
 
       <label className="project-modal-label">
-        S3M token
+        Odo S3M token
         <input
           className="input"
           type="password"
-          value={s3mToken}
-          onChange={(e) => setS3mToken(e.target.value)}
+          value={odoS3mToken}
+          onChange={(e) => setOdoS3mToken(e.target.value)}
           placeholder="Bearer token"
           autoComplete="off"
           spellCheck={false}
         />
         <span className="user-settings-hint">
-          Bearer token for the OLCF AmSC IRI service. Stored encrypted at rest.{" "}
+          Minted in Odo&apos;s OLCF project. Stored encrypted at rest.{" "}
           <a
             href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
             target="_blank"
@@ -245,7 +253,24 @@ function UserSettingsForm({
           >
             Get a token
           </a>
-          . Expires in 24 hours.
+          .
+        </span>
+      </label>
+
+      <label className="project-modal-label">
+        Frontier S3M token
+        <input
+          className="input"
+          type="password"
+          value={frontierS3mToken}
+          onChange={(e) => setFrontierS3mToken(e.target.value)}
+          placeholder="Bearer token"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span className="user-settings-hint">
+          Minted in Frontier&apos;s OLCF project, which is a different project
+          from Odo&apos;s, so it needs its own token. Stored encrypted at rest.
         </span>
       </label>
 

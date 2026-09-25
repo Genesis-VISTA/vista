@@ -66,7 +66,7 @@ def tenant_env(tmp_path, monkeypatch, session):
 @pytest.fixture
 def alice_with_canary() -> UserPublicWithConfig:
     return UserPublicWithConfig(
-        id=uuid.uuid4(), email="alice@example.com", s3m_token=CANARY
+        id=uuid.uuid4(), email="alice@example.com", odo_s3m_token=CANARY
     )
 
 

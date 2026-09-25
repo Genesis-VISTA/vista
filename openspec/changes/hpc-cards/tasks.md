@@ -1,9 +1,9 @@
 ## 1. Per-cluster S3M tokens
 
-- [ ] 1.1 Add encrypted `odo_s3m_token` / `frontier_s3m_token` columns to `app_user` (nullable, blank→null) and expose them on `GET/PUT /users/me`. Remove `s3m_token` from every API schema, but leave the column. Verify with a round-trip test in `backend/tests/test_access_control.py` or a new `backend/tests/test_user_tokens.py`, and check that an existing DB gains the columns on startup
-- [ ] 1.2 Send the two tokens in the MCP `_meta.vista.user` under those names and stop sending `s3m_token`. Verify with a test asserting the metadata contents, alongside the existing tests in `backend/tests/test_mcp_invoke.py`
-- [ ] 1.3 In the MCP server, remove `UserConfig.s3m_token` and the fallback in `require_s3m_token`, and make `submit_job_mcp.py`'s cluster enablement depend only on the per-cluster tokens. Verify with `mcp_servers/vista_mcp_server` tests: a legacy-only config enables neither cluster, and each token enables only its cluster
-- [ ] 1.4 Replace the single S3M field in `UserSettingsModal.tsx` and `ui/lib/user.ts` with Odo and Frontier fields, still in the current layout. The rework in group 5 regroups them. Verify with `npm run lint` and a hermetic check that saving one leaves the other untouched
+- [x] 1.1 Add encrypted `odo_s3m_token` / `frontier_s3m_token` columns to `app_user` (nullable, blank→null) and expose them on `GET/PUT /users/me`. Remove `s3m_token` from every API schema, but leave the column. Verify with a round-trip test in `backend/tests/test_access_control.py` or a new `backend/tests/test_user_tokens.py`, and check that an existing DB gains the columns on startup
+- [x] 1.2 Send the two tokens in the MCP `_meta.vista.user` under those names and stop sending `s3m_token`. Verify with a test asserting the metadata contents, alongside the existing tests in `backend/tests/test_mcp_invoke.py`
+- [x] 1.3 In the MCP server, remove `UserConfig.s3m_token` and the fallback in `require_s3m_token`, and make `submit_job_mcp.py`'s cluster enablement depend only on the per-cluster tokens. Verify with `mcp_servers/vista_mcp_server` tests: a legacy-only config enables neither cluster, and each token enables only its cluster
+- [x] 1.4 Replace the single S3M field in `UserSettingsModal.tsx` and `ui/lib/user.ts` with Odo and Frontier fields, still in the current layout. The rework in group 5 regroups them. Verify with `npm run lint` and a hermetic check that saving one leaves the other untouched
 
 ## 2. Backend: settings and visibility column
 

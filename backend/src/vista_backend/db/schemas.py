@@ -396,7 +396,8 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "nersc_remote_dir",
     "frontier_account",
     "frontier_remote_dir",
-    "s3m_token",
+    "odo_s3m_token",
+    "frontier_s3m_token",
     "nersc_iri_token",
     "globus_token",
     "odo_globus_token",
@@ -422,7 +423,8 @@ class UserCreate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -447,7 +449,8 @@ class UserUpdate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -471,7 +474,8 @@ class UserSelfUpdate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -506,7 +510,8 @@ class UserPublicWithConfig(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -566,7 +571,27 @@ class UserTable(SQLModel, table=True):
     s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
-    """ Bearer token for S3M API authentication. Encrypted at rest. """
+    """
+    Legacy single S3M token. Nothing reads it: an S3M token is scoped to one
+    OLCF project, so one field could only ever authorize one of Odo and
+    Frontier. Kept only because SQLite column drops are not worth it; see
+    `odo_s3m_token` / `frontier_s3m_token`.
+    """
+    odo_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Odo (open enclave), minted in Odo's OLCF project.
+    Authorizes Odo job submission through IRI and gates Odo file operations.
+    Encrypted at rest.
+    """
+    frontier_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Frontier (moderate enclave), minted in
+    `frontier_account`'s project. Encrypted at rest.
+    """
     nersc_iri_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
