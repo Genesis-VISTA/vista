@@ -8,7 +8,9 @@ import {
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import { useActiveProject } from "@/lib/projects";
+import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useCurrentUser } from "@/lib/user";
+import { HpcStatusSection } from "./HpcStatusSection";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -259,6 +261,17 @@ export function NavRail() {
 
   const projectEntries = PROJECT_LOCAL_ENTRIES.slice(1);
 
+  // Nothing until the user has loaded, so a hidden cluster never flashes in.
+  const hidden = new Set(user?.hpc_hidden_clusters ?? []);
+  const visibleClusters: HpcCluster[] = user
+    ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
+    : [];
+
+  function openSettingsFor(_cluster: HpcCluster) {
+    setTip(null);
+    setSettingsOpen(true);
+  }
+
   return (
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
@@ -345,6 +358,13 @@ export function NavRail() {
           {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
         </button>
         {projectEntries.map((entry) => renderEntry(entry, "project-child"))}
+
+        <HpcStatusSection
+          collapsed={collapsed}
+          visibleClusters={visibleClusters}
+          onOpenSettings={openSettingsFor}
+          tipProps={tipProps}
+        />
       </nav>
 
       {/* settingsHint changes as the user record loads, so it is the tooltip's

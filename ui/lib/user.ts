@@ -20,6 +20,11 @@ export type UserPublic = {
   id: string;
   email: string;
   is_admin: boolean;
+  /**
+   * Clusters left out of the NavRail's HPC section. Not a secret, so it is on
+   * the light view the rail reads. Optional because an older backend omits it.
+   */
+  hpc_hidden_clusters?: string[];
 };
 
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
