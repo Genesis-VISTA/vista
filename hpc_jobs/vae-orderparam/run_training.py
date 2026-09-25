@@ -255,7 +255,7 @@ def main(argv=None) -> int:
     )
     print(proc.stdout[-4000:], flush=True)
     curve = parse_training_curve(proc.stdout)
-    (out_dir / "training.log").write_text(proc.stdout)
+    (out_dir / "training.log").write_text(proc.stdout, encoding="utf-8")
 
     weights = ckpt / "vae.pt"
     if not weights.is_file():
@@ -284,7 +284,7 @@ def main(argv=None) -> int:
              "--skip_frames", str(args.skip_frames)],
             cwd=vae_root, check=False, capture_output=True, text=True,
         )
-        (out_dir / "order_parameter.log").write_text(op_out.stdout + op_out.stderr)
+        (out_dir / "order_parameter.log").write_text(op_out.stdout + op_out.stderr, encoding="utf-8")
         order_parameter = {"ok": op_out.returncode == 0,
                            "tail": (op_out.stdout or op_out.stderr)[-1500:]}
 
@@ -309,7 +309,7 @@ def main(argv=None) -> int:
         "order_parameter": order_parameter,
         "cleared_stale_artifacts": cleared,
     }
-    (out_dir / "results.json").write_text(json.dumps(results, indent=2))
+    (out_dir / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(f"[vae-orderparam] exported {encoder.name} / {decoder.name}; "
           f"final={final} gap={gap}", flush=True)
     return 0

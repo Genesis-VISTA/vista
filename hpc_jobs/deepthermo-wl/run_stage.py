@@ -162,9 +162,9 @@ def _run_tee(cmd, log_path, **kw):
     """Run a command, streaming its output live AND capturing it for parsing."""
     print(f"[deepthermo-wl] $ {' '.join(str(c) for c in cmd)}", flush=True)
     captured = []
-    with open(log_path, "w") as log:
+    with open(log_path, "w", encoding="utf-8") as log:
         proc = subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, bufsize=1, **kw)
+                                stderr=subprocess.STDOUT, text=True, bufsize=1, **kw, encoding="utf-8")
         for line in proc.stdout:
             print(line, end="", flush=True)
             log.write(line)
@@ -375,7 +375,7 @@ def parse_vae_dat(path: Path) -> dict:
     """Last row of vae.dat: sweeps, lnwlf, cumulative attempts, accepts, ratio."""
     if not path.is_file():
         return {}
-    rows = [r.split() for r in path.read_text().splitlines() if r.strip() and not r.startswith("#")]
+    rows = [r.split() for r in path.read_text(encoding="utf-8").splitlines() if r.strip() and not r.startswith("#")]
     if not rows:
         return {}
     last = rows[-1]
@@ -498,7 +498,7 @@ def main(argv=None) -> int:
         suggested = {}
         wf = workspace / "energy_window.json"
         if wf.is_file():
-            suggested = (json.loads(wf.read_text()).get("suggested_window") or {})
+            suggested = (json.loads(wf.read_text(encoding="utf-8")).get("suggested_window") or {})
         for field in ("e_min", "e_max", "bin_width"):
             if getattr(args, field) is None:
                 if suggested.get(field) is None:
@@ -513,7 +513,7 @@ def main(argv=None) -> int:
                     )
                 setattr(args, field, suggested[field])
         validate_window(args.e_min, args.e_max,
-                        json.loads(wf.read_text()) if wf.is_file() else None)
+                        json.loads(wf.read_text(encoding="utf-8")) if wf.is_file() else None)
         print(f"[deepthermo-wl] WL window: e_min={args.e_min} e_max={args.e_max} "
               f"bin_width={args.bin_width}", flush=True)
 
@@ -554,7 +554,7 @@ def main(argv=None) -> int:
     )
 
     config_text = build_config(args, elements, composition)
-    (run_dir / "config.toml").write_text(config_text)
+    (run_dir / "config.toml").write_text(config_text, encoding="utf-8")
     print(f"[deepthermo-wl] mode={args.mode} N={args.n} grid={grid} offset={offset} "
           f"ranks={ranks} workspace={workspace}", flush=True)
 
@@ -600,7 +600,7 @@ def main(argv=None) -> int:
         # Hand the window to the sample stage through the workspace, so it is chosen
         # from this system's actual energies rather than a constant borrowed from the
         # repo's example (which is MoNbTaW at N=10 and valid for nothing else).
-        (workspace / "energy_window.json").write_text(json.dumps(energy, indent=2))
+        (workspace / "energy_window.json").write_text(json.dumps(energy, indent=2), encoding="utf-8")
         print(f"[deepthermo-wl] suggested WL window: {energy['suggested_window']}", flush=True)
     if args.mode == "sample":
         results["vae_move"] = parse_vae_dat(run_dir / "vae.dat")
@@ -608,8 +608,8 @@ def main(argv=None) -> int:
         results["dos_files"] = dos
         results["wl_iterations_completed"] = len(dos)
 
-    (out_dir / "results.json").write_text(json.dumps(results, indent=2))
-    (out_dir / "config.toml").write_text(config_text)  # diagnostics come from sync_progress
+    (out_dir / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    (out_dir / "config.toml").write_text(config_text, encoding="utf-8")  # diagnostics come from sync_progress
 
     print(f"[deepthermo-wl] wrote {out_dir / 'results.json'} "
           f"({len(snapshots)} snapshot file(s) left in {run_dir})", flush=True)

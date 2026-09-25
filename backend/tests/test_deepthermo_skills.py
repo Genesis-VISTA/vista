@@ -57,7 +57,7 @@ def test_skill_parses_and_job_exists(name):
 @pytest.mark.parametrize("name", ["deepthermo-wl", "vae-orderparam"])
 def test_odo_script_sources_the_xforge_env_and_threads_the_workspace(name):
     """Odo gets PyTorch from the same xforge env forge-tune uses (sourced, not a module)."""
-    text = (JOBS / name / "job.odo.slurm").read_text()
+    text = (JOBS / name / "job.odo.slurm").read_text(encoding="utf-8")
     assert "xforge-env.sh" in text, "Odo must source xforge-env.sh, not module-load it"
     assert "module load xforge" not in text, "that is the Frontier mechanism"
     assert "RUN_DIR_Odo" in text and "RUN_DIR_Frontier" not in text
@@ -162,7 +162,8 @@ def test_element_order_is_preserved_into_the_config(stage):
 def test_vae_dat_last_row_becomes_the_acceptance_metric(stage, tmp_path):
     f = tmp_path / "vae.dat"
     f.write_text(
-        "# sweeps lnwlf att acc ratio\n100 1.0 1000 600 0.6\n200 0.5 29146 17275 0.593\n"
+        "# sweeps lnwlf att acc ratio\n100 1.0 1000 600 0.6\n200 0.5 29146 17275 0.593\n",
+        encoding="utf-8",
     )
     got = stage.parse_vae_dat(f)
     assert got["vae_attempts"] == 29146
@@ -278,7 +279,7 @@ def test_no_energy_line_yields_no_window(stage):
 
 def test_sample_mode_has_no_hardcoded_energy_window(stage):
     """The repo's example values are MoNbTaW@N=10 only; they must not be defaults."""
-    src = (JOBS / "deepthermo-wl" / "run_stage.py").read_text()
+    src = (JOBS / "deepthermo-wl" / "run_stage.py").read_text(encoding="utf-8")
     assert "default=-1.2808" not in src and "default=-1.2770" not in src
 
 
@@ -338,7 +339,7 @@ def test_recorded_totals_are_named_so_they_cannot_be_mistaken(stage, recorded):
 
 def test_skill_example_does_not_teach_passing_a_window():
     """The worked example taught the agent to supply e_min/e_max — that caused the bug."""
-    text = (SKILLS / "deepthermo-wl" / "SKILL.md").read_text()
+    text = (SKILLS / "deepthermo-wl" / "SKILL.md").read_text(encoding="utf-8")
     sample_example = [ln for ln in text.splitlines() if "--mode sample" in ln]
     assert sample_example, "no sample-mode example found"
     for ln in sample_example:
@@ -353,7 +354,7 @@ def test_progress_mirror_copies_dos_and_diagnostics(stage, tmp_path):
     run.mkdir()
     out.mkdir()
     for n in ("DOS_H_iter001.dat", "DOS_H_iter002.dat", "vae.dat", "misc0.dat"):
-        (run / n).write_text("x\n" * 10)
+        (run / n).write_text("x\n" * 10, encoding="utf-8")
     copied = stage.sync_progress(run, out)
     assert set(copied) >= {"DOS_H_iter001.dat", "DOS_H_iter002.dat", "vae.dat"}
 
@@ -363,8 +364,8 @@ def test_progress_mirror_never_copies_snapshots(stage, tmp_path):
     run, out = tmp_path / "run", tmp_path / "out"
     run.mkdir()
     out.mkdir()
-    (run / "snap_0_0.xyz").write_text("big\n" * 1000)
-    (run / "DOS_H_iter001.dat").write_text("ok\n")
+    (run / "snap_0_0.xyz").write_text("big\n" * 1000, encoding="utf-8")
+    (run / "DOS_H_iter001.dat").write_text("ok\n", encoding="utf-8")
     stage.sync_progress(run, out)
     assert not (out / "snap_0_0.xyz").exists()
     assert (out / "DOS_H_iter001.dat").exists()
@@ -375,7 +376,7 @@ def test_progress_mirror_is_idempotent(stage, tmp_path):
     run, out = tmp_path / "run", tmp_path / "out"
     run.mkdir()
     out.mkdir()
-    (run / "DOS_H_iter001.dat").write_text("x\n")
+    (run / "DOS_H_iter001.dat").write_text("x\n", encoding="utf-8")
     assert stage.sync_progress(run, out) == ["DOS_H_iter001.dat"]
     assert stage.sync_progress(run, out) == []
 
@@ -389,12 +390,12 @@ def test_progress_mirror_refreshes_an_updated_file(stage, tmp_path):
     run.mkdir()
     out.mkdir()
     f = run / "DOS_H_iter002.dat"
-    f.write_text("first\n")
+    f.write_text("first\n", encoding="utf-8")
     stage.sync_progress(run, out)
-    f.write_text("second\n")
+    f.write_text("second\n", encoding="utf-8")
     os.utime(f, (time.time() + 5, time.time() + 5))  # unambiguously newer
     assert stage.sync_progress(run, out) == ["DOS_H_iter002.dat"]
-    assert (out / "DOS_H_iter002.dat").read_text() == "second\n"
+    assert (out / "DOS_H_iter002.dat").read_text(encoding="utf-8") == "second\n"
 
 
 def test_progress_mirror_is_bounded(stage, tmp_path):
@@ -403,7 +404,7 @@ def test_progress_mirror_is_bounded(stage, tmp_path):
     run.mkdir()
     out.mkdir()
     for i in range(300):
-        (run / f"DOS_H_iter{i:03d}.dat").write_text("y\n")
+        (run / f"DOS_H_iter{i:03d}.dat").write_text("y\n", encoding="utf-8")
     assert len(stage.sync_progress(run, out)) <= stage.PROGRESS_MAX_FILES
 
     big = run / "DOS_H_iter999.dat"
@@ -430,7 +431,7 @@ def test_workspace_inventory_reports_what_each_stage_left(stage, tmp_path):
     ):
         (ws / sub).mkdir(parents=True)
         for f in files:
-            (ws / sub / f).write_text("x")
+            (ws / sub / f).write_text("x", encoding="utf-8")
 
     inv = stage.workspace_inventory(ws)
     assert inv["exists"] is True
@@ -446,12 +447,12 @@ def test_inventory_flags_a_bootstrap_only_model_dir(stage, tmp_path):
     ws = tmp_path / "ws"
     (ws / "models").mkdir(parents=True)
     for f in ("encoder_X.pt", "decoder_X.pt", "bootstrap.pt"):
-        (ws / "models" / f).write_text("x")
+        (ws / "models" / f).write_text("x", encoding="utf-8")
     assert stage.workspace_inventory(ws)["bootstrap_marker_present"] is True
 
     ws2 = tmp_path / "ws2"
     (ws2 / "models").mkdir(parents=True)
-    (ws2 / "models" / "encoder_X.pt").write_text("x")
+    (ws2 / "models" / "encoder_X.pt").write_text("x", encoding="utf-8")
     assert stage.workspace_inventory(ws2)["bootstrap_marker_present"] is False
 
 
@@ -481,7 +482,7 @@ def test_reset_clears_previous_run_artifacts(stage, tmp_path):
         "engine.log",
     ]
     for f in stale:
-        (run / f).write_text("old")
+        (run / f).write_text("old", encoding="utf-8")
     removed = stage.reset_run_dir(run)
     assert set(removed) == set(stale)
     assert not list(run.glob("DOS_H_iter*.dat"))
@@ -492,8 +493,8 @@ def test_reset_clears_checkpoints_so_a_run_cannot_silently_resume(stage, tmp_pat
     whose configuration no longer matches config.toml."""
     run = tmp_path / "sample"
     run.mkdir()
-    (run / "state0.input").write_text("ckpt")
-    (run / "mc0.input").write_text("ckpt")
+    (run / "state0.input").write_text("ckpt", encoding="utf-8")
+    (run / "mc0.input").write_text("ckpt", encoding="utf-8")
     stage.reset_run_dir(run)
     assert not (run / "state0.input").exists()
     assert not (run / "mc0.input").exists()
@@ -504,24 +505,24 @@ def test_reset_never_touches_the_models_symlink_or_the_trained_vae(stage, tmp_pa
     ws = tmp_path / "ws"
     models = ws / "models"
     models.mkdir(parents=True)
-    (models / "encoder_X.pt").write_text("trained")
+    (models / "encoder_X.pt").write_text("trained", encoding="utf-8")
     run = ws / "sample"
     run.mkdir()
     (run / "models").symlink_to(models, target_is_directory=True)
-    (run / "vae.dat").write_text("old")
+    (run / "vae.dat").write_text("old", encoding="utf-8")
 
     stage.reset_run_dir(run)
     assert (run / "models").is_symlink()
-    assert (models / "encoder_X.pt").read_text() == "trained"
+    assert (models / "encoder_X.pt").read_text(encoding="utf-8") == "trained"
     assert not (run / "vae.dat").exists()
 
 
 def test_reset_leaves_regenerated_inputs_alone(stage, tmp_path):
     run = tmp_path / "sample"
     run.mkdir()
-    (run / "config.toml").write_text("cfg")
-    (run / "coupling.input").write_text("J")
-    (run / "vae.dat").write_text("old")
+    (run / "config.toml").write_text("cfg", encoding="utf-8")
+    (run / "coupling.input").write_text("J", encoding="utf-8")
+    (run / "vae.dat").write_text("old", encoding="utf-8")
     stage.reset_run_dir(run)
     assert (run / "config.toml").exists() and (run / "coupling.input").exists()
 
@@ -530,8 +531,8 @@ def test_training_reset_clears_a_stale_checkpoint(train, tmp_path):
     """A failed run must not let the export step ship the PREVIOUS run's weights."""
     t = tmp_path / "train"
     (t / "checkpoints").mkdir(parents=True)
-    (t / "checkpoints" / "vae.pt").write_text("stale weights")
-    (t / "train_split.npy").write_text("old")
+    (t / "checkpoints" / "vae.pt").write_text("stale weights", encoding="utf-8")
+    (t / "train_split.npy").write_text("old", encoding="utf-8")
     removed = train.reset_train_dir(t)
     assert "checkpoints/vae.pt" in removed
     assert not (t / "checkpoints" / "vae.pt").exists()

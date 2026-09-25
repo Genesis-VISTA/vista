@@ -215,7 +215,7 @@ def main(argv=None) -> int:
     base_spec_path = Path(args.base_spec) if args.base_spec else skill_root / "examples" / "MoNbTaW" / "spec.json"
     if not base_spec_path.is_file():
         raise SystemExit(f"base spec not found at {base_spec_path}")
-    base_spec = json.loads(base_spec_path.read_text())
+    base_spec = json.loads(base_spec_path.read_text(encoding="utf-8"))
 
     work = Path(args.work_dir).resolve() if args.work_dir else skill_root.parent / "alloy-run"
     run_dir = work / "run"
@@ -224,7 +224,7 @@ def main(argv=None) -> int:
     # 1. Candidate spec (DFT couplings from the repo + this composition + run knobs).
     spec = build_spec(base_spec, args)
     spec_path = work / "spec.json"
-    spec_path.write_text(json.dumps(spec, indent=2))
+    spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     print(f"[alloy-thermo-mc] composition {dict(zip(ELEMENTS, spec['composition']))} "
           f"N={spec['simulation'].get('N')} ranks={ranks}", flush=True)
 
@@ -245,11 +245,11 @@ def main(argv=None) -> int:
     summary_path = analysis_dir / "summary.json"
     if not summary_path.is_file():
         raise SystemExit(f"analyze.py produced no summary.json at {summary_path}")
-    summary = json.loads(summary_path.read_text())
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     # 5. Campaign-facing result + the small human-readable artifacts.
     results = summarize(summary, spec, args, ranks)
-    (out_dir / "results.json").write_text(json.dumps(results, indent=2))
+    (out_dir / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     for extra in ("summary.md", "thermo.png", "order.png"):
         src = analysis_dir / extra
         if src.is_file():

@@ -195,7 +195,7 @@ def score_candidates(
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    raw = open(argv[0]).read() if argv else sys.stdin.read()
+    raw = open(argv[0], encoding="utf-8").read() if argv else sys.stdin.read()
     data = json.loads(raw)
     if isinstance(data, dict):
         candidates = data.get("candidates", [])

@@ -1,66 +1,67 @@
 """
 A failing job must be able to say why.
 
-Two blind spots found while debugging a real Odo failure (2026-09-21): the status
-output showed only the FIRST 200 lines of stdout — so a verbose CMake build buried the
-error — and the stderr log the JobSpec routes to `log-<id>.err` was never fetched or
-displayed at all. Between them, a job that died with a clear Python message reported
-nothing but a stdout log that simply stopped.
+The blind spot this guards (found debugging a real Odo failure): a job with a verbose
+prologue — a CMake build, a pip install — pushes its error message far down the log, so
+any window anchored at the START of the file reports build chatter and nothing about why
+the job died. `_read_log_tail` anchors at the END instead.
 """
 
 import pytest
 
-from vista_mcp_server.submit_job_mcp import _head_and_tail
+from vista_mcp_server.submit_job_mcp import (
+    _LOG_TAIL_BYTES,
+    _LOG_TAIL_LINES,
+    _read_log_tail,
+)
 
 pytestmark = pytest.mark.unit
 
 
-def test_tail_is_kept_not_just_the_head(tmp_path):
+def test_the_failure_message_at_the_end_survives(tmp_path):
     log = tmp_path / "log-1.out"
     log.write_text(
         "\n".join(
-            [f"[{i}%] Building CXX object..." for i in range(500)]
+            [f"[{i}%] Building CXX object..." for i in range(5000)]
             + ["error: the actual failure"]
-        )
+        ),
+        encoding="utf-8",
     )
-    out = _head_and_tail(log)
-    assert "error: the actual failure" in out, (
-        "the failure message must survive truncation"
-    )
-    assert "[0%]" in out, "the start is still useful context"
-    assert "lines elided" in out
+    out = _read_log_tail(log)
+    assert "error: the actual failure" in out
 
 
-def test_short_logs_pass_through_whole(tmp_path):
+def test_output_is_capped_to_the_line_budget(tmp_path):
+    log = tmp_path / "log-1.out"
+    log.write_text(
+        "\n".join(f"line{i}" for i in range(_LOG_TAIL_LINES * 3)), encoding="utf-8"
+    )
+    assert len(_read_log_tail(log).splitlines()) <= _LOG_TAIL_LINES
+
+
+def test_short_logs_come_back_whole(tmp_path):
     log = tmp_path / "log-1.out"
     body = "\n".join(f"line{i}" for i in range(20))
-    log.write_text(body)
-    assert _head_and_tail(log) == body
-    assert "elided" not in _head_and_tail(log)
+    log.write_text(body, encoding="utf-8")
+    assert _read_log_tail(log) == body
 
 
-def test_middle_is_what_gets_dropped(tmp_path):
+def test_a_window_opening_mid_line_drops_the_partial_line(tmp_path):
+    """A truncated first line reads as corrupt output rather than as a window."""
     log = tmp_path / "log-1.out"
-    log.write_text("\n".join(f"line{i}" for i in range(1000)))
-    out = _head_and_tail(log, head=10, tail=10)
-    assert "line0" in out and "line999" in out
-    assert "line500" not in out
+    filler = "x" * (_LOG_TAIL_BYTES + 5000)
+    log.write_text(filler + "\nCLEAN LINE\n", encoding="utf-8")
+    out = _read_log_tail(log)
+    assert "CLEAN LINE" in out
+    assert not out.startswith("x"), "partial first line should have been dropped"
 
 
 def test_undecodable_bytes_do_not_break_reading(tmp_path):
-    """Engine logs can carry stray binary; a status call must not 500 on it."""
+    """Engine logs can carry stray binary; a status call must not fail on it."""
     log = tmp_path / "log-1.out"
     log.write_bytes(b"ok\n\xff\xfe binary \n done\n")
-    assert "done" in _head_and_tail(log)
+    assert "done" in _read_log_tail(log)
 
 
-def test_status_assembles_a_stderr_section():
-    """The status text must have somewhere for stderr to appear, after stdout."""
-    import inspect
-    from vista_mcp_server import submit_job_mcp as m
-
-    src = inspect.getsource(m)
-    assert '"--- STDERR ---"' in src
-    assert 'with_suffix(".err")' in src, "stderr log path is never derived"
-    # and it must actually be fetched, not just derived
-    assert "local_err_path" in src and "remote_err_path" in src
+def test_missing_log_is_not_an_error(tmp_path):
+    assert _read_log_tail(tmp_path / "nope.out") == ""

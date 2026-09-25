@@ -377,7 +377,7 @@ async def test_collector_fetches_declared_files_and_parser_receives_them(
     planner = _collect_planner(hpc, seen_outputs=seen)
 
     collect = build_collector(planner_provider=lambda _s, _j: _async(planner))
-    await collect(session, job, "STATE=COMPLETED")
+    await collect(session, job, "STATE=COMPLETED", True)
 
     # The declared file list reached the HPC boundary...
     assert hpc.fetched == [("job-1", ["results.json"])]
@@ -414,7 +414,7 @@ async def test_collector_without_declared_files_fetches_nothing(session, alice):
     planner = _collect_planner(hpc, seen_outputs=seen)
 
     collect = build_collector(planner_provider=lambda _s, _j: _async(planner))
-    await collect(session, job, "STATE=COMPLETED")
+    await collect(session, job, "STATE=COMPLETED", True)
 
     assert hpc.fetched == []  # no fetch_outputs call at all
     assert seen == [""]  # parser sees empty outputs, as today
