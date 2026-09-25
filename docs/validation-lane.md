@@ -10,7 +10,7 @@ lane never blocks merges.
 | Nightly validation | GitLab schedule or `./scripts/nightly-validation.sh` | schedule vars only | **no** |
 | Weekly real HPC | weekly schedule / manual | HPC tokens | **no** |
 | Playwright smoke | schedule / manual | none beyond running UI | **no** |
-| VISTA window | manual, macOS with a display | none | **no** |
+| VISTA window | manual, macOS with a display, or Linux in Docker | none | **no** |
 
 OpenSpec: [`openspec/changes/milestone-d-validation-lane/`](../openspec/changes/milestone-d-validation-lane/).
 
@@ -111,7 +111,7 @@ Flow: open app → open Projects → activate a project → send a chat message 
 observe a tool-call bubble and/or elicitation modal. Selectors prefer
 role/text. **Not** part of required MR CI.
 
-## VISTA window (macOS, manual)
+## VISTA window (manual)
 
 The window's routing rules run in PR CI (`electron:test`). Its behaviour in a
 real window needs a display, so it is checked here instead.
@@ -120,6 +120,16 @@ real window needs a display, so it is checked here instead.
 
 ```bash
 cd electron && npm ci && npm run test:e2e
+```
+
+The same tests on Linux, in a container on any machine with Docker. The image matches the
+pinned `@playwright/test`. It runs as root, so the sandboxed PDF case is skipped and the
+`@no-sandbox` cases cover Linux's unsandboxed path. Behind TLS inspection, add
+`-v ~/root-ca.pem:/ca.pem:ro -e NODE_EXTRA_CA_CERTS=/ca.pem`, or Electron's download fails.
+
+```bash
+cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
+  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && xvfb-run -a npm run test:e2e'
 ```
 
 This covers external links and `window.open` going to the system browser, off-origin

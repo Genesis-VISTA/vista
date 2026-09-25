@@ -70,7 +70,7 @@
       - a `download` link to a PDF is still saved and not opened.
     - The existing sandboxed PDF case still opens a child window. It is skipped as root, where every launch is unsandboxed.
     - As root, every launch gets `--no-sandbox`, including the second-instance and smoke-test spawns.
-    - Seen once and not reproduced in 12 later runs of the old or new code: a smoke test against a refused port printed its failure but took 30 s to exit. Watch for it in the 5.1 CI job.
+    - Seen once and not reproduced in 12 later runs of the old or new code: a smoke test against a refused port printed its failure but took 30 s to exit. Watch for it in the 5.1 container run.
 
 ## 3. Linux package build
 
@@ -164,14 +164,21 @@
     - `WINDOW_SANDBOX` is `'$(./linux/window-sandbox)'` on Linux, and is expanded by the window's own shell after `cd electron`. Elsewhere it is empty.
     - On macOS, `WINDOW_CMD` was evaluated from both `0f0eac8^` and `0f0eac8` and compared after word splitting. The only difference is a space before the final `;`, so the command run is the same. `bash -n` passes. The full `./launch.sh logs --electron` was not started, because port 8000 was already in use by an unrelated local process.
 
-## 5. CI
+## 5. Linux e2e tests
 
-- [ ] 5.1 `.gitlab-ci.yml`: add an `electron:e2e` job in the test stage on `mcr.microsoft.com/playwright:v1.62.1-noble`, with `allow_failure: true`, an npm cache keyed on `electron/package-lock.json`, `npm ci`, and `xvfb-run -a npm run test:e2e` (D9). Verify by running those commands in that image locally, as root, from the committed tree (all e2e tests pass), then with the MR pipeline once pushed. Do not add it to `scripts/ci-local.sh`'s default targets, because it needs the Playwright image or a display.
+- [x] 5.1 `docs/validation-lane.md`: add the command that runs `npm run test:e2e` in `mcr.microsoft.com/playwright:v1.62.1-noble` under `xvfb-run -a` (D9). Verify by running it exactly as written. There is no CI job; D9 says why.
+  - **Done (2026-09-25).**
+    - This replaces the planned advisory `electron:e2e` CI job, which was dropped from this change.
+    - The command mounts `electron/` and puts an anonymous volume over `node_modules`, so the host's macOS modules are neither used nor changed.
+    - Run as documented on this Mac:
+      - the first attempt failed at Electron's binary download (`fetch failed`), because of this network's TLS inspection;
+      - with `-v ~/root-ca.pem:/ca.pem:ro -e NODE_EXTRA_CA_CERTS=/ca.pem`, **14 passed and 1 skipped in 22 s**. The skip is the sandboxed PDF case, which cannot run as root. All three `@no-sandbox` PDF cases passed.
+      - This is the first time the e2e tests have run on Linux. The CA workaround is in the doc.
 
 ## 6. Docs
 
 - [ ] 6.1 `README.md` "Running a prebuilt package": the Linux window, with SSH and `--browser` falling back; the Ubuntu sandbox message and the one-time profile install; the window's libraries per distribution (from 3.1); and PDFs opening in the browser while unsandboxed. Verify that every command in it was run in groups 1–4.
-- [ ] 6.2 `docs/validation-lane.md`: the "VISTA window" lane covers Linux (D9's manual list) and the new `electron:e2e` job. `AGENTS.md`: `electron/linux/` and the sandbox rule. Add a line to the release notes and checklist saying the bundled Electron version is reviewed each release. Update `electron-desktop-shell`'s `design.md` P1 Linux bullet to point at this change, replacing "Do not use `--no-sandbox`". Verify with `openspec validate linux-desktop-window --strict`.
+- [ ] 6.2 `docs/validation-lane.md`: the "VISTA window" lane covers Linux (D9's manual list); the container command is already there (5.1). `AGENTS.md`: `electron/linux/` and the sandbox rule. Add a line to the release notes and checklist saying the bundled Electron version is reviewed each release. Update `electron-desktop-shell`'s `design.md` P1 Linux bullet to point at this change, replacing "Do not use `--no-sandbox`". Verify with `openspec validate linux-desktop-window --strict`.
 
 ## 7. Validation (manual)
 

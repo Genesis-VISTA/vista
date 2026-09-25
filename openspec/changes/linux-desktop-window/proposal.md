@@ -38,8 +38,9 @@ Until then, Linux users should get the window now, including on Ubuntu.
 - The Linux build container gains `xvfb` and Electron's runtime libraries, so the build's
   "the window loads the UI" check runs there. That check alone uses `--no-sandbox`,
   because the container runs as root.
-- A new advisory CI job runs the window's Playwright tests on Linux under `xvfb`. Until
-  now they ran only by hand on macOS.
+- The validation lane gains a command that runs the window's Playwright tests on Linux,
+  in the Playwright container under `xvfb`. Until now they ran only by hand on macOS.
+  There is no CI job for them yet.
 
 ## Capabilities
 
@@ -62,7 +63,7 @@ None.
 - **Modified**: `scripts/package_launcher.sh`, `scripts/launch.sh`,
   `scripts/build_local_package.sh`, `scripts/smoke_test_package.sh`,
   `scripts/Dockerfile.build`, `electron/src/main.js` (PDF routing and a sandbox status
-  line in `window.log`), `electron/test/`, `.gitlab-ci.yml`, `README.md`,
+  line in `window.log`), `electron/test/`, `README.md`,
   `docs/validation-lane.md`, `AGENTS.md`.
 - **New**: the AppArmor profile file in `electron/`, shipped as `app/window/`.
 - **Package size**: Linux archives grow by about 100 MB compressed.

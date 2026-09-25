@@ -51,7 +51,8 @@ Current state and constraints that shape the approach:
   never silent.
 - A native `.deb` later only has to install one file this change already ships, and then
   the `--no-sandbox` path stops being taken without any code change.
-- The window's behaviour tests run in CI for the first time, on Linux.
+- The window's behaviour tests can be run on Linux, in a container, from the validation
+  lane.
 
 **Non-Goals:**
 
@@ -246,16 +247,23 @@ development binary with the same one-time step.
 
 - **PR CI (hermetic).** `electron:test` is unchanged. A shell test covers
   `window-sandbox`'s four branches, using a test override for the two paths it reads.
-- **New `electron:e2e` job (advisory, `allow_failure: true`).**
-  - It runs on `mcr.microsoft.com/playwright:v1.62.1-noble`, which has Node, `xvfb` and
-    Chromium's libraries, and matches the pinned `@playwright/test`.
+- **The e2e tests on Linux: a validation-lane command, not a CI job.**
+  - The command runs on `mcr.microsoft.com/playwright:v1.62.1-noble`, which has Node,
+    `xvfb` and Chromium's libraries, and matches the pinned `@playwright/test`.
   - It runs `npm ci` and then `xvfb-run -a npm run test:e2e`.
   - The tests pass `--no-sandbox` when running as root.
   - A new e2e case launches with `--no-sandbox` and checks that the fixture's PDF link
     calls the stubbed `shell.openExternal` and opens no child window. The existing PDF
     case keeps covering the sandboxed path.
-  - It becomes required after it has been reliable for a while. The `testing-ci` spec
-    keeps advisory jobs unrequired.
+  - **Why no CI job (decided 2026-09-25).**
+    - The logic most likely to change is where a link goes, and that is in
+      `routing.js`, whose tests are already required in PR CI.
+    - Each Linux package build already checks that the window loads the UI.
+    - `main.js` is small and rarely changes.
+    - An advisory job would cost every MR a large image pull and one more job, and we
+      don't know yet whether the runners can reach `mcr.microsoft.com`.
+    - Add the job if the window starts changing often. The container command is
+      already the job's script.
 - **Manual (validation lane)**, on a real Ubuntu 24.04 desktop and one of Debian 13 or
   Fedora. A VM is fine: without nested virtualisation, `VISTA_ALLOW_NO_KVM=1` is
   acceptable for window-only checks.
