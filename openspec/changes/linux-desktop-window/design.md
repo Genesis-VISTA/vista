@@ -57,8 +57,6 @@ Current state and constraints that shape the approach:
 
 - Running `sudo` on the researcher's behalf.
 - A window icon, a `.desktop` entry or app-menu integration. They need native packaging.
-- Hosts that disable user namespaces some other way, for example
-  `user.max_user_namespaces=0`. D5 falls back to browser mode there.
 
 ## Decisions
 
@@ -71,14 +69,33 @@ prints the extra arguments the window needs on this host. It prints nothing, or
 1. Running as root: `--no-sandbox`, because Chromium refuses to run as root otherwise.
    Only the build's smoke test reaches this (D7), since the launcher does not open a
    window for root (D4).
-2. `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is absent or not `1`: nothing
-   (sandbox on).
-3. `/etc/apparmor.d/vista-window` exists: nothing (sandbox on, D2).
-4. Otherwise: `--no-sandbox`.
+2. `unshare -Ur true` succeeds: nothing (sandbox on). This asks the host directly whether
+   an unprivileged user namespace with capabilities can be made, which is what Chromium's
+   namespace layer needs. It takes milliseconds.
+3. `/etc/apparmor.d/vista-window` exists: nothing (sandbox on, D2). This has to come
+   after the probe but before giving up, because on Ubuntu `unshare` has no profile of
+   its own and fails even when VISTA's is installed.
+4. Otherwise: `--no-sandbox`. The reason depends on
+   `/proc/sys/kernel/apparmor_restrict_unprivileged_userns`, which is now read only to
+   choose the message:
+   - `1`: Ubuntu's restriction, followed by the D2 install command;
+   - anything else: "this host does not allow unprivileged user namespaces" (for example
+     a container, or `user.max_user_namespaces=0`). No VISTA step can fix that, so none
+     is named.
+
+If `unshare` is not installed (it ships in util-linux on every mainstream distro, so this
+is unlikely), rule 2 falls back to the sysctl: absent or not `1` means nothing.
 
 The package launcher, `./launch.sh --electron` and the smoke test all call this script,
-so the rule exists once. The launcher prints the reason and the D2 install command on
-every start that takes branch 4.
+so the rule exists once. The launcher prints the reason, and the install command where
+there is one, on every start that takes branch 4.
+
+- *Alternative rejected: read the sysctl alone for rule 2* (the first draft). It only
+  knows Ubuntu's mechanism. In task 1.1's container run, Docker's default seccomp profile
+  blocked user namespaces for a non-root user with no such sysctl present. That rule
+  would have said "sandbox on", the window would have aborted (exit 133), and D5 would
+  have given browser mode instead of a window. `unshare -Ur true` exited 1 there and 0
+  where namespaces were permitted.
 
 - *Alternative rejected: always `--no-sandbox` on Linux.* It turns the sandbox off on
   Debian, Fedora and RHEL, where it works, and would stay that way after a `.deb` fixes
@@ -270,12 +287,8 @@ on with no code change.
 
 - How reliably the smoke test runs under `linux/amd64` emulation. It is measured in task
   3.3, and either outcome fits D7.
-- Whether D1 should probe rather than read the sysctl. Task 1.1's container run showed
-  that user namespaces can be blocked by something other than Ubuntu's sysctl: Docker's
-  default seccomp profile blocks them for a non-root user, and the window then aborts
-  exactly as on Ubuntu (exit 133), while D1's rule adds nothing because the sysctl is
-  absent. D5 turns that into browser mode, so nothing breaks. A probe would catch it:
-  `unshare -Ur true` exited 1 there and 0 with namespaces permitted. The probe would
-  replace rule 2, and the profile check (rule 3) would still come before `--no-sandbox`,
-  because on Ubuntu `unshare` itself has no profile and fails even when VISTA's is
-  installed. Undecided; D1 stands until then.
+- That `unshare -Ur true` fails on stock Ubuntu 24.04 with the restriction on. This is
+  expected, because the restriction denies capabilities in the new namespace, so writing
+  `uid_map` fails. It is confirmed on a real host in task 1.1. If it succeeds there, rule
+  2 would say "sandbox on" and D5 would give browser mode. In that case, add the sysctl
+  back as a condition on rule 2.

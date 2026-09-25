@@ -20,8 +20,10 @@ Until then, Linux users should get the window now, including on Ubuntu.
   Chromium's sandbox can run:
   - where the host allows it (Debian 13, Fedora, RHEL 10, or Ubuntu with VISTA's
     AppArmor profile installed), the window runs sandboxed, as today on macOS;
-  - where Ubuntu's restriction is on and VISTA's profile is not installed, the window
-    runs with `--no-sandbox`. The launcher says so on every start and names the one-time
+  - where the host blocks the user namespaces the sandbox needs, the window runs with
+    `--no-sandbox`. That means Ubuntu's restriction with VISTA's profile not installed, or
+    a host such as a container that blocks them some other way. The launcher checks by
+    trying to create one, says so on every start and, on Ubuntu, names the one-time
     command that turns the sandbox back on. **Accepted risk**, recorded in the design.
 - While the window runs without the sandbox, PDFs open in the system browser rather than
   a VISTA window, which keeps the largest parser of content VISTA does not produce inside

@@ -21,11 +21,12 @@
       - **`--no-sandbox`:** loads the page and exits 0. The renderer shares the browser's user namespace, so it is not sandboxed.
       - **Root without the flag:** `Running as root without --no-sandbox is not supported`, exit 133. That confirms D1's rule 1.
       - **D2's profile** parses with Ubuntu 24.04's `apparmor_parser` 4.0.1 (`-Q -K`) as profile `vista-window`, `userns`, mode unconfined.
-    - D1 and D2 are unchanged. The container run raised one open question about D1, recorded in design.md's Open Questions: probe `unshare` instead of reading the sysctl.
+    - D2 is unchanged. D1's rule 2 now probes `unshare -Ur true` instead of reading the sysctl (decided 2026-09-25). The run showed namespaces blocked with no sysctl present, which the old rule would have missed.
     - **Still deferred (needs a real Ubuntu 24.04 host):**
       - the abort caused by the AppArmor restriction itself;
       - that the loaded profile lets it open without `--no-sandbox`, including that the profile's path glob attaches to `app/window/VISTA`;
       - the sysctl value (the file is absent under LinuxKit);
+      - that `unshare -Ur true` exits non-zero on stock Ubuntu 24.04 (design Open Questions);
       - Wayland versus XWayland.
 - [ ] 1.2 Repeat the run without `--no-sandbox` on Debian 13 or Fedora, and record that it opens sandboxed with no profile. (manual)
   - **Container part done (2026-09-25):**
@@ -36,7 +37,15 @@
 
 ## 2. Window (`electron/`)
 
-- [ ] 2.1 Add `electron/linux/window-sandbox` (D1) and `electron/linux/vista-window.apparmor` (D2). The script reads its two paths from overridable test variables. Verify with a new `electron/test/window-sandbox.test.js` under `npm test`. It runs the script for root, restriction off, restriction on with the profile, and restriction on without it, and asserts the output and reason. The file is included in `electron:test`.
+- [ ] 2.1 Add `electron/linux/window-sandbox` (D1) and `electron/linux/vista-window.apparmor` (D2). The script reads its two paths and its probe command from overridable test variables. Verify with a new `electron/test/window-sandbox.test.js` under `npm test`. It runs the script for these cases and asserts the output and the reason:
+  - root;
+  - probe succeeds;
+  - probe fails with the profile;
+  - probe fails without the profile, with the sysctl at 1 (the reason names the install command);
+  - probe fails without the profile, with no sysctl (no install command);
+  - `unshare` missing (falls back to the sysctl).
+
+  Also run the real script in the 1.1 containers: default seccomp as non-root gives `--no-sandbox` with no install command, and `seccomp=unconfined` gives nothing. The file is included in `electron:test`.
 - [ ] 2.2 `electron/src/main.js`: write `renderer sandbox: on|off` at start. When `--no-sandbox` is set, send `application/pdf` main-frame and sub-frame responses to `shell.openExternal`, and close a child window that loaded nothing else (D3). Verify that `npm run typecheck` passes.
 - [ ] 2.3 `electron/test/window.e2e.js`: add a case that launches with `--no-sandbox` and checks that `#pdf-blank` calls the stubbed `openExternal` with `/paper.pdf` and opens no child window. The existing PDF case, which stays sandboxed, still opens one. Make launches add `--no-sandbox` when `process.getuid() === 0`. Verify that `npm run test:e2e` passes on macOS (13 tests). (needs a display)
 

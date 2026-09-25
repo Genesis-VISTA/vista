@@ -6,7 +6,8 @@ Every VISTA window SHALL run its pages inside the operating system's renderer sa
 whenever the host permits it. The window SHALL run without that sandbox only where the
 host's own security policy prevents the sandbox from starting for an application
 installed the way VISTA is. Whenever the window runs without it, the launcher SHALL say
-so on every start and SHALL name the one-time step that allows the sandbox on that host.
+so on every start and, where VISTA ships one, SHALL name the one-time step that allows the
+sandbox on that host.
 The sandbox SHALL NOT be turned off on a host that permits it, and SHALL NOT be turned
 off on macOS.
 
@@ -30,6 +31,14 @@ off on macOS.
   installed
 - **THEN** the window runs with the renderer sandbox on and the launcher reports nothing
   about it
+
+#### Scenario: A host that blocks user namespaces some other way
+
+- **WHEN** VISTA opens its window on a Linux host that does not allow unprivileged user
+  namespaces for another reason, such as a container's seccomp policy or
+  `user.max_user_namespaces=0`
+- **THEN** the window opens without the renderer sandbox, and the launcher reports that
+  it is running without the sandbox and why, naming no install step
 
 #### Scenario: Development window
 
