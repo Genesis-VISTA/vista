@@ -98,8 +98,8 @@
       - macOS with a window passes;
       - another OS with no window passes.
     - The real run of `stage_window_linux` comes with 3.3's build. Its steps were reproduced by hand in the updated build image (see 3.3).
-- [ ] 3.3 `scripts/Dockerfile.build`: add `xvfb`, `xauth` and the 3.1 libraries. `scripts/smoke_test_package.sh`: add the Linux branch of "the window loads the UI" (D7), using a display if one is present, otherwise `xvfb-run -a`, otherwise skipping with a reason, and passing `window-sandbox`'s arguments. Verify with `./scripts/build_in_docker.sh --platform linux/arm64 --vector-store … --payload …` (using `~/.vista`), which must end with "the window loads the UI" passing. Then run it for `linux/amd64` and record whether the check is reliable under emulation. If it isn't, implement the skip-when-emulated from the Risks section. Pass `--ca-bundle` if this network's TLS inspection blocks the image build. Fix `build_in_docker.sh:221`'s `local` outside a function if that path is hit.
-  - **Code done (2026-09-25); the full build is waiting on Sam.**
+- [x] 3.3 `scripts/Dockerfile.build`: add `xvfb`, `xauth` and the 3.1 libraries. `scripts/smoke_test_package.sh`: add the Linux branch of "the window loads the UI" (D7), using a display if one is present, otherwise `xvfb-run -a`, otherwise skipping with a reason, and passing `window-sandbox`'s arguments. Verify with `./scripts/build_in_docker.sh --platform linux/arm64 --vector-store … --payload …` (using `~/.vista`), which must end with "the window loads the UI" passing. Then run it for `linux/amd64` and record whether the check is reliable under emulation. If it isn't, implement the skip-when-emulated from the Risks section. Pass `--ca-bundle` if this network's TLS inspection blocks the image build. Fix `build_in_docker.sh:221`'s `local` outside a function if that path is hit.
+  - **Done (2026-09-25).**
     - `Dockerfile.build` gains `xvfb xauth libgtk-3-0t64 libnss3 libasound2t64 libgbm1`.
     - The smoke test's Linux branch:
       - it asks `window-sandbox` next to the window for its arguments, and appends the reason to `window-smoke.log`;
@@ -111,7 +111,13 @@
       - "ok the window loads the UI";
       - `window.log` shows `renderer sandbox: off (--no-sandbox)`;
       - `linux/` is not inside `app.asar`.
-    - **Not run:** the full `build_in_docker.sh` for arm64 and then amd64. It needs `PALISADE_GITHUB_TOKEN` (and `AMSC_GIT_TOKEN`, or `--without-hpc`), which only Sam's shell has. The emulation question is still open.
+    - **Full builds (2026-09-25),** both from `2dc8e49` with `--payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db` and `VISTA_BUILD_CA_BUNDLE=~/root-ca.pem`. The tokens came from Sam's git URL rule and keychain.
+      - `linux/arm64` produced `vista-0.1.0+2dc8e49-linux-aarch64.tar.gz` (2.50 GB).
+      - `linux/amd64`, under emulation in about 13 minutes, produced `…-linux-x86_64.tar.gz` (2.60 GB).
+      - Both smoke tests ended "all checks passed", with **"ok the window loads the UI"**. The two skips are the existing ones: retrieval (no `/dev/kvm`) and Globus (no credential).
+      - Both manifests have `window: {exe: app/window/VISTA, electron: 44.4.5}`, about 300 MB unpacked.
+      - The window check passed under emulation, so no skip-when-emulated was added. That is one run, so watch it in later amd64 builds.
+      - `build_in_docker.sh:221` was not hit, because the CA bundle was supplied.
     - Seen along the way, outside this change: packager's prune leaves a few small files and empty scope directories under `node_modules` in `app.asar`, on macOS builds as well, so `package.js`'s "prune leaves no node_modules at all" is not quite true. The cost is kilobytes.
 
 ## 4. Launchers

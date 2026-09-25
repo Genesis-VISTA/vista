@@ -304,8 +304,9 @@ on with no code change.
 
 ## Open Questions
 
-- How reliably the smoke test runs under `linux/amd64` emulation. It is measured in task
-  3.3, and either outcome fits D7.
+- *(Resolved in task 3.3.)* How reliably the smoke test runs under `linux/amd64`
+  emulation. The full amd64 build's window check passed, so there is no emulation skip.
+  That rests on one run.
 - That `unshare -Ur true` fails on stock Ubuntu 24.04 with the restriction on. This is
   expected, because the restriction denies capabilities in the new namespace, so writing
   `uid_map` fails. It is confirmed on a real host in task 1.1. If it succeeds there, rule
