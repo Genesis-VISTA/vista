@@ -203,6 +203,19 @@ and Fedora package names for the set, which task 3.1 measures on a bare `ubuntu:
 rather than copying a list from elsewhere. `ldd` exists wherever glibc does, and the
 glibc 2.39 floor already requires glibc.
 
+Measured in task 3.1 with Electron 44.4.5 on arm64. A bare image lacks 26 libraries, and
+four packages supply all of them. With those four plus a display, the window's smoke test
+passes:
+
+| | Debian / Ubuntu | Fedora / RHEL |
+|---|---|---|
+| GTK 3 (pulls in X11, cairo, pango, ATK, GLib, xkbcommon, D-Bus) | `libgtk-3-0t64` | `gtk3` |
+| NSS / NSPR | `libnss3` | `nss` |
+| ALSA | `libasound2t64` | `alsa-lib` |
+| GBM | `libgbm1` | `mesa-libgbm` |
+
+A desktop install already has all four. They matter for a minimal server or a container.
+
 ### D7. Building and smoke-testing the Linux window
 
 - **Staging.** `stage_window_linux` maps `x86_64`→`x64` and `aarch64`→`arm64` and runs

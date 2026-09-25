@@ -21,6 +21,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 # `shasum`, which on Debian-family systems ships with perl rather than
 # coreutils. build-essential is here so that a dependency without a wheel for
 # this platform builds from its sdist instead of failing an hour in.
+#
+# The last line is for the build's smoke test of the VISTA window, which has
+# to start it for real: xvfb and xauth give it a display, and the four
+# libraries are all it needs from the system on a bare 24.04 (measured with
+# `ldd` and a smoke test; linux-desktop-window task 3.1). The package does
+# not ship them -- a desktop already has them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
@@ -33,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xz-utils \
       zstd \
       build-essential \
+      xvfb xauth libgtk-3-0t64 libnss3 libasound2t64 libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Extra trust anchors, for a network that inspects TLS. A macOS host keeps its

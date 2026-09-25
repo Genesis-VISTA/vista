@@ -209,15 +209,31 @@ WINDOW_EXE="$(
     'import json,sys; w=json.load(open(sys.argv[1])).get("window"); print(w["exe"] if w else "")' \
     "$PACKAGE/manifest.json"
 )"
+# On Linux it gets the sandbox arguments the launcher would give it on this
+# host (linux-desktop-window D1), and a virtual display when there is no real
+# one, which is how a build container runs it (D7).
+WINDOW_RUNNER=()
 window_loads_the_ui() {
-  "$PACKAGE/$WINDOW_EXE" --smoke-test --url="http://127.0.0.1:$UI_PORT/" \
-    > "$LOGS/window-smoke.log" 2>&1
+  local sandbox=''
+  if [[ "$(uname -s)" == Linux ]]; then
+    sandbox="$("$PACKAGE/$(dirname "$WINDOW_EXE")/window-sandbox" 2>>"$LOGS/window-smoke.log")"
+  fi
+  # $sandbox is empty or the single word --no-sandbox, so it is left unquoted.
+  # shellcheck disable=SC2086
+  ${WINDOW_RUNNER[@]+"${WINDOW_RUNNER[@]}"} "$PACKAGE/$WINDOW_EXE" $sandbox \
+    --smoke-test --url="http://127.0.0.1:$UI_PORT/" >> "$LOGS/window-smoke.log" 2>&1
 }
 if [[ -z "$WINDOW_EXE" ]]; then
   skip "the window loads the UI" "this package has no window"
 elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
   skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
+elif [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] \
+     && ! command -v xvfb-run >/dev/null 2>&1; then
+  skip "the window loads the UI" "no display and no xvfb-run here; install xvfb, or rerun from a desktop session"
 else
+  if [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    WINDOW_RUNNER=(xvfb-run -a)
+  fi
   check "the window loads the UI" window_loads_the_ui
 fi
 

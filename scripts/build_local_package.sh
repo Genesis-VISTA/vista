@@ -368,12 +368,14 @@ shipped corpus returns passages that cite nothing. Pass \
       failures+=("cannot reach $probe_host — needed for $probe_why")
     fi
   done
-  # The VISTA window: Electron's binary comes from GitHub releases, and it is
-  # re-signed ad hoc here. Only on targets that have a window.
-  if [[ "$TARGET_OS" == macos ]]; then
+  # The VISTA window: Electron's binary comes from GitHub releases on every
+  # target that has a window, and on macOS it is re-signed ad hoc here.
+  if [[ "$TARGET_OS" == macos || "$TARGET_OS" == linux ]]; then
     if ! curl -fsS -m 15 --head -o /dev/null https://github.com/electron/electron/releases 2>/dev/null; then
       failures+=("cannot reach github.com — needed to download Electron for the VISTA window")
     fi
+  fi
+  if [[ "$TARGET_OS" == macos ]]; then
     command -v codesign >/dev/null 2>&1 \
       || failures+=("codesign is not available — needed to re-sign the VISTA window")
     # Exactly one signing call, the window's. Any other would risk re-signing
@@ -816,8 +818,46 @@ ELECTRON_VERSION="$(sed -nE 's/.*"electron": "([^"]+)".*/\1/p' "$REPO_ROOT/elect
 stage_window() {
   case "$TARGET_OS" in
     macos) stage_window_macos ;;
+    linux) stage_window_linux ;;
     *) log "no VISTA window for $TARGET_OS-$TARGET_ARCH yet; the package opens in a browser" ;;
   esac
+}
+
+# linux-desktop-window D7. Nothing is signed on Linux. Next to the window go
+# the two files that decide its sandbox: window-sandbox, which the launcher
+# and the smoke test run for its arguments (D1), and the AppArmor profile it
+# tells an Ubuntu researcher how to install (D2).
+stage_window_linux() {
+  log "building the VISTA window (Electron $ELECTRON_VERSION)"
+  local arch
+  case "$TARGET_ARCH" in
+    aarch64|arm64) arch=arm64 ;;
+    x86_64) arch=x64 ;;
+    *) die "no Electron build known for linux-$TARGET_ARCH" ;;
+  esac
+
+  local out built
+  out="$(mktemp -d)"
+  (
+    cd "$REPO_ROOT/electron"
+    # The packager downloads the Linux build itself; the npm package's own
+    # binary is only for running tests, which the build does not.
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --prefer-offline >/dev/null
+  )
+  built="$(node "$REPO_ROOT/electron/scripts/package.js" \
+    --platform linux --arch "$arch" --out "$out" | tail -1)"
+  [[ -d "$built" ]] || die "the window packager produced nothing at $built"
+
+  local window="$STAGING_APP/window"
+  rm -rf "$window"
+  mv "$built" "$window"
+  rm -rf "$out"
+  install -m 755 "$REPO_ROOT/electron/linux/window-sandbox" "$window/window-sandbox"
+  install -m 644 "$REPO_ROOT/electron/linux/vista-window.apparmor" "$window/vista-window.apparmor"
+
+  WINDOW_EXE="app/window/VISTA"
+  [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
+  echo "window      : $(du -sh "$window" | cut -f1) (Electron $ELECTRON_VERSION)"
 }
 
 stage_window_macos() {
@@ -1222,15 +1262,20 @@ from pathlib import Path
 manifest = json.loads(open(sys.argv[1]).read())
 target_os = sys.argv[2]
 
-# A macOS package without its window would still start -- in a browser --
-# which is exactly how a packaging mistake would go unnoticed.
+# A package without its window would still start -- in a browser -- which is
+# exactly how a packaging mistake would go unnoticed.
 window = manifest.get("window")
-if target_os == "macos" and not window:
-    sys.exit("manifest has no window on macOS")
+if target_os in ("macos", "linux") and not window:
+    sys.exit(f"manifest has no window on {target_os}")
 if window:
     exe = Path(sys.argv[1]).parent / window["exe"]
     if not (exe.is_file() and os.access(exe, os.X_OK)):
         sys.exit(f"manifest names a window executable that is not there: {window['exe']}")
+    # On Linux the launcher cannot start the window without asking this first.
+    if target_os == "linux":
+        sandbox = exe.parent / "window-sandbox"
+        if not (sandbox.is_file() and os.access(sandbox, os.X_OK)):
+            sys.exit("the Linux window has no executable window-sandbox next to it")
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),

@@ -74,13 +74,45 @@
 
 ## 3. Linux package build
 
-- [ ] 3.1 Measure the window's runtime libraries on a bare `ubuntu:24.04` (arm64 is native on this Mac):
+- [x] 3.1 Measure the window's runtime libraries on a bare `ubuntu:24.04` (arm64 is native on this Mac):
   - Unpack the 1.1 build and run `ldd VISTA | grep 'not found'`.
   - Install packages until `ldd` is clean and `xvfb-run -a ./VISTA --no-sandbox --smoke-test --url=…` exits 0.
   - Record the package list in `design.md` D6.
   - Repeat on `fedora:latest` for its package names.
-- [ ] 3.2 `scripts/build_local_package.sh`: add `stage_window_linux` (D7): the arch map, `npm ci` with `ELECTRON_SKIP_BINARY_DOWNLOAD=1`, `package.js --platform linux`, the move to `app/window/`, copying `window-sandbox` and `vista-window.apparmor`, and `WINDOW_EXE=app/window/VISTA`. Run the GitHub probe in preflight on Linux, and require the window in the manifest validator on Linux. Verify by running the validator's logic against a staged manifest, with and without the window, and checking that `stage_window_macos` output is unchanged (`bash -n`, plus a macOS build in 7.1).
+  - **Done (2026-09-25):**
+    - On bare `ubuntu:24.04` (arm64), `ldd` over `VISTA` and its bundled `.so` files found 26 missing libraries. `libgtk-3-0t64 libnss3 libasound2t64 libgbm1` make `ldd` clean.
+    - With those four plus `xvfb xauth` (and `python3` for the test page), `xvfb-run -a ./VISTA --no-sandbox --smoke-test` loaded the page and exited 0.
+    - On `fedora:latest` (Fedora 44): `gtk3 nss alsa-lib mesa-libgbm` make `ldd` clean, and the smoke test passed with `xorg-x11-server-Xvfb xorg-x11-xauth` added. The image needed `~/root-ca.pem` for dnf.
+    - The list is recorded in D6.
+- [x] 3.2 `scripts/build_local_package.sh`: add `stage_window_linux` (D7): the arch map, `npm ci` with `ELECTRON_SKIP_BINARY_DOWNLOAD=1`, `package.js --platform linux`, the move to `app/window/`, copying `window-sandbox` and `vista-window.apparmor`, and `WINDOW_EXE=app/window/VISTA`. Run the GitHub probe in preflight on Linux, and require the window in the manifest validator on Linux. Verify by running the validator's logic against a staged manifest, with and without the window, and checking that `stage_window_macos` output is unchanged (`bash -n`, plus a macOS build in 7.1).
+  - **Done (2026-09-25):**
+    - `stage_window_linux` is as specified. `aarch64` or `arm64` maps to arm64 and `x86_64` to x64; the files go in with `install -m 755/644`.
+    - The GitHub probe now runs for macOS and Linux; `codesign` and the signing-call count stay macOS-only.
+    - The validator requires a window on Linux, and on Linux also an executable `window-sandbox` next to it.
+    - `bash -n` passes. The diff has no hunk inside `stage_window_macos`.
+    - The validator's Python was extracted and run against fake staged packages. Six cases, all as expected:
+      - Linux with no window fails;
+      - Linux with a window but no `window-sandbox` fails;
+      - Linux with both passes;
+      - macOS with no window fails;
+      - macOS with a window passes;
+      - another OS with no window passes.
+    - The real run of `stage_window_linux` comes with 3.3's build. Its steps were reproduced by hand in the updated build image (see 3.3).
 - [ ] 3.3 `scripts/Dockerfile.build`: add `xvfb`, `xauth` and the 3.1 libraries. `scripts/smoke_test_package.sh`: add the Linux branch of "the window loads the UI" (D7), using a display if one is present, otherwise `xvfb-run -a`, otherwise skipping with a reason, and passing `window-sandbox`'s arguments. Verify with `./scripts/build_in_docker.sh --platform linux/arm64 --vector-store … --payload …` (using `~/.vista`), which must end with "the window loads the UI" passing. Then run it for `linux/amd64` and record whether the check is reliable under emulation. If it isn't, implement the skip-when-emulated from the Risks section. Pass `--ca-bundle` if this network's TLS inspection blocks the image build. Fix `build_in_docker.sh:221`'s `local` outside a function if that path is hit.
+  - **Code done (2026-09-25); the full build is waiting on Sam.**
+    - `Dockerfile.build` gains `xvfb xauth libgtk-3-0t64 libnss3 libasound2t64 libgbm1`.
+    - The smoke test's Linux branch:
+      - it asks `window-sandbox` next to the window for its arguments, and appends the reason to `window-smoke.log`;
+      - it uses `xvfb-run -a` when there is no `DISPLAY` or `WAYLAND_DISPLAY`;
+      - it skips with a reason when there is neither a display nor `xvfb-run`.
+    - The empty-array idiom was checked under macOS's bash 3.2 with `set -u`.
+    - The updated image was built for `linux/arm64` with the org CA. Inside it, as root, the window was staged as `stage_window_linux` does and the smoke test's window step was run exactly:
+      - `window-sandbox` → `--no-sandbox` ("running as root");
+      - "ok the window loads the UI";
+      - `window.log` shows `renderer sandbox: off (--no-sandbox)`;
+      - `linux/` is not inside `app.asar`.
+    - **Not run:** the full `build_in_docker.sh` for arm64 and then amd64. It needs `PALISADE_GITHUB_TOKEN` (and `AMSC_GIT_TOKEN`, or `--without-hpc`), which only Sam's shell has. The emulation question is still open.
+    - Seen along the way, outside this change: packager's prune leaves a few small files and empty scope directories under `node_modules` in `app.asar`, on macOS builds as well, so `package.js`'s "prune leaves no node_modules at all" is not quite true. The cost is kilobytes.
 
 ## 4. Launchers
 
