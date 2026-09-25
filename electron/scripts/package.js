@@ -61,7 +61,9 @@ const options = {
   // Only src/ and package.json are the app; everything here is a devDependency,
   // so prune leaves no node_modules at all.
   prune: true,
-  ignore: [/^\/test/, /^\/scripts/, /^\/test-results/, /^\/playwright/, /^\/tsconfig/, /^\/assets/],
+  // linux/ is for the launchers, which the build copies next to the window, not
+  // part of the app itself.
+  ignore: [/^\/test/, /^\/scripts/, /^\/test-results/, /^\/playwright/, /^\/tsconfig/, /^\/assets/, /^\/linux/],
 };
 
 if (platform === 'darwin') {

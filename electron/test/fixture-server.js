@@ -15,6 +15,8 @@ const INDEX = `<!doctype html>
   <a id="external-nav" href="${EXTERNAL}/nav">navigate away</a>
   <a id="same-origin-blank" href="/child" target="_blank" rel="noopener noreferrer">child page</a>
   <a id="pdf-blank" href="/paper.pdf" target="_blank" rel="noreferrer">Open PDF</a>
+  <a id="pdf-nav" href="/paper.pdf">PDF in this window</a>
+  <a id="pdf-download" href="/paper.pdf" download>Download PDF</a>
   <a id="same-origin-nav" href="/child">same-origin page</a>
   <a id="download" href="/file.txt" download>download</a>
   <a id="redirect-out" href="/redirect-out">redirects to another site</a>

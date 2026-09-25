@@ -54,6 +54,12 @@ try {
 
 if (args.userDataDir) app.setPath('userData', path.resolve(args.userDataDir));
 
+// On Linux the launcher adds --no-sandbox where the host blocks Chromium's
+// sandbox (linux-desktop-window D1). This line lands in window.log, so a report
+// from the field says which mode the window was in.
+const rendererSandboxed = !app.commandLine.hasSwitch('no-sandbox');
+console.log(`vista-window: renderer sandbox: ${rendererSandboxed ? 'on' : 'off (--no-sandbox)'}`);
+
 // W4: every window, the main one and any child, gets the same renderer: no
 // Node, no preload, isolated and sandboxed, i.e. exactly what a browser tab has.
 /** @type {Electron.WebPreferences} */
@@ -67,6 +73,11 @@ const webPreferences = {
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+
+// Child windows that have not shown a page yet: the ones a PDF sent to the
+// browser would otherwise leave empty (D3).
+/** @type {WeakSet<Electron.WebContents>} */
+const blankChildren = new WeakSet();
 
 // ─── routing (W3) ───────────────────────────────────────────────────────────
 
@@ -107,7 +118,46 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-redirect', guardNavigation);
 
   contents.on('will-attach-webview', (event) => event.preventDefault());
+
+  contents.on('did-create-window', (child) => {
+    blankChildren.add(child.webContents);
+    child.webContents.once('did-navigate', () => blankChildren.delete(child.webContents));
+  });
 });
+
+// D3: without the sandbox, PDFs (the largest parser of content VISTA did not
+// produce) open in the system browser, inside its sandbox, instead of here.
+// Keyed on the response's type, so a PDF reached by any link is covered.
+// Answering 204 leaves the page that followed the link where it was.
+/** @param {Electron.Session} ses */
+function sendPdfsToBrowser(ses) {
+  ses.webRequest.onHeadersReceived((details, callback) => {
+    const frame = details.resourceType === 'mainFrame' || details.resourceType === 'subFrame';
+    if (!frame || !isInlinePdf(details.responseHeaders ?? {})) {
+      callback({});
+      return;
+    }
+    openExternally(details.url);
+    callback({ statusLine: 'HTTP/1.1 204 No Content', responseHeaders: {} });
+    const contents = details.webContents;
+    if (contents && blankChildren.has(contents)) BrowserWindow.fromWebContents(contents)?.close();
+  });
+}
+
+/**
+ * A PDF the page would display. One sent as an attachment is a download and
+ * stays one.
+ * @param {Record<string, string[]>} headers
+ */
+function isInlinePdf(headers) {
+  /** @param {string} name */
+  const header = (name) =>
+    Object.entries(headers)
+      .find(([key]) => key.toLowerCase() === name)?.[1]
+      .join(',')
+      .toLowerCase() ?? '';
+  return header('content-type').startsWith('application/pdf') && !header('content-disposition').startsWith('attachment');
+}
 
 // ─── session (W3, W4) ───────────────────────────────────────────────────────
 
@@ -126,6 +176,8 @@ function configureSession() {
       defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
     });
   });
+
+  if (!rendererSandboxed) sendPdfsToBrowser(ses);
 }
 
 // ─── menu (W5) ──────────────────────────────────────────────────────────────

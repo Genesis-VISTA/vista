@@ -37,7 +37,7 @@
 
 ## 2. Window (`electron/`)
 
-- [ ] 2.1 Add `electron/linux/window-sandbox` (D1) and `electron/linux/vista-window.apparmor` (D2). The script reads its two paths and its probe command from overridable test variables. Verify with a new `electron/test/window-sandbox.test.js` under `npm test`. It runs the script for these cases and asserts the output and the reason:
+- [x] 2.1 Add `electron/linux/window-sandbox` (D1) and `electron/linux/vista-window.apparmor` (D2). The script reads its two paths and its probe command from overridable test variables. Verify with a new `electron/test/window-sandbox.test.js` under `npm test`. It runs the script for these cases and asserts the output and the reason:
   - root;
   - probe succeeds;
   - probe fails with the profile;
@@ -46,8 +46,31 @@
   - `unshare` missing (falls back to the sysctl).
 
   Also run the real script in the 1.1 containers: default seccomp as non-root gives `--no-sandbox` with no install command, and `seccomp=unconfined` gives nothing. The file is included in `electron:test`.
-- [ ] 2.2 `electron/src/main.js`: write `renderer sandbox: on|off` at start. When `--no-sandbox` is set, send `application/pdf` main-frame and sub-frame responses to `shell.openExternal`, and close a child window that loaded nothing else (D3). Verify that `npm run typecheck` passes.
-- [ ] 2.3 `electron/test/window.e2e.js`: add a case that launches with `--no-sandbox` and checks that `#pdf-blank` calls the stubbed `openExternal` with `/paper.pdf` and opens no child window. The existing PDF case, which stays sandboxed, still opens one. Make launches add `--no-sandbox` when `process.getuid() === 0`. Verify that `npm run test:e2e` passes on macOS (13 tests). (needs a display)
+  - **Done (2026-09-25):**
+    - Added `electron/linux/window-sandbox` (POSIX `sh`, executable) and `electron/linux/vista-window.apparmor`, which is D2's profile plus a comment header.
+    - The test variables are `VISTA_WINDOW_SANDBOX_{UID,PROBE,SYSCTL,PROFILE}`. The script always exits 0; the tests assert this.
+    - `npm test` passes 35/35: the 29 routing tests plus 6 new ones in `test/window-sandbox.test.js`, which uses fake `unshare` executables and files. `electron:test` runs `npm test`, so it is covered with no CI change. The tests don't depend on the real user id, so they pass under CI's root container.
+    - In the 1.1 `ubuntu:24.04` image, where `/bin/sh` is `dash`:
+      - non-root with default seccomp: `--no-sandbox` plus "this host does not allow unprivileged user namespaces … (for example inside a container)";
+      - `seccomp=unconfined`: nothing;
+      - root: `--no-sandbox` plus "it is running as root".
+    - `scripts/package.js` now ignores `linux/`, so the script is not bundled into the app's asar. The build copies it next to the window in 3.2.
+- [x] 2.2 `electron/src/main.js`: write `renderer sandbox: on|off` at start. When `--no-sandbox` is set, send `application/pdf` main-frame and sub-frame responses to `shell.openExternal`, and close a child window that loaded nothing else (D3). Verify that `npm run typecheck` passes.
+  - **Done (2026-09-25):**
+    - The `vista-window: renderer sandbox: on|off (--no-sandbox)` line is printed at start and so lands in `window.log`.
+    - `sendPdfsToBrowser` is registered only without the sandbox. It answers a PDF response with `204 No Content` rather than cancelling it, so the page that followed the link stays in place. It closes child windows marked by `did-create-window` that haven't navigated yet.
+    - PDFs sent as attachments are left as downloads.
+    - D3 has been updated to match. `npm run typecheck` passes.
+- [x] 2.3 `electron/test/window.e2e.js`: add a case that launches with `--no-sandbox` and checks that `#pdf-blank` calls the stubbed `openExternal` with `/paper.pdf` and opens no child window. The existing PDF case, which stays sandboxed, still opens one. Make launches add `--no-sandbox` when `process.getuid() === 0`. Verify that `npm run test:e2e` passes on macOS (13 tests). (needs a display)
+  - **Done (2026-09-25):** `npm run test:e2e` passes 15/15 on macOS in 5.9 s.
+    - The fixture gained `#pdf-nav` and `#pdf-download`.
+    - Three new `@no-sandbox`-tagged cases:
+      - a new-window PDF goes to `openExternal`, and the child window is closed again;
+      - a PDF followed in the window goes to `openExternal`, and the page and its title stay;
+      - a `download` link to a PDF is still saved and not opened.
+    - The existing sandboxed PDF case still opens a child window. It is skipped as root, where every launch is unsandboxed.
+    - As root, every launch gets `--no-sandbox`, including the second-instance and smoke-test spawns.
+    - Seen once and not reproduced in 12 later runs of the old or new code: a smoke test against a refused port printed its failure but took 30 s to exit. Watch for it in the 5.1 CI job.
 
 ## 3. Linux package build
 

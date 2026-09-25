@@ -19,6 +19,15 @@ import { startFixtureServer } from './fixture-server.js';
 const APP_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const EXTERNAL = 'https://example.org';
 
+// Chromium refuses to run as root with its sandbox, which is how the Linux CI
+// container runs (linux-desktop-window D9). Every launch there is unsandboxed.
+const AS_ROOT = process.getuid?.() === 0;
+const ROOT_ARGS = AS_ROOT ? ['--no-sandbox'] : [];
+
+// Tests tagged with this launch the window the way the launcher does on a host
+// that blocks the sandbox (D1).
+const NO_SANDBOX = '@no-sandbox';
+
 /** @type {import('node:http').Server} */
 let server;
 /** @type {string} */
@@ -38,10 +47,11 @@ test.afterAll(async () => {
   server.close();
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({}, testInfo) => {
   profile = mkdtempSync(path.join(tmpdir(), 'vista-window-'));
+  const sandbox = testInfo.tags.includes(NO_SANDBOX) && !AS_ROOT ? ['--no-sandbox'] : ROOT_ARGS;
   app = await electron.launch({
-    args: [APP_DIR, `--url=${origin}/`, `--user-data-dir=${profile}`],
+    args: [APP_DIR, `--url=${origin}/`, `--user-data-dir=${profile}`, ...sandbox],
   });
   // Record instead of opening a real browser, and save downloads without a
   // dialog. Both replace behaviour at the edge of the app, not the routing
@@ -115,6 +125,7 @@ test('a same-origin target=_blank link opens a child window', async () => {
 });
 
 test('a same-origin PDF opens in a child window and is viewed, not downloaded', async () => {
+  test.skip(AS_ROOT, 'as root the window is always unsandboxed, so PDFs go to the browser (D3)');
   const [child] = await Promise.all([app.waitForEvent('window'), page.click('#pdf-blank')]);
   await child.waitForLoadState('load');
   expect(child.url()).toBe(`${origin}/paper.pdf`);
@@ -126,6 +137,33 @@ test('a same-origin PDF opens in a child window and is viewed, not downloaded', 
   expect(await app.evaluate(() => /** @type {any} */ (globalThis).downloaded)).toEqual([]);
   await child.close();
   expect(app.windows()).toHaveLength(1);
+});
+
+/** @returns {Promise<string[]>} */
+const downloaded = () => app.evaluate(() => /** @type {any} */ (globalThis).downloaded);
+
+test('without the sandbox, a PDF opened in a new window goes to the browser instead', { tag: NO_SANDBOX }, async () => {
+  await page.click('#pdf-blank');
+  await expect.poll(opened).toEqual([`${origin}/paper.pdf`]);
+  // The child window it would have used is closed again, not left empty.
+  await expect.poll(() => app.windows().length).toBe(1);
+  expect(page.url()).toBe(`${origin}/`);
+  expect(await downloaded()).toEqual([]);
+});
+
+test('without the sandbox, a PDF followed in the window goes to the browser and the page stays', { tag: NO_SANDBOX }, async () => {
+  await page.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('#pdf-nav')).click());
+  await expect.poll(opened).toEqual([`${origin}/paper.pdf`]);
+  expect(page.url()).toBe(`${origin}/`);
+  expect(await page.title()).toBe('VISTA fixture');
+  expect(app.windows()).toHaveLength(1);
+});
+
+test('without the sandbox, a PDF download is still saved', { tag: NO_SANDBOX }, async () => {
+  await page.click('#pdf-download');
+  await expect.poll(downloaded).toEqual(['paper.pdf']);
+  expect(await opened()).toEqual([]);
+  expect(page.url()).toBe(`${origin}/`);
 });
 
 test('same-origin navigation stays in the window', async () => {
@@ -157,6 +195,7 @@ test('a second instance exits and leaves the first window in place', async () =>
     APP_DIR,
     `--url=${origin}/`,
     `--user-data-dir=${profile}`,
+    ...ROOT_ARGS,
   ]);
   const code = await new Promise((resolve) => second.on('exit', resolve));
   expect(code).toBe(0);
@@ -172,6 +211,7 @@ function smokeTest(url) {
     APP_DIR,
     '--smoke-test',
     `--url=${url}`,
+    ...ROOT_ARGS,
   ]);
   return new Promise((resolve) => child.on('exit', resolve));
 }

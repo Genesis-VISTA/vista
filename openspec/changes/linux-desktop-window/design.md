@@ -146,9 +146,15 @@ sudo apparmor_parser -r /etc/apparmor.d/vista-window
 
 When `main.js` sees `app.commandLine.hasSwitch('no-sandbox')`, it registers a
 `session.webRequest.onHeadersReceived` handler. For a main-frame or sub-frame response
-whose `Content-Type` is `application/pdf`, the handler cancels the response, calls
-`shell.openExternal` on its URL, and closes the child window if the response was the only
-thing that window ever loaded. The PDF then opens in the researcher's browser, where the
+whose `Content-Type` is `application/pdf`, the handler calls `shell.openExternal` on its
+URL and does two more things:
+- it rewrites the response to `204 No Content`, so the page that followed the link
+  stays where it was instead of showing a blocked-load error page;
+- it closes the child window if the response was the only thing that window ever loaded.
+  `did-create-window` marks each new child, and its first `did-navigate` clears the mark.
+
+A PDF sent with `Content-Disposition: attachment`, or fetched through a `download` link,
+is a download and is left alone. The PDF then opens in the researcher's browser, where the
 browser's own sandbox applies. The URL is on `127.0.0.1`, which that browser can reach.
 
 - *Keyed on content type, not URL,* so a PDF reached by any route is covered, not just the
