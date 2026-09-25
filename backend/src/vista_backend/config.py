@@ -41,6 +41,124 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+class ForumSettings(BaseModel):
+    """
+    Agent-forum settings — the git-backed debate forum (see
+    `docs/forum-git-format.md` and `openspec/changes/forum-git-backend/`).
+
+    Off by default: with `enabled=False` the service raises a clear error rather
+    than running git, and a project's lab is off. With it on, the lab also needs
+    a usable system git (`services/git_check.py`). Override via
+    `VISTA_BACKEND_FORUM__ENABLED=true` etc.
+    """
+
+    enabled: bool = False
+
+    git_binary: str = "git"
+    """
+    The git the forum drives; resolved on PATH unless an absolute path is given.
+
+    The user's own git, not one VISTA ships, so pushes use the credentials they
+    already have. The lab needs 2.34 or later and is off, with the reason shown,
+    without it — see `services/git_check.py`.
+    """
+
+    push_retries: int = 5
+    """
+    Fetch-replay-push attempts before a publish gives up until the next sync.
+
+    A rejected push means a peer posted first. Our posts are replayed on top of
+    theirs and pushed again; they never conflict, so this only bounds a burst.
+    """
+
+    attachment_cap_bytes: int = 1_048_576
+    """
+    Largest attachment published with a post. Larger ones are truncated with a
+    marker naming the full size and SHA-256, and kept whole on this install.
+    Every peer downloads every attachment, so this is what bounds the repository.
+    """
+
+    repo_root: Path | None = None
+    """
+    The one repository a `ForumClient` instance works in. Not configuration.
+
+    Filled in per project by `forum_config_for`; a `ForumSettings` read from the
+    environment always leaves it `None`, and a client built on one refuses to run
+    rather than guessing. `VISTA_BACKEND_FORUM__REPO_ROOT` no longer selects a
+    deployment-wide forum — see `check_legacy_forum_env`, which says so out loud
+    at boot rather than letting a stale line look like it still works.
+    """
+
+    timeout: float = 60.0
+    """
+    Per-command timeout in seconds for each git call. Local plumbing takes
+    milliseconds; this bounds a fetch or push to a remote that has stopped
+    answering.
+    """
+
+    max_job_wait_seconds: float = 1800.0
+    """
+    How long a role will wait for a simulation it commissioned.
+
+    Named with its unit because it was set to `30` meaning half an hour and got
+    half a minute. A bare `max_job_wait` invites that: minutes is the natural unit
+    for a cluster job and seconds is what the code wants.
+
+    A round used to end the moment a job was submitted, so the result arrived on
+    the thread whenever it arrived — often after the verdict, where no agent ever
+    reasoned about it. Waiting means the role that asked the question sees the
+    answer, which is the point of asking.
+
+    On timeout the debate carries on and the result is posted when it lands, so
+    this bounds the stall rather than deciding whether the evidence is used.
+    """
+
+    job_poll_seconds: float = 15.0
+    """
+    How often a waiting role re-checks its job.
+
+    The floor on noticing is `campaigns.monitor_interval` (300s by default), not
+    this: the monitor is the only thing that polls the cluster, and a second
+    poller would race it on the same rows. Lower that setting if a debate should
+    see its results sooner.
+    """
+
+    default_rounds: int = 5
+    """ Debate round budget when the caller does not specify one. """
+
+    remote_url: str | None = None
+    """
+    Git URL this client's forum publishes to. Not configuration, like `repo_root`.
+
+    Filled in per project from `Project.forum_repo_url`. Push access to that
+    repository is the whole authorization model: anyone who can push can post
+    under any identity they like. The forum's honesty is in labelling those
+    posts `peer-claimed`, not in preventing them — so the repository's collaborator
+    list is the security boundary, and it is the project's owners who should be
+    choosing it, not whoever can edit a `.env`.
+    """
+
+    max_simulations: int = 2
+    """
+    HPC jobs one debate may commission, in total.
+
+    A debate should test its sharpest prediction, not everything it wonders
+    about. Past the cap the tool refuses and says so on the thread, so the limit
+    is visible in the record rather than silently shaping the argument.
+    """
+
+    max_requests_per_turn: int = 12
+    """
+    Model requests one role may make in a single turn.
+
+    A turn is a few tool calls and an answer, so this is generous. It exists to
+    bound a tool loop: a model that keeps re-calling a tool whose answer does not
+    help it will otherwise spend the whole budget and fail the debate. Kept
+    explicit rather than inheriting pydantic-ai's default of 50, so the ceiling
+    is a decision rather than a surprise.
+    """
+
+
 # Every `.env` from the filesystem root down to the cwd, nearest last so the
 # most-specific file wins. Shared between the pydantic-settings config and the
 # explicit `load_dotenv` pass below.
@@ -140,6 +258,19 @@ class Settings(BaseSettings):
     """ Directory for data such as sandbox volumes and other created files """
 
     @property
+    def hpc_jobs_catalog(self) -> Path:
+        """
+        The `hpc_jobs/` catalog on disk, configured or derived.
+
+        `hpc_jobs_dir` is the override and may be unset; this is what callers
+        want. Two readers need it for different reasons — seeding writes the
+        MSTDB CSV a job template needs, and a debate checks a job name exists
+        before spending a submission to find out it does not — and resolving the
+        fallback separately in each is how the two come to disagree.
+        """
+        return self.hpc_jobs_dir or Path(__file__).resolve().parents[3] / "hpc_jobs"
+
+    @property
     def knowledge_bases_dir(self) -> Path:
         """
         Root directory for Knowledge Bases. Each KB gets a subdirectory:
@@ -155,6 +286,18 @@ class Settings(BaseSettings):
         relative to `data_dir`.
         """
         return self.data_dir / "storage"
+
+    @property
+    def forum_git_dir(self) -> Path:
+        """
+        Root of the git-backed forum: this install's `host_id`, and per project
+        (by id) a bare `repo.git` plus full copies of truncated attachments.
+
+        Keyed by project id, not name, so renaming a project keeps its forum.
+        The older `data/forums/` (h5i working repos) is not read by anything
+        and can be deleted.
+        """
+        return self.data_dir / "forum-git"
 
     database_url: A[
         str,
@@ -266,6 +409,12 @@ class Settings(BaseSettings):
 
     campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
     """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
+
+    forum: ForumSettings = Field(default_factory=ForumSettings)
+    """
+    Agent-forum (debate) settings; see `ForumSettings`. Disabled by default,
+    so the backend runs unchanged without git installed.
+    """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
     """

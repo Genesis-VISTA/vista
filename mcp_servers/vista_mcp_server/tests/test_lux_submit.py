@@ -79,13 +79,14 @@ def _submitted_script(conn: FakeSshConn) -> str:
 
 
 async def test_submit_renders_sbatch_header_and_env(lux):
-    job_id, log_path, out_dir, nodes, duration = await m._submit_lux_job(
+    job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_lux_job(
         None, "lux-demo", None, None, "MODEL=forge-m --flag"
     )
     assert job_id == "4242"
     assert (nodes, duration) == (16, 1800)
     session = f"{BASE}/test-session"
     assert log_path == f"{session}/out/log-4242.out"
+    assert err_path == f"{session}/out/log-4242.err"
     assert out_dir == f"{session}/out/4242"
 
     script = _submitted_script(lux)
@@ -158,11 +159,11 @@ async def test_sbatch_rejection_is_a_tool_error(lux):
 
 
 async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
-    job_id, log_path, out_dir, *_ = await m._submit_lux_job(
+    job_id, log_path, err_path, out_dir, *_ = await m._submit_lux_job(
         None, "lux-demo", None, None, None
     )
     m._submitted_jobs[job_id] = m.SubmittedJob(
-        cluster="lux", log_path=log_path, output_dir=out_dir
+        cluster="lux", log_path=log_path, err_path=err_path, output_dir=out_dir
     )
     lux.on("squeue", (0, "RUNNING|None\n", ""))
     lux.local(log_path).write_text(
@@ -178,6 +179,15 @@ async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
     assert "SLURM_STATE=RUNNING" in text
     assert "step 2 loss 8.7" in text
     assert "checkpoints/latest" in text
+    assert "--- STDERR ---\n\n(nothing on stderr)" in text  # no .err file yet
+
+    # A failing rank's traceback lands in stderr, and status must show it.
+    lux.local(err_path).write_text(
+        "Traceback (most recent call last):\nKeyError: 'SLURM_NTASKS'\n",
+        encoding="utf-8",
+    )
+    text = await m._get_lux_job_status(None, host_out, job_id)
+    assert "KeyError: 'SLURM_NTASKS'" in text.split("--- STDERR ---")[1]
 
     # Incremental: the next poll only fetches what was appended.
     with lux.local(log_path).open("a", encoding="utf-8") as f:

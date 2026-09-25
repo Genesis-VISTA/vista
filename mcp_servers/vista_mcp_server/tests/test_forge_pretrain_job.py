@@ -526,7 +526,7 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
     monkeypatch.setattr(m, "_lux_conn", fake_conn)
 
-    job_id, _, out_dir, nodes, duration = await m._submit_lux_job(
+    job_id, _, _, out_dir, nodes, duration = await m._submit_lux_job(
         None, "forge-pretrain", None, None, "MODEL=forge-m"
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
@@ -587,7 +587,7 @@ async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
         frontier_globus_token="g-transfer",
         frontier_globus_https_token="g-https",
     )
-    job_id, log_path, out_dir, nodes, duration = await m._submit_frontier_job(
+    job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_frontier_job(
         cfg, "forge-pretrain", None, None, "MODEL=forge-s"
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)

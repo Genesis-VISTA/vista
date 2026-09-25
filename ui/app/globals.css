@@ -4012,3 +4012,776 @@ button.chat-bubble.intermediate.collapsed:hover {
 .nav-rail-entry.project-child.active .nav-rail-icon {
   color: var(--surface);
 }
+
+/* ---------------------------------------------------------------------- */
+/*  Agent forum (debates)                                                  */
+/*                                                                         */
+/*  The visual job here is one thing: keep what this install knows about a  */
+/*  post separate from what it claims. The stamp line sits above a rule,    */
+/*  the claimed body sits behind a `│` fence below it, and nothing in the   */
+/*  styling lets the second borrow the authority of the first.              */
+/* ---------------------------------------------------------------------- */
+
+.debate-page {
+  /* `.app-content` is `height: 100vh; overflow: hidden`, so every page owns its
+     own scrolling. Without this the thread simply runs off the bottom of the
+     viewport with no way to reach it. */
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 28px 64px;
+  color: var(--ink);
+}
+
+.debate-page > * {
+  /* `width` is load-bearing. The global `main` rule makes this a column flex
+     container, and `margin-inline: auto` on a flex item overrides stretch
+     alignment — without an explicit width the children shrink-wrap to their
+     content, which collapsed the form to about 200px. */
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+.debate-page__header h1 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 4px;
+}
+
+.debate-page__lede {
+  color: var(--muted);
+  max-width: 68ch;
+  margin: 0 0 20px;
+}
+
+.debate-error {
+  background: #fdecea;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+/* Opening a debate */
+
+.debate-open {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+  display: grid;
+  gap: 10px;
+}
+
+.debate-open h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.debate-open label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.debate-open__hint {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.debate-open input,
+.debate-open textarea,
+.debate-say textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.debate-open__rounds input {
+  width: 90px;
+}
+
+.debate-open button,
+.debate-say button,
+.debate-detail__head button {
+  justify-self: start;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.debate-open button:disabled,
+.debate-say button:disabled,
+.debate-detail__head button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debate-detail__head button {
+  background: transparent;
+  color: var(--brand-2);
+  border-color: var(--brand-2);
+}
+
+/* Layout */
+
+.debate-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+/* Why every content box below carries `min-width: 0`.
+   A grid track sized `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+   item's min-content width — so one unbreakable child does not overflow its own
+   box, it widens the track, then the layout, then the page. A post containing a
+   markdown table and a `white-space: nowrap` span pushed this page to 2068px
+   inside a 1224px viewport, and the span in question was one we had already
+   asked to truncate with an ellipsis. `min-width: 0` is what makes both the
+   shrinking and the truncation possible; without it, `text-overflow` is
+   decoration on an element that will not shrink. */
+.debate-list,
+.debate-detail,
+.debate-post,
+.debate-verdict__item {
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .debate-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.debate-list {
+  display: grid;
+  gap: 6px;
+}
+
+.debate-list__item {
+  text-align: left;
+  font: inherit;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.debate-list__item--active {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+
+.debate-list__topic {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.debate-list__status,
+.debate-detail__status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.debate-detail__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.debate-detail__head h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1.15rem;
+  margin: 0;
+  flex: 1 1 320px;
+}
+
+/* Who is on the forum, and under what confinement */
+
+.debate-roster {
+  list-style: none;
+  padding: 10px 12px;
+  margin: 0 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: grid;
+  gap: 3px;
+}
+
+.debate-roster strong {
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+/* The thread */
+
+.debate-thread {
+  display: grid;
+  gap: 14px;
+}
+
+.debate-thread__note,
+.debate-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0 0 4px;
+  max-width: 70ch;
+}
+
+.debate-post {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 10px 14px 12px;
+}
+
+.debate-post--human {
+  background: var(--panel);
+}
+
+/* Above the rule: the host's stamp. Nothing here came from the poster. */
+.debate-post__stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding-bottom: 6px;
+  /* A forge principal is an email address, and an email address has no break
+     opportunity in it. Breaking mid-token is the lesser evil against a stamp
+     that pushes the post wider than its column. */
+  overflow-wrap: anywhere;
+}
+
+.debate-post__kind {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.debate-post__sender {
+  font-weight: 600;
+  color: var(--ink);
+  font-family: "Roboto Mono", monospace;
+}
+
+.debate-post__role {
+  text-transform: capitalize;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: var(--panel);
+}
+
+.debate-post__votes {
+  color: #0b6b53;
+  font-weight: 600;
+}
+
+.debate-post__lane {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: "Roboto Mono", monospace;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.debate-post__denied {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0 0 8px;
+}
+
+.debate-post__reply-to {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+/* Below the fence: what the agent claimed. */
+.debate-post__body {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.debate-post__body > :first-child {
+  margin-top: 0;
+}
+
+.debate-post__body > :last-child {
+  margin-bottom: 0;
+}
+
+.debate-post__body code {
+  font-family: "Roboto Mono", monospace;
+  font-size: 0.85em;
+}
+
+/* An agent writes this, so it can hold anything markdown can express: a
+   comparison table, a fenced job log, a `/gpfs/wolf2/olcf/...` path with no
+   break opportunity in it. Prose breaks mid-token rather than widening the
+   column, and a table or code block that genuinely cannot fit scrolls inside
+   its own box instead of taking the page with it. */
+.debate-post__body {
+  overflow-wrap: anywhere;
+}
+
+.debate-post__body :is(pre, table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* The verdict */
+
+.debate-verdict {
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+
+.debate-verdict--none {
+  border-color: var(--line);
+}
+
+.debate-verdict h3 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 10px;
+}
+
+.debate-verdict__list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.debate-verdict__claim {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.debate-verdict__mechanism {
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta {
+  display: grid;
+  /* `minmax(0, …)` on both tracks rather than bare `max-content 1fr`: the label
+     column would otherwise never shrink below "Standing after the debate", and
+     in a narrow column that leaves the value track less room than its own
+     min-content needs — so the whole list widens instead. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 2px 12px;
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta dt {
+  color: var(--muted);
+}
+
+.debate-verdict__meta dd {
+  margin: 0;
+}
+
+/* Two columns need room for both. Below this the label wins the space and the
+   value gets squeezed to a word a line, so they stack instead. */
+@media (max-width: 520px) {
+  .debate-verdict__meta {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 0;
+  }
+
+  .debate-verdict__meta dd {
+    margin-bottom: 6px;
+  }
+}
+
+.debate-verdict__label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 2px;
+}
+
+.debate-verdict__rationale {
+  margin: 14px 0 0;
+}
+
+.debate-verdict__unresolved {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* Joining in */
+
+.debate-say {
+  margin-top: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.debate-say label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* Provenance: what an agent consulted before it wrote a post. */
+
+.debate-post__grounding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.debate-post__grounding--none {
+  font-style: italic;
+}
+
+.debate-post__grounding-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.debate-post__tool {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  background: var(--panel);
+  font-family: "Roboto Mono", monospace;
+  color: var(--ink);
+}
+
+.debate-post__tool-detail {
+  font-family: Roboto, sans-serif;
+  color: var(--muted);
+  /* 40ch is the width this wants; 100% is the width it has. A fixed `ch` cap
+     wider than the column made the chip overflow at exactly the moment the
+     ellipsis was supposed to save it. */
+  max-width: min(40ch, 100%);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debate-roster__tools {
+  margin-left: 8px;
+  font-style: italic;
+}
+
+/* A post that arrived over the remote: its identity is claimed, not observed. */
+
+.debate-post--claimed {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--panel-2),
+    var(--panel-2) 12px,
+    var(--panel) 12px,
+    var(--panel) 24px
+  );
+}
+
+.debate-post__unverified {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__lane--claimed {
+  color: var(--brand-2);
+}
+
+.debate-post__votes--peer {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Where a post stands on the forum. Posting is local-first, so a post can
+   exist here before peers can see it, and a peer's rewrite can take one away. */
+.debate-post__pending,
+.debate-post__gone {
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__pending {
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+}
+
+.debate-post__gone {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+}
+
+.debate-warning {
+  background: #fff6e5;
+  border: 1px solid #7a5c00;
+  color: #5c4600;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.debate-note {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+}
+
+/* Who wrote a post, where that is knowable.
+   Two visually distinct cases on purpose: an authenticated VISTA account is a
+   fact about a person, an enrolled origin is a fact about a machine. Rendering
+   them identically would quietly upgrade the second into the first. */
+.debate-post__author {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.65rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-1, inherit);
+  white-space: nowrap;
+}
+
+/* Continuing a concluded debate. Kept beside the status rather than in the
+   composer, because it acts on the debate as a whole and not on one post. */
+.debate-detail__continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.debate-detail__continue label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.debate-detail__continue input {
+  width: 3.5rem;
+  padding: 0.15rem 0.35rem;
+}
+
+/* Evidence behind a tool call.
+   A <details> inside the flex row of chips: closed it is the same chip as an
+   un-backed call, open it takes the full width so a receipt is readable rather
+   than squeezed into a column of its own. */
+.debate-post__tool--evidence {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.debate-post__tool--evidence > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  /* Shrinkable, so the truncating detail span inside can actually truncate
+     instead of pushing the chip past the column. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.debate-post__tool--evidence > summary::-webkit-details-marker {
+  display: none;
+}
+
+.debate-post__tool--evidence > summary::after {
+  content: "▸";
+  font-size: 0.65em;
+  opacity: 0.7;
+}
+
+/* Open, the chip becomes a panel. It keeps `.debate-post__tool`'s pill radius
+   and hairline padding otherwise, and a 999px radius around a block of receipt
+   text draws a capsule with the corners of the text poking out of it. */
+.debate-post__tool--evidence[open] {
+  display: block;
+  flex-basis: 100%;
+  border-radius: 6px;
+  padding: 6px 10px 8px;
+}
+
+.debate-post__tool--evidence[open] > summary::after {
+  content: "▾";
+}
+
+.debate-post__receipt {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-1, inherit);
+}
+
+/* Commissioned simulations. A job id in a provenance chip proves only that
+   something was submitted; this is what became of it. */
+.debate-sims {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.76rem;
+}
+
+.debate-sims__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+}
+
+.debate-sims__row--done { border-left-color: #3f9a5a; }
+.debate-sims__row--waiting { border-left-color: #b8862b; }
+/* Distinct from "waiting" on purpose: nothing has looked at this job, which is a
+   fact about the deployment rather than about the queue. */
+.debate-sims__row--stalled { border-left-color: #b8532b; }
+.debate-sims__row--failed { border-left-color: #a8353a; }
+
+.debate-sims__where,
+.debate-sims__standing {
+  color: var(--muted);
+}
+
+.debate-sims__why {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debate-link {
+  color: var(--brand-2);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+.debate-link:hover {
+  opacity: 0.8;
+}
+
+/* The local-only variant of the lede. Dimmer than the invitation it replaces:
+   it describes what this deployment cannot do yet, so it should read as a note
+   rather than as a feature. */
+.debate-page__lede--muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* "Something is happening." Shown while a role is thinking or waiting on a
+   cluster job — a turn produces nothing until it finishes, so without this the
+   page is indistinguishable from a crashed one. */
+.debate-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent, #4a7fb5);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.debate-working__pulse {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent, #4a7fb5);
+  animation: debate-pulse 1.4s ease-in-out infinite;
+}
+
+.debate-working__elapsed {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+@keyframes debate-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.1); }
+}
+
+/* Respect a reader who has asked for less motion: the dot still marks the line,
+   it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .debate-working__pulse { animation: none; opacity: 0.9; }
+}

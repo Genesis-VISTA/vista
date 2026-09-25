@@ -73,9 +73,14 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
     ) -> str:
         """Begin a campaign. `planner_skill` and `domain` come from the active playbook skill."""
         if deps.session_id is None:
-            # A campaign must be tied to a chat session: that session's id keys the sandbox
-            # volume the monitor reconstructs the planner from, and is what lets the campaign
-            # resume after the long HPC wait. Stateless runs can't be durably resumed.
+            # A chat campaign must be tied to a session so it can be resumed and
+            # reported back into the conversation after the long HPC wait.
+            #
+            # Not because the session keys the sandbox volume — it does not; that
+            # is `project_paths_for(project_id, user_id)`. Believing otherwise is
+            # what made the monitor refuse to poll debate-commissioned jobs, which
+            # have no conversation by design, with a complaint about a volume it
+            # could have resolved perfectly well.
             raise ModelRetry(
                 "A campaign needs an active conversation so it can be resumed and monitored "
                 "after its HPC jobs finish. Ask the user to start (or select) a conversation, "
