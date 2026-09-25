@@ -250,7 +250,7 @@ async def test_build_collector_routes_to_run_planner(session, alice):
         return planner
 
     collect = build_collector(provider)
-    await collect(session, job, "STATE=COMPLETED")
+    await collect(session, job, "STATE=COMPLETED", True)
 
     step = await campaign_service.get_step(session, job.step_id)
     assert step.status == "completed"

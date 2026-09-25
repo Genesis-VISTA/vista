@@ -11,7 +11,6 @@ import uuid
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.agents.campaign.agent_tools import CampaignDriverDeps
 from vista_backend.agents.campaign.wiring import build_default_monitor
-from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectPublic, UserPublicWithConfig
 from vista_backend.services.campaign_monitor import CampaignMonitor
 
@@ -58,5 +57,21 @@ def test_build_default_monitor_constructs():
 
 
 def test_campaign_settings_default_off():
-    assert settings.campaigns.monitor_enabled is False
-    assert settings.campaigns.monitor_interval == 300.0
+    """
+    The monitor is opt-in: nothing polls HPC jobs until someone turns it on.
+
+    Asserted on a freshly built `CampaignSettings`, not on the process-wide
+    `settings`. That object reads the developer's `.env`, so this test used to
+    pass or fail on a file outside the repository — and it failed the moment a
+    deployment legitimately enabled the monitor, reporting a broken default when
+    the default was fine.
+
+    Worth stating rather than just defaulting: with the monitor off, a debate can
+    submit a simulation that nothing ever polls, and five of them sat at
+    `submitted` for three days before anyone noticed.
+    """
+    from vista_backend.config import CampaignSettings
+
+    fresh = CampaignSettings()
+    assert fresh.monitor_enabled is False
+    assert fresh.monitor_interval == 300.0
