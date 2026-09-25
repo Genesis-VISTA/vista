@@ -1,0 +1,690 @@
+"""Whether each HPC cluster would work for this researcher right now.
+
+Behind the NavRail's HPC cards. Every card is a live answer, not an inference
+from which credentials happen to be saved: the facility is asked whether the
+cluster is up, the facility is asked whether it accepts the researcher's
+token, and for Odo and Frontier the cluster's Globus collection is asked
+whether the researcher's session still reaches it.
+
+The calls are the ones a 2026-09-25 spike found could tell a good credential
+from a bad one (see the hpc-cards change's design.md):
+
+- facility: the public IRI `status/resources` list plus `status/incidents`.
+  The per-resource endpoint is not used -- OLCF's reports `unknown` while the
+  list says `up`.
+- credential: `GET compute/resources` with the token, which answers 200 for a
+  valid token and 401 otherwise. The `account/*` endpoints refuse valid S3M
+  tokens too, so they cannot tell the two apart. OLCF tokens are also
+  introspected, for their project and expiry.
+- Globus: exchange both refresh tokens, then list the collection home. A lapsed
+  High Assurance session survives the exchange and fails only the listing.
+
+The checks run here rather than as an MCP tool because the rail is global --
+it shows with no project open, and MCP tools are reachable only through a
+project's agent -- and because the agent has no reason to see a UI check.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Literal, Protocol
+
+import globus_sdk
+import httpx
+from pydantic import BaseModel
+
+from ..config import HpcClusterSettings, hpc_settings
+from ..db.schemas import HpcCluster
+
+log = logging.getLogger(__name__)
+
+CLUSTERS: tuple[HpcCluster, ...] = ("frontier", "odo", "perlmutter")
+""" In the order the rail shows them. """
+
+HTTP_TIMEOUT = 5.0
+""" Per outbound HTTP call. A facility that has not answered by then is down as far as a researcher is concerned. """
+GLOBUS_TIMEOUT = 10.0
+""" Two token exchanges and a listing, each its own round trip. """
+RESULT_TTL = 60.0
+""" How long one researcher's result for one cluster is reused. """
+FACILITY_TTL = 60.0
+""" How long a facility's public status feed is reused, across researchers. """
+INTROSPECT_TTL = 600.0
+""" A token's project does not change; matches the MCP server's introspection cache. """
+
+_TITLES: dict[HpcCluster, str] = {
+    "frontier": "Frontier",
+    "odo": "Odo",
+    "perlmutter": "Perlmutter",
+}
+
+
+# ---------------------------------------------------------------------------
+# What the endpoint returns
+# ---------------------------------------------------------------------------
+
+Reason = Literal[
+    "degraded",
+    "unreachable",
+    "unverifiable",
+    "not_connected",
+    "rejected",
+    "not_active",
+    "wrong_project",
+    "session_expired",
+]
+""" Why a check failed. The UI maps these to copy; `message` is a fallback. """
+
+State = Literal[
+    "degraded",
+    "unverifiable",
+    "not_connected",
+    "rejected",
+    "wrong_project",
+    "globus_not_connected",
+    "globus_session_expired",
+    "ready",
+]
+""" One per cluster. "Checking" exists only in the UI, while a request is in flight. """
+
+
+class Incident(BaseModel):
+    name: str
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+class Check(BaseModel):
+    """One check's outcome. Carries no token or token-derived value."""
+
+    ok: bool
+    reason: Reason | None = None
+    message: str
+    http_status: int | None = None
+    incident: Incident | None = None
+    project: str | None = None
+    """ The S3M token's project, when it was learned. A project name, not a secret. """
+    expected_project: str | None = None
+    expires_at: datetime | None = None
+    """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
+    active_from: datetime | None = None
+    identity: Literal["own", "deployment"] | None = None
+    """ Whose Globus connection was verified. """
+
+
+class ClusterChecks(BaseModel):
+    facility: Check
+    credential: Check
+    globus: Check | None = None
+    """ Odo and Frontier only; Perlmutter moves no files through Globus. """
+
+
+class ClusterStatus(BaseModel):
+    cluster: HpcCluster
+    state: State
+    checked_at: datetime
+    checks: ClusterChecks
+
+
+class HpcStatus(BaseModel):
+    clusters: list[ClusterStatus]
+
+
+# ---------------------------------------------------------------------------
+# One state per cluster
+# ---------------------------------------------------------------------------
+
+
+def _checks(c: ClusterChecks) -> list[Check]:
+    return [c.facility, c.credential] + ([c.globus] if c.globus else [])
+
+
+_PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
+    ("degraded", lambda c: c.facility.reason == "degraded"),
+    (
+        "unverifiable",
+        lambda c: any(x.reason in ("unreachable", "unverifiable") for x in _checks(c)),
+    ),
+    ("not_connected", lambda c: c.credential.reason == "not_connected"),
+    ("rejected", lambda c: c.credential.reason in ("rejected", "not_active")),
+    ("wrong_project", lambda c: c.credential.reason == "wrong_project"),
+    (
+        "globus_not_connected",
+        lambda c: c.globus is not None and c.globus.reason == "not_connected",
+    ),
+    (
+        "globus_session_expired",
+        lambda c: c.globus is not None and c.globus.reason == "session_expired",
+    ),
+]
+"""
+First match wins. A facility that is down explains everything else, so it
+comes first; a credential problem comes before a Globus one because without
+the credential no job runs at all.
+"""
+
+
+def resolve_state(checks: ClusterChecks) -> State:
+    for state, applies in _PRECEDENCE:
+        if applies(checks):
+            return state
+    if all(c.ok for c in _checks(checks)):
+        return "ready"
+    # A failed check whose reason nothing above claims: say so rather than
+    # show green.
+    return "unverifiable"
+
+
+# ---------------------------------------------------------------------------
+# Globus
+# ---------------------------------------------------------------------------
+
+
+class GlobusSessionExpired(Exception):
+    """The researcher has to connect Globus again for this cluster."""
+
+
+class GlobusProbe(Protocol):
+    def __call__(
+        self, *, transfer: str, https: str, collection_id: str, client_id: str
+    ) -> None: ...
+
+
+def probe_globus(
+    *, transfer: str, https: str, collection_id: str, client_id: str
+) -> None:
+    """Prove a Globus pair still reaches the collection. Blocking.
+
+    Classifies failures the way the MCP server's `lib/globus.py` does, so the
+    card and the file operations agree on what an expired session is: a
+    refresh token Globus will not exchange, a Transfer 401, or a
+    `ConsentRequired` / `AuthenticationFailed` refusal.
+    """
+    auth_client = globus_sdk.NativeAppAuthClient(client_id)
+    try:
+        # Each authorizer exchanges its refresh token on construction, so
+        # building both proves both halves of the pair.
+        transfer_auth = globus_sdk.RefreshTokenAuthorizer(transfer, auth_client)
+        globus_sdk.RefreshTokenAuthorizer(https, auth_client)
+    except globus_sdk.GlobusAPIError as error:
+        raise GlobusSessionExpired(error.message) from error
+
+    client = globus_sdk.TransferClient(authorizer=transfer_auth)
+    try:
+        client.operation_ls(collection_id, path="/~/", limit=1)
+    except globus_sdk.TransferAPIError as error:
+        code = error.code or ""
+        if error.http_status == 401 or code in (
+            "ConsentRequired",
+            "AuthenticationFailed",
+        ):
+            raise GlobusSessionExpired(error.message) from error
+        if error.http_status in (403, 404):
+            # Authenticated, and the collection answered; the home directory
+            # just is not listable. The session is what this check is about.
+            return
+        raise
+
+
+@dataclass(frozen=True)
+class _GlobusSource:
+    transfer: str
+    https: str
+    identity: Literal["own", "deployment"]
+
+
+def globus_source(
+    cluster: Literal["odo", "frontier"], user: Any, settings: HpcClusterSettings
+) -> _GlobusSource | None:
+    """The Globus pair this cluster's file operations would use, or None.
+
+    The same order as the MCP server's `UserConfig.require_globus_token`: the
+    researcher's pair for this cluster, then their shared pair, then the
+    deployment's. A source counts only with both halves -- half a pair lists a
+    directory it cannot read.
+    """
+    own = (
+        (user.odo_globus_token, user.odo_globus_https_token)
+        if cluster == "odo"
+        else (user.frontier_globus_token, user.frontier_globus_https_token)
+    )
+    for transfer, https in (own, (user.globus_token, user.globus_https_token)):
+        if transfer and https:
+            return _GlobusSource(transfer, https, "own")
+    deployment = (
+        (settings.odo_globus_refresh_token, settings.odo_globus_https_refresh_token)
+        if cluster == "odo"
+        else (
+            settings.frontier_globus_refresh_token,
+            settings.frontier_globus_https_refresh_token,
+        )
+    )
+    if deployment[0] and deployment[1]:
+        return _GlobusSource(
+            deployment[0].get_secret_value(),
+            deployment[1].get_secret_value(),
+            "deployment",
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# The service
+# ---------------------------------------------------------------------------
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _digest(*values: str | None) -> str:
+    return hashlib.sha256("\0".join(v or "" for v in values).encode()).hexdigest()
+
+
+class HpcStatusService:
+    """Runs the checks, with the caches that keep them cheap.
+
+    Everything that reaches the network is injectable -- the HTTP transport,
+    the Globus probe, and the clock -- so the tests run with none.
+    """
+
+    def __init__(
+        self,
+        *,
+        settings: HpcClusterSettings = hpc_settings,
+        transport: httpx.AsyncBaseTransport | None = None,
+        globus_probe: GlobusProbe = probe_globus,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._settings = settings
+        self._transport = transport
+        self._globus_probe = globus_probe
+        self._now = now
+        self._monotonic = monotonic
+        self._results: dict[
+            tuple[str, HpcCluster], tuple[float, str, ClusterStatus]
+        ] = {}
+        self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
+        self._introspections: dict[str, tuple[float, dict]] = {}
+
+    async def status(
+        self, user: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
+    ) -> HpcStatus:
+        """Every visible cluster's status for `user`.
+
+        `fresh` reruns the checks instead of reusing a recent result: for every
+        cluster, or with `cluster` for that one only. A hidden cluster is not
+        checked at all.
+        """
+        hidden: set[str] = set(user.hpc_hidden_clusters or [])
+        visible: list[HpcCluster] = [c for c in CLUSTERS if c not in hidden]
+        async with httpx.AsyncClient(
+            timeout=HTTP_TIMEOUT, transport=self._transport
+        ) as client:
+            results = await asyncio.gather(
+                *(
+                    self._cluster(client, user, c, fresh=fresh and cluster in (None, c))
+                    for c in visible
+                )
+            )
+        return HpcStatus(clusters=list(results))
+
+    async def _cluster(
+        self, client: httpx.AsyncClient, user: Any, cluster: HpcCluster, *, fresh: bool
+    ) -> ClusterStatus:
+        key = (str(user.id), cluster)
+        fingerprint = self._credential_fingerprint(user, cluster)
+        cached = self._results.get(key)
+        if (
+            not fresh
+            and cached is not None
+            and cached[1] == fingerprint
+            and self._monotonic() - cached[0] < RESULT_TTL
+        ):
+            return cached[2]
+
+        olcf = cluster in ("odo", "frontier")
+        facility, credential, globus = await asyncio.gather(
+            self._facility(client, cluster, fresh=fresh),
+            self._credential(client, cluster, user),
+            self._globus(cluster, user) if olcf else _none(),
+        )
+        checks = ClusterChecks(facility=facility, credential=credential, globus=globus)
+        result = ClusterStatus(
+            cluster=cluster,
+            state=resolve_state(checks),
+            checked_at=self._now(),
+            checks=checks,
+        )
+        self._results[key] = (self._monotonic(), fingerprint, result)
+        return result
+
+    def _credential_fingerprint(self, user: Any, cluster: HpcCluster) -> str:
+        """Changes whenever a credential this cluster's checks use changes."""
+        if cluster == "perlmutter":
+            return _digest(user.nersc_iri_token)
+        s3m = user.odo_s3m_token if cluster == "odo" else user.frontier_s3m_token
+        own = (
+            (user.odo_globus_token, user.odo_globus_https_token)
+            if cluster == "odo"
+            else (user.frontier_globus_token, user.frontier_globus_https_token)
+        )
+        return _digest(s3m, *own, user.globus_token, user.globus_https_token)
+
+    # --- facility ----------------------------------------------------------
+
+    def _iri_url(self, cluster: HpcCluster) -> str:
+        return {
+            "odo": self._settings.odo_iri_url,
+            "frontier": self._settings.frontier_iri_url,
+            "perlmutter": self._settings.nersc_iri_url,
+        }[cluster].rstrip("/")
+
+    async def _facility_feed(
+        self, client: httpx.AsyncClient, base: str, *, fresh: bool
+    ) -> tuple[list[dict], list[dict]]:
+        cached = self._facility_feeds.get(base)
+        if not fresh and cached and self._monotonic() - cached[0] < FACILITY_TTL:
+            return cached[1], cached[2]
+        resources, incidents = await asyncio.gather(
+            client.get(f"{base}/api/v1/status/resources"),
+            client.get(f"{base}/api/v1/status/incidents"),
+        )
+        resources.raise_for_status()
+        incidents.raise_for_status()
+        feed = (resources.json(), incidents.json())
+        if not (isinstance(feed[0], list) and isinstance(feed[1], list)):
+            raise ValueError("status feed is not a list")
+        self._facility_feeds[base] = (self._monotonic(), *feed)
+        return feed
+
+    def _match_resource(self, cluster: HpcCluster, rows: list[dict]) -> dict | None:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if (
+                cluster == "odo"
+                and row.get("id") == self._settings.odo_compute_resource_id
+            ):
+                return row
+            if (
+                cluster == "frontier"
+                and str(row.get("name", "")).lower() == self._settings.frontier_machine
+            ):
+                return row
+            if (
+                cluster == "perlmutter"
+                and row.get("group") == self._settings.nersc_machine
+                and row.get("name") == "compute"
+            ):
+                return row
+        return None
+
+    def _open_incident(
+        self, resource_id: str, incidents: list[dict]
+    ) -> Incident | None:
+        now = self._now()
+        for raw in incidents:
+            if not isinstance(raw, dict):
+                continue
+            uris = raw.get("resource_uris") or []
+            if not any(str(u).rstrip("/").endswith(f"/{resource_id}") for u in uris):
+                continue
+            start, end = _parse_time(raw.get("start")), _parse_time(raw.get("end"))
+            if (start is None or start <= now) and (end is None or end > now):
+                return Incident(
+                    name=str(raw.get("name") or "Incident"), start=start, end=end
+                )
+        return None
+
+    async def _facility(
+        self, client: httpx.AsyncClient, cluster: HpcCluster, *, fresh: bool
+    ) -> Check:
+        title = _TITLES[cluster]
+        try:
+            resources, incidents = await self._facility_feed(
+                client, self._iri_url(cluster), fresh=fresh
+            )
+        except (httpx.HTTPError, ValueError) as error:
+            log.info("%s status feed unavailable: %s", title, type(error).__name__)
+            return Check(
+                ok=False,
+                reason="unreachable",
+                message=f"{title}'s facility status feed did not answer.",
+            )
+        row = self._match_resource(cluster, resources)
+        if row is None:
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=f"The facility status feed does not list {title}.",
+            )
+        status = str(row.get("current_status") or "unknown")
+        incident = self._open_incident(str(row.get("id", "")), incidents)
+        if status != "up":
+            return Check(
+                ok=False,
+                reason="degraded",
+                message=f"The facility reports {title} as {status}.",
+                incident=incident,
+            )
+        if incident is not None:
+            return Check(
+                ok=False,
+                reason="degraded",
+                message=f"{title} has an open incident: {incident.name}.",
+                incident=incident,
+            )
+        return Check(ok=True, message=f"The facility reports {title} up.")
+
+    # --- credential --------------------------------------------------------
+
+    async def _get_status(
+        self, client: httpx.AsyncClient, url: str, token: str
+    ) -> int | None:
+        """The HTTP status an authenticated GET answers with, or None if none came."""
+        try:
+            response = await client.get(
+                url, headers={"Authorization": f"Bearer {token}"}
+            )
+        except httpx.HTTPError:
+            return None
+        return response.status_code
+
+    async def _introspect(
+        self, client: httpx.AsyncClient, url: str, token: str
+    ) -> tuple[int | None, dict | None]:
+        key = _digest(url, token)
+        cached = self._introspections.get(key)
+        if cached and self._monotonic() - cached[0] < INTROSPECT_TTL:
+            return 200, cached[1]
+        try:
+            response = await client.get(
+                url, headers={"Authorization": f"Bearer {token}"}
+            )
+        except httpx.HTTPError:
+            return None, None
+        if response.status_code != 200:
+            return response.status_code, None
+        try:
+            info = response.json().get("token") or {}
+        except ValueError, AttributeError:
+            return response.status_code, None
+        self._introspections[key] = (self._monotonic(), info)
+        return 200, info
+
+    async def _credential(
+        self, client: httpx.AsyncClient, cluster: HpcCluster, user: Any
+    ) -> Check:
+        title = _TITLES[cluster]
+        kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
+        token = {
+            "odo": user.odo_s3m_token,
+            "frontier": user.frontier_s3m_token,
+            "perlmutter": user.nersc_iri_token,
+        }[cluster]
+        if not token:
+            return Check(
+                ok=False,
+                reason="not_connected",
+                message=f"No {kind} token is saved for {title}.",
+            )
+        compute_url = f"{self._iri_url(cluster)}/api/v1/compute/resources"
+
+        if cluster == "perlmutter":
+            return self._from_iri(
+                title, kind, await self._get_status(client, compute_url, token)
+            )
+
+        s = self._settings
+        introspect_url, expected = (
+            (s.odo_introspect_url, s.odo_account)
+            if cluster == "odo"
+            else (s.frontier_introspect_url, s.frontier_account)
+        )
+        (intro_status, info), iri_status = await asyncio.gather(
+            self._introspect(client, introspect_url, token),
+            self._get_status(client, compute_url, token),
+        )
+        if intro_status == 401:
+            return Check(
+                ok=False,
+                reason="rejected",
+                message=f"S3M rejected the {title} token; it may have expired or been revoked.",
+                http_status=401,
+            )
+        if info is None:
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message="S3M could not be asked about the token.",
+                http_status=intro_status,
+            )
+
+        project = info.get("project") or None
+        expires_at = _parse_time(info.get("plannedExpiration"))
+        active_from = (
+            _parse_time(info.get("delayDate")) if info.get("delayedStart") else None
+        )
+        if active_from is not None and active_from > self._now():
+            return Check(
+                ok=False,
+                reason="not_active",
+                message=f"The {title} token is not active until {active_from.isoformat()}.",
+                project=project,
+                active_from=active_from,
+                expires_at=expires_at,
+            )
+        # Before the IRI answer: a token for the other enclave's project is
+        # refused there too, and "wrong project" is the part the researcher
+        # can act on.
+        if project != expected:
+            return Check(
+                ok=False,
+                reason="wrong_project",
+                message=(
+                    f"This token is for project {project!r}; {title} needs a "
+                    f"token minted in {expected!r}."
+                ),
+                project=project,
+                expected_project=expected,
+                expires_at=expires_at,
+            )
+        check = self._from_iri(title, kind, iri_status)
+        return check.model_copy(update={"project": project, "expires_at": expires_at})
+
+    @staticmethod
+    def _from_iri(title: str, kind: str, status: int | None) -> Check:
+        if status == 200:
+            return Check(ok=True, message=f"{title} accepted the {kind} token.")
+        if status == 401:
+            return Check(
+                ok=False,
+                reason="rejected",
+                message=f"{title} rejected the {kind} token; it may have expired.",
+                http_status=401,
+            )
+        return Check(
+            ok=False,
+            reason="unverifiable",
+            message=(
+                f"{title} gave an unexpected answer ({status}) when checking the token."
+                if status is not None
+                else f"{title} did not answer when checking the token."
+            ),
+            http_status=status,
+        )
+
+    # --- Globus ------------------------------------------------------------
+
+    async def _globus(self, cluster: Literal["odo", "frontier"], user: Any) -> Check:
+        title = _TITLES[cluster]
+        source = globus_source(cluster, user, self._settings)
+        if source is None:
+            return Check(
+                ok=False,
+                reason="not_connected",
+                message=f"Globus file transfer is not connected for {title}.",
+            )
+        collection = (
+            self._settings.odo_globus_collection_id
+            if cluster == "odo"
+            else self._settings.frontier_globus_collection_id
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._globus_probe,
+                    transfer=source.transfer,
+                    https=source.https,
+                    collection_id=collection,
+                    client_id=self._settings.globus_native_app_client_id,
+                ),
+                GLOBUS_TIMEOUT,
+            )
+        except GlobusSessionExpired:
+            return Check(
+                ok=False,
+                reason="session_expired",
+                message=f"The Globus session for {title} has expired; connect Globus again.",
+                identity=source.identity,
+            )
+        except Exception as error:  # noqa: BLE001 -- any other failure is "couldn't tell"
+            log.info("%s Globus check failed: %s", title, type(error).__name__)
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=f"Globus did not confirm {title}'s file transfer.",
+                identity=source.identity,
+            )
+        return Check(
+            ok=True,
+            message=(
+                f"Globus reaches {title}'s files"
+                + (
+                    " with the deployment's shared identity."
+                    if source.identity == "deployment"
+                    else "."
+                )
+            ),
+            identity=source.identity,
+        )
+
+
+async def _none() -> None:
+    return None
+
+
+hpc_status_service = HpcStatusService()
