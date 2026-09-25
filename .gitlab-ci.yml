@@ -51,8 +51,18 @@ variables:
   image:
     name: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
     entrypoint: [""]
+  # Runs before the cache is saved. Drops wheels downloaded pre-built from PyPI
+  # (quicker to fetch again than to zip and unzip) and keeps wheels built from
+  # source, such as the PALISADE git dependency.
+  after_script:
+    - uv cache prune --ci
 
 # ─── Cache anchors ──────────────────────────────────────────────────────────
+#
+# Only uv's cache is kept, never a project's .venv/. uv installs managed Python
+# (python-preference = "only-managed") under the home directory, which is not
+# cached, so a restored .venv links to an interpreter that no longer exists and
+# uv discards it. Rebuilding it from .uv-cache/ takes about a second.
 
 .cache-uv-backend: &cache-uv-backend
   cache:
@@ -62,7 +72,6 @@ variables:
         - backend/uv.lock
     paths:
       - .uv-cache/
-      - backend/.venv/
 
 .cache-uv-dev-mcp: &cache-uv-dev-mcp
   cache:
@@ -72,7 +81,6 @@ variables:
         - mcp_servers/dev_mcp_server/uv.lock
     paths:
       - .uv-cache/
-      - mcp_servers/dev_mcp_server/.venv/
 
 .cache-uv-vista-mcp: &cache-uv-vista-mcp
   cache:
@@ -82,7 +90,6 @@ variables:
         - mcp_servers/vista_mcp_server/uv.lock
     paths:
       - .uv-cache/
-      - mcp_servers/vista_mcp_server/.venv/
 
 .cache-npm-ui: &cache-npm-ui
   cache:
@@ -195,7 +202,6 @@ vista-mcp:test:
           - mcp_servers/vista_mcp_server/uv.lock
       paths:
         - .uv-cache/
-        - mcp_servers/vista_mcp_server/.venv/
   # Required job — must NOT set allow_failure.
   script:
     - cd mcp_servers/vista_mcp_server
