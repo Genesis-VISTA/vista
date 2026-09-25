@@ -4,12 +4,13 @@
  * Mirrors the backend's `DebateStatePublic` (snake_case wire shape). All calls go
  * through the BFF proxy under `/api/debates`.
  *
- * The one thing to preserve when touching these types: a post's `body` is the
- * only field its author wrote. `sender`, `forum_role`, `box_id`,
- * `policy_digest`, `origin` and `vouch_lane` are stamped by the h5i host, and the
- * record format has no field an agent could write them through. Anything
- * rendering a post has to keep that boundary visible — flattening it into one
- * blob of text would let a post claim an identity it does not have.
+ * The one thing to preserve when touching these types: what this install
+ * *knows* about a post and what the post *says* about itself are different.
+ * `vouch_lane`, `published` and `on_remote` are ours. `sender`, `forum_role` and
+ * `origin` are written into the post by whoever posted it, so on anything but a
+ * host-observed post they are that peer's claim. Anything rendering a post has
+ * to keep that boundary visible — flattening it into one blob of text would let
+ * a post claim an identity it does not have.
  */
 
 export type DebateStatus =
@@ -44,6 +45,12 @@ export type DebateRun = {
    */
   activity: string | null;
   activity_since: string | null;
+  /**
+   * True once the forum no longer has this debate's thread — deleted on the
+   * forge, or written by h5i before the forum moved to plain git. The stored
+   * posts are still shown; posting, continuing and ending it are refused.
+   */
+  thread_missing: boolean | null;
 };
 
 export type DebateParticipant = {
@@ -52,20 +59,17 @@ export type DebateParticipant = {
   identity: string;
   debate_role: string;
   forum_role: string;
-  box_slug: string;
-  box_id: string;
-  policy_digest: string | null;
   active: boolean;
   /** What this role was allowed to use. Empty means it had nothing to reach for. */
   granted_tools: string[];
 };
 
 /**
- * How much the host actually knows about where a post came from.
+ * How much this install actually knows about where a post came from.
  *
- * Only `host-observed` means this host watched it happen. On the other two the
- * `sender`, `forum_role` and `origin` are whatever the *remote* host stamped —
- * that peer's account of itself, unsigned, and not proof of anything.
+ * Only `host-observed` means this install wrote it. On the other two the
+ * `sender`, `forum_role` and `origin` are whatever the poster wrote — that
+ * peer's account of itself, unsigned, and not proof of anything.
  */
 export type VouchLane = "host-observed" | "peer-claimed" | "unattributed";
 
@@ -76,15 +80,14 @@ export function isObserved(post: DebatePost): boolean {
 /**
  * The operator, decided by the lane and not by the sender string.
  *
- * Every h5i host stamps its own operator's posts as `human`, so on a shared
- * forum an external participant's comment arrives as `human` too. Checking the
+ * Every install's operator posts as `human`, so on a shared forum an external
+ * participant's comment arrives as `human` too. Checking the
  * name alone would present a stranger as the person who owns the thread.
  */
 export function isOperator(post: DebatePost): boolean {
   return post.sender === "human" && isObserved(post);
 }
 
-/** One tool an agent called while producing a post. */
 /**
  * One tool an agent reached for, and what it saw.
  *
@@ -103,17 +106,26 @@ export type DebatePost = {
   run_id: string;
   post_id: string;
   kind: string;
-  /** The only agent-authored field. Everything else here was stamped by the host. */
+  /** What the poster said. Always their claim, from anyone. */
   body: string;
   sender: string;
   forum_role: string;
-  box_id: string | null;
-  policy_digest: string | null;
   origin: string | null;
   reply_to: string | null;
   ts: string;
   vouch_lane: string | null;
   denied: string | null;
+  /**
+   * For a post this install wrote: whether the forum remote has it yet. False is
+   * "not yet published" — written here, waiting for the next successful sync.
+   * Null on a peer's post, which by definition came from the remote.
+   */
+  published: boolean | null;
+  /**
+   * False when a post we once read from the remote is no longer there: someone
+   * rewrote the thread's history. Kept, because it was said.
+   */
+  on_remote: boolean | null;
   /** Net votes from participants this host observed. */
   votes: number;
   /**
@@ -127,9 +139,9 @@ export type DebatePost = {
   /**
    * The VISTA account that wrote this, where this deployment authenticated them.
    *
-   * Null on every post from outside, and that is not a gap to fill: h5i stamps
-   * `sender="human"` for every host's operator, so a peer's post carries no
-   * name we could believe.
+   * Null on every post from outside, and that is not a gap to fill: every
+   * install's operator posts as `human`, so a peer's post carries no name we
+   * could believe.
    */
   authored_by: string | null;
   round_index: number | null;
@@ -182,8 +194,6 @@ export type DebateState = {
   run: DebateRun;
   participants: DebateParticipant[];
   posts: DebatePost[];
-  /** Origin host id → the forge account enrolled on that machine. */
-  enrolled_origins: Record<string, EnrolledOrigin>;
   simulations: CommissionedRun[];
 };
 
@@ -214,15 +224,18 @@ export function simulationStanding(sim: CommissionedRun): {
   return { label: `${sim.state} — waiting`, tone: "waiting" };
 }
 
-/** The forum's federation state — whether it is shared, and whether votes count. */
+/** Whether this project's lab can run, and whether its forum is shared. */
 export type ForumStatus = {
+  /** The lab is usable: the forum is on, the project has a URL, and git works. */
   enabled: boolean;
   shared: boolean;
   remote: string | null;
-  vote_policy: string | null;
-  enrolled: number;
-  /** False when the policy is `principal` and nobody has enrolled. */
-  votes_counting: boolean;
+  /** False when this machine has no usable git; the lab is off until it does. */
+  git_ok: boolean;
+  /** Why git is unusable, written for the reader. Shown verbatim. */
+  git_reason: string | null;
+  /** This install's posts the remote does not have yet — e.g. written offline. */
+  unpublished: number;
 };
 
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -298,10 +311,8 @@ export async function closeDebate(
 }
 
 /**
- * Pick a finished debate back up for more rounds.
- *
- * A new roster is attached under fresh identities, because the previous one was
- * revoked when the debate concluded and a revoked identity cannot post.
+ * Pick a finished debate back up for more rounds, with the same roster: the
+ * extra rounds post under the identities the earlier ones used.
  */
 export async function continueDebate(
   projectName: string,
@@ -322,8 +333,8 @@ export async function continueDebate(
  * Who ended a debate: the operator, a peer, or nobody yet.
  *
  * Derived from the CLOSED post's vouch lane, because that is where the fact
- * lives. Both arrive with `sender === "human"` — every host stamps its own
- * operator that way — so labelling every closure "ended early" would credit you
+ * lives. Both arrive with `sender === "human"` — every install's operator
+ * posts that way — so labelling every closure "ended early" would credit you
  * with a decision an outside participant may have made.
  */
 export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
@@ -335,37 +346,16 @@ export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
   return null;
 }
 
+/**
+ * Who wrote a post, where that is actually known: the VISTA account this
+ * deployment authenticated when the post was made. Null for everything else —
+ * a peer's post carries no name we could believe.
+ */
+export function authorOf(post: DebatePost): string | null {
+  return post.authored_by ?? null;
+}
+
 /** Debate statuses that can still produce new posts. */
-/**
- * A forge account bound to one machine.
- *
- * What it licenses saying is "this came from a machine <name> enrolled" — not
- * "<name> wrote this". Anyone with access to that machine posts as `human` from
- * that origin, so the binding is to hardware, not authorship.
- */
-export interface EnrolledOrigin {
-  principal: string;
-  name: string | null;
-}
-
-/**
- * The best available account of who wrote a post.
- *
- * Three cases, and they are genuinely different kinds of statement:
- *  - `account`  — this deployment authenticated them. A fact.
- *  - `machine`  — an enrolled origin. A fact about the machine, not the person.
- *  - `null`     — nothing is known, and the origin is all there is to show.
- */
-export function authorOf(
-  post: DebatePost,
-  enrolled: Record<string, EnrolledOrigin> = {}
-): { kind: "account" | "machine"; label: string } | null {
-  if (post.authored_by) return { kind: "account", label: post.authored_by };
-  const binding = post.origin ? enrolled[post.origin] : undefined;
-  if (binding) return { kind: "machine", label: binding.name ?? binding.principal };
-  return null;
-}
-
 export function isActive(status: DebateStatus): boolean {
   return status === "setting_up" || status === "debating";
 }
@@ -379,23 +369,34 @@ export function isActive(status: DebateStatus): boolean {
  * object to. The event stream ends at a terminal status and the UI opens none
  * for a finished run, so this is what keeps such a debate watched.
  *
- * `closed` is excluded because h5i moves a closed thread to the attic and
- * nothing further can arrive on it.
+ * `closed` is excluded because a closed thread takes no further posts, and a
+ * thread no longer on the forum has nothing left to read.
  */
-export function watchesForPeerPosts(status: DebateStatus): boolean {
-  return !isActive(status) && status !== "closed";
+export function watchesForPeerPosts(run: DebateRun, posts: DebatePost[]): boolean {
+  return !isActive(run.status) && acceptsPosts(run, posts);
+}
+
+/**
+ * Whether anyone may post to this debate from here. A closed thread refuses
+ * every post (readers would never show one written after the close), and a
+ * thread no longer on the forum has nowhere to put it.
+ */
+export function acceptsPosts(run: DebateRun, posts: DebatePost[]): boolean {
+  // The CLOSED post, not only the status: a debate that concluded and was then
+  // closed by a peer keeps its "converged" status, and its thread is closed all
+  // the same.
+  return run.status !== "closed" && !run.thread_missing && closedBy(posts) === null;
 }
 
 /**
  * The scientific role behind a forum identity (`vista-proposer-1a2b` → proposer).
  *
- * h5i's own role vocabulary is only worker/reviewer/observer, so the meaningful
- * role travels in the identity. That is host-stamped data only for a post this
- * host observed; for anything that arrived over a remote it is the peer's own
- * claim, so this returns null there rather than dressing it as a role.
+ * Only for a post this install wrote; for anything that arrived over a remote
+ * the identity is the peer's own claim, so this returns null there rather than
+ * dressing it as one of our roles.
  */
 export function debateRoleOf(post: DebatePost): string | null {
-  // Only for posts this host observed. The identity travels in the sender name,
+  // Only for posts this install wrote. The identity travels in the sender name,
   // which a remote peer controls completely — so on anything else this would
   // render an outsider with one of our role badges.
   if (!isObserved(post)) return null;

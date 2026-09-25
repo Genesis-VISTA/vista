@@ -10,6 +10,7 @@ import {
   DebateRun,
   DebateState,
   ForumStatus,
+  acceptsPosts,
   closeDebate,
   continueDebate,
   closedBy,
@@ -49,8 +50,15 @@ const STATUS_LABEL: Record<DebateRun["status"], string> = {
  * the record rather than from the status alone.
  */
 function statusLabel(run: DebateRun, posts: DebatePost[]): string {
-  if (run.status !== "closed") return STATUS_LABEL[run.status];
-  return closedBy(posts) === "peer" ? "Ended by a peer" : "Ended early";
+  if (run.thread_missing) return "No longer on the forum";
+  const closer = closedBy(posts);
+  if (run.status !== "closed") {
+    // Concluded, then closed afterwards: the verdict stands, and so does the close.
+    if (closer === "peer") return `${STATUS_LABEL[run.status]} · closed by a peer`;
+    if (closer === "operator") return `${STATUS_LABEL[run.status]} · closed`;
+    return STATUS_LABEL[run.status];
+  }
+  return closer === "peer" ? "Ended by a peer" : "Ended early";
 }
 
 /* ---------------------------------------------------------------------- */
@@ -235,10 +243,9 @@ function DebatesPage() {
   //
   // Re-fetching is what makes the server read the forum; the backend throttles
   // that to one fetch per thread per interval however many people are watching.
-  const watchedStatus = state?.run.status;
+  const watched = state ? watchesForPeerPosts(state.run, state.posts) : false;
   useEffect(() => {
-    if (!projectName || !selectedId || !watchedStatus) return;
-    if (!watchesForPeerPosts(watchedStatus)) return;
+    if (!projectName || !selectedId || !watched) return;
 
     const controller = new AbortController();
     const timer = setInterval(() => {
@@ -253,7 +260,7 @@ function DebatesPage() {
       clearInterval(timer);
       controller.abort();
     };
-  }, [projectName, selectedId, watchedStatus]);
+  }, [projectName, selectedId, watched]);
 
   useDebateStream(
     projectName,
@@ -369,6 +376,30 @@ function DebatesPage() {
     return <main className="debate-page"><p>Select a project first.</p></main>;
   }
 
+  // No git on this machine turns every project's lab off, and the fix is on the
+  // machine rather than in the project, so it gets its own message: telling
+  // someone to add a repository they already added would send them the wrong
+  // way. `git_reason` is written for the reader and shown as it is.
+  if (forum !== null && !forum.enabled && !forum.git_ok) {
+    return (
+      <main className="debate-page">
+        <header className="debate-page__header">
+          <h1>Hypothesis Lab</h1>
+          <p className="debate-warning">
+            <strong>The Hypothesis Lab needs git.</strong>{" "}
+            {forum.git_reason ?? "Git could not be found on this machine."}
+          </p>
+          <p className="debate-page__lede debate-page__lede--muted">
+            Debates are kept in a git repository and published with your own git
+            and its credentials, so the lab turns on once git 2.34 or later is
+            installed. Reload this page afterwards. The rest of VISTA works
+            without it.
+          </p>
+        </header>
+      </main>
+    );
+  }
+
   // A project with no forum repository has no lab, and the honest thing is to
   // say so and point at the one place it can be turned on. Rendering the opener
   // would offer a debate with nowhere to publish — a private argument with
@@ -384,8 +415,8 @@ function DebatesPage() {
           <p className="debate-page__lede debate-page__lede--muted">
             A lab needs a git repository to publish its debates to: push access
             to that repository is who may post, so it is the guest list for the
-            room. Add one under <strong>Hypothesis Lab</strong> in the project&rsquo;s
-            settings and this page turns on — along with any threads the
+            room. Add one under <strong>Hypothesis Lab</strong>{" "}
+            in the project&rsquo;s settings and this page turns on — along with any threads the
             repository already holds.
           </p>
           <p className="debate-page__lede">
@@ -428,19 +459,25 @@ function DebatesPage() {
 
       {error && <p className="debate-error">{error}</p>}
 
-      {forum && !forum.votes_counting && (
-        <p className="debate-warning">
-          <strong>Votes are not being counted.</strong> This forum counts one
-          vote per enrolled account, and no machine has enrolled yet — so every
-          vote, including the agents&rsquo; own, is discarded. Each participant
-          runs <code>h5i forum enroll</code> once on their own machine.
+      {forum !== null && forum.unpublished > 0 && (
+        <p className="debate-note">
+          <strong>
+            {forum.unpublished === 1
+              ? "1 post has"
+              : `${forum.unpublished} posts have`}{" "}
+            not reached the forum yet.
+          </strong>{" "}
+          {forum.unpublished === 1 ? "It was" : "They were"} written while the
+          forum could not be reached and {forum.unpublished === 1 ? "is" : "are"}{" "}
+          safe here, publishing on the next successful sync, and marked{" "}
+          <em>not yet published</em> until then.
         </p>
       )}
 
       {forum?.shared && (
         <p className="debate-note">
-          This forum is shared. Posts marked <strong>peer-claimed</strong> came
-          from another machine: their name and role are that participant&rsquo;s
+          This forum is shared. Posts marked <strong>peer-claimed</strong>{" "}
+          came from another machine: their name and role are that participant&rsquo;s
           own claim, not verified here.
         </p>
       )}
@@ -508,12 +545,12 @@ function DebatesPage() {
                   {statusLabel(state.run, posts)} · round {state.run.rounds_done}/
                   {state.run.rounds}
                 </span>
-                {isActive(state.run.status) && (
+                {isActive(state.run.status) && !state.run.thread_missing && (
                   <button onClick={handleClose} disabled={busy}>
                     End this debate
                   </button>
                 )}
-                {watchesForPeerPosts(state.run.status) && (
+                {watchesForPeerPosts(state.run, posts) && (
                   <span className="debate-detail__continue">
                     <label>
                       <input
@@ -532,9 +569,9 @@ function DebatesPage() {
                       onClick={handleContinue}
                       disabled={busy}
                       title={
-                        "Attaches a fresh roster and argues on in the same " +
-                        "thread, so an objection raised after the verdict gets " +
-                        "answered against the argument that produced it."
+                        "Argues on in the same thread with the same roster, so " +
+                        "an objection raised after the verdict gets answered " +
+                        "against the argument that produced it."
                       }
                     >
                       Continue the debate
@@ -542,6 +579,16 @@ function DebatesPage() {
                   </span>
                 )}
               </div>
+
+              {state.run.thread_missing && (
+                <p className="debate-warning">
+                  <strong>This thread is no longer on the forum.</strong>{" "}
+                  It was
+                  deleted from the repository, or it was written before the lab
+                  moved to plain git. What is shown here is this machine&rsquo;s
+                  copy; it can be read but not posted to or continued.
+                </p>
+              )}
 
               {state.simulations && state.simulations.length > 0 && (
                 <ul className="debate-sims">
@@ -574,12 +621,6 @@ function DebatesPage() {
                   <li key={participant.id}>
                     <strong>{participant.debate_role}</strong>{" "}
                     <span>{participant.identity}</span>{" "}
-                    <span className="debate-roster__box">
-                      {participant.box_id}
-                    </span>
-                    {!participant.active && (
-                      <span className="debate-roster__revoked">revoked</span>
-                    )}
                     <span className="debate-roster__tools">
                       {participant.granted_tools.length > 0
                         ? `may use: ${participant.granted_tools.join(", ")}`
@@ -597,11 +638,9 @@ function DebatesPage() {
                 />
               )}
 
-              <DebateThread
-                posts={posts}
-                enrolled={state.enrolled_origins ?? {}}
-              />
+              <DebateThread posts={posts} />
 
+              {acceptsPosts(state.run, posts) && (
               <div className="debate-say">
                 <label>
                   Say something into this debate
@@ -616,6 +655,7 @@ function DebatesPage() {
                   Post as you
                 </button>
               </div>
+              )}
             </>
           )}
         </section>

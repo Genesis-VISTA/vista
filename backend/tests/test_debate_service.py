@@ -3,8 +3,8 @@ Tests for the debate service (run / participant / post projection).
 
 The projection is the part worth testing hard. Git owns what was said; these
 tables only mirror it, so the properties that matter are that a replay converges
-instead of duplicating, that a late vote reaches an old post, and that the
-host-stamped and agent-claimed halves stay apart on the way in.
+instead of duplicating, that a late vote reaches an old post, and that what
+this install knows and what a post claims stay apart on the way in.
 """
 
 import uuid
@@ -13,26 +13,30 @@ import pytest
 
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import debate as debate_service
-from vista_backend.services.h5i_forum import Participant, ParticipantRole, Thread
+from vista_backend.services.forum_git import Participant, Post, Thread, ThreadHeader
 
 
 def _thread(
-    *posts: dict, status: str = "open", votes: list[dict] | None = None
+    *posts: dict,
+    status: str = "open",
+    votes: list[dict] | None = None,
+    lanes: dict[str, str] | None = None,
+    published: dict[str, bool] | None = None,
 ) -> Thread:
-    """Build a `forum read --json` payload the way h5i emits one."""
+    """A read thread, every post ours unless `lanes` says otherwise."""
     all_posts = [*posts, *(votes or [])]
-    return Thread.from_json(
-        {
-            "header": {
-                "id": "t1",
-                "title": "why does the knee move?",
-                "created_at": "2026-08-27T00:00:00Z",
-                "created_by": "human",
-            },
-            "status": status,
-            "posts": all_posts,
-            "vouch": [{"id": p["id"], "lane": "host-observed"} for p in all_posts],
-        }
+    lanes = lanes or {}
+    return Thread(
+        header=ThreadHeader(
+            id="t1",
+            title="why does the knee move?",
+            created_at="2026-08-27T00:00:00Z",
+            created_by="a" * 32,
+        ),
+        status=status,
+        posts=[Post.model_validate(p) for p in all_posts],
+        vouch={p["id"]: lanes.get(p["id"], "host-observed") for p in all_posts},
+        published=published or {},
     )
 
 
@@ -132,47 +136,19 @@ async def test_a_debate_closed_early_keeps_a_null_verdict(session, alice):
 
 
 @pytest.mark.anyio
-async def test_participant_records_the_box_and_its_policy(session, alice):
+async def test_a_participant_is_recorded_with_its_role(session, alice):
     run = await _make_run(session, alice)
     row = await debate_service.add_participant(
         session,
         run_id=run.id,
         debate_role="proposer",
-        participant=Participant(
-            identity="vista-proposer",
-            role=ParticipantRole.WORKER,
-            box_slug="proposer",
-            box_id="env/human/proposer",
-            policy_digest="16f7e744",
-        ),
+        participant=Participant(identity="vista-proposer-1a2b3c4d", role="proposer"),
+        granted_tools=["search_literature"],
     )
-    # VISTA's role vocabulary and h5i's are both kept: they are not the same set.
-    assert row.debate_role == "proposer"
-    assert row.forum_role == "worker"
-    assert row.box_id == "env/human/proposer"
-    assert row.policy_digest == "16f7e744"
+    assert row.identity == "vista-proposer-1a2b3c4d"
+    assert row.debate_role == row.forum_role == "proposer"
+    assert row.granted_tools == ["search_literature"]
     assert row.active
-
-
-@pytest.mark.anyio
-async def test_revoking_keeps_the_participant_row(session, alice):
-    run = await _make_run(session, alice)
-    await debate_service.add_participant(
-        session,
-        run_id=run.id,
-        debate_role="reviewer",
-        participant=Participant(
-            identity="vista-reviewer",
-            role=ParticipantRole.REVIEWER,
-            box_slug="reviewer",
-            box_id="env/human/reviewer",
-        ),
-    )
-    await debate_service.deactivate_participant(
-        session, run_id=run.id, identity="vista-reviewer"
-    )
-    rows = await debate_service.list_participants(session, run_id=run.id)
-    assert len(rows) == 1 and not rows[0].active
 
 
 # --------------------------------------------------------------------------- #
@@ -181,7 +157,7 @@ async def test_revoking_keeps_the_participant_row(session, alice):
 
 
 @pytest.mark.anyio
-async def test_projection_keeps_host_stamped_fields_apart_from_the_body(session, alice):
+async def test_projection_keeps_the_lane_apart_from_the_post(session, alice):
     run = await _make_run(session, alice)
     thread = _thread(
         _post(
@@ -189,10 +165,8 @@ async def test_projection_keeps_host_stamped_fields_apart_from_the_body(session,
             "PROPOSAL",
             "rigidity sets the knee",
             "vista-proposer",
-            "worker",
-            box_id="env/human/proposer",
-            policy_digest="16f7e744",
-            origin="host-592619",
+            "proposer",
+            origin="a" * 32,
         )
     )
     (row,) = await debate_service.project_thread(
@@ -200,9 +174,8 @@ async def test_projection_keeps_host_stamped_fields_apart_from_the_body(session,
     )
     assert row.body == "rigidity sets the knee"
     assert row.sender == "vista-proposer"
-    assert row.forum_role == "worker"
-    assert row.box_id == "env/human/proposer"
-    assert row.policy_digest == "16f7e744"
+    assert row.forum_role == "proposer"
+    assert row.origin == "a" * 32
     assert row.vouch_lane == "host-observed"
 
 
@@ -275,8 +248,8 @@ async def test_votes_are_stored_but_hidden_from_the_reading_view(session, alice)
 @pytest.mark.anyio
 async def test_only_agent_posts_are_labelled_with_a_round(session, alice):
     """
-    The human's interjections and h5i's own bookkeeping belong to no round, so
-    labelling them would put words in a round that did not produce them.
+    The human's interjections and the framing and closing posts belong to no
+    round, so labelling them would put words in a round that did not produce them.
     """
     run = await _make_run(session, alice)
     thread = _thread(
@@ -293,8 +266,8 @@ async def test_only_agent_posts_are_labelled_with_a_round(session, alice):
         p.post_id: p for p in await debate_service.list_posts(session, run_id=run.id)
     }
     assert by_id["p2"].round_index == 2, "the agent's proposal is round 2's work"
-    assert by_id["p1"].round_index is None, "h5i's TASK belongs to no round"
-    assert by_id["p4"].round_index is None, "h5i's CLOSED belongs to no round"
+    assert by_id["p1"].round_index is None, "the TASK belongs to no round"
+    assert by_id["p4"].round_index is None, "the CLOSED belongs to no round"
     # A human ASK is a real contribution and still not the agents' round: it
     # happens alongside the debate, not inside it.
     assert by_id["p3"].round_index is None
@@ -326,9 +299,8 @@ async def test_a_replay_does_not_relabel_earlier_rounds(session, alice):
 @pytest.mark.anyio
 async def test_a_denied_post_is_projected_with_its_refusal(session, alice):
     """
-    h5i lets a refused message through and records that it should not have been
-    sent. Dropping the refusal on the way into the DB would turn evidence into an
-    ordinary contribution.
+    A recorded refusal is evidence, not a contribution; dropping it on the way
+    into the DB would erase the difference.
     """
     run = await _make_run(session, alice)
     thread = _thread(
@@ -371,19 +343,9 @@ async def test_posts_are_ordered_by_forum_timestamp(session, alice):
 # --------------------------------------------------------------------------- #
 
 
-FAKE = __import__("pathlib").Path(__file__).parent / "fixtures" / "fake_h5i.py"
-
-
 @pytest.fixture
-def forum_client(tmp_path):
-    from vista_backend.config import ForumSettings
-    from vista_backend.services.h5i_forum import ForumClient
-
-    (tmp_path / ".git" / ".h5i").mkdir(parents=True)
-    return ForumClient(
-        ForumSettings(enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0),
-        confirm_delay=0.0,
-    )
+def forum_client(client):
+    return client
 
 
 async def _live_run(session, alice, client, *, topic="does the knee move?"):
@@ -410,7 +372,7 @@ async def test_a_refresh_picks_up_a_post_made_outside_the_debate(
     await debate_service.refresh_from_forum(session, forum_client, run)
 
     # Something arrives on the thread with nothing on our side reading it.
-    await forum_client.post_as_human(run.thread_id, "a comment from elsewhere")
+    forum_client.peer_post(run.thread_id, "a comment from elsewhere")
 
     before = await debate_service.list_posts(session, run_id=run.id)
     result = await debate_service.refresh_from_forum(session, forum_client, run)
@@ -435,12 +397,12 @@ async def test_a_refresh_notices_the_thread_was_closed_elsewhere(
     session, alice, forum_client
 ):
     """
-    A peer with push access can close a thread they did not open (contract §8.2),
-    so the forum's status can move without anything here deciding it did.
+    A peer with push access can close a thread they did not open, so the
+    forum's status can move without anything here deciding it did.
     """
     run = await _live_run(session, alice, forum_client)
     await debate_service.set_status(session, run_id=run.id, status="debating")
-    await forum_client.close_thread(run.thread_id)
+    forum_client.peer_close(run.thread_id)
 
     result = await debate_service.refresh_from_forum(session, forum_client, run)
 
@@ -492,8 +454,8 @@ def test_our_own_closure_is_attributed_to_the_operator():
 
 def test_a_peers_closure_is_not_credited_to_the_operator():
     """
-    Both arrive with `sender == "human"`, because every host stamps its own
-    operator that way. Calling a peer's closure "ended early" would tell the
+    Both arrive with `sender == "human"`, because every install's operator
+    posts that way. Calling a peer's closure "ended early" would tell the
     reader you made a decision somebody else made.
     """
     assert debate_service.closed_by([_closed_post("peer-claimed")]) == "peer"
@@ -512,26 +474,18 @@ async def test_our_votes_and_peers_votes_are_projected_apart(session, alice):
     # counted as ours — so the test passed against its own mutation.
     proposal = _post("p1", "PROPOSAL", "claim", "vista-proposer", "worker")
     ours = _post("p2", "UPVOTE", "+1", "vista-reviewer", "reviewer", reply_to="p1")
-    theirs = _post("p3", "UPVOTE", "+1", "human", "human", reply_to="p1")
-    also_theirs = _post("p4", "UPVOTE", "+1", "their-agent", "worker", reply_to="p1")
-
-    thread = Thread.from_json(
-        {
-            "header": {
-                "id": "t1",
-                "title": "t",
-                "created_at": "2026-08-29T00:00:00Z",
-                "created_by": "human",
-            },
-            "status": "open",
-            "posts": [proposal, ours, theirs, also_theirs],
-            "vouch": [
-                {"id": "p1", "lane": "host-observed"},
-                {"id": "p2", "lane": "host-observed"},
-                {"id": "p3", "lane": "peer-claimed"},
-                {"id": "p4", "lane": "peer-claimed"},
-            ],
-        }
+    theirs = _post(
+        "p3", "UPVOTE", "+1", "human", "human", reply_to="p1", origin="b" * 32
+    )
+    also_theirs = _post(
+        "p4", "UPVOTE", "+1", "their-agent", "worker", reply_to="p1", origin="c" * 32
+    )
+    thread = _thread(
+        proposal,
+        ours,
+        theirs,
+        also_theirs,
+        lanes={"p3": "peer-claimed", "p4": "peer-claimed"},
     )
     await debate_service.project_thread(session, run_id=run.id, thread=thread)
 
@@ -539,3 +493,93 @@ async def test_our_votes_and_peers_votes_are_projected_apart(session, alice):
     assert row.votes == 1, "one upvote from this forum"
     assert row.peer_votes == 2, "two from outside, kept apart from ours"
     assert thread.tally(proposal["id"]) == 3, "the combined tally still works"
+
+
+# --------------------------------------------------------------------------- #
+# Publication and missing threads
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_an_unpublished_post_is_projected_as_such(session, alice):
+    run = await _make_run(session, alice)
+    proposal = _post("p1", "PROPOSAL", "claim", "vista-proposer", "proposer")
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=_thread(proposal, published={"p1": False})
+    )
+    (row,) = await debate_service.list_posts(session, run_id=run.id)
+    assert row.published is False
+    assert row.on_remote is None, "not yet published is not the same as gone"
+
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=_thread(proposal, published={"p1": True})
+    )
+    (row,) = await debate_service.list_posts(session, run_id=run.id)
+    assert row.published is True
+    assert row.on_remote is True
+
+
+@pytest.mark.anyio
+async def test_a_peer_post_that_vanished_from_the_remote_is_kept_and_marked(
+    session, alice
+):
+    run = await _make_run(session, alice)
+    ours = _post("p1", "PROPOSAL", "claim", "vista-proposer", "proposer")
+    theirs = _post("p2", "RISK", "objection", "their-agent", "reviewer")
+    await debate_service.project_thread(
+        session,
+        run_id=run.id,
+        thread=_thread(ours, theirs, lanes={"p2": "peer-claimed"}),
+    )
+    # A peer rewrote the thread; their post is gone from it.
+    await debate_service.project_thread(session, run_id=run.id, thread=_thread(ours))
+    by_id = {
+        p.post_id: p for p in await debate_service.list_posts(session, run_id=run.id)
+    }
+    assert by_id["p2"].body == "objection", "it was said, so it stays"
+    assert by_id["p2"].on_remote is False
+    assert by_id["p1"].on_remote is True
+
+
+@pytest.mark.anyio
+async def test_a_missing_thread_is_recorded_once_and_not_read_again(
+    session, alice, forum_client, monkeypatch
+):
+    run = await _live_run(session, alice, forum_client)
+    await debate_service.set_status(session, run_id=run.id, status="debating")
+    await debate_service.refresh_from_forum(session, forum_client, run)
+    forum_client.delete_thread(run.thread_id)
+
+    result = await debate_service.refresh_from_forum(session, forum_client, run)
+    assert result.thread_missing
+    run = await debate_service.require_debate(session, run.id)
+    assert run.thread_missing is True
+    assert run.status == "failed", "an arguing debate cannot go on without its thread"
+    assert await debate_service.list_posts(session, run_id=run.id), "stored posts stay"
+
+    async def must_not_read(thread):  # pragma: no cover - the guard
+        raise AssertionError("a missing thread was read again")
+
+    monkeypatch.setattr(forum_client, "read_thread", must_not_read)
+    assert (
+        await debate_service.refresh_from_forum(session, forum_client, run)
+    ).thread_missing
+
+
+@pytest.mark.anyio
+async def test_a_finished_debate_keeps_its_status_when_its_thread_goes(
+    session, alice, forum_client
+):
+    run = await _live_run(session, alice, forum_client)
+    await debate_service.record_verdict(session, run_id=run.id, verdict={"r": 1})
+    forum_client.delete_thread(run.thread_id)
+    await debate_service.refresh_from_forum(session, forum_client, run)
+    run = await debate_service.require_debate(session, run.id)
+    assert (run.status, run.thread_missing) == ("converged", True)
+
+
+@pytest.mark.anyio
+async def test_an_h5i_era_thread_id_reads_as_missing(session, alice, forum_client):
+    run = await _make_run(session, alice)  # thread_id "t1": not a thread here
+    result = await debate_service.refresh_from_forum(session, forum_client, run)
+    assert result.thread_missing

@@ -1,10 +1,10 @@
 """
 Drive the debate loop end to end, with fakes only at the two real boundaries.
 
-The forum is the `fake_h5i.py` binary, so the actual `ForumClient` and the actual
-projection run; the models are `FunctionModel`s returning scripted outputs. What
-is under test is therefore the whole path — loop, client, service, tables — with
-no LLM, no sandbox and no network.
+The forum is the in-memory `FakeForumClient` (the real client has its own
+real-git suite), so the actual loop and the actual projection run; the models are
+`FunctionModel`s returning scripted outputs. What is under test is therefore the
+whole path — loop, service, tables — with no LLM, no sandbox and no network.
 
 Follows the shape of `test_campaign_driver.py`: script the model, drive the real
 runtime, assert the state transitions.
@@ -12,8 +12,6 @@ runtime, assert the state transitions.
 
 import json
 import uuid
-from pathlib import Path
-
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -21,19 +19,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from vista_backend.agents.forum.debate import ROSTER, DebateOrchestrator
+from vista_backend.agents.forum.debate import ROSTER, DebateOrchestrator, identity_for
 from vista_backend.agents.forum.roles import RoleAgents
-from vista_backend.config import ForumSettings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import debate as debate_service
-from vista_backend.services.h5i_forum import (
-    ForumClient,
-    ParticipantRole,
-    PostKind,
-)
-
-
-FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
+from vista_backend.services.forum_git import Participant, PostKind
 
 
 HYPOTHESIS = {
@@ -99,15 +89,6 @@ def scripted(*payloads: dict, capture: list[str] | None = None) -> FunctionModel
         return structured(payload)
 
     return FunctionModel(respond)
-
-
-@pytest.fixture
-def client(tmp_path) -> ForumClient:
-    (tmp_path / ".git" / ".h5i").mkdir(parents=True)
-    return ForumClient(
-        ForumSettings(enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0),
-        confirm_delay=0.0,
-    )
 
 
 async def _project(session):
@@ -211,53 +192,8 @@ async def test_the_roster_records_the_tools_the_debate_actually_ran_with(
     assert "prior_debates" in granted["reviewer"]
 
 
-@pytest.mark.anyio
-async def test_a_retired_stints_grants_are_left_as_they_were(client, session, alice):
-    """
-    History is not restated in today's terms.
-
-    A continued debate carries the retired roster on its record. What *that* stint
-    could reach is a fact about the posts it made; rewriting it to match the
-    current wiring would make an old post look as though it had tools it never
-    had.
-    """
-    from vista_backend.agents.forum.grounding import Grounding, build_toolsets
-
-    _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
-    run_id = run.id
-    await _run_to_verdict(client, session, run_id)
-
-    retired = await debate_service.list_participants(session, run_id=run_id)
-    assert all(not r.active for r in retired), "the first stint is retired"
-
-    async def rag(query, kb_slug, n_results):  # pragma: no cover - never called
-        return "nothing"
-
-    wired = DebateOrchestrator(
-        client=client,
-        roles=_roles(toolsets=build_toolsets(Grounding(rag=rag, forum=client))),
-        checkpoint=_committing,
-        knowledge_bases=["salt"],
-    )
-    await wired.resume(
-        session,
-        run=await debate_service.require_debate(session, run_id),
-        extra_rounds=1,
-    )
-
-    # Both stints are retired by now — resume argues to a verdict and revokes on
-    # its way out — so they are told apart by identity, which is what carries the
-    # stint number and what the posts are stamped with.
-    rows = await debate_service.list_participants(session, run_id=run_id)
-    first = [r for r in rows if not r.identity.endswith("-2")]
-    second = [r for r in rows if r.identity.endswith("-2")]
-    assert len(first) == len(second) == len(ROSTER)
-    assert all(list(r.granted_tools) == [] for r in first), "the first stint is history"
-    assert all("prior_debates" in r.granted_tools for r in second)
-
-
 async def _run_to_verdict(client, session, run_id):
-    """Argue the first stint out, so the next one resumes rather than starts."""
+    """Argue a debate out, so the next call continues rather than starts."""
     plain = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
     await plain.run(session, await debate_service.require_debate(session, run_id))
 
@@ -287,7 +223,7 @@ async def test_a_debate_runs_its_rounds_and_ends_with_a_verdict(client, session,
 
 @pytest.mark.anyio
 async def test_each_role_posts_under_its_own_identity(client, session, alice):
-    """The whole reason for the box relay, asserted through the real client."""
+    """Three roles, three voices on the thread."""
     orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
@@ -296,8 +232,9 @@ async def test_each_role_posts_under_its_own_identity(client, session, alice):
     assert by_kind[PostKind.PROPOSAL].sender.startswith("vista-proposer-")
     assert by_kind[PostKind.RISK].sender.startswith("vista-reviewer-")
     assert by_kind[PostKind.DONE].sender.startswith("vista-referee-")
-    assert by_kind[PostKind.PROPOSAL].forum_role == "worker"
+    assert by_kind[PostKind.PROPOSAL].forum_role == "proposer"
     assert by_kind[PostKind.RISK].forum_role == "reviewer"
+    assert by_kind[PostKind.DONE].forum_role == "referee"
 
 
 @pytest.mark.anyio
@@ -363,7 +300,8 @@ async def test_a_human_post_reaches_the_next_round(client, session, alice):
 @pytest.mark.anyio
 async def test_the_human_can_end_a_debate_early(client, session, alice):
     """
-    Closing is enforced by h5i, not by the loop: the next post is simply refused.
+    Closing is enforced by the forum, not by the loop: the next post is simply
+    refused.
     The debate ends without a verdict, which is the honest outcome — inventing
     one would report a conclusion the debate never reached.
     """
@@ -386,7 +324,7 @@ async def test_the_human_can_end_a_debate_early(client, session, alice):
 
 @pytest.mark.anyio
 async def test_closing_still_records_what_was_said(client, session, alice):
-    """The record should hold the debate up to the stop, plus h5i's CLOSED marker."""
+    """The record should hold the debate up to the stop, plus the CLOSED marker."""
     closed = {"done": False}
 
     async def close_after_first_post(post):
@@ -415,27 +353,29 @@ async def test_the_roster_is_attached_and_recorded(client, session, alice):
     _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
 
     rows = await debate_service.list_participants(session, run_id=run.id)
-    assert {r.debate_role for r in rows} == {"proposer", "reviewer", "referee"}
-    assert all(r.box_id.startswith("env/") for r in rows)
-    assert all(r.policy_digest for r in rows), "the confinement is recorded per role"
+    assert {r.debate_role: r.identity for r in rows} == {
+        role: identity_for(role, run.id) for role in ROSTER
+    }
+    assert all(r.forum_role == r.debate_role for r in rows)
     assert run.status == "debating"
 
 
 @pytest.mark.anyio
-async def test_the_roster_is_retired_when_the_debate_ends(client, session, alice):
+async def test_the_roster_outlives_the_debate(client, session, alice):
+    """
+    Nothing is revoked at the end: a late simulation result still posts under
+    the identity that asked for it, and a continued debate speaks as before.
+    """
     orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
     rows = await debate_service.list_participants(session, run_id=run.id)
-    assert not any(r.active for r in rows), "boxes are not left on the forum"
-    # Posts survive their author's revocation: the record is not retracted.
-    posts = await debate_service.list_posts(session, run_id=run.id)
-    assert any(p.sender.startswith("vista-proposer-") for p in posts)
+    assert rows and all(r.active for r in rows)
 
 
 @pytest.mark.anyio
 async def test_participants_are_named_after_their_run(client, session, alice):
-    """Several debates share one forum, so slugs cannot be bare role names."""
+    """Several debates share one forum, so identities cannot be bare role names."""
     _, first = await _start(client, session, alice, roles=_roles(), rounds=1)
     _, second = await _start(client, session, alice, roles=_roles(), rounds=1)
 
@@ -731,7 +671,7 @@ async def test_a_posts_provenance_reaches_the_record(client, session, alice):
             "detail": "salt-chemistry",
             # Not just that a skill was read — what it said. A label alone is a
             # claim about grounding; this is the evidence under it, and it was
-            # being written to an h5i attachment nothing could open.
+            # once written only to an attachment nothing here could open.
             "receipt": (
                 "skill salt-chemistry\n\nsalt chemistry says the knee is structural"
             ),
@@ -775,34 +715,41 @@ async def test_each_role_records_what_it_was_allowed_to_use(client, session, ali
 
 
 @pytest.mark.anyio
-async def test_resume_attaches_a_fresh_roster_and_argues_again(client, session, alice):
+async def test_a_continued_debate_reuses_its_identities(client, session, alice):
     """
-    Continuing is not just running the loop again.
+    One roster for the debate's whole life.
 
-    The roster is revoked when a debate concludes, and a revoked identity cannot
-    post. So `resume` attaches a new one — under distinct identities, so the
-    thread shows plainly that the argument was picked up rather than pretending
-    it never stopped, and so the earlier posts keep the names they were made
-    under.
+    Continuing is the same debate, so the same three voices: the extra rounds
+    post under the identities the earlier rounds used, and no new rows appear.
     """
     orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
     run_id = run.id
     await orch.run(session, run)
 
-    before = await debate_service.list_participants(session, run_id=run_id)
-    assert before, "the first stint should be on the record"
-    assert not any(p.active for p in before), "and retired when it concluded"
+    before = {
+        p.identity
+        for p in await debate_service.list_participants(session, run_id=run_id)
+    }
+    earlier = {
+        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
+    }
 
     run = await debate_service.require_debate(session, run_id)
     await orch.resume(session, run=run, extra_rounds=2)
 
-    after = await debate_service.list_participants(session, run_id=run_id)
-    assert len(after) == len(before) + 3, "a second roster, not a reused one"
+    after = {
+        p.identity
+        for p in await debate_service.list_participants(session, run_id=run_id)
+    }
+    assert after == before, "a continued debate keeps its roster"
 
-    first = {p.identity for p in before}
-    second = {p.identity for p in after} - first
-    assert len(second) == 3
-    assert not (first & second), "a revoked identity must not be posted under again"
+    fresh = [
+        p
+        for p in await debate_service.list_posts(session, run_id=run_id)
+        if p.post_id not in earlier and p.sender != "human"
+    ]
+    assert fresh, "continuing should have produced posts"
+    assert {p.sender for p in fresh} <= before
 
     refreshed = await debate_service.require_debate(session, run_id)
     assert refreshed.rounds == 3, "the budget is raised, not reset"
@@ -810,90 +757,30 @@ async def test_resume_attaches_a_fresh_roster_and_argues_again(client, session, 
 
 
 @pytest.mark.anyio
-async def test_the_resumed_rounds_post_under_the_new_roster(client, session, alice):
-    """
-    The roster the orchestrator rebuilds has to be the attached one.
-
-    `list_participants` returns every stint a debate has had, retired ones
-    included, keyed by the same three roles — so building the client's view from
-    it would collapse them and hand the loop whichever row happened to sort last
-    by identity. Half the time that is a revoked identity whose box is gone.
-
-    Checked after the fact by who the extra rounds were posted under, because
-    the roster is only live *while* the argument runs: `run` retires it on the
-    way out.
-    """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
-    run_id = run.id
-    await orch.run(session, run)
-
-    first = {
-        p.identity
-        for p in await debate_service.list_participants(session, run_id=run_id)
-    }
-    before = {
-        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
-    }
-
-    run = await debate_service.require_debate(session, run_id)
-    await orch.resume(session, run=run, extra_rounds=1)
-
-    second = {
-        p.identity
-        for p in await debate_service.list_participants(session, run_id=run_id)
-    } - first
-    fresh = [
-        p
-        for p in await debate_service.list_posts(session, run_id=run_id)
-        if p.post_id not in before and p.sender != "human"
-    ]
-
-    assert fresh, "continuing should have produced posts"
-    assert {p.sender for p in fresh} <= second, (
-        "the extra rounds were posted under an identity from the retired stint"
-    )
-
-
-@pytest.mark.anyio
 async def test_the_roster_excludes_retired_identities(client, session, alice):
     """
-    Pinned deliberately, because the naming makes it look fine by accident.
+    Rows written before the git forum can be inactive (retired h5i stints).
 
-    `_participants` keys a dict by debate_role over every recorded stint, so
-    without the active filter the last row to be visited wins. Real continuation
-    identities happen to sort so that the live one lands last — which is luck,
-    not a rule. Here the retired identity sorts *after* the live one, so an
-    unfiltered roster picks a revoked box whose worktree no longer exists.
+    `_participants` keys a dict by debate_role, so without the active filter the
+    last row visited would win. Here the inactive identity sorts *after* the
+    live one, so an unfiltered roster would pick it.
     """
     orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
     run_id = run.id
-    # The opening roster stands in for a stint that has already been retired.
-    for row in await debate_service.list_participants(session, run_id=run_id):
-        await debate_service.deactivate_participant(
-            session, run_id=run_id, identity=row.identity
-        )
+    live = Participant(identity=identity_for("proposer", run_id), role="proposer")
 
-    live = await client.create_participant(
-        box_slug="aaa-live", identity="vista-aaa-live", role=ParticipantRole.WORKER
+    retired = await debate_service.add_participant(
+        session,
+        run_id=run_id,
+        participant=Participant(identity="vista-proposer-zzz-2", role="proposer"),
+        debate_role="proposer",
     )
-    retired = await client.create_participant(
-        box_slug="zzz-retired",
-        identity="vista-zzz-retired",
-        role=ParticipantRole.WORKER,
-    )
-    for participant in (live, retired):
-        await debate_service.add_participant(
-            session, run_id=run_id, participant=participant, debate_role="proposer"
-        )
-    await debate_service.deactivate_participant(
-        session, run_id=run_id, identity=retired.identity
-    )
+    retired.active = False
+    session.add(retired)
+    await session.flush()
 
     roster = await orch._participants(session, run_id)
-
-    assert roster["proposer"].identity == live.identity, (
-        "the roster picked a revoked identity, which cannot post"
-    )
+    assert roster["proposer"].identity == live.identity
 
 
 @pytest.mark.anyio
@@ -901,7 +788,7 @@ async def test_resume_survives_a_committing_checkpoint(client, session, alice):
     """
     The same expiry trap `run` documents, one frame further up.
 
-    `resume` checkpoints after attaching the roster — deliberately, so a viewer
+    `resume` checkpoints before arguing — deliberately, so a viewer
     sees the debate go live rather than waiting for it to finish. That commit
     expires every ORM object the session holds, the run included, so handing that
     same object to `run` makes its first line async IO in a context that cannot
@@ -933,123 +820,6 @@ async def test_resume_survives_a_committing_checkpoint(client, session, alice):
     refreshed = await debate_service.require_debate(session, run_id)
     assert refreshed.rounds == 2
     assert refreshed.rounds_done == 2
-
-
-@pytest.mark.anyio
-async def test_resume_does_not_post_through_a_roster_left_by_a_crash(
-    client, session, alice
-):
-    """
-    A resume that died after its checkpoint leaves a live roster behind.
-
-    Retrying then has two attached rosters for the same three roles, and
-    `_participants` — a dict keyed by role — keeps whichever identity it visits
-    last. So which of them the debate speaks as would be decided by string
-    ordering. Asserted on who actually posted, because merely checking the
-    orphan ends up inactive proves nothing: `run` retires whatever roster it
-    used on its way out, orphan included.
-    """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
-    run_id = run.id
-    await orch.run(session, run)
-
-    # Stand in for the crashed attempt: a roster attached and committed, then
-    # nothing further. Named so it sorts *after* a real stint identity, which is
-    # what an unguarded `_participants` would then prefer.
-    for role, forum_role in list(ROSTER.items()):
-        participant = await client.create_participant(
-            box_slug=f"{role}-orphan", identity=f"vista-{role}-orphan", role=forum_role
-        )
-        await debate_service.add_participant(
-            session, run_id=run_id, participant=participant, debate_role=role
-        )
-
-    before = {
-        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
-    }
-    run = await debate_service.require_debate(session, run_id)
-    await orch.resume(session, run=run, extra_rounds=1)
-
-    fresh = [
-        p
-        for p in await debate_service.list_posts(session, run_id=run_id)
-        if p.post_id not in before and p.sender != "human"
-    ]
-    assert fresh, "continuing should have produced posts"
-    assert not any(p.sender.endswith("-orphan") for p in fresh), (
-        "the debate spoke as a roster left behind by a crashed attempt"
-    )
-
-
-@pytest.mark.anyio
-async def test_a_participant_h5i_has_already_dropped_is_still_recorded_as_retired(
-    client, session, alice, monkeypatch
-):
-    """
-    Taking a role off the forum and recording that are two different things.
-
-    The commonest refusal is h5i having already revoked the identity — a debate
-    that crashed after the subprocess ran but before the row was written. Under a
-    single `try`, that refusal skipped the write and the row said `active`
-    forever, so every later roster read inherited it and a resumed debate could
-    speak as a participant that no longer exists.
-    """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
-    run_id = run.id
-    roster = await orch._participants(session, run_id)
-
-    async def already_gone(participant):
-        raise RuntimeError("no participant matching that identity")
-
-    monkeypatch.setattr(client, "remove_participant", already_gone)
-    await orch._retire(session, run_id, roster.values())
-
-    rows = await debate_service.list_participants(session, run_id=run_id)
-    assert rows and not any(row.active for row in rows), (
-        "h5i refusing the removal left our own record claiming they are attached"
-    )
-
-
-@pytest.mark.anyio
-async def test_resume_clears_every_attached_stint_not_just_one_per_role(
-    client, session, alice
-):
-    """
-    A debate can have more than one stint attached at once.
-
-    Each crashed resume leaves a live roster, so they accumulate. Retiring
-    through a role-keyed dict clears exactly one identity per role however many
-    are attached, which means the next resume starts from the same mess — and a
-    role can still resolve to a participant whose box is gone.
-    """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
-    run_id = run.id
-    await orch.run(session, run)
-
-    # Two crashed attempts' worth of rosters, all still marked attached.
-    for stint in ("a", "b"):
-        for role, forum_role in list(ROSTER.items()):
-            participant = await client.create_participant(
-                box_slug=f"{role}-{stint}",
-                identity=f"vista-{role}-{stint}",
-                role=forum_role,
-            )
-            await debate_service.add_participant(
-                session, run_id=run_id, participant=participant, debate_role=role
-            )
-    assert (
-        len(await debate_service.list_active_participants(session, run_id=run_id)) == 6
-    )
-
-    run = await debate_service.require_debate(session, run_id)
-    await orch.resume(session, run=run, extra_rounds=1)
-
-    stale = [
-        p.identity
-        for p in await debate_service.list_active_participants(session, run_id=run_id)
-        if p.identity.endswith("-a") or p.identity.endswith("-b")
-    ]
-    assert not stale, f"left attached after a resume: {stale}"
 
 
 @pytest.mark.anyio
@@ -1281,3 +1051,49 @@ async def test_prose_where_structured_output_was_expected_costs_one_round(
     assert "could not produce an answer in the form" in blocked.body, (
         "a malformed answer is not a spent budget, and the note should not say so"
     )
+
+
+@pytest.mark.anyio
+async def test_a_thread_deleted_mid_debate_ends_it_without_an_error(
+    client, session, alice
+):
+    """Someone deletes the branch on the forge while the debate is arguing."""
+    deleted = {"done": False}
+
+    async def delete_after_first_post(post):
+        if not deleted["done"]:
+            deleted["done"] = True
+            client.delete_thread(post.thread)
+
+    orch, run = await _start(
+        client,
+        session,
+        alice,
+        roles=_roles(),
+        rounds=3,
+        on_post=delete_after_first_post,
+    )
+    run = await orch.run(session, run)
+
+    assert run.thread_missing is True
+    assert run.status == "failed"
+    assert run.activity is None
+    assert await debate_service.list_posts(session, run_id=run.id), "stored posts stay"
+
+
+@pytest.mark.anyio
+async def test_a_peers_close_ends_the_debate(client, session, alice):
+    closed = {"done": False}
+
+    async def peer_closes(post):
+        if not closed["done"]:
+            closed["done"] = True
+            client.peer_close(post.thread)
+
+    orch, run = await _start(
+        client, session, alice, roles=_roles(), rounds=3, on_post=peer_closes
+    )
+    run = await orch.run(session, run)
+    posts = await debate_service.list_posts(session, run_id=run.id)
+    assert run.status == "closed"
+    assert debate_service.closed_by(posts) == "peer"

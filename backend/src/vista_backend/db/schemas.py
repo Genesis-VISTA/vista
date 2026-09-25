@@ -892,25 +892,25 @@ class CampaignStatePublic(BaseModel):
 # ---------------------------------------------------------------------------
 # Agent forum (multi-agent debate)
 #
-# A debate is one h5i forum thread on a human-given topic, argued by role agents
+# A debate is one forum thread on a human-given topic, argued by role agents
 # (proposer / reviewer / referee) until a round budget is spent or the human
-# closes it. See docs/h5i-forum-contract.md and openspec/changes/agent-forum/.
+# closes it. See docs/forum-git-format.md and openspec/changes/agent-forum/.
 #
-# The forum's git store is the source of truth for what was said. These tables
-# are a *projection* of it, rebuildable from `h5i forum read --json`, and exist
+# The forum's git repository is the source of truth for what was said. These
+# tables are a *projection* of it, rebuildable by reading the thread, and exist
 # for the things git cannot cheaply do: list a user's debates, scope them to a
 # project, and feed a change stream to the UI.
 #
 #   DebateRun         — the thread: topic, round budget, status, verdict.
-#   DebateParticipant — a role on the forum: its identity, box, and policy.
-#   DebatePost        — one post, keeping host-stamped and agent-claimed apart.
+#   DebateParticipant — a role on the debate: its identity and granted tools.
+#   DebatePost        — one post, keeping what we know apart from what it claims.
 # ---------------------------------------------------------------------------
 
 DebateStatus = Literal[
     "setting_up",  # thread created, participants being attached
     "debating",  # rounds in flight
     "converged",  # round budget spent, referee posted a verdict
-    "closed",  # the human ended it early (h5i closed the thread)
+    "closed",  # the human, or a peer, ended it early with a CLOSED post
     "failed",  # the run could not continue
 ]
 
@@ -921,7 +921,7 @@ class DebateRunBase(SQLModel):
     framing: str | None = None
     """ Any extra context the human gave; becomes the thread's first (TASK) post. """
     thread_id: str
-    """ h5i's thread id. The join key back to the forum, which owns the real record. """
+    """ The forum thread's id. The join key back to the forum, which owns the real record. """
     rounds: int = 5
     """ Round budget. Each round is one proposal and the reviewer's answer to it. """
     rounds_done: int = 0
@@ -961,6 +961,14 @@ class DebateRunBase(SQLModel):
     activity_since: str | None = None
     """When the current activity started, so the interface can show how long."""
 
+    thread_missing: bool | None = None
+    """
+    True once the forum no longer has this debate's thread — deleted on the
+    forge, or written by h5i before the forum moved to plain git. The stored
+    posts stay readable; posting and continuing are refused, and nothing keeps
+    retrying the read.
+    """
+
 
 class DebateRunPublic(DebateRunBase):
     id: uuid.UUID
@@ -982,18 +990,13 @@ class DebateRunTable(DebateRunBase, table=True):
 
 class DebateParticipantBase(SQLModel):
     identity: str
-    """ The forum identity, e.g. `vista-proposer`. The host stamps this on every post. """
+    """ The forum identity, e.g. `vista-proposer-1a2b3c4d`. Written on each post. """
     debate_role: str
-    """ The scientific role: proposer, reviewer, referee. VISTA's vocabulary, not h5i's. """
+    """ The scientific role: proposer, reviewer, referee. """
     forum_role: str
-    """ h5i's role — worker, reviewer or observer. Its vocabulary is fixed and small. """
-    box_slug: str
-    box_id: str
-    """ h5i's full box id, e.g. `env/human/proposer`. """
-    policy_digest: str | None = None
-    """ The confinement this role was attached under, recorded so a reader can check it. """
+    """ The role name written on the role's posts. Today the same as `debate_role`. """
     active: bool = True
-    """ False once revoked. Its posts stay, attributed — revocation is not deletion. """
+    """ Kept for older rows. A debate has one roster for its whole life, so always true. """
     granted_tools: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     """
     The tools this role was allowed to use.
@@ -1019,56 +1022,68 @@ class DebateParticipantTable(DebateParticipantBase, table=True):
 
 class DebatePostBase(SQLModel):
     post_id: str
-    """ h5i's post id. Unique within a thread and stable across reads. """
+    """ The post's uuid7. Unique across every install and stable across reads. """
     kind: str
     """ PROPOSAL, RISK, FINDING, ASK, DONE, TASK, CLOSED, UPVOTE, ... """
     body: str
     """
-    The only agent-authored field on this row. Everything else was stamped by the
-    host. Anything rendering a post has to keep that boundary visible, which is
-    why the two are not mixed into one blob here.
+    The only agent-authored field on this row. Anything rendering a post has to
+    keep that boundary visible, which is why it is not mixed into one blob with
+    the rest.
     """
     sender: str
-    """ Host-stamped forum identity, or `human`. """
+    """ The post's identity, or `human`. On a peer's post, their claim. """
     forum_role: str
-    """ Host-stamped role. """
-    box_id: str | None = None
-    policy_digest: str | None = None
+    """ The post's role name. On a peer's post, their claim. """
     origin: str | None = None
+    """ The host id of the install that wrote it. On a peer's post, their claim. """
     reply_to: str | None = None
     ts: str
-    """ h5i's timestamp for the post, not the time we projected it. """
+    """ The post's own timestamp, not the time we projected it. Display only. """
     vouch_lane: str | None = None
     """
-    `host-observed`, `engine-claimed`, or None.
+    `host-observed`, `peer-claimed` or `unattributed`.
 
-    A separate column on purpose: h5i never merges what it saw with what a box
-    claimed, and folding the lane into the post row would erase a distinction the
-    tool deliberately maintains. A reader is entitled to know which they have.
+    A separate column on purpose: what this install knows (it wrote the post)
+    and what a post says about itself are different things, and folding the
+    lane into the post row would erase that. A reader is entitled to know
+    which they have.
     """
     denied: str | None = None
-    """ A host-recorded refusal. Read the post as evidence, not as a contribution. """
+    """ A recorded refusal. Nothing in the git format writes one; kept for older rows. """
+
+    published: bool | None = None
+    """
+    For a post this install wrote: whether the forum remote has it yet.
+
+    Posting is local-first — a post is real once it is committed locally, and
+    reaches the remote on the next successful sync. False is "not yet
+    published", which the UI says rather than implying peers can see it. None
+    on a peer's post, which by definition came from the remote.
+    """
+
+    on_remote: bool | None = None
+    """
+    False when a post we once read from the remote is no longer there — a peer
+    rewrote the thread's history. The post stays here, because it was said;
+    this marks that the forum no longer shows it. None until known.
+    """
 
     authored_by: str | None = None
     """
     The VISTA account that wrote this, for posts this deployment made itself.
 
-    h5i stamps every operator's post `sender="human"` with no name — the forum
-    protocol has nowhere to put one, and a name arriving over the wire would be a
-    claim rather than a fact. So this is filled in only where we genuinely know:
-    the request that created the post was authenticated. It is stamped at post
-    time rather than joined at read time, matching how the host stamps everything
-    else — the record says who posted it then, not who owns that account now.
+    Every operator's post is `sender="human"` with no name — the forum format
+    has nowhere to put one, and a name arriving over the wire would be a claim
+    rather than a fact. So this is filled in only where we genuinely know: the
+    request that created the post was authenticated. It is stamped at post time
+    rather than joined at read time — the record says who posted it then, not
+    who owns that account now.
 
     Always None on a peer's post. Nothing we could put there would be knowledge.
     """
     votes: int = 0
-    """
-    Net votes from participants this host observed.
-
-    h5i's own rendered score additionally applies the forum's vote policy
-    (per machine, or per enrolled account), which this count does not model.
-    """
+    """ Net votes from posts this install wrote, one per voter, latest winning. """
 
     peer_votes: int = 0
     """
@@ -1079,7 +1094,7 @@ class DebatePostBase(SQLModel):
     think. Summed, neither is legible.
     """
     round_index: int | None = None
-    """ Which debate round produced this; None for the human's and h5i's own posts. """
+    """ Which debate round produced this; None for the human's posts and peers'. """
     tools_used: A[
         list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))
     ]
@@ -1113,29 +1128,12 @@ class DebateCreate(BaseModel):
     rounds: int | None = None
 
 
-class EnrolledOrigin(BaseModel):
-    """
-    A forge account bound to one machine, for naming where a peer post came from.
-
-    Deliberately not folded onto the post: an enrollment binds a *machine* to an
-    account, and anyone with access to that machine posts as `human` from that
-    origin. "From a machine enrolled by X" is the true statement; "X wrote this"
-    is not, and a field named `author` on a post would invite the second.
-    """
-
-    principal: str
-    name: str | None = None
-
-
 class DebateStatePublic(BaseModel):
     """Full debate state for the UI: the run, who is on it, and what was said."""
 
     run: DebateRunPublic
     participants: list[DebateParticipantPublic]
     posts: list[DebatePostPublic]
-    enrolled_origins: dict[str, EnrolledOrigin] = {}
-    """Origin host id → the account enrolled on it. Only what h5i has recorded."""
-
     simulations: list[dict[str, Any]] = []
     """
     Every job this debate commissioned, and what became of it.

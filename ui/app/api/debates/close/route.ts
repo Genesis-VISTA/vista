@@ -7,9 +7,9 @@ export const dynamic = "force-dynamic";
 /**
  * End a debate early.
  *
- * Closing is enforced by h5i rather than by the orchestrator: the thread leaves
- * every box's inbox, so the next agent post is refused and the loop stops by
- * being told no.
+ * Closing is enforced by the forum rather than by the orchestrator: it writes a
+ * CLOSED post, the next agent post is refused, and the loop stops by being told
+ * no.
  */
 export async function POST(request: Request) {
   const params = new URL(request.url).searchParams;

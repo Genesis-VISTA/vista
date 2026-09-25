@@ -3,9 +3,9 @@ Simulation in the loop: a debate commissioning HPC work to test a prediction.
 
 The Proposer and Reviewer produce falsifiable predictions; this is how one gets
 tested instead of argued about. A role commissions a job, the existing campaign
-monitor watches it, and when it finishes the result is posted back **through the
-commissioning role's box** — so the evidence carries the same host-stamped
-identity as the claim it bears on.
+monitor watches it, and when it finishes the result is posted back **as the
+commissioning role** — so the evidence carries the same identity as the claim it
+bears on.
 
 Two facts about the shapes involved drive the design:
 
@@ -24,9 +24,9 @@ Two facts about the shapes involved drive the design:
     would block what it is waiting for. Hence the commissioner's own session, the
     per-poll sessions in `wait_for_result`, and the orchestrator committing before
     a role speaks.
-  - **Attribution requires the box to still exist.** A revoked participant cannot
-    post, so the orchestrator does not retire a role while it has work in flight.
-    `reap_after_collection` retires it once the result is in.
+  - **The identity outlives the debate.** A debate keeps one roster for its whole
+    life, so a result that lands after the verdict still posts under the role that
+    asked for it.
 
 The job itself is tracked as a one-step campaign, because "submit a job, watch
 it, collect it" is exactly what the campaign tables and monitor already do.
@@ -48,8 +48,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...db.schemas import CampaignRunTable, HpcJobTable
 from ...services import campaign as campaign_service
-from ...services import debate as debate_service
-from ...services.h5i_forum import ForumClient, Participant, PostKind, ThreadClosed
+from ...services.forum_git import ForumClient, Participant, PostKind, ThreadClosed
 from ..campaign.subagent import HpcTools
 
 
@@ -286,8 +285,6 @@ async def commission(
             "debate_run_id": str(debate_run_id),
             "thread_id": thread_id,
             "commissioned_by": participant.identity,
-            "box_slug": participant.box_slug,
-            "box_id": participant.box_id,
             "prediction": prediction,
             "reply_to": reply_to,
         },
@@ -481,9 +478,8 @@ async def commissioned_runs(
     """
     Every simulation this debate commissioned, finished or not.
 
-    Unlike `open_simulations`, which the orchestrator uses to decide whether the
-    roster may retire, this is for reading: it includes completed and failed runs
-    because "it finished an hour ago and posted nothing" is exactly the state a
+    Unlike `open_simulations`, which lists only jobs still out, this includes
+    completed and failed runs because "it finished an hour ago and posted nothing" is exactly the state a
     reader needs to see.
     """
     wanted = str(debate_run_id)
@@ -579,8 +575,8 @@ async def post_result(
     Post a finished job's result back onto the debate thread. Returns whether it landed.
 
     Posted as the role that commissioned it, so the evidence carries the same
-    host-stamped identity as the claim it bears on — a result attributed to the
-    host would read as the operator vouching for it.
+    identity as the claim it bears on — a result attributed to the operator would
+    read as the operator vouching for it.
 
     A closed thread is not an error: the human ended the debate while the job was
     running, which is allowed and common. The result is recorded on the step
@@ -591,12 +587,7 @@ async def post_result(
         return False
 
     spec = run.spec
-    participant = Participant(
-        identity=spec["commissioned_by"],
-        role="worker",  # type: ignore[arg-type]
-        box_slug=spec["box_slug"],
-        box_id=spec["box_id"],
-    )
+    participant = participant_from_identity(spec["commissioned_by"])
     prediction = spec.get("prediction", "")
 
     await campaign_service.update_step(
@@ -634,41 +625,16 @@ async def post_result(
         return False
 
 
-async def reap_after_collection(
-    session: AsyncSession, client: ForumClient, job: HpcJobTable
-) -> None:
+def participant_from_identity(identity: str) -> Participant:
     """
-    Retire the commissioning role once its last job is in.
+    The role behind an identity like `vista-reviewer-1a2b3c4d`.
 
-    The orchestrator leaves a role attached while it has work in flight, because
-    a revoked participant cannot post. Something has to take it off the forum
-    afterwards, and the collector is the only code that knows the work is done.
+    The campaign spec keeps only the identity, which names its role; a spec from
+    before that convention falls back to the identity itself as the role name.
     """
-    run = await _campaign_for_job(session, job)
-    if run is None:
-        return
-    debate_run_id = uuid.UUID(run.spec["debate_run_id"])
-
-    debate = await debate_service.get_debate(session, debate_run_id)
-    if debate is None or debate.status in debate_service.ACTIVE_STATUSES:
-        return  # the debate is still arguing; it owns its own roster
-    if await open_simulations(session, debate_run_id=debate_run_id):
-        return  # other jobs are still out
-
-    for row in await debate_service.list_participants(session, run_id=debate_run_id):
-        if not row.active:
-            continue
-        await client.remove_participant(
-            Participant(
-                identity=row.identity,
-                role=row.forum_role,  # type: ignore[arg-type]
-                box_slug=row.box_slug,
-                box_id=row.box_id,
-            )
-        )
-        await debate_service.deactivate_participant(
-            session, run_id=debate_run_id, identity=row.identity
-        )
+    parts = identity.split("-")
+    role = parts[1] if len(parts) >= 3 and parts[0] == "vista" else identity
+    return Participant(identity=identity, role=role)
 
 
 def spec_of(run: CampaignRunTable) -> dict[str, Any]:

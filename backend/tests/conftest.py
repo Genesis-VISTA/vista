@@ -121,3 +121,41 @@ async def alice(session) -> UserPublicWithConfig:
 @pytest.fixture
 async def bob(session) -> UserPublicWithConfig:
     return await _make_user(session, is_admin=False)
+
+
+@pytest.fixture
+def git_ok(monkeypatch):
+    """Treat this host as having a usable git, whatever it has."""
+    from vista_backend.agents.forum import project_forum
+    from vista_backend.services.git_check import GitCheck
+
+    found = GitCheck(ok=True, path="/usr/bin/git", version=(2, 50))
+    monkeypatch.setattr(project_forum, "git_status", lambda: found)
+    return found
+
+
+@pytest.fixture
+def fake_forum(monkeypatch, git_ok):
+    """
+    Every project's forum is the in-memory `FakeForumClient`.
+
+    For tests about what VISTA does with a thread. The real client is tested
+    against real git in `test_forum_git.py`.
+    """
+    from harness import fake_forum as module
+    from vista_backend.agents.forum import project_forum
+
+    module.reset()
+    monkeypatch.setattr(project_forum, "client_factory", module.FakeForumClient)
+    yield module
+    module.reset()
+
+
+@pytest.fixture
+def client(tmp_path, fake_forum):
+    """A forum client on a throwaway forum."""
+    from vista_backend.config import ForumSettings
+
+    return fake_forum.FakeForumClient(
+        ForumSettings(enabled=True, repo_root=tmp_path / "forum", timeout=30.0)
+    )

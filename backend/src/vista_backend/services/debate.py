@@ -7,11 +7,12 @@ conditions raise ValueError so the service is usable outside HTTP; the API maps
 them to 404s. Mutators touch `updated_at` and flush + refresh, mirroring
 `campaign.py`.
 
-The forum's git store is the source of truth for what was said. What lives here
-is a projection of it, and `project_thread` is the one function that writes posts:
-it replays `forum read --json` into the tables, and is idempotent so replaying a
-thread after a reconnect converges instead of duplicating. Nothing else should
-insert a post — a post this service invented would be a post nobody said.
+The forum's git repository is the source of truth for what was said. What
+lives here is a projection of it, and `project_thread` is the one function that
+writes posts: it replays a read thread into the tables, and is idempotent so
+replaying a thread after a reconnect converges instead of duplicating. Nothing
+else should insert a post — a post this service invented would be a post nobody
+said.
 """
 
 import enum
@@ -30,7 +31,7 @@ from ..db.schemas import (
     DebateStatus,
 )
 from ..utils.misc import now_iso
-from .h5i_forum import ForumClient, Participant, Thread
+from .forum_git import ForumClient, Participant, Thread, ThreadMissing
 
 
 # Statuses a debate can still make progress from. "converged", "closed" and
@@ -209,21 +210,12 @@ async def add_participant(
     debate_role: str,
     granted_tools: list[str] | None = None,
 ) -> DebateParticipantTable:
-    """
-    Record a role that has been attached to the forum.
-
-    Takes the client's `Participant` rather than loose strings so the box id and
-    policy digest come from `h5i box status`, not from a caller's assumption
-    about how h5i names things.
-    """
+    """Record a role on the debate's roster."""
     row = DebateParticipantTable(
         run_id=run_id,
         identity=participant.identity,
         debate_role=debate_role,
         forum_role=str(participant.role),
-        box_slug=participant.box_slug,
-        box_id=participant.box_id,
-        policy_digest=participant.policy_digest,
         active=True,
         granted_tools=granted_tools or [],
     )
@@ -251,9 +243,7 @@ async def record_granted_tools(
     and a commissioned job. So the row is rewritten by whoever actually runs the
     debate, which is the only party that knows.
 
-    Silent about roles it is not given: a debate continued for extra rounds has
-    retired stints on its record, and what *they* were granted is history, not
-    something to restate in today's terms.
+    Silent about roles it is not given.
     """
     for row in await list_active_participants(session, run_id=run_id):
         tools = granted.get(row.debate_role)
@@ -280,42 +270,12 @@ async def list_active_participants(
     session: AsyncSession, *, run_id: uuid.UUID
 ) -> list[DebateParticipantTable]:
     """
-    Only the roles currently attached to the forum.
-
-    A debate that has been continued has more than one roster on its record —
-    the retired stint and the current one — and a revoked identity cannot post.
-    Rebuilding the client's roster from every row would hand the orchestrator
-    boxes that no longer exist.
+    The debate's roster. Every row of a debate made with the git forum is
+    active; the filter only matters for rows written before it.
     """
     return [
         row for row in await list_participants(session, run_id=run_id) if row.active
     ]
-
-
-async def deactivate_participant(
-    session: AsyncSession, *, run_id: uuid.UUID, identity: str
-) -> DebateParticipantTable:
-    """
-    Mark a role revoked.
-
-    Its posts stay and stay attributed: revoking changes who may post next, not
-    what was already said.
-    """
-    row = (
-        await session.exec(
-            select(DebateParticipantTable).where(
-                DebateParticipantTable.run_id == run_id,
-                DebateParticipantTable.identity == identity,
-            )
-        )
-    ).first()
-    if row is None:
-        raise ValueError(f"Participant {identity} not found on debate {run_id}")
-    row.active = False
-    session.add(row)
-    await session.flush()
-    await session.refresh(row)
-    return row
 
 
 # --------------------------------------------------------------------------- #
@@ -342,6 +302,9 @@ class Refresh(BaseModel):
     closed_remotely: bool = False
     """The forum says closed while our record still said otherwise."""
 
+    thread_missing: bool = False
+    """The forum no longer has this thread; the stored copy is all there is."""
+
 
 async def refresh_from_forum(
     session: AsyncSession, client: "ForumClient", run: DebateRunTable
@@ -349,16 +312,30 @@ async def refresh_from_forum(
     """
     Re-read a debate's thread and fold anything new into the projection.
 
-    The reason this exists: h5i syncs with the remote on every host-side read, so
-    while a debate is arguing its own reads keep it current for free. Between
-    rounds, and after it ends, nothing reads — and a peer's comment would sit on
-    the remote unseen. Whatever is watching a debate has to do the reading.
+    The reason this exists: every read fetches from the remote, so while a
+    debate is arguing its own reads keep it current for free. Between rounds,
+    and after it ends, nothing reads — and a peer's comment would sit on the
+    remote unseen. Whatever is watching a debate has to do the reading.
 
-    Also reconciles closure. A peer with push access can close a thread they did
-    not open (contract §8.2), so the forum's status can move without anything
-    here deciding it did.
+    Also reconciles closure — a peer with push access can close a thread they
+    did not open — and publishes our own posts that an earlier push could not.
+
+    A thread the forum no longer has is recorded as missing, once, and never
+    read again: the stored posts are the record from then on.
     """
-    thread = await client.read_thread(run.thread_id)
+    if run.thread_missing:
+        return Refresh(thread_missing=True)
+    try:
+        thread = await client.read_thread(run.thread_id)
+    except ThreadMissing:
+        await mark_thread_missing(session, run_id=run.id)
+        return Refresh(thread_missing=True)
+    if any(not ok for ok in thread.published.values()):
+        try:
+            await client.publish(run.thread_id)
+            thread = await client.read_thread(run.thread_id)
+        except Exception:  # noqa: BLE001 — unpublished posts publish next time
+            pass
     created = await project_thread(session, run_id=run.id, thread=thread)
 
     closed_remotely = thread.is_closed and run.status in ACTIVE_STATUSES
@@ -368,6 +345,21 @@ async def refresh_from_forum(
     return Refresh(
         new_posts=[row.post_id for row in created], closed_remotely=closed_remotely
     )
+
+
+async def mark_thread_missing(session: AsyncSession, *, run_id: uuid.UUID) -> None:
+    """Record that the forum no longer has this debate's thread."""
+    run = await require_debate(session, run_id)
+    if run.thread_missing:
+        return
+    run.thread_missing = True
+    if run.status in ACTIVE_STATUSES:
+        run.status = "failed"
+    run.activity = None
+    run.activity_since = None
+    run.updated_at = now_iso()
+    session.add(run)
+    await session.flush()
 
 
 async def record_author(
@@ -419,8 +411,8 @@ async def record_post_tools(
     """
     Attach tool provenance to a post the projection already created.
 
-    Separate from `project_thread` because the forum does not carry it: h5i knows
-    what was said, not how the agent arrived at it. That half of the record is
+    Separate from `project_thread` because the forum does not carry it: the
+    thread knows what was said, not how the agent arrived at it. That half of the record is
     ours, and it is written here rather than inferred later.
     """
     if not tools:
@@ -461,6 +453,9 @@ async def project_thread(
     `round_index` labels only the posts this call is seeing for the first time,
     so a replay does not relabel history with the round that happened to be
     running when someone re-read the thread.
+
+    A stored post the thread no longer holds is marked `on_remote = False`: a
+    peer rewrote the thread's history. It stays, because it was said.
     """
     existing = {
         row.post_id: row
@@ -474,12 +469,15 @@ async def project_thread(
         observed_votes, peer_votes = (
             thread.tally_split(post.id) if not post.is_vote else (0, 0)
         )
+        published = thread.published.get(post.id)
         row = existing.get(post.id)
         if row is not None:
             # Only what can legitimately change after the fact.
             row.votes = observed_votes
             row.peer_votes = peer_votes
             row.vouch_lane = thread.lane(post.id)
+            row.published = published
+            row.on_remote = None if published is False else True
             session.add(row)
             continue
 
@@ -490,25 +488,21 @@ async def project_thread(
             body=post.body,
             sender=post.sender,
             forum_role=post.role,
-            box_id=post.box_id,
-            policy_digest=post.policy_digest,
             origin=post.origin,
             reply_to=post.reply_to,
             ts=post.ts,
             vouch_lane=thread.lane(post.id),
             denied=post.denied,
+            published=published,
+            on_remote=None if published is False else True,
             votes=observed_votes,
             peer_votes=peer_votes,
             # Spelled out for the same reason as `verdict=None` in create_debate:
             # a JSON `sa_column` does not carry its default into __init__.
             tools_used=[],
-            # A round is a unit of the agents' work. The human's interjections
-            # and h5i's own bookkeeping happen alongside it, not inside it, so
-            # stamping them with a round would credit the debate with words it
-            # did not produce.
-            # A round is our agents' work. The operator's interjections, h5i's
-            # own bookkeeping, and anything a peer pushed over the remote all
-            # happen alongside it rather than inside it.
+            # A round is our agents' work. The operator's interjections, the
+            # framing and closing posts, and anything a peer pushed over the
+            # remote all happen alongside it rather than inside it.
             round_index=(
                 round_index
                 if (thread.is_observed(post) and not post.claims_human)
@@ -518,6 +512,12 @@ async def project_thread(
         )
         session.add(row)
         created.append(row)
+
+    present = {post.id for post in thread.posts}
+    for post_id, row in existing.items():
+        if post_id not in present and row.on_remote is not False:
+            row.on_remote = False
+            session.add(row)
 
     await session.flush()
     for row in created:

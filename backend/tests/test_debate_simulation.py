@@ -1,10 +1,10 @@
 """
 Tests for simulation in the loop: a debate commissioning HPC work.
 
-Hermetic — the HPC boundary is a fake and the forum is the fake binary. What is
-under test is the awkward part of this feature, which is not submitting a job but
-the fact that the job outlives the debate: the roster has to survive long enough
-to post the answer, and the monitor has to not throw the job away first.
+Hermetic — the HPC boundary is a fake and so is the forum. What is under test is
+the awkward part of this feature, which is not submitting a job but the fact that
+the job outlives the debate: the answer has to post under the role that asked,
+and the monitor has to not throw the job away first.
 
 Anything needing a real cluster belongs behind the `hpc` marker.
 """
@@ -23,29 +23,16 @@ from vista_backend.agents.forum.simulation import (
     commission,
     format_finding,
     open_simulations,
+    participant_from_identity,
     post_result,
-    reap_after_collection,
 )
-from vista_backend.config import ForumSettings
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import debate as debate_service
-from vista_backend.services.h5i_forum import (
-    ForumClient,
-    Participant,
-    ParticipantRole,
-)
+from vista_backend.services.forum_git import Participant
 
-
-FAKE = Path(__file__).parent / "fixtures" / "fake_h5i.py"
-
-PARTICIPANT = Participant(
-    identity="vista-reviewer",
-    role=ParticipantRole.REVIEWER,
-    box_slug="reviewer",
-    box_id="env/human/reviewer",
-    policy_digest="16f7e744",
-)
+REVIEWER_ID = "vista-reviewer-1a2b3c4d"
+PARTICIPANT = Participant(identity=REVIEWER_ID, role="reviewer")
 
 
 class FakeHpc:
@@ -72,15 +59,6 @@ class FakeHpc:
         raise NotImplementedError
 
 
-@pytest.fixture
-def client(tmp_path) -> ForumClient:
-    (tmp_path / ".git" / ".h5i").mkdir(parents=True)
-    return ForumClient(
-        ForumSettings(enabled=True, binary=str(FAKE), repo_root=tmp_path, timeout=30.0),
-        confirm_delay=0.0,
-    )
-
-
 async def _debate(client, session, alice, *, status="debating"):
     """A debate with one attached role, ready to commission work."""
     project = ProjectTable(name=f"sim-{uuid.uuid4().hex[:8]}")
@@ -96,9 +74,7 @@ async def _debate(client, session, alice, *, status="debating"):
         thread_id=thread_id,
         rounds=2,
     )
-    participant = await client.create_participant(
-        box_slug="reviewer", identity="vista-reviewer", role=ParticipantRole.REVIEWER
-    )
+    participant = PARTICIPANT
     await debate_service.add_participant(
         session, run_id=run.id, participant=participant, debate_role="reviewer"
     )
@@ -143,8 +119,8 @@ async def test_commissioning_records_who_asked_and_why(client, session, alice):
     assert campaign.domain == DEBATE_DOMAIN
     assert campaign.spec["debate_run_id"] == str(run.id)
     assert campaign.spec["thread_id"] == run.thread_id
-    assert campaign.spec["commissioned_by"] == "vista-reviewer"
-    assert campaign.spec["box_slug"] == participant.box_slug
+    assert campaign.spec["commissioned_by"] == REVIEWER_ID
+    assert "box_slug" not in campaign.spec and "box_id" not in campaign.spec
     assert campaign.spec["prediction"] == "No shear-rate dependence below 1/s"
 
 
@@ -236,7 +212,7 @@ async def test_the_result_is_posted_under_the_commissioning_identity(
 
     thread = await client.read_thread(run.thread_id)
     finding = next(p for p in thread.posts if p.kind == "FINDING")
-    assert finding.sender == "vista-reviewer"
+    assert finding.sender == REVIEWER_ID
     assert "viscosity: flat" in finding.body
     assert finding.attachments, "the full report rides along as an attachment"
     assert finding.attachments[0]["name"] == f"simulation-{job.job_id}.json"
@@ -294,75 +270,34 @@ def test_the_finding_leads_with_the_result():
 
 
 # --------------------------------------------------------------------------- #
-# Keeping the roster alive long enough to answer
+# Posting the answer under the role that asked
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.anyio
-async def test_a_role_with_work_in_flight_is_not_retired(client, session, alice):
-    """
-    A revoked participant cannot post, so retiring the roster while a job is
-    running would silently make its result unpostable — the debate would end
-    looking complete and the evidence would never arrive.
-    """
-    from vista_backend.agents.forum.debate import DebateOrchestrator
-    from vista_backend.agents.forum.roles import RoleAgents
-
-    run, participant = await _debate(client, session, alice)
-    await _commission(client, session, alice, run, participant)
-
-    orch = DebateOrchestrator(client=client, roles=RoleAgents())
-    roster = await orch._participants(session, run.id)  # noqa: SLF001
-    await orch._retire(session, run.id, roster)  # noqa: SLF001
-
-    rows = await debate_service.list_participants(session, run_id=run.id)
-    assert all(row.active for row in rows), "the roster stays until the job is in"
+def test_the_commissioning_role_is_rebuilt_from_its_identity():
+    assert participant_from_identity(REVIEWER_ID) == PARTICIPANT
+    # A spec from before the naming convention still posts, under its own name.
+    assert participant_from_identity("vista-reviewer").role == "vista-reviewer"
 
 
 @pytest.mark.anyio
-async def test_the_roster_is_reaped_once_the_last_job_lands(client, session, alice):
+async def test_a_result_after_the_verdict_posts_as_the_commissioning_role(
+    client, session, alice
+):
+    """Nothing retires the roster, so a late result still carries its asker's name."""
     run, participant = await _debate(client, session, alice, status="converged")
     job = await _commission(client, session, alice, run, participant)
 
-    await post_result(session, client, job, state="COMPLETED", ok=True, outputs="flat")
-    await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
-    await reap_after_collection(session, client, job)
-
-    rows = await debate_service.list_participants(session, run_id=run.id)
-    assert not any(row.active for row in rows)
-
-
-@pytest.mark.anyio
-async def test_a_still_running_debate_keeps_its_own_roster(client, session, alice):
-    """
-    The reaper must not take a role off the forum mid-argument just because one
-    of its jobs finished — the orchestrator owns the roster while it is arguing.
-    """
-    run, participant = await _debate(client, session, alice, status="debating")
-    job = await _commission(client, session, alice, run, participant)
-    await campaign_service.update_job(session, job_id=job.job_id, result_collected=True)
-
-    await reap_after_collection(session, client, job)
-
-    rows = await debate_service.list_participants(session, run_id=run.id)
-    assert all(row.active for row in rows)
-
-
-@pytest.mark.anyio
-async def test_the_reaper_waits_for_every_outstanding_job(client, session, alice):
-    run, participant = await _debate(client, session, alice, status="converged")
-    first = await _commission(
-        client, session, alice, run, participant, FakeHpc("job-a")
+    assert await post_result(
+        session, client, job, state="COMPLETED", ok=True, outputs="flat"
     )
-    await _commission(client, session, alice, run, participant, FakeHpc("job-b"))
-
-    await campaign_service.update_job(
-        session, job_id=first.job_id, result_collected=True
+    thread = await client.read_thread(run.thread_id)
+    finding = thread.posts[-1]
+    assert (finding.kind, finding.sender, finding.role) == (
+        "FINDING",
+        REVIEWER_ID,
+        "reviewer",
     )
-    await reap_after_collection(session, client, first)
-
-    rows = await debate_service.list_participants(session, run_id=run.id)
-    assert all(row.active for row in rows), "job-b is still out"
 
 
 # --------------------------------------------------------------------------- #
@@ -525,7 +460,7 @@ async def test_a_refused_submission_is_reported_not_raised(client, session, alic
 
 def test_simulation_module_exports_what_the_wiring_needs():
     """The monitor's collector is wired from these; a rename should fail loudly."""
-    for name in ("commission", "post_result", "reap_after_collection", "DEBATE_DOMAIN"):
+    for name in ("commission", "post_result", "DEBATE_DOMAIN"):
         assert hasattr(simulation, name)
 
 
@@ -558,7 +493,7 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
 
     thread = await client.read_thread(run.thread_id)
     finding = next(p for p in thread.posts if p.kind == "FINDING")
-    assert finding.sender == "vista-reviewer"
+    assert finding.sender == REVIEWER_ID
 
 
 @pytest.mark.anyio
@@ -1045,9 +980,8 @@ def test_usage_covers_only_the_jobs_asked_for(tmp_path):
 
 
 # Federation used to be reconciled here, deployment-wide, at boot. It is now a
-# property of each project — see tests/test_project_forum.py, which pins the same
-# behaviours against `ensure_forum`: the remote being applied and checked with a
-# sync, and `principal` being withheld until somebody is enrolled.
+# property of each project — see tests/test_project_forum.py, which pins the
+# remote being applied and checked with a sync against `ensure_forum`.
 
 
 @pytest.mark.anyio
@@ -1072,7 +1006,7 @@ async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
 
     assert record.job_id == "57719697"
     assert record.job_name == "flibe-viscosity"
-    assert record.commissioned_by == "vista-reviewer"
+    assert record.commissioned_by == REVIEWER_ID
     assert record.prediction == "No shear-rate dependence below 1/s"
     assert record.result_collected is False
     assert record.last_polled_at is None, "nothing has polled it yet, and that shows"
@@ -1081,7 +1015,7 @@ async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
 @pytest.mark.anyio
 async def test_commissioned_runs_keep_reporting_a_finished_job(client, session, alice):
     """
-    Unlike `open_simulations`, which answers "may the roster retire yet", this is
+    Unlike `open_simulations`, which lists only jobs still out, this is
     for reading — and "it finished and posted nothing" is precisely the state
     worth seeing. Dropping completed runs would hide it.
     """

@@ -11,17 +11,17 @@ before every turn, which is also how the human's interjections reach the agents 
 there is no separate inbox, because the thread already is one.
 
 Two things end a debate. The round budget runs out, and the Referee rules. Or the
-human closes the thread, in which case h5i stops accepting posts and this loop
-finds out by being refused. That refusal is expected control flow: a debate the
-human ended early is a real outcome, and it ends without a verdict rather than
-with a manufactured one.
+human — or a peer — closes the thread, in which case the forum stops accepting
+posts and this loop finds out by being refused. That refusal is expected control
+flow: a debate ended early is a real outcome, and it ends without a verdict
+rather than with a manufactured one.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Awaitable, Callable, Iterable
+from typing import Awaitable, Callable
 
 from pydantic_ai.exceptions import (
     ToolRetryError,
@@ -33,41 +33,39 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ...config import settings
 from ...db.schemas import DebateRunTable
 from ...services import debate as debate_service
-from ...services.h5i_forum import (
+from ...services.forum_git import (
     ForumClient,
     Participant,
-    ParticipantRole,
     Post,
     PostKind,
     Thread,
     ThreadClosed,
+    ThreadMissing,
 )
 from .roles import DebateDeps, DebateRole, RoleAgents
-from .simulation import open_simulations
 
 
 logger = logging.getLogger(__name__)
 
 
-# The debate's roster. The scientific role is the forum *identity*, which the host
-# stamps; h5i's own role vocabulary is only worker/reviewer/observer, so the
-# mapping is lossy in that direction and the identity carries the real meaning.
-ROSTER: dict[DebateRole, ParticipantRole] = {
-    "proposer": ParticipantRole.WORKER,
-    "reviewer": ParticipantRole.REVIEWER,
-    "referee": ParticipantRole.WORKER,
-}
+ROSTER: tuple[DebateRole, ...] = ("proposer", "reviewer", "referee")
+""" The debate's roles, in speaking order. """
+
+
+def identity_for(role: DebateRole, run_id: uuid.UUID) -> str:
+    """
+    The forum identity a role posts under, e.g. `vista-proposer-1a2b3c4d`.
+
+    Named after the run so a reader of the forum can tell two debates' roles
+    apart, and fixed for the debate's whole life: continuing it reuses the same
+    names, so one role's posts read as one voice.
+    """
+    return f"vista-{role}-{str(run_id)[:8]}"
 
 
 def _participant_of(row) -> Participant:
     """The client's view of a recorded participant row."""
-    return Participant(
-        identity=row.identity,
-        role=ParticipantRole(row.forum_role),
-        box_slug=row.box_slug,
-        box_id=row.box_id,
-        policy_digest=row.policy_digest,
-    )
+    return Participant(identity=row.identity, role=row.forum_role)
 
 
 TURN_FAILED: tuple[type[Exception], ...] = (
@@ -152,11 +150,10 @@ class DebateOrchestrator:
         rounds: int | None = None,
     ) -> DebateRunTable:
         """
-        Open the thread, attach the roster, and record it all.
+        Open the thread and record it with its roster.
 
-        Participants are named after the run so several debates can share a
-        forum without colliding on box slugs, and so a stray box is traceable to
-        the debate that made it.
+        Participants are named after the run so several debates on one forum
+        have distinguishable voices.
         """
         thread_id = await self.client.create_thread(topic, body=framing)
         run = await debate_service.create_debate(
@@ -169,19 +166,7 @@ class DebateOrchestrator:
             rounds=rounds or settings.forum.default_rounds,
         )
 
-        for role, forum_role in ROSTER.items():
-            slug = f"{role}-{str(run.id)[:8]}"
-            participant = await self.client.create_participant(
-                box_slug=slug, identity=f"vista-{slug}", role=forum_role
-            )
-            await debate_service.add_participant(
-                session,
-                run_id=run.id,
-                participant=participant,
-                debate_role=role,
-                granted_tools=self.roles.granted.get(role, []),
-            )
-
+        await self._add_roster(session, run.id)
         return await debate_service.set_status(
             session, run_id=run.id, status="debating"
         )
@@ -194,63 +179,15 @@ class DebateOrchestrator:
         extra_rounds: int,
     ) -> DebateRunTable:
         """
-        Put a finished debate back on the forum for another few rounds.
-
-        The reason this is not just `run()` again: the roster was revoked when
-        the debate concluded, and a revoked identity cannot post. So a new one is
-        attached, under identities suffixed with the stint number — the old posts
-        keep the names they were made under, and the thread shows plainly that
-        the argument was picked up again rather than pretending it never stopped.
+        Argue a finished debate for another few rounds, with the same roster.
 
         `rounds_done` is left alone and the budget is raised instead, so the loop
         runs exactly the extra rounds asked for and the record still says how
         much arguing this debate has had in total.
         """
         run_id = run.id
-
-        # Clear any roster still marked attached before adding another.
-        #
-        # Normally there is none: `run` retires on its way out. But a resume that
-        # crashed after its checkpoint leaves one committed and active, and two
-        # live rosters for the same three roles makes `_participants` pick by
-        # string ordering — which of two identities wins should never be decided
-        # by how they sort.
-        leftover = [
-            _participant_of(row)
-            for row in await debate_service.list_active_participants(
-                session, run_id=run_id
-            )
-        ]
-        if leftover:
-            logger.info(
-                "debate %s: retiring %d roster entr(ies) left attached",
-                run_id,
-                len(leftover),
-            )
-            # Every attached row, not the role-keyed roster: a debate that crashed
-            # mid-resume can have more than one stint attached, and a dict keyed by
-            # role would keep exactly one of them — leaving the rest marked active
-            # for the next resume to trip over in the same way.
-            await self._retire(session, run_id, leftover)
-
-        stint = (
-            len(await debate_service.list_participants(session, run_id=run_id))
-            // len(ROSTER)
-            + 1
-        )
-
-        for role, forum_role in ROSTER.items():
-            slug = f"{role}-{str(run_id)[:8]}-{stint}"
-            participant = await self.client.create_participant(
-                box_slug=slug, identity=f"vista-{slug}", role=forum_role
-            )
-            await debate_service.add_participant(
-                session,
-                run_id=run_id,
-                participant=participant,
-                debate_role=role,
-                granted_tools=self.roles.granted.get(role, []),
-            )
+        if not await debate_service.list_active_participants(session, run_id=run_id):
+            await self._add_roster(session, run_id)
 
         await debate_service.update_debate(
             session,
@@ -267,6 +204,16 @@ class DebateOrchestrator:
             session, await debate_service.require_debate(session, run_id)
         )
 
+    async def _add_roster(self, session: AsyncSession, run_id: uuid.UUID) -> None:
+        for role in ROSTER:
+            await debate_service.add_participant(
+                session,
+                run_id=run_id,
+                participant=Participant(identity=identity_for(role, run_id), role=role),
+                debate_role=role,
+                granted_tools=self.roles.granted.get(role, []),
+            )
+
     async def _participants(
         self, session: AsyncSession, run_id: uuid.UUID
     ) -> dict[DebateRole, Participant]:
@@ -281,11 +228,13 @@ class DebateOrchestrator:
 
     async def run(self, session: AsyncSession, run: DebateRunTable) -> DebateRunTable:
         """
-        Argue to a verdict, or until the human stops it.
+        Argue to a verdict, or until someone closes the thread.
 
         `ThreadClosed` is caught here rather than inside a round because closure
         can land between any two calls — the human is not waiting for a round
-        boundary — and every one of those points means the same thing.
+        boundary — and every one of those points means the same thing. So is
+        `ThreadMissing`: a thread deleted from the forge mid-debate ends it,
+        with the stored posts kept.
         """
         # The loop spans checkpoints, and a checkpoint commits — which expires
         # every ORM object this session is holding. So the run is carried as an
@@ -314,12 +263,15 @@ class DebateOrchestrator:
                 await self.run_round(session, run, roster)
             await self.conclude(session, run, roster)
         except ThreadClosed:
-            logger.info("debate %s: the human closed the thread", run_id)
+            logger.info("debate %s: the thread was closed", run_id)
             await self._sync(session, run_id)
             await debate_service.set_status(session, run_id=run_id, status="closed")
             await self._checkpoint(session)
+        except ThreadMissing:
+            logger.info("debate %s: the thread is no longer on the forum", run_id)
+            await debate_service.mark_thread_missing(session, run_id=run_id)
+            await self._checkpoint(session)
         finally:
-            await self._retire(session, run_id, roster.values())
             # Whatever ended the debate — verdict, closure, a raised error — the
             # interface must stop saying someone is thinking. A stale activity is
             # worse than none: it is the frozen screen this was added to fix,
@@ -502,7 +454,7 @@ class DebateOrchestrator:
         """
         Turn this turn's receipts into an attachment on the post.
 
-        h5i takes one attachment per post, so several calls become one file. A
+        A post carries one attachment, so several calls become one file. A
         refused fetch has a receipt too, and it is kept for the same reason a
         successful one is: what the debate could not reach is part of the record.
 
@@ -542,7 +494,7 @@ class DebateOrchestrator:
         because "it spent its whole budget" and "we will not say on what" is
         exactly backwards.
 
-        `BLOCKED` is h5i's kind for exactly this: the agent could not finish, and
+        `BLOCKED` is the kind for exactly this: the agent could not finish, and
         a reader needs to know that rather than inferring silence. Best effort —
         a debate already in trouble must not also fail on its own error report.
         """
@@ -661,72 +613,15 @@ class DebateOrchestrator:
         """
         Project whatever the thread ended up holding.
 
-        Called on the closed path so the record includes the human's closing
-        posts and h5i's own CLOSED marker, rather than stopping at whatever the
-        agents last managed to say.
+        Called on the closed path so the record includes the closing posts and
+        the CLOSED marker, rather than stopping at whatever the agents last
+        managed to say.
         """
         try:
             run = await debate_service.require_debate(session, run_id)
             await self._sync_thread(session, run, round_index=None)
         except Exception:  # noqa: BLE001 — a failed final read must not mask the close
             logger.warning("debate %s: could not read the closed thread", run_id)
-
-    async def _retire(
-        self,
-        session: AsyncSession,
-        run_id: uuid.UUID,
-        roster: Iterable[Participant],
-    ) -> None:
-        """
-        Take the roster off the forum and delete its boxes.
-
-        Their posts stay and stay attributed — revoking changes who may post
-        next, not what was said. Best effort, and never allowed to fail a debate
-        that has already reached its conclusion.
-        """
-        pending = await open_simulations(session, debate_run_id=run_id)
-        if pending:
-            # A revoked participant cannot post, and a commissioned job's result
-            # has to come back under the identity that asked for it. The
-            # collector retires the roster once the last job is in.
-            logger.info(
-                "debate %s: keeping the roster attached for %d job(s) still running",
-                run_id,
-                len(pending),
-            )
-            return
-
-        for participant in roster:
-            try:
-                await self.client.remove_participant(participant)
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "debate %s: could not take %s off the forum",
-                    run_id,
-                    participant.identity,
-                    exc_info=True,
-                )
-
-            # Mark it retired even when h5i refused.
-            #
-            # These two are not one operation: the first is an external side
-            # effect, the second a row. Doing them under one `try` meant that a
-            # participant h5i had *already* revoked — the commonest refusal —
-            # left our row saying `active` forever, because the failure skipped
-            # the write. The row records "attached according to us"; if h5i no
-            # longer has it, the row is simply stale, and every later read of the
-            # roster inherits the mistake.
-            try:
-                await debate_service.deactivate_participant(
-                    session, run_id=run_id, identity=participant.identity
-                )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "debate %s: could not record %s as retired",
-                    run_id,
-                    participant.identity,
-                    exc_info=True,
-                )
 
 
 def _deps(

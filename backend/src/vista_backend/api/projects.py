@@ -30,13 +30,14 @@ async def _open_the_lab(project: ProjectTable) -> None:
     Initialise this project's forum, or refuse the save with the reason.
 
     Done here rather than lazily on first use because the URL is typed into a
-    dialog: `h5i forum remote` accepts any string, so a typo is not discovered
+    dialog: git accepts any string as a remote, so a typo is not discovered
     until something tries to reach it, and the person who could fix it in a
     second has long since moved on. Syncing now also pulls whatever threads the
     repository already holds, so pointing a project at a forum that exists joins
     that conversation instead of starting an empty one beside it.
 
-    A project with no URL has no lab and nothing to set up.
+    A project with no URL has no lab and nothing to set up. Saving one on a
+    machine without a usable git fails here too, saying so.
     """
     try:
         await ensure_forum(project)

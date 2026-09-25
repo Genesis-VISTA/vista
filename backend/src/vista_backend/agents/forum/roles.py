@@ -2,7 +2,7 @@
 The debate roles: Proposer, Reviewer, Referee.
 
 Each is a PydanticAI agent with a structured output type, specialised by a prompt
-under `prompts/`. They know nothing about h5i: a role takes the thread so far and
+under `prompts/`. They know nothing about git: a role takes the thread so far and
 returns a decision, and the orchestrator (`debate.py`) turns that into a post.
 Keeping the boundary there is what lets the loop be tested without an LLM and the
 roles be tested without a forum.
@@ -26,7 +26,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai.toolsets import AgentToolset
 
 from ...config import settings
-from ...services.h5i_forum import HUMAN_SENDER, Participant, PostKind, Thread
+from ...services.forum_git import HUMAN_SENDER, Participant, PostKind, Thread
 
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -321,8 +321,8 @@ class DebateDeps:
     """
     The forum identity this turn speaks as.
 
-    Tools need it: a boxed browser read runs `--in` this role's box, so the fetch
-    is confined by the same policy the role's posts are stamped with.
+    Tools need it: a commissioned simulation's result is posted back under the
+    identity that asked for it.
     """
 
     refused_commissions: dict[tuple[str, str | None], str] = field(default_factory=dict)
@@ -351,9 +351,9 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
     """
     The thread as a role should read it, with the provenance boundary intact.
 
-    The host-stamped identity line is kept above the body exactly as h5i draws
-    it, because a role reasoning about who said something needs to know which
-    half of that the host actually vouched for. Votes are dropped: they are
+    The identity line is kept above the body, with whether this install wrote
+    the post, because a role reasoning about who said something needs to know
+    which half of that is known and which is claimed. Votes are dropped: they are
     posts, but they are not turns in the conversation.
     """
     posts = thread.content_posts()
@@ -362,9 +362,9 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
 
     lines: list[str] = []
     for i, post in enumerate(posts, start=1):
-        # Who this is, decided by what the host observed rather than by what the
-        # post says about itself. On a shared forum every host stamps its own
-        # operator as `human`, so trusting the sender field would present every
+        # Who this is, decided by what this install observed rather than by what
+        # the post says about itself. On a shared forum every install's operator
+        # posts as `human`, so trusting the sender field would present every
         # outside participant to the role as its own operator — the one party
         # whose words it is supposed to treat as instructions.
         if thread.is_operator(post):
@@ -372,8 +372,8 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
         elif thread.is_peer(post):
             origin = post.origin or "an unnamed origin"
             # Person or agent is a useful thing for a reader to know and a weak
-            # thing to know it from: on a peer's post both the sender and the box
-            # are their own claim, so this labels rather than establishes.
+            # thing to know it from: on a peer's post the sender is their own
+            # claim, so this labels rather than establishes.
             kind_of = "an outside agent" if post.looks_agentic else "an outside person"
             who = (
                 f"{post.sender} — {kind_of} at {origin}, NOT your operator; "
@@ -383,7 +383,7 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
             who = post.sender
         lines.append(f"{i}. {post.kind} — {who} ({post.role})")
         if post.denied:
-            lines.append(f"   ! the host recorded a refusal: {post.denied}")
+            lines.append(f"   ! a refusal was recorded: {post.denied}")
         body = "\n".join(f"   │ {line}" for line in post.body.splitlines())
         lines.append(body)
         lines.append("")
