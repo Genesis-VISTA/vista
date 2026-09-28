@@ -398,6 +398,14 @@ class SkillUpdate(BaseModel):
     is_public: bool | None = None
 
 
+HpcCluster = Literal["frontier", "odo", "perlmutter"]
+"""The clusters the NavRail can show an availability card for."""
+
+
+def _dedupe_clusters(v: list[HpcCluster] | None) -> list[HpcCluster] | None:
+    return None if v is None else list(dict.fromkeys(v))
+
+
 class UserBase(SQLModel):
     pass
 
@@ -412,7 +420,8 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "nersc_remote_dir",
     "frontier_account",
     "frontier_remote_dir",
-    "s3m_token",
+    "odo_s3m_token",
+    "frontier_s3m_token",
     "nersc_iri_token",
     "globus_token",
     "odo_globus_token",
@@ -438,7 +447,8 @@ class UserCreate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -463,7 +473,8 @@ class UserUpdate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -471,11 +482,18 @@ class UserUpdate(UserBase):
     globus_https_token: str | None = None
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
+    hpc_hidden_clusters: list[HpcCluster] | None = None
+    """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         return _empty_str_to_none(v)
+
+    @field_validator("hpc_hidden_clusters")
+    @classmethod
+    def _dedupe_hidden(cls, v):
+        return _dedupe_clusters(v)
 
 
 class UserSelfUpdate(UserBase):
@@ -487,7 +505,8 @@ class UserSelfUpdate(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -495,17 +514,36 @@ class UserSelfUpdate(UserBase):
     globus_https_token: str | None = None
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
+    hpc_hidden_clusters: list[HpcCluster] | None = None
+    """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         return _empty_str_to_none(v)
 
+    @field_validator("hpc_hidden_clusters")
+    @classmethod
+    def _dedupe_hidden(cls, v):
+        return _dedupe_clusters(v)
+
 
 class UserPublic(UserBase):
     id: uuid.UUID
     email: str
     is_admin: bool = False
+    hpc_hidden_clusters: list[str] = []
+    """
+    Clusters left out of the NavRail; not a secret, so on the light view too.
+    Plain strings on the way out: only writes are checked against
+    `HpcCluster`, so a stored name that later leaves the list cannot make
+    reading the user fail.
+    """
+
+    @field_validator("hpc_hidden_clusters", mode="before")
+    @classmethod
+    def _null_is_none_hidden(cls, v):
+        return [] if v is None else v
 
 
 class UserPublicWithConfig(UserBase):
@@ -522,7 +560,8 @@ class UserPublicWithConfig(UserBase):
     nersc_remote_dir: str | None = None
     frontier_account: str | None = None
     frontier_remote_dir: str | None = None
-    s3m_token: str | None = None
+    odo_s3m_token: str | None = None
+    frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -530,6 +569,18 @@ class UserPublicWithConfig(UserBase):
     globus_https_token: str | None = None
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
+    hpc_hidden_clusters: list[str] = []
+    """
+    Clusters left out of the NavRail; not a secret, so on the light view too.
+    Plain strings on the way out: only writes are checked against
+    `HpcCluster`, so a stored name that later leaves the list cannot make
+    reading the user fail.
+    """
+
+    @field_validator("hpc_hidden_clusters", mode="before")
+    @classmethod
+    def _null_is_none_hidden(cls, v):
+        return [] if v is None else v
 
 
 class UserTable(SQLModel, table=True):
@@ -582,7 +633,27 @@ class UserTable(SQLModel, table=True):
     s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
-    """ Bearer token for S3M API authentication. Encrypted at rest. """
+    """
+    Legacy single S3M token. Nothing reads it: an S3M token is scoped to one
+    OLCF project, so one field could only ever authorize one of Odo and
+    Frontier. Kept only because SQLite column drops are not worth it; see
+    `odo_s3m_token` / `frontier_s3m_token`.
+    """
+    odo_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Odo (open enclave), minted in Odo's OLCF project.
+    Authorizes Odo job submission through IRI and gates Odo file operations.
+    Encrypted at rest.
+    """
+    frontier_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Frontier (moderate enclave), minted in
+    `frontier_account`'s project. Encrypted at rest.
+    """
     nersc_iri_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
@@ -633,6 +704,14 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ Frontier collection's HTTPS refresh token. Encrypted at rest. """
+    hpc_hidden_clusters: list[str] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    """
+    Clusters this user has turned off in the NavRail, whose availability is
+    then never checked. Stored as what is *hidden* so that a cluster added
+    later shows for everyone by default, with nothing to migrate.
+    """
 
 
 # ---------------------------------------------------------------------------

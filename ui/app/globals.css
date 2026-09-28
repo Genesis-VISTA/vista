@@ -4013,6 +4013,504 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--surface);
 }
 
+/* ---------------------------------------------------------------------------
+   HPC availability cards (NavRail). Built to the "HPC Availability Cards"
+   canvas: one dot per cluster whose SHAPE and color both change with its
+   state, so the states read without color.
+   ------------------------------------------------------------------------- */
+
+.hpc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 10px 4px;
+}
+
+.hpc-section-label {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.hpc-stale {
+  font-size: 11px;
+  color: var(--warning-ink);
+  white-space: nowrap;
+}
+
+.hpc-recheck-all {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.hpc-recheck-all:hover:not(:disabled) {
+  background: var(--surface-active);
+  color: var(--ink);
+}
+
+.hpc-recheck-all:focus-visible,
+.hpc-card:focus-visible,
+.hpc-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.hpc-collapsed-divider {
+  width: 24px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--line);
+}
+
+.hpc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.hpc-card:hover,
+.hpc-card.open {
+  background: var(--brand-tint);
+  border-color: var(--brand-line);
+}
+
+.hpc-card--collapsed {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  gap: 4px;
+}
+
+.hpc-card-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hpc-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.hpc-card-word,
+.hpc-card-short {
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hpc-card-short {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.hpc-word--warn {
+  color: var(--warning-ink);
+}
+
+.hpc-word--urgent {
+  color: #b01000; /* --danger darkened to 4.5:1 on white, for text */
+}
+
+/* The dots: each state its own shape as well as its own color. */
+.hpc-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border-radius: var(--r-pill);
+}
+
+.hpc-dot--ready {
+  background: var(--success);
+}
+
+.hpc-dot--degraded {
+  width: 0;
+  height: 0;
+  border-radius: 0;
+  border-left: 5.5px solid transparent;
+  border-right: 5.5px solid transparent;
+  border-bottom: 9.5px solid #d8a400;
+}
+
+.hpc-dot--unverifiable {
+  border: 1.5px dashed var(--muted);
+}
+
+.hpc-dot--not_connected {
+  border: 1.5px solid var(--muted);
+}
+
+.hpc-dot--rejected,
+.hpc-dot--wrong_project {
+  width: 7px;
+  height: 7px;
+  margin: 1px;
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+.hpc-dot--rejected {
+  background: var(--danger);
+}
+
+.hpc-dot--wrong_project {
+  border: 1.5px solid var(--danger);
+}
+
+.hpc-dot--globus_not_connected {
+  border: 1.5px solid var(--danger);
+}
+
+.hpc-dot--globus_session_expired {
+  border: 1.5px solid var(--danger);
+  background: var(--danger);
+  box-shadow: inset 0 0 0 1.5px var(--surface);
+}
+
+.hpc-dot--checking {
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--brand);
+  animation: hpc-spin 900ms linear infinite;
+}
+
+.hpc-spin {
+  animation: hpc-spin 900ms linear infinite;
+}
+
+@keyframes hpc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-dot--checking,
+  .hpc-spin {
+    animation: none;
+  }
+}
+
+/* The details popover. Fixed, like the rail's tooltip, so the scrolling
+   entry list cannot clip it. */
+.hpc-popover {
+  position: fixed;
+  z-index: 70;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card-lg);
+  box-shadow: 0 12px 32px rgba(17, 42, 77, 0.14);
+  overflow: hidden;
+}
+
+.hpc-popover-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.hpc-popover-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hpc-popover-title {
+  flex: 1 1 auto;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.hpc-popover-sub {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.hpc-pill {
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.hpc-pill--ready {
+  color: var(--success);
+  background: var(--success-tint);
+  border-color: var(--success-line);
+}
+
+.hpc-pill--degraded {
+  color: var(--warning-ink);
+  border-color: var(--warning-line);
+}
+
+.hpc-pill--rejected,
+.hpc-pill--wrong_project,
+.hpc-pill--globus_not_connected,
+.hpc-pill--globus_session_expired {
+  color: #b01000;
+  border-color: var(--danger-line);
+}
+
+.hpc-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 6px 18px;
+  list-style: none;
+}
+
+.hpc-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.hpc-row:last-child {
+  border-bottom: 0;
+}
+
+.hpc-row-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.hpc-row-icon--ok {
+  color: var(--success);
+}
+
+.hpc-row-icon--fail {
+  color: #b01000;
+}
+
+.hpc-row-icon--unknown {
+  color: var(--muted);
+}
+
+.hpc-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hpc-row-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hpc-row-detail {
+  font-size: 12px;
+  color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+
+.hpc-popover-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px 14px;
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--line-soft);
+}
+
+.hpc-popover-checked {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.hpc-link {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--brand);
+  cursor: pointer;
+}
+
+.hpc-link:hover {
+  color: var(--brand-dark);
+  text-decoration: underline;
+}
+
+.hpc-recheck {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.button.ghost.hpc-recheck {
+  background: var(--surface);
+  border-color: var(--brand-line-strong);
+  color: var(--brand);
+}
+
+/* Settings modal: one collapsible section per HPC cluster, as on the canvas's
+   Settings artboard. */
+.user-settings-clusters {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.user-settings-cluster + .user-settings-cluster {
+  border-top: 1px solid var(--line);
+}
+
+.user-settings-cluster-heading {
+  margin: 0;
+  font: inherit;
+}
+
+.user-settings-cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 0;
+  background: var(--surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-settings-cluster.expanded .user-settings-cluster-head {
+  background: var(--brand-tint);
+  border-bottom: 1px solid var(--brand-line);
+}
+
+.user-settings-cluster-head:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.user-settings-cluster-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-2);
+  transition: transform 120ms ease;
+}
+
+.user-settings-cluster.expanded .user-settings-cluster-chevron {
+  transform: rotate(90deg);
+}
+
+.user-settings-cluster-name {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.user-settings-cluster-tag {
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.user-settings-cluster-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.user-settings-cluster-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 14px 16px 38px;
+}
+
+.user-settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-settings-switch-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-settings-switch-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.user-settings-switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.user-settings-switch[aria-checked="true"] {
+  background: var(--brand);
+  justify-content: flex-end;
+}
+
+.user-settings-switch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.user-settings-switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+}
+
 /* ---------------------------------------------------------------------- */
 /*  Agent forum (debates)                                                  */
 /*                                                                         */
