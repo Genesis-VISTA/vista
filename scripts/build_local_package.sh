@@ -28,8 +28,7 @@
 #                         indexing the corpus again
 #   --sandbox-image TAR  Use an already-exported sandbox image archive instead
 #                         of building one, so no container runtime is needed.
-#                         Its architecture must match the target; see
-#                         scripts/build_in_docker.sh
+#                         Its architecture must match the target
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
@@ -150,8 +149,8 @@ if [[ -z "$VERSION" ]]; then
   fi
 fi
 
-# Both of these are overridable because a cross-platform build runs against a
-# tree extracted with `git archive`, which carries no `.git`. Left to query
+# Both of these are overridable so a build can run against a tree with no
+# `.git`, such as one extracted with `git archive`. Left to query
 # git, the manifest's commit field came out as an empty string -- the build
 # still succeeded and the artifact simply lost its traceability.
 COMMIT="${VISTA_COMMIT:-}"
@@ -254,10 +253,7 @@ preflight() {
 
   # The shipped image -- the agent's sandbox -- is either built here, which
   # needs a container runtime, or supplied as an already-exported archive, which
-  # needs none. The second form is what lets the build itself run inside a
-  # container, since a container has no daemon of its own -- and it is the only
-  # way to get a target-architecture image when the runtime available would
-  # build the host's instead.
+  # needs none -- for a build host with no container runtime of its own.
   local complaint=''
   if [[ -n "$SANDBOX_IMAGE_TAR" ]]; then
     complaint="$(supplied_image_complaint --sandbox-image "$SANDBOX_IMAGE_TAR" \
@@ -1033,10 +1029,9 @@ export_sandbox_image() {
 # entirely healthy right up to the moment someone reads a citation.
 # The oldest system libraries the artifact can run against. Everything
 # compiled into it inherits the build environment's floor, so on Linux this is
-# the build container's glibc -- ubuntu:24.04 puts it at 2.39, which is also
-# the minimum the bundled `msb` needs regardless of base. Recorded rather
-# than merely known, so a host that cannot run the artifact is identifiable
-# without unpacking and starting it.
+# the build host's glibc -- which has to be at least 2.39, the minimum the
+# bundled `msb` needs. Recorded rather than merely known, so a host that
+# cannot run the artifact is identifiable without unpacking and starting it.
 target_floor() {
   case "$TARGET_OS" in
     linux)

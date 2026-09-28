@@ -74,16 +74,11 @@ wait_for() {
 
 export VISTA_HOME="$STATE"
 
-# The launcher refuses to start on Linux without KVM, because every agent tool
-# call needs it. A build container never has /dev/kvm, so a cross-platform
-# build would be unable to exercise its own artifact at all. The override lets
-# the services start; the checks that go through the agent are skipped below
-# and reported as skipped rather than passed.
-AGENT_PATH_TESTABLE=true
-if [[ "$(uname -s)" == Linux && ! -e /dev/kvm ]]; then
-  export VISTA_ALLOW_NO_KVM=1
-  AGENT_PATH_TESTABLE=false
-fi
+# There is no opt-out for hardware virtualisation: VISTA always needs a
+# microVM, so a host where the launcher refuses to start for want of one
+# cannot verify a package, and this test fails there rather than skipping the
+# checks that go through the sandbox.
+#
 # This test deliberately configures no Globus credential, which is now the
 # ordinary state of a fresh install: one arrives when a researcher connects
 # Globus in the interface. Unset rather than assumed absent, so a maintainer
@@ -155,16 +150,7 @@ if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
 PYCHECK
 }
-if [[ "$AGENT_PATH_TESTABLE" == true ]]; then
-  check "retrieval returns passages" retrieval_returns_passages
-else
-  # Not a weaker assertion about retrieval: it cannot be reached at all here.
-  # The sandbox server is part of the agent's toolset and its lifespan spawns a
-  # microVM, so with no /dev/kvm the backend's MCP client gets `Connection
-  # closed` and this call returns 500 regardless of the store's health.
-  skip "retrieval returns passages" \
-    "no /dev/kvm here, so every agent tool call fails; verify on a KVM host"
-fi
+check "retrieval returns passages" retrieval_returns_passages
 
 # The launcher has nothing left to say about file transfer, and this asserts the
 # silence. OLCF file operations are HTTPS requests made inside a tool call, so

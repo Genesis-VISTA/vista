@@ -102,12 +102,9 @@ fi
 # Measured, not assumed: `rag_search` returns HTTP 500 on a host with no
 # /dev/kvm while the MCP server itself has the store open and reports 4401
 # chunks. Serving pages while the agent cannot answer anything is worse than
-# saying so up front.
-#
-# VISTA_ALLOW_NO_KVM exists for the build's own smoke test, which runs inside a
-# container where /dev/kvm is never present. It is not a way to use VISTA
-# without KVM; the checks that depend on the agent are skipped when it is set.
-if [[ "$HOST_OS" == linux && "${VISTA_ALLOW_NO_KVM:-}" != 1 ]]; then
+# saying so up front. There is no way to start without it: VISTA always needs
+# a microVM.
+if [[ "$HOST_OS" == linux ]]; then
   kvm_problem=''
   if [[ ! -e /dev/kvm ]]; then
     kvm_problem="this machine has no /dev/kvm.
