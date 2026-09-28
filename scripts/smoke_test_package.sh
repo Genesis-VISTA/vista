@@ -45,11 +45,26 @@ skip() {
   echo "  skip $1 -- $2"
 }
 
+IS_WINDOWS=false
+case "$(uname -s)" in
+  MINGW*|MSYS*) IS_WINDOWS=true ;;
+esac
+
+# The package's own interpreter, for the checks below that parse JSON.
+PACKAGE_PYTHON="$PACKAGE/app/backend/.venv/bin/python"
+[[ "$IS_WINDOWS" == true ]] && PACKAGE_PYTHON="$PACKAGE/app/backend/.venv/Scripts/python.exe"
+
 cleanup() {
   trap - INT TERM EXIT
   local pid
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
+    if [[ "$IS_WINDOWS" == true ]]; then
+      # The launcher is native PowerShell, and bash's signals reach neither it
+      # nor the services it started; taskkill /T takes the whole tree.
+      taskkill //F //T //PID "$(cat "/proc/$pid/winpid" 2>/dev/null)" >/dev/null 2>&1 || true
+    else
+      kill "$pid" 2>/dev/null || true
+    fi
   done
   wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
 }
@@ -70,7 +85,13 @@ wait_for() {
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
-[[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+LAUNCHER=("$PACKAGE/vista")
+if [[ "$IS_WINDOWS" == true ]]; then
+  [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
+  LAUNCHER=(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PACKAGE/vista.ps1")
+else
+  [[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+fi
 
 export VISTA_HOME="$STATE"
 
@@ -95,7 +116,7 @@ BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 mkdir -p "$STATE" "$LOGS"
 
 log "starting the package launcher"
-"$PACKAGE/vista" > "$LOGS/launcher.log" 2>&1 &
+"${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
 # The launcher prints one address line when every service is up.
@@ -136,11 +157,11 @@ retrieval_returns_passages() {
       -d '{"name":"rag_search","arguments":{"query":"thermal conductivity of molten fluoride salts","kb_slug":"molten-salt-papers"}}'
   )"
   echo "$body" > "$LOGS/retrieval.json"
-  "$PACKAGE/app/backend/.venv/bin/python" - "$LOGS/retrieval.json" <<'PYCHECK'
+  "$PACKAGE_PYTHON" - "$LOGS/retrieval.json" <<'PYCHECK'
 import json
 import sys
 
-result = json.load(open(sys.argv[1]))
+result = json.load(open(sys.argv[1], encoding="utf-8"))
 if result.get("isError"):
     sys.exit(f"rag_search reported an error: {result}")
 text = "".join(
@@ -175,8 +196,8 @@ version_is_consistent() {
   declared="$(cat "$PACKAGE/VERSION")"
   reported="$(
     curl -s -m 20 "$BACKEND_URL/openapi.json" \
-      | "$PACKAGE/app/backend/.venv/bin/python" -c \
-        'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+      | "$PACKAGE_PYTHON" -c \
+        'import json,sys; print(json.load(sys.stdin.buffer)["info"]["version"])'
   )"
   [[ -n "$declared" && "$declared" == "$reported" ]] \
     && grep -q "VISTA $declared" "$LOGS/launcher.log"

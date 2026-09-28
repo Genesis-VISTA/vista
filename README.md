@@ -119,7 +119,7 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--check`                        | Run the preflight and exit; builds nothing                                                                                |
 | `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
 | `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
-| `--archive-format gz\|zstd\|none` | `gz` is the default and needs no extra tool; `zstd` is faster for a local round trip; `none` leaves the tree unpacked      |
+| `--archive-format gz\|zstd\|zip\|none` | Defaults to `gz` on unix, `zip` on Windows                                                                          |
 | `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
@@ -135,6 +135,23 @@ A typical rebuild, once you have a corpus clone and a vector store worth reusing
 
 That still downloads the embedding weights, runs `npm ci`, and builds the UI and
 the MCP app; it skips only the indexing pass and its per-paper model calls.
+
+### Building on Windows
+
+Run the same script from Git Bash (it comes with Git for Windows). It builds a
+`win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
+they run `vista.cmd`, or `vista.ps1` from PowerShell.
+
+```bash
+./scripts/build_local_package.sh --check
+./scripts/build_local_package.sh --vector-store data/knowledge-bases/molten-salt-papers/rag_db
+```
+
+The sandbox image is built with Docker Desktop or Podman Desktop; start its
+machine first. No C++ build tools are needed, and long paths do not have to be
+enabled: the build reports how much room its deepest path leaves for the
+folder a package is unpacked into. The archive is a zip, which Explorer's
+Extract All opens.
 
 ## Architecture
 

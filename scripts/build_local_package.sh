@@ -21,7 +21,8 @@
 #   --payload DIR        Unpacked vista-data tree to use instead of fetching it
 #                         with VISTA_DATA_TOKEN
 #   --output-dir DIR     Archive destination (default: dist/)
-#   --archive-format FMT gz (default), zstd, or none to leave the tree unpacked
+#   --archive-format FMT gz (default), zstd, zip (Windows only, and its
+#                         default), or none to leave the tree unpacked
 #   --without-citations  Build the vector store without citation metadata
 #                         (titles, authors, DOIs), and record that
 #   --vector-store DIR   Reuse an already-built vector store instead of
@@ -32,6 +33,9 @@
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
+#
+# On Windows, run it from Git Bash; it builds a Windows x64 package whose
+# launcher is PowerShell, so the recipient needs no bash.
 
 set -euo pipefail
 
@@ -95,12 +99,38 @@ warn() {
   echo "warning: $*" >&2
 }
 
+# Copy the contents of one directory into another, skipping the given
+# rsync-style exclusions: `name/` matches that directory at any depth, and a
+# leading slash anchors it to the top of the copy.
+#
+# rsync where there is one. Git Bash has none, so there the same copy is a tar
+# pipe, with each exclusion translated to GNU tar's form of it -- anchored ones
+# become `./name`, which only the top-level entry can match.
+copy_tree() {
+  local src="$1" dst="$2" pattern
+  shift 2
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    local excludes=()
+    for pattern in "$@"; do excludes+=(--exclude "$pattern"); done
+    rsync -a ${excludes[@]+"${excludes[@]}"} "$src/" "$dst/"
+  else
+    local excludes=()
+    for pattern in "$@"; do
+      pattern="${pattern%/}"
+      [[ "$pattern" == /* ]] && pattern=".$pattern"
+      excludes+=("--exclude=$pattern")
+    done
+    tar -C "$src" ${excludes[@]+"${excludes[@]}"} -cf - . | tar -C "$dst" -xf -
+  fi
+}
+
 # ─── defaults ───────────────────────────────────────────────────────────────
 
 CHECK_ONLY=false
 PAYLOAD_DIR=''
 OUTPUT_DIR="$REPO_ROOT/dist"
-ARCHIVE_FORMAT=gz
+ARCHIVE_FORMAT=''  # resolved per platform below
 WITHOUT_CITATIONS=false
 REUSE_STORE=''
 SANDBOX_IMAGE_TAR=''
@@ -127,7 +157,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--output-dir needs a directory"
       OUTPUT_DIR="$2"; shift ;;
     --archive-format)
-      [[ $# -ge 2 ]] || die "--archive-format needs gz, zstd, or none"
+      [[ $# -ge 2 ]] || die "--archive-format needs gz, zstd, zip, or none"
       ARCHIVE_FORMAT="$2"; shift ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -135,8 +165,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ARCHIVE_FORMAT" in
-  gz|zstd|none) ;;
-  *) die "unknown archive format: $ARCHIVE_FORMAT (want gz, zstd, or none)" ;;
+  ''|gz|zstd|zip|none) ;;
+  *) die "unknown archive format: $ARCHIVE_FORMAT (want gz, zstd, zip, or none)" ;;
 esac
 
 # ─── identity ───────────────────────────────────────────────────────────────
@@ -163,7 +193,8 @@ fi
 case "$(uname -s)" in
   Darwin) TARGET_OS=macos ;;
   Linux)  TARGET_OS=linux ;;
-  *) die "unsupported build platform: $(uname -s) (want Darwin or Linux)" ;;
+  MINGW*|MSYS*) TARGET_OS=windows ;;
+  *) die "unsupported build platform: $(uname -s) (want Darwin, Linux, or Git Bash on Windows)" ;;
 esac
 TARGET_ARCH="$(uname -m)"
 
@@ -185,6 +216,38 @@ case "$TARGET_ARCH" in
   *)             PACKAGE_ARCH="$TARGET_ARCH" ;;
 esac
 PACKAGE_NAME="vista-${VERSION%%+*}-${PACKAGE_OS}-${PACKAGE_ARCH}"
+
+# Where Windows lays things out differently. Environments keep their
+# interpreter in `Scripts\` rather than `bin/`, and every executable carries
+# `.exe`. Git Bash hands POSIX paths to native programs as Windows paths, both
+# as arguments and in the environment, so the rest of this script can go on
+# spelling them the POSIX way.
+EXE=''
+VENV_PYTHON="bin/python"
+if [[ "$TARGET_OS" == windows ]]; then
+  EXE=.exe
+  VENV_PYTHON="Scripts/python.exe"
+  # bsdtar, which ships with Windows 10 and later, for zip archives. Named by
+  # path because Git Bash's own GNU tar comes first on PATH and cannot write
+  # a zip.
+  WIN_TAR="$(cygpath -u "$SYSTEMROOT")/System32/tar.exe"
+  # Paths given as C:\... would otherwise read to GNU tar as a remote host
+  # (`C:`) and to this script as relative.
+  for var in PAYLOAD_DIR OUTPUT_DIR REUSE_STORE SANDBOX_IMAGE_TAR; do
+    [[ -n "${!var}" ]] && printf -v "$var" '%s' "$(cygpath -u "${!var}")"
+  done
+fi
+
+# gzip is the default because the recipient has to extract before anything of
+# ours runs, so "install a decompressor first" is an instruction with nowhere
+# to go. On Windows that argument picks zip: it is the one format Explorer
+# opens on every supported version.
+if [[ -z "$ARCHIVE_FORMAT" ]]; then
+  ARCHIVE_FORMAT=gz
+  [[ "$TARGET_OS" == windows ]] && ARCHIVE_FORMAT=zip
+fi
+[[ "$ARCHIVE_FORMAT" != zip || "$TARGET_OS" == windows ]] \
+  || die "--archive-format zip is only for Windows packages; use gz or zstd"
 
 # The private dependency HPC submission needs, read from the file that declares
 # it so the preflight cannot check a stale URL.
@@ -393,7 +456,19 @@ requested — gz needs no extra tool and is the default for that reason") ;;
     gz)
       command -v gzip >/dev/null 2>&1 \
         || failures+=("gzip is not installed") ;;
+    zip)
+      [[ -x "$WIN_TAR" ]] \
+        || failures+=("no tar.exe at $WIN_TAR — it ships with Windows 10 and \
+later, and writes the zip") ;;
   esac
+
+  # The launcher a Windows package ships. The bash one cannot be used there: a
+  # researcher's machine has no bash.
+  if [[ "$TARGET_OS" == windows ]]; then
+    [[ -f "$REPO_ROOT/scripts/package_launcher.ps1" ]] \
+      || failures+=("scripts/package_launcher.ps1 does not exist — a Windows \
+package has no launcher without it")
+  fi
 
   if (( ${#failures[@]} > 0 )); then
     echo >&2
@@ -476,8 +551,13 @@ case "$TARGET_OS-$TARGET_ARCH" in
   macos-x86_64) NODE_PLATFORM=darwin-x64 ;;
   linux-aarch64|linux-arm64) NODE_PLATFORM=linux-arm64 ;;
   linux-x86_64) NODE_PLATFORM=linux-x64 ;;
+  windows-x86_64) NODE_PLATFORM=win-x64 ;;
   *) die "no Node build known for $TARGET_OS-$TARGET_ARCH" ;;
 esac
+# The Windows distribution is a zip that keeps node.exe at its top level; the
+# others are tarballs with the binary under bin/.
+NODE_BIN="$STAGING/node/bin/node"
+[[ "$TARGET_OS" == windows ]] && NODE_BIN="$STAGING/node/node.exe"
 
 # Every project that gets its own environment inside the package, as
 # <source path>|<sync flags>.
@@ -504,7 +584,9 @@ bundle_runtime() {
   # The install leaves a `cpython-<minor>-<platform>` symlink beside the real
   # `cpython-<patch>-<platform>` directory, pointing at it by absolute path --
   # which dangles the moment the package is unpacked somewhere else. The real
-  # directory is what everything references, so the alias is dropped.
+  # directory is what everything references, so the alias is dropped. (On
+  # Windows the alias is a junction, which Git Bash reports as a symlink and
+  # `rm -f` removes without touching its target.)
   local alias
   while IFS= read -r alias; do
     [[ -L "$alias" ]] && rm -f "$alias"
@@ -516,18 +598,20 @@ bundle_runtime() {
   )"
   [[ -n "$BUNDLED_PYTHON_DIR" ]] \
     || die "uv python install left no interpreter in $STAGING_PYTHON"
+  # A Windows interpreter keeps python.exe at the top of its install.
   BUNDLED_PYTHON="$BUNDLED_PYTHON_DIR/bin/python$PYTHON_REQUIREMENT"
+  [[ "$TARGET_OS" == windows ]] && BUNDLED_PYTHON="$BUNDLED_PYTHON_DIR/python.exe"
   [[ -x "$BUNDLED_PYTHON" ]] || die "no interpreter at $BUNDLED_PYTHON"
 
   # uv is a runtime dependency, not just a build tool: the backend spawns the
   # sandbox MCP server with `uv run dev-mcp-server` on every agent session.
   local uv_binary
-  uv_binary="$(command -v uv)"
-  cp "$uv_binary" "$STAGING_BIN/uv"
-  chmod +x "$STAGING_BIN/uv"
+  uv_binary="$(command -v uv)$EXE"
+  cp "$uv_binary" "$STAGING_BIN/uv$EXE"
+  chmod +x "$STAGING_BIN/uv$EXE"
 
   echo "interpreter : $(basename "$BUNDLED_PYTHON_DIR")"
-  echo "uv          : $("$STAGING_BIN/uv" --version)"
+  echo "uv          : $("$STAGING_BIN/uv$EXE" --version)"
 }
 
 # ─── sources ────────────────────────────────────────────────────────────────
@@ -566,13 +650,8 @@ stage_sources() {
     # top of this transfer: unanchored, it also matched the *output* directory
     # `src/vista_mcp_server/mcp-apps/`, and the app was silently left out of
     # every package.
-    rsync -a \
-      --exclude '.venv/' \
-      --exclude '__pycache__/' \
-      --exclude '/mcp-apps/' \
-      --exclude '.pytest_cache/' \
-      --exclude 'tests/' \
-      "$REPO_ROOT/$source/" "$STAGING_APP/$source/"
+    copy_tree "$REPO_ROOT/$source" "$STAGING_APP/$source" \
+      '.venv/' '__pycache__/' '/mcp-apps/' '.pytest_cache/' 'tests/'
   done
 
   # `build_rag.py` sits at the repo root and is imported by the indexer, which
@@ -582,11 +661,18 @@ stage_sources() {
 
   # `submit_job_mcp.py` iterates this directory at import time, so the MCP
   # server does not start without it.
-  rsync -a --exclude '__pycache__/' "$REPO_ROOT/hpc_jobs/" "$STAGING_APP/hpc_jobs/"
+  copy_tree "$REPO_ROOT/hpc_jobs" "$STAGING_APP/hpc_jobs" '__pycache__/'
 
   # The launcher lives at the package root, where a researcher will look for
-  # it, and is the only executable they are asked to run.
-  install -m 755 "$REPO_ROOT/scripts/package_launcher.sh" "$STAGING/vista"
+  # it, and is the only executable they are asked to run. On Windows it is
+  # PowerShell, with a `.cmd` beside it so it can be double-clicked or run
+  # from cmd.
+  if [[ "$TARGET_OS" == windows ]]; then
+    cp "$REPO_ROOT/scripts/package_launcher.ps1" "$STAGING/vista.ps1"
+    cp "$REPO_ROOT/scripts/package_launcher.cmd" "$STAGING/vista.cmd"
+  else
+    install -m 755 "$REPO_ROOT/scripts/package_launcher.sh" "$STAGING/vista"
+  fi
 
   local staged_app="$STAGING_APP/mcp_servers/vista_mcp_server/src/vista_mcp_server/mcp-apps/display-file.html"
   [[ -f "$staged_app" ]] || die "the MCP app did not reach the package at $staged_app"
@@ -609,8 +695,17 @@ stage_sources() {
 #     dependencies import but the application does not.
 #
 # The third is fixed at install time with `--no-editable`; the first two here.
+#
+# Windows has neither of the first two to fix at build time. `Scripts\python.exe`
+# is a copy of the venv launcher rather than a symlink, and uv's console-script
+# trampolines find it beside themselves. `home` stays absolute: CPython resolves
+# a relative `home` against the working directory rather than `pyvenv.cfg`, so
+# the relative form written below would break it, and the build's own later
+# steps need these environments working where they are. `package_launcher.ps1`
+# points `home` at the unpacked interpreter before it starts anything.
 relocate_environment() {
   local venv="$1"
+  [[ "$TARGET_OS" == windows ]] && return 0
   local python_dir_name
   python_dir_name="$(basename "$BUNDLED_PYTHON_DIR")"
 
@@ -658,13 +753,13 @@ create_environments() {
     read -r -a skip <<< "$(cuda_packages_to_skip "$REPO_ROOT/$source/uv.lock")"
     (
       cd "$STAGING_APP/$source"
-      "$STAGING_BIN/uv" venv --relocatable --python "$BUNDLED_PYTHON" .venv \
+      "$STAGING_BIN/uv$EXE" venv --relocatable --python "$BUNDLED_PYTHON" .venv \
         >/dev/null
       # --no-editable so the project is copied into site-packages instead of
       # pointed at by an absolute path. Without it the package unpacks to a
       # working interpreter that cannot import the application.
       UV_PROJECT_ENVIRONMENT="$venv" \
-        "$STAGING_BIN/uv" sync --frozen --no-editable $flags \
+        "$STAGING_BIN/uv$EXE" sync --frozen --no-editable $flags \
         ${skip[@]+"${skip[@]}"} >/dev/null
     )
     install_cpu_torch "$venv" "${#skip[@]}"
@@ -680,7 +775,7 @@ create_environments() {
   # its Python modules, not this.
   local msb
   msb="$(find "$STAGING_APP/mcp_servers/dev_mcp_server/.venv" \
-    -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
+    -path "*/microsandbox/_bundled/bin/msb$EXE" -print -quit 2>/dev/null)"
   if [[ -x "$msb" ]]; then
     local msb_error host_glibc=''
     # Guarded twice, and both guards are load-bearing. `ldd` does not exist on
@@ -746,27 +841,39 @@ install_cpu_torch() {
 bundle_node() {
   log "bundling the Node runtime (v$NODE_VERSION, $NODE_PLATFORM)"
 
-  local archive="node-v${NODE_VERSION}-${NODE_PLATFORM}.tar.xz"
+  local suffix=tar.xz
+  [[ "$TARGET_OS" == windows ]] && suffix=zip
+  local archive="node-v${NODE_VERSION}-${NODE_PLATFORM}.${suffix}"
   local url="https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
   local tmp
   tmp="$(mktemp -d)"
   curl -fsSL -o "$tmp/$archive" "$url" \
     || die "could not download the Node runtime from $url"
-  # Official tarballs unpack to node-v<version>-<platform>/; strip that so the
+  # Official archives unpack to node-v<version>-<platform>/; strip that so the
   # layout inside the package does not carry a version in its path.
   mkdir -p "$STAGING/node"
-  tar -xJf "$tmp/$archive" -C "$STAGING/node" --strip-components=1
+  if [[ "$TARGET_OS" == windows ]]; then
+    "$WIN_TAR" -xf "$tmp/$archive" -C "$STAGING/node" --strip-components=1
+  else
+    tar -xJf "$tmp/$archive" -C "$STAGING/node" --strip-components=1
+  fi
   rm -rf "$tmp"
 
   # npm and npx are build-time tools; the package only ever runs `node
   # server.js`. Dropping them saves a little over 10 MB and removes the only
-  # thing in the package that could try to install something at runtime.
+  # thing in the package that could try to install something at runtime. The
+  # Windows zip keeps them, as .cmd and .ps1 shims, at its top level.
   rm -rf "$STAGING/node/lib/node_modules/npm" \
          "$STAGING/node/bin/npm" "$STAGING/node/bin/npx" \
          "$STAGING/node/include"
+  if [[ "$TARGET_OS" == windows ]]; then
+    rm -rf "$STAGING/node/node_modules/npm" \
+           "$STAGING/node"/npm "$STAGING/node"/npm.{cmd,ps1} \
+           "$STAGING/node"/npx "$STAGING/node"/npx.{cmd,ps1}
+  fi
 
-  [[ -x "$STAGING/node/bin/node" ]] || die "no node binary after unpacking"
-  echo "node        : $("$STAGING/node/bin/node" --version)"
+  [[ -x "$NODE_BIN" ]] || die "no node binary after unpacking"
+  echo "node        : $("$NODE_BIN" --version)"
 }
 
 stage_ui() {
@@ -782,13 +889,12 @@ stage_ui() {
   [[ -d "$out" ]] \
     || die "no standalone output at $out — is output: 'standalone' still set in ui/next.config.mjs?"
 
-  rsync -a "$out/" "$STAGING_APP/ui/"
+  copy_tree "$out" "$STAGING_APP/ui"
   # Next deliberately leaves these out of the standalone tree, on the
   # assumption that a CDN serves them. There is no CDN here, and `server.js`
   # serves them once they are in place.
-  mkdir -p "$STAGING_APP/ui/.next"
-  rsync -a "$REPO_ROOT/ui/.next/static/" "$STAGING_APP/ui/.next/static/"
-  rsync -a "$REPO_ROOT/ui/public/" "$STAGING_APP/ui/public/"
+  copy_tree "$REPO_ROOT/ui/.next/static" "$STAGING_APP/ui/.next/static"
+  copy_tree "$REPO_ROOT/ui/public" "$STAGING_APP/ui/public"
 
   [[ -f "$STAGING_APP/ui/server.js" ]] || die "staged UI has no server.js"
   echo "ui          : $(du -sh "$STAGING_APP/ui" | cut -f1)"
@@ -813,7 +919,7 @@ stage_payload() {
   mkdir -p "$vista_data"
 
   if [[ -n "$PAYLOAD_DIR" ]]; then
-    rsync -a --exclude '.git/' "$PAYLOAD_DIR/" "$vista_data/"
+    copy_tree "$PAYLOAD_DIR" "$vista_data" '.git/'
   else
     local tmp
     tmp="$(mktemp -d)"
@@ -827,7 +933,7 @@ stage_payload() {
       clone --depth 1 https://code.ornl.gov/v28/vista-data.git "$tmp/vista-data" \
       >/dev/null 2>&1 \
       || die "could not clone v28/vista-data — is VISTA_DATA_TOKEN still valid?"
-    rsync -a --exclude '.git/' "$tmp/vista-data/" "$vista_data/"
+    copy_tree "$tmp/vista-data" "$vista_data" '.git/'
     rm -rf "$tmp"
   fi
 
@@ -866,11 +972,10 @@ stage_embedding_weights() {
 
   local host_cache="$REPO_ROOT/data/huggingface/hub/$cache_name"
   if [[ -d "$host_cache" ]]; then
-    mkdir -p "$hf/hub"
-    rsync -a "$host_cache/" "$hf/hub/$cache_name/"
+    copy_tree "$host_cache" "$hf/hub/$cache_name"
   else
     HF_HOME="$hf" HF_HUB_DISABLE_TELEMETRY=1 \
-      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/bin/python" - "$model" <<'PYHF'
+      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$model" <<'PYHF'
 import sys
 from huggingface_hub import snapshot_download
 
@@ -891,7 +996,7 @@ PYHF
 check_store_matches_corpus() {
   local kb="$1"
   VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-    "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYMATCH'
+    "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb" <<'PYMATCH'
 import sys
 from pathlib import Path
 
@@ -931,7 +1036,7 @@ build_vector_store() {
 
   local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
   mkdir -p "$kb"
-  rsync -a "$STAGING_PAYLOAD/vista-data/molten-salt-papers/" "$kb/pdfs/"
+  copy_tree "$STAGING_PAYLOAD/vista-data/molten-salt-papers" "$kb/pdfs"
 
   # Reusing a store skips the slowest step in the build -- reading every paper,
   # embedding ~4400 chunks, and calling a model once per paper for citation
@@ -940,10 +1045,10 @@ build_vector_store() {
   # keeps a stale store from being shipped against a different corpus.
   if [[ -n "$REUSE_STORE" ]]; then
     log "reusing the vector store from $REUSE_STORE"
-    rsync -a "$REUSE_STORE/" "$kb/rag_db/"
+    copy_tree "$REUSE_STORE" "$kb/rag_db"
     check_store_matches_corpus "$kb"
     VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-      "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYCHECK'
+      "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb" <<'PYCHECK'
 import sys
 from pathlib import Path
 
@@ -965,7 +1070,7 @@ PYCHECK
   HF_HUB_OFFLINE=1 \
   VISTA_BUILD_RAG_DIR="$STAGING_APP" \
   VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-    "$STAGING_APP/backend/.venv/bin/python" - "$kb" "$citations" <<'PYINDEX'
+    "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb" "$citations" <<'PYINDEX'
 import asyncio
 import logging
 import sys
@@ -1005,7 +1110,7 @@ PYINDEX
   # diagnose, so it is caught here rather than shipped -- the same check the
   # backend applies before recording the knowledge base.
   VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-    "$STAGING_APP/backend/.venv/bin/python" - "$kb" <<'PYCHECK'
+    "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb" <<'PYCHECK'
 import sys
 from pathlib import Path
 
@@ -1076,6 +1181,29 @@ target_floor() {
       macos="$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)"
       [[ -n "$macos" ]] && printf ', "built_on_macos": "%s"' "$macos"
       ;;
+    windows)
+      # The build host's version, for the same reason as macOS's. And the
+      # package's longest path relative to its own root: Windows caps a full
+      # path at 260 characters unless long paths are enabled, so the launcher
+      # adds where it was unpacked to this and can say the location is too
+      # deep before anything fails to open.
+      local windows longest
+      windows="$(cmd.exe //c ver 2>/dev/null | tr -d '\r' \
+        | sed -nE 's/.*Version ([0-9.]+).*/\1/p' || true)"
+      [[ -n "$windows" ]] && printf ', "built_on_windows": "%s"' "$windows"
+      longest="$(shipped_files \
+        | awk '{ if (length > m) m = length } END { print m + 0 }')"
+      printf ', "longest_relative_path": %s' "$longest"
+      # The same for what payload.tar puts into the state directory, whose
+      # location the launcher also only learns at run time. Written while the
+      # payload is still staged as folders, so it is measured from them.
+      local packed longest_state
+      packed="$(IFS='|'; echo "${PAYLOAD_PARTS[*]}")"
+      longest_state="$(find "$STAGING_PAYLOAD" -type f -printf '%P\n' \
+        | grep -E "^($packed)/" \
+        | awk '{ if (length > m) m = length } END { print m + 0 }')"
+      printf ', "longest_state_path": %s' "$longest_state"
+      ;;
   esac
 }
 
@@ -1105,6 +1233,45 @@ pack_payload() {
   echo "payload.tar : $(du -sh "$STAGING_PAYLOAD/payload.tar" | cut -f1)"
 }
 
+# Every file the package ships, relative to its root, as it will be once the
+# payload is packed -- so the manifest, written while the payload folders
+# still exist, records the layout a recipient actually unpacks.
+shipped_files() {
+  local packed
+  packed="$(IFS='|'; echo "${PAYLOAD_PARTS[*]}")"
+  find "$STAGING" -type f -printf '%P\n' | grep -vE "^payload/($packed)/"
+  echo "payload/payload.tar"
+}
+
+# How deep a Windows package's files go, against Windows' 260-character path
+# limit. Files past it cannot be unpacked by Explorer at all, and a Python
+# module past it cannot be imported unless the recipient's machine has long
+# paths enabled, which most cannot turn on.
+#
+# Reported rather than enforced: what matters is the unpack location, which
+# only the launcher knows, and the launcher refuses a location that is too
+# deep. This says how much room the build left, and names the files using it,
+# so a dependency that adds a deep tree is noticed at build time.
+report_path_lengths() {
+  [[ "$TARGET_OS" == windows ]] || return 0
+  log "checking path lengths"
+  local longest room
+  longest="$(find "$STAGING" -type f -printf '%P\n' \
+    | awk '{ if (length > m) m = length } END { print m + 0 }')"
+  # 259 characters, less the package's own folder and the separators around it.
+  room=$(( 259 - longest - ${#PACKAGE_NAME} - 2 ))
+  echo "longest path: $longest characters inside the package"
+  echo "unpack room : $room characters for the folder the package is unpacked into"
+  if (( room < 40 )); then
+    warn "only $room characters are left for the unpack location, which is less \
+than C:\\Users\\<name>\\Downloads\\ needs for most names. The deepest files:"
+    # sed rather than head: head exits after ten lines, and under pipefail
+    # the SIGPIPE that leaves sort with would fail the build.
+    find "$STAGING" -type f -printf '%P\n' \
+      | awk '{ print length, $0 }' | sort -rn | sed -n 1,10p >&2
+  fi
+}
+
 write_manifest() {
   log "writing the manifest"
 
@@ -1112,7 +1279,7 @@ write_manifest() {
   local chunks citations pdf_count
   chunks="$(
     VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-      "$STAGING_APP/backend/.venv/bin/python" - "$kb/rag_db" <<'PYCOUNT'
+      "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb/rag_db" <<'PYCOUNT'
 import sys
 
 import chromadb
@@ -1144,8 +1311,8 @@ PYCOUNT
   "target": { "os": "$TARGET_OS", "arch": "$TARGET_ARCH"$(target_floor) },
   "runtimes": {
     "python": "$(basename "$BUNDLED_PYTHON_DIR")",
-    "node": "$("$STAGING/node/bin/node" --version)",
-    "uv": "$("$STAGING_BIN/uv" --version | cut -d' ' -f2)"
+    "node": "$("$NODE_BIN" --version)",
+    "uv": "$("$STAGING_BIN/uv$EXE" --version | cut -d' ' -f2)"
   },
   "components": {
     "python": $(size_of "$STAGING_PYTHON"),
@@ -1168,7 +1335,7 @@ EOF
   echo "$VERSION" > "$STAGING/VERSION"
 
   # Fail rather than ship a manifest that claims something untrue.
-  "$STAGING_APP/backend/.venv/bin/python" - "$STAGING/manifest.json" <<'PYVALID'
+  "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$STAGING/manifest.json" <<'PYVALID'
 import json
 import sys
 
@@ -1197,9 +1364,11 @@ PYVALID
 # bundled `msb` carries an adhoc code signature in them, and macOS refuses to
 # execute a binary whose signature no longer matches.
 #
-# gzip is the default because the recipient has to extract before anything of
-# ours runs, so "install a decompressor first" is an instruction with nowhere
-# to go. zstd is available for a faster local round trip.
+# The default format is chosen with the platform, near the top. zstd is
+# available for a faster local round trip.
+#
+# A Windows zip is written by Windows' own bsdtar: Git Bash's GNU tar cannot
+# write zip, and there are no hardlinks or extended attributes to carry.
 create_archive() {
   [[ "$ARCHIVE_FORMAT" == none ]] && { log "archive: skipped (--archive-format none)"; return 0; }
 
@@ -1208,8 +1377,16 @@ create_archive() {
   case "$ARCHIVE_FORMAT" in
     gz) suffix=tar.gz ;;
     zstd) suffix=tar.zst ;;
+    zip) suffix=zip ;;
   esac
   ARCHIVE_PATH="$OUTPUT_DIR/${PACKAGE_NAME}.${suffix}"
+
+  if [[ "$ARCHIVE_FORMAT" == zip ]]; then
+    rm -f "$ARCHIVE_PATH"
+    "$WIN_TAR" -a -cf "$ARCHIVE_PATH" -C "$OUTPUT_DIR" "$PACKAGE_NAME"
+    write_archive_sidecars
+    return 0
+  fi
 
   local xattr_flag=()
   # bsdtar (macOS) stores extended attributes by default and rejects --xattrs;
@@ -1232,6 +1409,11 @@ create_archive() {
     -C "$OUTPUT_DIR" "$PACKAGE_NAME" \
     | "${compressor[@]}" > "$ARCHIVE_PATH"
 
+  write_archive_sidecars
+}
+
+# The checksum and manifest that sit beside every archive, whatever its format.
+write_archive_sidecars() {
   ( cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ARCHIVE_PATH")" \
       > "$(basename "$ARCHIVE_PATH").sha256" )
   cp "$STAGING/manifest.json" "$ARCHIVE_PATH.manifest.json"
@@ -1259,10 +1441,18 @@ run_smoke_test() {
   fi
 
   log "smoke test: unpacking elsewhere and running"
+  # On Windows the user's Temp folder is already at a different depth from
+  # the staging tree, and the extra levels would only spend the 260-character
+  # path budget the launcher checks against.
   local root
   root="$(mktemp -d)/a/deeper/path"
+  [[ "$TARGET_OS" == windows ]] && root="$(mktemp -d)"
   mkdir -p "$root"
-  tar -xf "$ARCHIVE_PATH" -C "$root"
+  if [[ "$ARCHIVE_FORMAT" == zip ]]; then
+    "$WIN_TAR" -xf "$ARCHIVE_PATH" -C "$root"
+  else
+    tar -xf "$ARCHIVE_PATH" -C "$root"
+  fi
   local unpacked="$root/$PACKAGE_NAME"
 
   # msb has to survive the round trip and run here. Two different things can
@@ -1273,7 +1463,7 @@ run_smoke_test() {
   # 29 MB binary.
   local msb
   msb="$(find "$unpacked/app/mcp_servers/dev_mcp_server/.venv" \
-    -path '*/microsandbox/_bundled/bin/msb' -print -quit)"
+    -path "*/microsandbox/_bundled/bin/msb$EXE" -print -quit)"
   [[ -x "$msb" ]] || die "smoke test: no msb binary in the unpacked package"
   local msb_error
   if ! msb_error="$("$msb" --version 2>&1)"; then
@@ -1284,7 +1474,7 @@ run_smoke_test() {
   On Linux that is usually a glibc older than the binary requires; compare
   \`objdump -T\` on it against \`ldd --version\` here. On macOS it is usually an
   adhoc code signature lost in archiving, so check that extended attributes
-  were preserved."
+  were preserved. On Windows, check whether Defender quarantined it."
   fi
 
   # The package is unpacked deep on purpose -- that is what catches a path baked
@@ -1296,9 +1486,16 @@ run_smoke_test() {
   # Deliberately not under `$TMPDIR`: on macOS that is a per-user directory
   # roughly 50 characters long before anything is added to it, which cannot fit
   # the sandbox's socket budget however short the rest of the path is. `/tmp` is
-  # short on both platforms.
+  # short on both platforms. Windows is handled below.
   local state
   state="$(mktemp -d /tmp/vista-smoke.XXXXXX)"
+  # Under Git Bash, /tmp is the user's Temp folder, deep enough that the
+  # corpus's longest paths pass Windows' 260-character limit once extracted
+  # into it. The home folder puts the state as deep as the default ~/.vista.
+  if [[ "$TARGET_OS" == windows ]]; then
+    rm -rf "$state"
+    state="$(mktemp -d "$HOME/.vista-smoke.XXXXXX")"
+  fi
   local failures=0
   "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
 
@@ -1328,6 +1525,7 @@ build_vector_store
 export_sandbox_image
 write_manifest
 pack_payload
+report_path_lengths
 create_archive
 run_smoke_test
 
