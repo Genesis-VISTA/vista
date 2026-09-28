@@ -97,6 +97,7 @@ that directory, and starting over is deleting the state directory.
 | `VISTA_UI_PORT`      | Web interface                                                                                                                                           | `3000`     |
 | `VISTA_MCP_PORT`     | MCP server                                                                                                                                              | `8000`     |
 | `VISTA_BACKEND_PORT` | Backend                                                                                                                                                 | `8001`     |
+| `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab. A project's lab also needs its own repository, set in the project's settings, and git 2.34 or later. `false` turns it off everywhere. | `true` |
 
 `./vista --help` prints the same list.
 

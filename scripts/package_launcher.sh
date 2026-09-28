@@ -20,6 +20,12 @@
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
 #
+#   VISTA_BACKEND_FORUM__ENABLED
+#                       The Hypothesis Lab (default: true). A project's lab
+#                       still needs its own repository, set in the project's
+#                       settings, and git 2.34 or later on PATH. Set false to
+#                       turn the lab off for every project.
+#
 #   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
 #   VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN
 #   VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
@@ -236,6 +242,11 @@ export MSB_HOME="$MSB_STORE"
 # with `docker or podman not found on PATH` even though the image is present.
 export VISTA_DEV_MCP_DOCKERFILE=""
 export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
+# The backend keeps the Hypothesis Lab off unless told otherwise, and a
+# development checkout turns it on in `.env`, which a package never reads.
+# On here, because each project is still gated on its own repository and a
+# usable git; the caller's own value wins.
+export VISTA_BACKEND_FORUM__ENABLED="${VISTA_BACKEND_FORUM__ENABLED:-true}"
 LOGS="$STATE/logs"
 
 # ─── first-run setup ────────────────────────────────────────────────────────
