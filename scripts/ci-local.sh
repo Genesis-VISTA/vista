@@ -66,11 +66,18 @@ run_job() {
   local allow_failure="$2"
   shift 2
   log "$name"
-  if "$@"; then
+  # Capture the status from the command itself, not from after the `if`.
+  #
+  # A compound `if` whose condition fails and which has no `else` returns 0, so
+  # `$?` afterwards is the *if statement's* status — which is why real failures
+  # were reported as "fail: … (exit 0)", a line that reads like a bug in the
+  # harness and invites disbelieving the failure.
+  local rc=0
+  "$@" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
     echo "ok: $name"
     return 0
   fi
-  local rc=$?
   if [[ "$allow_failure" -eq 1 && "$STRICT" != true ]]; then
     echo "warn: $name failed (advisory; pass --strict to fail)" >&2
     return 0

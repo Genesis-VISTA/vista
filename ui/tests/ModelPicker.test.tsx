@@ -31,6 +31,7 @@ const PROJECT: Project = {
   systemPrompt: "",
   skills: [],
   knowledgeBases: [],
+  forumRepoUrl: "",
   tools: [],
   usageLimits: {},
 };
@@ -45,7 +46,8 @@ function userWithModel(model: string | null): UserPublicWithConfig {
     inference_api_key: null,
     nersc_account: null,
     nersc_remote_dir: null,
-    s3m_token: null,
+    odo_s3m_token: null,
+    frontier_s3m_token: null,
     nersc_iri_token: null,
     globus_token: null,
     odo_globus_token: null,

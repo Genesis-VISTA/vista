@@ -66,7 +66,7 @@ def tenant_env(tmp_path, monkeypatch, session):
 @pytest.fixture
 def alice_with_canary() -> UserPublicWithConfig:
     return UserPublicWithConfig(
-        id=uuid.uuid4(), email="alice@example.com", s3m_token=CANARY
+        id=uuid.uuid4(), email="alice@example.com", odo_s3m_token=CANARY
     )
 
 
@@ -83,7 +83,11 @@ async def seed_skill(session, tenant_env: Path, name: str) -> None:
         f"---\nname: {name}\ndescription: test skill\n---\nbody\n", encoding="utf-8"
     )
     session.add(SkillTable(name=name, description="test skill", path=f"storage/{name}"))
-    await session.flush()
+    # Committed, not just flushed: the agent opens its own session, and only a
+    # committed row is visible to one. (This passed on a flush while the test
+    # database pinned every session to a single shared connection, which made
+    # uncommitted rows visible everywhere — true of no real deployment.)
+    await session.commit()
 
 
 async def drive_campaign(agent: agents_module.ProjectAgent, jobs: int) -> list[dict]:

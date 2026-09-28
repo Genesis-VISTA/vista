@@ -8,7 +8,9 @@ import {
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import { useActiveProject } from "@/lib/projects";
+import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useCurrentUser } from "@/lib/user";
+import { HpcStatusSection } from "./HpcStatusSection";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -143,6 +145,16 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
       </svg>
     ),
   },
+  {
+    label: "Hypothesis Lab",
+    href: "/hypothesis-lab",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 5h11a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-5 3V5Z" />
+        <path d="M18 9h3v11l-4-2h-5a2 2 0 0 1-2-2" />
+      </svg>
+    ),
+  },
 ];
 
 export function NavRail() {
@@ -151,6 +163,8 @@ export function NavRail() {
   const activeProject = useActiveProject();
   const { user, loading: userLoading } = useCurrentUser();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Set when settings were opened from a cluster's card, to expand only that section. */
+  const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const collapsed = useSyncExternalStore(
     railSubscribe,
@@ -259,6 +273,18 @@ export function NavRail() {
 
   const projectEntries = PROJECT_LOCAL_ENTRIES.slice(1);
 
+  // Nothing until the user has loaded, so a hidden cluster never flashes in.
+  const hidden = new Set(user?.hpc_hidden_clusters ?? []);
+  const visibleClusters: HpcCluster[] = user
+    ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
+    : [];
+
+  function openSettingsFor(cluster: HpcCluster) {
+    setTip(null);
+    setSettingsCluster(cluster);
+    setSettingsOpen(true);
+  }
+
   return (
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
@@ -345,6 +371,13 @@ export function NavRail() {
           {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
         </button>
         {projectEntries.map((entry) => renderEntry(entry, "project-child"))}
+
+        <HpcStatusSection
+          collapsed={collapsed}
+          visibleClusters={visibleClusters}
+          onOpenSettings={openSettingsFor}
+          tipProps={tipProps}
+        />
       </nav>
 
       {/* settingsHint changes as the user record loads, so it is the tooltip's
@@ -353,7 +386,10 @@ export function NavRail() {
       <button
         type="button"
         className="nav-rail-settings"
-        onClick={() => setSettingsOpen(true)}
+        onClick={() => {
+          setSettingsCluster(undefined);
+          setSettingsOpen(true);
+        }}
         disabled={!user}
         aria-label="Open settings"
         {...tipProps(settingsHint)}
@@ -375,7 +411,12 @@ export function NavRail() {
         </div>
       )}
 
-      {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <UserSettingsModal
+          initialCluster={settingsCluster}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </aside>
   );
 }

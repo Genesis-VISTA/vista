@@ -86,7 +86,12 @@ def test_get_fernet_is_cached_until_cleared(ephemeral_key, monkeypatch):
 # User token fields at rest
 # ---------------------------------------------------------------------------
 
-TOKEN_FIELDS = ("s3m_token", "nersc_iri_token", "globus_token")
+TOKEN_FIELDS = (
+    "odo_s3m_token",
+    "frontier_s3m_token",
+    "nersc_iri_token",
+    "globus_token",
+)
 
 
 @pytest.mark.anyio

@@ -20,6 +20,11 @@ export type UserPublic = {
   id: string;
   email: string;
   is_admin: boolean;
+  /**
+   * Clusters left out of the NavRail's HPC section. Not a secret, so it is on
+   * the light view the rail reads. Optional because an older backend omits it.
+   */
+  hpc_hidden_clusters?: string[];
 };
 
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
@@ -29,7 +34,12 @@ export type UserPublicWithConfig = UserPublic & {
   inference_api_key: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
-  s3m_token: string | null;
+  /**
+   * One S3M token per OLCF cluster: a token is scoped to a single project,
+   * so one field could only ever authorize one of Odo and Frontier.
+   */
+  odo_s3m_token: string | null;
+  frontier_s3m_token: string | null;
   nersc_iri_token: string | null;
   /**
    * File-transfer credentials, read only to tell whether a cluster is
@@ -63,8 +73,11 @@ export type UserSelfUpdate = {
   inference_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
-  s3m_token?: string | null;
+  odo_s3m_token?: string | null;
+  frontier_s3m_token?: string | null;
   nersc_iri_token?: string | null;
+  /** Clusters to leave out of the NavRail. `[]` shows them all. */
+  hpc_hidden_clusters?: string[] | null;
 };
 
 let userCache: UserPublic | null = null;
@@ -195,7 +208,14 @@ export async function updateCurrentUser(
   });
   if (!res.ok) throw new Error(await extractError(res));
   const updated = (await res.json()) as UserPublicWithConfig;
-  userCache = { id: updated.id, email: updated.email, is_admin: updated.is_admin };
+  userCache = {
+    id: updated.id,
+    email: updated.email,
+    is_admin: updated.is_admin,
+    // The rail reads this from the light view; leaving it out would show a
+    // cluster the researcher had just hidden until the next page load.
+    hpc_hidden_clusters: updated.hpc_hidden_clusters ?? [],
+  };
   userLoaded = true;
   userError = null;
   notifyUser();
