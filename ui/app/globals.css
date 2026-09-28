@@ -4380,7 +4380,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 /* Settings modal: one collapsible section per HPC cluster, as on the canvas's
    Settings artboard. */
+/* Never shrink: `overflow: hidden` (for the rounded corners) drops a flex
+   item's minimum height to zero, so the modal body would squeeze the list and
+   clip an expanded cluster instead of scrolling to it. */
 .user-settings-clusters {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
