@@ -54,6 +54,8 @@ load_env_file() {
   local file="$1" line key value
   [[ -f "$file" ]] || return 0
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # A .env written on Windows usually has CRLF endings.
+    line="${line%$'\r'}"
     line="${line#"${line%%[![:space:]]*}"}"
     [[ -z "$line" || "$line" == '#'* ]] && continue
     [[ "$line" == "export "* ]] && line="${line#export }"
@@ -299,10 +301,12 @@ for v28/vista-data) or pass --payload with an already-unpacked copy")
   # the url.insteadOf rewrite in README.md, or a stored HTTPS credential.
   # Nothing is read out of the credential store and nothing is written to .env
   # -- the answer needed here is only whether the fetch will work.
+  # GCM_INTERACTIVE covers Git Credential Manager, the Windows default, which
+  # would otherwise answer a missing credential with a login window.
   if [[ -z "$AMSC_GIT_URL" ]]; then
     failures+=("could not read the amscrot-py URL from \
 mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
-  elif ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/true \
+  elif ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/true GCM_INTERACTIVE=never \
          git ls-remote "$AMSC_GIT_URL" HEAD >/dev/null 2>&1; then
     failures+=("no access to the amsc2 repository that provides amscrot-py:
     $AMSC_GIT_URL
@@ -476,7 +480,9 @@ prepare_staging() {
 bundle_runtime() {
   log "bundling the python interpreter and uv"
 
-  uv python install "$PYTHON_REQUIREMENT" >/dev/null
+  # --no-bin: install the interpreter into the package only. Without it uv also
+  # puts a `python3.x` shim into the build user's ~/.local/bin, on their PATH.
+  uv python install --no-bin "$PYTHON_REQUIREMENT" >/dev/null
   # The install leaves a `cpython-<minor>-<platform>` symlink beside the real
   # `cpython-<patch>-<platform>` directory, pointing at it by absolute path --
   # which dangles the moment the package is unpacked somewhere else. The real
@@ -791,7 +797,12 @@ stage_payload() {
   else
     local tmp
     tmp="$(mktemp -d)"
-    GIT_TERMINAL_PROMPT=0 git -c "credential.helper=!f() { \
+    # The empty helper first clears any configured ones, so the token is what
+    # answers: a stored credential for code.ornl.gov -- which Git Credential
+    # Manager on Windows would otherwise offer first -- cannot stand in for it,
+    # and the token is not stored anywhere.
+    GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never git -c credential.helper= \
+      -c "credential.helper=!f() { \
       echo username=oauth2; echo \"password=\$VISTA_DATA_TOKEN\"; }; f" \
       clone --depth 1 https://code.ornl.gov/v28/vista-data.git "$tmp/vista-data" \
       >/dev/null 2>&1 \
@@ -896,7 +907,7 @@ PYMATCH
 # when a store is already present, so the researcher's first run finds a
 # searchable corpus and does none of this.
 build_vector_store() {
-  log "building the vector store (this is the slow part)"
+  log "staging the vector store"
 
   local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
   mkdir -p "$kb"
@@ -924,6 +935,7 @@ PYCHECK
     return 0
   fi
 
+  log "indexing the corpus (this is the slow part)"
   local citations=1
   [[ "$WITHOUT_CITATIONS" == true ]] && citations=0
 
