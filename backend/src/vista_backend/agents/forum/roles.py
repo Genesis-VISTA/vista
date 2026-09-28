@@ -21,12 +21,13 @@ from typing import Literal, Sequence, TypeVar
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent, PromptedOutput
-from pydantic_ai.models import Model, infer_model
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.toolsets import AgentToolset
 
 from ...config import settings
 from ...services.forum_git import HUMAN_SENDER, Participant, PostKind, Thread
+from ..inference import build_inference_model
 
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -469,9 +470,15 @@ def build_agent(
     a text reply is the expected shape rather than a failure. Ordinary tools are
     unaffected — they are still tool calls; this changes only how the final answer
     comes back.
+
+    The model goes through `build_inference_model`, as every VISTA agent's
+    does, so its endpoint and key come from `Settings` rather than only from
+    `OPENAI_*` in the environment. A bare `infer_model` here is what made
+    opening a debate fail on a package, where the key is typed into the
+    settings modal and never exported.
     """
     return Agent(
-        model=infer_model(model or settings.model),
+        model=build_inference_model(model),
         deps_type=DebateDeps,
         output_type=PromptedOutput(output_type),
         system_prompt=_prompt(role),
