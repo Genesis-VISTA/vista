@@ -275,6 +275,84 @@ if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
 
 # --- services ----------------------------------------------------------------
 
+# Every service dies with this launcher, however it ends. The launcher joins a
+# job object that kills its members when the job's last handle closes, and only
+# this process holds that handle; every process started from here on -- the
+# services, and whatever they start in turn, the sandbox servers and node
+# included -- joins the job with it. So when this process goes, Windows closes
+# the handle and ends them all, with no cleanup code of ours involved.
+#
+# The cleanup in Stop-VistaServices is not enough on its own. Ctrl-C in the
+# `cmd` window running vista.cmd starts it, but cmd then ends the batch and
+# takes this process with it partway through, leaving the services it had not
+# yet reached running; closing the window or a crash runs no cleanup at all.
+#
+# If joining fails -- say this launcher runs inside a job that forbids it --
+# the cleanup below still stops the services on an ordinary Ctrl-C.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class VistaJob {
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimits {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoCounters {
+        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimits {
+        public BasicLimits Basic;
+        public IoCounters Io;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    const int ExtendedLimitInformation = 9;
+    const uint KillOnJobClose = 0x2000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimits info, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
+
+    // The job's handle is deliberately never closed: this process holding it
+    // until it exits is what ties the job's lifetime to the launcher's.
+    public static bool JoinKillOnCloseJob() {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return false;
+        var info = new ExtendedLimits();
+        info.Basic.LimitFlags = KillOnJobClose;
+        if (!SetInformationJobObject(job, ExtendedLimitInformation, ref info,
+                (uint)Marshal.SizeOf(typeof(ExtendedLimits)))) return false;
+        return AssignProcessToJobObject(job, GetCurrentProcess());
+    }
+}
+'@
+[void][VistaJob]::JoinKillOnCloseJob()
+
 $services = @()
 
 # Each service runs under cmd so stdout and stderr share one log file, which
