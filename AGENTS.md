@@ -65,7 +65,18 @@ cd electron && npm run test:e2e  # window behaviour via Playwright; needs a disp
 Where a link goes is decided by origin alone in `electron/src/routing.js`: VISTA's own origin
 stays in the app, other http(s) goes to the system browser, and everything else is refused. So
 UI links need no Electron-specific code. The prebuilt macOS package ships it as
-`app/window/VISTA.app`, found through the manifest's `window.exe`. `./vista --browser` skips it.
+`app/window/VISTA.app` and the Linux package as `app/window/VISTA`, both found through the
+manifest's `window.exe`. `./vista --browser` skips it.
+
+On Linux, whether the window gets `--no-sandbox` is decided in one place,
+`electron/linux/window-sandbox`. The package launcher, `./launch.sh --electron` and the
+build's smoke test all call it, so don't hardcode the flag anywhere else. It prints the flag
+only when the host blocks Chromium's sandbox: as root, or where unprivileged user namespaces
+are blocked and VISTA's AppArmor profile (`electron/linux/vista-window.apparmor`, shipped next
+to the window) isn't installed, as on stock Ubuntu 24.04. Each time, it says why on stderr.
+While the window is unsandboxed, `main.js` sends PDFs to the system browser. Test with
+`cd electron && npm test`, which runs `window-sandbox.test.js` hermetically, and the Linux e2e
+container command in `docs/validation-lane.md`.
 
 ### MCP Server (vista_mcp_server)
 Launches vista_mcp_server on :8000/mcp (HPC, RAG, display_file tools)

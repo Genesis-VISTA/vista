@@ -177,8 +177,34 @@
 
 ## 6. Docs
 
-- [ ] 6.1 `README.md` "Running a prebuilt package": the Linux window, with SSH and `--browser` falling back; the Ubuntu sandbox message and the one-time profile install; the window's libraries per distribution (from 3.1); and PDFs opening in the browser while unsandboxed. Verify that every command in it was run in groups 1–4.
-- [ ] 6.2 `docs/validation-lane.md`: the "VISTA window" lane covers Linux (D9's manual list); the container command is already there (5.1). `AGENTS.md`: `electron/linux/` and the sandbox rule. Add a line to the release notes and checklist saying the bundled Electron version is reviewed each release. Update `electron-desktop-shell`'s `design.md` P1 Linux bullet to point at this change, replacing "Do not use `--no-sandbox`". Verify with `openspec validate linux-desktop-window --strict`.
+- [x] 6.1 `README.md` "Running a prebuilt package": the Linux window, with SSH and `--browser` falling back; the Ubuntu sandbox message and the one-time profile install; the window's libraries per distribution (from 3.1); and PDFs opening in the browser while unsandboxed. Verify that every command in it was run in groups 1–4.
+  - **Done (2026-09-28).**
+    - "Running a prebuilt package" now covers:
+      - the window on macOS and Linux;
+      - the reasons it falls back to browser mode (SSH, no display, and on Linux root or missing libraries);
+      - the crash fallback;
+      - the D6 library table, with `apt`/`dnf` lines;
+      - Ubuntu's sandbox restriction and the one-time profile install;
+      - the container case;
+      - PDFs going to the browser while unsandboxed;
+      - the `window.log` sandbox line;
+      - `~/.config/VISTA` as the Linux window cache.
+    - The development section says the same profile turns the sandbox on for `./launch.sh logs --electron`, using the repo-relative path that `window-sandbox` prints there.
+    - Commands, against groups 1–4:
+      - both package lines were installed in 3.1, on `ubuntu:24.04` and `fedora:latest`, with the smoke test passing afterwards;
+      - the `sudo install` / `apparmor_parser -r` pair is the text `window-sandbox` prints, checked in 4.2. The profile was only parsed (`apparmor_parser -Q -K`, 1.1), never loaded on a real Ubuntu kernel. **Loading it, and the sandbox then turning on, is a 7.2 check.**
+    - `~/.config/VISTA` follows Electron's documented default (`appData` plus the app name, `productName` "VISTA"). The window doesn't override it. It was not observed on a Linux host.
+- [x] 6.2 `docs/validation-lane.md`: the "VISTA window" lane covers Linux (D9's manual list); the container command is already there (5.1). `AGENTS.md`: `electron/linux/` and the sandbox rule. Add a line to the release notes and checklist saying the bundled Electron version is reviewed each release. Update `electron-desktop-shell`'s `design.md` P1 Linux bullet to point at this change, replacing "Do not use `--no-sandbox`". Verify with `openspec validate linux-desktop-window --strict`.
+  - **Done (2026-09-28).**
+    - `docs/validation-lane.md`:
+      - the lane row and the stop steps now cover Linux (Ctrl-Q, "terminal window");
+      - an "On Linux" list carries D9's manual checks, plus the crash fallback and the development window's message.
+    - `AGENTS.md`:
+      - the Linux package's `app/window/VISTA`;
+      - `electron/linux/window-sandbox` as the only place the `--no-sandbox` decision is made, and when it makes it;
+      - the profile file, the PDF rule, and where the tests are.
+    - **Release line.** The repo has no release-notes file or release checklist. So the "review the bundled Electron each release" line is in README's "Building a prebuilt package" section, where releases are cut. It points at `electron/package.json` and the manifest's `window.electron`. Move it if a checklist is added later.
+    - `electron-desktop-shell` `design.md` P1: the Linux bullet now points at this change and records that it reverses "Do not use `--no-sandbox`", and why.
 
 ## 7. Validation (manual)
 

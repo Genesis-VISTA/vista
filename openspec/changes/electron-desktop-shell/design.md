@@ -232,17 +232,15 @@ unchanged, since `next dev`'s HMR WebSocket is same-origin.
 The shell (`electron/src/`) and the lifecycle contract are OS-neutral. What each port
 still needs:
 
-- **Linux.**
-  - On Ubuntu 24.04, AppArmor restricts unprivileged user namespaces, and Chromium's
-    sandbox needs them. A window launched from a tarball crashes at start-up.
-  - The fix is a one-time `sudo` step that installs an AppArmor profile for
-    `app/window/VISTA`, or a `.deb`/`.rpm` that installs it. This is comparable to the
-    existing one-time `usermod -aG kvm`. Do not use `--no-sandbox`. Debian 13 and
-    RHEL 10 don't need the step.
-  - Otherwise the port adds a `linux` branch to `can_show_window` (`DISPLAY` /
-    `WAYLAND_DISPLAY`) and a `stage_window_linux` that writes `window.exe`.
-  - The window smoke test (B3) needs `xvfb-run` in the amd64 build container.
-  - Process-group stop and `HUP` (L2) already apply.
+- **Linux.** Done in the `linux-desktop-window` change, whose design is authoritative.
+  - This bullet originally said "Do not use `--no-sandbox`". That change reverses it:
+    the window runs with `--no-sandbox` where the host blocks Chromium's sandbox (stock
+    Ubuntu 24.04 without VISTA's AppArmor profile, root, some containers), and it says
+    so on every start. Its PDFs then go to the system browser. The one-time `sudo`
+    profile install turns the sandbox back on, and a later `.deb` installs the same file.
+  - It also added the `linux` branch of `can_show_window` (SSH, root, display, and
+    missing libraries), `stage_window_linux`, `xvfb-run` in the build container, and a
+    crash fallback to browser mode. Process-group stop and `HUP` (L2) applied unchanged.
 - **Windows.**
   - The window becomes one more child of the `windows-support` change's PowerShell
     launcher (its D9). That launcher's job object replaces L2's process groups and
