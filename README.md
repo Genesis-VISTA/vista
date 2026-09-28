@@ -16,8 +16,9 @@ attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
 bundled `msb` binary's adhoc code signature, without which the code-execution
 sandbox cannot create microVMs.
 
-First run copies the corpus, vector store, and embedding weights into the
-state directory (~1 GB), imports the sandbox image, and seeds the database.
+First run extracts the corpus, vector store, and embedding weights from the
+package's `payload/payload.tar` into the state directory (~1 GB), imports the
+sandbox image, and seeds the database.
 That takes a few minutes, with each step logged as it happens. It then prints
 `VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
 Later runs skip every setup step and start in seconds.

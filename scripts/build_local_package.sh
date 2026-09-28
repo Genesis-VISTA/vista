@@ -166,7 +166,25 @@ case "$(uname -s)" in
   *) die "unsupported build platform: $(uname -s) (want Darwin or Linux)" ;;
 esac
 TARGET_ARCH="$(uname -m)"
-PACKAGE_NAME="vista-${VERSION}-${TARGET_OS}-${TARGET_ARCH}"
+
+# The package's folder and archive name, e.g. vista-0.1.0-win-x86. Kept short
+# on purpose: the folder name sits in front of every path in the package, and
+# on Windows every one of those counts against the 260-character limit --
+# twice over when Explorer's Extract All makes a folder named after the zip.
+# So the name carries the release version and the platform only; the full
+# build identity (commit, dirty tree) is in VERSION and manifest.json, and the
+# manifest keeps the full OS and architecture names the launchers check.
+case "$TARGET_OS" in
+  macos)   PACKAGE_OS=mac ;;
+  windows) PACKAGE_OS=win ;;
+  *)       PACKAGE_OS="$TARGET_OS" ;;
+esac
+case "$TARGET_ARCH" in
+  x86_64|amd64)  PACKAGE_ARCH=x86 ;;
+  aarch64|arm64) PACKAGE_ARCH=arm64 ;;
+  *)             PACKAGE_ARCH="$TARGET_ARCH" ;;
+esac
+PACKAGE_NAME="vista-${VERSION%%+*}-${PACKAGE_OS}-${PACKAGE_ARCH}"
 
 # The private dependency HPC submission needs, read from the file that declares
 # it so the preflight cannot check a stale URL.
@@ -781,9 +799,11 @@ stage_ui() {
 # The vista-data files, the vector store built from them, and the embedding
 # weights, all inside the package.
 #
-# `payload/` is copied into the state directory on first run rather than read in
-# place, because the knowledge-base row records absolute paths and the corpus is
-# a researcher's to add to. The tree under `payload/vista-data` deliberately
+# `payload/` is installed into the state directory on first run rather than read
+# in place, because the knowledge-base row records absolute paths and the corpus
+# is a researcher's to add to. It is staged as folders, which the steps below
+# read, and packed into `payload/payload.tar` just before archiving (see
+# pack_payload). The tree under `payload/vista-data` deliberately
 # mirrors the repository, so `db/seed.LocalRepoClient` resolves the same
 # repo-relative paths the GitLab client would.
 stage_payload() {
@@ -1059,6 +1079,32 @@ target_floor() {
   esac
 }
 
+# ─── payload archive ────────────────────────────────────────────────────────
+
+# The parts of the payload a launcher installs into the state directory on
+# first run. They ship as one uncompressed tar, `payload/payload.tar`, rather
+# than as folders, and the launcher extracts the ones the state directory does
+# not have yet.
+#
+# The reason is path length. Some corpus PDFs have file names of 150+
+# characters, a few folders deep, and inside a package they sit under the
+# package folder and `payload/` as well -- far enough past Windows' 260-
+# character limit that the zip could not be extracted anywhere. Extracted
+# straight into the state directory they are ~240. One archive also means the
+# corpus is a single file to copy until first run. Uncompressed because PDFs
+# and model weights barely compress, and the release archive compresses anyway.
+PAYLOAD_PARTS=(vista-data knowledge-bases huggingface)
+
+pack_payload() {
+  log "packing the payload"
+  tar -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_PARTS[@]}"
+  local part
+  for part in "${PAYLOAD_PARTS[@]}"; do
+    rm -rf "${STAGING_PAYLOAD:?}/$part"
+  done
+  echo "payload.tar : $(du -sh "$STAGING_PAYLOAD/payload.tar" | cut -f1)"
+}
+
 write_manifest() {
   log "writing the manifest"
 
@@ -1281,6 +1327,7 @@ stage_embedding_weights
 build_vector_store
 export_sandbox_image
 write_manifest
+pack_payload
 create_archive
 run_smoke_test
 
