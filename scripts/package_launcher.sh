@@ -119,12 +119,9 @@ fi
 # Measured, not assumed: `rag_search` returns HTTP 500 on a host with no
 # /dev/kvm while the MCP server itself has the store open and reports 4401
 # chunks. Serving pages while the agent cannot answer anything is worse than
-# saying so up front.
-#
-# VISTA_ALLOW_NO_KVM exists for the build's own smoke test, which runs inside a
-# container where /dev/kvm is never present. It is not a way to use VISTA
-# without KVM; the checks that depend on the agent are skipped when it is set.
-if [[ "$HOST_OS" == linux && "${VISTA_ALLOW_NO_KVM:-}" != 1 ]]; then
+# saying so up front. There is no way to start without it: VISTA always needs
+# a microVM.
+if [[ "$HOST_OS" == linux ]]; then
   kvm_problem=''
   if [[ ! -e /dev/kvm ]]; then
     kvm_problem="this machine has no /dev/kvm.
@@ -256,17 +253,23 @@ mkdir -p "$STATE" "$LOGS"
 FIRST_RUN=false
 [[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
 
-# The payload is copied out of the package rather than read in place, for two
-# reasons: the knowledge-base row records absolute paths, so reading in place
-# would break when the package is replaced; and the corpus is the researcher's
-# to add to. Each part is skipped when already present, which is what makes a
-# second run cheap and an upgrade a directory replacement.
+# The payload is extracted out of the package rather than read in place, for
+# two reasons: the knowledge-base row records absolute paths, so reading in
+# place would break when the package is replaced; and the corpus is the
+# researcher's to add to. Each part is skipped when already present, which is
+# what makes a second run cheap and an upgrade a directory replacement.
+#
+# It ships as one tar rather than as folders because some corpus file names
+# are long enough that, under the package folder, they would pass Windows'
+# path-length limit; see build_local_package.sh's pack_payload.
+missing=()
 for part in vista-data knowledge-bases huggingface; do
-  if [[ -d "$PACKAGE/payload/$part" && ! -e "$STATE/$part" ]]; then
-    log "First run: installing $part..."
-    cp -R "$PACKAGE/payload/$part" "$STATE/$part"
-  fi
+  [[ -e "$STATE/$part" ]] || missing+=("$part")
 done
+if (( ${#missing[@]} > 0 )) && [[ -f "$PACKAGE/payload/payload.tar" ]]; then
+  log "First run: installing ${missing[*]}..."
+  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
+fi
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
   -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"

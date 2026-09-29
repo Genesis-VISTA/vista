@@ -42,7 +42,6 @@ The same two the Linux build needs (README, "A complete Linux build from a Mac")
 ## Known issues that are not tasks here
 
 - **The dev-mode image digest check never matches** under Docker Desktop's containerd store, so every sandbox spawn re-exports and reloads the image, and concurrent spawns can race on the store cache (`MicrosandboxError: image error: cache error …`). This predates the branch and was split off as a separate task. Packages are unaffected; they run in image-only mode. On Windows this only matters if the dev server runs in Dockerfile mode.
-- **`scripts/build_in_docker.sh:221`** uses `local` outside a function on its TLS-failure path, so the guidance it means to print becomes a bash error. It predates the branch and is unfixed.
 - **Killing `launch.sh`** leaves stopped sandboxes in the store, because `close()` doesn't run. This also predates the branch. Clear them with `msb rm <name>`.
 
 ## How to work
