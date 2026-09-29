@@ -68,3 +68,11 @@ def test_parity_check_catches_a_drifted_default():
     )
     assert drifted != source, "fixture no longer finds the Odo IRI URL"
     assert set(_mismatches(drifted)) == {"odo_iri_url"}
+
+
+def test_lux_hosts_parse_like_the_mcp_server(monkeypatch):
+    """`VISTA_MCP_LUX_SSH_HOSTS` is comma-separated in the MCP server; JSON also works."""
+    monkeypatch.setenv("VISTA_MCP_LUX_SSH_HOSTS", "hub.example, login.example")
+    assert HpcClusterSettings().lux_ssh_hosts == ["hub.example", "login.example"]
+    monkeypatch.setenv("VISTA_MCP_LUX_SSH_HOSTS", '["hub.example"]')
+    assert HpcClusterSettings().lux_ssh_hosts == ["hub.example"]

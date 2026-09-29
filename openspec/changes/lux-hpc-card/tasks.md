@@ -7,8 +7,8 @@
 
 ## 1. Backend settings and cluster list
 
-- [ ] 1.1 Add `lux_ssh_hosts` (comma-separated, via `NoDecode` + before-validator) and `lux_account` to `HpcClusterSettings` in `backend/src/vista_backend/config.py`, with defaults copied from the MCP's `config.py`; verify `backend/tests/test_hpc_config_parity.py` passes and a new case there shows `VISTA_MCP_LUX_SSH_HOSTS=a,b` parses to `["a", "b"]`
-- [ ] 1.2 Add `"lux"` to `HpcCluster` in `backend/src/vista_backend/db/schemas.py`; change `test_unknown_cluster_is_rejected` in `backend/tests/test_user_tokens.py` to reject some other name and add a case that `["lux"]` saves; verify with `cd backend && uv run --extra dev pytest tests/test_user_tokens.py`
+- [x] 1.1 Add `lux_ssh_hosts` (comma-separated, via `NoDecode` + before-validator) and `lux_account` to `HpcClusterSettings` in `backend/src/vista_backend/config.py`, with defaults copied from the MCP's `config.py`; verify `backend/tests/test_hpc_config_parity.py` passes and a new case there shows `VISTA_MCP_LUX_SSH_HOSTS=a,b` parses to `["a", "b"]`
+- [x] 1.2 Add `"lux"` to `HpcCluster` in `backend/src/vista_backend/db/schemas.py`; change `test_unknown_cluster_is_rejected` in `backend/tests/test_user_tokens.py` to reject some other name and add a case that `["lux"]` saves; verify with `cd backend && uv run --extra dev pytest tests/test_user_tokens.py`
 
 ## 2. Backend Lux checks
 

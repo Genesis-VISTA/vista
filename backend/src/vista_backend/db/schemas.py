@@ -398,7 +398,7 @@ class SkillUpdate(BaseModel):
     is_public: bool | None = None
 
 
-HpcCluster = Literal["frontier", "odo", "perlmutter"]
+HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
 
