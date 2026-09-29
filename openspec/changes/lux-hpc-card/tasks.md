@@ -28,5 +28,6 @@
 
 ## 4. End-to-end check
 
-- [ ] 4.1 With the dev stack running from this worktree (`./launch.sh logs`), open the rail and verify Lux shows Ready, its popover and settings section match the spec, hiding it removes the card, and Recheck re-probes (hub connection visible in `logs/backend.log` or by a fresh `checked_at`)
-- [ ] 4.2 Run `openspec validate lux-hpc-card --strict` and verify it passes
+- [x] 4.1 With the dev stack running from this worktree (`./launch.sh logs`), open the rail and verify Lux shows Ready, its popover and settings section match the spec, hiding it removes the card, and Recheck re-probes (hub connection visible in `logs/backend.log` or by a fresh `checked_at`)
+  - Result 2026-09-29, on the running dev stack: Lux card Ready (green) with "Lx" collapsed; details show only the hub and sign-in rows, no Globus or expiry; Recheck sends `fresh=true&cluster=lux` and yields a new `checked_at`, while a plain request within the minute reuses the result; Settings from the card expands only Lux, whose section holds only its switch. Hiding Lux was not exercised on the live user, to leave real settings untouched while a `lux-hello` run was in progress; it is covered by `UserSettingsModal.test.tsx`, the hermetic hide/every-hidden e2e tests, and `test_hidden_lux_is_not_probed`.
+- [x] 4.2 Run `openspec validate lux-hpc-card --strict` and verify it passes
