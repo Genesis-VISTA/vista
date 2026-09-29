@@ -64,13 +64,14 @@ no chat session, and without this it would be abandoned on its first poll.
 """
 
 
-# Which cluster each backend credential unlocks. `s3m_token` is the generic OLCF
-# token and covers both OLCF machines; NERSC is a separate credential. Mirrors
-# `submit_job_mcp.configured_clusters`, and the two must not drift — a debate
-# that offers a cluster the user cannot reach wastes a submission.
+# Which cluster each backend credential unlocks. An S3M token is scoped to one
+# OLCF project, so Odo and Frontier each have their own; NERSC is a separate
+# credential. Mirrors the MCP server's `_default_cluster` enablement, and the two
+# must not drift — a debate that offers a cluster the user cannot reach wastes a
+# submission.
 CLUSTER_CREDENTIALS: dict[str, tuple[str, ...]] = {
-    "odo": ("s3m_token",),
-    "frontier": ("s3m_token",),
+    "odo": ("odo_s3m_token",),
+    "frontier": ("frontier_s3m_token",),
     "perlmutter": ("nersc_iri_token",),
 }
 

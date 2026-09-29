@@ -18,6 +18,60 @@ export const USER = {
   id: USER_ID,
   email: "hermetic@example.invalid",
   is_admin: false,
+  hpc_hidden_clusters: [] as string[],
+};
+
+const OK = (message: string) => ({ ok: true, reason: null, message });
+
+/**
+ * `GET /users/me/hpc-status`: one cluster in each of three different states,
+ * so the rail's cards are distinguishable by more than their names.
+ */
+export const HPC_STATUS = {
+  clusters: [
+    {
+      cluster: "frontier",
+      state: "ready",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Frontier up."),
+        credential: {
+          ...OK("Frontier accepted the S3M token."),
+          project: "chm243",
+          expires_at: "2026-01-02T00:00:00+00:00",
+        },
+        globus: { ...OK("Globus reaches Frontier's files."), identity: "own" },
+      },
+    },
+    {
+      cluster: "odo",
+      state: "globus_not_connected",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Odo up."),
+        credential: { ...OK("Odo accepted the S3M token."), project: "gen150-vista" },
+        globus: {
+          ok: false,
+          reason: "not_connected",
+          message: "Globus file transfer is not connected for Odo.",
+        },
+      },
+    },
+    {
+      cluster: "perlmutter",
+      state: "not_connected",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Perlmutter up."),
+        credential: {
+          ok: false,
+          reason: "not_connected",
+          message: "No NERSC IRI token is saved for Perlmutter.",
+        },
+        globus: null,
+      },
+    },
+  ],
 };
 
 export const PROJECTS = [
@@ -104,6 +158,7 @@ export const MODELS = {
 
 export const ROUTES: Record<string, unknown> = {
   "GET /api/users/me": USER,
+  "GET /api/users/me/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
   "GET /api/projects/molten-salt/models": MODELS,
   "GET /api/skills": SKILLS,

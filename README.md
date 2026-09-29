@@ -16,14 +16,31 @@ attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
 bundled `msb` binary's adhoc code signature, without which the code-execution
 sandbox cannot create microVMs.
 
-First run copies the corpus, vector store, and embedding weights into the
-state directory (~1 GB), imports the sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. It then prints
-`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
-Later runs skip every setup step and start in seconds.
+Start it from a terminal, as above. Don't double-click `vista` or anything
+inside the package: a downloaded file carries macOS's quarantine flag, which
+`./vista` removes before running anything else, and a double-click is blocked
+before it gets the chance.
 
-Open the UI and paste your inference API key into the settings modal. It takes
-effect immediately; no restart.
+First run extracts the corpus, vector store, and embedding weights from the
+package's `payload/payload.tar` into the state directory (~1 GB), imports the
+sandbox image, and seeds the database.
+That takes a few minutes, with each step logged as it happens. Later runs skip
+every setup step and start in seconds.
+
+VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
+the window stops VISTA, and so do Ctrl-C in the terminal and closing the
+terminal. VISTA is a desktop application and has no browser mode. In a session
+that can't show the window, the launcher says why and stops before starting
+anything: an SSH session, no display, or, on Linux, running as root or missing
+system libraries (see below). If the window crashes, the launcher reports its exit
+status and stops the services. If another VISTA window is already open, the new
+one refuses to start rather than run a second stack.
+
+Paste your inference API key into the settings modal. It takes effect
+immediately; no restart. Links to other sites, including the Globus login,
+open in your default browser; VISTA's own PDFs open in a second VISTA window
+(or in your browser, on Linux without the sandbox; see below), and downloads
+ask where to save.
 
 On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
@@ -31,9 +48,48 @@ virtual machine needs nested virtualisation enabled by its host; and access is
 usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
 login is the common fix.
 
+**The window on Linux** needs a desktop session (X11 or Wayland) and four
+system libraries that every desktop install already has. A minimal server or a
+container may not have them, and then the launcher names what is missing and
+stops:
+
+| | Debian / Ubuntu | Fedora / RHEL |
+|---|---|---|
+| GTK 3 | `libgtk-3-0t64` | `gtk3` |
+| NSS | `libnss3` | `nss` |
+| ALSA | `libasound2t64` | `alsa-lib` |
+| GBM | `libgbm1` | `mesa-libgbm` |
+
+```bash
+sudo apt install libgtk-3-0t64 libnss3 libasound2t64 libgbm1   # Debian, Ubuntu
+sudo dnf install gtk3 nss alsa-lib mesa-libgbm                  # Fedora, RHEL
+```
+
+**Chromium's sandbox on Ubuntu.** The window's pages run inside Chromium's
+sandbox, which needs unprivileged user namespaces. Ubuntu 23.10 and later
+allow those only to programs an AppArmor profile names. So on stock Ubuntu the window
+starts without the sandbox, and the launcher says so on every start, with the
+two commands that turn it on. The package ships the profile. Installing it is
+a one-time step that covers every later unpack and version:
+
+```bash
+sudo install -m 644 ~/vista/vista-<version>-<platform>/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
+sudo apparmor_parser -r /etc/apparmor.d/vista-window
+```
+
+The launcher prints these with your package's own path. Debian and Fedora need
+no step. Where the host blocks user namespaces some other way, such as inside
+a container, the window also runs without the sandbox and says so, with
+nothing to install. While the sandbox is off, PDFs open in your default
+browser instead of a VISTA window, so the browser's own sandbox handles them.
+Each start writes `renderer sandbox: on` or `off (--no-sandbox)` to
+`logs/window.log` in the state directory.
+
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
-`setup.log`). The unpacked package tree is disposable. Upgrading is replacing
+`window.log`, `setup.log`). The window's own browser cache is kept apart, in
+`~/Library/Application Support/VISTA` on macOS and `~/.config/VISTA` on Linux.
+The unpacked package tree is disposable. Upgrading is replacing
 that directory, and starting over is deleting the state directory.
 
 | Variable             | Description                                                                                                                                             | Default    |
@@ -42,6 +98,7 @@ that directory, and starting over is deleting the state directory.
 | `VISTA_UI_PORT`      | Web interface                                                                                                                                           | `3000`     |
 | `VISTA_MCP_PORT`     | MCP server                                                                                                                                              | `8000`     |
 | `VISTA_BACKEND_PORT` | Backend                                                                                                                                                 | `8001`     |
+| `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab. A project's lab also needs its own repository, set in the project's settings, and git 2.34 or later. `false` turns it off everywhere. | `true` |
 
 `./vista --help` prints the same list.
 
@@ -49,12 +106,21 @@ that directory, and starting over is deleting the state directory.
 
 The build host needs the credentials and tooling so the recipient does not.
 
+**Each release, review the bundled Electron.** Its version is pinned in
+`electron/package.json`, and each package's manifest records it as
+`window.electron`. Bump it if it has fallen out of Electron's supported
+releases, and put the version in the release notes. On a Linux host that runs
+the window without the sandbox, the engine's own security fixes are all that
+stands between a page and the researcher's account.
+
 ### Build-host requirements
 
 All verified by `--check`:
 
 - `uv`, `npm`, `git`
 - Docker or Podman
+- The same platform as the package, on a machine that can run the code-execution
+  sandbox (KVM on Linux; `msb doctor` reports ready on Windows).
 - Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
   `amscrot-py` that HPC job submission needs; see
   [Prerequisites](#prerequisites) for the `url.insteadOf` rewrite. Nothing is
@@ -116,10 +182,9 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--check`                        | Run the preflight and exit; builds nothing                                                                                |
 | `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
 | `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
-| `--archive-format gz\|zstd\|none` | `gz` is the default and needs no extra tool; `zstd` is faster for a local round trip; `none` leaves the tree unpacked      |
+| `--archive-format gz\|zstd\|zip\|none` | Defaults to `gz` on unix, `zip` on Windows                                                                          |
 | `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
-| `--without-hpc`                  | Omit `amscrot-py`. HPC job submission will not work in the result, and the manifest records that                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
 
@@ -134,101 +199,22 @@ A typical rebuild, once you have a corpus clone and a vector store worth reusing
 That still downloads the embedding weights, runs `npm ci`, and builds the UI and
 the MCP app; it skips only the indexing pass and its per-paper model calls.
 
-### Building for another platform
+### Building on Windows
 
-Cross-compiling is not possible here, so the build runs inside a container of
-the target platform instead, under emulation:
-
-```bash
-./scripts/build_in_docker.sh --payload ~/.vista-build/vista-data \
-                             --vector-store ~/.vista-build/rag_db
-```
-
-Defaults to `linux/amd64`; pass `--platform` for another. Every other flag goes
-straight through to `build_local_package.sh`, and host paths given to
-`--payload` and `--vector-store` are mounted in automatically. Run
-`--check` first, as with a native build.
-
-Three things differ from a native build.
-
-The container builds from `git archive HEAD`, not from your working copy,
-because `stage_ui` and `build_mcp_app` run `npm` *inside* the source tree and
-skip the install when `node_modules` already exists. A mounted checkout would
-have its macOS `node_modules` reused under Linux. So the wrapper refuses a
-dirty tree unless you pass `--allow-dirty`, and uncommitted work is excluded
-either way.
-
-Credentials come from the environment rather than `.env`, since the extracted
-tree has no `.env` in it. `VISTA_DATA_TOKEN` and the inference variables are
-forwarded when set. `amscrot-py` needs one addition. Your keychain credential
-for gitlab.com is unreachable from a Linux container, so set `AMSC_GIT_TOKEN`
-to a gitlab.com token that can read the amsc2 repository, or build
-`--without-hpc`.
-
-**On a network that inspects TLS**, the container fails where the host
-succeeds. It has its own trust store and cannot read your system keychain, so
-downloads from any inspected host stop with `self-signed certificate in
-certificate chain` even though the same URL works outside the container. Find
-which CA is doing it, export that root, and pass it in:
+Run the same script from Git Bash (it comes with Git for Windows). It builds a
+`win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
+they run `vista.cmd`, or `vista.ps1` from PowerShell.
 
 ```bash
-openssl s_client -connect nodejs.org:443 -servername nodejs.org </dev/null 2>/dev/null | grep 'i:'
-security find-certificate -a -c <CA name> -p /Library/Keychains/System.keychain > ~/root-ca.pem
-./scripts/build_in_docker.sh --ca-bundle ~/root-ca.pem ...
+./scripts/build_local_package.sh --check
+./scripts/build_local_package.sh --vector-store data/knowledge-bases/molten-salt-papers/rag_db
 ```
 
-Set `VISTA_BUILD_CA_BUNDLE` to avoid repeating the flag. The build's failure
-message walks through this too, including the case where the bundle you
-supplied turns out to hold an intermediate rather than a root. Keep the PEM out
-of the repository; it belongs in your home directory.
-
-#### A complete Linux build from a Mac
-
-This is for building a Linux package on a macOS host. On a Linux build host,
-skip all of this: run `./scripts/build_local_package.sh` directly, as in
-[Building a prebuilt package](#building-a-prebuilt-package), and it reads `.env`
-and your git credentials like any native build.
-
-From a Mac, the build runs in a Linux container. The container gets nothing
-from `.env` or from your git credential helpers, so each of these has to be
-exported in the shell that runs the build. Only these names are forwarded into
-the container:
-
-| Variable                                                  | Needed for                                                                                                  | Skip it with                                       |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `AMSC_GIT_TOKEN`                                          | Bundling `amscrot-py`: a gitlab.com token with read access to the amsc2 repository                          | `--without-hpc`                                    |
-| `PALISADE_GITHUB_TOKEN`                                   | Installing the backend's `palisade` dependency: a GitHub PAT with read access to `herronej/palisade_siege_agentic_security` | Nothing; the backend cannot be built without it   |
-| `VISTA_DATA_TOKEN`                                        | Fetching the corpus from code.ornl.gov                                                                      | `--payload DIR`                                    |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` (or the `AZURE_OPENAI_*` trio) | Citation metadata while indexing                                                 | `--vector-store DIR` or `--without-citations`      |
-| `VISTA_BUILD_CA_BUNDLE`                                   | Only behind TLS inspection: the inspecting root CA as a PEM (same as `--ca-bundle`)                         | Omit it on an uninspected network                  |
-
-```bash
-# Tokens: however you store them, get them into these two variables.
-export AMSC_GIT_TOKEN=...          # gitlab.com, read access to amsc2
-export PALISADE_GITHUB_TOKEN=...   # GitHub, read access to palisade_siege_agentic_security
-
-# The corpus and inference variables can come straight from your .env.
-set -a; . ./.env; set +a
-
-# Behind TLS inspection (see above):
-export VISTA_BUILD_CA_BUNDLE=~/root-ca.pem
-
-./scripts/build_in_docker.sh --check \
-  --payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db
-./scripts/build_in_docker.sh \
-  --payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db
-```
-
-`--payload` and `--vector-store` point at an unpacked corpus and a built
-Chroma store (any `knowledge-bases/<kb>/rag_db` from an existing install
-works); drop them to fetch and index from scratch. Add `--platform
-linux/arm64` for ARM, and `--allow-dirty` to build `HEAD` while the working
-tree has uncommitted changes. The archive lands in `dist/`, named
-`vista-<version>-linux-x86_64.tar.gz` (or `-aarch64`). On an Apple Silicon
-Mac, the default `linux/amd64` build runs under emulation; with a reused vector
-store it took about 15 minutes. The smoke test runs in a container without
-`/dev/kvm`, so it skips the retrieval check, which needs the sandbox; verify
-that on a Linux host with KVM.
+The sandbox image is built with Docker Desktop or Podman Desktop; start its
+machine first. No C++ build tools are needed, and long paths do not have to be
+enabled: the build reports how much room its deepest path leaves for the
+folder a package is unpacked into. The archive is a zip, which Explorer's
+Extract All opens.
 
 ## Architecture
 
@@ -305,9 +291,10 @@ Important env vars:
 | VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN | " | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
-Per-user HPC credentials (S3M token, NERSC IRI token, and Globus for Odo/Frontier) are **not**
+Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
 env vars — each user connects them in the UI under User settings. Globus is a one-time
-authorization per cluster; S3M tokens follow the
+authorization per cluster. An S3M token is scoped to one OLCF project, so Odo and Frontier
+each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
@@ -328,6 +315,21 @@ You can use
 ./launch.sh terminal
 ```
 to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+
+To develop against the VISTA window rather than a browser tab:
+```bash
+./launch.sh logs --electron
+```
+This installs the window (`./scripts/build.sh --electron`, a ~290 MB Electron download the
+default build skips) and opens `http://localhost:3000` in it once the UI answers. Hot reload
+works as in a browser, DevTools are in the View menu, and closing the window stops the stack.
+It is `logs` mode only, since tmux and terminal modes don't own the services' lifetime.
+From the macOS Dock and app switcher the window reads "Electron" in development; only the
+packaged build is named VISTA. On Linux the development window makes the same sandbox check
+as the package, and the same AppArmor profile turns the sandbox on for it
+(`sudo install -m 644 electron/linux/vista-window.apparmor /etc/apparmor.d/vista-window`, then
+`sudo apparmor_parser -r /etc/apparmor.d/vista-window`). The window's code and tests are in
+[`electron/`](electron/).
 
 ### Manual launch
 Run:

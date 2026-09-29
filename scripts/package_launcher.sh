@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Start VISTA from an unpacked package. Installed at the package root as `vista`.
 #
-#   ./vista            first-run setup if needed, then start
-#   ./vista --help     show this
+#   ./vista         first-run setup if needed, then start and open the window
+#   ./vista --help  show this
+#
+# Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
+# terminal. VISTA is a desktop application: in a session that cannot show its
+# window, such as SSH, it says why and stops.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -14,6 +18,12 @@
 #   VISTA_UI_PORT       default 3000
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
+#
+#   VISTA_BACKEND_FORUM__ENABLED
+#                       The Hypothesis Lab (default: true). A project's lab
+#                       still needs its own repository, set in the project's
+#                       settings, and git 2.34 or later on PATH. Set false to
+#                       turn the lab off for every project.
 #
 #   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
 #   VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN
@@ -39,11 +49,15 @@ VERSION="$(cat "$PACKAGE/VERSION" 2>/dev/null || echo unknown)"
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
-  exit 0
-fi
-[[ $# -eq 0 ]] || die "unexpected argument: $1 (try --help)"
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+      exit 0
+      ;;
+    *) die "unexpected argument: $arg (try --help)" ;;
+  esac
+done
 
 # ─── platform guard ─────────────────────────────────────────────────────────
 
@@ -102,12 +116,9 @@ fi
 # Measured, not assumed: `rag_search` returns HTTP 500 on a host with no
 # /dev/kvm while the MCP server itself has the store open and reports 4401
 # chunks. Serving pages while the agent cannot answer anything is worse than
-# saying so up front.
-#
-# VISTA_ALLOW_NO_KVM exists for the build's own smoke test, which runs inside a
-# container where /dev/kvm is never present. It is not a way to use VISTA
-# without KVM; the checks that depend on the agent are skipped when it is set.
-if [[ "$HOST_OS" == linux && "${VISTA_ALLOW_NO_KVM:-}" != 1 ]]; then
+# saying so up front. There is no way to start without it: VISTA always needs
+# a microVM.
+if [[ "$HOST_OS" == linux ]]; then
   kvm_problem=''
   if [[ ! -e /dev/kvm ]]; then
     kvm_problem="this machine has no /dev/kvm.
@@ -225,7 +236,85 @@ export MSB_HOME="$MSB_STORE"
 # with `docker or podman not found on PATH` even though the image is present.
 export VISTA_DEV_MCP_DOCKERFILE=""
 export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
+# The backend keeps the Hypothesis Lab off unless told otherwise, and a
+# development checkout turns it on in `.env`, which a package never reads.
+# On here, because each project is still gated on its own repository and a
+# usable git; the caller's own value wins.
+export VISTA_BACKEND_FORUM__ENABLED="${VISTA_BACKEND_FORUM__ENABLED:-true}"
 LOGS="$STATE/logs"
+
+# ─── window ─────────────────────────────────────────────────────────────────
+
+# Whether this session can show a window at all, with the reason on stdout when
+# it cannot. One branch per OS, so a port adds a case rather than reworking this.
+can_show_window() {
+  case "$HOST_OS" in
+    macos)
+      # "Aqua" is a GUI login session; SSH and other background sessions
+      # report something else, and a window started there never appears.
+      local session
+      session="$(launchctl managername 2>/dev/null || true)"
+      [[ "$session" == Aqua ]] && return 0
+      echo "this session has no display (launchctl reports '${session:-nothing}', not Aqua; over SSH, for example)"
+      return 1
+      ;;
+    linux)
+      # linux-desktop-window D4. X forwarding would put the window on the far
+      # end of an SSH session, and someone there wants the address anyway.
+      if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]]; then
+        echo "this is a remote shell session"
+        return 1
+      fi
+      if [[ "$(id -u)" == 0 ]]; then
+        echo "the window does not run as root"
+        return 1
+      fi
+      if [[ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+        echo "there is no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)"
+        return 1
+      fi
+      # D6: name what is missing rather than start a window that cannot load.
+      # A desktop has all of these; a minimal server or container may not.
+      # A bare system lacks all 26 at once, so only the first few are named.
+      local missing
+      missing="$(ldd "$PACKAGE/$WINDOW_EXE" 2>/dev/null | awk '/not found/ { print $1 }' | sort -u \
+        | awk '{ n++; if (n <= 5) names = names (n > 1 ? " " : "") $1 }
+               END { if (n) printf "%s%s", names, (n > 5 ? " and " (n - 5) " more" : "") }')"
+      if [[ -n "$missing" ]]; then
+        echo "the window needs system libraries this host lacks ($missing); on Ubuntu or Debian install libgtk-3-0t64 libnss3 libasound2t64 libgbm1, on Fedora or RHEL gtk3 nss alsa-lib mesa-libgbm"
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      echo "VISTA has no window on $HOST_OS yet"
+      return 1
+      ;;
+  esac
+}
+
+# D1: the arguments the window needs on this host -- nothing, or --no-sandbox
+# where the host blocks Chromium's sandbox. window-sandbox says why, and on
+# Ubuntu how to turn it back on, and that is shown on every start that needs it.
+window_sandbox_args() {
+  [[ "$HOST_OS" == linux ]] || return 0
+  local script
+  script="$(dirname "$PACKAGE/$WINDOW_EXE")/window-sandbox"
+  [[ -x "$script" ]] || return 0
+  "$script" 2> "$LOGS/window-sandbox.log" || true
+}
+
+# VISTA is a desktop application: there is no browser mode to fall back to, so a
+# session that cannot show the window is refused here, before anything is
+# started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
+# alone and is for the build's smoke test, which has no one to look at a window.
+WINDOW_EXE="$(manifest_field exe)"
+if [[ "${VISTA_NO_WINDOW:-}" != 1 ]]; then
+  [[ -n "$WINDOW_EXE" && -x "$PACKAGE/$WINDOW_EXE" ]] \
+    || die "this package has no VISTA window; rebuild it with build_local_package.sh."
+  reason="$(can_show_window)" \
+    || die "cannot open the VISTA window: $reason."
+fi
 
 # ─── first-run setup ────────────────────────────────────────────────────────
 
@@ -234,17 +323,23 @@ mkdir -p "$STATE" "$LOGS"
 FIRST_RUN=false
 [[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
 
-# The payload is copied out of the package rather than read in place, for two
-# reasons: the knowledge-base row records absolute paths, so reading in place
-# would break when the package is replaced; and the corpus is the researcher's
-# to add to. Each part is skipped when already present, which is what makes a
-# second run cheap and an upgrade a directory replacement.
+# The payload is extracted out of the package rather than read in place, for
+# two reasons: the knowledge-base row records absolute paths, so reading in
+# place would break when the package is replaced; and the corpus is the
+# researcher's to add to. Each part is skipped when already present, which is
+# what makes a second run cheap and an upgrade a directory replacement.
+#
+# It ships as one tar rather than as folders because some corpus file names
+# are long enough that, under the package folder, they would pass Windows'
+# path-length limit; see build_local_package.sh's pack_payload.
+missing=()
 for part in vista-data knowledge-bases huggingface; do
-  if [[ -d "$PACKAGE/payload/$part" && ! -e "$STATE/$part" ]]; then
-    log "First run: installing $part..."
-    cp -R "$PACKAGE/payload/$part" "$STATE/$part"
-  fi
+  [[ -e "$STATE/$part" ]] || missing+=("$part")
 done
+if (( ${#missing[@]} > 0 )) && [[ -f "$PACKAGE/payload/payload.tar" ]]; then
+  log "First run: installing ${missing[*]}..."
+  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
+fi
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
   -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
@@ -268,24 +363,94 @@ load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
 
 # ─── services ───────────────────────────────────────────────────────────────
 
+# Every service is started as the leader of its own process group, so stopping
+# it reaches everything it started, not only the process we hold a PID for. The
+# backend starts a sandbox server through `uv run` for each agent session, and
+# that starts microVMs: killed by PID alone, those outlive the launcher and hold
+# ports, and the next start refuses with "port in use".
+set -m
+
 PIDS=()
+STOP_GRACE_SECONDS=10
+
+# Signals every group, waits for them to go, then kills what is left. The
+# signals go out in reverse start order but without waiting between them, so
+# this does not sequence the shutdown: every service is told within
+# milliseconds, and the grace period below is what gives slow ones time.
+#
+# HUP is trapped with the rest because closing the Terminal window sends it,
+# and every output line here is guarded because that terminal may already be
+# gone: a write error inside the trap would otherwise abort it under `set -e`
+# with the services still running.
+#
+# A service's own group is not always enough. The backend's MCP client starts
+# each sandbox server (`uv run dev-mcp-server`, its Python, its `msb`) in a new
+# group of its own. On TERM the backend closes those itself, but if it has to
+# be killed they would be orphaned. So every group below each service is
+# collected first, while the process tree still links them, and anything left
+# in any of them after the grace period is killed.
+descendant_groups() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    ps -o pgid= -p "$child" 2>/dev/null | tr -d ' '
+    descendant_groups "$child"
+  done
+}
+
+STOPPING=false
 stop() {
-  trap - INT TERM EXIT
-  log ""
-  log "Stopping VISTA..."
-  local pid
+  trap - INT TERM HUP EXIT
+  STOPPING=true
+  { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
+  # Job control reports each service it sees die ("line 301: 78461
+  # Terminated: 15 ..."), which reads like a failure. Nothing after this point
+  # has anything to say on stderr, and this is the script's last act.
+  exec 2>/dev/null
+  local i pid group groups=() own_group
+  # Never our own group: that one holds the shell this was started from.
+  own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
+    groups+=("$pid")
+    for group in $(descendant_groups "$pid"); do
+      [[ "$group" == "$own_group" || " ${groups[*]} " == *" $group "* ]] || groups+=("$group")
+    done
+  done
+  for (( i = ${#PIDS[@]} - 1; i >= 0; i-- )); do
+    pid="${PIDS[i]}"
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  done
+  local waited=0 alive
+  while (( waited < STOP_GRACE_SECONDS * 4 )); do
+    alive=false
+    for group in ${groups[@]+"${groups[@]}"}; do
+      kill -0 -- "-$group" 2>/dev/null && alive=true && break
+    done
+    [[ "$alive" == true ]] || break
+    perl -e 'select(undef, undef, undef, 0.25)' 2>/dev/null || sleep 1
+    waited=$(( waited + 1 ))
+  done
+  for group in ${groups[@]+"${groups[@]}"}; do
+    kill -KILL -- "-$group" 2>/dev/null || true
   done
   wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
 }
-trap stop INT TERM EXIT
+trap stop INT TERM HUP EXIT
+
+# Under `set -m` a foreground command is a process group of its own, and the
+# terminal delivers Ctrl-C to that group alone: the shell never sees it, the INT
+# trap never runs, and the wait carries on. Run as a background job and waited
+# for, the command leaves the shell in the terminal's foreground, so Ctrl-C
+# reaches the shell and interrupts `wait` at once.
+interruptible() {
+  "$@" &
+  wait $!
+}
 
 wait_for() {
   local url="$1" seconds="$2" logfile="$3" what="$4" i
   for (( i = 0; i < seconds; i++ )); do
-    curl -s -o /dev/null -m 5 "$url" && return 0
-    perl -e 'select(undef, undef, undef, 1)' 2>/dev/null || sleep 1
+    interruptible curl -s -o /dev/null -m 5 "$url" && return 0
+    interruptible sleep 1
   done
   echo >&2
   echo "error: $what did not start within ${seconds}s. Last lines of $logfile:" >&2
@@ -316,8 +481,75 @@ PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
 PIDS+=($!)
 wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
 
-log ""
-log "VISTA is running at http://localhost:$UI_PORT"
-log "Press Ctrl-C to stop."
+# ─── window ─────────────────────────────────────────────────────────────────
 
-wait
+# 127.0.0.1, not localhost: it is what the UI binds, and localhost can resolve
+# to ::1 first. It is also the origin the window's storage is kept under, so it
+# has to be the same on every run.
+UI_URL="http://127.0.0.1:$UI_PORT"
+
+# The window exits with this when another VISTA window already holds the
+# single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
+WINDOW_ALREADY_OPEN=75
+
+WINDOW_PID=''
+start_window() {
+  "$PACKAGE/$WINDOW_EXE" "$@" --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
+  WINDOW_PID=$!
+  PIDS+=("$WINDOW_PID")
+}
+
+if [[ "${VISTA_NO_WINDOW:-}" == 1 ]]; then
+  log ""
+  log "VISTA is running at $UI_URL (no window: VISTA_NO_WINDOW is set)"
+  log "Press Ctrl-C to stop."
+  wait
+  exit 0
+fi
+
+# D1: window-sandbox says whether the host needs --no-sandbox, and why.
+sandbox_arg="$(window_sandbox_args)"
+if [[ -n "$sandbox_arg" ]]; then
+  log ""
+  while IFS= read -r line; do log "$line"; done < "$LOGS/window-sandbox.log"
+  start_window "$sandbox_arg"
+else
+  start_window
+  # window-sandbox cannot tell an AppArmor profile that is loaded from one that
+  # is only installed, and Chromium aborts at once when its sandbox cannot start.
+  # So a window that dies within a few seconds on Linux is started once more
+  # without the sandbox, with the reason, instead of ending the session.
+  if [[ "$HOST_OS" == linux ]]; then
+    for (( i = 0; i < 20; i++ )); do
+      kill -0 "$WINDOW_PID" 2>/dev/null || break
+      interruptible sleep 0.25
+    done
+    early_status=0
+    kill -0 "$WINDOW_PID" 2>/dev/null || wait "$WINDOW_PID" || early_status=$?
+    if [[ "$early_status" != 0 && "$early_status" != "$WINDOW_ALREADY_OPEN" ]]; then
+      log ""
+      log "The VISTA window stopped at start (exit $early_status); trying again without Chromium's sandbox."
+      log "If it starts, this host blocks the sandbox; the first attempt is in $LOGS/window-first-attempt.log."
+      cp "$LOGS/window.log" "$LOGS/window-first-attempt.log"
+      PIDS=("${PIDS[@]:0:${#PIDS[@]}-1}")
+      start_window --no-sandbox
+    fi
+  fi
+fi
+
+log ""
+log "VISTA is open in its own window ($UI_URL)."
+log "Close the window, or press Ctrl-C here, to stop."
+# The window closing or quitting ends the session; the EXIT trap stops the
+# rest. A trapped signal interrupts this wait and runs `stop` first, and the
+# script then carries on here -- so STOPPING, not the status, says whether it
+# was a stop.
+window_status=0
+wait "$WINDOW_PID" || window_status=$?
+if [[ "$window_status" == 0 || "$STOPPING" == true ]]; then
+  exit 0
+fi
+if [[ "$window_status" == "$WINDOW_ALREADY_OPEN" ]]; then
+  die "VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it."
+fi
+die "the VISTA window stopped unexpectedly (exit $window_status); see $LOGS/window.log."

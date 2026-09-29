@@ -318,6 +318,60 @@ async def test_an_unpostable_kind_is_rejected(forum_config, app_client, session,
 
 
 @pytest.mark.anyio
+async def test_opening_a_debate_with_no_inference_key_says_where_to_add_one(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """
+    With no key anywhere, opening a debate is the same named condition as a
+    chat: 409 and the settings location, not a 500 from deep in the provider.
+    Nothing is opened on the forum either, since the debate could not argue.
+    """
+    from vista_backend.agents.inference import SETTINGS_LOCATION
+
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(settings, "model", "openai:deployment-model")
+    project = await _project(session, alice)
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates", json={"topic": "why does the knee move?"}
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert SETTINGS_LOCATION in resp.json()["detail"]
+    assert await debate_service.list_debates(session, project_id=project.id) == []
+
+
+@pytest.mark.anyio
+async def test_continuing_a_debate_whose_opener_has_no_key_says_where_to_add_one(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """
+    More rounds run on the opener's settings, so with no key there the request
+    is refused up front, rather than accepted and then failing in a background
+    task where nobody sees why.
+    """
+    from vista_backend.agents.inference import SETTINGS_LOCATION
+
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(settings, "openai_api_key", None)
+    monkeypatch.setattr(settings, "model", "openai:deployment-model")
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    await debate_service.set_status(session, run_id=run.id, status="converged")
+
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates/{run.id}/continue", json={"rounds": 1}
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert SETTINGS_LOCATION in resp.json()["detail"]
+    assert (await debate_service.require_debate(session, run.id)).status == "converged"
+
+
+@pytest.mark.anyio
 async def test_closing_ends_the_debate_on_the_forum_too(
     forum_config, app_client, session, alice
 ):

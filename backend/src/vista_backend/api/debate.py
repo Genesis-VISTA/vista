@@ -28,7 +28,8 @@ from ..agents.forum.project_forum import (
     forum_url_of,
     lab_enabled,
 )
-from ..agents.forum.wiring import continue_debate_task, run_debate_task
+from ..agents.forum.wiring import continue_debate_task, opener_of, run_debate_task
+from ..agents.inference import require_inference_credential
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
     DebateCreate,
@@ -237,11 +238,14 @@ async def open_debate(
     Open a thread, attach the roster, and start arguing in the background.
     """
     project = await project_service.get_project_by_name(session, project_name, user)
+    # Before anything is opened on the forum: without a key the debate could not
+    # argue, and a 409 naming the setting beats a 500 from inside the provider.
+    require_inference_credential(user)
 
     from ..agents.forum.wiring import build_orchestrator
 
     try:
-        run = await build_orchestrator(build_client_for(project)).start(
+        run = await build_orchestrator(build_client_for(project), user=user).start(
             session,
             project_id=project.id,
             user_id=user.id,
@@ -425,6 +429,9 @@ async def continue_debate(
             status_code=503,
             detail=f"Project {project.name!r} has no Hypothesis Lab.",
         )
+    # The rounds run on the opener's settings (`opener_of`), who may not be the
+    # person continuing, so it is their credential that has to be there.
+    require_inference_credential(await opener_of(session, run))
 
     payload = DebateRunPublic.model_validate(run)
     extra = body.rounds
