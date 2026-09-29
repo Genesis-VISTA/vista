@@ -227,6 +227,7 @@ describe("UserSettingsModal: Lux", () => {
     expect(header("Lux")).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     expect(lux.querySelectorAll("input:not([role=switch]), textarea, a")).toHaveLength(0);
+    expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
   });
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {
