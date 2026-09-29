@@ -175,7 +175,7 @@ uv run python scripts/metrics_report.py --metrics results/hpc-dryrun.jsonl
 ```
 
 > **Real submits.** For real cluster numbers, relaunch with
-> `VISTA_MCP_HPC_DRY_RUN` unset, configure a user's S3M token (UI → User
+> `VISTA_MCP_HPC_DRY_RUN` unset, configure a user's per-cluster S3M token (UI → User
 > settings), and run loadgen in `--mode agent` against an HPC-submitting skill.
 > Report `stage.hpc.submit` (platform) separately from queue wait observed via
 > `stage.hpc.status` (facility), so the two are not conflated.

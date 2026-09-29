@@ -8,7 +8,6 @@ os.environ.setdefault("VISTA_BACKEND_MODEL", "test")
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -59,12 +58,25 @@ def _no_inherited_vista_data(monkeypatch):
 
 
 @pytest.fixture
-async def session():
-    """A fresh in-memory SQLite DB with all tables created, shared across the test."""
+async def engine(tmp_path_factory):
+    """
+    The in-memory engine behind `session`.
+
+    Exposed separately so a test can open a *second* session on the same
+    database — which anything testing concurrent readers and writers needs, since
+    two sessions on one connection would just share a transaction and never see
+    each other's commits.
+    """
+    # A file in a temp directory rather than `sqlite://` on a StaticPool. The
+    # in-memory form has to pin every session to one connection to keep the same
+    # database, which means concurrent sessions share a transaction: they see
+    # each other's uncommitted rows, and they interleave inside it. Both are
+    # untrue of the real deployment, and both have produced misleading results
+    # here — a test that passed with a commit removed, and an intermittent
+    # "Could not refresh instance" in the streaming test.
     engine = create_async_engine(
-        "sqlite+aiosqlite://",
+        f"sqlite+aiosqlite:///{tmp_path_factory.mktemp('db') / 'test.db'}",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
     )
 
     # Match production: SQLite needs FK enforcement on for ON DELETE CASCADE to fire.
@@ -76,9 +88,15 @@ async def session():
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(engine):
+    """A fresh in-memory SQLite DB with all tables created, shared across the test."""
     async with AsyncSession(engine) as s:
         yield s
-    await engine.dispose()
 
 
 async def _make_user(session: AsyncSession, *, is_admin: bool) -> UserPublicWithConfig:
@@ -103,3 +121,41 @@ async def alice(session) -> UserPublicWithConfig:
 @pytest.fixture
 async def bob(session) -> UserPublicWithConfig:
     return await _make_user(session, is_admin=False)
+
+
+@pytest.fixture
+def git_ok(monkeypatch):
+    """Treat this host as having a usable git, whatever it has."""
+    from vista_backend.agents.forum import project_forum
+    from vista_backend.services.git_check import GitCheck
+
+    found = GitCheck(ok=True, path="/usr/bin/git", version=(2, 50))
+    monkeypatch.setattr(project_forum, "git_status", lambda: found)
+    return found
+
+
+@pytest.fixture
+def fake_forum(monkeypatch, git_ok):
+    """
+    Every project's forum is the in-memory `FakeForumClient`.
+
+    For tests about what VISTA does with a thread. The real client is tested
+    against real git in `test_forum_git.py`.
+    """
+    from harness import fake_forum as module
+    from vista_backend.agents.forum import project_forum
+
+    module.reset()
+    monkeypatch.setattr(project_forum, "client_factory", module.FakeForumClient)
+    yield module
+    module.reset()
+
+
+@pytest.fixture
+def client(tmp_path, fake_forum):
+    """A forum client on a throwaway forum."""
+    from vista_backend.config import ForumSettings
+
+    return fake_forum.FakeForumClient(
+        ForumSettings(enabled=True, repo_root=tmp_path / "forum", timeout=30.0)
+    )

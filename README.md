@@ -228,9 +228,10 @@ Important env vars:
 | VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN | " | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
-Per-user HPC credentials (S3M token, NERSC IRI token, and Globus for Odo/Frontier) are **not**
+Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
 env vars — each user connects them in the UI under User settings. Globus is a one-time
-authorization per cluster; S3M tokens follow the
+authorization per cluster. An S3M token is scoped to one OLCF project, so Odo and Frontier
+each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 

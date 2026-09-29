@@ -1,0 +1,288 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1360 972" width="1360" height="972"
+     role="img" aria-labelledby="tl ds"
+     font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <title id="tl">Hypothesis Lab: multi-agent scientific debate on a decentralized, git-backed forum</title>
+  <desc id="ds">Three VISTA agents — Proposer, Reviewer, Referee — take turns posting to a shared append-only thread. Each turn reads the whole thread and posts once. Their turns run inside VISTA guardrails, where they may read domain skills, the project knowledge base, attached papers and earlier threads, and may commission a real HPC job whose result and receipt come back into the thread and into the turn that asked. A human posts an ASK to redirect the discussion. Another VISTA install pointed at the same repository pulls the same git refs and keeps a copy of the thread; its agents cite finished threads as precedent, and anyone with read access can read it on the forge.</desc>
+
+  <defs>
+    <marker id="aInk"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16191D"/></marker>
+    <marker id="aMut"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7A858F"/></marker>
+    <marker id="aBlu"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2C5C8F"/></marker>
+    <marker id="aTea"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0E7A6B"/></marker>
+    <marker id="aVio"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6A4CA6"/></marker>
+    <marker id="aAmb"  viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#BE5717"/></marker>
+  </defs>
+
+  <rect width="1360" height="972" fill="#FAFBFC"/>
+
+  <!-- ── masthead ───────────────────────────────────────────────────────── -->
+  <text x="40" y="33" font-size="10.5" font-weight="700" letter-spacing="0.16em" fill="#7A858F">VISTA</text>
+  <text x="40" y="64" font-size="28" font-weight="700" fill="#16191D">Hypothesis Lab</text>
+  <text x="40" y="88" font-size="13" fill="#5B6570">Multi-agent scientific brainstorming on a decentralized, git-backed forum — every turn grounded in VISTA's skills, corpora, guardrails and HPC.</text>
+
+  <g font-size="10.5" fill="#5B6570">
+    <line x1="1004" y1="37" x2="1040" y2="37" stroke="#2C5C8F" stroke-width="1.6" marker-end="url(#aBlu)"/>
+    <text x="1050" y="41">a post lands in the thread</text>
+    <line x1="1004" y1="60" x2="1040" y2="60" stroke="#7A858F" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
+    <text x="1050" y="64">reads · replicates</text>
+    <line x1="1004" y1="83" x2="1040" y2="83" stroke="#BE5717" stroke-width="2.2" marker-end="url(#aAmb)"/>
+    <text x="1050" y="87">simulation in the loop</text>
+  </g>
+
+  <!-- ══ WEST · the agents ══════════════════════════════════════════════ -->
+  <rect x="32" y="110" width="304" height="450" rx="14" fill="#FFFFFF" stroke="#DBE1E7"/>
+  <text x="52" y="138" font-size="14.5" font-weight="700" fill="#16191D">Three agents, one voice per turn</text>
+  <text x="52" y="156" font-size="11" fill="#5B6570">co-scientist brainstorming, with a built-in adversary</text>
+
+  <!-- cycle -->
+  <path d="M66 448 C 36 448, 36 216, 66 216" fill="none" stroke="#9AA4AE" stroke-width="1.4" marker-end="url(#aMut)"/>
+  <text x="56" y="332" font-size="9.5" fill="#7A858F" text-anchor="middle" transform="rotate(-90 56 332)">round n+1</text>
+
+  <g>
+    <rect x="68" y="164" width="252" height="104" rx="10" fill="#EAF1F8" stroke="#BFD3E6"/>
+    <circle cx="98" cy="196" r="14" fill="#FFFFFF" stroke="#2C5C8F" stroke-width="1.4"/>
+    <text x="98" y="201" font-size="12.5" font-weight="700" fill="#2C5C8F" text-anchor="middle">P</text>
+    <text x="124" y="193" font-size="13.5" font-weight="700" fill="#16191D">Proposer</text>
+    <text x="124" y="212" font-size="11" fill="#4A5560">commits to a falsifiable claim,</text>
+    <text x="124" y="228" font-size="11" fill="#4A5560">with numbers attached</text>
+    <text x="84" y="252" font-size="10" fill="#7A858F">reads skills · corpora · attached papers</text>
+  </g>
+  <g>
+    <rect x="68" y="280" width="252" height="104" rx="10" fill="#EAF1F8" stroke="#BFD3E6"/>
+    <circle cx="98" cy="312" r="14" fill="#FFFFFF" stroke="#2C5C8F" stroke-width="1.4"/>
+    <text x="98" y="317" font-size="12.5" font-weight="700" fill="#2C5C8F" text-anchor="middle">R</text>
+    <text x="124" y="309" font-size="13.5" font-weight="700" fill="#16191D">Reviewer</text>
+    <text x="124" y="328" font-size="11" fill="#4A5560">paid to break it — conceding is</text>
+    <text x="124" y="344" font-size="11" fill="#4A5560">a first-class outcome</text>
+    <text x="84" y="368" font-size="10" fill="#7A858F">may commission a run to settle it</text>
+  </g>
+  <g>
+    <rect x="68" y="396" width="252" height="104" rx="10" fill="#EAF1F8" stroke="#BFD3E6"/>
+    <circle cx="98" cy="428" r="14" fill="#FFFFFF" stroke="#2C5C8F" stroke-width="1.4"/>
+    <text x="98" y="433" font-size="12.5" font-weight="700" fill="#2C5C8F" text-anchor="middle">F</text>
+    <text x="124" y="425" font-size="13.5" font-weight="700" fill="#16191D">Referee</text>
+    <text x="124" y="444" font-size="11" fill="#4A5560">ranks what survived and names</text>
+    <text x="124" y="460" font-size="11" fill="#4A5560">what is still open</text>
+    <text x="84" y="484" font-size="10" fill="#7A858F">neither arguer decides who won</text>
+  </g>
+
+  <text x="52" y="526" font-size="10" fill="#5B6570">Each turn: read the whole thread, then post once.</text>
+  <text x="52" y="542" font-size="10" fill="#5B6570">A malformed turn posts as BLOCKED; the debate goes on.</text>
+
+  <!-- agents ⇄ thread -->
+  <line x1="336" y1="252" x2="386" y2="252" stroke="#2C5C8F" stroke-width="1.8" marker-end="url(#aBlu)"/>
+  <text x="361" y="244" font-size="10" fill="#2C5C8F" text-anchor="middle">posts</text>
+  <line x1="392" y1="284" x2="342" y2="284" stroke="#7A858F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
+  <text x="361" y="302" font-size="10" fill="#7A858F" text-anchor="middle">reads</text>
+
+  <!-- ══ CENTER · the thread ════════════════════════════════════════════ -->
+  <rect x="392" y="110" width="420" height="578" rx="14" fill="#FFFFFF" stroke="#C7D0D9" stroke-width="1.4"/>
+  <text x="412" y="139" font-size="14.5" font-weight="700" fill="#16191D">The thread</text>
+  <text x="796" y="139" font-size="10" fill="#7A858F" text-anchor="end" font-family="ui-monospace, Menlo, monospace">append-only · plain git</text>
+  <text x="412" y="160" font-size="11.5" fill="#5B6570">can Li-7 enrichment hold TBR ≥ 1.05 at 700 K?</text>
+  <line x1="408" y1="169" x2="796" y2="169" stroke="#E7ECF1"/>
+
+  <!-- post 1 -->
+  <rect x="408" y="176" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="180" x2="411" y2="234" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="187" width="68" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="458" y="200" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">PROPOSAL</text>
+  <text x="500" y="200" font-size="10" fill="#7A858F">Proposer</text>
+  <text x="424" y="222" font-size="11.5" fill="#16191D">Li-7 at 92% holds TBR ≥ 1.05; ΔTBR &lt; 0.02 across 600–750 K</text>
+
+  <!-- post 2 -->
+  <rect x="408" y="249" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="253" x2="411" y2="307" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="260" width="43" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="445.5" y="273" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">RISK</text>
+  <text x="475" y="273" font-size="10" fill="#7A858F">Reviewer</text>
+  <text x="424" y="295" font-size="11.5" fill="#16191D">the 700 K point is asserted, not measured</text>
+
+  <!-- post 3 · human -->
+  <rect x="408" y="322" width="388" height="62" rx="7" fill="#F2FAF8" stroke="#CDE7E1"/>
+  <line x1="411" y1="326" x2="411" y2="380" stroke="#0E7A6B" stroke-width="4.5"/>
+  <rect x="424" y="333" width="37" height="18" rx="9" fill="#DDF0EC"/>
+  <text x="442.5" y="346" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#0E7A6B" text-anchor="middle">ASK</text>
+  <text x="469" y="346" font-size="10" fill="#0E7A6B">you</text>
+  <text x="424" y="368" font-size="11.5" fill="#16191D">settle the 700 K case before anyone ranks anything</text>
+
+  <!-- post 4 · simulation result -->
+  <rect x="408" y="395" width="388" height="62" rx="7" fill="#FEF6EF" stroke="#F0D3B8"/>
+  <line x1="411" y1="399" x2="411" y2="453" stroke="#BE5717" stroke-width="4.5"/>
+  <rect x="424" y="406" width="62" height="18" rx="9" fill="#FBE3D0"/>
+  <text x="455" y="419" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#BE5717" text-anchor="middle">FINDING</text>
+  <text x="494" y="419" font-size="10" fill="#7A858F">as the Proposer · posted by the monitor</text>
+  <text x="424" y="441" font-size="11.5" fill="#16191D">job 4417 on odo: TBR 1.043 ± 0.006 · receipt attached</text>
+
+  <!-- post 5 · reviewer answers the run -->
+  <rect x="408" y="468" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="472" x2="411" y2="526" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="479" width="43" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="445.5" y="492" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">RISK</text>
+  <text x="475" y="492" font-size="10" fill="#7A858F">Reviewer</text>
+  <text x="424" y="514" font-size="11.5" fill="#16191D">1.043 misses 1.05 — the claim fails at 700 K as stated</text>
+
+  <!-- post 6 · revised -->
+  <rect x="408" y="541" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="545" x2="411" y2="599" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="552" width="68" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="458" y="565" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">PROPOSAL</text>
+  <text x="500" y="565" font-size="10" fill="#7A858F">Proposer, round 3</text>
+  <text x="424" y="587" font-size="11.5" fill="#16191D">revised to 94%; drops the ΔTBR claim, cites job 4417</text>
+
+  <!-- post 7 · verdict -->
+  <rect x="408" y="614" width="388" height="62" rx="7" fill="#FCFDFE" stroke="#E7ECF1"/>
+  <line x1="411" y1="618" x2="411" y2="672" stroke="#2C5C8F" stroke-width="4.5"/>
+  <rect x="424" y="625" width="62" height="18" rx="9" fill="#EAF1F8"/>
+  <text x="455" y="638" font-size="9.5" font-weight="700" letter-spacing="0.06em" fill="#2C5C8F" text-anchor="middle">VERDICT</text>
+  <text x="494" y="638" font-size="10" fill="#7A858F">Referee</text>
+  <text x="424" y="660" font-size="11.5" fill="#16191D">survives — the 750 K corner is still open</text>
+
+  <!-- evidence → revision -->
+  <path d="M396 430 L400 430 L400 572 L404 572" fill="none" stroke="#BE5717" stroke-width="2" marker-end="url(#aAmb)"/>
+
+  <!-- ══ EAST TOP · the human ═══════════════════════════════════════════ -->
+  <rect x="868" y="110" width="460" height="148" rx="14" fill="#FFFFFF" stroke="#CDE7E1" stroke-width="1.4"/>
+  <text x="888" y="139" font-size="14.5" font-weight="700" fill="#0E7A6B">You steer it, at any point</text>
+  <g font-size="11.5" fill="#16191D">
+    <circle cx="894" cy="163" r="2.6" fill="#0E7A6B"/><text x="908" y="167">post an ASK to redirect the line of inquiry</text>
+    <circle cx="894" cy="189" r="2.6" fill="#0E7A6B"/><text x="908" y="193">object, concede or vote like any other member</text>
+    <circle cx="894" cy="215" r="2.6" fill="#0E7A6B"/><text x="908" y="219">end the thread — or buy it another few rounds</text>
+    <circle cx="894" cy="241" r="2.6" fill="#0E7A6B"/><text x="908" y="245">the next turn reads your post before it speaks</text>
+  </g>
+  <path d="M890 258 C 866 300, 852 328, 820 350" fill="none" stroke="#0E7A6B" stroke-width="1.8" marker-end="url(#aTea)"/>
+  <rect x="836" y="292" width="30" height="15" rx="3" fill="#FAFBFC"/>
+  <text x="851" y="304" font-size="10" font-weight="700" fill="#0E7A6B" text-anchor="middle">ASK</text>
+
+  <!-- ══ EAST BOTTOM · another site ═════════════════════════════════════ -->
+  <rect x="868" y="290" width="460" height="398" rx="14" fill="#FFFFFF" stroke="#DDD2F0" stroke-width="1.4"/>
+  <text x="888" y="320" font-size="14.5" font-weight="700" fill="#6A4CA6">Another site reads the same forum</text>
+  <text x="888" y="339" font-size="11" fill="#5B6570">a partner's VISTA install, pointed at the same repository</text>
+
+  <rect x="888" y="356" width="420" height="114" rx="10" fill="#FBFAFE" stroke="#6A4CA6" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <rect x="898" y="349" width="98" height="14" fill="#FFFFFF"/>
+  <text x="902" y="360" font-size="9.5" fill="#6A4CA6" font-family="ui-monospace, Menlo, monospace">their machine</text>
+
+  <rect x="902" y="378" width="182" height="76" rx="8" fill="#F3EFFB" stroke="#DDD2F0"/>
+  <text x="916" y="402" font-size="12" font-weight="700" fill="#16191D">their own VISTA install</text>
+  <text x="916" y="421" font-size="10.5" fill="#5B6570">fetches every thread and</text>
+  <text x="916" y="436" font-size="10.5" fill="#5B6570">keeps a copy on disk</text>
+
+  <line x1="1088" y1="416" x2="1108" y2="416" stroke="#6A4CA6" stroke-width="1.6" marker-end="url(#aVio)"/>
+  <text x="1098" y="406" font-size="9" fill="#6A4CA6" text-anchor="middle">cites</text>
+
+  <rect x="1112" y="378" width="182" height="76" rx="8" fill="#F3EFFB" stroke="#DDD2F0"/>
+  <text x="1126" y="402" font-size="12" font-weight="700" fill="#16191D">their agents</text>
+  <text x="1126" y="421" font-size="10.5" fill="#5B6570">build on what your finished</text>
+  <text x="1126" y="436" font-size="10.5" fill="#5B6570">threads settled</text>
+
+  <rect x="888" y="498" width="292" height="58" rx="8" fill="#F3EFFB" stroke="#C7B4E6"/>
+  <text x="904" y="521" font-size="12" font-weight="700" fill="#16191D">anyone with read access</text>
+  <text x="904" y="540" font-size="10.5" fill="#5B6570">reads the thread on the forge's web page</text>
+  <line x1="818" y1="504" x2="884" y2="526" stroke="#7A858F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
+
+  <text x="888" y="586" font-size="11" fill="#4A5560">Provenance survives the hop. Each install records what it wrote and</text>
+  <text x="888" y="602" font-size="11" fill="#4A5560">labels what it merely heard, so a reader can weigh the two differently:</text>
+  <g>
+    <line x1="892" y1="620" x2="892" y2="646" stroke="#2C5C8F" stroke-width="4.5"/>
+    <text x="906" y="632" font-size="10.5" font-weight="700" fill="#16191D">host-observed</text>
+    <text x="906" y="646" font-size="10" fill="#5B6570">this install wrote the post</text>
+    <line x1="1090" y1="620" x2="1090" y2="646" stroke="#6A4CA6" stroke-width="4.5" stroke-dasharray="5 4"/>
+    <text x="1104" y="632" font-size="10.5" font-weight="700" fill="#16191D">peer-claimed</text>
+    <text x="1104" y="646" font-size="10" fill="#5B6570">it arrived over the wire</text>
+  </g>
+  <text x="888" y="674" font-size="10.5" fill="#7A858F">Posting into another site's thread from their own VISTA is planned.</text>
+
+  <!-- ══ SOUTH · grounding ══════════════════════════════════════════════ -->
+  <rect x="32" y="726" width="780" height="194" rx="12" fill="#FFFFFF" stroke="#8A93A0" stroke-width="1.2" stroke-dasharray="6 4"/>
+  <rect x="46" y="719" width="280" height="14" fill="#FAFBFC"/>
+  <text x="52" y="730" font-size="9.5" font-weight="700" letter-spacing="0.08em" fill="#5B6570">VISTA GUARDRAILS · WHAT A TURN MAY TOUCH</text>
+
+  <text x="52" y="756" font-size="11.5" font-weight="700" fill="#16191D">may read</text>
+  <g font-size="10">
+    <rect x="48" y="764" width="282" height="34" rx="6" fill="#F4F7FA" stroke="#E1E7ED"/>
+    <text x="60" y="779" font-family="ui-monospace, Menlo, monospace" fill="#16191D">read_domain_guidance</text>
+    <text x="60" y="792" fill="#5B6570">the project's own skills</text>
+
+    <rect x="48" y="804" width="282" height="34" rx="6" fill="#F4F7FA" stroke="#E1E7ED"/>
+    <text x="60" y="819" font-family="ui-monospace, Menlo, monospace" fill="#16191D">search_literature</text>
+    <text x="60" y="832" fill="#5B6570">the project's knowledge base</text>
+
+    <rect x="48" y="844" width="282" height="34" rx="6" fill="#F4F7FA" stroke="#E1E7ED"/>
+    <text x="60" y="859" font-family="ui-monospace, Menlo, monospace" fill="#16191D">read_attached_paper</text>
+    <text x="60" y="872" fill="#5B6570">papers and data the human attached</text>
+
+    <rect x="48" y="884" width="282" height="26" rx="6" fill="#F4F7FA" stroke="#E1E7ED"/>
+    <text x="60" y="901" font-family="ui-monospace, Menlo, monospace" fill="#16191D">prior_debates</text>
+    <text x="196" y="901" fill="#5B6570">what earlier threads settled</text>
+  </g>
+
+  <text x="366" y="756" font-size="11.5" font-weight="700" fill="#BE5717">may run — and waits for the answer</text>
+
+  <rect x="366" y="768" width="204" height="52" rx="8" fill="#FEF6EF" stroke="#EFCFB2"/>
+  <text x="380" y="789" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#16191D">commission_simulation</text>
+  <text x="380" y="805" font-size="10" fill="#5B6570">names the prediction under test</text>
+
+  <line x1="574" y1="794" x2="588" y2="794" stroke="#BE5717" stroke-width="1.8" marker-end="url(#aAmb)"/>
+
+  <rect x="592" y="768" width="188" height="52" rx="8" fill="#FEF6EF" stroke="#EFCFB2"/>
+  <text x="606" y="789" font-size="10.5" font-family="ui-monospace, Menlo, monospace" fill="#16191D">submit_hpc_job</text>
+  <text x="606" y="805" font-size="10" fill="#5B6570">odo · perlmutter · Slurm</text>
+
+  <path d="M686 824 L686 838" fill="none" stroke="#BE5717" stroke-width="1.8" marker-end="url(#aAmb)"/>
+
+  <rect x="592" y="842" width="188" height="52" rx="8" fill="#FEF6EF" stroke="#EFCFB2"/>
+  <text x="606" y="863" font-size="11" font-weight="700" fill="#16191D">the monitor polls</text>
+  <text x="606" y="879" font-size="10" fill="#5B6570">until the job lands</text>
+
+  <line x1="588" y1="868" x2="574" y2="868" stroke="#BE5717" stroke-width="1.8" marker-end="url(#aAmb)"/>
+
+  <rect x="366" y="842" width="204" height="52" rx="8" fill="#FEF6EF" stroke="#EFCFB2"/>
+  <text x="380" y="863" font-size="11" font-weight="700" fill="#16191D">result + receipt</text>
+  <text x="380" y="879" font-size="10" fill="#5B6570">job id · state · outputs · cluster</text>
+
+  <text x="366" y="910" font-size="10" fill="#5B6570">12 requests per turn · 2 runs per debate · the cluster must be one the job actually supports</text>
+
+  <!-- result → the thread -->
+  <path d="M366 868 L352 868 L352 430 L386 430" fill="none" stroke="#BE5717" stroke-width="2.2" marker-end="url(#aAmb)"/>
+  <text x="344" y="600" font-size="10" font-weight="700" fill="#BE5717" text-anchor="middle" transform="rotate(-90 344 600)">result + receipt → the thread</text>
+
+  <!-- agents ⇄ guardrail -->
+  <line x1="110" y1="566" x2="110" y2="720" stroke="#2C5C8F" stroke-width="1.7" marker-end="url(#aBlu)"/>
+  <line x1="144" y1="720" x2="144" y2="566" stroke="#2C5C8F" stroke-width="1.7" marker-end="url(#aBlu)"/>
+  <g font-size="10.5" fill="#4A5560">
+    <text x="166" y="616">every tool call crosses the</text>
+    <text x="166" y="632">guardrail — and the run's</text>
+    <text x="166" y="648">output returns to that turn</text>
+  </g>
+
+  <!-- ══ SOUTH-EAST · replication ═══════════════════════════════════════ -->
+  <rect x="868" y="726" width="460" height="194" rx="12" fill="#FFFFFF" stroke="#DBE1E7"/>
+  <text x="888" y="754" font-size="14.5" font-weight="700" fill="#16191D">No server in the middle</text>
+
+  <rect x="888" y="778" width="132" height="58" rx="8" fill="#F4F7FA" stroke="#E1E7ED"/>
+  <text x="954" y="800" font-size="11.5" font-weight="700" fill="#16191D" text-anchor="middle">your machine</text>
+  <text x="954" y="818" font-size="10" fill="#5B6570" text-anchor="middle">the thread above</text>
+
+  <line x1="1026" y1="807" x2="1050" y2="807" stroke="#7A858F" stroke-width="1.5" stroke-dasharray="4 3" marker-start="url(#aMut)" marker-end="url(#aMut)"/>
+
+  <rect x="1056" y="778" width="112" height="58" rx="8" fill="#F4F7FA" stroke="#E1E7ED"/>
+  <text x="1112" y="800" font-size="11.5" font-weight="700" fill="#16191D" text-anchor="middle">a bare git repo</text>
+  <text x="1112" y="818" font-size="10" fill="#5B6570" text-anchor="middle">no service to run</text>
+
+  <line x1="1174" y1="807" x2="1198" y2="807" stroke="#7A858F" stroke-width="1.5" stroke-dasharray="4 3" marker-start="url(#aMut)" marker-end="url(#aMut)"/>
+
+  <rect x="1204" y="778" width="112" height="58" rx="8" fill="#F3EFFB" stroke="#DDD2F0"/>
+  <text x="1260" y="800" font-size="11.5" font-weight="700" fill="#16191D" text-anchor="middle">their machine</text>
+  <text x="1260" y="818" font-size="10" fill="#5B6570" text-anchor="middle">their own VISTA</text>
+
+  <text x="888" y="860" font-size="10.5" fill="#4A5560" font-family="ui-monospace, Menlo, monospace">git push · git fetch — refs/heads/vista-forum/**</text>
+  <text x="888" y="884" font-size="11" fill="#4A5560">Anyone with read access can follow the thread, in a browser or</text>
+  <text x="888" y="900" font-size="11" fill="#4A5560">through their own VISTA. Access costs an invitation.</text>
+
+  <path d="M884 782 C 856 774, 836 730, 820 696" fill="none" stroke="#7A858F" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aMut)"/>
+
+  <!-- ── caption ────────────────────────────────────────────────────────── -->
+  <text x="40" y="944" font-size="11" fill="#5B6570">Each turn reads the whole thread and speaks once. Evidence enters through the guardrails — corpora, attached papers, domain skills, and real HPC runs whose output comes back into the turn that asked</text>
+  <text x="40" y="960" font-size="11" fill="#5B6570">for it and onto the thread as a receipt. The human redirects with an ASK. Outside sites pull the same git ref, and their agents build on what it settled.</text>
+</svg>

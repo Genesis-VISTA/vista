@@ -153,6 +153,18 @@ class SubmittedJob:
     cluster: Cluster
     # Rendered absolute paths after %j substitution (all clusters).
     log_path: str | None = None
+    err_path: str | None = None
+    """
+    The job's stderr file, which is where a failure explains itself.
+
+    Every cluster spec has always written one — `stdout_path` and `stderr_path`
+    are set side by side — but only stdout was recorded, so only stdout was ever
+    fetched. A job that died with a Python traceback or an argparse usage message
+    therefore looked silent: the `.out` file held the setup script's echoes and
+    stopped, and the reason was in a file nothing in Vista knew existed. Two
+    debate simulations were reported to an agent as "no outputs recorded" that
+    way, both of them argparse rejecting invented flags with exit status 2.
+    """
     output_dir: str | None = None
 
 
@@ -174,7 +186,12 @@ def _registry_path() -> Path:
 
 def _serialize_jobs(jobs: dict[str, SubmittedJob]) -> dict[str, dict]:
     return {
-        jid: {"cluster": s.cluster, "log_path": s.log_path, "output_dir": s.output_dir}
+        jid: {
+            "cluster": s.cluster,
+            "log_path": s.log_path,
+            "err_path": s.err_path,
+            "output_dir": s.output_dir,
+        }
         for jid, s in jobs.items()
     }
 
@@ -187,6 +204,7 @@ def _deserialize_jobs(data: dict) -> dict[str, SubmittedJob]:
         jobs[jid] = SubmittedJob(
             cluster=rec["cluster"],
             log_path=rec.get("log_path"),
+            err_path=rec.get("err_path"),
             output_dir=rec.get("output_dir"),
         )
     return jobs
@@ -240,9 +258,6 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
 
     - `odo_s3m_token` enables Odo.
     - `frontier_s3m_token` enables Frontier.
-    - `s3m_token` is the backend's current generic OLCF token field; it
-      supports explicit `cluster="odo"` / `cluster="frontier"` calls but
-      does not by itself disambiguate which OLCF cluster to prefer.
     - `nersc_iri_token` enables Perlmutter.
     """
     configured_set: set[Cluster] = set()
@@ -250,8 +265,6 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
         configured_set.add("odo")
     if cfg.frontier_s3m_token:
         configured_set.add("frontier")
-    if cfg.s3m_token:
-        configured_set.update({"odo", "frontier"})
     if cfg.nersc_iri_token:
         configured_set.add("perlmutter")
     configured = sorted(configured_set)
@@ -349,36 +362,66 @@ async def submit_hpc_job(
             job_id = dry_run.record_submit(cluster, job, eff_nodes, eff_duration)
             _record_submitted_job(job_id, SubmittedJob(cluster=cluster))
         elif cluster == "odo":
-            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
                 cfg, job, node_count, duration_int, script_args,
             )
             _record_submitted_job(
-                job_id, SubmittedJob(cluster="odo", log_path=log_path, output_dir=output_dir),
+                job_id,
+                SubmittedJob(
+                    cluster="odo",
+                    log_path=log_path,
+                    err_path=err_path,
+                    output_dir=output_dir,
+                ),
             )
         elif cluster == "perlmutter":
-            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
                 cfg, job, node_count, duration_int, script_args,
             )
             _record_submitted_job(
-                job_id, SubmittedJob(cluster="perlmutter", log_path=log_path, output_dir=output_dir),
+                job_id,
+                SubmittedJob(
+                    cluster="perlmutter",
+                    log_path=log_path,
+                    err_path=err_path,
+                    output_dir=output_dir,
+                ),
             )
         else:  # "frontier"
-            job_id, log_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
                 cfg, job, node_count, duration_int, script_args,
             )
             _record_submitted_job(
-                job_id, SubmittedJob(cluster="frontier", log_path=log_path, output_dir=output_dir),
+                job_id,
+                SubmittedJob(
+                    cluster="frontier",
+                    log_path=log_path,
+                    err_path=err_path,
+                    output_dir=output_dir,
+                ),
             )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
     h, rem = divmod(eff_duration, 3600)
     m, s = divmod(rem, 60)
-    return "\n".join([
+    summary = [
         f"job_id: {job_id}",
         f"cluster: {cluster}",
         f"nodes: {eff_nodes}",
         f"duration: {h}:{m:02d}:{s:02d} ({eff_duration}s)",
-    ])
+    ]
+    # The rendered paths, so a caller can record where this job's files are.
+    # They were kept only in this process's registry, which is enough for later
+    # status calls and no use to anyone else: Vista's own job rows had blank
+    # `log_path` and `output_dir`, so the report attached to a debate's FINDING
+    # post named no file a human could go and read.
+    if not dry_run.enabled():
+        summary += [
+            f"log_path: {log_path}",
+            f"err_path: {err_path}",
+            f"output_dir: {output_dir}",
+        ]
+    return "\n".join(summary)
 
 
 async def _submit_odo_job(
@@ -407,7 +450,7 @@ async def _submit_odo_job(
     group-writable `<base>/out`: Slurm logs land directly in it, and the
     per-job `$VISTA_OUT` subdir is mkdir'd at runtime by the auser itself.
 
-    Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
+    Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.odo
@@ -517,7 +560,14 @@ async def _submit_odo_job(
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to odo")
-    return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+    return (
+        job_id,
+        stdout_template.replace("%j", job_id),
+        stderr_template.replace("%j", job_id),
+        f"{out_dir}/{job_id}",
+        nodes,
+        duration,
+    )
 
 
 async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str) -> None:
@@ -566,7 +616,7 @@ async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str)
 async def _submit_perlmutter_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
 ) -> tuple[str, str, str, int, int]:
-    """ Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
+    """ Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
     if not cfg.nersc_account:
         raise ToolError(
             "No NERSC account configured for this user. Set it in the Vista user "
@@ -674,7 +724,14 @@ async def _submit_perlmutter_job(
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to {settings.nersc_machine}")
-    return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+    return (
+        job_id,
+        stdout_template.replace("%j", job_id),
+        stderr_template.replace("%j", job_id),
+        f"{out_dir}/{job_id}",
+        nodes,
+        duration,
+    )
 
 
 async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
@@ -718,7 +775,7 @@ async def _submit_frontier_job(
     The Slurm account is the global `settings.frontier_account` (one shared
     OLCF project for all Vista users); the user's S3M token must belong to it.
 
-    Returns (job_id, rendered_log_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
+    Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.frontier
@@ -859,7 +916,14 @@ async def _submit_frontier_job(
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to {settings.frontier_machine}")
-    return job_id, stdout_template.replace("%j", job_id), f"{out_dir}/{job_id}", nodes, duration
+    return (
+        job_id,
+        stdout_template.replace("%j", job_id),
+        stderr_template.replace("%j", job_id),
+        f"{out_dir}/{job_id}",
+        nodes,
+        duration,
+    )
 
 
 async def _sync_job_sources(
@@ -1106,6 +1170,15 @@ async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
     except Exception as e:
         logs = f"(unable to fetch logs: {e})"
 
+    # stderr as well as stdout. A job that failed wrote its reason here, and
+    # reading only stdout is how a traceback became "no output".
+    errs = "(no stderr path cached for this job)"
+    if submitted.err_path:
+        try:
+            errs = await iri_client.head(submitted.err_path, lines=200)
+        except Exception as e:
+            errs = f"(unable to fetch stderr: {e})"
+
     files: list[str] = []
     if submitted.output_dir:
         try:
@@ -1118,6 +1191,8 @@ async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
         "\n".join(f"{k}={v}" for k, v in metadata.items()),
         "--- LOGS ---",
         logs.strip() if logs.strip() else "(no logs yet)",
+        "--- STDERR ---",
+        errs.strip() if errs.strip() else "(nothing on stderr)",
         "--- OUTPUT FILES ---",
         "\n".join(files) if files else "(no output files yet)",
     ])
@@ -1219,6 +1294,41 @@ async def _get_olcf_job_status(
         except Exception as e:
             logs = f"(unable to fetch logs: {e})"
 
+    # stderr, tailed the same way. Every cluster spec has always written one —
+    # `stdout_path` and `stderr_path` are set side by side — but only stdout was
+    # ever fetched, so a job that died with a traceback or an argparse usage
+    # message looked silent: the `.out` file held the setup script's echoes and
+    # stopped, and the reason sat in a file nothing here knew existed. Two debate
+    # simulations reached an agent as "no outputs recorded" that way.
+    #
+    # `GlobusFileNotFound` is the good case, not a failure: Slurm creates the
+    # stderr file only when something writes to it, so its absence *is* the
+    # answer — and the HTTPS interface can tell that apart from a fetch that
+    # could not be made, which is the difference between silence we verified and
+    # silence we could not look at.
+    if submitted.err_path is None:
+        errs = "(no stderr path cached for this job)"
+    elif globus is None:
+        errs = "(stderr unavailable: no Globus connection)"
+    else:
+        errs = "(nothing on stderr)"
+        try:
+            errs = (
+                await _tail_remote_log(
+                    globus,
+                    collection_id=remote_collection,
+                    remote_path=submitted.err_path,
+                    local_path=host_output_dir / job_id / Path(submitted.err_path).name,
+                )
+                or "(nothing on stderr)"
+            )
+        except GlobusFileNotFound:
+            pass
+        except GlobusSessionExpired:
+            raise
+        except Exception as e:
+            errs = f"(unable to fetch stderr: {e})"
+
     # List the output dir on the cluster's collection via Globus operation_ls
     # (recursive BFS-walk; see lib/globus.py). The HTTPS interface has no
     # listing, so this stays on Transfer. Drop venv/pycache noise.
@@ -1257,6 +1367,8 @@ async def _get_olcf_job_status(
         "\n".join(f"{k}={v}" for k, v in metadata.items()),
         "--- LOGS ---",
         logs.strip() if logs.strip() else "(no logs yet)",
+        "--- STDERR ---",
+        errs.strip() if errs.strip() else "(nothing on stderr)",
         "--- OUTPUT FILES ---",
         "\n".join(files) if files else listing,
     ])

@@ -38,7 +38,8 @@ def make_user(
     *,
     email: str | None = None,
     is_admin: bool = False,
-    s3m_token: str | None = None,
+    odo_s3m_token: str | None = None,
+    frontier_s3m_token: str | None = None,
     nersc_iri_token: str | None = None,
     frontier_account: str | None = None,
 ) -> UserPublicWithConfig:
@@ -47,7 +48,8 @@ def make_user(
         id=uuid.uuid4(),
         email=email or f"{uuid.uuid4().hex[:8]}@ornl.gov",
         is_admin=is_admin,
-        s3m_token=s3m_token,
+        odo_s3m_token=odo_s3m_token,
+        frontier_s3m_token=frontier_s3m_token,
         nersc_iri_token=nersc_iri_token,
         frontier_account=frontier_account,
     )

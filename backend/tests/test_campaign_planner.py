@@ -98,7 +98,34 @@ async def _make_run(session, alice):
 
 def test_parse_submit_summary():
     text = "job_id: 12345\ncluster: frontier\nnodes: 2\nduration: 1:00:00"
-    assert parse_submit_summary(text) == ("12345", "frontier")
+    assert parse_submit_summary(text) == {
+        "job_id": "12345",
+        "cluster": "frontier",
+        "log_path": "",
+        "err_path": "",
+        "output_dir": "",
+    }
+
+
+def test_parse_submit_summary_keeps_the_rendered_paths():
+    """
+    They are the only record of where a job's files are outside the MCP server.
+
+    Dropping them left every job row with a blank `log_path` and `output_dir`, so
+    the report attached to a debate's FINDING post named no file a reader could
+    open — and nothing pointed at the stderr file where a failed run explains
+    itself.
+    """
+    text = (
+        "job_id: 44039\ncluster: odo\nnodes: 1\nduration: 1:00:00\n"
+        "log_path: /gpfs/out/44039/log-44039.out\n"
+        "err_path: /gpfs/out/44039/log-44039.err\n"
+        "output_dir: /gpfs/out/44039"
+    )
+    parsed = parse_submit_summary(text)
+    assert parsed["log_path"] == "/gpfs/out/44039/log-44039.out"
+    assert parsed["err_path"] == "/gpfs/out/44039/log-44039.err"
+    assert parsed["output_dir"] == "/gpfs/out/44039"
 
 
 def test_parse_submit_summary_raises_without_job_id():
