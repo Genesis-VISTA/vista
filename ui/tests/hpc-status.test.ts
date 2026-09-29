@@ -102,15 +102,12 @@ describe("useHpcStatus", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3); // overdue, so it checks on return
   });
 
-  it("carries Lux's entry, hub included, and rechecks it alone", async () => {
-    const lux = cluster("lux", "ready");
-    lux.checks.facility = { ...lux.checks.facility, host: "hub.ccs.ornl.gov" };
-    answers = [[cluster("frontier", "ready"), lux]];
+  it("carries Lux's entry and rechecks it alone", async () => {
+    answers = [[cluster("frontier", "ready"), cluster("lux", "ready")]];
     const { result } = renderHook(() => useHpcStatus());
     await flush();
     const entry = result.current.clusters?.find((c) => c.cluster === "lux");
     expect(entry?.state).toBe("ready");
-    expect(entry?.status.checks.facility.host).toBe("hub.ccs.ornl.gov");
     expect(entry?.status.checks.globus).toBeNull();
     await act(async () => {
       await result.current.recheck("lux");

@@ -125,6 +125,11 @@ cluster's jobs run under".
   anyone has the rail open, plus one per Recheck.
 
 ### D6. The probed hub travels as `Check.host`
+
+> **Dropped after archive (2026-09-29).** Nothing read `host` once the Lux
+> settings box was removed, so the field was taken out; the facility check's
+> `message` still names the hub.
+
 Add `host: str | None` to `Check` (backend model and the `HpcCheck` TS type),
 set only by Lux's facility check, so the hub is a value in the response rather
 than only words in `message`. The project already travels in

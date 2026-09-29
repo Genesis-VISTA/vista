@@ -69,10 +69,7 @@ function statusView(): HpcStatusView {
       checks: { facility: ok, credential: ok, globus: null, ...checks },
     },
   });
-  const luxEntry = entry("lux", "ready", {
-    facility: { ...ok, host: "hub.ccs.ornl.gov" },
-    credential: { ...ok, project: "stf218" },
-  });
+  const luxEntry = entry("lux", "ready", { credential: { ...ok, project: "stf218" } });
   return {
     clusters: [
       entry("frontier", "ready"),

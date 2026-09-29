@@ -140,8 +140,6 @@ class Check(BaseModel):
     active_from: datetime | None = None
     identity: Literal["own", "deployment"] | None = None
     """ Whose Globus connection was verified. """
-    host: str | None = None
-    """ The host a Lux facility check probed. """
 
 
 class ClusterChecks(BaseModel):
@@ -613,13 +611,11 @@ class HpcStatusService:
                 ok=False,
                 reason="unreachable",
                 message=f"The Lux hub {host} {_probe_failure(error, HTTP_TIMEOUT)}.",
-                host=host,
             )
         else:
             check = Check(
                 ok=True,
                 message=f"The Lux hub {host} answered ({greeting}).",
-                host=host,
             )
         self._ssh_probes[host] = (self._monotonic(), check)
         return check

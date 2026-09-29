@@ -60,8 +60,6 @@ export type HpcCheck = {
   expires_at?: string | null;
   active_from?: string | null;
   identity?: "own" | "deployment" | null;
-  /** The host a Lux facility check probed. */
-  host?: string | null;
 };
 
 export type HpcClusterStatus = {

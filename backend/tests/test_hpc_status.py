@@ -709,7 +709,7 @@ async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     result = await statuses(make_service(fac, lux=lux), user(**ONLY_LUX))
     lx = result["lux"]
     assert lx.state == "ready"
-    assert lx.checks.facility.host == "hub.ccs.ornl.gov"
+    assert "hub.ccs.ornl.gov" in lx.checks.facility.message
     assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
     assert lx.checks.credential.ok
     assert lx.checks.credential.project == "stf218"

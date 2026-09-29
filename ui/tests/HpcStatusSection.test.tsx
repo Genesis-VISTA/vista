@@ -240,7 +240,6 @@ describe("HpcStatusSection: Lux", () => {
     facility: {
       ...OK,
       message: "The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9).",
-      host: "hub.ccs.ornl.gov",
     },
     credential: {
       ...OK,
@@ -287,7 +286,6 @@ describe("HpcStatusSection: Lux", () => {
               ok: false,
               reason: "unreachable",
               message: "The Lux hub hub.ccs.ornl.gov did not answer within 5 s.",
-              host: "hub.ccs.ornl.gov",
             },
             credential: LUX_READY.checks.credential,
           }),
