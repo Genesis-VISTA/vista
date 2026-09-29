@@ -49,6 +49,8 @@ Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, log
 
 Note that the `./launch.sh` script will not terminate until cancelled, and then on cancel will automatically clean up all 3 processes.
 
+On Windows, run `launch.sh` and `build.sh` from Git Bash (installed with Git for Windows).
+
 To build everything without launching, run
 ```bash
 ./scripts/build.sh

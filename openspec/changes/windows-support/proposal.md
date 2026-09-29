@@ -12,7 +12,11 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 - **Remove the POSIX-only host tools from the agent path.** Today every agent start runs a `chmod` subprocess.
 - **Pin LF line endings with `.gitattributes`** without rewriting anything in existing macOS and Linux checkouts.
 - **Migrate the sandbox store in place.** The 0.7 migration is one-way, so rolling back, or running an older checkout, needs a documented store reset.
-- **Package for Windows x64.** This adds a PowerShell launcher, a Windows build path, and preflight checks for Hypervisor Platform and path length.
+- **Package for Windows x64.** Windows packages are built by the existing `build_local_package.sh`, run under Git Bash; the package's launcher is PowerShell, so a researcher needs no bash. The launcher checks, before starting anything, that the sandbox's hypervisor is available (asked of `msb doctor`) and that the unpack location is not too deep for Windows' path limit. `launch.sh` and `build.sh` also run under Git Bash for development.
+- **Keep package paths short, on every platform.** The corpus, vector store and embedding weights ship as one archive, `payload/payload.tar`, extracted into the state directory on first run; some corpus PDF names would otherwise put paths far past 260 characters inside the package. Package names become `vista-<version>-<os>-<arch>` (e.g. `vista-0.1.0-win-x86`), with the commit kept in `VERSION` and the manifest.
+- **No cross-platform builds.** **BREAKING (internal):** `scripts/build_in_docker.sh` and `scripts/Dockerfile.build` are removed. Each platform is built, and fully verified, on its own OS.
+- **No way to run without a microVM.** The `VISTA_ALLOW_NO_KVM` opt-out is removed and has no Windows counterpart, so every build's verification includes retrieval through a real sandbox.
+- **Drop dependencies VISTA never loads.** `amscrot-py` requires every one of its providers' libraries; VISTA uses only its IRI job client. `ansible` and `fabrictestbed-extensions` are excluded with uv overrides, which also removes `recordclass`, so no C++ build tools are needed on Windows. `--without-hpc` is removed: `amscrot-py` is always bundled.
 
 ## Capabilities
 
@@ -21,13 +25,13 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 - `host-portability`: behavior that must not depend on the host OS. This covers guest paths, text encoding, host tools, line endings, and download containment.
 
 ### Modified Capabilities
-- `laptop-distribution`: Windows x64 becomes a supported platform with its own preflight checks. Windows artifacts may be built on a Windows host rather than cross-built.
+- `laptop-distribution`: Windows x64 becomes a supported platform with its own preflight checks. Building for another platform is removed: every artifact is built and verified on its own platform, on a host that can run the sandbox.
 
 ## Non-goals
 
 - Windows arm64 packages. There is no test hardware.
 - Code signing and ORNL endpoint-policy review. These are tracked as risks.
-- Cross-building Windows artifacts from macOS or Linux.
+- Cross-platform builds of any kind.
 - WSL2 as a supported route.
 - The Electron window shell on Windows.
 - The AWS deployment. There is none today; a future one would port the unmerged `beta-deployment-3` sandbox changes onto this change's SDK path.
@@ -37,6 +41,7 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 
 - **dev_mcp_server:** the sandbox adapter, config, server, and dependency pin. `lib/dns.py` and its tests are removed.
 - **backend:** `agents/agents.py`, `agents/skills.py`, `services/skills.py`, `db/seed.py`.
-- **vista_mcp_server:** `display_file_mcp.py`, `submit_job_mcp.py`, `agenthpc/config.py`. The dead `lib/dns.py` is removed.
-- **Scripts:** `package_launcher.sh`, `build_local_package.sh`. New: a PowerShell launcher and a Windows build path.
+- **vista_mcp_server:** `display_file_mcp.py`, `submit_job_mcp.py`, `agenthpc/config.py`. The dead `lib/dns.py` is removed. `pyproject.toml` gains uv `override-dependencies`, and `uv.lock` is relocked.
+- **Scripts:** `package_launcher.sh`, `build_local_package.sh`, `smoke_test_package.sh`, `launch.sh`, `build.sh`, `build_in_docker.sh` (removed), `Dockerfile.build` (removed). New: `package_launcher.ps1` and `package_launcher.cmd`.
+- **Docs:** `README.md` (package names, first run, the cross-platform build sections removed), `AGENTS.md` (Git Bash on Windows).
 - **Repo:** new `.gitattributes` rules.
