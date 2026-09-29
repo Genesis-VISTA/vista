@@ -12,11 +12,11 @@
 
 ## 2. Backend Lux checks
 
-- [ ] 2.1 Add `host: str | None` to `Check` and generalise the `project` docstring (design D4, D6); verify the existing `tests/test_hpc_status.py` still passes
-- [ ] 2.2 Implement `probe_ssh_greeting` (design D2: connect, read one line of at most 255 bytes within the timeout, require `SSH-`, send `SSH-2.0-VISTA_status_probe\r\n`, close) and map every failure to `reason="unreachable"` with a message naming host and cause (D3); verify with hermetic real-socket tests in `tests/test_hpc_status.py` against local `127.0.0.1` servers covering greeting, non-SSH first line, silent server (short timeout), and refused port, plus an assertion that the probe's identification line arrives
-- [ ] 2.3 Wire Lux into `HpcStatusService`: `CLUSTERS`/`_TITLES` (Lux last), injectable `lux_probe`, per-host probe cache shared across users for `FACILITY_TTL` and bypassed by `fresh` (D5), constant `_credential_fingerprint`, constant-ok credential check with `project=lux_account` (D4), `globus=None`; verify with fake-probe tests in `tests/test_hpc_status.py`: hub answers → `ready`; hub fails → `unverifiable` (not `degraded`); two users within TTL → one probe; `fresh` → re-probe; Lux hidden → no probe; `GET /users/me/hpc-status` includes Lux and no token values
-- [ ] 2.4 Add a Lux case to `backend/tests/live/test_hpc_status_live.py` that probes the real hub (marked `live`, out of PR CI); verify it passes locally with `VISTA_RUN_LIVE=1` on the ORNL network
-- [ ] 2.5 Run `./scripts/ci-local.sh backend` and verify lint and tests pass
+- [x] 2.1 Add `host: str | None` to `Check` and generalise the `project` docstring (design D4, D6); verify the existing `tests/test_hpc_status.py` still passes
+- [x] 2.2 Implement `probe_ssh_greeting` (design D2: connect, read one line of at most 255 bytes within the timeout, require `SSH-`, send `SSH-2.0-VISTA_status_probe\r\n`, close) and map every failure to `reason="unreachable"` with a message naming host and cause (D3); verify with hermetic real-socket tests in `tests/test_hpc_status.py` against local `127.0.0.1` servers covering greeting, non-SSH first line, silent server (short timeout), and refused port, plus an assertion that the probe's identification line arrives
+- [x] 2.3 Wire Lux into `HpcStatusService`: `CLUSTERS`/`_TITLES` (Lux last), injectable `lux_probe`, per-host probe cache shared across users for `FACILITY_TTL` and bypassed by `fresh` (D5), constant `_credential_fingerprint`, constant-ok credential check with `project=lux_account` (D4), `globus=None`; verify with fake-probe tests in `tests/test_hpc_status.py`: hub answers → `ready`; hub fails → `unverifiable` (not `degraded`); two users within TTL → one probe; `fresh` → re-probe; Lux hidden → no probe; `GET /users/me/hpc-status` includes Lux and no token values
+- [x] 2.4 Add a Lux case to `backend/tests/live/test_hpc_status_live.py` that probes the real hub (marked `live`, out of PR CI); verify it passes locally with `VISTA_RUN_LIVE=1` on the ORNL network
+- [x] 2.5 Run `./scripts/ci-local.sh backend` and verify lint and tests pass
 
 ## 3. UI
 

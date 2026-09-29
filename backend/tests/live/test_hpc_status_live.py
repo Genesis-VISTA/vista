@@ -11,6 +11,10 @@ feed is read, and each cluster with a credential resolves to Ready or to a
 named failure, never to Couldn't verify. That last state is for a facility
 answering in a way the checks do not understand, which is what this test
 exists to catch when an IRI deployment changes under us.
+
+Lux is left out of that: its facility check is a probe of the hub's SSH port,
+which is Couldn't verify by design from a network that does not reach ORNL.
+Its own test probes the hub directly.
 """
 
 from __future__ import annotations
@@ -19,6 +23,9 @@ import os
 
 import httpx
 import pytest
+
+from vista_backend.config import HpcClusterSettings
+from vista_backend.services import hpc_status
 
 pytestmark = pytest.mark.live
 
@@ -53,6 +60,8 @@ def test_every_cluster_gets_a_decisive_answer():
     assert result["clusters"], "no clusters visible; unhide one in settings"
     for cluster in result["clusters"]:
         name, checks = cluster["cluster"], cluster["checks"]
+        if name == "lux":
+            continue  # see the module docstring; test_lux_hub_answers covers it
         assert cluster["state"] in STATES, name
         facility = checks["facility"]
         assert facility["ok"] or facility["reason"] == "degraded", (
@@ -78,3 +87,11 @@ def test_response_carries_nothing_token_like():
     body = str(_get("/users/me/hpc-status"))
     assert "Bearer" not in body
     assert "refresh_token" not in body
+
+
+@pytest.mark.anyio
+async def test_lux_hub_answers():
+    """Needs the ORNL network (or a route to the hub); no credential involved."""
+    hub = HpcClusterSettings().lux_ssh_hosts[0]
+    greeting = await hpc_status.probe_ssh_greeting(hub, timeout=hpc_status.HTTP_TIMEOUT)
+    assert greeting.startswith("SSH-2.0-"), greeting
