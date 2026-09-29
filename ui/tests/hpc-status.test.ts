@@ -16,7 +16,7 @@ function cluster(name: HpcClusterStatus["cluster"], state: HpcState): HpcCluster
     cluster: name,
     state,
     checked_at: "2026-09-25T15:00:00Z",
-    checks: { facility: ok, credential: ok, globus: name === "perlmutter" ? null : ok },
+    checks: { facility: ok, credential: ok, globus: name === "perlmutter" || name === "lux" ? null : ok },
   };
 }
 
@@ -100,6 +100,22 @@ describe("useHpcStatus", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(fetchMock).toHaveBeenCalledTimes(3); // overdue, so it checks on return
+  });
+
+  it("carries Lux's entry, hub included, and rechecks it alone", async () => {
+    const lux = cluster("lux", "ready");
+    lux.checks.facility = { ...lux.checks.facility, host: "hub.ccs.ornl.gov" };
+    answers = [[cluster("frontier", "ready"), lux]];
+    const { result } = renderHook(() => useHpcStatus());
+    await flush();
+    const entry = result.current.clusters?.find((c) => c.cluster === "lux");
+    expect(entry?.state).toBe("ready");
+    expect(entry?.status.checks.facility.host).toBe("hub.ccs.ornl.gov");
+    expect(entry?.status.checks.globus).toBeNull();
+    await act(async () => {
+      await result.current.recheck("lux");
+    });
+    expect(urls()).toContain("/api/users/me/hpc-status?fresh=true&cluster=lux");
   });
 
   it("recheck asks for fresh results, for one cluster or all", async () => {

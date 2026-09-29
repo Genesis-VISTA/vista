@@ -71,6 +71,22 @@ export const HPC_STATUS = {
         globus: null,
       },
     },
+    {
+      cluster: "lux",
+      state: "ready",
+      checked_at: NOW,
+      checks: {
+        facility: {
+          ...OK("The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9)."),
+          host: "hub.ccs.ornl.gov",
+        },
+        credential: {
+          ...OK("Sign in with PIN + RSA passcode when a chat first uses Lux."),
+          project: "stf218",
+        },
+        globus: null,
+      },
+    },
   ],
 };
 

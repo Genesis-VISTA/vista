@@ -32,7 +32,7 @@ function status(
     checks: {
       facility: OK,
       credential: OK,
-      globus: cluster === "perlmutter" ? null : OK,
+      globus: cluster === "perlmutter" || cluster === "lux" ? null : OK,
       ...checks,
     },
   };
@@ -232,5 +232,74 @@ describe("HpcStatusSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("HpcStatusSection: Lux", () => {
+  const LUX_READY = status("lux", "ready", {
+    facility: {
+      ...OK,
+      message: "The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9).",
+      host: "hub.ccs.ornl.gov",
+    },
+    credential: {
+      ...OK,
+      message: "Sign in with PIN + RSA passcode when a chat first uses Lux.",
+      project: "stf218",
+    },
+  });
+
+  it("shows a Ready Lux card in green, labelled Lx when collapsed", () => {
+    useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
+    const { unmount } = renderSection({ visible: ["lux"] });
+    const card = screen.getByRole("button", { name: "Lux: Ready" });
+    expect(card.querySelector(".hpc-dot")).toHaveAttribute("data-state", "ready");
+    unmount();
+
+    renderSection({ collapsed: true, visible: ["lux"] });
+    expect(screen.getByRole("button", { name: "Lux: Ready" })).toHaveTextContent("Lx");
+  });
+
+  it("details show the hub, how sign-in works, and what is not checked, with no Globus or expiry", async () => {
+    useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
+    renderSection({ visible: ["lux"] });
+    await userEvent.click(screen.getByRole("button", { name: "Lux: Ready" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Lux connection details" });
+    expect(within(dialog).getByText("OLCF · Slurm over SSH")).toBeInTheDocument();
+    expect(within(dialog).getByText("Hub is reachable")).toBeInTheDocument();
+    expect(within(dialog).getByText(/hub\.ccs\.ornl\.gov answered/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Sign in from a chat")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Project stf218 · Sign in with PIN + RSA passcode when a chat first uses Lux."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Login node not checked")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Globus/)).toBeNull();
+    expect(within(dialog).queryByText(/expires/)).toBeNull();
+    expect(within(dialog).queryByText("Facility is up")).toBeNull();
+  });
+
+  it("an unreachable hub reads Couldn't verify, not a facility outage", async () => {
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("lux", "unverifiable", {
+            facility: {
+              ok: false,
+              reason: "unreachable",
+              message: "The Lux hub hub.ccs.ornl.gov did not answer within 5 s.",
+              host: "hub.ccs.ornl.gov",
+            },
+            credential: LUX_READY.checks.credential,
+          }),
+        },
+      ]),
+    );
+    renderSection({ visible: ["lux"] });
+    await userEvent.click(screen.getByRole("button", { name: "Lux: Couldn't verify" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Couldn't reach the hub")).toBeInTheDocument();
+    expect(within(dialog).getByText(/did not answer within 5 s/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/degraded/i)).toBeNull();
   });
 });

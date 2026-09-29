@@ -2755,7 +2755,8 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-top: 4px;
 }
 
-.user-settings-globus {
+.user-settings-globus,
+.user-settings-lux {
   display: flex;
   flex-direction: column;
   gap: 8px;

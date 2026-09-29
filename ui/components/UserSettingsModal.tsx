@@ -122,6 +122,7 @@ const CREDENTIAL_FIELDS: Record<HpcCluster, Array<keyof UserSelfUpdate>> = {
   odo: ["odo_s3m_token"],
   frontier: ["frontier_s3m_token"],
   perlmutter: ["nersc_iri_token"],
+  lux: [], // nothing stored: a researcher signs in from a chat
 };
 
 function UserSettingsForm({
@@ -396,6 +397,7 @@ function UserSettingsForm({
                 </label>
               </>
             )}
+            {cluster === "lux" && <LuxSignIn />}
           </ClusterSection>
         ))}
       </div>
@@ -432,6 +434,37 @@ function UserSettingsForm({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Lux has no credential to save. This says how sign-in works, with the hub and
+ * project from the status check; a hidden Lux is not checked, so then it says
+ * only how sign-in works.
+ */
+function LuxSignIn() {
+  const view = useHpcStatus();
+  const entry = view.clusters?.find((c) => c.cluster === "lux");
+  const hub = entry?.status.checks.facility.host;
+  const project = entry?.status.checks.credential.project;
+  return (
+    <div className="user-settings-lux">
+      <div className="user-settings-globus-head">
+        <span className="user-settings-globus-cluster">Sign-in</span>
+      </div>
+      <span className="user-settings-hint">
+        Nothing to save here. When a chat first uses Lux, VISTA asks for your
+        username and a PIN + RSA passcode, once for the hub and once for the Lux
+        login node, and keeps that sign-in for up to an hour between uses.
+      </span>
+      {(hub || project) && (
+        <span className="user-settings-hint" data-testid="lux-facts">
+          {hub && <>Hub {hub}</>}
+          {hub && project && " · "}
+          {project && <>Project {project}</>}
+        </span>
+      )}
+    </div>
   );
 }
 
