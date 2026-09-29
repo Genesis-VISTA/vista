@@ -282,9 +282,6 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
 
     - `odo_s3m_token` enables Odo.
     - `frontier_s3m_token` enables Frontier.
-    - `s3m_token` is the backend's current generic OLCF token field; it
-      supports explicit `cluster="odo"` / `cluster="frontier"` calls but
-      does not by itself disambiguate which OLCF cluster to prefer.
     - `nersc_iri_token` enables Perlmutter.
     """
     configured_set: set[Cluster] = set()
@@ -292,8 +289,6 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
         configured_set.add("odo")
     if cfg.frontier_s3m_token:
         configured_set.add("frontier")
-    if cfg.s3m_token:
-        configured_set.update({"odo", "frontier"})
     if cfg.nersc_iri_token:
         configured_set.add("perlmutter")
     configured = sorted(configured_set)
@@ -1570,20 +1565,28 @@ async def _get_olcf_job_status(
     if not submitted.output_dir:
         listing = "(no output directory recorded for this job)"
     elif globus is not None:
-        excludes = (".venv", "__pycache__")
+        # Pruned at the TRAVERSAL level, not just filtered out of the results below:
+        # the walk costs one sequential API call per directory, so descending into a
+        # venv/.git only to drop the entries afterwards is what turns a status check
+        # into minutes of apparent hang.
+        excludes = (".venv", "__pycache__", ".git", "node_modules")
         try:
             entries = await globus.operation_ls(
                 endpoint=remote_collection,
                 path=submitted.output_dir,
                 recursive=True,
+                exclude_segments=excludes,
             )
             for e in entries:
                 if e.get("type") != "file":
                     continue
                 p = e.get("path", "")
-                if any(seg in p for seg in excludes):
-                    continue
                 rel = p[len(submitted.output_dir):].lstrip("/")
+                # Whole path segments of the part under output_dir, never substrings
+                # of the absolute path: `.gitignore`, `run.github.log`, or an
+                # output_dir like `/proj/my.git-runs/` must not vanish from the listing.
+                if any(seg in excludes for seg in rel.split("/")):
+                    continue
                 files.append(rel)
             files = files[:20]
         except GlobusSessionExpired:

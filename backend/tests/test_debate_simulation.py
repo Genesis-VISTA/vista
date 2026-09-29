@@ -666,12 +666,23 @@ def test_a_missing_catalog_is_not_a_crash(tmp_path):
 
 class _User:
     def __init__(self, **kw):
-        self.s3m_token = kw.get("s3m_token")
+        self.odo_s3m_token = kw.get("odo_s3m_token")
+        self.frontier_s3m_token = kw.get("frontier_s3m_token")
         self.nersc_iri_token = kw.get("nersc_iri_token")
 
 
-def test_the_olcf_token_unlocks_both_olcf_machines():
-    assert simulation.clusters_for(_User(s3m_token="t")) == ["frontier", "odo"]
+def test_each_olcf_token_unlocks_only_its_own_machine():
+    """An S3M token belongs to one OLCF project, so it reaches one cluster."""
+    assert simulation.clusters_for(_User(odo_s3m_token="t")) == ["odo"]
+    assert simulation.clusters_for(_User(frontier_s3m_token="t")) == ["frontier"]
+    both = _User(odo_s3m_token="t", frontier_s3m_token="t")
+    assert simulation.clusters_for(both) == ["frontier", "odo"]
+
+
+def test_the_legacy_shared_token_unlocks_nothing():
+    legacy = _User()
+    legacy.s3m_token = "t"  # the old single field, no longer read anywhere
+    assert simulation.clusters_for(legacy) == []
 
 
 def test_the_nersc_token_unlocks_perlmutter():
@@ -791,7 +802,7 @@ async def test_the_tool_is_wired_when_the_project_and_user_allow_it(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr", "splash-planner"],
-        tokens={"s3m_token": "tok"},
+        tokens={"odo_s3m_token": "tok", "frontier_s3m_token": "tok"},
     )
     commissioner, runnable = await wiring.build_simulation(session, run)
 
@@ -811,7 +822,11 @@ async def test_no_tool_without_credentials(session, alice, monkeypatch, tmp_path
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": None, "nersc_iri_token": None},
+        tokens={
+            "odo_s3m_token": None,
+            "frontier_s3m_token": None,
+            "nersc_iri_token": None,
+        },
     )
     commissioner, runnable = await wiring.build_simulation(session, run)
     assert commissioner is None and runnable == {}
@@ -827,7 +842,7 @@ async def test_no_tool_when_the_project_has_no_simulation_skills(
         monkeypatch,
         tmp_path,
         skills=["salt-prediction"],
-        tokens={"s3m_token": "tok"},
+        tokens={"odo_s3m_token": "tok", "frontier_s3m_token": "tok"},
     )
     commissioner, _ = await wiring.build_simulation(session, run)
     assert commissioner is None
@@ -844,7 +859,7 @@ async def test_the_commissioner_refuses_a_job_outside_the_project(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": "tok"},
+        tokens={"odo_s3m_token": "tok", "frontier_s3m_token": "tok"},
     )
     commissioner, _ = await wiring.build_simulation(session, run)
 
@@ -862,7 +877,11 @@ async def test_the_commissioner_refuses_a_cluster_without_credentials(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": "tok", "nersc_iri_token": None},
+        tokens={
+            "odo_s3m_token": "tok",
+            "frontier_s3m_token": "tok",
+            "nersc_iri_token": None,
+        },
     )
     commissioner, _ = await wiring.build_simulation(session, run)
 
@@ -890,7 +909,7 @@ async def test_the_budget_stops_a_third_simulation(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": "tok"},
+        tokens={"odo_s3m_token": "tok", "frontier_s3m_token": "tok"},
     )
     assert app_settings.forum.max_simulations == 2
     commissioner, _ = await wiring.build_simulation(session, run)
@@ -1178,7 +1197,7 @@ async def test_no_monitor_means_no_wait_and_no_promise(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": "tok"},
+        tokens={"odo_s3m_token": "tok", "frontier_s3m_token": "tok"},
     )
     monkeypatch.setattr(app_settings.campaigns, "monitor_enabled", False)
     commissioner, _ = await wiring.build_simulation(session, run)
@@ -1245,7 +1264,11 @@ async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
-        tokens={"s3m_token": "tok", "nersc_iri_token": "tok"},
+        tokens={
+            "odo_s3m_token": "tok",
+            "frontier_s3m_token": "tok",
+            "nersc_iri_token": "tok",
+        },
     )
     commissioner, runnable = await wiring.build_simulation(session, run)
 
@@ -1280,7 +1303,11 @@ async def test_a_frontier_only_job_is_offered_on_frontier(
         monkeypatch,
         tmp_path,
         skills=["salt-chemistry-md"],
-        tokens={"s3m_token": "tok", "nersc_iri_token": "tok"},
+        tokens={
+            "odo_s3m_token": "tok",
+            "frontier_s3m_token": "tok",
+            "nersc_iri_token": "tok",
+        },
     )
     _commissioner, runnable = await wiring.build_simulation(session, run)
     assert runnable == {"salt-chemistry-md": ["frontier"]}
@@ -1300,7 +1327,11 @@ async def test_a_job_with_no_reachable_cluster_is_not_offered_at_all(
         monkeypatch,
         tmp_path,
         skills=["salt-chemistry-md"],
-        tokens={"s3m_token": None, "nersc_iri_token": "tok"},
+        tokens={
+            "odo_s3m_token": None,
+            "frontier_s3m_token": None,
+            "nersc_iri_token": "tok",
+        },
     )
     commissioner, runnable = await wiring.build_simulation(session, run)
 

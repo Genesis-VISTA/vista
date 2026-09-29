@@ -434,6 +434,8 @@ class GlobusClient:
 
     async def operation_ls(
         self, *, endpoint: str, path: str, recursive: bool = False,
+        exclude_segments: tuple[str, ...] = (),
+        max_dirs: int = 200,
     ) -> list[dict[str, Any]]:
         """
         List entries under `path` on the given collection. Returns a list of dicts
@@ -446,16 +448,37 @@ class GlobusClient:
 
         When `recursive=True`, BFS-walks the tree (Globus has no native recursive
         ls). Subtree errors during the walk are logged and skipped.
+
+        The walk costs ONE API round-trip per directory, sequentially, so an
+        unbounded tree (a build dir, a venv, a .git) turns a status check into
+        minutes of silent waiting. Two guards:
+
+          - `exclude_segments`: directory names never descended into. Filtering
+            these out of the *results* afterwards does not help — the cost is the
+            traversal, so they must be pruned from the queue.
+          - `max_dirs`: hard ceiling on directories visited. On hitting it the walk
+            stops and logs; callers get a partial listing rather than a hang.
         """
-        return await asyncio.to_thread(self._operation_ls, endpoint, path, recursive)
+        return await asyncio.to_thread(
+            self._operation_ls, endpoint, path, recursive, exclude_segments, max_dirs,
+        )
 
     def _operation_ls(
         self, endpoint: str, path: str, recursive: bool,
+        exclude_segments: tuple[str, ...] = (), max_dirs: int = 200,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         queue = [path]
+        visited = 0
         while queue:
             cur = queue.pop(0)
+            if recursive and visited >= max_dirs:
+                logging.warning(
+                    f"globus ls stopped at {max_dirs} directories under {path}; "
+                    f"{len(queue)} subtree(s) not walked. Listing is partial."
+                )
+                break
+            visited += 1
             try:
                 resp = self._transfer().operation_ls(endpoint, path=cur)
             except globus_sdk.TransferAPIError as e:
@@ -478,6 +501,8 @@ class GlobusClient:
                 entry["path"] = full
                 results.append(entry)
                 if recursive and entry.get("type") == "dir":
+                    if name in exclude_segments:
+                        continue  # prune: never pay for a venv / .git / __pycache__
                     queue.append(full)
             if not recursive:
                 break

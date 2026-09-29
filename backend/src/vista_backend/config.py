@@ -435,6 +435,60 @@ class Settings(BaseSettings):
     """
 
 
+class HpcClusterSettings(BaseSettings):
+    """
+    Where each HPC cluster's facility, S3M, and Globus endpoints are, for the
+    availability checks behind the NavRail's HPC cards.
+
+    These belong to the MCP server, which is what actually submits jobs and
+    moves files; the backend needs them only to ask the same services whether
+    they would answer. So they are read under the MCP server's own names
+    (`VISTA_MCP_ODO_IRI_URL`, ...) rather than `VISTA_BACKEND_*`: a deployment
+    that points the MCP server somewhere else points these there too, because
+    there is only one variable. The defaults are copies of
+    `vista_mcp_server.config`'s, held in step by `tests/test_hpc_config_parity.py`.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES, extra="ignore", env_prefix="VISTA_MCP_"
+    )
+
+    odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
+    """ OLCF AmSC IRI API, open enclave. """
+    odo_account: str = "gen150-vista"
+    """ The OLCF project an Odo S3M token must belong to. """
+    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
+    """
+    Odo's IRI compute resource. Matched by id, not name: the open enclave lists
+    Odo beside Defiant, Wombat, and Quokka with no stable naming to match on.
+    """
+    odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
+    odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
+    odo_globus_refresh_token: SecretStr | None = None
+    """ Deployment-wide Transfer token: the last Globus source, after the user's own. """
+    odo_globus_https_refresh_token: SecretStr | None = None
+
+    frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    """ OLCF AmSC IRI API, moderate enclave. """
+    frontier_account: str = "chm243"
+    """ The OLCF project a Frontier S3M token must belong to. """
+    frontier_machine: str = "frontier"
+    """ Frontier's resource name in the IRI status list, compared case-insensitively. """
+    frontier_introspect_url: str = (
+        "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
+    )
+    frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
+    frontier_globus_refresh_token: SecretStr | None = None
+    frontier_globus_https_refresh_token: SecretStr | None = None
+
+    nersc_iri_url: str = "https://api.iri.nersc.gov"
+    nersc_machine: str = "perlmutter"
+    """ The IRI status group Perlmutter's `compute` resource sits in. """
+
+    globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
+    """ The public client the users' Globus refresh tokens were minted for. """
+
+
 for env_file in reversed(_ENV_FILES):
     if Path(env_file).exists():
         values = dotenv_values(env_file)
@@ -447,6 +501,7 @@ for env_file in reversed(_ENV_FILES):
 # from env / dotenv sources; model_validate runs those sources without pyright
 # demanding they be passed as constructor arguments.
 settings = Settings.model_validate({})
+hpc_settings = HpcClusterSettings.model_validate({})
 
 os.environ["HF_HOME"] = str(settings.data_dir / "huggingface")
 

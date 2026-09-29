@@ -5,13 +5,14 @@ from pydantic import BaseModel
 
 from ..db.db import SessionDep
 from ..db.schemas import (
+    HpcCluster,
     UserCreate,
     UserUpdate,
     UserSelfUpdate,
     UserPublic,
     UserPublicWithConfig,
 )
-from ..services import globus_auth, user as user_service
+from ..services import globus_auth, hpc_status, user as user_service
 from ..services.auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -39,6 +40,21 @@ async def update_me(
 ) -> UserPublicWithConfig:
     row = await user_service.update_user(session, user.id, updates, user)
     return UserPublicWithConfig.model_validate(row)
+
+
+@router.get("/me/hpc-status")
+async def get_hpc_status(
+    user: UserDep, fresh: bool = False, cluster: HpcCluster | None = None
+) -> hpc_status.HpcStatus:
+    """
+    Whether each visible HPC cluster would work for the current user right
+    now, from live checks against the facility, S3M, and Globus. Results are
+    reused for a minute; `fresh=true` reruns them, for every cluster or, with
+    `cluster`, for that one. Never carries a token.
+    """
+    return await hpc_status.hpc_status_service.status(
+        user, fresh=fresh, cluster=cluster
+    )
 
 
 # ---------------------------------------------------------------------------

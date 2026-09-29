@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { fileLinkProps } from "@/lib/file-links";
 
 type Props = {
   src: string;
@@ -41,14 +42,9 @@ export function ImageLightbox({ src, alt, onClose }: Props) {
         <img className="lightbox-image" src={src} alt={alt} />
         <div className="lightbox-bar">
           <span className="lightbox-name">{alt}</span>
-          {/* Opening in a tab is the way to get at the file itself — zoom
-              further, save it, drop it in a document. */}
-          <a
-            className="button ghost button-sm"
-            href={src}
-            target="_blank"
-            rel="noreferrer"
-          >
+          {/* The file itself, to zoom further or drop in a document: saved
+              when it is one of VISTA's own, opened in a tab otherwise. */}
+          <a className="button ghost button-sm" href={src} {...fileLinkProps(src)}>
             Download
           </a>
           <button type="button" className="button ghost button-sm" onClick={onClose}>

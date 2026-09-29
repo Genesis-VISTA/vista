@@ -16,7 +16,6 @@ from .types import GlobusTokens
 class UserConfig(BaseModel):
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
-    s3m_token: str | None = None
     nersc_iri_token: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
@@ -29,8 +28,6 @@ class UserConfig(BaseModel):
 
     def require_s3m_token(self, cluster: Literal["odo", "frontier"]) -> str:
         token = self.odo_s3m_token if cluster == "odo" else self.frontier_s3m_token
-        if not token:
-            token = self.s3m_token
         if not token:
             raise ToolError(
                 f"No S3M token configured for {cluster!r}. Add a {cluster} S3M token in the "

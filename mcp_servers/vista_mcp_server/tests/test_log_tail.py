@@ -291,6 +291,32 @@ class TestWhatAStatusQuerySays:
 
         assert "(no output files yet)" in text
 
+    async def test_the_listing_drops_excluded_dirs_but_not_lookalike_names(
+        self, globus, tmp_path
+    ):
+        """`.git` and `__pycache__` are noise as directories, but a file that
+        merely contains the string -- `.gitignore`, `run.github.log` -- is output
+        the researcher asked for, and must not vanish from the listing."""
+        out = "/lustre/orion/chm243/proj-shared/vista/out/1"
+        globus.ls_entries[out] = [
+            {"type": "file", "path": f"{out}/{rel}"}
+            for rel in (
+                "results.json",
+                ".gitignore",
+                "run.github.log",
+                ".git/HEAD",
+                "src/__pycache__/a.cpython-312.pyc",
+            )
+        ]
+
+        text = await self.status(tmp_path)
+
+        assert "results.json" in text
+        assert ".gitignore" in text
+        assert "run.github.log" in text
+        assert ".git/HEAD" not in text
+        assert "a.cpython-312.pyc" not in text
+
     async def test_a_job_with_no_output_dir_says_that_much(self, globus, tmp_path):
         """Nothing was ever recorded to list. Distinct from an empty one."""
         _submitted_jobs.clear()

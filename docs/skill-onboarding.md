@@ -197,6 +197,13 @@ for the skill, including the **sim-skill dispatch/collect contract** (`order →
 out one subagent per state point — see the
 [multi-agent framework](./multi-agent-framework.md).
 
+A campaign binds a sim skill to a role in its `campaign.yaml`, where two optional fields
+make that contract explicit: `args` (how a candidate is encoded into `script_args` —
+use `encoding: flags` with a `map` of variable → CLI flag, since job wrappers parse flat
+flags with argparse) and `collect_files` (the output files the result parser needs, e.g.
+`[results.json]`). Both are opt-in: a role declaring neither keeps the older behavior of
+a JSON-serialized candidate and no fetched outputs.
+
 ## Troubleshooting
 
 **"Invalid skill name 'X'; must be kebab-case…"** — Slugs must be lowercase

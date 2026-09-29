@@ -45,11 +45,26 @@ skip() {
   echo "  skip $1 -- $2"
 }
 
+IS_WINDOWS=false
+case "$(uname -s)" in
+  MINGW*|MSYS*) IS_WINDOWS=true ;;
+esac
+
+# The package's own interpreter, for the checks below that parse JSON.
+PACKAGE_PYTHON="$PACKAGE/app/backend/.venv/bin/python"
+[[ "$IS_WINDOWS" == true ]] && PACKAGE_PYTHON="$PACKAGE/app/backend/.venv/Scripts/python.exe"
+
 cleanup() {
   trap - INT TERM EXIT
   local pid
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-    kill "$pid" 2>/dev/null || true
+    if [[ "$IS_WINDOWS" == true ]]; then
+      # The launcher is native PowerShell, and bash's signals reach neither it
+      # nor the services it started; taskkill /T takes the whole tree.
+      taskkill //F //T //PID "$(cat "/proc/$pid/winpid" 2>/dev/null)" >/dev/null 2>&1 || true
+    else
+      kill "$pid" 2>/dev/null || true
+    fi
   done
   wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
 }
@@ -70,20 +85,25 @@ wait_for() {
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
-[[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+# VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
+# waits for the address line the launcher prints in that mode. The Windows
+# launcher has no window and ignores it.
+export VISTA_NO_WINDOW=1
+LAUNCHER=("$PACKAGE/vista")
+if [[ "$IS_WINDOWS" == true ]]; then
+  [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
+  LAUNCHER=(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PACKAGE/vista.ps1")
+else
+  [[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+fi
 
 export VISTA_HOME="$STATE"
 
-# The launcher refuses to start on Linux without KVM, because every agent tool
-# call needs it. A build container never has /dev/kvm, so a cross-platform
-# build would be unable to exercise its own artifact at all. The override lets
-# the services start; the checks that go through the agent are skipped below
-# and reported as skipped rather than passed.
-AGENT_PATH_TESTABLE=true
-if [[ "$(uname -s)" == Linux && ! -e /dev/kvm ]]; then
-  export VISTA_ALLOW_NO_KVM=1
-  AGENT_PATH_TESTABLE=false
-fi
+# There is no opt-out for hardware virtualisation: VISTA always needs a
+# microVM, so a host where the launcher refuses to start for want of one
+# cannot verify a package, and this test fails there rather than skipping the
+# checks that go through the sandbox.
+#
 # This test deliberately configures no Globus credential, which is now the
 # ordinary state of a fresh install: one arrives when a researcher connects
 # Globus in the interface. Unset rather than assumed absent, so a maintainer
@@ -100,7 +120,7 @@ BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 mkdir -p "$STATE" "$LOGS"
 
 log "starting the package launcher"
-"$PACKAGE/vista" > "$LOGS/launcher.log" 2>&1 &
+"${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
 # The launcher prints one address line when every service is up.
@@ -141,11 +161,11 @@ retrieval_returns_passages() {
       -d '{"name":"rag_search","arguments":{"query":"thermal conductivity of molten fluoride salts","kb_slug":"molten-salt-papers"}}'
   )"
   echo "$body" > "$LOGS/retrieval.json"
-  "$PACKAGE/app/backend/.venv/bin/python" - "$LOGS/retrieval.json" <<'PYCHECK'
+  "$PACKAGE_PYTHON" - "$LOGS/retrieval.json" <<'PYCHECK'
 import json
 import sys
 
-result = json.load(open(sys.argv[1]))
+result = json.load(open(sys.argv[1], encoding="utf-8"))
 if result.get("isError"):
     sys.exit(f"rag_search reported an error: {result}")
 text = "".join(
@@ -155,16 +175,7 @@ if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
 PYCHECK
 }
-if [[ "$AGENT_PATH_TESTABLE" == true ]]; then
-  check "retrieval returns passages" retrieval_returns_passages
-else
-  # Not a weaker assertion about retrieval: it cannot be reached at all here.
-  # The sandbox server is part of the agent's toolset and its lifespan spawns a
-  # microVM, so with no /dev/kvm the backend's MCP client gets `Connection
-  # closed` and this call returns 500 regardless of the store's health.
-  skip "retrieval returns passages" \
-    "no /dev/kvm here, so every agent tool call fails; verify on a KVM host"
-fi
+check "retrieval returns passages" retrieval_returns_passages
 
 # The launcher has nothing left to say about file transfer, and this asserts the
 # silence. OLCF file operations are HTTPS requests made inside a tool call, so
@@ -189,13 +200,51 @@ version_is_consistent() {
   declared="$(cat "$PACKAGE/VERSION")"
   reported="$(
     curl -s -m 20 "$BACKEND_URL/openapi.json" \
-      | "$PACKAGE/app/backend/.venv/bin/python" -c \
-        'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+      | "$PACKAGE_PYTHON" -c \
+        'import json,sys; print(json.load(sys.stdin.buffer)["info"]["version"])'
   )"
   [[ -n "$declared" && "$declared" == "$reported" ]] \
     && grep -q "VISTA $declared" "$LOGS/launcher.log"
 }
 check "version matches across manifest, launcher and app" version_is_consistent
+
+# The window, as unpacked here -- relocated, and carrying the signature the
+# build gave it through the archive round trip -- loads the running UI. Its
+# --smoke-test mode never shows anything and takes no single-instance lock, so
+# a VISTA the builder has open cannot turn this into a false failure. It still
+# needs a GUI session to start at all, which a build over SSH does not have.
+WINDOW_EXE="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
+    "$PACKAGE/manifest.json"
+)"
+# On Linux it gets the sandbox arguments the launcher would give it on this
+# host (linux-desktop-window D1), and a virtual display when there is no real
+# one, which is how a build container runs it (D7).
+WINDOW_RUNNER=()
+window_loads_the_ui() {
+  local sandbox=''
+  if [[ "$(uname -s)" == Linux ]]; then
+    sandbox="$("$PACKAGE/$(dirname "$WINDOW_EXE")/window-sandbox" 2>>"$LOGS/window-smoke.log")"
+  fi
+  # $sandbox is empty or the single word --no-sandbox, so it is left unquoted.
+  # shellcheck disable=SC2086
+  ${WINDOW_RUNNER[@]+"${WINDOW_RUNNER[@]}"} "$PACKAGE/$WINDOW_EXE" $sandbox \
+    --smoke-test --url="http://127.0.0.1:$UI_PORT/" >> "$LOGS/window-smoke.log" 2>&1
+}
+if [[ -z "$WINDOW_EXE" ]]; then
+  skip "the window loads the UI" "this package has no window"
+elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
+  skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
+elif [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] \
+     && ! command -v xvfb-run >/dev/null 2>&1; then
+  skip "the window loads the UI" "no display and no xvfb-run here; install xvfb, or rerun from a desktop session"
+else
+  if [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    WINDOW_RUNNER=(xvfb-run -a)
+  fi
+  check "the window loads the UI" window_loads_the_ui
+fi
 
 log "shutting down"
 cleanup
