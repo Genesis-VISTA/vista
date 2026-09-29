@@ -86,7 +86,8 @@ wait_for() {
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
 # --browser: a build has no one to look at a window, and the check below waits
-# for the address line that only browser mode prints.
+# for the address line that only browser mode prints. The Windows launcher has
+# no window and takes no arguments.
 LAUNCHER=("$PACKAGE/vista" --browser)
 if [[ "$IS_WINDOWS" == true ]]; then
   [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
@@ -212,8 +213,8 @@ check "version matches across manifest, launcher and app" version_is_consistent
 # a VISTA the builder has open cannot turn this into a false failure. It still
 # needs a GUI session to start at all, which a build over SSH does not have.
 WINDOW_EXE="$(
-  "$PACKAGE/app/backend/.venv/bin/python" -c \
-    'import json,sys; w=json.load(open(sys.argv[1])).get("window"); print(w["exe"] if w else "")' \
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
     "$PACKAGE/manifest.json"
 )"
 # On Linux it gets the sandbox arguments the launcher would give it on this

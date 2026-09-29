@@ -24,9 +24,8 @@ before it gets the chance.
 First run extracts the corpus, vector store, and embedding weights from the
 package's `payload/payload.tar` into the state directory (~1 GB), imports the
 sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. It then prints
-`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
-Later runs skip every setup step and start in seconds.
+That takes a few minutes, with each step logged as it happens. Later runs skip
+every setup step and start in seconds.
 
 VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
 the window stops VISTA, and so do Ctrl-C in the terminal and closing the
