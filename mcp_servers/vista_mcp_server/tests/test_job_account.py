@@ -34,13 +34,17 @@ def checked(monkeypatch):
 
 
 async def test_default_account_is_the_clusters(checked):
-    token = await m._require_olcf_access(UserConfig(s3m_token="tok"), "frontier")
+    token = await m._require_olcf_access(
+        UserConfig(frontier_s3m_token="tok"), "frontier"
+    )
     assert token == "tok"
     assert checked == [("tok", "chm243", "frontier")]
 
 
 async def test_job_account_overrides_the_clusters(checked):
-    await m._require_olcf_access(UserConfig(s3m_token="tok"), "frontier", "stf218")
+    await m._require_olcf_access(
+        UserConfig(frontier_s3m_token="tok"), "frontier", "stf218"
+    )
     assert checked == [("tok", "stf218", "frontier")]
 
 

@@ -583,7 +583,7 @@ async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
 
     cfg = UserConfig(
-        s3m_token="chm243-token",
+        frontier_s3m_token="chm243-token",
         frontier_globus_token="g-transfer",
         frontier_globus_https_token="g-https",
     )

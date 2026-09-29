@@ -89,17 +89,17 @@ async def test_sync_changes_no_project(engine):
 
 
 async def test_existing_skill_rows_are_left_alone(engine):
+    # Any skill the first seed registered -- not a named one, since the bundled
+    # set changes as skills are added and retired.
     async with AsyncSession(engine) as session:
-        row = (
-            await session.exec(
-                select(SkillTable).where(SkillTable.name == "alloy-design")
-            )
-        ).one()
+        row = (await session.exec(select(SkillTable).order_by(SkillTable.name))).first()
+        assert row is not None, "the offline seed registered no skills"
+        name = row.name
         row.description = "edited by an admin"
         session.add(row)
         await session.commit()
     await sync_bundled_skills(engine)
-    assert (await _skills(engine))["alloy-design"].description == "edited by an admin"
+    assert (await _skills(engine))[name].description == "edited by an admin"
 
 
 async def test_asset_skills_are_left_to_seed_db(engine):
