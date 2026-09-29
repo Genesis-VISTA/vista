@@ -18,6 +18,7 @@ import {
 } from "@/components/SkillEditorModal";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { labelForTool } from "@/lib/tool-labels";
+import { fileLinkProps } from "@/lib/file-links";
 import {
   readActiveProjectName,
   useActiveProject,
@@ -1634,7 +1635,7 @@ export default function HomePage() {
                     onZoom={setLightbox}
                   />
                 ) : (
-                  <a href={latestResult.ui.url} target="_blank" rel="noreferrer" className="chat-bubble">
+                  <a href={latestResult.ui.url} {...fileLinkProps(latestResult.ui.url)} className="chat-bubble">
                     Download {latestResult.ui.name ?? "file"}
                   </a>
                 )

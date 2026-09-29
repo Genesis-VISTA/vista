@@ -14,9 +14,11 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
 fi
 
 PROD=false
+ELECTRON=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
+    --electron) ELECTRON=true ;;
     *) echo "Unknown build.sh argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -44,6 +46,13 @@ npm ci
 # In prod we serve a precompiled build via `npm start`, in dev we just run the devserver
 if [[ "$PROD" == true ]]; then
     npm run build
+fi
+
+# The VISTA window (./launch.sh --electron). Opt-in because Electron is a
+# ~290 MB download that nothing else needs.
+if [[ "$ELECTRON" == true ]]; then
+    cd "$REPO_ROOT/electron"
+    npm ci
 fi
 
 cd "$REPO_ROOT"
