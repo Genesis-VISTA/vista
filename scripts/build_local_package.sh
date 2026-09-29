@@ -454,7 +454,9 @@ shipped corpus returns passages that cite nothing. Pass \
     # Exactly one signing call, the window's. Any other would risk re-signing
     # `msb` and stripping the hypervisor entitlement the sandbox needs (R2).
     local signing_calls
-    signing_calls="$(grep -cE '^[[:space:]]*codesign[[:space:]].*--sign' "$REPO_ROOT/scripts/build_local_package.sh")"
+    # grep -c prints 0 but exits 1 on no match, which set -e would turn into a
+    # silent abort before the explanation below.
+    signing_calls="$(grep -cE '^[[:space:]]*codesign[[:space:]].*--sign' "$REPO_ROOT/scripts/build_local_package.sh" || true)"
     if [[ "$signing_calls" != 1 ]]; then
       failures+=("build_local_package.sh has $signing_calls codesign --sign calls; only the \
 VISTA window's may exist, so nothing else (msb above all) is ever re-signed")
@@ -960,9 +962,11 @@ stage_window_linux() {
   out="$(mktemp -d)"
   (
     cd "$REPO_ROOT/electron"
-    # The packager downloads the Linux build itself; the npm package's own
-    # binary is only for running tests, which the build does not.
-    ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --prefer-offline >/dev/null
+    # A plain install, as on macOS. Skipping the binary would leave
+    # node_modules/.bin/electron without one and break the dev window and the
+    # e2e tests in this same folder; the packager shares the download cache, so
+    # a native-architecture build fetches nothing twice.
+    npm ci --prefer-offline >/dev/null
   )
   built="$(node "$REPO_ROOT/electron/scripts/package.js" \
     --platform linux --arch "$arch" --out "$out" | tail -1)"

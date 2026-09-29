@@ -320,3 +320,7 @@ on with no code change.
   `uid_map` fails. It is confirmed on a real host in task 1.1. If it succeeds there, rule
   2 would say "sandbox on" and D5 would give browser mode. In that case, add the sysctl
   back as a condition on rule 2.
+
+## Amendment: no browser fallback
+
+The package is desktop-only. `--browser` and the automatic fall-back to printing an address (L1, D5) are removed: a session that cannot show the window is refused up front with the reason, and a window that fails ends the launcher with its exit status. `VISTA_NO_WINDOW=1` starts the services alone, for the build smoke test only. A second window exits 75 (single-instance lock), and the dev window keeps its own userData so it does not contend with an installed one.

@@ -52,7 +52,15 @@ try {
   fail(`--url must be the http(s) address of the running UI (got "${args.url}")`);
 }
 
+// The single-instance lock is kept per userData directory, and the dev window and
+// the installed one are both named VISTA. Without this, a dev window and an open
+// installed one would contend for one lock. An explicit --user-data-dir wins.
+if (args.dev) app.setPath('userData', path.join(app.getPath('appData'), 'VISTA-dev'));
 if (args.userDataDir) app.setPath('userData', path.resolve(args.userDataDir));
+
+// What the window exits with when another VISTA window already holds the lock.
+// The launchers read it (EX_TEMPFAIL); 0 means only that the user closed it.
+const EXIT_ALREADY_OPEN = 75;
 
 // On Linux the launcher adds --no-sandbox where the host blocks Chromium's
 // sandbox (linux-desktop-window D1). This line lands in window.log, so a report
@@ -107,15 +115,27 @@ app.on('web-contents-created', (_event, contents) => {
     }
   });
 
-  /** @param {Electron.Event<{ url: string }>} event */
+  /**
+   * @param {Electron.Event<{ url: string, isMainFrame: boolean }>} event
+   */
   const guardNavigation = (event) => {
+    // A sandboxed card's own document has no http address; refusing it would
+    // leave the card blank. Only a subframe can be one of these.
+    if (!event.isMainFrame && (event.url === 'about:srcdoc' || event.url === 'about:blank')) return;
     const route = classify(origin, event.url);
     if (route === 'in-app') return;
     event.preventDefault();
     if (route === 'external') openExternally(event.url);
   };
-  contents.on('will-navigate', guardNavigation);
-  contents.on('will-redirect', guardNavigation);
+  // will-navigate is main-frame only, so a link clicked inside an iframe (a
+  // SandboxedHtmlCard, whose sandbox has no popups) would load in the app.
+  // will-frame-navigate covers every frame.
+  contents.on('will-frame-navigate', guardNavigation);
+  // will-redirect fires for subframes too, and a redirect inside a card is not
+  // the researcher going anywhere.
+  contents.on('will-redirect', (event) => {
+    if (event.isMainFrame) guardNavigation(event);
+  });
 
   contents.on('will-attach-webview', (event) => event.preventDefault());
 
@@ -263,7 +283,8 @@ function runSmokeTest() {
 
 if (origin && !args.smokeTest && !app.requestSingleInstanceLock()) {
   // Another VISTA window is open; it gets the `second-instance` event below.
-  app.exit(0);
+  console.error('vista-window: VISTA is already open; that window was brought forward.');
+  app.exit(EXIT_ALREADY_OPEN);
 }
 
 app.on('second-instance', () => {

@@ -29,12 +29,12 @@ every setup step and start in seconds.
 
 VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
 the window stops VISTA, and so do Ctrl-C in the terminal and closing the
-terminal. If the window crashes, the services keep running and the launcher
-prints the address to open in a browser instead. `./vista --browser` prints
-`VISTA is running at http://127.0.0.1:3000` instead of opening the window, for use in a
-browser. So does any session that can't show the window, and the launcher says
-why: an SSH session, no display, or, on Linux, running as root or missing
-system libraries (see below). In every case Ctrl-C stops every service.
+terminal. VISTA is a desktop application and has no browser mode. In a session
+that can't show the window, the launcher says why and stops before starting
+anything: an SSH session, no display, or, on Linux, running as root or missing
+system libraries (see below). If the window crashes, the launcher reports its exit
+status and stops the services. If another VISTA window is already open, the new
+one refuses to start rather than run a second stack.
 
 Paste your inference API key into the settings modal. It takes effect
 immediately; no restart. Links to other sites, including the Globus login,
@@ -51,7 +51,7 @@ login is the common fix.
 **The window on Linux** needs a desktop session (X11 or Wayland) and four
 system libraries that every desktop install already has. A minimal server or a
 container may not have them, and then the launcher names what is missing and
-stays in browser mode:
+stops:
 
 | | Debian / Ubuntu | Fedora / RHEL |
 |---|---|---|

@@ -44,7 +44,10 @@ if [[ "$NO_BUILD" != true ]]; then
   ./scripts/build.sh ${PROD:+--prod} ${ELECTRON:+--electron}
 fi
 
-if [[ -n "$ELECTRON" && ! -x "$REPO_ROOT/electron/node_modules/.bin/electron" ]]; then
+# path.txt is what Electron's installer writes once it has the binary. The
+# .bin/electron link exists without it (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`
+# leaves one), and then fails to start with a confusing message.
+if [[ -n "$ELECTRON" && ! -f "$REPO_ROOT/electron/node_modules/electron/path.txt" ]]; then
   echo "The VISTA window is not installed; run ./scripts/build.sh --electron first." >&2
   exit 1
 fi
@@ -194,8 +197,13 @@ case "$MODE" in
       echo "  Window:     $LOG_DIR/window.log (close it to stop everything)"
       run_service window "$LOG_DIR/window.log" "$WINDOW_CMD"
       # Only the window ends the session; the EXIT trap then stops the rest.
-      wait "${pids[${#pids[@]}-1]}" || true
-      exit 0
+      # A window that fails says so, and the failure is the script's status.
+      window_status=0
+      wait "${pids[${#pids[@]}-1]}" || window_status=$?
+      if [[ "$window_status" != 0 ]]; then
+        echo "The VISTA window exited with status $window_status; see $LOG_DIR/window.log" >&2
+      fi
+      exit "$window_status"
     fi
 
     wait

@@ -85,10 +85,11 @@ wait_for() {
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
-# --browser: a build has no one to look at a window, and the check below waits
-# for the address line that only browser mode prints. The Windows launcher has
-# no window and takes no arguments.
-LAUNCHER=("$PACKAGE/vista" --browser)
+# VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
+# waits for the address line the launcher prints in that mode. The Windows
+# launcher has no window and ignores it.
+export VISTA_NO_WINDOW=1
+LAUNCHER=("$PACKAGE/vista")
 if [[ "$IS_WINDOWS" == true ]]; then
   [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
   LAUNCHER=(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PACKAGE/vista.ps1")

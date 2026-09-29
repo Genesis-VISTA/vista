@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Start VISTA from an unpacked package. Installed at the package root as `vista`.
 #
-#   ./vista            first-run setup if needed, then start and open the window
-#   ./vista --browser  the same, but print the address to open in a browser
-#   ./vista --help     show this
+#   ./vista         first-run setup if needed, then start and open the window
+#   ./vista --help  show this
 #
 # Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
-# terminal. Where no window can be shown -- a package without one, or a
-# session with no display, such as SSH -- it says so and behaves as --browser.
+# terminal. VISTA is a desktop application: in a session that cannot show its
+# window, such as SSH, it says why and stops.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -50,14 +49,12 @@ VERSION="$(cat "$PACKAGE/VERSION" 2>/dev/null || echo unknown)"
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '%s\n' "$*"; }
 
-BROWSER_MODE=false
 for arg in "$@"; do
   case "$arg" in
     -h|--help)
       awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
       exit 0
       ;;
-    --browser) BROWSER_MODE=true ;;
     *) die "unexpected argument: $arg (try --help)" ;;
   esac
 done
@@ -246,166 +243,7 @@ export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
 export VISTA_BACKEND_FORUM__ENABLED="${VISTA_BACKEND_FORUM__ENABLED:-true}"
 LOGS="$STATE/logs"
 
-# ─── first-run setup ────────────────────────────────────────────────────────
-
-mkdir -p "$STATE" "$LOGS"
-
-FIRST_RUN=false
-[[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
-
-# The payload is extracted out of the package rather than read in place, for
-# two reasons: the knowledge-base row records absolute paths, so reading in
-# place would break when the package is replaced; and the corpus is the
-# researcher's to add to. Each part is skipped when already present, which is
-# what makes a second run cheap and an upgrade a directory replacement.
-#
-# It ships as one tar rather than as folders because some corpus file names
-# are long enough that, under the package folder, they would pass Windows'
-# path-length limit; see build_local_package.sh's pack_payload.
-missing=()
-for part in vista-data knowledge-bases huggingface; do
-  [[ -e "$STATE/$part" ]] || missing+=("$part")
-done
-if (( ${#missing[@]} > 0 )) && [[ -f "$PACKAGE/payload/payload.tar" ]]; then
-  log "First run: installing ${missing[*]}..."
-  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
-fi
-
-MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
-  -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
-
-# Imports the sandbox image from the payload -- the only one the package ships.
-# The `image inspect` guard is what makes a second run cheap: the load costs a
-# minute of disk on a first start and nothing at all afterwards. Nothing to do
-# -- no runtime, or no such archive -- is not a failure, and is left to the
-# caller to judge.
-load_image() {
-  local tar="$1" tag="$2" what="$3"
-  [[ -x "$MSB" && -f "$tar" ]] || return 0
-  "$MSB" image inspect --format=json "$tag" >/dev/null 2>&1 && return 0
-  log "First run: importing $what..."
-  "$MSB" load -i "$tar" -t "$tag" >> "$LOGS/setup.log" 2>&1
-}
-
-load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
-  "the code-execution sandbox image" \
-  || die "could not import the sandbox image; see $LOGS/setup.log"
-
-# ─── services ───────────────────────────────────────────────────────────────
-
-# Every service is started as the leader of its own process group, so stopping
-# it reaches everything it started, not only the process we hold a PID for. The
-# backend starts a sandbox server through `uv run` for each agent session, and
-# that starts microVMs: killed by PID alone, those outlive the launcher and hold
-# ports, and the next start refuses with "port in use".
-set -m
-
-PIDS=()
-STOP_GRACE_SECONDS=10
-
-# Signals every group, waits for them to go, then kills what is left. Services
-# are stopped in reverse start order, so the window closes first and the MCP
-# server, which the others talk to, last.
-#
-# HUP is trapped with the rest because closing the Terminal window sends it,
-# and every output line here is guarded because that terminal may already be
-# gone: a write error inside the trap would otherwise abort it under `set -e`
-# with the services still running.
-#
-# A service's own group is not always enough. The backend's MCP client starts
-# each sandbox server (`uv run dev-mcp-server`, its Python, its `msb`) in a new
-# group of its own. On TERM the backend closes those itself, but if it has to
-# be killed they would be orphaned. So every group below each service is
-# collected first, while the process tree still links them, and anything left
-# in any of them after the grace period is killed.
-descendant_groups() {
-  local child
-  for child in $(pgrep -P "$1" 2>/dev/null); do
-    ps -o pgid= -p "$child" 2>/dev/null | tr -d ' '
-    descendant_groups "$child"
-  done
-}
-
-STOPPING=false
-stop() {
-  trap - INT TERM HUP EXIT
-  STOPPING=true
-  { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
-  # Job control reports each service it sees die ("line 301: 78461
-  # Terminated: 15 ..."), which reads like a failure. Nothing after this point
-  # has anything to say on stderr, and this is the script's last act.
-  exec 2>/dev/null
-  local i pid group groups=() own_group
-  # Never our own group: that one holds the shell this was started from.
-  own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
-  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-    groups+=("$pid")
-    for group in $(descendant_groups "$pid"); do
-      [[ "$group" == "$own_group" || " ${groups[*]} " == *" $group "* ]] || groups+=("$group")
-    done
-  done
-  for (( i = ${#PIDS[@]} - 1; i >= 0; i-- )); do
-    pid="${PIDS[i]}"
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  done
-  local waited=0 alive
-  while (( waited < STOP_GRACE_SECONDS * 4 )); do
-    alive=false
-    for group in ${groups[@]+"${groups[@]}"}; do
-      kill -0 -- "-$group" 2>/dev/null && alive=true && break
-    done
-    [[ "$alive" == true ]] || break
-    perl -e 'select(undef, undef, undef, 0.25)' 2>/dev/null || sleep 1
-    waited=$(( waited + 1 ))
-  done
-  for group in ${groups[@]+"${groups[@]}"}; do
-    kill -KILL -- "-$group" 2>/dev/null || true
-  done
-  wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
-}
-trap stop INT TERM HUP EXIT
-
-wait_for() {
-  local url="$1" seconds="$2" logfile="$3" what="$4" i
-  for (( i = 0; i < seconds; i++ )); do
-    curl -s -o /dev/null -m 5 "$url" && return 0
-    perl -e 'select(undef, undef, undef, 1)' 2>/dev/null || sleep 1
-  done
-  echo >&2
-  echo "error: $what did not start within ${seconds}s. Last lines of $logfile:" >&2
-  tail -15 "$logfile" >&2
-  exit 1
-}
-
-# Each service writes to its own file rather than interleaving on stdout: three
-# services' output braided together is unreadable, and the one thing a
-# researcher needs from a successful start is the address.
-log "VISTA $VERSION"
-log "Starting services (logs in $LOGS)..."
-
-"$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
-  --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
-PIDS+=($!)
-wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server"
-
-if [[ "$FIRST_RUN" == true ]]; then
-  log "First run: preparing the database and corpus (this takes a minute)..."
-fi
-"$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
-PIDS+=($!)
-wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend"
-
-PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
-  "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
-PIDS+=($!)
-wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
-
-# ─── window or address ──────────────────────────────────────────────────────
-
-# 127.0.0.1, not localhost: it is what the UI binds, and localhost can resolve
-# to ::1 first. It is also the origin the window's storage is kept under, so it
-# has to be the same on every run.
-UI_URL="http://127.0.0.1:$UI_PORT"
+# ─── window ─────────────────────────────────────────────────────────────────
 
 # Whether this session can show a window at all, with the reason on stdout when
 # it cannot. One branch per OS, so a port adds a case rather than reworking this.
@@ -466,49 +304,252 @@ window_sandbox_args() {
   "$script" 2> "$LOGS/window-sandbox.log" || true
 }
 
-# The package says where its window is; the launcher does not assume a layout.
+# VISTA is a desktop application: there is no browser mode to fall back to, so a
+# session that cannot show the window is refused here, before anything is
+# started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
+# alone and is for the build's smoke test, which has no one to look at a window.
 WINDOW_EXE="$(manifest_field exe)"
+if [[ "${VISTA_NO_WINDOW:-}" != 1 ]]; then
+  [[ -n "$WINDOW_EXE" && -x "$PACKAGE/$WINDOW_EXE" ]] \
+    || die "this package has no VISTA window; rebuild it with build_local_package.sh."
+  reason="$(can_show_window)" \
+    || die "cannot open the VISTA window: $reason."
+fi
+
+# ─── first-run setup ────────────────────────────────────────────────────────
+
+mkdir -p "$STATE" "$LOGS"
+
+FIRST_RUN=false
+[[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
+
+# The payload is extracted out of the package rather than read in place, for
+# two reasons: the knowledge-base row records absolute paths, so reading in
+# place would break when the package is replaced; and the corpus is the
+# researcher's to add to. Each part is skipped when already present, which is
+# what makes a second run cheap and an upgrade a directory replacement.
+#
+# It ships as one tar rather than as folders because some corpus file names
+# are long enough that, under the package folder, they would pass Windows'
+# path-length limit; see build_local_package.sh's pack_payload.
+missing=()
+for part in vista-data knowledge-bases huggingface; do
+  [[ -e "$STATE/$part" ]] || missing+=("$part")
+done
+if (( ${#missing[@]} > 0 )) && [[ -f "$PACKAGE/payload/payload.tar" ]]; then
+  log "First run: installing ${missing[*]}..."
+  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
+fi
+
+MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
+  -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
+
+# Imports the sandbox image from the payload -- the only one the package ships.
+# The `image inspect` guard is what makes a second run cheap: the load costs a
+# minute of disk on a first start and nothing at all afterwards. Nothing to do
+# -- no runtime, or no such archive -- is not a failure, and is left to the
+# caller to judge.
+load_image() {
+  local tar="$1" tag="$2" what="$3"
+  [[ -x "$MSB" && -f "$tar" ]] || return 0
+  "$MSB" image inspect --format=json "$tag" >/dev/null 2>&1 && return 0
+  log "First run: importing $what..."
+  "$MSB" load -i "$tar" -t "$tag" >> "$LOGS/setup.log" 2>&1
+}
+
+load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
+  "the code-execution sandbox image" \
+  || die "could not import the sandbox image; see $LOGS/setup.log"
+
+# ─── services ───────────────────────────────────────────────────────────────
+
+# Every service is started as the leader of its own process group, so stopping
+# it reaches everything it started, not only the process we hold a PID for. The
+# backend starts a sandbox server through `uv run` for each agent session, and
+# that starts microVMs: killed by PID alone, those outlive the launcher and hold
+# ports, and the next start refuses with "port in use".
+set -m
+
+PIDS=()
+STOP_GRACE_SECONDS=10
+
+# Signals every group, waits for them to go, then kills what is left. The
+# signals go out in reverse start order but without waiting between them, so
+# this does not sequence the shutdown: every service is told within
+# milliseconds, and the grace period below is what gives slow ones time.
+#
+# HUP is trapped with the rest because closing the Terminal window sends it,
+# and every output line here is guarded because that terminal may already be
+# gone: a write error inside the trap would otherwise abort it under `set -e`
+# with the services still running.
+#
+# A service's own group is not always enough. The backend's MCP client starts
+# each sandbox server (`uv run dev-mcp-server`, its Python, its `msb`) in a new
+# group of its own. On TERM the backend closes those itself, but if it has to
+# be killed they would be orphaned. So every group below each service is
+# collected first, while the process tree still links them, and anything left
+# in any of them after the grace period is killed.
+descendant_groups() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    ps -o pgid= -p "$child" 2>/dev/null | tr -d ' '
+    descendant_groups "$child"
+  done
+}
+
+STOPPING=false
+stop() {
+  trap - INT TERM HUP EXIT
+  STOPPING=true
+  { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
+  # Job control reports each service it sees die ("line 301: 78461
+  # Terminated: 15 ..."), which reads like a failure. Nothing after this point
+  # has anything to say on stderr, and this is the script's last act.
+  exec 2>/dev/null
+  local i pid group groups=() own_group
+  # Never our own group: that one holds the shell this was started from.
+  own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
+  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+    groups+=("$pid")
+    for group in $(descendant_groups "$pid"); do
+      [[ "$group" == "$own_group" || " ${groups[*]} " == *" $group "* ]] || groups+=("$group")
+    done
+  done
+  for (( i = ${#PIDS[@]} - 1; i >= 0; i-- )); do
+    pid="${PIDS[i]}"
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  done
+  local waited=0 alive
+  while (( waited < STOP_GRACE_SECONDS * 4 )); do
+    alive=false
+    for group in ${groups[@]+"${groups[@]}"}; do
+      kill -0 -- "-$group" 2>/dev/null && alive=true && break
+    done
+    [[ "$alive" == true ]] || break
+    perl -e 'select(undef, undef, undef, 0.25)' 2>/dev/null || sleep 1
+    waited=$(( waited + 1 ))
+  done
+  for group in ${groups[@]+"${groups[@]}"}; do
+    kill -KILL -- "-$group" 2>/dev/null || true
+  done
+  wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
+}
+trap stop INT TERM HUP EXIT
+
+# Under `set -m` a foreground command is a process group of its own, and the
+# terminal delivers Ctrl-C to that group alone: the shell never sees it, the INT
+# trap never runs, and the wait carries on. Run as a background job and waited
+# for, the command leaves the shell in the terminal's foreground, so Ctrl-C
+# reaches the shell and interrupts `wait` at once.
+interruptible() {
+  "$@" &
+  wait $!
+}
+
+wait_for() {
+  local url="$1" seconds="$2" logfile="$3" what="$4" i
+  for (( i = 0; i < seconds; i++ )); do
+    interruptible curl -s -o /dev/null -m 5 "$url" && return 0
+    interruptible sleep 1
+  done
+  echo >&2
+  echo "error: $what did not start within ${seconds}s. Last lines of $logfile:" >&2
+  tail -15 "$logfile" >&2
+  exit 1
+}
+
+# Each service writes to its own file rather than interleaving on stdout: three
+# services' output braided together is unreadable, and the one thing a
+# researcher needs from a successful start is the address.
+log "VISTA $VERSION"
+log "Starting services (logs in $LOGS)..."
+
+"$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
+  --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
+PIDS+=($!)
+wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server"
+
+if [[ "$FIRST_RUN" == true ]]; then
+  log "First run: preparing the database and corpus (this takes a minute)..."
+fi
+"$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
+PIDS+=($!)
+wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend"
+
+PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
+  "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
+PIDS+=($!)
+wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
+
+# ─── window ─────────────────────────────────────────────────────────────────
+
+# 127.0.0.1, not localhost: it is what the UI binds, and localhost can resolve
+# to ::1 first. It is also the origin the window's storage is kept under, so it
+# has to be the same on every run.
+UI_URL="http://127.0.0.1:$UI_PORT"
+
+# The window exits with this when another VISTA window already holds the
+# single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
+WINDOW_ALREADY_OPEN=75
+
 WINDOW_PID=''
-if [[ "$BROWSER_MODE" != true ]]; then
-  if [[ -z "$WINDOW_EXE" || ! -x "$PACKAGE/$WINDOW_EXE" ]]; then
-    log "This package has no VISTA window; open the address below in a browser."
-  elif ! reason="$(can_show_window)"; then
-    log "Not opening the VISTA window: $reason."
-  else
-    WINDOW_ARGS=()
-    sandbox_arg="$(window_sandbox_args)"
-    if [[ -n "$sandbox_arg" ]]; then
-      WINDOW_ARGS+=("$sandbox_arg")
+start_window() {
+  "$PACKAGE/$WINDOW_EXE" "$@" --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
+  WINDOW_PID=$!
+  PIDS+=("$WINDOW_PID")
+}
+
+if [[ "${VISTA_NO_WINDOW:-}" == 1 ]]; then
+  log ""
+  log "VISTA is running at $UI_URL (no window: VISTA_NO_WINDOW is set)"
+  log "Press Ctrl-C to stop."
+  wait
+  exit 0
+fi
+
+# D1: window-sandbox says whether the host needs --no-sandbox, and why.
+sandbox_arg="$(window_sandbox_args)"
+if [[ -n "$sandbox_arg" ]]; then
+  log ""
+  while IFS= read -r line; do log "$line"; done < "$LOGS/window-sandbox.log"
+  start_window "$sandbox_arg"
+else
+  start_window
+  # window-sandbox cannot tell an AppArmor profile that is loaded from one that
+  # is only installed, and Chromium aborts at once when its sandbox cannot start.
+  # So a window that dies within a few seconds on Linux is started once more
+  # without the sandbox, with the reason, instead of ending the session.
+  if [[ "$HOST_OS" == linux ]]; then
+    for (( i = 0; i < 20; i++ )); do
+      kill -0 "$WINDOW_PID" 2>/dev/null || break
+      interruptible sleep 0.25
+    done
+    early_status=0
+    kill -0 "$WINDOW_PID" 2>/dev/null || wait "$WINDOW_PID" || early_status=$?
+    if [[ "$early_status" != 0 && "$early_status" != "$WINDOW_ALREADY_OPEN" ]]; then
       log ""
-      while IFS= read -r line; do log "$line"; done < "$LOGS/window-sandbox.log"
+      log "The VISTA window stopped at start (exit $early_status); trying again without Chromium's sandbox."
+      log "If it starts, this host blocks the sandbox; the first attempt is in $LOGS/window-first-attempt.log."
+      cp "$LOGS/window.log" "$LOGS/window-first-attempt.log"
+      PIDS=("${PIDS[@]:0:${#PIDS[@]}-1}")
+      start_window --no-sandbox
     fi
-    "$PACKAGE/$WINDOW_EXE" ${WINDOW_ARGS[@]+"${WINDOW_ARGS[@]}"} --url="$UI_URL" > "$LOGS/window.log" 2>&1 &
-    WINDOW_PID=$!
-    PIDS+=("$WINDOW_PID")
   fi
 fi
 
 log ""
-if [[ -n "$WINDOW_PID" ]]; then
-  log "VISTA is open in its own window ($UI_URL)."
-  log "Close the window, or press Ctrl-C here, to stop."
-  # The window closing or quitting ends the session; the EXIT trap stops the
-  # rest. A trapped signal interrupts this wait and runs `stop` first, and the
-  # script then carries on here -- so STOPPING, not the status, says whether it
-  # was a stop.
-  window_status=0
-  wait "$WINDOW_PID" || window_status=$?
-  if [[ "$window_status" == 0 || "$STOPPING" == true ]]; then
-    exit 0
-  fi
-  # D5: a window that fails -- at start or mid-session -- is not a reason to
-  # stop the services under it. Carry on as browser mode does.
-  log ""
-  log "The VISTA window stopped unexpectedly (exit $window_status); see $LOGS/window.log."
-  log "The services are still running."
+log "VISTA is open in its own window ($UI_URL)."
+log "Close the window, or press Ctrl-C here, to stop."
+# The window closing or quitting ends the session; the EXIT trap stops the
+# rest. A trapped signal interrupts this wait and runs `stop` first, and the
+# script then carries on here -- so STOPPING, not the status, says whether it
+# was a stop.
+window_status=0
+wait "$WINDOW_PID" || window_status=$?
+if [[ "$window_status" == 0 || "$STOPPING" == true ]]; then
+  exit 0
 fi
-
-log "VISTA is running at $UI_URL"
-log "Press Ctrl-C to stop."
-
-wait
+if [[ "$window_status" == "$WINDOW_ALREADY_OPEN" ]]; then
+  die "VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it."
+fi
+die "the VISTA window stopped unexpectedly (exit $window_status); see $LOGS/window.log."

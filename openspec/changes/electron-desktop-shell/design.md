@@ -306,3 +306,7 @@ changes; packages built before this change are unaffected.
   are unsuitable as an app icon. Until someone supplies a square icon, the shell ships
   Electron's default. This is cosmetic, and it changes no tasks: the icon is one path
   in B1.
+
+## Amendment: no browser fallback
+
+The package is desktop-only. `--browser` and the automatic fall-back to printing an address (L1, D5) are removed: a session that cannot show the window is refused up front with the reason, and a window that fails ends the launcher with its exit status. `VISTA_NO_WINDOW=1` starts the services alone, for the build smoke test only. A second window exits 75 (single-instance lock), and the dev window keeps its own userData so it does not contend with an installed one.
