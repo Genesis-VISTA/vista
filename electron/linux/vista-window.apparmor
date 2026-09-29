@@ -1,0 +1,14 @@
+# Lets the VISTA window use Chromium's sandbox on Ubuntu 23.10 and later, which
+# restrict unprivileged user namespaces to programs a profile allows. It grants
+# that and nothing else: `unconfined` confines nothing further. Covers every
+# unpacked package (app/window/VISTA) and the development window.
+# See linux-desktop-window design D2. Install once with:
+#   sudo install -m 644 vista-window.apparmor /etc/apparmor.d/vista-window
+#   sudo apparmor_parser -r /etc/apparmor.d/vista-window
+abi <abi/4.0>,
+include <tunables/global>
+
+profile vista-window /**/{app/window/VISTA,electron/node_modules/electron/dist/electron} flags=(unconfined) {
+  userns,
+  include if exists <local/vista-window>
+}

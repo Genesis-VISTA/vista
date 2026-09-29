@@ -50,10 +50,18 @@ describe("ImageLightbox", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("offers the file itself in a new tab, for zooming further or saving it", () => {
+  it("downloads one of VISTA's own files rather than opening a tab", () => {
     setup();
     const link = screen.getByRole("link", { name: "Download" });
     expect(link).toHaveAttribute("href", SRC);
+    expect(link).toHaveAttribute("download");
+    expect(link).not.toHaveAttribute("target");
+  });
+
+  it("opens someone else's image in a new tab", () => {
+    setup({ src: "https://example.org/figure.png" });
+    const link = screen.getByRole("link", { name: "Download" });
+    expect(link).not.toHaveAttribute("download");
     expect(link).toHaveAttribute("target", "_blank");
   });
 });

@@ -31,6 +31,7 @@ from ...services import skills as skills_service
 from ...services.forum_git import ForumClient, ForumDisabled
 from ..campaign.hpc_tools import McpHpcTools
 from ..campaign.mcp_invoke import build_mcp_invoke, project_paths_for
+from ..inference import build_model_for
 from . import simulation
 from .debate import DebateOrchestrator
 from .project_forum import build_client_for
@@ -453,9 +454,22 @@ async def build_simulation(
     return commissioner, runnable
 
 
+async def opener_of(session: AsyncSession, run) -> UserPublicWithConfig | None:
+    """
+    The person who opened `run`, with their settings, or `None` if they are gone.
+
+    A debate argues in a background task that has only the run, so the opener
+    is looked up again for their inference key, endpoint and model, the same
+    ones their chat uses.
+    """
+    user_row = await session.get(UserTable, run.user_id)
+    return UserPublicWithConfig.model_validate(user_row) if user_row else None
+
+
 def build_orchestrator(
     client: ForumClient,
     *,
+    user: UserPublicWithConfig | None = None,
     on_post=None,
     checkpoint=None,
     grounding: Grounding | None = None,
@@ -470,11 +484,15 @@ def build_orchestrator(
     deployment-wide forum to default to: a debate belongs to a project, and the
     project names the repository. Passing it in is what makes forgetting to
     scope a type error instead of a post in the wrong room.
+
+    `user` is the opener. Their inference key, endpoint and model win over the
+    deployment's, as in their chat: on a single-user install the settings
+    modal is where the key lives, and nothing exports it.
     """
     grounding = grounding if grounding is not None else build_grounding(client)
     return DebateOrchestrator(
         client=client,
-        roles=RoleAgents(toolsets=_toolsets(grounding)),
+        roles=RoleAgents(model=build_model_for(user), toolsets=_toolsets(grounding)),
         on_post=on_post,
         checkpoint=checkpoint,
         runnable=runnable,
@@ -512,6 +530,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
 
             await build_orchestrator(
                 client,
+                user=await opener_of(session, run),
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
@@ -552,6 +571,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
             # so without this the live view only goes live once it is over.
             await build_orchestrator(
                 client,
+                user=await opener_of(session, run),
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,

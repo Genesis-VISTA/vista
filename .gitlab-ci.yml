@@ -249,6 +249,45 @@ dev-mcp:test:
       junit: mcp_servers/dev_mcp_server/junit.xml
     expire_in: 1 week
 
+# ─── VISTA window (electron/) ───────────────────────────────────────────────
+#
+# Hermetic: the routing rules are plain functions, so neither job needs the
+# Electron binary or a display. The window's own behaviour -- child windows,
+# downloads, single instance -- is Playwright-driven and needs a display, so it
+# runs in the validation lane (docs/validation-lane.md), not here.
+
+.cache-npm-electron: &cache-npm-electron
+  cache:
+    key:
+      prefix: npm-electron
+      files:
+        - electron/package-lock.json
+    paths:
+      - electron/node_modules/
+
+electron:typecheck:
+  stage: lint
+  image: node:22-slim
+  <<: *cache-npm-electron
+  variables:
+    ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  script:
+    - cd electron
+    - npm ci --prefer-offline
+    - npm run typecheck
+
+# Required job — must NOT set allow_failure.
+electron:test:
+  stage: test
+  image: node:22-slim
+  <<: *cache-npm-electron
+  variables:
+    ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  script:
+    - cd electron
+    - npm ci --prefer-offline
+    - npm test
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:

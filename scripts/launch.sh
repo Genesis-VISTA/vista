@@ -18,21 +18,38 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   set -o allexport; eval "$(tr -d '\r' < "$REPO_ROOT/.env")"; set +o allexport
 fi
 
-# Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
+# Args: an optional mode (tmux|terminal|logs) plus optional flags
 MODE="logs"
 PROD=''
 NO_BUILD=false
+ELECTRON=''
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
     --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
+    --electron) ELECTRON=true ;; # Open the UI in the VISTA window; closing it stops the stack.
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--electron]" >&2; exit 1 ;;
   esac
 done
 
+# The window's lifetime is the stack's, which only `logs` mode owns: tmux and
+# terminal hand the services to other windows and return.
+if [[ -n "$ELECTRON" && "$MODE" != logs ]]; then
+  echo "--electron works in logs mode only; $MODE mode does not own the services' lifetime." >&2
+  exit 1
+fi
+
 if [[ "$NO_BUILD" != true ]]; then
-  ./scripts/build.sh ${PROD:+--prod}
+  ./scripts/build.sh ${PROD:+--prod} ${ELECTRON:+--electron}
+fi
+
+# path.txt is what Electron's installer writes once it has the binary. The
+# .bin/electron link exists without it (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`
+# leaves one), and then fails to start with a confusing message.
+if [[ -n "$ELECTRON" && ! -f "$REPO_ROOT/electron/node_modules/electron/path.txt" ]]; then
+  echo "The VISTA window is not installed; run ./scripts/build.sh --electron first." >&2
+  exit 1
 fi
 
 cd "$REPO_ROOT/backend"
@@ -69,6 +86,25 @@ UI_CMD="
   echo 'Waiting for backend...' &&
   until curl -s -o /dev/null '$VISTA_BACKEND_URL/openapi.json'; do sleep 1; done &&
   $UI_RUN_CMD;
+"
+
+# localhost, not 127.0.0.1: that is where `next dev` answers. --dev keeps
+# DevTools and force-reload in the window's menu.
+UI_URL="http://localhost:3000"
+# On Linux, the same sandbox decision the package makes (linux-desktop-window
+# D8): window-sandbox prints nothing or --no-sandbox, and says why on stderr,
+# which shows with the window's other output. Left for the window's own shell
+# to run, so the single quotes keep it unexpanded here.
+WINDOW_SANDBOX=''
+if [[ "$(uname -s)" == Linux ]]; then
+  # shellcheck disable=SC2016
+  WINDOW_SANDBOX='$(./linux/window-sandbox)'
+fi
+WINDOW_CMD="
+  cd '$REPO_ROOT/electron' &&
+  echo 'Waiting for UI...' &&
+  until curl -s -o /dev/null '$UI_URL'; do sleep 1; done &&
+  ./node_modules/.bin/electron . --dev --url='$UI_URL' $WINDOW_SANDBOX;
 "
 
 
@@ -156,6 +192,19 @@ case "$MODE" in
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"
+
+    if [[ -n "$ELECTRON" ]]; then
+      echo "  Window:     $LOG_DIR/window.log (close it to stop everything)"
+      run_service window "$LOG_DIR/window.log" "$WINDOW_CMD"
+      # Only the window ends the session; the EXIT trap then stops the rest.
+      # A window that fails says so, and the failure is the script's status.
+      window_status=0
+      wait "${pids[${#pids[@]}-1]}" || window_status=$?
+      if [[ "$window_status" != 0 ]]; then
+        echo "The VISTA window exited with status $window_status; see $LOG_DIR/window.log" >&2
+      fi
+      exit "$window_status"
+    fi
 
     wait
     ;;
