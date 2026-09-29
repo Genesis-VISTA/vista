@@ -246,6 +246,35 @@ async def test_outputs_download_over_sftp_and_cache_locally(lux, tmp_path):
         await m._get_lux_job_outputs(None, tmp_path, "79", ["../escape"])
 
 
+async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
+    lux, monkeypatch
+):
+    """The repo's lux-hello job: the cheap way to check Lux end to end."""
+    repo_jobs = Path(__file__).resolve().parents[3] / "hpc_jobs"
+    monkeypatch.setattr(settings, "local_hpc_jobs_dir", repo_jobs)
+    monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
+
+    job_id, *_, nodes, duration = await m._submit_lux_job(
+        None, "lux-hello", None, None, None
+    )
+    assert job_id == "4242"
+    assert (nodes, duration) == (1, 300)
+
+    script = _submitted_script(lux)
+    header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
+    assert "#SBATCH -N 1" in header
+    assert "#SBATCH -t 0:05:00" in header
+    assert "#SBATCH --exclusive" not in header
+    assert not any("--gpus" in line or "--ntasks-per-node" in line for line in header)
+    # No setup_lux.sh and no sources: besides creating directories, sbatch is the
+    # only command, and nothing is uploaded.
+    assert [c for c, _ in lux.commands if not c.startswith("mkdir -p ")] == [
+        "sbatch --parsable"
+    ]
+    assert lux.puts == []
+    assert 'tee "${VISTA_OUT}/hello.txt"' in script
+
+
 async def test_lux_is_never_the_implicit_default():
     # No token selects Lux, so a call without cluster= must not land there.
     from vista_mcp_server.lib.user_config import UserConfig
