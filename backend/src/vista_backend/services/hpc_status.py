@@ -66,6 +66,14 @@ RESULT_TTL = 60.0
 """ How long one researcher's result for one cluster is reused. """
 FACILITY_TTL = 60.0
 """ How long a facility's public status feed is reused, across researchers. """
+LUX_PROBE_MIN_INTERVAL = 10.0
+"""
+The Lux hub is probed at most this often, even for a fresh check: every probe
+is a pre-login SSH connection from the VISTA host, the same address the MCP
+server submits Lux jobs from, and sshd penalises bursts of those.
+"""
+LUX_PROBE_FAILURE_TTL = 10.0
+""" How long a failed hub probe is reused. Shorter than a success, so one dropped connection doesn't keep Lux grey for a minute. """
 INTROSPECT_TTL = 600.0
 """ A token's project does not change; matches the MCP server's introspection cache. """
 
@@ -407,6 +415,7 @@ class HpcStatusService:
         self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
         self._introspections: dict[str, tuple[float, dict]] = {}
         self._ssh_probes: dict[str, tuple[float, Check]] = {}
+        self._ssh_inflight: dict[str, asyncio.Future[Check]] = {}
 
     async def status(
         self, user: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
@@ -440,7 +449,7 @@ class HpcStatusService:
             not fresh
             and cached is not None
             and cached[1] == fingerprint
-            and self._monotonic() - cached[0] < RESULT_TTL
+            and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
             return cached[2]
 
@@ -459,6 +468,13 @@ class HpcStatusService:
         )
         self._results[key] = (self._monotonic(), fingerprint, result)
         return result
+
+    @staticmethod
+    def _result_ttl(result: ClusterStatus) -> float:
+        """A failed Lux hub probe is kept no longer per researcher than it is shared."""
+        if result.cluster == "lux" and not result.checks.facility.ok:
+            return LUX_PROBE_FAILURE_TTL
+        return RESULT_TTL
 
     def _credential_fingerprint(self, user: Any, cluster: HpcCluster) -> str:
         """Changes whenever a credential this cluster's checks use changes."""
@@ -597,15 +613,35 @@ class HpcStatusService:
 
         Every failure is `unreachable` (Couldn't verify), never `degraded`: a
         probe that fails cannot tell Lux being down from a network that does
-        not reach ORNL.
+        not reach ORNL. Concurrent callers share one probe, and even a fresh
+        check reuses a probe younger than `LUX_PROBE_MIN_INTERVAL`.
         """
-        host = self._settings.lux_ssh_hosts[0]
+        hosts = self._settings.lux_ssh_hosts
+        if not hosts:
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message="No Lux hub is configured (VISTA_MCP_LUX_SSH_HOSTS is empty).",
+            )
+        host = hosts[0]
         cached = self._ssh_probes.get(host)
-        if not fresh and cached and self._monotonic() - cached[0] < FACILITY_TTL:
-            return cached[1]
+        if cached:
+            age = self._monotonic() - cached[0]
+            ttl = FACILITY_TTL if cached[1].ok else LUX_PROBE_FAILURE_TTL
+            if age < LUX_PROBE_MIN_INTERVAL or (not fresh and age < ttl):
+                return cached[1]
+        inflight = self._ssh_inflight.get(host)
+        if inflight is None:
+            inflight = asyncio.ensure_future(self._probe_lux_hub(host))
+            self._ssh_inflight[host] = inflight
+            inflight.add_done_callback(lambda _: self._ssh_inflight.pop(host, None))
+        # Shielded: one caller giving up must not cancel the others' probe.
+        return await asyncio.shield(inflight)
+
+    async def _probe_lux_hub(self, host: str) -> Check:
         try:
             greeting = await self._lux_probe(host, timeout=HTTP_TIMEOUT)
-        except (TimeoutError, OSError, SshProbeError) as error:
+        except Exception as error:  # noqa: BLE001 -- any failure is "couldn't tell", never a 500
             log.info("Lux hub %s probe failed: %s", host, type(error).__name__)
             check = Check(
                 ok=False,

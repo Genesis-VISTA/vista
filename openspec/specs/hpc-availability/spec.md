@@ -51,6 +51,13 @@ naming itself as a VISTA status probe, and close the connection. It SHALL NOT
 begin key exchange or authenticate. Any failure SHALL be reported as unreachable, never as
 degraded, because the probe cannot tell an outage from a network path that
 does not reach the hub. The Lux login node behind the hub SHALL NOT be probed.
+If no Lux hub is configured, Lux SHALL be Couldn't verify, and no failure of
+the Lux check SHALL prevent the other clusters' status from being returned.
+
+Every probe is a pre-login connection from VISTA's host, so the system SHALL
+share one probe among concurrent requests and SHALL NOT probe the hub more
+than once every 10 seconds, even for a fresh check. A failed probe SHALL be
+reused for no longer than 10 seconds.
 
 The facility check SHALL NOT require any credential.
 
@@ -80,7 +87,19 @@ The facility check SHALL NOT require any credential.
 
 #### Scenario: Lux probe is shared
 - **WHEN** two researchers request status within the result reuse window
-- **THEN** the Lux hub is probed once, unless one of them requests a fresh check
+- **THEN** the Lux hub is probed once, unless one of them requests a fresh check more than 10 seconds after the last probe
+
+#### Scenario: Repeated rechecks
+- **WHEN** a researcher presses Recheck on Lux several times within 10 seconds
+- **THEN** the hub is probed once
+
+#### Scenario: Transient failure
+- **WHEN** one probe fails and the hub answers again
+- **THEN** Lux is Ready again on the first status request more than 10 seconds after the failure
+
+#### Scenario: No hub configured
+- **WHEN** the Lux host list is empty
+- **THEN** Lux is Couldn't verify, and Frontier, Odo, and Perlmutter are reported as usual
 
 ### Requirement: Credential check
 For each cluster with a saved credential, the system SHALL verify it with an

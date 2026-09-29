@@ -108,7 +108,7 @@ function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
   if (cluster === "lux") {
     // Nothing is stored to check: the row says how sign-in works.
     const parts = [check.project ? `Project ${check.project}` : null, check.message].filter(Boolean);
-    return { ok: true, title: "Sign in from a chat", detail: parts.join(" · ") };
+    return { ok: check.ok, title: "Sign in from a chat", detail: parts.join(" · ") };
   }
   const kind = cluster === "perlmutter" ? "NERSC IRI token" : "S3M token";
   if (check.ok) {
