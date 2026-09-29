@@ -124,19 +124,16 @@ cluster's jobs run under".
 - **Load on the hub:** at most one connection per minute per backend while
   anyone has the rail open, plus one per Recheck.
 
-### D6. The hub reaches the UI as a new `Check.host` field
-The settings modal and details popover need the hub's name as a value, not
-parsed from a message. So add `host: str | None` to `Check` (backend model and
-the `HpcCheck` TS type). Only Lux's facility check sets it. The project already
-travels in `credential.project` (D4).
+### D6. The probed hub travels as `Check.host`
+Add `host: str | None` to `Check` (backend model and the `HpcCheck` TS type),
+set only by Lux's facility check, so the hub is a value in the response rather
+than only words in `message`. The project already travels in
+`credential.project` (D4). The UI shows the hub through the facility row's
+message; nothing in it reads `host` yet.
 
-A hidden cluster gets no status entry. So a hidden Lux's settings section shows
-the sign-in note without the hub and project (spec: "Lux section while
-hidden").
-
-*Alternative:* put hub and project on `/users/me` or a config endpoint, so the
-modal has them even while Lux is hidden. Rejected: it adds a second route for
-one line of text in an edge case.
+Lux's settings section holds only its show/hide switch: sign-in is described
+where it's needed, in the card's details, and a hidden Lux has no status entry
+to read hub or project from anyway.
 
 ### D7. Backend settings mirror the MCP's, including comma-separated parsing
 Add to `HpcClusterSettings`:
@@ -160,13 +157,11 @@ with the MCP's literal default, so the new fields are covered automatically.
 - **`HpcStatusSection.tsx`:**
   - `SUBTITLES.lux = "OLCF · Slurm over SSH"`, `SHORT.lux = "Lx"`.
   - `credentialRow` gets Lux's title.
-  - The details show "Only the hub is checked, not the Lux login node or Slurm".
   - `globus: null` already hides the Globus row, as for Perlmutter.
 - **`UserSettingsModal.tsx`:**
   - `CREDENTIAL_FIELDS.lux = []`.
-  - A Lux block with the show/hide switch, the sign-in note, and, when present
-    in status, hub and project.
-  - No inputs, so there is nothing to save and no recheck on save.
+  - The Lux section holds only the show/hide switch: no inputs, nothing to
+    save, and no recheck on save.
 
 Read `ui/node_modules/next/dist/docs/` before touching the components, per
 AGENTS.md.
@@ -196,8 +191,8 @@ AGENTS.md.
 ## Risks / Trade-offs
 
 - **The hub answering doesn't mean Lux works.** The login node, Slurm or Lux
-  itself can be down behind a green card. → The popover says only the hub is
-  checked. The separate `example`-job change is the end-to-end check.
+  itself can be down behind a green card. → The facility row names the hub it
+  reached, and `lux-hello` (D0) is the end-to-end check.
 - **A hosted deployment off the ORNL network shows Lux grey forever.** → This
   is what D3 intends, and "Couldn't verify" is honest. The deployment can hide
   Lux.

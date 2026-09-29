@@ -22,8 +22,8 @@
 
 - [x] 3.1 Read the relevant docs in `ui/node_modules/next/dist/docs/` for the client components being changed (per AGENTS.md)
 - [x] 3.2 Add `"lux"` to `HpcCluster`, `HPC_CLUSTERS`, `HPC_CLUSTER_TITLES` and `host` to `HpcCheck` in `ui/lib/hpc-status.ts`; verify `ui/tests/hpc-status.test.ts` passes with a Lux entry in its fixture
-- [x] 3.3 In `ui/components/HpcStatusSection.tsx` add the Lux subtitle ("OLCF · Slurm over SSH"), short label "Lx", the Lux credential-row title, and the "only the hub is checked" note in the details (D8); verify in `ui/tests/HpcStatusSection.test.tsx` that a Ready Lux card shows green "Ready", its details show hub, project, sign-in note and the login-node note with no Globus row or expiry, and the collapsed label reads "Lux: Ready"
-- [x] 3.4 In `ui/components/UserSettingsModal.tsx` add `CREDENTIAL_FIELDS.lux = []` and an info-only Lux section (switch, sign-in note, hub and project from status when present); verify in `ui/tests/UserSettingsModal.test.tsx` the shown case, the hidden case (no hub/project), deep-linking from the Lux card expands only Lux, and toggling Lux's switch saves `hpc_hidden_clusters`
+- [x] 3.3 In `ui/components/HpcStatusSection.tsx` add the Lux subtitle ("OLCF · Slurm over SSH"), short label "Lx", and the Lux facility- and credential-row titles (D8); verify in `ui/tests/HpcStatusSection.test.tsx` that a Ready Lux card shows green "Ready", its details show hub, project and sign-in note with no Globus row or expiry, and the collapsed label reads "Lux: Ready"
+- [x] 3.4 In `ui/components/UserSettingsModal.tsx` add `CREDENTIAL_FIELDS.lux = []` so the Lux section holds only its show/hide switch; verify in `ui/tests/UserSettingsModal.test.tsx` that the section has nothing but the switch, deep-linking from the Lux card expands only Lux, and toggling Lux's switch saves `hpc_hidden_clusters`
 - [x] 3.5 Add a Lux entry to `HPC_STATUS` in `ui/e2e-hermetic/fixtures.ts` and cover it in `ui/e2e-hermetic/shell.spec.ts`; verify with `./scripts/ci-local.sh ui`
 
 ## 4. End-to-end check

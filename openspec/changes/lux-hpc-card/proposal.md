@@ -15,15 +15,14 @@ waiting for one leaves a usable cluster invisible.
   connection to the Lux hub (the first configured Lux SSH host) and waits for its
   SSH greeting. It sends no credential. Any failure reads as Couldn't verify,
   never Degraded, because a failed probe cannot tell an outage from a network
-  that doesn't reach ORNL. The Lux login node behind the hub is not checked, and
-  the details say so.
+  that doesn't reach ORNL. The Lux login node behind the hub is not checked.
 - **Lux's credential check always passes, as information only.** Lux has no
   stored credential; a researcher signs in with a PIN + RSA passcode when a chat
   first uses it. So the card is **Ready** (green) whenever the hub answers. No
   new state is added.
 - **No Globus check for Lux.** Its files move over the same SSH connection.
-- **The settings modal gets an info-only Lux section**: its "Show in sidebar"
-  switch, the project jobs run under, and how sign-in works. Nothing is stored.
+- **The settings modal gets a Lux section with only its "Show in sidebar"
+  switch.** Nothing is stored; the card's details say how sign-in works.
 - **A `lux-hello` sample job** (`hpc_jobs/lux-hello/`): one node for a few
   seconds, reporting the compute node's hostname and GPUs. It checks sign-in,
   upload, submission, status, and output fetch end to end, without

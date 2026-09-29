@@ -164,8 +164,7 @@ cluster's section SHALL contain:
 - its "Show in sidebar" switch;
 - all of its credentials: for Odo and Frontier, the S3M token and Globus
   connection; for Perlmutter, the NERSC account, remote directory, and IRI
-  token; Lux has none, and its section SHALL instead say how sign-in works
-  and name the hub and the project Lux jobs run under, with nothing to edit;
+  token; Lux has none, so its section SHALL contain only its switch;
 - in its header, the same status dot and word the rail shows.
 
 Opened from the rail's settings button, every cluster section SHALL start
@@ -186,12 +185,8 @@ SHALL trigger a fresh check of that cluster.
 - **THEN** Odo is rechecked immediately, and its section header and rail card update without waiting for the next poll
 
 #### Scenario: Lux section
-- **WHEN** a researcher expands the Lux section while Lux is shown in the sidebar
-- **THEN** it shows the "Show in sidebar" switch, the Lux hub and project, and a note that sign-in uses a PIN and RSA passcode in a chat, and it has no credential fields
-
-#### Scenario: Lux section while hidden
-- **WHEN** a researcher expands the Lux section while Lux is hidden
-- **THEN** it shows the "Show in sidebar" switch and the sign-in note without the hub and project, because a hidden cluster is not checked
+- **WHEN** a researcher expands the Lux section
+- **THEN** it shows only the "Show in sidebar" switch, with no credential fields
 
 ### Requirement: NavRail presentation
 The expanded rail SHALL show an HPC section with one card per visible cluster.
@@ -200,7 +195,6 @@ as its color, and a status word. Clicking any card, in any state, SHALL open a
 details view containing:
 - each check with its reason;
 - for Odo and Frontier, the S3M token's planned expiration;
-- for Lux, that only the hub is checked, not the login node or its scheduler;
 - when the checks ran;
 - a Recheck control;
 - a link to that cluster's settings.
@@ -229,7 +223,7 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Lux details
 - **WHEN** a researcher opens the Lux card
-- **THEN** the details show the hub's reachability, the sign-in note with the project, and that the login node is not checked, with no Globus row and no expiry
+- **THEN** the details show the hub's reachability and the sign-in note with the project, with no Globus row and no expiry
 
 #### Scenario: Collapsed rail is labelled
 - **WHEN** the rail is collapsed

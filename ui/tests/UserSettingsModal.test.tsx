@@ -52,7 +52,7 @@ function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConf
   };
 }
 
-function statusView({ lux = true }: { lux?: boolean } = {}): HpcStatusView {
+function statusView(): HpcStatusView {
   const ok = { ok: true, reason: null, message: "ok" };
   const entry = (
     cluster: HpcCluster,
@@ -78,8 +78,7 @@ function statusView({ lux = true }: { lux?: boolean } = {}): HpcStatusView {
       entry("frontier", "ready"),
       entry("odo", "ready"),
       entry("perlmutter", "not_connected"),
-      // The backend does not check a hidden cluster, so it has no entry.
-      ...(lux ? [luxEntry] : []),
+      luxEntry,
     ],
     lastSuccessAt: 0,
     failing: false,
@@ -219,29 +218,15 @@ describe("UserSettingsModal saving", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows only how sign-in works, with the hub and project and nothing to edit", async () => {
+  it("opened from the Lux card, shows only the sidebar switch", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
     const lux = await section("Lux");
     expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
     expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
     expect(header("Lux")).toHaveTextContent("Ready");
-
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    expect(lux).toHaveTextContent(/PIN \+ RSA passcode/);
-    expect(within(lux).getByTestId("lux-facts")).toHaveTextContent("Hub hub.ccs.ornl.gov · Project stf218");
-    expect(within(lux).queryByRole("textbox")).toBeNull();
-    expect(lux.querySelector("input:not([role=switch])")).toBeNull();
-  });
-
-  it("while hidden, says how sign-in works without the hub and project", async () => {
-    useHpcStatusMock.mockReturnValue(statusView({ lux: false }));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ hpc_hidden_clusters: ["lux"] }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
-    const lux = await section("Lux");
-    expect(header("Lux")).toHaveTextContent("Hidden from sidebar");
-    expect(lux).toHaveTextContent(/PIN \+ RSA passcode/);
-    expect(within(lux).queryByTestId("lux-facts")).toBeNull();
+    expect(lux.querySelectorAll("input:not([role=switch]), textarea, a")).toHaveLength(0);
   });
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {

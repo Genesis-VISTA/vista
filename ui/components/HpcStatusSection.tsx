@@ -81,13 +81,6 @@ function clock(iso: string): string {
 
 type Row = { ok: boolean | null; title: string; detail: string };
 
-/** What a green Lux card does not promise. */
-const LUX_NOT_CHECKED: Row = {
-  ok: null,
-  title: "Login node not checked",
-  detail: "Only the hub is probed, not the Lux login node or Slurm behind it.",
-};
-
 function facilityRow(cluster: HpcCluster, check: HpcCheck): Row {
   // Lux is in no facility status feed; its check is whether the hub's SSH
   // server answers, and a failure there is never a reported outage.
@@ -377,7 +370,6 @@ function HpcDetails({
         facilityRow(cluster, status.checks.facility),
         credentialRow(cluster, status.checks.credential, now),
         ...(status.checks.globus ? [globusRow(status.checks.globus)] : []),
-        ...(cluster === "lux" ? [LUX_NOT_CHECKED] : []),
       ]
     : [];
   const checked =

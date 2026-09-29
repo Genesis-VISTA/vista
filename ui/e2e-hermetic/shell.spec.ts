@@ -288,7 +288,7 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
   });
 
-  test("Lux is Ready from its hub, says how sign-in works, and has nothing to save", async ({ page }) => {
+  test("Lux is Ready from its hub, and its settings are only the sidebar switch", async ({ page }) => {
     const stub = await installStub(page);
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
@@ -297,7 +297,6 @@ test.describe("HPC availability cards", () => {
     const details = page.getByRole("dialog", { name: "Lux connection details" });
     await expect(details).toContainText("Hub is reachable");
     await expect(details).toContainText("Project stf218");
-    await expect(details).toContainText("Login node not checked");
     await expect(details).not.toContainText("Globus");
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
@@ -308,7 +307,6 @@ test.describe("HPC availability cards", () => {
     const settings = page.getByRole("dialog", { name: "User settings" });
     await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-expanded", "true");
     const lux = settings.getByRole("region", { name: "Lux" });
-    await expect(lux).toContainText("Hub hub.ccs.ornl.gov · Project stf218");
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     await expect(lux.getByRole("textbox")).toHaveCount(0);
     expect(await stub.unstubbed()).toEqual([]);

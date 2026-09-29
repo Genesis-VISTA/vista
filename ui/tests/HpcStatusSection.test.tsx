@@ -260,7 +260,7 @@ describe("HpcStatusSection: Lux", () => {
     expect(screen.getByRole("button", { name: "Lux: Ready" })).toHaveTextContent("Lx");
   });
 
-  it("details show the hub, how sign-in works, and what is not checked, with no Globus or expiry", async () => {
+  it("details show the hub and how sign-in works, with no Globus or expiry", async () => {
     useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: "Lux: Ready" }));
@@ -273,7 +273,6 @@ describe("HpcStatusSection: Lux", () => {
     expect(
       within(dialog).getByText("Project stf218 · Sign in with PIN + RSA passcode when a chat first uses Lux."),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("Login node not checked")).toBeInTheDocument();
     expect(within(dialog).queryByText(/Globus/)).toBeNull();
     expect(within(dialog).queryByText(/expires/)).toBeNull();
     expect(within(dialog).queryByText("Facility is up")).toBeNull();
