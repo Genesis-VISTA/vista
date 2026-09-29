@@ -12,7 +12,10 @@ cd "$REPO_ROOT"
 # missing *script* file as fatal and exits before the `||` is considered, so
 # the tolerant-looking form kills the script on a checkout with no .env.
 if [[ -f "$REPO_ROOT/.env" ]]; then
-  set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
+  # Strip \r so a .env saved with CRLF endings (Windows) still parses. Read
+  # through eval rather than `source <(...)`: macOS ships bash 3.2, where
+  # sourcing a process substitution silently reads nothing.
+  set -o allexport; eval "$(tr -d '\r' < "$REPO_ROOT/.env")"; set +o allexport
 fi
 
 # Args: an optional mode (tmux|terminal|logs) plus an optional --prod flag
@@ -89,7 +92,7 @@ launch_terminal() {
       osascript -e "tell application \"Terminal\" to do script \"$cmd\""
       ;;
     MINGW*|MSYS*|CYGWIN*)
-      start cmd /c "$cmd"
+      mintty -t "$title" bash -c "$cmd" &
       ;;
     *)
       echo "Unsupported platform: $(uname -s)"
@@ -120,7 +123,18 @@ case "$MODE" in
       trap - INT TERM EXIT  # Disarm so this only runs once.
       echo "Shutting down..."
       for pid in "${pids[@]}"; do
-        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+        case "$(uname -s)" in
+          MINGW*|MSYS*|CYGWIN*)
+            local proc
+            for proc in /proc/[0-9]*; do
+              [[ "$(cat "$proc/pgid" 2>/dev/null)" == "$pid" ]] || continue
+              taskkill //F //T //PID "$(cat "$proc/winpid")" >/dev/null 2>&1 || true
+            done
+            ;;
+          *)
+            kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+            ;;
+        esac
       done
       wait "${pids[@]}" 2>/dev/null || true
     }

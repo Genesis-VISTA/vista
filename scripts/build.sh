@@ -7,7 +7,10 @@ REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 # the shell before the `||` is ever considered, so the tolerant-looking form
 # silently killed this script on any checkout without a .env.
 if [[ -f "$REPO_ROOT/.env" ]]; then
-  set -o allexport; source "$REPO_ROOT/.env"; set +o allexport
+  # Strip \r so a .env saved with CRLF endings (Windows) still parses. Read
+  # through eval rather than `source <(...)`: macOS ships bash 3.2, where
+  # sourcing a process substitution silently reads nothing.
+  set -o allexport; eval "$(tr -d '\r' < "$REPO_ROOT/.env")"; set +o allexport
 fi
 
 PROD=false
