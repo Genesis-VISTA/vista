@@ -16,15 +16,31 @@ attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
 bundled `msb` binary's adhoc code signature, without which the code-execution
 sandbox cannot create microVMs.
 
+Start it from a terminal, as above. Don't double-click `vista` or anything
+inside the package: a downloaded file carries macOS's quarantine flag, which
+`./vista` removes before running anything else, and a double-click is blocked
+before it gets the chance.
+
 First run extracts the corpus, vector store, and embedding weights from the
 package's `payload/payload.tar` into the state directory (~1 GB), imports the
 sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. It then prints
-`VISTA is running at http://localhost:3000`. Ctrl-C stops every service.
-Later runs skip every setup step and start in seconds.
+That takes a few minutes, with each step logged as it happens. Later runs skip
+every setup step and start in seconds.
 
-Open the UI and paste your inference API key into the settings modal. It takes
-effect immediately; no restart.
+VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
+the window stops VISTA, and so do Ctrl-C in the terminal and closing the
+terminal. VISTA is a desktop application and has no browser mode. In a session
+that can't show the window, the launcher says why and stops before starting
+anything: an SSH session, no display, or, on Linux, running as root or missing
+system libraries (see below). If the window crashes, the launcher reports its exit
+status and stops the services. If another VISTA window is already open, the new
+one refuses to start rather than run a second stack.
+
+Paste your inference API key into the settings modal. It takes effect
+immediately; no restart. Links to other sites, including the Globus login,
+open in your default browser; VISTA's own PDFs open in a second VISTA window
+(or in your browser, on Linux without the sandbox; see below), and downloads
+ask where to save.
 
 On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
@@ -32,9 +48,48 @@ virtual machine needs nested virtualisation enabled by its host; and access is
 usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
 login is the common fix.
 
+**The window on Linux** needs a desktop session (X11 or Wayland) and four
+system libraries that every desktop install already has. A minimal server or a
+container may not have them, and then the launcher names what is missing and
+stops:
+
+| | Debian / Ubuntu | Fedora / RHEL |
+|---|---|---|
+| GTK 3 | `libgtk-3-0t64` | `gtk3` |
+| NSS | `libnss3` | `nss` |
+| ALSA | `libasound2t64` | `alsa-lib` |
+| GBM | `libgbm1` | `mesa-libgbm` |
+
+```bash
+sudo apt install libgtk-3-0t64 libnss3 libasound2t64 libgbm1   # Debian, Ubuntu
+sudo dnf install gtk3 nss alsa-lib mesa-libgbm                  # Fedora, RHEL
+```
+
+**Chromium's sandbox on Ubuntu.** The window's pages run inside Chromium's
+sandbox, which needs unprivileged user namespaces. Ubuntu 23.10 and later
+allow those only to programs an AppArmor profile names. So on stock Ubuntu the window
+starts without the sandbox, and the launcher says so on every start, with the
+two commands that turn it on. The package ships the profile. Installing it is
+a one-time step that covers every later unpack and version:
+
+```bash
+sudo install -m 644 ~/vista/vista-<version>-<platform>/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
+sudo apparmor_parser -r /etc/apparmor.d/vista-window
+```
+
+The launcher prints these with your package's own path. Debian and Fedora need
+no step. Where the host blocks user namespaces some other way, such as inside
+a container, the window also runs without the sandbox and says so, with
+nothing to install. While the sandbox is off, PDFs open in your default
+browser instead of a VISTA window, so the browser's own sandbox handles them.
+Each start writes `renderer sandbox: on` or `off (--no-sandbox)` to
+`logs/window.log` in the state directory.
+
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
-`setup.log`). The unpacked package tree is disposable. Upgrading is replacing
+`window.log`, `setup.log`). The window's own browser cache is kept apart, in
+`~/Library/Application Support/VISTA` on macOS and `~/.config/VISTA` on Linux.
+The unpacked package tree is disposable. Upgrading is replacing
 that directory, and starting over is deleting the state directory.
 
 | Variable             | Description                                                                                                                                             | Default    |
@@ -43,12 +98,20 @@ that directory, and starting over is deleting the state directory.
 | `VISTA_UI_PORT`      | Web interface                                                                                                                                           | `3000`     |
 | `VISTA_MCP_PORT`     | MCP server                                                                                                                                              | `8000`     |
 | `VISTA_BACKEND_PORT` | Backend                                                                                                                                                 | `8001`     |
+| `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab. A project's lab also needs its own repository, set in the project's settings, and git 2.34 or later. `false` turns it off everywhere. | `true` |
 
 `./vista --help` prints the same list.
 
 ## Building a prebuilt package
 
 The build host needs the credentials and tooling so the recipient does not.
+
+**Each release, review the bundled Electron.** Its version is pinned in
+`electron/package.json`, and each package's manifest records it as
+`window.electron`. Bump it if it has fallen out of Electron's supported
+releases, and put the version in the release notes. On a Linux host that runs
+the window without the sandbox, the engine's own security fixes are all that
+stands between a page and the researcher's account.
 
 ### Build-host requirements
 
@@ -252,6 +315,21 @@ You can use
 ./launch.sh terminal
 ```
 to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+
+To develop against the VISTA window rather than a browser tab:
+```bash
+./launch.sh logs --electron
+```
+This installs the window (`./scripts/build.sh --electron`, a ~290 MB Electron download the
+default build skips) and opens `http://localhost:3000` in it once the UI answers. Hot reload
+works as in a browser, DevTools are in the View menu, and closing the window stops the stack.
+It is `logs` mode only, since tmux and terminal modes don't own the services' lifetime.
+From the macOS Dock and app switcher the window reads "Electron" in development; only the
+packaged build is named VISTA. On Linux the development window makes the same sandbox check
+as the package, and the same AppArmor profile turns the sandbox on for it
+(`sudo install -m 644 electron/linux/vista-window.apparmor /etc/apparmor.d/vista-window`, then
+`sudo apparmor_parser -r /etc/apparmor.d/vista-window`). The window's code and tests are in
+[`electron/`](electron/).
 
 ### Manual launch
 Run:

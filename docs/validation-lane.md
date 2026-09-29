@@ -10,6 +10,7 @@ lane never blocks merges.
 | Nightly validation | GitLab schedule or `./scripts/nightly-validation.sh` | schedule vars only | **no** |
 | Weekly real HPC | weekly schedule / manual | HPC tokens | **no** |
 | Playwright smoke | schedule / manual | none beyond running UI | **no** |
+| VISTA window | manual: macOS or a Linux desktop; tests also in Docker | none | **no** |
 
 OpenSpec: [`openspec/changes/milestone-d-validation-lane/`](../openspec/changes/milestone-d-validation-lane/).
 
@@ -109,6 +110,77 @@ npx playwright test -c playwright.config.ts
 Flow: open app → open Projects → activate a project → send a chat message →
 observe a tool-call bubble and/or elicitation modal. Selectors prefer
 role/text. **Not** part of required MR CI.
+
+## VISTA window (manual)
+
+The window's routing rules run in PR CI (`electron:test`). Its behaviour in a
+real window needs a display, so it is checked here instead.
+
+**Window tests** (fixture server, no services, ~10 s):
+
+```bash
+cd electron && npm ci && npm run test:e2e
+```
+
+The same tests on Linux, in a container on any machine with Docker. The image matches the
+pinned `@playwright/test`. It runs as root, so the sandboxed PDF case is skipped and the
+`@no-sandbox` cases cover Linux's unsandboxed path. Behind TLS inspection, add
+`-v ~/root-ca.pem:/ca.pem:ro -e NODE_EXTRA_CA_CERTS=/ca.pem`, or Electron's download fails.
+
+```bash
+cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
+  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && xvfb-run -a npm run test:e2e'
+```
+
+This covers external links and `window.open` going to the system browser, off-origin
+navigation and redirects being refused, `file:` links, same-origin pop-ups and PDFs
+opening child windows, downloads, the page having no Node access, the single-instance
+lock, and `--smoke-test` exit codes.
+
+**Stopping and cleanup** (a built package, ideally with a chat started so a sandbox
+exists). Start `./vista`, then stop it each of these three ways:
+
+1. Close the window, or press Cmd-Q (Ctrl-Q on Linux).
+2. Press Ctrl-C in the terminal.
+3. Close the terminal window.
+
+After each one, run this from the package directory to check that nothing is left:
+
+```bash
+pgrep -fl "$PWD" ; lsof -nP -iTCP:3000 -iTCP:8000 -iTCP:8001 -sTCP:LISTEN
+```
+
+Both commands should print nothing.
+
+**Walk-through in the window** (`openspec/specs/desktop-window`):
+
+- The Globus "Open in browser" link opens the system browser, and pasting the code
+  back completes the connection.
+- A DOI link and the settings token links open the system browser.
+- "Open PDF" opens a second window.
+- Dataset and agent-file downloads show a save dialog.
+- Cmd-V into a settings field pastes.
+- Dropping a file outside an upload area leaves the page alone.
+- A second `./vista` or `npm start` exits and brings the first window forward.
+- Over SSH, `./vista` says it has no display and prints the address instead.
+
+**On Linux** (`openspec/changes/linux-desktop-window`): a real Ubuntu 24.04 desktop,
+and one of Debian 13 or Fedora. A VM is fine. Without nested virtualisation,
+`VISTA_ALLOW_NO_KVM=1` is acceptable for these window-only checks. Run the stopping
+and walk-through checks above, then:
+
+- On stock Ubuntu the window opens without the sandbox, and the launcher prints why along
+  with the two `sudo` commands. After running them, the next start prints nothing, and
+  `logs/window.log` shows `renderer sandbox: on`.
+- On Debian or Fedora it opens sandboxed with no step.
+- With the sandbox off, "Open PDF" opens the system browser, not a second window.
+- The window opens in both a Wayland session and an X11 session.
+- Over SSH, and as root, `./vista` gives its reason and the address.
+- With one of the README's window libraries removed, the launcher names what is missing.
+- `kill -SEGV` on the window process makes the launcher say the window stopped
+  unexpectedly, and the services keep answering. Ctrl-C then stops everything.
+- On Ubuntu, `./launch.sh logs --electron` prints the same sandbox message, and the
+  profile turns the sandbox on for it as well.
 
 ## Weekly / manual real HPC (`hpc_jobs/example`)
 

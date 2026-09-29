@@ -85,6 +85,10 @@ wait_for() {
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
+# VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
+# waits for the address line the launcher prints in that mode. The Windows
+# launcher has no window and ignores it.
+export VISTA_NO_WINDOW=1
 LAUNCHER=("$PACKAGE/vista")
 if [[ "$IS_WINDOWS" == true ]]; then
   [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
@@ -203,6 +207,44 @@ version_is_consistent() {
     && grep -q "VISTA $declared" "$LOGS/launcher.log"
 }
 check "version matches across manifest, launcher and app" version_is_consistent
+
+# The window, as unpacked here -- relocated, and carrying the signature the
+# build gave it through the archive round trip -- loads the running UI. Its
+# --smoke-test mode never shows anything and takes no single-instance lock, so
+# a VISTA the builder has open cannot turn this into a false failure. It still
+# needs a GUI session to start at all, which a build over SSH does not have.
+WINDOW_EXE="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
+    "$PACKAGE/manifest.json"
+)"
+# On Linux it gets the sandbox arguments the launcher would give it on this
+# host (linux-desktop-window D1), and a virtual display when there is no real
+# one, which is how a build container runs it (D7).
+WINDOW_RUNNER=()
+window_loads_the_ui() {
+  local sandbox=''
+  if [[ "$(uname -s)" == Linux ]]; then
+    sandbox="$("$PACKAGE/$(dirname "$WINDOW_EXE")/window-sandbox" 2>>"$LOGS/window-smoke.log")"
+  fi
+  # $sandbox is empty or the single word --no-sandbox, so it is left unquoted.
+  # shellcheck disable=SC2086
+  ${WINDOW_RUNNER[@]+"${WINDOW_RUNNER[@]}"} "$PACKAGE/$WINDOW_EXE" $sandbox \
+    --smoke-test --url="http://127.0.0.1:$UI_PORT/" >> "$LOGS/window-smoke.log" 2>&1
+}
+if [[ -z "$WINDOW_EXE" ]]; then
+  skip "the window loads the UI" "this package has no window"
+elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
+  skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
+elif [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] \
+     && ! command -v xvfb-run >/dev/null 2>&1; then
+  skip "the window loads the UI" "no display and no xvfb-run here; install xvfb, or rerun from a desktop session"
+else
+  if [[ "$(uname -s)" == Linux && -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    WINDOW_RUNNER=(xvfb-run -a)
+  fi
+  check "the window loads the UI" window_loads_the_ui
+fi
 
 log "shutting down"
 cleanup
