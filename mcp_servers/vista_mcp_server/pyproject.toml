@@ -45,6 +45,14 @@ artifacts = [
 
 [tool.uv]
 python-preference = "only-managed"
+# amscrot-py (the hpc extra) requires every one of its providers' libraries, but
+# VISTA uses only its IRI job client. Manually exclude these heavy-weight deps
+# that unnecessarily complicate the build with paths too long for Windows and
+# requiring C++ toolchains to build the wheel.
+override-dependencies = [
+    "ansible; sys_platform == 'never'",
+    "fabrictestbed-extensions; sys_platform == 'never'",
+]
 
 [tool.pytest.ini_options]
 markers = [
