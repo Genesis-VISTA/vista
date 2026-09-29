@@ -734,7 +734,13 @@ import pathlib, re, sys
 
 config = pathlib.Path(sys.argv[1])
 config.write_text(
-    re.sub(r"^home = .*$", f"home = {sys.argv[2]}", config.read_text(), flags=re.M)
+    re.sub(
+        r"^home = .*$",
+        f"home = {sys.argv[2]}",
+        config.read_text(encoding="utf-8"),
+        flags=re.M,
+    ),
+    encoding="utf-8",
 )
 PYFIX
 }
@@ -1221,11 +1227,19 @@ target_floor() {
 # straight into the state directory they are ~240. One archive also means the
 # corpus is a single file to copy until first run. Uncompressed because PDFs
 # and model weights barely compress, and the release archive compresses anyway.
+#
+# POSIX (pax) format because it is the one that records file names as UTF-8.
+# GNU tar's default stores the bytes with no charset, and the tar.exe Windows
+# ships reads those in the ANSI code page, so a corpus name with an accent or
+# an en dash would be extracted under a different name than the store records.
+# pax stores a name's bytes as they are, so they must be UTF-8 to begin with:
+# Git Bash converts Windows' UTF-16 names into the locale's charset, which is
+# the builder's LANG unless it is pinned here.
 PAYLOAD_PARTS=(vista-data knowledge-bases huggingface)
 
 pack_payload() {
   log "packing the payload"
-  tar -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_PARTS[@]}"
+  LC_ALL=C.UTF-8 tar --format=posix -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_PARTS[@]}"
   local part
   for part in "${PAYLOAD_PARTS[@]}"; do
     rm -rf "${STAGING_PAYLOAD:?}/$part"
@@ -1339,7 +1353,7 @@ EOF
 import json
 import sys
 
-manifest = json.loads(open(sys.argv[1]).read())
+manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),

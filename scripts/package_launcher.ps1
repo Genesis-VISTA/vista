@@ -228,8 +228,10 @@ $env:HF_HOME = "$STATE\huggingface"
 $env:HF_HUB_OFFLINE = '1'
 $env:MSB_HOME = $MSB_STORE
 # Use the sandbox image imported below, rather than building one -- which
-# would need docker or podman, and a researcher has neither.
-$env:VISTA_DEV_MCP_DOCKERFILE = ''
+# would need docker or podman, and a researcher has neither. A space, not '':
+# assigning '' to an $env: variable deletes it, and dev_mcp_server then falls
+# back to its bundled Dockerfile. It reads a blank value as "no Dockerfile".
+$env:VISTA_DEV_MCP_DOCKERFILE = ' '
 $env:VISTA_DEV_MCP_IMAGE = 'vista-sandbox:latest'
 $LOGS = "$STATE\logs"
 
@@ -378,6 +380,10 @@ function Start-VistaService([string]$Name, [string]$Command) {
 function Stop-VistaServices {
   Log ''
   Log 'Stopping VISTA...'
+  # 'Continue' because taskkill writes to stderr whenever part of a tree is
+  # already gone, which 'Stop' turns into a throw -- and every service after
+  # that one would be left running.
+  $ErrorActionPreference = 'Continue'
   foreach ($proc in $services) {
     if (-not $proc.HasExited) { & taskkill.exe /F /T /PID $proc.Id 2>&1 | Out-Null }
   }
