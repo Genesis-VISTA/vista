@@ -52,8 +52,17 @@ class FakeGlobusClient:
     # --- Transfer -----------------------------------------------------------
 
     async def operation_ls(
-        self, *, endpoint: str, path: str, recursive: bool = False
+        self,
+        *,
+        endpoint: str,
+        path: str,
+        recursive: bool = False,
+        exclude_segments: tuple[str, ...] = (),
+        max_dirs: int = 200,
     ) -> list[dict[str, Any]]:
+        # exclude_segments/max_dirs bound the real client's recursive walk (one API
+        # round-trip per directory). Accepted here so callers can pass them; the fake
+        # serves canned listings and has no traversal to prune.
         self.ls_calls.append((endpoint, path))
         if path in self.ls_entries:
             return list(self.ls_entries[path])

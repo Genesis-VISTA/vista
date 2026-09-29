@@ -45,16 +45,11 @@ GOLDENS = (
     GoldenCase(
         project="alloy-design",
         prompt=(
-            "List the available Andes optimization applications using the "
-            "agenthpc tools. Do not submit any jobs yet."
+            "Set up a campaign to maximize the MoNbTaW transition temperature. "
+            "Do not submit any jobs yet."
         ),
-        preferred_tools=frozenset(
-            {
-                "agenthpc_list_applications",
-                "agenthpc_get_search_space",
-            }
-        ),
-        description="alloy-design prefers agenthpc_* discovery tools",
+        preferred_tools=frozenset({"start_campaign", "set_campaign_spec"}),
+        description="alloy-design prefers the campaign tools (agenthpc_* is retired)",
     ),
 )
 

@@ -314,3 +314,126 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session, ali
     expected = project_paths_for(project.id, alice.id)
     assert seen_paths[0] == expected
     assert seen_paths[1] == expected
+
+
+# --- collect_files: the monitor must reach the job's real outputs ----------
+
+COLLECT_MANIFEST_YAML = """
+domain: testdomain
+metrics:
+  primary: {name: SCORE, target: 1.0}
+subagents:
+  - {role: alpha, skill: alpha-skill, job: alpha_job, collect_files: [results.json]}
+  - {role: beta,  skill: beta-skill,  job: beta_job,  collect_files: [out.json, log.txt]}
+  - {role: gamma, skill: gamma-skill, job: gamma_job}
+"""
+
+
+class _RecordingHpc(_FakeHpc):
+    """Records every fetch_outputs call so we can assert what the collector asked for."""
+
+    def __init__(self, payload="RAW OUTPUT"):
+        self.fetched: list[tuple[str, list[str]]] = []
+        self.payload = payload
+
+    async def fetch_outputs(self, *, job_id, files, cluster):
+        self.fetched.append((job_id, list(files)))
+        return self.payload
+
+
+def _collect_planner(hpc, *, seen_outputs: list[str]) -> CampaignPlanner:
+    manifest = CampaignManifest.model_validate(
+        __import__("yaml").safe_load(COLLECT_MANIFEST_YAML)
+    )
+
+    def parser_factory(skill_dir, role):
+        async def parse(*, candidate, raw_status, raw_outputs):
+            seen_outputs.append(raw_outputs)
+            return ParsedResult(ok=True, metrics={"SCORE": 1.0})
+
+        return CallableResultParser(parse)
+
+    subagents = build_subagents(
+        manifest, hpc=hpc, skills_dir="/unused", parser_factory=parser_factory
+    )
+    return CampaignPlanner(manifest=manifest, subagents=subagents)
+
+
+def test_collect_files_for_role_reads_the_manifest():
+    planner = _collect_planner(_RecordingHpc(), seen_outputs=[])
+    assert planner.collect_files_for_role("alpha") == ["results.json"]
+    assert planner.collect_files_for_role("beta") == ["out.json", "log.txt"]
+    assert planner.collect_files_for_role("gamma") == []
+    assert planner.collect_files_for_role("nonexistent") == []
+
+
+@pytest.mark.anyio
+async def test_collector_fetches_declared_files_and_parser_receives_them(
+    session, alice
+):
+    _project, _run, _step, job = await _make_run_step_job(session, alice)
+    hpc = _RecordingHpc(payload='{"Tc": 1180}')
+    seen: list[str] = []
+    planner = _collect_planner(hpc, seen_outputs=seen)
+
+    collect = build_collector(planner_provider=lambda _s, _j: _async(planner))
+    await collect(session, job, "STATE=COMPLETED", True)
+
+    # The declared file list reached the HPC boundary...
+    assert hpc.fetched == [("job-1", ["results.json"])]
+    # ...and its content reached the parser, rather than the empty string.
+    assert seen == ['{"Tc": 1180}']
+
+
+@pytest.mark.anyio
+async def test_collector_without_declared_files_fetches_nothing(session, alice):
+    """A role that declares no collect_files behaves exactly as before the change."""
+    project = ProjectTable(name="wiring-gamma")
+    session.add(project)
+    await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    run = await campaign_service.create_campaign(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        domain="testdomain",
+        planner_skill="mock-planner",
+    )
+    step = await campaign_service.add_step(
+        session, run_id=run.id, cycle=0, kind="gamma", candidate={"x": 1}
+    )
+    job = await campaign_service.record_job(
+        session, job_id="job-gamma", step_id=step.id, user_id=alice.id, cluster="odo"
+    )
+
+    hpc = _RecordingHpc()
+    seen: list[str] = []
+    planner = _collect_planner(hpc, seen_outputs=seen)
+
+    collect = build_collector(planner_provider=lambda _s, _j: _async(planner))
+    await collect(session, job, "STATE=COMPLETED", True)
+
+    assert hpc.fetched == []  # no fetch_outputs call at all
+    assert seen == [""]  # parser sees empty outputs, as today
+
+
+@pytest.mark.anyio
+async def test_explicit_files_argument_overrides_the_manifest(session, alice):
+    _project, _run, _step, job = await _make_run_step_job(session, alice)
+    hpc = _RecordingHpc()
+    planner = _collect_planner(hpc, seen_outputs=[])
+
+    await planner.collect_job(session, job=job, files=["override.json"])
+    assert hpc.fetched == [("job-1", ["override.json"])]
+
+
+def _async(value):
+    """Wrap a value in an awaitable, for injecting a prebuilt planner as a provider."""
+
+    async def _coro():
+        return value
+
+    return _coro()

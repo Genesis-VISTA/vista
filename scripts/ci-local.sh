@@ -96,26 +96,34 @@ ensure_npm() {
 
 backend_lint() {
   ensure_uv
-  log "backend:lint (ruff $RUFF_VERSION)"
-  (
-    cd "$REPO_ROOT/backend"
+  local rc=0
+  # Gate through run_job so a ruff failure actually fails this script. A bare subshell
+  # took the exit status of its LAST command and nothing checked it, so `ruff check`
+  # errors were printed and then discarded: the script said "All requested checks
+  # passed" and exited 0 while GitLab failed the same commit.
+  run_job "backend:lint (ruff $RUFF_VERSION)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/backend"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  ' || rc=1
   if [[ "$FAST" == true ]]; then
-    return 0
+    return "$rc"
   fi
   # Match CI: typecheck is a required gate (the pyright baseline is clean);
   # security is advisory (allow_failure).
   run_job "backend:typecheck" 0 bash -c '
+    set -e
     cd "'"$REPO_ROOT"'/backend"
     uv sync --frozen
     uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
-  '
+  ' || rc=1
   run_job "backend:security" 1 bash -c '
+    set -e
     cd "'"$REPO_ROOT"'/backend"
     uvx "bandit@${BANDIT_VERSION}" -r src/ -ll -q
   '
+  return "$rc"
 }
 
 PYTEST_HERMETIC_MARKERS='not live and not hpc and not sandbox'
@@ -135,36 +143,41 @@ backend_test() {
 
 mcp_lint() {
   ensure_uv
-  log "vista-mcp:lint (ruff tests/)"
-  (
-    cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
+  local rc=0
+  # See backend_lint: these must gate, not just print.
+  run_job "vista-mcp:lint (ruff tests/)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/mcp_servers/vista_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check tests/
     uvx "ruff@${RUFF_VERSION}" format --check tests/
-  )
-  log "dev-mcp:lint (ruff)"
-  (
-    cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
+  ' || rc=1
+  run_job "dev-mcp:lint (ruff)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/mcp_servers/dev_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  ' || rc=1
+  return "$rc"
 }
 
 mcp_test() {
   ensure_uv
+  local rc=0
   # Required (matches GitLab vista-mcp:test)
   log "vista-mcp:test"
   (
     cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  ) || rc=1
   # Required: container-dependent tests are marked `sandbox` and excluded here.
   log "dev-mcp:test"
   (
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  ) || rc=1
+  return "$rc"
 }
 
 ui_lint() {

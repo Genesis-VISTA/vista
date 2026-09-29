@@ -1,0 +1,34 @@
+{
+  "odo": {
+    "duration": 600,
+    "resources": {
+      "node_count": 2,
+      "processes_per_node": 56,
+      "cpu_cores_per_process": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "ALLOYMC_REPO_URL": "https://github.com/jqyin/alloy-thermo-skill",
+        "ALLOYMC_REPO_REF": "main"
+      }
+    }
+  },
+  "frontier": {
+    "duration": 600,
+    "resources": {
+      "node_count": 2,
+      "processes_per_node": 56,
+      "cpu_cores_per_process": 1,
+      "exclusive_node_use": true
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {
+        "ALLOYMC_REPO_URL": "https://github.com/jqyin/alloy-thermo-skill",
+        "ALLOYMC_REPO_REF": "main"
+      }
+    }
+  }
+}
