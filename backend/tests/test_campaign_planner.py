@@ -358,18 +358,34 @@ def test_render_without_extra_omits_it():
 
 def test_render_json_encoding_is_opt_in():
     m = _render_manifest()
-    assert render_script_args(m, m.subagent("delta"), {"a": 1}) == '{"a": 1}'
+    assert render_script_args(m, m.subagent("delta"), {"a": 1}) == """'{"a": 1}'"""
 
 
-def test_render_without_args_block_is_byte_identical_to_pre_change_behavior():
-    """The pre-contract encoding was json.dumps(candidate); non-adopters must match it."""
+def test_render_without_args_block_serializes_the_candidate_as_json():
+    """Non-adopters keep the pre-contract encoding: the whole candidate as JSON."""
     import json
+    import shlex
 
     m = _render_manifest()
     candidate = {"a": 1, "b": 2.5, "c": "x"}
-    assert render_script_args(m, m.subagent("gamma"), candidate) == json.dumps(
-        candidate
-    )
+    rendered = render_script_args(m, m.subagent("gamma"), candidate)
+    assert rendered == shlex.quote(json.dumps(candidate))
+
+
+@pytest.mark.parametrize("role", ["gamma", "delta"])
+def test_render_json_survives_the_dispatchers_shlex_split(role):
+    """
+    Every dispatcher runs `shlex.split(script_args)`. The JSON must come out the other
+    side as one argv word that parses back to the candidate, spaces and quotes included.
+    """
+    import json
+    import shlex
+
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2.5, "c": 'O\'Brien "x" y'}
+    argv = shlex.split(render_script_args(m, m.subagent(role), candidate))
+    assert len(argv) == 1
+    assert json.loads(argv[0]) == candidate
 
 
 def test_render_without_args_block_and_empty_candidate_is_none():
@@ -429,4 +445,6 @@ async def test_dispatch_candidate_submits_rendered_flags(session, alice):
     seen = dict(hpc.script_args_seen)
     assert seen["alpha_job"] == "--ay 1 --bee 2 --fixed 3"
     assert seen["beta_job"] == "--see 3"
-    assert seen["gamma_job"] == '{"a": 1, "b": 2, "c": 3}'  # unchanged for non-adopters
+    assert (
+        seen["gamma_job"] == """'{"a": 1, "b": 2, "c": 3}'"""
+    )  # one JSON word for non-adopters

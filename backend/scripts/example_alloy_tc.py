@@ -27,11 +27,12 @@ Prerequisites
 - A model configured (``VISTA_BACKEND_MODEL``) — the agent needs one to plan the call.
 - HPC credentials for the target cluster on your user record. Without them the agent
   would stop mid-turn and *elicit* them interactively, which a non-streaming API call
-  cannot answer. Set them once:
+  cannot answer. Set them once (``frontier_s3m_token`` for Frontier; an S3M token is
+  scoped to one OLCF project, so each OLCF cluster has its own):
 
       curl -X PUT http://localhost:8001/users/me \
            -H 'Content-Type: application/json' \
-           -d '{"s3m_token": "<your OLCF S3M token>"}'
+           -d '{"odo_s3m_token": "<your Odo S3M token>"}'
 
   This script preflights that and tells you if it is missing.
 
@@ -55,7 +56,11 @@ JOB = "alloy-thermo-mc"
 # Terminal Slurm states as they appear in get_hpc_job_status's "STATE=" line.
 DONE_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"}
 # The cluster whose credential field gates submission.
-CLUSTER_TOKEN_FIELD = {"odo": "s3m_token", "frontier": "s3m_token", "perlmutter": "nersc_iri_token"}
+CLUSTER_TOKEN_FIELD = {
+    "odo": "odo_s3m_token",
+    "frontier": "frontier_s3m_token",
+    "perlmutter": "nersc_iri_token",
+}
 
 
 def parse_composition(text: str) -> dict[str, float]:

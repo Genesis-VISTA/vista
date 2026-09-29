@@ -1352,9 +1352,12 @@ async def _get_olcf_job_status(
                 if e.get("type") != "file":
                     continue
                 p = e.get("path", "")
-                if any(seg in p for seg in excludes):
-                    continue
                 rel = p[len(submitted.output_dir):].lstrip("/")
+                # Whole path segments of the part under output_dir, never substrings
+                # of the absolute path: `.gitignore`, `run.github.log`, or an
+                # output_dir like `/proj/my.git-runs/` must not vanish from the listing.
+                if any(seg in excludes for seg in rel.split("/")):
+                    continue
                 files.append(rel)
             files = files[:20]
         except GlobusSessionExpired:

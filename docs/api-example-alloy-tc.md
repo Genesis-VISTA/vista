@@ -35,10 +35,12 @@ model in that loop, so waiting costs no tokens.
    ```bash
    curl -X PUT http://localhost:8001/users/me \
         -H 'Content-Type: application/json' \
-        -d '{"s3m_token": "<your OLCF S3M token>"}'
+        -d '{"odo_s3m_token": "<your Odo S3M token>"}'
    ```
 
-   `s3m_token` covers Odo and Frontier; Perlmutter uses `nersc_iri_token`. Check with
+   Each cluster has its own field: `odo_s3m_token` for Odo, `frontier_s3m_token` for
+   Frontier (an S3M token is scoped to one OLCF project, so one token cannot cover both),
+   and `nersc_iri_token` for Perlmutter. Check with
    `curl 'http://localhost:8001/users/me?config=true'`. The script preflights this and
    exits with instructions rather than hanging.
 
@@ -127,7 +129,7 @@ Treat one job as a screening estimate, not a converged number.
 Set `"stream": true` to get Server-Sent Events instead: PydanticAI agent events, plus
 vista's `log` events and `mcp_form_elicitation` / `mcp_url_elicitation`. If the agent
 needs credentials it cannot find, it emits an elicitation event and waits — answer with
-`POST /projects/{project}/elicitation`. Pre-setting `s3m_token` (above) avoids this
+`POST /projects/{project}/elicitation`. Pre-setting the cluster's token (above) avoids this
 entirely, which is why the non-streaming example can work at all.
 
 ## Running a search instead of one point

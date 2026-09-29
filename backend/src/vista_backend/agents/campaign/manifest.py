@@ -9,6 +9,7 @@ domain code of its own.
 """
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any, Literal
 
@@ -106,6 +107,10 @@ def render_script_args(
     Pure: no I/O, no DB. `spec.args is None` reproduces the pre-contract behavior
     (the whole candidate as JSON) so manifests that have not opted in are unchanged.
 
+    `script_args` is a shell string: every dispatcher runs `shlex.split` on it. So the
+    JSON is shell-quoted into ONE word; left bare, `{"a": 1, "b": 2}` splits into
+    `{a:`, `1,`, `b:`, `2}` and the job receives neither JSON nor anything else usable.
+
     With `encoding: flags`, mapped variables render as `<flag> <value>` in the manifest's
     *variable declaration order* — deterministic, so the output is assertable and job
     logs stay diffable. Candidate keys absent from `spec.args.map` are not passed.
@@ -114,10 +119,10 @@ def render_script_args(
     """
     if spec.args is None:
         # Pre-contract default: serialize the candidate, or pass nothing when empty.
-        return json.dumps(candidate) if candidate else None
+        return shlex.quote(json.dumps(candidate)) if candidate else None
 
     if spec.args.encoding == "json":
-        parts = [json.dumps(candidate)] if candidate else []
+        parts = [shlex.quote(json.dumps(candidate))] if candidate else []
         if spec.args.extra:
             parts.append(spec.args.extra)
         return " ".join(parts) or None
