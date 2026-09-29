@@ -2,7 +2,8 @@
 
 - [x] 0.1 Add `hpc_jobs/lux-hello/` with `README.md` (starting `# lux-hello`: what it does, that it costs one node for seconds, how to run it from a chat), `cluster_defaults.json` with only a `lux` section (`node_count` 1, `duration` 300, `exclusive_node_use: false`, since it defaults to true), and `job.lux.slurm` that writes `hostname`, `date`, and `rocm-smi` output (tolerating its absence) to `$VISTA_OUT/hello.txt` and echoes them to the log (design D0); verify `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest tests/test_job_catalog.py` passes
 - [x] 0.2 Add a hermetic case to `mcp_servers/vista_mcp_server/tests/test_lux_submit.py` that submits `lux-hello` against the fake SSH and asserts a 1-node, 5-minute `#SBATCH` header with no `--exclusive`, no GPU directive, and no login-node setup step; verify with `uv run --extra dev pytest tests/test_lux_submit.py`
-- [ ] 0.3 Manual, out of PR CI: from a chat on the dev stack, submit `lux-hello` on Lux, sign in through the hub, then fetch its status and outputs; verify `hello.txt` names a Lux compute node. If `sbatch` refuses a job without a GPU request, add `"gpus_per_node": 1` to its `resources`, rerun, and note it in the README
+- [x] 0.3 Manual, out of PR CI: from a chat on the dev stack, submit `lux-hello` on Lux, sign in through the hub, then fetch its status and outputs; verify `hello.txt` names a Lux compute node. If `sbatch` refuses a job without a GPU request, add `"gpus_per_node": 1` to its `resources`, rerun, and note it in the README
+  - Result 2026-09-29: sign-in through the hub, upload, and `sbatch` worked, and `sbatch` accepted the job without a GPU request. The job stayed PENDING (Priority) because Lux is not yet in production, so the output fetch is unverified until it runs.
 
 ## 1. Backend settings and cluster list
 
