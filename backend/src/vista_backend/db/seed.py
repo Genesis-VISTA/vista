@@ -281,6 +281,11 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
     logging.info(f"Knowledge base {kb_dir.name} holds {count} indexed chunk(s).")
 
 
+def _from_payload() -> bool:
+    """Whether `_vista_data_client()` reads a bundled payload rather than GitLab."""
+    return bool(settings.vista_data_payload_dir)
+
+
 def _vista_data_client():
     """
     The vista-data client for this deployment, as an async context manager, or
@@ -292,8 +297,9 @@ def _vista_data_client():
     checked first, because the prebuilt package sets the payload path while a
     developer's inherited `.env` may still carry a token.
     """
-    if settings.vista_data_payload_dir:
-        return LocalRepoClient(settings.vista_data_payload_dir)
+    payload = settings.vista_data_payload_dir
+    if payload:
+        return LocalRepoClient(payload)
     if settings.vista_data_token:
         return GitlabRepoClient(
             "code.ornl.gov", "v28/vista-data", token=settings.vista_data_token
@@ -311,7 +317,7 @@ async def _science_enabled(client) -> bool:
     """
     if client is None:
         return False
-    if isinstance(client, LocalRepoClient):
+    if _from_payload():
         return await client.has("molten-salt-papers") and await client.has("mstdb")
     return settings.seed_science_projects
 
@@ -354,7 +360,8 @@ async def seed_db(engine: AsyncEngine) -> None:
             await vista_data_client.download_dir(
                 "molten-salt-papers", molten_salt_kb_dir / "pdfs"
             )
-            await _build_knowledge_base(molten_salt_kb_dir)
+            if not _from_payload():
+                await _build_knowledge_base(molten_salt_kb_dir)
 
         skipped_skills = set()
 
@@ -497,6 +504,147 @@ async def seed_db(engine: AsyncEngine) -> None:
                 for project in projects
             )
 
+        await session.commit()
+
+
+AI_SAFETY_PROJECT_ID = uuid.UUID("5c0a4f3e-7b1d-4e8a-9a52-3d6f0c1b7e24")
+AI_SAFETY_KB_ID = uuid.UUID("a3e7c915-42d8-4b6f-8f0e-9d1b5c7a2e46")
+AI_SAFETY_SLUG = "ai-safety"
+AI_SAFETY_PROJECT_NAME = "ai-safety-autonomous-labs"
+TEST_USER_ID = uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b")
+
+
+async def _acquire_ai_safety_corpus() -> bool:
+    """
+    Put the `ai-safety` corpus under `knowledge_bases_dir` and verify its index.
+    Returns False, with a warning, when the corpus is unavailable; the next boot
+    tries again.
+
+    From a payload the index is distributed ready-made and never built here: an
+    absent or empty one is a packaging defect and raises. From a token the PDFs
+    are downloaded and indexed, and a network or token failure only warns, so a
+    revoked token or a GitLab outage never blocks startup.
+    """
+    kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
+    ctx_manager = _vista_data_client()
+    if isinstance(ctx_manager, nullcontext):
+        logging.warning(
+            "AI-safety corpus unavailable: neither vista_data_payload_dir nor "
+            "vista_data_token is configured; the project is seeded without its "
+            "knowledge base"
+        )
+        return False
+    try:
+        async with ctx_manager as client:
+            if not await client.has(AI_SAFETY_SLUG):
+                logging.warning(
+                    f"AI-safety corpus unavailable: vista-data has no "
+                    f"{AI_SAFETY_SLUG}/ folder; the project is seeded without its "
+                    "knowledge base"
+                )
+                return False
+            await client.download_dir(AI_SAFETY_SLUG, kb_dir / "pdfs")
+            if not _from_payload():
+                await _build_knowledge_base(kb_dir)
+    except httpx.HTTPError as exc:
+        logging.warning(
+            f"AI-safety corpus unavailable: vista-data request failed ({exc!r}); "
+            "the project is seeded without its knowledge base and the next "
+            "startup will try again"
+        )
+        return False
+    _assert_knowledge_base_indexed(kb_dir)
+    return True
+
+
+async def sync_default_projects(engine: AsyncEngine) -> None:
+    """
+    Bring the AI-safety default project and knowledge base to this database, on
+    every startup. Additive only, like `sync_bundled_skills`.
+
+    Inserts the project and the KB by their fixed ids where missing, and appends
+    the KB's slug to the project's `knowledge_bases` when the KB exists and the
+    slug is absent. Nothing else about an existing project or KB is touched, no
+    user-attached KB is removed, and nothing is deleted. The science projects are
+    not handled here: they stay in `seed_db`, which only ever runs on an empty
+    database.
+
+    A deleted default project comes back on the next startup, since there is no
+    record of the deletion to tell it apart from a project never seeded.
+    """
+    async with AsyncSession(engine) as session:
+        project = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
+        kb = (
+            await session.exec(
+                select(KnowledgeBaseTable).where(
+                    (KnowledgeBaseTable.id == AI_SAFETY_KB_ID)
+                    | (KnowledgeBaseTable.slug == AI_SAFETY_SLUG)
+                )
+            )
+        ).first()
+
+    if kb is None and await _acquire_ai_safety_corpus():
+        kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
+        now = now_iso()
+        kb = KnowledgeBaseTable(
+            id=AI_SAFETY_KB_ID,
+            slug=AI_SAFETY_SLUG,
+            name="AI Safety Papers",
+            description=(
+                "Papers on the safety and security of autonomous laboratories and "
+                "LLM agents: the interconnected autonomous-labs roadmap, "
+                "autonomy-induced security risks in LLM agents, and security and "
+                "privacy in autonomous driving. Shares its PDF folder and ChromaDB "
+                "index with the MCP server's rag_search tool."
+            ),
+            pdfs_dir=str(kb_dir / "pdfs"),
+            rag_db_path=str(kb_dir / "rag_db"),
+            shared_with_mcp=True,
+            publications=[],
+            build_status="ready",
+            last_built_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        new_kb = True
+    else:
+        new_kb = False
+
+    async with AsyncSession(engine) as session:
+        if new_kb:
+            session.add(kb)
+        if project is None:
+            session.add(
+                ProjectTable(
+                    id=AI_SAFETY_PROJECT_ID,
+                    name=AI_SAFETY_PROJECT_NAME,
+                    description=(
+                        "AI Safety in Autonomous Labs: the safety and security of "
+                        "AI agents that plan and run experiments, grounded in a "
+                        "literature corpus and runnable HPC jobs."
+                    ),
+                    system_prompt=(
+                        SYSTEM_PROMPTS / f"{AI_SAFETY_PROJECT_NAME}.md"
+                    ).read_text(encoding="utf-8"),
+                    skills=[],
+                    knowledge_bases=[AI_SAFETY_SLUG] if kb is not None else [],
+                    tools=["*", "!agenthpc_*"],
+                    usage_limits=dict(request_limit=50),
+                )
+            )
+            if settings.env != "prod" and await session.get(UserTable, TEST_USER_ID):
+                await session.flush()
+                session.add(
+                    ProjectMemberTable(
+                        project_id=AI_SAFETY_PROJECT_ID, user_id=TEST_USER_ID
+                    )
+                )
+        elif kb is not None and AI_SAFETY_SLUG not in project.knowledge_bases:
+            existing = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
+            assert existing is not None
+            # A new list: SQLAlchemy does not see an in-place append to a JSON column.
+            existing.knowledge_bases = [*existing.knowledge_bases, AI_SAFETY_SLUG]
+            session.add(existing)
         await session.commit()
 
 

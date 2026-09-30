@@ -296,6 +296,7 @@ async def seeded_either_source(request, payload_env, monkeypatch):
         payload = payload_env["payload"]
         monkeypatch.setattr(settings, "vista_data_payload_dir", None)
         monkeypatch.setattr(settings, "vista_data_token", "glpat-stub")
+        monkeypatch.setattr(settings, "seed_science_projects", True)
         monkeypatch.setattr(
             seed_module,
             "GitlabRepoClient",
