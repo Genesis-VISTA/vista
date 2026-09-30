@@ -23,8 +23,9 @@
 
 ## 4. Launchers install missing corpora per corpus (D4)
 
-- [ ] 4.1 Change `scripts/package_launcher.sh` to read `payload/parts.txt` and extract only members missing from `$STATE`; verify by running an unpacked default package against a copy of a state dir from an earlier molten-salt package: `ai-safety` is installed, molten-salt data is untouched, and the new project's retrieval works
+- [x] 4.1 Change `scripts/package_launcher.sh` to read `payload/parts.txt` and extract only members missing from `$STATE`; verify by running an unpacked default package against a copy of a state dir from an earlier molten-salt package: `ai-safety` is installed, molten-salt data is untouched, and the new project's retrieval works
 - [ ] 4.2 Make the same change in `scripts/package_launcher.ps1`; verify on Windows (or leave unchecked with a note in the change for the next Windows session, per the windows-support handoff)
+  - Note (2026-09-30): implemented in `package_launcher.ps1` (reads `payload\parts.txt`, extracts only members missing from `$STATE` with `tar.exe`), but not run: no Windows or `pwsh` on the machine that did it. For the next Windows session (see `windows-support/handoff.md`): unpack a default package over a state dir from an earlier molten-salt package and check that `vista-data\ai-safety` and `knowledge-bases\ai-safety` appear, molten-salt data is untouched, and a second run extracts nothing. Also confirm `Get-Content -Encoding UTF8` plus forward-slash members work with `tar.exe`.
 
 ## 5. Verification and docs (D6)
 
