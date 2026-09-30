@@ -24,11 +24,11 @@ test.describe("validation-lane smoke", () => {
     ).toBeVisible({ timeout: 30_000 });
     await card.getByRole("button", { name: /^(Open|Reopen)$/ }).click();
 
-    // Matched loosely: the composer's placeholder is shared by every project.
-    await expect(page.getByPlaceholder(/^Ask about/i)).toBeVisible({
+    // Matched loosely; the composer placeholder is the same for every project.
+    await expect(page.getByPlaceholder(/^Ask a question/i)).toBeVisible({
       timeout: 30_000,
     });
-    const input = page.getByPlaceholder(/^Ask about/i);
+    const input = page.getByPlaceholder(/^Ask a question/i);
     await input.fill(
       "Search the literature for memory poisoning in LLM agents. Use rag_search.",
     );
