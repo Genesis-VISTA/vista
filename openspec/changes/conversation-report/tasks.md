@@ -22,4 +22,4 @@ All tasks are hermetic (PR CI). None need live, HPC, or sandbox markers.
 
 ## 5. End-to-end check
 
-- [ ] 5.1 Run `./launch.sh logs` and check with Playwright that a real conversation generates a report with an inline plot, saves it (it appears under `reports/` on the Datasets page), re-saves under the same filename, opens the skill editor via Save as skill, and that a new chat asked about "my last report" finds and reads it. This is a manual check that needs an inference key, so keep it out of PR CI.
+- [x] 5.1 Run `./launch.sh logs` and check with Playwright that a real conversation generates a report with an inline plot, saves it (it appears under `reports/` on the Datasets page), re-saves under the same filename, opens the skill editor via Save as skill, and that a new chat asked about "my last report" finds and reads it. This is a manual check that needs an inference key, so keep it out of PR CI.
