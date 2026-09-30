@@ -93,6 +93,18 @@ class GitlabRepoClient:
             page = int(next_page) if next_page else 0
         return blobs
 
+    async def has(self, repo_path: str) -> bool:
+        """Whether the directory `repo_path` exists in vista-data and is not empty."""
+        try:
+            resp = await self._get(
+                "/tree", params={"path": repo_path, "ref": "main", "per_page": 1}
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return False
+            raise
+        return bool(resp.json())
+
     async def download_dir(self, repo_dir: str, dest: Path) -> None:
         # Gitlab's archive endpoint tends to time out so download files individually
         dest = dest.resolve()
@@ -142,6 +154,10 @@ class LocalRepoClient:
         if not src.is_relative_to(self._root):
             raise ValueError(f"Payload path escapes the payload root: {repo_path}")
         return src
+
+    async def has(self, repo_path: str) -> bool:
+        """Whether `repo_path` exists in the payload, as a file or a directory."""
+        return self._resolve(repo_path).exists()
 
     async def download_file(self, repo_path: str, dest: Path) -> None:
         src = self._resolve(repo_path)
@@ -265,6 +281,41 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
     logging.info(f"Knowledge base {kb_dir.name} holds {count} indexed chunk(s).")
 
 
+def _vista_data_client():
+    """
+    The vista-data client for this deployment, as an async context manager, or
+    `nullcontext()` when there is none.
+
+    Payload before token: when both are configured the payload is already on
+    disk, so fetching over the network could only produce the same files more
+    slowly. Ordered explicitly rather than left to whichever happens to be
+    checked first, because the prebuilt package sets the payload path while a
+    developer's inherited `.env` may still carry a token.
+    """
+    if settings.vista_data_payload_dir:
+        return LocalRepoClient(settings.vista_data_payload_dir)
+    if settings.vista_data_token:
+        return GitlabRepoClient(
+            "code.ornl.gov", "v28/vista-data", token=settings.vista_data_token
+        )
+    return nullcontext()
+
+
+async def _science_enabled(client) -> bool:
+    """
+    Whether `seed_db` seeds the science projects (`molten-salt`, `alloy-design`).
+
+    A payload is seeded by what it contains and the setting is not consulted:
+    the science projects need both the molten-salt corpus and MSTDB. From a
+    token, the `seed_science_projects` setting decides. With no client, never.
+    """
+    if client is None:
+        return False
+    if isinstance(client, LocalRepoClient):
+        return await client.has("molten-salt-papers") and await client.has("mstdb")
+    return settings.seed_science_projects
+
+
 async def seed_db(engine: AsyncEngine) -> None:
     """
     Seed the DB with default data on first run, and a no-op thereafter.
@@ -281,25 +332,16 @@ async def seed_db(engine: AsyncEngine) -> None:
     )
     molten_salt_kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
 
-    # Payload before token: when both are configured the payload is already on
-    # disk, so fetching over the network could only produce the same files more
-    # slowly. Ordered explicitly rather than left to whichever happens to be
-    # checked first, because the prebuilt package sets the payload path while a
-    # developer's inherited `.env` may still carry a token.
-    if settings.vista_data_payload_dir:
-        ctx_manager = LocalRepoClient(settings.vista_data_payload_dir)
-    elif settings.vista_data_token:
-        ctx_manager = GitlabRepoClient(
-            "code.ornl.gov", "v28/vista-data", token=settings.vista_data_token
-        )
-    else:
-        ctx_manager = nullcontext()
+    ctx_manager = _vista_data_client()
+    if isinstance(ctx_manager, nullcontext):
         logging.warning(
             "Neither vista_data_payload_dir nor vista_data_token configured; "
             "skipping vista-data fetch: seeding only public data"
         )
     async with ctx_manager as vista_data_client, AsyncSession(engine) as session:
-        if vista_data_client:
+        science = await _science_enabled(vista_data_client)
+        if science:
+            assert vista_data_client is not None  # `science` implies a client
             # TODO This is not really where we should handle the hpc_jobs files, but it will work for now
             job_mstdb_file = (
                 settings.hpc_jobs_dir or REPO_ROOT / "hpc_jobs"
@@ -318,7 +360,8 @@ async def seed_db(engine: AsyncEngine) -> None:
 
         for src in _bundled_skill_dirs():
             path = new_storage_path()
-            if vista_data_client:
+            if science:
+                assert vista_data_client is not None
                 for asset_dest, asset_src in SKILL_ASSETS.get(src.name, {}).items():
                     asset_dest = settings.data_dir / path / asset_dest
                     asset_dest.parent.mkdir(exist_ok=True, parents=True)
@@ -396,16 +439,18 @@ async def seed_db(engine: AsyncEngine) -> None:
                     }
                     - skipped_skills
                 ),
-                knowledge_bases=[molten_salt_kb_dir.name] if vista_data_client else [],
+                knowledge_bases=[molten_salt_kb_dir.name],
                 # Deny the retired agenthpc_* SSH toolchain; the SPLASH campaign
                 # dispatches + monitors HPC jobs through the standard HPC toolchain.
                 tools=["*", "!agenthpc_*"],
                 usage_limits=dict(request_limit=100),
             ),
         ]
+        if not science:
+            projects = []
         session.add_all(projects)
 
-        if vista_data_client:
+        if science:
             _assert_knowledge_base_indexed(molten_salt_kb_dir)
             session.add(
                 KnowledgeBaseTable(

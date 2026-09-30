@@ -200,6 +200,54 @@ async def test_local_client_refuses_a_path_escaping_the_payload(tmp_path):
             await client.download_file("../outside.txt", tmp_path / "out.txt")
 
 
+async def test_local_client_has_reports_presence(tmp_path):
+    payload = make_payload(tmp_path / "payload")
+    async with LocalRepoClient(payload) as client:
+        assert await client.has("mstdb") is True
+        assert await client.has("mstdb/elemental-properties.csv") is True
+        assert await client.has("ai-safety") is False
+
+
+async def test_local_client_has_refuses_a_path_escaping_the_payload(tmp_path):
+    payload = make_payload(tmp_path / "payload")
+    async with LocalRepoClient(payload) as client:
+        with pytest.raises(ValueError, match="escapes the payload root"):
+            await client.has("../outside")
+
+
+async def test_gitlab_client_has_uses_the_tree_endpoint():
+    import httpx
+
+    from vista_backend.db.seed import GitlabRepoClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/repository/tree")
+        path = request.url.params["path"]
+        if path == "ai-safety":
+            return httpx.Response(
+                200, json=[{"type": "blob", "path": "ai-safety/a.pdf"}]
+            )
+        if path == "empty":
+            return httpx.Response(200, json=[])
+        if path == "absent":
+            return httpx.Response(404, json={"message": "404 Tree Not Found"})
+        return httpx.Response(502)
+
+    client = GitlabRepoClient("example.test", "v28/vista-data", token="t")
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(
+        base_url="https://example.test/api/v4/projects/x/repository",
+        transport=httpx.MockTransport(handler),
+    )
+    async with client:
+        assert await client.has("ai-safety") is True
+        assert await client.has("empty") is False
+        assert await client.has("absent") is False
+        # Anything but "not found" is not an answer, so it is not reported as absent.
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.has("broken")
+
+
 # --------------------------------------------------------------------------
 # Branch selection (4.3)
 # --------------------------------------------------------------------------
@@ -355,5 +403,46 @@ async def test_absent_vector_store_is_refused(payload_env, monkeypatch):
         with pytest.raises(RuntimeError, match="no vector store") as exc:
             await run_seed(engine)
         assert "molten-salt-papers" in str(exc.value)
+    finally:
+        await engine.dispose()
+
+
+# --------------------------------------------------------------------------
+# Science follows the payload's contents
+# --------------------------------------------------------------------------
+
+
+async def test_science_is_seeded_from_a_payload_without_the_flag(
+    payload_env, monkeypatch
+):
+    """The payload path never consults `seed_science_projects`."""
+    monkeypatch.setattr(settings, "seed_science_projects", False)
+    engine = make_engine()
+    try:
+        await run_seed(engine)
+        async with AsyncSession(engine) as session:
+            names = {p.name for p in (await session.exec(select(ProjectTable))).all()}
+        assert names == {"molten-salt", "alloy-design"}
+    finally:
+        await engine.dispose()
+
+
+async def test_payload_with_only_ai_safety_seeds_no_science(tmp_path, monkeypatch):
+    payload = tmp_path / "payload"
+    (payload / "ai-safety").mkdir(parents=True)
+    (payload / "ai-safety" / "paper.pdf").write_bytes(b"%PDF-1.4 safety")
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    monkeypatch.setattr(settings, "vista_data_token", None)
+    monkeypatch.setattr(settings, "vista_data_payload_dir", payload)
+    monkeypatch.setattr(seed_module, "REPO_ROOT", tmp_path / "repo")
+
+    engine = make_engine()
+    try:
+        await run_seed(engine)
+        async with AsyncSession(engine) as session:
+            assert (await session.exec(select(ProjectTable))).all() == []
+            assert (await session.exec(select(KnowledgeBaseTable))).all() == []
+            names = {s.name for s in (await session.exec(select(SkillTable))).all()}
+        assert names and {"salt-analysis", "salt-prediction"}.isdisjoint(names)
     finally:
         await engine.dispose()
