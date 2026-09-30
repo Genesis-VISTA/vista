@@ -60,7 +60,10 @@ project, but project access is checked anyway, which is harmless.
 Resolve `uploads_dir` exactly as `save_uploads` does (project lookup →
 `get_project_agent_key` → `project_agent_pool.get`). Write the header with
 `yaml.safe_dump` (PyYAML is already a dependency) so titles with colons or
-quotes can't break it. For one-report-per-chat, scan `uploads/reports/*.md`,
+quotes can't break it, and collapse `title`/`summary` to one line so no value
+can span lines or fake the closing `---`. The slug is reduced to a flat
+`[a-z0-9-]` stem rather than run through the upload filename helper, which
+keeps `/` and would nest reports in subfolders. For one-report-per-chat, scan `uploads/reports/*.md`,
 parse each header, and overwrite the first whose `chat_session_id` matches;
 otherwise write `reports/<sanitized slug>.md` with `write_file_unique`, which
 also handles slug collisions with another chat's report. A linear scan is fine:
