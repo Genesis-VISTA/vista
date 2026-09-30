@@ -29,7 +29,7 @@ from .lib.iri import (
 from .lib.globus import (
     GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
 )
-from .lib.olcf_token import require_s3m_project
+from .lib.olcf_token import get_s3m_token_project
 from .lib import slurm_ssh
 from .lib.ssh import get_ssh_conn_mcp_elicitation
 from .lib.user_config import UserConfig, get_vista_meta
@@ -178,10 +178,6 @@ class SubmittedJob:
     way, both of them argparse rejecting invented flags with exit status 2.
     """
     output_dir: str | None = None
-    # OLCF project the job was charged to, when a job overrode the cluster's
-    # default (`account` in cluster_defaults.json). Status and outputs verify
-    # the S3M token against THAT project, so it is remembered here.
-    account: str | None = None
 
 
 # Durable registry of job_id -> SubmittedJob. Used by get_hpc_job_status /
@@ -207,7 +203,6 @@ def _serialize_jobs(jobs: dict[str, SubmittedJob]) -> dict[str, dict]:
             "log_path": s.log_path,
             "err_path": s.err_path,
             "output_dir": s.output_dir,
-            "account": s.account,
         }
         for jid, s in jobs.items()
     }
@@ -223,7 +218,6 @@ def _deserialize_jobs(data: dict) -> dict[str, SubmittedJob]:
             log_path=rec.get("log_path"),
             err_path=rec.get("err_path"),
             output_dir=rec.get("output_dir"),
-            account=rec.get("account"),
         )
     return jobs
 
@@ -265,12 +259,6 @@ def _record_submitted_job(job_id: str, submitted: SubmittedJob) -> None:
 
 # Rehydrate from disk at import so a restarted server remembers prior submissions.
 _submitted_jobs.update(_load_submitted_jobs())
-
-
-def _submitted_account(job_id: str) -> str | None:
-    """ The OLCF project a job overrode its cluster's default with, if any. """
-    submitted = _submitted_jobs.get(job_id)
-    return submitted.account if submitted is not None else None
 
 
 def _default_cluster(cfg: UserConfig) -> Cluster:
@@ -437,7 +425,6 @@ async def submit_hpc_job(
                     log_path=log_path,
                     err_path=err_path,
                     output_dir=output_dir,
-                    account=AVAILABLE_JOBS[job].cluster_defaults.frontier.account,
                 ),
             )
 
@@ -473,8 +460,7 @@ async def _submit_odo_job(
 
     - open-enclave IRI endpoint (`settings.odo_iri_url`) with a pinned compute
       resource id (`settings.odo_compute_resource_id`)
-    - the Slurm account is the global `settings.odo_account` (one shared OLCF
-      project for all Vista users); the user's S3M token must belong to it
+    - the Slurm account is the S3M token's own project (see `_olcf_project`)
     - the remote base is the preset `settings.odo_remote_dir`
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
@@ -505,8 +491,8 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
-    await _require_olcf_access(cfg, "odo")
-    iri_client = await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
+    s3m_token, project = await _olcf_project(cfg, "odo")
+    iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
@@ -588,7 +574,7 @@ async def _submit_odo_job(
         "attributes": {
             "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
-            "account": settings.odo_account,
+            "account": project,
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
@@ -812,10 +798,7 @@ async def _submit_frontier_job(
     `iri-frontend-moderate` scope doesn't authorize IRI storage discovery, so
     the researcher's own Globus connection grants access to the OLCF DTN.
 
-    The Slurm account is the global `settings.frontier_account` (one shared
-    OLCF project for all Vista users) unless the job's cluster_defaults.json
-    names its own `account` (and `remote_dir`); the user's S3M token must
-    belong to whichever applies.
+    The Slurm account is the S3M token's own project (see `_olcf_project`).
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
@@ -832,11 +815,8 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    account = defaults.account or settings.frontier_account
-    s3m_token = await _require_olcf_access(cfg, "frontier", defaults.account)
-    iri_client = await create_olcf_iri_client(
-        iri_token=s3m_token or cfg.require_s3m_token("frontier"),
-    )
+    s3m_token, project = await _olcf_project(cfg, "frontier")
+    iri_client = await create_olcf_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
@@ -944,7 +924,7 @@ async def _submit_frontier_job(
         "attributes": {
             "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
-            "account": account,
+            "account": project,
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
@@ -1291,17 +1271,11 @@ def _read_log_tail(path: Path) -> str:
     return "\n".join(lines[-_LOG_TAIL_LINES:])
 
 
-async def _create_olcf_iri_for(
-    cluster: Cluster, cfg: UserConfig, s3m_token: str | None = None,
-) -> IriClient:
-    """
-    IRI client for an OLCF cluster: "odo" (open enclave) or "frontier" (moderate).
-    `s3m_token` is the token `_require_olcf_access` verified for the job's
-    project; without one, the user's token for the cluster.
-    """
+async def _create_olcf_iri_for(cluster: Cluster, cfg: UserConfig) -> IriClient:
+    """ IRI client for an OLCF cluster: "odo" (open enclave) or "frontier" (moderate). """
     if cluster == "odo":
-        return await create_odo_iri_client(iri_token=s3m_token or cfg.require_s3m_token("odo"))
-    return await create_olcf_iri_client(iri_token=s3m_token or cfg.require_s3m_token("frontier"))
+        return await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
+    return await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
 
 
 def _olcf_collection_id(cluster: Cluster) -> str:
@@ -1311,22 +1285,21 @@ def _olcf_collection_id(cluster: Cluster) -> str:
     return settings.frontier_globus_collection_id
 
 
-async def _require_olcf_access(
-    cfg: UserConfig, cluster: Cluster, account: str | None = None,
-) -> str:
+async def _olcf_project(cfg: UserConfig, cluster: Cluster) -> tuple[str, str]:
     """
-    Verify the user's S3M token belongs to the job's OLCF project (`account`,
-    default the cluster's) before any file op, and return the token.
+    The researcher's S3M token for an OLCF cluster, and the project it belongs to.
+
+    The project is the job's Slurm account: IRI runs the job as that project's
+    automation user, so it is the only account the token can charge. Any
+    project is accepted -- the facility decides what the token may do, and file
+    operations act as the researcher's own Globus identity.
+
+    Only submission needs this. Status, outputs and cancel go straight to IRI
+    and Globus, which authorize the researcher themselves.
     """
-    if cluster == "odo":
-        default_account, url = settings.odo_account, settings.odo_introspect_url
-    else:
-        default_account, url = settings.frontier_account, settings.frontier_introspect_url
+    url = settings.odo_introspect_url if cluster == "odo" else settings.frontier_introspect_url
     token = cfg.require_s3m_token(cluster)
-    await require_s3m_project(
-        token, account or default_account, cluster=cluster, introspect_url=url,
-    )
-    return token
+    return token, await get_s3m_token_project(token, introspect_url=url)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
@@ -1436,10 +1409,8 @@ async def _get_olcf_job_status(
     what comes back is the END of it — which is what a researcher watching a
     running or failed job is looking for.
     """
-    account = _submitted_account(job_id)
-    s3m_token = await _require_olcf_access(cfg, cluster, account)
     remote_collection = _olcf_collection_id(cluster)
-    iri_client = await _create_olcf_iri_for(cluster, cfg, s3m_token)
+    iri_client = await _create_olcf_iri_for(cluster, cfg)
     status = await iri_client.get_job_status(job_id)
     state = status.get("state", "UNKNOWN").upper()
 
@@ -1826,7 +1797,6 @@ async def _get_olcf_job_outputs(
     re-fetched, so a follow-up `display_file` costs nothing. To force a fresh
     pull (e.g. a checkpoint updated mid-training), delete the local copy first.
     """
-    await _require_olcf_access(cfg, cluster, _submitted_account(job_id))
     submitted = _submitted_jobs.get(job_id)
     if submitted is None or submitted.output_dir is None:
         raise ValueError(
@@ -1846,10 +1816,6 @@ async def _get_olcf_job_outputs(
         # so the facility enforces what they may read. This relative-path check
         # plus the server-defined remote_out_dir confine the fetch to the
         # resolved output dir on top of that.
-        # NOTE: users can still request jobs from other users by job id. But since we are limiting
-        # access to only gen150-vista and chm245 the jobs all run as a service account the users
-        # would have had access to anyways. When OLCF supports IRI file transfer, we can remove
-        # globus and rely on the S3M token for restricting file access.
         local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
         sandbox_paths.append(str(sandbox_path))
         if local_path.exists() and local_path.stat().st_size > 0:

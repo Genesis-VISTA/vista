@@ -156,13 +156,9 @@ class TestWhatAStatusQuerySays:
     def _olcf(self, monkeypatch, globus):
         monkeypatch.setattr(settings, "frontier_globus_collection_id", COLLECTION)
 
-        async def _noop_access(cfg, cluster, account=None):
-            return None
-
-        async def _iri(cluster, cfg, s3m_token=None):
+        async def _iri(cluster, cfg):
             return FakeIriClient(status={"state": "RUNNING"})
 
-        monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
         monkeypatch.setattr(submit_job_mcp, "_create_olcf_iri_for", _iri)
         monkeypatch.setattr(
             submit_job_mcp, "create_globus_client", lambda **kwargs: globus

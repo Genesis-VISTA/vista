@@ -74,14 +74,14 @@ function urls(): string[] {
 
 describe("useHpcStatus", () => {
   it("fetches once on mount, shared between subscribers", async () => {
-    answers = [[cluster("frontier", "ready"), cluster("odo", "wrong_project")]];
+    answers = [[cluster("frontier", "ready"), cluster("odo", "rejected")]];
     const a = renderHook(() => useHpcStatus());
     const b = renderHook(() => useHpcStatus());
     expect(a.result.current.clusters).toBeNull(); // the rail shows Checking
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(a.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "wrong_project"]);
-    expect(b.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "wrong_project"]);
+    expect(a.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "rejected"]);
+    expect(b.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "rejected"]);
   });
 
   it("polls every five minutes while visible, and not while hidden", async () => {

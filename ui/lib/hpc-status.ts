@@ -31,7 +31,6 @@ export type HpcState =
   | "unverifiable"
   | "not_connected"
   | "rejected"
-  | "wrong_project"
   | "globus_not_connected"
   | "globus_session_expired"
   | "ready";
@@ -46,7 +45,6 @@ export type HpcCheckReason =
   | "not_connected"
   | "rejected"
   | "not_active"
-  | "wrong_project"
   | "session_expired";
 
 export type HpcCheck = {
@@ -56,7 +54,6 @@ export type HpcCheck = {
   http_status?: number | null;
   incident?: { name: string; start: string | null; end: string | null } | null;
   project?: string | null;
-  expected_project?: string | null;
   expires_at?: string | null;
   active_from?: string | null;
 };

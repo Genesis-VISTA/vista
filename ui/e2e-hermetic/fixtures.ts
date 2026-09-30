@@ -37,7 +37,7 @@ export const HPC_STATUS = {
         facility: OK("The facility reports Frontier up."),
         credential: {
           ...OK("Frontier accepted the S3M token."),
-          project: "chm243",
+          project: "abc123",
           expires_at: "2026-01-02T00:00:00+00:00",
         },
         globus: OK("Globus reaches Frontier's files."),
@@ -49,7 +49,7 @@ export const HPC_STATUS = {
       checked_at: NOW,
       checks: {
         facility: OK("The facility reports Odo up."),
-        credential: { ...OK("Odo accepted the S3M token."), project: "gen150-vista" },
+        credential: { ...OK("Odo accepted the S3M token."), project: "xyz789" },
         globus: {
           ok: false,
           reason: "not_connected",

@@ -89,7 +89,6 @@ describe("HpcStatusSection", () => {
     "unverifiable",
     "not_connected",
     "rejected",
-    "wrong_project",
     "globus_not_connected",
     "globus_session_expired",
   ];
@@ -138,7 +137,7 @@ describe("HpcStatusSection", () => {
       view([
         {
           status: status("frontier", "ready", {
-            credential: { ...OK, project: "chm243", expires_at: "2026-09-26T13:00:00Z" },
+            credential: { ...OK, project: "abc123", expires_at: "2026-09-26T13:00:00Z" },
             globus: OK,
           }),
         },
@@ -150,7 +149,7 @@ describe("HpcStatusSection", () => {
     const dialog = screen.getByRole("dialog", { name: "Frontier connection details" });
     expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
     expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
-    expect(within(dialog).getByText("Project chm243 · expires in 22 h")).toBeInTheDocument();
+    expect(within(dialog).getByText("Project abc123 · expires in 22 h")).toBeInTheDocument();
     expect(within(dialog).getByText("Your own identity")).toBeInTheDocument();
     expect(within(dialog).getByText("Checked 2 min ago")).toBeInTheDocument();
 
@@ -162,23 +161,21 @@ describe("HpcStatusSection", () => {
     useHpcStatusMock.mockReturnValue(
       view([
         {
-          status: status("frontier", "wrong_project", {
+          status: status("frontier", "rejected", {
             credential: {
               ok: false,
-              reason: "wrong_project",
-              message: "This token is for project 'gen150-vista'; Frontier needs a token minted in 'chm243'.",
-              project: "gen150-vista",
-              expected_project: "chm243",
+              reason: "rejected",
+              message: "S3M rejected the Frontier token; it may have expired or been revoked.",
+              http_status: 401,
             },
           }),
         },
       ]),
     );
     renderSection({ visible: ["frontier"] });
-    await userEvent.click(screen.getByRole("button", { name: "Frontier: Wrong project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Frontier: Token rejected" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Token is for another project")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Frontier needs a token minted in 'chm243'/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/may have expired or been revoked/)).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Settings" }));
     expect(onOpenSettings).toHaveBeenCalledWith("frontier");

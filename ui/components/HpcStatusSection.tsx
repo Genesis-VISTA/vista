@@ -27,7 +27,6 @@ export const STATE_LABELS: Record<HpcDisplayState, string> = {
   unverifiable: "Couldn't verify",
   not_connected: "Not connected",
   rejected: "Token rejected",
-  wrong_project: "Wrong project",
   globus_not_connected: "Globus not connected",
   globus_session_expired: "Globus session expired",
 };
@@ -36,7 +35,6 @@ export const STATE_LABELS: Record<HpcDisplayState, string> = {
 export const WORD_TONE: Partial<Record<HpcDisplayState, "warn" | "urgent">> = {
   degraded: "warn",
   rejected: "urgent",
-  wrong_project: "urgent",
   globus_not_connected: "urgent",
   globus_session_expired: "urgent",
 };
@@ -130,8 +128,6 @@ function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
       };
     case "rejected":
       return { ok: false, title: "Token rejected", detail: check.message };
-    case "wrong_project":
-      return { ok: false, title: "Token is for another project", detail: check.message };
     default:
       return { ok: null, title: "Couldn't verify the token", detail: check.message };
   }

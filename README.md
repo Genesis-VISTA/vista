@@ -290,8 +290,9 @@ Important env vars:
 Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
 env vars — each user connects them in the UI under User settings. Globus is a one-time
 authorization per cluster, and every Odo and Frontier file operation acts as that researcher's
-own identity: there is no deployment-wide Globus login to fall back on. An S3M token is scoped to one OLCF project, so Odo and Frontier
-each need their own; mint them per the
+own identity: there is no deployment-wide Globus login to fall back on. An S3M token is scoped to one OLCF project, and
+that project is the Slurm account the cluster's jobs are charged to. A token from any project with S3M
+access works, and Odo and Frontier each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 

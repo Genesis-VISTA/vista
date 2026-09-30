@@ -32,6 +32,9 @@ from vista_backend.services.hpc_status import (
 
 NOW = datetime(2026, 9, 25, 15, 0, tzinfo=timezone.utc)
 S = HpcClusterSettings.model_validate({})
+ODO_PROJECT = "abc123"
+FRONTIER_PROJECT = "xyz789"
+""" Projects no deployment is configured for: any project's token works. """
 ODO = "https://amsc-open.s3m.olcf.ornl.gov"
 FRONTIER = "https://amsc-moderate.s3m.olcf.ornl.gov"
 NERSC = "https://api.iri.nersc.gov"
@@ -215,8 +218,8 @@ CONNECTED = dict(
 def healthy() -> Facilities:
     fac = Facilities()
     fac.s3m = {
-        "odo-tok": (200, S.odo_account, {}),
-        "fr-tok": (200, S.frontier_account, {}),
+        "odo-tok": (200, ODO_PROJECT, {}),
+        "fr-tok": (200, FRONTIER_PROJECT, {}),
     }
     fac.iri = {(ODO, "odo-tok"): 200, (FRONTIER, "fr-tok"): 200, (NERSC, "pm-tok"): 200}
     return fac
@@ -251,7 +254,6 @@ def fail(reason) -> Check:
         (OK, fail("not_connected"), fail("not_connected"), "not_connected"),
         (OK, fail("rejected"), OK, "rejected"),
         (OK, fail("not_active"), OK, "rejected"),
-        (OK, fail("wrong_project"), fail("not_connected"), "wrong_project"),
         (OK, OK, fail("not_connected"), "globus_not_connected"),
         (OK, OK, fail("session_expired"), "globus_session_expired"),
     ],
@@ -396,14 +398,25 @@ async def test_rejected_token():
 
 
 @pytest.mark.anyio
-async def test_token_for_another_project():
-    """An Odo token pasted into Frontier: introspect names the wrong project."""
+async def test_token_for_any_project_is_reported_not_judged():
+    """No project is configured: whatever the token belongs to is its jobs'
+    account, and the card says which."""
     fac = healthy()
-    fac.s3m["fr-tok"] = (200, S.odo_account, {})
+    fac.s3m["odo-tok"] = (200, "zzz999", {})
+    odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
+    assert odo.state == "ready"
+    assert odo.checks.credential.project == "zzz999"
+
+
+@pytest.mark.anyio
+async def test_token_for_the_other_enclave_is_rejected_by_iri():
+    """An Odo token pasted into Frontier: Frontier's IRI refuses it, and that
+    is the answer -- there is no project comparison to make."""
+    fac = healthy()
+    fac.s3m["fr-tok"] = (200, ODO_PROJECT, {})
     fac.iri[(FRONTIER, "fr-tok")] = 401  # what Frontier's IRI really answers
     frontier = (await statuses(make_service(fac), user(**CONNECTED)))["frontier"]
-    assert frontier.state == "wrong_project"
-    assert frontier.checks.credential.expected_project == S.frontier_account
+    assert frontier.state == "rejected"
 
 
 @pytest.mark.anyio
@@ -412,7 +425,7 @@ async def test_token_not_active_yet():
     start = NOW + timedelta(hours=2)
     fac.s3m["odo-tok"] = (
         200,
-        S.odo_account,
+        ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(start)},
     )
     odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
@@ -426,7 +439,7 @@ async def test_delayed_start_in_the_past_is_fine():
     fac = healthy()
     fac.s3m["odo-tok"] = (
         200,
-        S.odo_account,
+        ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(NOW - timedelta(hours=2))},
     )
     assert (await statuses(make_service(fac), user(**CONNECTED)))[

@@ -42,8 +42,6 @@ def _hpc_jobs_and_registry(monkeypatch):
     )
     monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
     monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
-    monkeypatch.setattr(settings, "odo_account", "gen150-vista")
-    monkeypatch.setattr(settings, "frontier_account", "chm243")
     monkeypatch.setattr(settings, "session_id", "test-session")
     _submitted_jobs.clear()
     yield
@@ -73,14 +71,15 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     async def _nersc(*, iri_token: str):
         return iri
 
-    async def _noop_access(cfg, cluster, account=None):
-        return None
+    async def _introspect(token, *, introspect_url):
+        # Every token belongs to a project no deployment is configured for.
+        return "abc123"
 
     monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo)
     monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
-    monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
+    monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
 
 
 async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg):
@@ -119,7 +118,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     assert "set -- a b" in job_cmd
     env = spec["attributes"]["environment"]
     assert env["RUN_DIR_Odo"] == "/fake/odo/vista/example/src"
-    assert spec["attributes"]["account"] == "gen150-vista"
+    assert spec["attributes"]["account"] == "abc123"
     assert globus.uploads, "expected Globus source upload"
 
 

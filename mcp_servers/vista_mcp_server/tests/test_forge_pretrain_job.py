@@ -556,29 +556,28 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
+async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeypatch):
     from fakes import FakeGlobusClient, FakeIriClient
     from vista_mcp_server.lib.user_config import UserConfig
 
     base = "/lustre/orion/chm243/proj-shared/vista"
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "frontier_account", "chm243")
     monkeypatch.setattr(settings, "frontier_remote_dir", base)
     monkeypatch.setattr(settings, "frontier_globus_collection_id", "fr-coll")
     monkeypatch.setattr(settings, "session_id", "sess")
     iri, globus = FakeIriClient(job_id="777"), FakeGlobusClient()
     seen: dict = {}
 
-    async def access(cfg, cluster, account=None):
-        seen["account"] = account
-        return "chm243-token"
+    async def introspect(token, *, introspect_url):
+        seen["introspected"] = token
+        return "chm243"
 
     async def olcf(*, iri_token):
         seen["iri_token"] = iri_token
         return iri
 
-    monkeypatch.setattr(m, "_require_olcf_access", access)
+    monkeypatch.setattr(m, "get_s3m_token_project", introspect)
     monkeypatch.setattr(m, "create_olcf_iri_client", olcf)
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
 
@@ -592,8 +591,8 @@ async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)
     assert out_dir == f"{base}/sess/out/777"
-    # No per-job override: the cluster's own account and token, as for forge-tune.
-    assert seen == {"account": None, "iri_token": "chm243-token"}
+    # The account is whatever project the token belongs to.
+    assert seen == {"introspected": "chm243-token", "iri_token": "chm243-token"}
 
     [(spec, _)] = iri.submitted
     attrs = spec["attributes"]

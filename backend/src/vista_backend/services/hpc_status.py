@@ -105,7 +105,6 @@ Reason = Literal[
     "not_connected",
     "rejected",
     "not_active",
-    "wrong_project",
     "session_expired",
 ]
 """ Why a check failed. The UI maps these to copy; `message` is a fallback. """
@@ -115,7 +114,6 @@ State = Literal[
     "unverifiable",
     "not_connected",
     "rejected",
-    "wrong_project",
     "globus_not_connected",
     "globus_session_expired",
     "ready",
@@ -142,7 +140,6 @@ class Check(BaseModel):
     The project the cluster's jobs run under: the S3M token's, once learned, or
     Lux's configured one. A project name, not a secret.
     """
-    expected_project: str | None = None
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
     active_from: datetime | None = None
@@ -183,7 +180,6 @@ _PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
     ),
     ("not_connected", lambda c: c.credential.reason == "not_connected"),
     ("rejected", lambda c: c.credential.reason in ("rejected", "not_active")),
-    ("wrong_project", lambda c: c.credential.reason == "wrong_project"),
     (
         "globus_not_connected",
         lambda c: c.globus is not None and c.globus.reason == "not_connected",
@@ -703,11 +699,10 @@ class HpcStatusService:
                 title, kind, await self._get_status(client, compute_url, token)
             )
 
-        s = self._settings
-        introspect_url, expected = (
-            (s.odo_introspect_url, s.odo_account)
+        introspect_url = (
+            self._settings.odo_introspect_url
             if cluster == "odo"
-            else (s.frontier_introspect_url, s.frontier_account)
+            else self._settings.frontier_introspect_url
         )
         (intro_status, info), iri_status = await asyncio.gather(
             self._introspect(client, introspect_url, token),
@@ -742,21 +737,8 @@ class HpcStatusService:
                 active_from=active_from,
                 expires_at=expires_at,
             )
-        # Before the IRI answer: a token for the other enclave's project is
-        # refused there too, and "wrong project" is the part the researcher
-        # can act on.
-        if project != expected:
-            return Check(
-                ok=False,
-                reason="wrong_project",
-                message=(
-                    f"This token is for project {project!r}; {title} needs a "
-                    f"token minted in {expected!r}."
-                ),
-                project=project,
-                expected_project=expected,
-                expires_at=expires_at,
-            )
+        # Any project is accepted: it is the account the cluster's jobs are
+        # charged to, reported rather than compared with anything.
         check = self._from_iri(title, kind, iri_status)
         return check.model_copy(update={"project": project, "expires_at": expires_at})
 

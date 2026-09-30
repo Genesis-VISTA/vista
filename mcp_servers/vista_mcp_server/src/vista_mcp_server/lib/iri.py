@@ -82,9 +82,9 @@ class IriDefaults(BaseModel):
     iri: IriAttributes = IriAttributes()
     account: str | None = None
     """
-    OLCF project to charge, overriding the cluster's deployment-wide account
-    (`frontier_account`, `lux_account`) for this job only. On Frontier the
-    user's S3M token must belong to this project. Honored on Frontier and Lux.
+    Slurm account to charge, overriding `lux_account` for this job only.
+    Honored on Lux. Odo and Frontier always charge the S3M token's own
+    project, which is the only account IRI can run the job under.
     """
     remote_dir: str | None = None
     """

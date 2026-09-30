@@ -455,8 +455,6 @@ class HpcClusterSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, open enclave. """
-    odo_account: str = "gen150-vista"
-    """ The OLCF project an Odo S3M token must belong to. """
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
     """
     Odo's IRI compute resource. Matched by id, not name: the open enclave lists
@@ -467,8 +465,6 @@ class HpcClusterSettings(BaseSettings):
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, moderate enclave. """
-    frontier_account: str = "chm243"
-    """ The OLCF project a Frontier S3M token must belong to. """
     frontier_machine: str = "frontier"
     """ Frontier's resource name in the IRI status list, compared case-insensitively. """
     frontier_introspect_url: str = (

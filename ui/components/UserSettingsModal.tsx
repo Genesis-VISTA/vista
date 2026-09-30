@@ -324,7 +324,7 @@ function UserSettingsForm({
                   label="Odo S3M token"
                   value={odoS3mToken}
                   onChange={setOdoS3mToken}
-                  hint="Minted in Odo's OLCF project."
+                  hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
                 />
                 <GlobusConnect
                   cluster="odo"
@@ -340,7 +340,7 @@ function UserSettingsForm({
                   label="Frontier S3M token"
                   value={frontierS3mToken}
                   onChange={setFrontierS3mToken}
-                  hint="Minted in Frontier's OLCF project, a different project from Odo's, so it needs its own token."
+                  hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
                 />
                 <GlobusConnect
                   cluster="frontier"

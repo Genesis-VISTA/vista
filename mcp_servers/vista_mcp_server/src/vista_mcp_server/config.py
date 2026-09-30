@@ -86,11 +86,6 @@ class AppSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the open enclave """
-    odo_account: str = "gen150-vista"
-    """
-    OLCF project name used as the Slurm account for Odo jobs. The user's S3M token must belong to
-    this project.
-    """
     odo_remote_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     """ Base dir on Odo where job sources and outputs live """
     odo_machine: str = "odo"
@@ -104,8 +99,8 @@ class AppSettings(BaseSettings):
     """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """
-    S3M token introspection endpoint used to verify that a user's token belongs
-    to `odo_account` before Vista moves files for them with Globus
+    S3M token introspection endpoint. Tells VISTA which OLCF project an Odo
+    token belongs to, which is the Slurm account its jobs are charged to.
     """
     odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
     """
@@ -114,15 +109,10 @@ class AppSettings(BaseSettings):
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
-    frontier_account: str = "chm243"
-    """
-    OLCF project name used as the Slurm account for Frontier jobs. The user's S3M token must
-    belong to this project.
-    """
     frontier_remote_dir: str = "/lustre/orion/chm243/proj-shared/vista"
     """ Base dir on Frontier where job sources and outputs live """
     frontier_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
-    """ Same as `odo_introspect_url`, for Frontier tokens (`frontier_account`). """
+    """ Same as `odo_introspect_url`, for Frontier tokens. """
     frontier_machine: str = "frontier"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"

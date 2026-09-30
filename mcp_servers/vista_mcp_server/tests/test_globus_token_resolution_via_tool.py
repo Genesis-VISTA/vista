@@ -34,17 +34,16 @@ def _odo_environment(monkeypatch):
     itself, so each test below varies only the thing it is testing."""
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
     monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
-    monkeypatch.setattr(settings, "odo_account", "gen150-vista")
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
 
-    async def _noop_access(cfg, cluster, account=None):
-        return None
+    async def _introspect(token, *, introspect_url):
+        return "abc123"
 
     async def _odo_iri(*, iri_token: str):
         return FakeIriClient(job_id="odo-token-test")
 
-    monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
+    monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
     monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo_iri)
 
 
