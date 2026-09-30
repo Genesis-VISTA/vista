@@ -3,15 +3,16 @@ Database engine, session factory, and FastAPI session dependency.
 """
 
 import functools
+import logging
 from pathlib import Path
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
-from sqlalchemy import event
+from sqlalchemy import Connection, event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from .seed import seed_db
+from .seed import seed_db, sync_bundled_skills
 
 
 @functools.cache
@@ -79,6 +80,52 @@ def get_engine() -> AsyncEngine:
     return engine
 
 
+def _add_missing_columns(conn: Connection) -> None:
+    """
+    Add columns the models declare and an existing database lacks.
+
+    `SQLModel.metadata.create_all` creates missing *tables* but never alters
+    existing ones, so a column added to a model after a database exists is
+    simply absent and every query naming it fails. Replacing an installed
+    VISTA with a newer build has to keep the existing state directory working
+    ("Replacing the artifact preserves state"), and there is no migration
+    tool in this project, so additive columns are filled in here.
+
+    Deliberately narrow. It only ADDs columns; it never drops, renames, or
+    retypes anything, and it skips any column that is NOT NULL without a
+    server default, because SQLite cannot add one of those to a populated
+    table. Those need a real migration -- this is not one.
+    """
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    log = logging.getLogger(__name__)
+
+    for table in SQLModel.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # create_all just made it, with every column.
+        present = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present:
+                continue
+            if not column.nullable and column.server_default is None:
+                log.warning(
+                    "Column %s.%s is missing from the database and cannot be "
+                    "added automatically (NOT NULL with no server default). "
+                    "It needs a migration.",
+                    table.name,
+                    column.name,
+                )
+                continue
+            column_type = column.type.compile(conn.dialect)
+            log.info("Adding missing column %s.%s", table.name, column.name)
+            conn.execute(
+                text(
+                    f'ALTER TABLE "{table.name}" '
+                    f'ADD COLUMN "{column.name}" {column_type}'
+                )
+            )
+
+
 async def init_db() -> None:
     """Create tables and seed defaults. Call once at app startup."""
     if settings.database_url.startswith("sqlite"):
@@ -88,8 +135,11 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(_add_missing_columns)
 
     await seed_db(engine)
+    # seed_db is first-run only; this picks up skills bundled since then.
+    await sync_bundled_skills(engine)
 
 
 EngineDep = A[AsyncEngine, Depends(get_engine)]

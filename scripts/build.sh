@@ -2,13 +2,23 @@
 set -euo pipefail
 
 REPO_ROOT="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
-# Source the .env file
-set -o allexport; source "$REPO_ROOT/.env" 2>/dev/null || true; set +o allexport
+# Source the .env file if there is one. Guarded with a file test rather than
+# `source ... || true`: bash treats a missing *script* file as fatal and exits
+# the shell before the `||` is ever considered, so the tolerant-looking form
+# silently killed this script on any checkout without a .env.
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  # Strip \r so a .env saved with CRLF endings (Windows) still parses. Read
+  # through eval rather than `source <(...)`: macOS ships bash 3.2, where
+  # sourcing a process substitution silently reads nothing.
+  set -o allexport; eval "$(tr -d '\r' < "$REPO_ROOT/.env")"; set +o allexport
+fi
 
 PROD=false
+ELECTRON=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
+    --electron) ELECTRON=true ;;
     *) echo "Unknown build.sh argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -36,6 +46,13 @@ npm ci
 # In prod we serve a precompiled build via `npm start`, in dev we just run the devserver
 if [[ "$PROD" == true ]]; then
     npm run build
+fi
+
+# The VISTA window (./launch.sh --electron). Opt-in because Electron is a
+# ~290 MB download that nothing else needs.
+if [[ "$ELECTRON" == true ]]; then
+    cd "$REPO_ROOT/electron"
+    npm ci
 fi
 
 cd "$REPO_ROOT"

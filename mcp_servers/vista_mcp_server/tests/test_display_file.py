@@ -20,7 +20,7 @@ the files existed on disk and simply could not be served.
 
 import pytest
 
-from vista_mcp_server.display_file_mcp import resolve_uri
+from vista_mcp_server.display_file_mcp import display_filename, resolve_uri
 
 pytestmark = pytest.mark.unit
 
@@ -77,21 +77,47 @@ def test_empty_map_is_the_regression_being_guarded():
         resolve_uri(f"/mnt/data/output/{JOB}/plot.png", {})
 
 
-def test_parent_traversal_is_rejected():
-    """`..` survives pathlib normalization, so the component check catches it."""
-    with pytest.raises(ValueError, match="not absolute"):
-        resolve_uri("/mnt/data/output/../../etc/passwd", URI_MAP)
-
-
-def test_single_dot_component_normalizes_to_the_same_file():
-    """A `.` is a no-op that pathlib drops; the path stays inside the mapped prefix."""
-    assert resolve_uri("/mnt/data/output/./plot.png", URI_MAP) == (
-        f"/api/files/outputs/plot.png?project_name={PROJECT}"
-    )
-
-
 @pytest.mark.parametrize("uri", ["/etc/passwd", "relative/path.png"])
 def test_unmapped_paths_are_refused(uri):
     """Only the mapped prefixes are servable; anything else has no URL."""
     with pytest.raises(ValueError, match="No download URL is configured"):
         resolve_uri(uri, URI_MAP)
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "/mnt/data/output/../../etc/passwd",
+        "/mnt/data/output/./plot.png",
+        "file:mnt/data/output/plot.png",
+        "file://otherhost/mnt/data/output/plot.png",
+    ],
+)
+def test_non_absolute_or_remote_paths_are_refused(uri):
+    with pytest.raises(ValueError, match="not absolute"):
+        resolve_uri(uri, URI_MAP)
+
+
+def test_sandbox_paths_are_not_host_paths():
+    """
+    `Path` is a WindowsPath on Windows, where `/mnt/...` has no drive and cannot become a
+    `file://` URI. Sandbox paths are POSIX, so resolution must not go through `Path`.
+    """
+    import vista_mcp_server.display_file_mcp as module
+
+    assert not hasattr(module, "Path")
+
+
+@pytest.mark.parametrize(
+    "uri, name",
+    [
+        ("/mnt/data/output/plot.png", "plot.png"),
+        ("/mnt/data/output/fig#1.png", "fig#1.png"),
+        ("/mnt/data/output/a?b.png", "a?b.png"),
+        ("file:///mnt/data/output/my%20plot.png", "my plot.png"),
+        ("file:///mnt/data/output/fig%231.png", "fig#1.png"),
+    ],
+)
+def test_filename_keeps_characters_a_bare_path_allows(uri, name):
+    """`#` and `?` only mean fragment and query inside a URI, not in a bare path."""
+    assert display_filename(uri) == name

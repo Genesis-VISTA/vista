@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +22,23 @@ from pydantic import BaseModel
 from ..config import settings
 
 
+def _default_amscrot_log_location() -> None:
+    """
+    Give amscrot a log file it can open, on hosts where its default cannot be.
+
+    amscrot opens its log file when it is imported, at `AMSCROT_LOG_LOCATION` or
+    `/tmp/amscrot.log`. On Windows that is `C:\\tmp\\amscrot.log`, and `C:\\tmp`
+    does not normally exist, so the import raised FileNotFoundError and every
+    IRI call -- Odo and Frontier as well as NERSC -- failed. Only when unset and
+    only where `/tmp` is missing, so macOS and Linux keep logging where they did.
+    """
+    if "AMSCROT_LOG_LOCATION" not in os.environ and not Path("/tmp").is_dir():
+        os.environ["AMSCROT_LOG_LOCATION"] = str(Path(tempfile.gettempdir()) / "amscrot.log")
+
+
 def _require_amscrot():
     """Import amscrot on first real IRI use; fail with a clear error if missing."""
+    _default_amscrot_log_location()
     try:
         from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
         from amscrot.serviceclient import ServiceClient
@@ -41,6 +58,8 @@ class IriResourceSpec(BaseModel):
     processes_per_node: int | None = None
     cpu_cores_per_process: int | None = None
     exclusive_node_use: bool = True
+    gpus_per_node: int | None = None
+    """ Lux only: rendered as `#SBATCH --gpus-per-node`. The IRI clusters bind GPUs themselves. """
 
 
 class IriAttributes(BaseModel):
@@ -61,6 +80,18 @@ class IriDefaults(BaseModel):
     """ Seconds """
     resources: IriResourceSpec = IriResourceSpec()
     iri: IriAttributes = IriAttributes()
+    account: str | None = None
+    """
+    OLCF project to charge, overriding the cluster's deployment-wide account
+    (`frontier_account`, `lux_account`) for this job only. On Frontier the
+    user's S3M token must belong to this project. Honored on Frontier and Lux.
+    """
+    remote_dir: str | None = None
+    """
+    Base dir for this job's sources and outputs, overriding the cluster's
+    `*_remote_dir`. Goes with `account`: it must be writable by that project.
+    Honored on Frontier and Lux.
+    """
 
 
 class IriClient:

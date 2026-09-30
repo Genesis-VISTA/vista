@@ -62,6 +62,38 @@ class TestFormatFileContent:
         result = format_file_content(b"a\nb\n")
         assert len(result.splitlines()) == 2
 
+    # --- text vs binary classification ---
+    #
+    # Pinned deliberately: this used to ask libmagic for a MIME type and test
+    # it against `text/`, which hid every JSON and SVG file. Nothing here
+    # would have caught that, which is how it survived.
+
+    def test_json_is_text(self):
+        # libmagic returned application/json, so this rendered as binary.
+        result = format_file_content(b'{"salt": "FLiBe", "k": 1.1}')
+        assert result == '1\t{"salt": "FLiBe", "k": 1.1}'
+
+    def test_svg_is_text(self):
+        # libmagic returned image/svg+xml, likewise.
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+        assert "<svg" in format_file_content(svg)
+
+    def test_pdf_is_binary(self):
+        # A real PDF header with no NUL byte in it: the decode is what rejects
+        # this, not the NUL scan. matplotlib's toolbar icons look like this.
+        pdf = b"%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\n\xd0\xcf\x11\xe0"
+        assert format_file_content(pdf) == "[binary file]"
+
+    def test_latin1_text_is_binary(self):
+        # Accepted regression. libmagic called this text/plain and it printed
+        # with replacement characters; a strict decode refuses it.
+        assert format_file_content(b"temp = 900\xb0C\n") == "[binary file]"
+
+    def test_utf16_text_is_binary(self):
+        # Accepted regression, and the clearest gap: UTF-16 encodes ASCII with
+        # zero bytes, so the NUL scan rejects it before the decode runs.
+        assert format_file_content("k = 1.1\n".encode("utf-16")) == "[binary file]"
+
     # --- fixed-width padding ---
 
     def test_padding_for_ten_lines(self):
@@ -348,7 +380,7 @@ class TestViewPath:
     async def test_text_file(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "hello.txt"
-        f.write_text("line 1\nline 2\nline 3\n")
+        f.write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
         result = await view_path(sandbox, "/test/hello.txt")
         assert "line 1" in result
         assert "line 2" in result
@@ -358,7 +390,7 @@ class TestViewPath:
     async def test_text_file_line_numbers(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "nums.txt"
-        f.write_text("\n".join(f"line {i}" for i in range(1, 6)))
+        f.write_text("\n".join(f"line {i}" for i in range(1, 6)), encoding="utf-8")
         lines = (await view_path(sandbox, "/test/nums.txt")).splitlines()
         assert lines[0].split("\t")[0].strip() == "1"
         assert lines[4].split("\t")[0].strip() == "5"
@@ -367,7 +399,7 @@ class TestViewPath:
     async def test_text_file_with_range(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "range.txt"
-        f.write_text("\n".join(f"line {i}" for i in range(1, 11)))
+        f.write_text("\n".join(f"line {i}" for i in range(1, 11)), encoding="utf-8")
         result = await view_path(sandbox, "/test/range.txt", (3, 5))
         assert "line 3" in result
         assert "line 5" in result
@@ -378,7 +410,7 @@ class TestViewPath:
     async def test_text_file_negative_range(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "neg.txt"
-        f.write_text("a\nb\nc\nd\ne")
+        f.write_text("a\nb\nc\nd\ne", encoding="utf-8")
         result = await view_path(sandbox, "/test/neg.txt", (-2, -1))
         assert "d" in result
         assert "e" in result
@@ -396,8 +428,10 @@ class TestViewPath:
     async def test_directory(self, sb):
         sandbox, tmp_path = sb
         (tmp_path / "dir/src").mkdir(parents=True)
-        (tmp_path / "dir/src" / "main.py").write_text("print('hello')")
-        (tmp_path / "dir/README.md").write_text("# Readme")
+        (tmp_path / "dir/src" / "main.py").write_text(
+            "print('hello')", encoding="utf-8"
+        )
+        (tmp_path / "dir/README.md").write_text("# Readme", encoding="utf-8")
         result = await view_path(sandbox, "/test/dir")
         assert "src/" in result
         assert "README.md" in result
@@ -412,7 +446,7 @@ class TestViewPath:
     async def test_invalid_range_returns_error(self, sb):
         sandbox, tmp_path = sb
         f = tmp_path / "f.txt"
-        f.write_text("a\nb\nc")
+        f.write_text("a\nb\nc", encoding="utf-8")
         result = await view_path(sandbox, "/test/f.txt", (10, 20))
         assert result.startswith("Error:")
 
@@ -421,7 +455,9 @@ class TestViewPath:
         sandbox, tmp_path = sb
         # depth from /test: a=1, b=2, c=3, d=4 — 'd' and its contents are beyond -maxdepth 3
         (tmp_path / "a" / "b" / "c" / "d").mkdir(parents=True)
-        (tmp_path / "a" / "b" / "c" / "d" / "deep.txt").write_text("deep")
+        (tmp_path / "a" / "b" / "c" / "d" / "deep.txt").write_text(
+            "deep", encoding="utf-8"
+        )
         result = await view_path(sandbox, "/test")
         assert "deep.txt" not in result
         assert "a/" in result

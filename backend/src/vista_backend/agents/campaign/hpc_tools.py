@@ -17,19 +17,28 @@ from .subagent import SubmittedJobInfo
 InvokeTool = Callable[[str, dict], Awaitable[str]]
 
 
-def parse_submit_summary(text: str) -> tuple[str, str]:
-    """Pull (job_id, cluster) out of submit_hpc_job's multi-line ground-truth summary."""
-    job_id = ""
-    cluster = ""
+SUMMARY_FIELDS = ("job_id", "cluster", "log_path", "err_path", "output_dir")
+"""The `key: value` lines `submit_hpc_job` reports back. Absent ones stay empty."""
+
+
+def parse_submit_summary(text: str) -> dict[str, str]:
+    """
+    Read `submit_hpc_job`'s multi-line ground-truth summary.
+
+    Returns every field it reported, not just the two we used to take. The paths
+    matter: they are rendered at submission and used to be kept only in the MCP
+    server's own registry, so Vista's job rows had blank `log_path` and
+    `output_dir` and the report attached to a debate's FINDING post named no file
+    anyone could go and read.
+    """
+    found = {k: "" for k in SUMMARY_FIELDS}
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("job_id:"):
-            job_id = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("cluster:"):
-            cluster = stripped.split(":", 1)[1].strip()
-    if not job_id:
+        key, sep, value = line.strip().partition(":")
+        if sep and key in found:
+            found[key] = value.strip()
+    if not found["job_id"]:
         raise ValueError(f"Could not parse job_id from submit_hpc_job output: {text!r}")
-    return job_id, cluster
+    return found
 
 
 class McpHpcTools:
@@ -57,12 +66,17 @@ class McpHpcTools:
         if script_args is not None:
             args["script_args"] = script_args
         text = await self._invoke("submit_hpc_job", args)
-        job_id, parsed_cluster = parse_submit_summary(text)
-        # The backend records job_id + cluster; the MCP server's persistent registry
-        # (resolves rendered log/output paths) is what makes the later status/outputs
-        # calls restart-safe, so we don't need the paths on this side.
+        summary = parse_submit_summary(text)
+        # The paths are recorded here as well as in the MCP server's registry, and
+        # the duplication earns its keep: the registry makes *its own* later status
+        # calls restart-safe, while this copy is what lets anything outside that
+        # process — a job row, a report attached to a forum post, a human reading
+        # the thread — say where the job's log and outputs actually are.
         return SubmittedJobInfo(
-            job_id=job_id, cluster=parsed_cluster or (cluster or "")
+            job_id=summary["job_id"],
+            cluster=summary["cluster"] or (cluster or ""),
+            log_path=summary["log_path"] or None,
+            output_dir=summary["output_dir"] or None,
         )
 
     async def status(self, *, job_id: str, cluster: str) -> str:

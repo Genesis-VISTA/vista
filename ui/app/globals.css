@@ -379,6 +379,140 @@ main {
   outline-offset: -2px;
 }
 
+/* ---------- Model picker (chat header, next to the project crumb) ---- */
+
+.model-picker {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.model-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink-2);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.model-picker-button:hover:not(:disabled) {
+  background: var(--surface-active);
+  border-color: var(--line-strong);
+}
+
+.model-picker-button[aria-expanded="true"] {
+  background: var(--surface-active);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.model-picker-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.model-picker-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.model-picker-label {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(17, 42, 77, 0.16);
+}
+
+.model-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-picker-option:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.model-picker-option:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.model-picker-option[data-active="true"] {
+  font-weight: 600;
+}
+
+.model-picker-option-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Filled for the active model, hollow for the rest -- same convention as
+   `.project-switcher-dot` right next to it in the header. */
+.model-picker-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+}
+
+.model-picker-option[data-active="true"] .model-picker-dot {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.model-picker-empty,
+.model-picker-hint {
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.model-picker-hint a {
+  color: var(--brand);
+}
+
 /* ---------- "Pick a project" panel ----------------------------------- */
 
 .project-required {
@@ -1350,6 +1484,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2613,6 +2748,81 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.4;
 }
 
+.user-settings-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 4px;
+}
+
+.user-settings-globus {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.user-settings-globus-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-settings-globus-cluster {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.user-settings-globus-status {
+  flex: 1;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.user-settings-globus-status.connected {
+  color: var(--ok, #1a7f4b);
+}
+
+.user-settings-globus-status.pending {
+  color: var(--ink);
+}
+
+.user-settings-globus-status.absent {
+  color: var(--muted);
+}
+
+/* The authorization address. Long, and the researcher may need to select it by
+   hand on a machine where the browser cannot be opened for them. */
+.user-settings-globus-url {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  max-height: 96px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.user-settings-globus-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-settings-globus-actions .input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Standalone page wrapper (used by /datasets, /skills)               */
 /* ------------------------------------------------------------------ */
@@ -3801,4 +4011,1279 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .nav-rail-entry.project-child.active .nav-rail-icon {
   color: var(--surface);
+}
+
+/* ---------------------------------------------------------------------------
+   HPC availability cards (NavRail). Built to the "HPC Availability Cards"
+   canvas: one dot per cluster whose SHAPE and color both change with its
+   state, so the states read without color.
+   ------------------------------------------------------------------------- */
+
+.hpc-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 10px 4px;
+}
+
+.hpc-section-label {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.hpc-stale {
+  font-size: 11px;
+  color: var(--warning-ink);
+  white-space: nowrap;
+}
+
+.hpc-recheck-all {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.hpc-recheck-all:hover:not(:disabled) {
+  background: var(--surface-active);
+  color: var(--ink);
+}
+
+.hpc-recheck-all:focus-visible,
+.hpc-card:focus-visible,
+.hpc-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.hpc-collapsed-divider {
+  width: 24px;
+  height: 1px;
+  margin: 6px 0;
+  background: var(--line);
+}
+
+.hpc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.hpc-card:hover,
+.hpc-card.open {
+  background: var(--brand-tint);
+  border-color: var(--brand-line);
+}
+
+.hpc-card--collapsed {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  gap: 4px;
+}
+
+.hpc-card-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hpc-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.hpc-card-word,
+.hpc-card-short {
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hpc-card-short {
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.hpc-word--warn {
+  color: var(--warning-ink);
+}
+
+.hpc-word--urgent {
+  color: #b01000; /* --danger darkened to 4.5:1 on white, for text */
+}
+
+/* The dots: each state its own shape as well as its own color. */
+.hpc-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border-radius: var(--r-pill);
+}
+
+.hpc-dot--ready {
+  background: var(--success);
+}
+
+.hpc-dot--degraded {
+  width: 0;
+  height: 0;
+  border-radius: 0;
+  border-left: 5.5px solid transparent;
+  border-right: 5.5px solid transparent;
+  border-bottom: 9.5px solid #d8a400;
+}
+
+.hpc-dot--unverifiable {
+  border: 1.5px dashed var(--muted);
+}
+
+.hpc-dot--not_connected {
+  border: 1.5px solid var(--muted);
+}
+
+.hpc-dot--rejected,
+.hpc-dot--wrong_project {
+  width: 7px;
+  height: 7px;
+  margin: 1px;
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+.hpc-dot--rejected {
+  background: var(--danger);
+}
+
+.hpc-dot--wrong_project {
+  border: 1.5px solid var(--danger);
+}
+
+.hpc-dot--globus_not_connected {
+  border: 1.5px solid var(--danger);
+}
+
+.hpc-dot--globus_session_expired {
+  border: 1.5px solid var(--danger);
+  background: var(--danger);
+  box-shadow: inset 0 0 0 1.5px var(--surface);
+}
+
+.hpc-dot--checking {
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--brand);
+  animation: hpc-spin 900ms linear infinite;
+}
+
+.hpc-spin {
+  animation: hpc-spin 900ms linear infinite;
+}
+
+@keyframes hpc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hpc-dot--checking,
+  .hpc-spin {
+    animation: none;
+  }
+}
+
+/* The details popover. Fixed, like the rail's tooltip, so the scrolling
+   entry list cannot clip it. */
+.hpc-popover {
+  position: fixed;
+  z-index: 70;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card-lg);
+  box-shadow: 0 12px 32px rgba(17, 42, 77, 0.14);
+  overflow: hidden;
+}
+
+.hpc-popover-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.hpc-popover-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hpc-popover-title {
+  flex: 1 1 auto;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.hpc-popover-sub {
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.hpc-pill {
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface-sunken);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.hpc-pill--ready {
+  color: var(--success);
+  background: var(--success-tint);
+  border-color: var(--success-line);
+}
+
+.hpc-pill--degraded {
+  color: var(--warning-ink);
+  border-color: var(--warning-line);
+}
+
+.hpc-pill--rejected,
+.hpc-pill--wrong_project,
+.hpc-pill--globus_not_connected,
+.hpc-pill--globus_session_expired {
+  color: #b01000;
+  border-color: var(--danger-line);
+}
+
+.hpc-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 6px 18px;
+  list-style: none;
+}
+
+.hpc-row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.hpc-row:last-child {
+  border-bottom: 0;
+}
+
+.hpc-row-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.hpc-row-icon--ok {
+  color: var(--success);
+}
+
+.hpc-row-icon--fail {
+  color: #b01000;
+}
+
+.hpc-row-icon--unknown {
+  color: var(--muted);
+}
+
+.hpc-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hpc-row-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hpc-row-detail {
+  font-size: 12px;
+  color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+
+.hpc-popover-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px 14px;
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--line-soft);
+}
+
+.hpc-popover-checked {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.hpc-link {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--brand);
+  cursor: pointer;
+}
+
+.hpc-link:hover {
+  color: var(--brand-dark);
+  text-decoration: underline;
+}
+
+.hpc-recheck {
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.button.ghost.hpc-recheck {
+  background: var(--surface);
+  border-color: var(--brand-line-strong);
+  color: var(--brand);
+}
+
+/* Settings modal: one collapsible section per HPC cluster, as on the canvas's
+   Settings artboard. */
+/* Never shrink: `overflow: hidden` (for the rounded corners) drops a flex
+   item's minimum height to zero, so the modal body would squeeze the list and
+   clip an expanded cluster instead of scrolling to it. */
+.user-settings-clusters {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.user-settings-cluster + .user-settings-cluster {
+  border-top: 1px solid var(--line);
+}
+
+.user-settings-cluster-heading {
+  margin: 0;
+  font: inherit;
+}
+
+.user-settings-cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 0;
+  background: var(--surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-settings-cluster.expanded .user-settings-cluster-head {
+  background: var(--brand-tint);
+  border-bottom: 1px solid var(--brand-line);
+}
+
+.user-settings-cluster-head:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.user-settings-cluster-chevron {
+  flex: 0 0 auto;
+  color: var(--ink-2);
+  transition: transform 120ms ease;
+}
+
+.user-settings-cluster.expanded .user-settings-cluster-chevron {
+  transform: rotate(90deg);
+}
+
+.user-settings-cluster-name {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.user-settings-cluster-tag {
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.user-settings-cluster-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.user-settings-cluster-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 14px 16px 38px;
+}
+
+.user-settings-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-settings-switch-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-settings-switch-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.user-settings-switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.user-settings-switch[aria-checked="true"] {
+  background: var(--brand);
+  justify-content: flex-end;
+}
+
+.user-settings-switch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.user-settings-switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Agent forum (debates)                                                  */
+/*                                                                         */
+/*  The visual job here is one thing: keep what this install knows about a  */
+/*  post separate from what it claims. The stamp line sits above a rule,    */
+/*  the claimed body sits behind a `│` fence below it, and nothing in the   */
+/*  styling lets the second borrow the authority of the first.              */
+/* ---------------------------------------------------------------------- */
+
+.debate-page {
+  /* `.app-content` is `height: 100vh; overflow: hidden`, so every page owns its
+     own scrolling. Without this the thread simply runs off the bottom of the
+     viewport with no way to reach it. */
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px 28px 64px;
+  color: var(--ink);
+}
+
+.debate-page > * {
+  /* `width` is load-bearing. The global `main` rule makes this a column flex
+     container, and `margin-inline: auto` on a flex item overrides stretch
+     alignment — without an explicit width the children shrink-wrap to their
+     content, which collapsed the form to about 200px. */
+  width: 100%;
+  max-width: 1180px;
+  margin-inline: auto;
+}
+
+.debate-page__header h1 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 4px;
+}
+
+.debate-page__lede {
+  color: var(--muted);
+  max-width: 68ch;
+  margin: 0 0 20px;
+}
+
+.debate-error {
+  background: #fdecea;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+/* Opening a debate */
+
+.debate-open {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+  display: grid;
+  gap: 10px;
+}
+
+.debate-open h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.debate-open label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.debate-open__hint {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.debate-open input,
+.debate-open textarea,
+.debate-say textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.debate-open__rounds input {
+  width: 90px;
+}
+
+.debate-open button,
+.debate-say button,
+.debate-detail__head button {
+  justify-self: start;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.debate-open button:disabled,
+.debate-say button:disabled,
+.debate-detail__head button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.debate-detail__head button {
+  background: transparent;
+  color: var(--brand-2);
+  border-color: var(--brand-2);
+}
+
+/* Layout */
+
+.debate-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+/* Why every content box below carries `min-width: 0`.
+   A grid track sized `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the
+   item's min-content width — so one unbreakable child does not overflow its own
+   box, it widens the track, then the layout, then the page. A post containing a
+   markdown table and a `white-space: nowrap` span pushed this page to 2068px
+   inside a 1224px viewport, and the span in question was one we had already
+   asked to truncate with an ellipsis. `min-width: 0` is what makes both the
+   shrinking and the truncation possible; without it, `text-overflow` is
+   decoration on an element that will not shrink. */
+.debate-list,
+.debate-detail,
+.debate-post,
+.debate-verdict__item {
+  min-width: 0;
+}
+
+@media (max-width: 860px) {
+  .debate-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.debate-list {
+  display: grid;
+  gap: 6px;
+}
+
+.debate-list__item {
+  text-align: left;
+  font: inherit;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.debate-list__item--active {
+  border-color: var(--brand);
+  background: var(--panel);
+}
+
+.debate-list__topic {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.debate-list__status,
+.debate-detail__status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.debate-detail__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.debate-detail__head h2 {
+  font-family: Figtree, sans-serif;
+  font-size: 1.15rem;
+  margin: 0;
+  flex: 1 1 320px;
+}
+
+/* Who is on the forum, and under what confinement */
+
+.debate-roster {
+  list-style: none;
+  padding: 10px 12px;
+  margin: 0 0 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  display: grid;
+  gap: 3px;
+}
+
+.debate-roster strong {
+  color: var(--ink);
+  text-transform: capitalize;
+}
+
+/* The thread */
+
+.debate-thread {
+  display: grid;
+  gap: 14px;
+}
+
+.debate-thread__note,
+.debate-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0 0 4px;
+  max-width: 70ch;
+}
+
+.debate-post {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  padding: 10px 14px 12px;
+}
+
+.debate-post--human {
+  background: var(--panel);
+}
+
+/* Above the rule: the host's stamp. Nothing here came from the poster. */
+.debate-post__stamp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  padding-bottom: 6px;
+  /* A forge principal is an email address, and an email address has no break
+     opportunity in it. Breaking mid-token is the lesser evil against a stamp
+     that pushes the post wider than its column. */
+  overflow-wrap: anywhere;
+}
+
+.debate-post__kind {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.debate-post__sender {
+  font-weight: 600;
+  color: var(--ink);
+  font-family: "Roboto Mono", monospace;
+}
+
+.debate-post__role {
+  text-transform: capitalize;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  background: var(--panel);
+}
+
+.debate-post__votes {
+  color: #0b6b53;
+  font-weight: 600;
+}
+
+.debate-post__lane {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: "Roboto Mono", monospace;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+}
+
+.debate-post__denied {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0 0 8px;
+}
+
+.debate-post__reply-to {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+/* Below the fence: what the agent claimed. */
+.debate-post__body {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+
+.debate-post__body > :first-child {
+  margin-top: 0;
+}
+
+.debate-post__body > :last-child {
+  margin-bottom: 0;
+}
+
+.debate-post__body code {
+  font-family: "Roboto Mono", monospace;
+  font-size: 0.85em;
+}
+
+/* An agent writes this, so it can hold anything markdown can express: a
+   comparison table, a fenced job log, a `/gpfs/wolf2/olcf/...` path with no
+   break opportunity in it. Prose breaks mid-token rather than widening the
+   column, and a table or code block that genuinely cannot fit scrolls inside
+   its own box instead of taking the page with it. */
+.debate-post__body {
+  overflow-wrap: anywhere;
+}
+
+.debate-post__body :is(pre, table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* The verdict */
+
+.debate-verdict {
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+
+.debate-verdict--none {
+  border-color: var(--line);
+}
+
+.debate-verdict h3 {
+  font-family: Figtree, sans-serif;
+  margin: 0 0 10px;
+}
+
+.debate-verdict__list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.debate-verdict__claim {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.debate-verdict__mechanism {
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta {
+  display: grid;
+  /* `minmax(0, …)` on both tracks rather than bare `max-content 1fr`: the label
+     column would otherwise never shrink below "Standing after the debate", and
+     in a narrow column that leaves the value track less room than its own
+     min-content needs — so the whole list widens instead. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 2px 12px;
+  font-size: 0.82rem;
+  margin: 0 0 8px;
+}
+
+.debate-verdict__meta dt {
+  color: var(--muted);
+}
+
+.debate-verdict__meta dd {
+  margin: 0;
+}
+
+/* Two columns need room for both. Below this the label wins the space and the
+   value gets squeezed to a word a line, so they stack instead. */
+@media (max-width: 520px) {
+  .debate-verdict__meta {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 0;
+  }
+
+  .debate-verdict__meta dd {
+    margin-bottom: 6px;
+  }
+}
+
+.debate-verdict__label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 2px;
+}
+
+.debate-verdict__rationale {
+  margin: 14px 0 0;
+}
+
+.debate-verdict__unresolved {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+/* Joining in */
+
+.debate-say {
+  margin-top: 20px;
+  display: grid;
+  gap: 8px;
+}
+
+.debate-say label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* Provenance: what an agent consulted before it wrote a post. */
+
+.debate-post__grounding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.debate-post__grounding--none {
+  font-style: italic;
+}
+
+.debate-post__grounding-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.debate-post__tool {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  background: var(--panel);
+  font-family: "Roboto Mono", monospace;
+  color: var(--ink);
+}
+
+.debate-post__tool-detail {
+  font-family: Roboto, sans-serif;
+  color: var(--muted);
+  /* 40ch is the width this wants; 100% is the width it has. A fixed `ch` cap
+     wider than the column made the chip overflow at exactly the moment the
+     ellipsis was supposed to save it. */
+  max-width: min(40ch, 100%);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debate-roster__tools {
+  margin-left: 8px;
+  font-style: italic;
+}
+
+/* A post that arrived over the remote: its identity is claimed, not observed. */
+
+.debate-post--claimed {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--panel-2),
+    var(--panel-2) 12px,
+    var(--panel) 12px,
+    var(--panel) 24px
+  );
+}
+
+.debate-post__unverified {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__lane--claimed {
+  color: var(--brand-2);
+}
+
+.debate-post__votes--peer {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Where a post stands on the forum. Posting is local-first, so a post can
+   exist here before peers can see it, and a peer's rewrite can take one away. */
+.debate-post__pending,
+.debate-post__gone {
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+.debate-post__pending {
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+}
+
+.debate-post__gone {
+  border: 1px solid var(--brand-2);
+  color: var(--brand-2);
+}
+
+.debate-warning {
+  background: #fff6e5;
+  border: 1px solid #7a5c00;
+  color: #5c4600;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+}
+
+.debate-note {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+}
+
+/* Who wrote a post, where that is knowable.
+   Two visually distinct cases on purpose: an authenticated VISTA account is a
+   fact about a person, an enrolled origin is a fact about a machine. Rendering
+   them identically would quietly upgrade the second into the first. */
+.debate-post__author {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.65rem;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-1, inherit);
+  white-space: nowrap;
+}
+
+/* Continuing a concluded debate. Kept beside the status rather than in the
+   composer, because it acts on the debate as a whole and not on one post. */
+.debate-detail__continue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.debate-detail__continue label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.debate-detail__continue input {
+  width: 3.5rem;
+  padding: 0.15rem 0.35rem;
+}
+
+/* Evidence behind a tool call.
+   A <details> inside the flex row of chips: closed it is the same chip as an
+   un-backed call, open it takes the full width so a receipt is readable rather
+   than squeezed into a column of its own. */
+.debate-post__tool--evidence {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.debate-post__tool--evidence > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  /* Shrinkable, so the truncating detail span inside can actually truncate
+     instead of pushing the chip past the column. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.debate-post__tool--evidence > summary::-webkit-details-marker {
+  display: none;
+}
+
+.debate-post__tool--evidence > summary::after {
+  content: "▸";
+  font-size: 0.65em;
+  opacity: 0.7;
+}
+
+/* Open, the chip becomes a panel. It keeps `.debate-post__tool`'s pill radius
+   and hairline padding otherwise, and a 999px radius around a block of receipt
+   text draws a capsule with the corners of the text poking out of it. */
+.debate-post__tool--evidence[open] {
+  display: block;
+  flex-basis: 100%;
+  border-radius: 6px;
+  padding: 6px 10px 8px;
+}
+
+.debate-post__tool--evidence[open] > summary::after {
+  content: "▾";
+}
+
+.debate-post__receipt {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-1, inherit);
+}
+
+/* Commissioned simulations. A job id in a provenance chip proves only that
+   something was submitted; this is what became of it. */
+.debate-sims {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.76rem;
+}
+
+.debate-sims__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+}
+
+.debate-sims__row--done { border-left-color: #3f9a5a; }
+.debate-sims__row--waiting { border-left-color: #b8862b; }
+/* Distinct from "waiting" on purpose: nothing has looked at this job, which is a
+   fact about the deployment rather than about the queue. */
+.debate-sims__row--stalled { border-left-color: #b8532b; }
+.debate-sims__row--failed { border-left-color: #a8353a; }
+
+.debate-sims__where,
+.debate-sims__standing {
+  color: var(--muted);
+}
+
+.debate-sims__why {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debate-link {
+  color: var(--brand-2);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+}
+
+.debate-link:hover {
+  opacity: 0.8;
+}
+
+/* The local-only variant of the lede. Dimmer than the invitation it replaces:
+   it describes what this deployment cannot do yet, so it should read as a note
+   rather than as a feature. */
+.debate-page__lede--muted {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* "Something is happening." Shown while a role is thinking or waiting on a
+   cluster job — a turn produces nothing until it finishes, so without this the
+   page is indistinguishable from a crashed one. */
+.debate-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent, #4a7fb5);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-radius: 3px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.debate-working__pulse {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent, #4a7fb5);
+  animation: debate-pulse 1.4s ease-in-out infinite;
+}
+
+.debate-working__elapsed {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+@keyframes debate-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.1); }
+}
+
+/* Respect a reader who has asked for less motion: the dot still marks the line,
+   it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .debate-working__pulse { animation: none; opacity: 0.9; }
 }

@@ -12,16 +12,16 @@ these primitives — so this core is fully testable without an LLM.
 specialized by it; `build_subagents` builds one subagent per manifest role.
 """
 
-import json
 import uuid
 from pathlib import Path
 from typing import Callable
 
+from pydantic_ai.models import Model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...services import campaign as campaign_service
 from ..skills import read_skill
-from .manifest import CampaignManifest
+from .manifest import CampaignManifest, render_script_args
 from .subagent import (
     HpcTools,
     ParsedResult,
@@ -56,9 +56,15 @@ def build_subagents(
     hpc: HpcTools,
     skills_dir: Path | str,
     parser_factory: Callable[[Path, str], ResultParser] | None = None,
-    model: str | None = None,
+    model: str | Model | None = None,
 ) -> dict[str, SubAgent]:
-    """Build one `SubAgent` per manifest role, each specialized by its sim skill's parser."""
+    """
+    Build one `SubAgent` per manifest role, each specialized by its sim skill's parser.
+
+    `model` is forwarded to `build_skill_parser`, so pass the same resolved
+    `Model` the request's other agents use. Ignored when `parser_factory` is
+    supplied, which is how the tests inject a parser with no LLM at all.
+    """
     factory = parser_factory or (
         lambda skill_dir, role: build_skill_parser(skill_dir, role, model)
     )
@@ -97,7 +103,9 @@ class CampaignPlanner:
                 job=spec.job,
                 candidate=candidate,
                 cluster=cluster,
-                script_args=json.dumps(candidate) if candidate else None,
+                # How the candidate becomes job arguments is declared per role in the
+                # manifest; roles that declare nothing keep the old JSON encoding.
+                script_args=render_script_args(self.manifest, spec, candidate),
             )
             result = await subagent.dispatch(
                 session, step=step, user_id=user_id, order=order
@@ -105,14 +113,27 @@ class CampaignPlanner:
             job_ids.extend(result.job_ids)
         return job_ids
 
+    def collect_files_for_role(self, role: str) -> list[str]:
+        """The output files this role's parser needs, as declared in the manifest."""
+        spec = self.manifest.subagent(role)
+        return list(spec.collect_files) if spec else []
+
     async def collect_job(
         self, session: AsyncSession, *, job, files: list[str] | None = None
     ) -> ParsedResult:
-        """Route a finished job back to its role's subagent to parse + complete the step."""
+        """
+        Route a finished job back to its role's subagent to parse + complete the step.
+
+        `files` defaults to the role's manifest-declared `collect_files`, so the monitor
+        does not have to know what a domain's outputs are called. An explicit `files`
+        argument still wins (callers and tests can override).
+        """
         step = await campaign_service.get_step(session, job.step_id)
         if step is None:
             raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
         subagent = self.subagents.get(step.kind)
         if subagent is None:
             raise ValueError(f"No subagent registered for role {step.kind!r}")
+        if files is None:
+            files = self.collect_files_for_role(step.kind) or None
         return await subagent.collect(session, job=job, files=files)

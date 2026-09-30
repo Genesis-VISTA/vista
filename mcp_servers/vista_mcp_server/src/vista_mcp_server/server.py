@@ -11,6 +11,10 @@ from .rag_mcp import mcp as rag_mcp
 from .agenthpc.mcp import mcp as agenthpc_mcp
 from .metrics import MetricsMiddleware, get_recorder
 
+
+# No lifespan. VISTA's OLCF file operations are HTTPS requests against the
+# cluster's own Globus collection, so there is no endpoint of VISTA's own to
+# start or stop -- which is what the lifespan here used to exist for.
 mcp = FastMCP(name="VISTA MCP Server")
 
 # M3 server-side tool timing. Registered only when VISTA_MCP_METRICS__LEVEL

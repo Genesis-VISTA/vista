@@ -7,6 +7,7 @@ from ..agents.skills import Skill
 from ..db.db import SessionDep
 from ..db.schemas import SkillPublic, SkillUpdate
 from ..services import skills as skills_service
+from ..services.auth import UserDep
 
 
 router = APIRouter()
@@ -90,12 +91,12 @@ async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail
 
 
 @router.post("/skills/generate")
-async def generate_skill(body: SkillGenerateRequest) -> SkillDraft:
+async def generate_skill(body: SkillGenerateRequest, user: UserDep) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation. Does NOT persist anything — the
     client edits the draft in a form and then submits `POST /skills` to save.
     """
-    return await skills_service.generate_draft(body.message_history, body.hint)
+    return await skills_service.generate_draft(body.message_history, body.hint, user)
 
 
 @router.post("/skills/import", status_code=201)

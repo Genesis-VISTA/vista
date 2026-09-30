@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..db.db import SessionDep
-from ..db.schemas import ProjectCreate, ProjectPublic, UserPublic
+from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable, UserPublic
 from ..services import project as project_service
 from ..services.auth import UserDep
 
@@ -24,11 +25,32 @@ async def get_project(
     return ProjectPublic.model_validate(project)
 
 
+async def _open_the_lab(project: ProjectTable) -> None:
+    """
+    Initialise this project's forum, or refuse the save with the reason.
+
+    Done here rather than lazily on first use because the URL is typed into a
+    dialog: git accepts any string as a remote, so a typo is not discovered
+    until something tries to reach it, and the person who could fix it in a
+    second has long since moved on. Syncing now also pulls whatever threads the
+    repository already holds, so pointing a project at a forum that exists joins
+    that conversation instead of starting an empty one beside it.
+
+    A project with no URL has no lab and nothing to set up. Saving one on a
+    machine without a usable git fails here too, saying so.
+    """
+    try:
+        await ensure_forum(project)
+    except ForumSetupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("", status_code=201)
 async def create_project(
     payload: ProjectCreate, session: SessionDep, user: UserDep
 ) -> ProjectPublic:
     project = await project_service.create_project(session, payload, user)
+    await _open_the_lab(project)
     return ProjectPublic.model_validate(project)
 
 
@@ -37,6 +59,7 @@ async def update_project(
     project_name: str, updates: ProjectCreate, session: SessionDep, user: UserDep
 ) -> ProjectPublic:
     project = await project_service.update_project(session, project_name, updates, user)
+    await _open_the_lab(project)
     return ProjectPublic.model_validate(project)
 
 

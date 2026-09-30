@@ -1,6 +1,6 @@
 import os
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, Annotated as A
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,7 +31,7 @@ class AppSettings(BaseSettings):
     )
     image: str = "vista-sandbox:latest"
 
-    volumes: list[tuple[ResolvedPath, Path, Literal["r", "w"]]] = []
+    volumes: list[tuple[ResolvedPath, PurePosixPath, Literal["r", "w"]]] = []
     """
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """

@@ -20,7 +20,7 @@ _CONFIG_PATH = Path(__file__).parent / "applications.yaml"
 
 @lru_cache(maxsize=1)
 def _load() -> dict[str, dict[str, Any]]:
-    with open(_CONFIG_PATH) as f:
+    with open(_CONFIG_PATH, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{_CONFIG_PATH} must be a YAML mapping of app_type -> config")

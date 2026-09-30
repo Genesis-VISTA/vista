@@ -175,12 +175,17 @@ def test_vista_metadata_paths_are_scoped_per_project_and_user():
 )
 def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
     user = make_user(
-        s3m_token="s3m-secret",
+        odo_s3m_token="odo-s3m-secret",
+        frontier_s3m_token="frontier-s3m-secret",
         nersc_iri_token="iri-secret",
         frontier_account="chm243",
     )
     metadata = _agent(make_project(), user)._build_vista_metadata(tool)["vista"]["user"]
-    assert metadata["s3m_token"] == "s3m-secret"
+    assert metadata["odo_s3m_token"] == "odo-s3m-secret"
+    assert metadata["frontier_s3m_token"] == "frontier-s3m-secret"
+    # The legacy single token is never sent: the MCP server no longer falls
+    # back to it, and a stale copy would disagree with the per-cluster ones.
+    assert "s3m_token" not in metadata
     assert metadata["nersc_iri_token"] == "iri-secret"
     assert metadata["frontier_account"] == "chm243"
     assert metadata["id"] == str(user.id)
@@ -188,7 +193,7 @@ def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
 
 @pytest.mark.parametrize("tool", ["rag_search", "display_file", "run_bash"])
 def test_vista_metadata_withholds_credentials_from_non_hpc_tools(tool):
-    user = make_user(s3m_token="s3m-secret", nersc_iri_token="iri-secret")
+    user = make_user(odo_s3m_token="s3m-secret", nersc_iri_token="iri-secret")
     metadata = _agent(make_project(), user)._build_vista_metadata(tool)
     assert "user" not in metadata["vista"]
     assert "s3m-secret" not in str(metadata)

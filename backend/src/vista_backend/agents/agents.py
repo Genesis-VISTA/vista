@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import uuid
 import asyncio
 from typing import AsyncIterator, Literal, Annotated as A, Any
@@ -21,6 +22,8 @@ from pydantic_ai import (
     RunUsage,
     AgentRunResultEvent,
 )
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import Model
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -39,7 +42,11 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
 )
-from pydantic_ai.models import infer_model
+from .inference import (
+    build_model_for,
+    rejected_credential_detail,
+    require_inference_credential,
+)
 import mcp.client.session
 import mcp.shared.context
 import mcp.types
@@ -73,7 +80,9 @@ from .campaign.mcp_invoke import build_invoke
 from .campaign.planner import CampaignPlanner, build_subagents
 
 
-BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text()
+BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text(
+    encoding="utf-8"
+)
 
 
 class LogEntry(BaseModel):
@@ -156,6 +165,39 @@ class EgressWarning(BaseModel):
     """ `warning` (annotate) or `error` (block mode). """
     message: str
     """ Rendered blurb, already formatted for display. """
+
+
+def _make_readable_by_others(root: Path) -> None:
+    """
+    In-process `chmod -R o+rX`, so the sandbox can read skills whatever user it runs as.
+    Directories become traversable, and files become readable (and executable when already
+    executable by someone). Symlinks are left alone, as `chmod -R` leaves them.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root):
+        _add_mode(Path(dirpath), stat.S_IROTH | stat.S_IXOTH)
+        for name in filenames:
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            mode = path.stat().st_mode
+            executable = mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            _add_mode(path, stat.S_IROTH | (stat.S_IXOTH if executable else 0))
+
+
+def _add_mode(path: Path, bits: int) -> None:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & bits != bits:
+        os.chmod(path, mode | bits)
+
+
+def _reset_dir(path: Path) -> None:
+    """
+    Empty `path`, creating it if needed. A failed cleanup raises rather than being ignored:
+    whatever it left behind would stay mounted in the sandbox.
+    """
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir()
 
 
 class ProjectAgentResult(BaseModel):
@@ -368,14 +410,18 @@ class ProjectAgent:
         quarantine_agent = None
         intent_extraction_agent = None
         code_intent_extraction_agent = None
+        # One `Model` for this agent and its Q-LLM sub-agents. Built from the
+        # user's settings row where they set one, falling back to `Settings`
+        # -- see `agents.inference.resolve_inference_target`. Shared rather
+        # than rebuilt per sub-agent so all four talk to the same endpoint
+        # with the same credential, and so a single HTTP client is reused.
+        model = build_model_for(self.user)
         if settings.palisade.quarantine_enabled:
-            quarantine_agent = build_quarantine_agent(settings.model)
-            intent_extraction_agent = build_intent_extraction_agent(settings.model)
+            quarantine_agent = build_quarantine_agent(model)
+            intent_extraction_agent = build_intent_extraction_agent(model)
             # Shared by G4 and G5 slow tiers ("what is this code/job
             # trying to do?").
-            code_intent_extraction_agent = build_code_intent_extraction_agent(
-                settings.model
-            )
+            code_intent_extraction_agent = build_code_intent_extraction_agent(model)
 
         capabilities = self._sidecar.build_capabilities(
             quarantine_agent=quarantine_agent,
@@ -397,7 +443,7 @@ class ProjectAgent:
         )
 
         agent = Agent(
-            model=infer_model(settings.model),
+            model=model,
             toolsets=toolsets,
             end_strategy="exhaustive",
             capabilities=capabilities,
@@ -434,11 +480,11 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
-        register_campaign_tools(agent, self._campaign_driver_deps())
+        register_campaign_tools(agent, self._campaign_driver_deps(model))
 
         return agent
 
-    def _campaign_driver_deps(self) -> CampaignDriverDeps:
+    def _campaign_driver_deps(self, model: Model | None = None) -> CampaignDriverDeps:
         """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
 
         def emit_progress(message: str) -> None:
@@ -446,17 +492,27 @@ class ProjectAgent:
             if cb is not None:
                 cb(message)
 
+        # The same resolved `Model` the agent and its Q-LLM sub-agents use, so
+        # a campaign's parser agents reach the same endpoint with the same
+        # credential. `_build_agent` passes the one it already built; resolved
+        # here otherwise, so a caller that forgets cannot fall back to
+        # `Settings` alone -- which on a single-user install cannot see the key
+        # from the researcher's settings row.
+        campaign_model = model or build_model_for(self.user)
+
         return CampaignDriverDeps(
             project_id=self.project.id,
             user_id=self.user.id,
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
-            get_planner=self._build_campaign_planner_for_run,
+            get_planner=lambda session, run: self._build_campaign_planner_for_run(
+                session, run, model=campaign_model
+            ),
             emit_progress=emit_progress,
         )
 
     async def _build_campaign_planner_for_run(
-        self, session: AsyncSession, run: Any
+        self, session: AsyncSession, run: Any, *, model: Model | None = None
     ) -> CampaignPlanner:
         """Build the planner for a campaign run: its manifest + subagents over this agent's MCP server."""
         project_paths = {
@@ -471,7 +527,10 @@ class ProjectAgent:
         )
         manifest = load_manifest(self.skills_volume_dir / run.planner_skill)
         subagents = build_subagents(
-            manifest, hpc=McpHpcTools(invoke), skills_dir=self.skills_volume_dir
+            manifest,
+            hpc=McpHpcTools(invoke),
+            skills_dir=self.skills_volume_dir,
+            model=model,
         )
         return CampaignPlanner(manifest=manifest, subagents=subagents)
 
@@ -629,18 +688,14 @@ class ProjectAgent:
             row.name: row.allowed_tools for row in rows if row.allowed_tools
         }
 
-        shutil.rmtree(self.skills_volume_dir, ignore_errors=True)
-        self.skills_volume_dir.mkdir()
+        _reset_dir(self.skills_volume_dir)
         for name in self.project.skills:
             src = skill_dirs.get(name)
             if src is None or not src.is_dir():
                 logging.warning(f"Skill {name!r} not found at {src}; skipping")
                 continue
             shutil.copytree(src, self.skills_volume_dir / name, symlinks=True)
-        proc = await asyncio.create_subprocess_exec(
-            "chmod", "-R", "o+rX", str(self.skills_volume_dir)
-        )
-        await proc.wait()
+        _make_readable_by_others(self.skills_volume_dir)
 
     def _attribute_skill(self, tool_name: str, args_blob: str | None) -> str | None:
         """
@@ -849,7 +904,22 @@ class ProjectAgent:
 
         Pass db_session to enable campaign mode: the campaign tools persist through this session and
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
+
+        Raises:
+            MissingInferenceCredential: if no inference credential is
+                configured. Raised here rather than at agent construction so
+                the features that share this pooled agent but never reach the
+                model -- listing uploads, listing MCP tools -- keep working on
+                an install where nothing is configured yet. This method is a
+                plain method returning an iterator, not an async generator, so
+                the raise happens on the call and not on first iteration.
         """
+        # `self.user` is the snapshot taken when this agent was pooled. It
+        # stays current because `services.user.update_user` evicts this user's
+        # agents after every commit, which is also what lets a key pasted into
+        # the settings modal take effect without a restart.
+        require_inference_credential(self.user)
+
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
         # Merge the agent's own event stream with our own MCP Server log notifications
@@ -985,6 +1055,28 @@ class ProjectAgent:
                             yield event
                 except PalisadeDeny as deny:
                     yield log("WARNING", "PALISADE:G1", deny.decision.reason)
+                    yield ProjectAgentResultEvent(
+                        result=ProjectAgentResult(
+                            new_messages=[],
+                            usage=RunUsage(),
+                            logs=list(logs),
+                        )
+                    )
+                    return
+                except ModelHTTPError as exc:
+                    # A rejected credential is the same reportable condition as
+                    # an absent one -- a typo'd key is the likeliest first-run
+                    # failure -- but it can only be discovered by asking the
+                    # provider, which happens after the response has started.
+                    # Reported in-stream on the SEV1 pattern above rather than
+                    # as a broken stream. Anything else propagates: an outage
+                    # or a bad request is not a configuration problem and must
+                    # not be described as one.
+                    if exc.status_code not in (401, 403):
+                        raise
+                    yield log(
+                        "ERROR", "Agent", rejected_credential_detail(exc.model_name)
+                    )
                     yield ProjectAgentResultEvent(
                         result=ProjectAgentResult(
                             new_messages=[],

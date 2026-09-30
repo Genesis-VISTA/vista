@@ -26,7 +26,7 @@ from ..agents.skills import (
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import SkillTable, SkillUpdate
+from ..db.schemas import SkillTable, SkillUpdate, UserPublicWithConfig
 from ..utils.misc import now_iso
 from ._helpers import new_storage_path
 
@@ -157,10 +157,12 @@ async def import_skill(session: AsyncSession, url: str) -> SkillTable:
 
 
 async def generate_draft(
-    message_history: list[ModelMessage], hint: str | None
+    message_history: list[ModelMessage],
+    hint: str | None,
+    user: UserPublicWithConfig | None = None,
 ) -> SkillDraft:
     """Draft a SKILL.md from a chat conversation. Persists nothing."""
-    return await generate_skill_draft(message_history, hint)
+    return await generate_skill_draft(message_history, hint, user)
 
 
 async def update_skill(
@@ -209,7 +211,7 @@ async def update_skill(
         skill_md_path = find_skill_md(directory)
         if skill_md_path is None:
             raise ParseError(f"SKILL.md not found in {directory}")
-        original_text = skill_md_path.read_text()
+        original_text = skill_md_path.read_text(encoding="utf-8")
         current = parse_skill(original_text)
         # Re-validate the merged result (model_copy skips validators) so a PATCH
         # can't store a value that POST would reject, e.g. an unstripped
@@ -219,7 +221,7 @@ async def update_skill(
             merged = Skill.model_validate({**current.model_dump(), **spec_updates})
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        skill_md_path.write_text(skill_to_markdown(merged))
+        skill_md_path.write_text(skill_to_markdown(merged), encoding="utf-8")
         # Re-sync mirrored spec metadata from the regenerated document.
         skill.description = merged.description
         skill.license = merged.license
@@ -241,7 +243,7 @@ async def update_skill(
     except Exception:
         await session.rollback()
         if skill_md_path is not None and original_text is not None:
-            skill_md_path.write_text(original_text)
+            skill_md_path.write_text(original_text, encoding="utf-8")
         raise
     await session.refresh(skill)
     return skill

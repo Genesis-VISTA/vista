@@ -61,11 +61,30 @@ metrics:
   primary: {name: TBR, target: 1.1, direction: maximize}
   scorer: scripts/score_candidates.py         # deterministic scorer, run in the sandbox
 subagents:                                    # role → sim skill → hpc job; count is a default, not a cap
-  - {role: neutronics, skill: neutronics-shift,    job: neutronics, default_count: 1}
-  - {role: chemistry,  skill: chemistry-supersalt, job: chemistry,  default_count: 1}
+  - role: neutronics
+    skill: neutronics-shift
+    job: neutronics
+    default_count: 1
+    collect_files: [results.json]             # outputs the result parser needs
+    args:                                     # how a candidate becomes script_args
+      encoding: flags                         # flags (flat CLI, what real jobs parse) | json
+      map: {li6_enrichment: --li6}            # candidate variable → CLI flag, per role
+      extra: "--allow-extrapolation"          # fixed, non-candidate arguments
+  - role: chemistry
+    skill: chemistry-supersalt
+    job: chemistry
+    collect_files: [results.json]
+    args:
+      map: {temperature: --temperature}
 search:
   strategy: bayesian                          # bayesian | grid | llm
 ```
+
+**`args` and `collect_files` are optional and per-role.** The mapping is per-role because
+one candidate feeds roles that need different subsets under different flag names. A role
+that declares neither behaves exactly as it did before these fields existed: the whole
+candidate is serialized as JSON into `script_args`, and no output files are fetched at
+collect time. Adoption is therefore per-campaign and opt-in.
 
 ## Mapping onto existing VISTA
 

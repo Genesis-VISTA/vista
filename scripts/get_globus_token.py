@@ -11,10 +11,18 @@
 
 This one script covers both facilities, picked by ``--cluster``:
 
-* **OLCF** (``--cluster odo`` / ``--cluster frontier``) — mints a Globus
-  **Transfer refresh token** for file ops (the DTN endpoint), and ``--save-env``
-  writes it to ``.env`` as ``VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN`` (a
-  deployment-wide secret the MCP server reads at startup):
+* **OLCF** (``--cluster odo`` / ``--cluster frontier``) — mints the **pair** of
+  refresh tokens a cluster's file operations need, and ``--save-env`` writes
+  both to ``.env`` (deployment-wide secrets the MCP server reads at startup):
+
+  * ``VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN`` — Transfer, for listing
+    directories and making them.
+  * ``VISTA_MCP_<CLUSTER>_GLOBUS_HTTPS_REFRESH_TOKEN`` — the collection itself,
+    for reading and writing file contents over the Globus HTTPS interface.
+
+  Two because Globus issues one refresh token per resource server, and the
+  collection is its own. Both are needed: one alone finds an output directory
+  it cannot open.
 
       ./scripts/get_globus_token.py --cluster odo --save-env
       ./scripts/get_globus_token.py --cluster frontier --save-env
@@ -31,10 +39,12 @@ All flows use the Globus Native App device/auth-code flow against the same clien
 ID, request refresh tokens, and cache them under ``~/.globus/`` so re-running
 refreshes silently instead of forcing another browser login.
 
-OLCF Globus 4 DTN endpoints (e.g. UUID ef1a9560-7ca1-11e5-992c-22000b96db58) are
-activated with ``endpoint_autoactivate()`` and need only the base Transfer scope.
-If you transfer from a newer OLCF Globus Connect Server 5 mapped collection, pass
-``--data-access`` to also request that collection's ``data_access`` scope.
+The OLCF collections VISTA uses are Globus Connect Server 5 **high-assurance
+mapped** collections. They reject a ``data_access`` scope — their session
+requirement is what replaces it — so ``--data-access`` is off by default and
+should stay off for Odo and Frontier. An earlier version of this file blamed the
+resulting ``UNKNOWN_SCOPE_ERROR`` on "Globus 4 endpoints like the legacy OLCF
+DTN"; that was wrong, and high assurance is the actual reason.
 
 Ports the structure of NERSC's iri-api-get-globus-token and jqyin/OLCF-Globus-Transfer.
 See https://github.com/NERSC/iri-api-get-globus-token and
@@ -125,11 +135,27 @@ def build_transfer_scope(collection_id: str | None) -> str:
     return f"{TRANSFER_SCOPE}[{data_access}]"
 
 
-def get_requested_scopes(facility: str, data_access_collection_id: str | None) -> list[str]:
+def https_scope(collection_id: str) -> str:
+    """The per-collection scope that authorizes the Globus HTTPS interface.
+
+    Not a dependent scope of Transfer's: the collection is its own resource
+    server, so this comes back as its own token.
+    """
+    return f"https://auth.globus.org/scopes/{collection_id}/https"
+
+
+def get_requested_scopes(
+    facility: str,
+    data_access_collection_id: str | None,
+    https_collection_id: str | None = None,
+) -> list[str]:
     base = sorted(REQUIRED_AUTH_SCOPES)
     if facility == "nersc":
         return base + [NERSC_IRI_SCOPE]
-    return base + [build_transfer_scope(data_access_collection_id)]
+    scopes = base + [build_transfer_scope(data_access_collection_id)]
+    if https_collection_id:
+        scopes.append(https_scope(https_collection_id))
+    return scopes
 
 
 def parse_args() -> argparse.Namespace:
@@ -155,8 +181,9 @@ def parse_args() -> argparse.Namespace:
         "--save-env",
         action="store_true",
         help=(
-            "OLCF only: write the Transfer refresh token to .env at the repo root "
-            "as VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN (requires --cluster). "
+            "OLCF only: write both refresh tokens to .env at the repo root, as "
+            "VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN and "
+            "VISTA_MCP_<CLUSTER>_GLOBUS_HTTPS_REFRESH_TOKEN (requires --cluster). "
             "NERSC IRI tokens are per-user; paste the printed access token into the UI."
         ),
     )
@@ -181,9 +208,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "OLCF only: also request the data_access dependent scope for "
-            "--olcf-collection-id. Required for Globus Connect Server 5 mapped "
-            "collections; must NOT be set for Globus 4 endpoints like the legacy "
-            "OLCF DTN (which would return UNKNOWN_SCOPE_ERROR)."
+            "--olcf-collection-id. Do NOT set this for Odo or Frontier: their "
+            "collections are high-assurance mapped collections, which reject "
+            "data_access (the whole login then fails with UNKNOWN_SCOPE_ERROR). "
+            "Here for a non-high-assurance GCS5 collection that needs it."
         ),
     )
     parser.add_argument(
@@ -287,13 +315,21 @@ def require_token(token_response_data: dict, resource_server: str) -> dict:
     return token
 
 
-def validate_auth_data(auth_data: dict, primary_resource: str) -> None:
+def validate_auth_data(
+    auth_data: dict, primary_resource: str, https_resource: str | None = None
+) -> None:
     auth_token = require_token(auth_data, AUTH_RESOURCE_SERVER)
     granted = parse_scope_string(auth_token.get("scope", ""))
     missing = REQUIRED_AUTH_SCOPES - granted
     if missing:
         raise RuntimeError(f"Missing required Globus Auth scopes: {sorted(missing)}")
     require_token(auth_data, primary_resource)
+    if https_resource:
+        # Required, not optional: half a credential reads as connected and then
+        # fails on the first file. A cache minted before the HTTPS scope was
+        # added has only the Transfer half, and this is what sends it back
+        # through a login rather than saving it.
+        require_token(auth_data, https_resource)
 
 
 def interactive_login(
@@ -301,11 +337,16 @@ def interactive_login(
     facility: str,
     data_access_collection_id: str | None,
     *,
+    https_collection_id: str | None = None,
     prompt_login: bool = False,
     session_domain: str | None = None,
 ) -> dict:
     client.oauth2_start_flow(
-        requested_scopes=" ".join(get_requested_scopes(facility, data_access_collection_id)),
+        requested_scopes=" ".join(
+            get_requested_scopes(
+                facility, data_access_collection_id, https_collection_id
+            )
+        ),
         refresh_tokens=True,
     )
     print("Open this URL, login, and consent:")
@@ -403,12 +444,18 @@ def set_token(stored: dict, resource_server: str, refreshed: dict) -> dict:
 
 
 def refresh_stored_tokens(
-    client: globus_sdk.NativeAppAuthClient, stored: dict, primary_resource: str
+    client: globus_sdk.NativeAppAuthClient,
+    stored: dict,
+    primary_resource: str,
+    https_resource: str | None = None,
 ) -> dict | None:
     refreshed = dict(stored)
     any_refreshed = False
 
-    for resource_server in (AUTH_RESOURCE_SERVER, primary_resource):
+    wanted = [AUTH_RESOURCE_SERVER, primary_resource]
+    if https_resource:
+        wanted.append(https_resource)
+    for resource_server in wanted:
         token = get_token_for_resource_server(refreshed, resource_server)
         refresh_tok = (token or {}).get("refresh_token")
         # The auth token's refresh_token can also sit at the response top level.
@@ -424,7 +471,7 @@ def refresh_stored_tokens(
     if not any_refreshed:
         return None
     try:
-        validate_auth_data(refreshed, primary_resource)
+        validate_auth_data(refreshed, primary_resource, https_resource)
     except RuntimeError:
         return None
     return refreshed
@@ -447,12 +494,16 @@ def main() -> None:
             "token field), not .env."
         )
 
+    https_resource: str | None = None
     if args.cluster:
         settings = load_mcp_settings()
         args.client_id = settings.globus_native_app_client_id
         if facility == "olcf":
             args.olcf_collection_id = getattr(settings, f"{args.cluster}_globus_collection_id")
             args.session_domain = CLUSTER_SESSION_DOMAINS[args.cluster]
+            # The collection is its own resource server, so its token comes back
+            # under the collection UUID rather than under Transfer.
+            https_resource = args.olcf_collection_id
     if args.token_file is None:
         # Per-cluster cache: different facilities/enclaves use different identities,
         # so sharing one file would clobber another cluster's refresh token.
@@ -465,7 +516,9 @@ def main() -> None:
     if not args.force_login:
         stored = load_tokens(args.token_file)
         if stored:
-            auth_data = refresh_stored_tokens(client, stored, primary_resource)
+            auth_data = refresh_stored_tokens(
+                client, stored, primary_resource, https_resource
+            )
 
     if auth_data is None:
         if args.refresh_only:
@@ -480,11 +533,12 @@ def main() -> None:
             client,
             facility,
             data_access_collection,
+            https_collection_id=https_resource,
             prompt_login=args.prompt_login or args.force_login,
             session_domain=args.session_domain,
         )
 
-    validate_auth_data(auth_data, primary_resource)
+    validate_auth_data(auth_data, primary_resource, https_resource)
     auth_data = _normalize_token_expiry(auth_data)
     save_tokens(args.token_file, auth_data)
 
@@ -510,29 +564,44 @@ def main() -> None:
             print(primary["refresh_token"])
         return
 
-    # --- OLCF: the deliverable is a Transfer refresh token for .env ---
+    # --- OLCF: the deliverable is the pair of refresh tokens for .env ---
+    print(f"OLCF collection ID: {args.olcf_collection_id}")
     if args.data_access:
-        print(f"OLCF collection ID: {args.olcf_collection_id} (data_access requested)")
-    else:
-        print("Transfer-only scope requested (no data_access).")
+        print("  data_access requested (not valid for Odo or Frontier).")
+    if https_resource:
+        print("  HTTPS interface scope requested (no data_access).")
+
+    https_token = (
+        get_token_for_resource_server(auth_data, https_resource) or {}
+        if https_resource
+        else {}
+    )
 
     if args.save_env:
-        refresh_token = primary.get("refresh_token")
-        if not refresh_token:
-            raise RuntimeError(
-                "No refresh token in the Transfer token response, cannot --save-env. "
-                "Re-run with --force-login (a --refresh-only flow reuses the existing "
-                "access token and may not return a refresh token)."
-            )
         env_file = REPO_ROOT / ".env"
-        env_var = f"VISTA_MCP_{args.cluster.upper()}_GLOBUS_REFRESH_TOKEN"
-        update_env_file(env_file, env_var, refresh_token)
-        print(f"Wrote {env_var} to {env_file}")
+        prefix = f"VISTA_MCP_{args.cluster.upper()}_GLOBUS"
+        for token, suffix, what in (
+            (primary, "REFRESH_TOKEN", "Transfer"),
+            (https_token, "HTTPS_REFRESH_TOKEN", "the collection's HTTPS interface"),
+        ):
+            refresh_token = token.get("refresh_token")
+            if not refresh_token:
+                raise RuntimeError(
+                    f"No refresh token for {what}, cannot --save-env. Re-run with "
+                    "--force-login (a --refresh-only flow reuses the existing "
+                    "access token and may not return a refresh token)."
+                )
+            env_var = f"{prefix}_{suffix}"
+            update_env_file(env_file, env_var, refresh_token)
+            print(f"Wrote {env_var} to {env_file}")
     if args.print_token:
         print("\nTransfer access token:")
         print(primary["access_token"])
-        print("\nRefresh token:")
+        print("\nTransfer refresh token:")
         print(primary["refresh_token"])
+        if https_token:
+            print("\nCollection (HTTPS) refresh token:")
+            print(https_token.get("refresh_token"))
 
 
 if __name__ == "__main__":

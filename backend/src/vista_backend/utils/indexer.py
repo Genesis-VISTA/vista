@@ -61,13 +61,20 @@ def _get_text_rag_cls():
 
     import sys
 
+    from ..config import settings
+
     here = Path(__file__).resolve()
-    # utils -> vista_backend -> src -> backend -> repo root
-    repo_root = here.parents[4]
+    # utils -> vista_backend -> src -> backend -> repo root. Correct only while
+    # this package sits in `backend/src/`; a non-editable install (the prebuilt
+    # package) puts it in site-packages, where the same walk lands inside the
+    # virtual environment. `build_rag_dir` is how that deployment says where the
+    # module actually is.
+    repo_root = settings.build_rag_dir or here.parents[4]
     if not (repo_root / "build_rag.py").is_file():
         raise RuntimeError(
-            f"Could not locate build_rag.py at {repo_root}. The KB indexer "
-            f"expects the repo root to contain `build_rag.py`."
+            f"Could not locate build_rag.py at {repo_root}. Set "
+            f"VISTA_BUILD_RAG_DIR to the directory containing it, or run from a "
+            f"checkout where the repo root holds `build_rag.py`."
         )
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -302,7 +309,16 @@ def _resolved_openai_model() -> str:
     return "gpt-4o-mini"
 
 
-def has_llm_credentials() -> bool:
+def has_llm_credentials(credentials: Any | None = None) -> bool:
+    """
+    Whether citation extraction can run.
+
+    An explicitly supplied `build_rag.LLMCredentials` answers this on its own:
+    it is how a key from the user's settings row reaches this path, and that
+    key is invisible to the environment checks below.
+    """
+    if credentials is not None and getattr(credentials, "is_usable", False):
+        return True
     azure_ok = bool(
         os.environ.get("AZURE_OPENAI_ENDPOINT")
         and (os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
@@ -355,6 +371,7 @@ async def index_publications(
     *,
     extract_citations: bool | None = None,
     force_reindex: bool = False,
+    llm_credentials: Any | None = None,
 ) -> list[dict[str, Any]]:
     """
     Index a list of PDFs into the rag_db at `rag_db_path`. PDFs are
@@ -380,7 +397,7 @@ async def index_publications(
     function only owns the chroma side.
     """
     if extract_citations is None:
-        extract_citations = has_llm_credentials()
+        extract_citations = has_llm_credentials(llm_credentials)
 
     # Log this loud and clear at the start of every run. If the user
     # is expecting citation metadata and isn't seeing it, the very
@@ -438,7 +455,10 @@ async def index_publications(
         # creds were absent — left users wondering for 20 minutes why
         # nothing was happening.
         logger.warning(
-            "Citation extraction: DISABLED — has_llm_credentials() returned False. "
+            "Citation extraction: DISABLED — no inference credential. "
+            "On a single-user install the key entered in the settings modal is "
+            "used, and is passed down by the caller; this message means neither "
+            "that nor the environment supplied one. "
             "See the env snapshot above. To enable, ensure one of these "
             "combinations is set in the backend process's environment "
             "(check your .env file is at the repo root or in backend/, "
@@ -520,6 +540,11 @@ async def index_publications(
                     cached.pdf_folder = str(pdfs_dir_p)
                     cached.extract_citations = extract_citations
                     cached.force_reindex = force_reindex
+                    # Re-stamped like the others: instances are cached per
+                    # rag_db path, so without this a second run against the
+                    # same knowledge base would keep using the credential the
+                    # first caller happened to supply.
+                    cached.llm_credentials = llm_credentials
                     return cached
             logger.info("Constructing TextRAG for %s", cache_key)
             instance = TextRAG(
@@ -527,6 +552,7 @@ async def index_publications(
                 db_path=str(rag_db_p),
                 extract_citations=extract_citations,
                 force_reindex=False,  # we manage per-PDF dedup ourselves
+                llm_credentials=llm_credentials,
             )
             _text_rag_instances[cache_key] = instance
             return instance

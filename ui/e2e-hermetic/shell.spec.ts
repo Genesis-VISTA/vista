@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { USER } from "./fixtures";
 import { installStub, type Stub } from "./stub";
 
 /**
@@ -257,5 +258,122 @@ test.describe("shared shell", () => {
 
     // And it is the only one on screen.
     await expect(page.locator('img[alt="Genesis VISTA"]')).toHaveCount(1);
+  });
+});
+
+test.describe("HPC availability cards", () => {
+  test("the rail shows one card per cluster, with details and recheck", async ({ page }) => {
+    const stub = await installStub(page);
+    await page.goto("/skills");
+
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Perlmutter: Not connected" })).toBeVisible();
+    const odo = rail.getByRole("button", { name: "Odo: Globus not connected" });
+    await expect(odo).toBeVisible();
+
+    await odo.click();
+    const details = page.getByRole("dialog", { name: "Odo connection details" });
+    await expect(details).toContainText("Globus not connected");
+    await expect(details).toContainText("Facility is up");
+    await details.getByRole("button", { name: "Recheck" }).click();
+    await expect
+      .poll(() => stub.requests())
+      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=odo");
+    expect(await stub.unstubbed()).toEqual([]);
+
+    // Collapsed, each card still says which cluster and what state.
+    await page.keyboard.press("Escape");
+    await rail.getByRole("button", { name: "Collapse navigation" }).click();
+    await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+  });
+
+  test("Lux is Ready from its hub, and its settings are only the sidebar switch", async ({ page }) => {
+    const stub = await installStub(page);
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await rail.getByRole("button", { name: "Lux: Ready" }).click();
+
+    const details = page.getByRole("dialog", { name: "Lux connection details" });
+    await expect(details).toContainText("Hub is reachable");
+    await expect(details).toContainText("Project stf218");
+    await expect(details).not.toContainText("Globus");
+    await details.getByRole("button", { name: "Recheck" }).click();
+    await expect
+      .poll(() => stub.requests())
+      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=lux");
+
+    await details.getByRole("button", { name: "Settings" }).click();
+    const settings = page.getByRole("dialog", { name: "User settings" });
+    await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-expanded", "true");
+    const lux = settings.getByRole("region", { name: "Lux" });
+    await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
+    await expect(lux.getByRole("textbox")).toHaveCount(0);
+    expect(await stub.unstubbed()).toEqual([]);
+  });
+
+  test("a card's Settings link opens settings at that cluster only", async ({ page }) => {
+    await installStub(page);
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await rail.getByRole("button", { name: "Frontier: Ready" }).click();
+    await page.getByRole("dialog", { name: "Frontier connection details" })
+      .getByRole("button", { name: "Settings" })
+      .click();
+
+    const settings = page.getByRole("dialog", { name: "User settings" });
+    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-expanded", "true");
+    await expect(settings.getByRole("button", { name: /^Odo,/ })).toHaveAttribute("aria-expanded", "false");
+    await expect(settings.getByRole("button", { name: /^Perlmutter,/ })).toHaveAttribute("aria-expanded", "false");
+    await expect(settings.getByLabel("Frontier S3M token")).toBeVisible();
+
+    // From the rail's own settings button, every cluster starts collapsed.
+    await settings.getByRole("button", { name: "Close" }).click();
+    await rail.getByRole("button", { name: "Open settings" }).click();
+    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  test("hiding a cluster in settings removes its card", async ({ page }) => {
+    const stub = await installStub(page, {
+      // What the backend answers once the hidden list is saved.
+      "PUT /api/users/me": { ...USER, hpc_hidden_clusters: ["perlmutter"] },
+    });
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await expect(rail.getByRole("button", { name: "Perlmutter: Not connected" })).toBeVisible();
+    await rail.getByRole("button", { name: "Perlmutter: Not connected" }).click();
+    await page.getByRole("dialog", { name: "Perlmutter connection details" })
+      .getByRole("button", { name: "Settings" })
+      .click();
+
+    const settings = page.getByRole("dialog", { name: "User settings" });
+    await settings.getByRole("switch", { name: "Show Perlmutter in sidebar" }).click();
+    await settings.getByRole("button", { name: "Save" }).click();
+
+    await expect(settings).toHaveCount(0);
+    await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
+    await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+    expect(await stub.requests()).toContain("PUT /api/users/me");
+  });
+
+  test("a hidden cluster has no card", async ({ page }) => {
+    await installStub(page, {
+      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["perlmutter"] },
+    });
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+    await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
+  });
+
+  test("with every cluster hidden the section is gone", async ({ page }) => {
+    await installStub(page, {
+      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["frontier", "odo", "perlmutter", "lux"] },
+    });
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await expect(rail.getByRole("button", { name: "Open settings" })).toBeVisible();
+    await expect(rail.locator(".hpc-section-head")).toHaveCount(0);
+    await expect(rail.locator(".hpc-card")).toHaveCount(0);
   });
 });

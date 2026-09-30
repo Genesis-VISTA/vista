@@ -18,6 +18,73 @@ export const USER = {
   id: USER_ID,
   email: "hermetic@example.invalid",
   is_admin: false,
+  hpc_hidden_clusters: [] as string[],
+};
+
+const OK = (message: string) => ({ ok: true, reason: null, message });
+
+/**
+ * `GET /users/me/hpc-status`: one cluster in each of three different states,
+ * so the rail's cards are distinguishable by more than their names.
+ */
+export const HPC_STATUS = {
+  clusters: [
+    {
+      cluster: "frontier",
+      state: "ready",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Frontier up."),
+        credential: {
+          ...OK("Frontier accepted the S3M token."),
+          project: "chm243",
+          expires_at: "2026-01-02T00:00:00+00:00",
+        },
+        globus: { ...OK("Globus reaches Frontier's files."), identity: "own" },
+      },
+    },
+    {
+      cluster: "odo",
+      state: "globus_not_connected",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Odo up."),
+        credential: { ...OK("Odo accepted the S3M token."), project: "gen150-vista" },
+        globus: {
+          ok: false,
+          reason: "not_connected",
+          message: "Globus file transfer is not connected for Odo.",
+        },
+      },
+    },
+    {
+      cluster: "perlmutter",
+      state: "not_connected",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The facility reports Perlmutter up."),
+        credential: {
+          ok: false,
+          reason: "not_connected",
+          message: "No NERSC IRI token is saved for Perlmutter.",
+        },
+        globus: null,
+      },
+    },
+    {
+      cluster: "lux",
+      state: "ready",
+      checked_at: NOW,
+      checks: {
+        facility: OK("The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9)."),
+        credential: {
+          ...OK("Sign in with PIN + RSA passcode when a chat first uses Lux."),
+          project: "stf218",
+        },
+        globus: null,
+      },
+    },
+  ],
 };
 
 export const PROJECTS = [
@@ -94,9 +161,19 @@ export const CHAT_SESSION = {
  * flow only ever asks for one project and one conversation, so varying the
  * response by query would add branching the test cannot exercise.
  */
+export const MODELS = {
+  supported: true,
+  models: [
+    { id: "gpt-5", owned_by: "openai" },
+    { id: "gpt-5-mini", owned_by: "openai" },
+  ],
+};
+
 export const ROUTES: Record<string, unknown> = {
   "GET /api/users/me": USER,
+  "GET /api/users/me/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
+  "GET /api/projects/molten-salt/models": MODELS,
   "GET /api/skills": SKILLS,
   "GET /api/knowledge-bases": KNOWLEDGE_BASES,
   "GET /api/chat/sessions": [CHAT_SESSION_SUMMARY],

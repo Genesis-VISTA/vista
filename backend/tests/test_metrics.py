@@ -32,7 +32,9 @@ def make_recorder(
 def read_events(log_path: Path) -> list[dict]:
     if not log_path.exists():
         return []
-    return [json.loads(line) for line in log_path.read_text().splitlines()]
+    return [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +219,7 @@ def test_timer_measures_monotonic_duration():
 
 def test_write_failure_degrades_without_raising(tmp_path):
     bad_path = tmp_path / "not-a-dir"
-    bad_path.write_text("file, not a directory")
+    bad_path.write_text("file, not a directory", encoding="utf-8")
     settings = MetricsSettings(level="perf", log_path=bad_path / "metrics.jsonl")
     rec = MetricsRecorder(settings)
     assert rec.tool_call(tool_name="t", duration_ms=1.0) is not None  # no raise

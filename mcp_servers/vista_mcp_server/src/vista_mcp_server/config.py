@@ -1,5 +1,4 @@
-import os, sys, functools, logging
-from fastmcp.exceptions import ToolError
+import os, sys, logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -7,7 +6,7 @@ from typing import Annotated as A, Literal
 import getpass
 import uuid
 from datetime import datetime
-from .lib.types import ResolvedPath, CommaSeparatedList
+from .lib.types import ResolvedPath, CommaSeparatedList, GlobusTokens
 from .metrics import MetricsSettings
 
 
@@ -114,10 +113,17 @@ class AppSettings(BaseSettings):
     """
     odo_globus_refresh_token: str | None = None
     """
-    Globus Transfer refresh token for Odo (open enclave) file ops to work around the lack of
-    IRI File API support.
+    Globus Transfer refresh token for Odo (open enclave) directory listings and
+    `mkdir`, to work around the lack of IRI File API support.
     Generate with:
         ./scripts/get_globus_token.py --cluster odo --save-env
+    """
+    odo_globus_https_refresh_token: str | None = None
+    """
+    Refresh token for Odo's collection over the Globus HTTPS interface -- the
+    one that moves bytes. A second token because Globus issues one per resource
+    server and this one's is the collection UUID, not `transfer.api.globus.org`.
+    Written by the same `--save-env` run as the Transfer token above.
     """
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
@@ -139,9 +145,36 @@ class AppSettings(BaseSettings):
     """
     frontier_globus_refresh_token: str | None = None
     """
-    Deployment-wide Globus Transfer refresh token for Frontier (moderate enclave) file ops.
+    Deployment-wide Globus Transfer refresh token for Frontier (moderate
+    enclave) directory listings and `mkdir`.
     Generate with:
         ./scripts/get_globus_token.py --cluster frontier --save-env
+    """
+    frontier_globus_https_refresh_token: str | None = None
+    """
+    Frontier's counterpart to `odo_globus_https_refresh_token`: the collection's
+    own refresh token, which is what reads and writes file contents.
+    """
+
+    lux_ssh_hosts: CommaSeparatedList[str] = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
+    """
+    SSH hop chain to a Lux login node, ending at the login node. Lux has no IRI
+    service, so its jobs are submitted with `sbatch` over SSH. Its login node is
+    not public yet, hence the hub hop; each hop asks the researcher for their own
+    PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
+    """
+    lux_account: str = "stf218"
+    """ OLCF project name used as the Slurm account for Lux jobs. """
+    lux_remote_dir: str = "/lustre/orion/stf218/proj-shared/vista"
+    """
+    Base dir on Lux (Orion Lustre, also mounted on Frontier) where job sources
+    and outputs live. Jobs run as the researcher, so it only needs to be writable
+    by `lux_account` members.
+    """
+    lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
+    """
+    HTTP(S) proxy exported to Lux setup scripts and jobs, which have no direct
+    outbound network (e.g. to clone a repo). None to export nothing.
     """
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
@@ -194,28 +227,83 @@ class AppSettings(BaseSettings):
         """
         return self.data_dir / "knowledge-bases"
 
-    @functools.cached_property
-    def vista_globus_collection_id(self) -> str | None:
-        """
-        UUID of the Globus Collection hosted on the Vista server, read from the
-        Globus Connect Personal config.
-        """
-        client_id_file = self.data_dir / "globusonline" / "lta" / "client-id.txt"
-        if not client_id_file.exists():
-            return None
-        return client_id_file.read_text().strip() or None
+    def globus_tokens(self, cluster: Literal["odo", "frontier"]) -> GlobusTokens | None:
+        """The deployment's Globus credential for a cluster, or None.
 
-    def require_globus_token(self, cluster: Literal["odo", "frontier"]) -> str:
-        """ Return the Globus refresh token for the cluster or raise a `ToolError` if it isn't set. """
+        The last of the three sources `UserConfig.require_globus_token` tries,
+        and the only one a hosted deployment has ever had. Returning None rather
+        than refusing, because this is a fallback: only the caller knows whether
+        the two sources ahead of it also came up empty, and so only the caller
+        can say to go and connect one.
+
+        Both halves or neither. A deployment that has the Transfer token but not
+        the collection's could list directories and read nothing, which looks
+        like an empty output dir -- the exact confusion the HTTPS move exists to
+        remove.
+        """
         if cluster == "odo":
-            token = self.odo_globus_refresh_token
+            transfer = self.odo_globus_refresh_token
+            https = self.odo_globus_https_refresh_token
         else:
-            token = self.frontier_globus_refresh_token
-        if not token:
-            raise ToolError(f"No Globus refresh token configured for '{cluster}' in env")
-        return token
+            transfer = self.frontier_globus_refresh_token
+            https = self.frontier_globus_https_refresh_token
+        if not (transfer and https):
+            return None
+        return GlobusTokens(transfer=transfer, https=https)
 
-    rag_model: str = "google/embeddinggemma-300m"
+    embed_device: A[str | None, Field(validation_alias="VISTA_EMBED_DEVICE")] = None
+    """
+    Torch device for the query encoder, or `None` to let
+    sentence-transformers choose the best available (cuda, then mps, then
+    cpu).
+
+    Unpinned because pinning cpu costs roughly 60x on a machine with an
+    accelerator -- measured while indexing the molten-salt corpus. Set this
+    to `cpu` to force it back. `build_rag.py` reads the same variable for
+    the *indexing* encoder; the two need not agree, since the device
+    affects only how fast vectors are computed and not their values.
+    """
+
+    rag_model: str = "microsoft/harrier-oss-v1-270m"
+    """
+    Sentence-transformers model used to encode `rag_search` queries.
+
+    Ungated (MIT) and 640-dimension, so a fresh install needs no HuggingFace
+    account. Kept byte-identical to `build_rag.TextRAG.__init__`'s
+    `text_model` default, which is the *indexing* encoder: a Chroma
+    collection locks to the dimension of its first insert, so the two names
+    must never diverge. Change one, change the other.
+    """
+
+    rag_query_instruction: str = (
+        "Given a search query, retrieve relevant passages from documents"
+    )
+    """
+    One-sentence task description prepended to every `rag_search` query as
+    `Instruct: <this>\\nQuery: `.
+
+    `rag_model` is instruction-tuned. Its model card's FAQ: "Do I need to add
+    instructions to the query? Yes, this is how the model is trained,
+    otherwise you will see a performance degradation." Its
+    `config_sentence_transformers.json` leaves `default_prompt_name` null, so
+    sentence-transformers prepends nothing unless a caller asks; without this
+    the queries went in bare.
+
+    The same FAQ says the document side needs no instruction, and
+    `build_rag.py` gives it none. That asymmetry is what makes this a
+    query-time setting: changing it re-encodes no documents and invalidates
+    no ChromaDB store.
+
+    The default describes the task rather than any subject matter, because
+    Knowledge Bases are user-built and may hold anything. It says "search
+    query" rather than "question" because that is what the agent sends: the
+    `rag_search` calls in chat history are keyword phrases such as
+    `molten salt concentrated solar power thermal energy storage`, even when
+    the user asked a question, following the worked examples in the
+    molten-salt system prompt. It is the model card's stock
+    `web_search_query` prompt with "web" dropped. A deployment serving one
+    known corpus can tighten this to name it.
+    """
 
     hf_token: A[str | None, Field(validation_alias="HF_TOKEN")] = None
 

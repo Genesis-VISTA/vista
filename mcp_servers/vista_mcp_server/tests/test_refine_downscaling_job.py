@@ -716,7 +716,6 @@ def _frontier_submit(monkeypatch):
     from vista_mcp_server.submit_job_mcp import _submit_frontier_job, _submitted_jobs
 
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", REPO_ROOT / "hpc_jobs")
-    monkeypatch.setattr(settings, "vista_globus_collection_id", "vista-gcs-id")
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"
     )
@@ -724,6 +723,9 @@ def _frontier_submit(monkeypatch):
     monkeypatch.setattr(settings, "frontier_account", "chm243")
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(settings, "frontier_globus_refresh_token", "fake-refresh")
+    monkeypatch.setattr(
+        settings, "frontier_globus_https_refresh_token", "fake-frontier-https"
+    )
 
     iri = FakeIriClient(job_id="fr-refine-1")
     globus = FakeGlobusClient()
@@ -731,7 +733,7 @@ def _frontier_submit(monkeypatch):
     async def _olcf(*, iri_token: str):
         return iri
 
-    async def _noop_access(cfg, cluster):
+    async def _noop_access(cfg, cluster, account=None):
         return None
 
     monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
@@ -757,7 +759,7 @@ async def test_the_jobspec_asks_for_one_exclusive_gpu_node_on_the_shared_account
     _frontier_submit,
 ):
     submit, iri, _ = _frontier_submit
-    job_id, _log, _out, nodes, duration = await submit()
+    job_id, _log, _err, _out, nodes, duration = await submit()
 
     assert job_id == "fr-refine-1"
     assert (nodes, duration) == (1, 1800)
@@ -842,5 +844,5 @@ async def test_the_wrapper_is_staged_to_the_run_dir(_frontier_submit):
     to have been shipped there."""
     submit, _iri, globus = _frontier_submit
     await submit()
-    transferred = " ".join(str(t) for t in globus.transfers)
+    transferred = " ".join(remote for _collection, remote in globus.uploads)
     assert "run_downscaling.py" in transferred

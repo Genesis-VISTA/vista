@@ -60,7 +60,10 @@ async def test_seed_registers_skills_that_do_not_need_vista_data(seeded):
     """Skills with no GitLab assets are always registered offline."""
     names = {s.name for s in (await seeded.exec(select(SkillTable))).all()}
     assert {
-        "alloy-design",
+        "alloy-tc-planner",
+        "alloy-thermo-mc",
+        "deepthermo-wl",
+        "vae-orderparam",
         "datacard-generation",
         "salt-chemistry-md",
         "salt-neutronics-tbr",
@@ -75,24 +78,33 @@ async def test_seed_registers_skills_that_do_not_need_vista_data(seeded):
 async def test_alloy_design_seed_snapshot(seeded):
     project = await _project(seeded, "alloy-design")
 
-    assert project.skills == ["alloy-design"]
+    assert project.skills == [
+        "alloy-tc-planner",
+        "alloy-thermo-mc",
+        "deepthermo-wl",
+        "vae-orderparam",
+    ]
     assert project.knowledge_bases == []
     assert project.usage_limits.get("request_limit") == 600
 
-    # Andes agenthpc toolchain is allowed; the standard HPC submit tools are not.
+    # The campaign drives the STANDARD HPC toolchain, so those must be allowed; the
+    # retired agenthpc_* SSH tools are denied.
     assert "*" in project.tools
-    assert "!submit_hpc_job" in project.tools
-    assert "!get_hpc_job_status" in project.tools
-    assert "!get_hpc_job_outputs" in project.tools
-    assert "!list_hpc_jobs" in project.tools
+    assert "!agenthpc_*" in project.tools
+    assert "!submit_hpc_job" not in project.tools
+    assert "!get_hpc_job_status" not in project.tools
+    assert "!get_hpc_job_outputs" not in project.tools
+    assert "!list_hpc_jobs" not in project.tools
 
     assert (
         "alloy" in project.system_prompt.lower() or "MoNbTaW" in project.system_prompt
     )
+    # The retired agenthpc_* loop must be gone from the prompt.
+    assert "agenthpc_" not in project.system_prompt
 
-    # The skill the project references is registered.
+    # Both skills the project references are registered.
     skill_names = {s.name for s in (await seeded.exec(select(SkillTable))).all()}
-    assert "alloy-design" in skill_names
+    assert set(project.skills).issubset(skill_names)
 
 
 async def test_molten_salt_seed_snapshot_offline(seeded):
@@ -131,3 +143,12 @@ async def test_seed_project_ids_are_stable(seeded):
     molten = await _project(seeded, "molten-salt")
     assert str(alloy.id) == "f855bdd8-c433-423e-ab5c-3a9a63b6e661"
     assert str(molten.id) == "282531e7-1e05-4369-a339-9d1b4f20aa89"
+
+
+async def test_llm_pretraining_is_a_library_skill_in_no_project(seeded):
+    """Seeded into the public skill library (no vista-data assets needed), but not
+    attached to any default project: users opt their own project into it."""
+    names = {s.name for s in (await seeded.exec(select(SkillTable))).all()}
+    assert "llm-pretraining" in names
+    for project in (await seeded.exec(select(ProjectTable))).all():
+        assert "llm-pretraining" not in project.skills, project.name

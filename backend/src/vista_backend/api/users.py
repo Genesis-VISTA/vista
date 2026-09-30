@@ -1,16 +1,18 @@
 import uuid
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from ..db.db import SessionDep
 from ..db.schemas import (
+    HpcCluster,
     UserCreate,
     UserUpdate,
     UserSelfUpdate,
     UserPublic,
     UserPublicWithConfig,
 )
-from ..services import user as user_service
+from ..services import globus_auth, hpc_status, user as user_service
 from ..services.auth import AdminDep, UserDep
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -38,6 +40,77 @@ async def update_me(
 ) -> UserPublicWithConfig:
     row = await user_service.update_user(session, user.id, updates, user)
     return UserPublicWithConfig.model_validate(row)
+
+
+@router.get("/me/hpc-status")
+async def get_hpc_status(
+    user: UserDep, fresh: bool = False, cluster: HpcCluster | None = None
+) -> hpc_status.HpcStatus:
+    """
+    Whether each visible HPC cluster would work for the current user right
+    now, from live checks against the facility, S3M, and Globus. Results are
+    reused for a minute; `fresh=true` reruns them, for every cluster or, with
+    `cluster`, for that one. Never carries a token.
+    """
+    return await hpc_status.hpc_status_service.status(
+        user, fresh=fresh, cluster=cluster
+    )
+
+
+# ---------------------------------------------------------------------------
+# Connecting Globus
+#
+# Two calls rather than a field on `PUT /me`, because this is an exchange and
+# not a value: the researcher never sees the credential, and what they do paste
+# is a single-use code that is worthless once spent.
+# ---------------------------------------------------------------------------
+
+
+class GlobusLoginStarted(BaseModel):
+    authorize_url: str
+    """Displayed for the researcher to open and, if the browser cannot be opened
+    for them, to copy. Carries no secret: the verifier that makes the exchange
+    work stays on the server."""
+
+
+class GlobusLoginCode(BaseModel):
+    code: str
+
+
+class GlobusConnected(BaseModel):
+    cluster: globus_auth.Cluster
+    identity: str
+    """Which Globus account this cluster is now connected as, so a researcher
+    who authorizes both enclaves can see they landed where intended."""
+
+
+@router.post("/me/globus/{cluster}/login")
+async def start_globus_login(
+    cluster: globus_auth.Cluster, user: UserDep
+) -> GlobusLoginStarted:
+    return GlobusLoginStarted(authorize_url=globus_auth.start_login(user.id, cluster))
+
+
+@router.post("/me/globus/{cluster}/code")
+async def complete_globus_login(
+    cluster: globus_auth.Cluster,
+    payload: GlobusLoginCode,
+    session: SessionDep,
+    user: UserDep,
+) -> GlobusConnected:
+    connection = globus_auth.complete_login(user.id, cluster, payload.code)
+    await user_service.update_user(
+        session,
+        user.id,
+        UserSelfUpdate.model_validate(
+            {
+                globus_auth.TOKEN_FIELDS[cluster]: connection.refresh_token,
+                globus_auth.HTTPS_TOKEN_FIELDS[cluster]: connection.https_refresh_token,
+            }
+        ),
+        user,
+    )
+    return GlobusConnected(cluster=cluster, identity=connection.identity)
 
 
 @router.get("")

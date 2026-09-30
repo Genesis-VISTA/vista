@@ -3,7 +3,6 @@ Utilities for the `view` MCP tool: binary detection, file formatting, and direct
 """
 
 from pathlib import PurePosixPath
-import magic
 from .sandbox import Sandbox
 
 DIRECTORY_LINE_LIMIT = 50
@@ -206,9 +205,21 @@ def format_file_content(
     if not isinstance(content, str):
         if not content:
             return ""
-        if magic.from_buffer(content, mime=True).startswith("text/"):
-            content = content.decode("utf-8", errors="replace")
-        else:
+        # Is this printable text? Two checks, because each covers the other's
+        # blind spot. A NUL byte is valid UTF-8 -- it encodes U+0000 -- so the
+        # decode alone accepts binary padding. And some binary files hold no
+        # NUL at all (matplotlib ships PDF icons like that), so the NUL scan
+        # alone would spill them into the agent's context.
+        #
+        # This replaced `magic.from_buffer(content, mime=True)`, which needed a
+        # system libmagic the package cannot ship, and which called every JSON
+        # and SVG file binary because their MIME types are not under `text/`.
+        # The cost is that text in a non-UTF-8 encoding now reads as binary.
+        if b"\x00" in content[:8192]:
+            return "[binary file]"
+        try:
+            content = content.decode("utf-8")
+        except UnicodeDecodeError:
             return "[binary file]"
 
     lines = content.splitlines()

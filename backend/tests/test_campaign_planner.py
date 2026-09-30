@@ -6,7 +6,11 @@ No live LLM or MCP: the HPC boundary and the result parsers are injected.
 import pytest
 
 from vista_backend.agents.campaign.hpc_tools import McpHpcTools, parse_submit_summary
-from vista_backend.agents.campaign.manifest import CampaignManifest
+from vista_backend.agents.inference import build_inference_model
+from vista_backend.agents.campaign.manifest import (
+    CampaignManifest,
+    render_script_args,
+)
 from vista_backend.agents.campaign.planner import (
     CampaignPlanner,
     build_planner_system_prompt,
@@ -97,7 +101,34 @@ async def _make_run(session, alice):
 
 def test_parse_submit_summary():
     text = "job_id: 12345\ncluster: frontier\nnodes: 2\nduration: 1:00:00"
-    assert parse_submit_summary(text) == ("12345", "frontier")
+    assert parse_submit_summary(text) == {
+        "job_id": "12345",
+        "cluster": "frontier",
+        "log_path": "",
+        "err_path": "",
+        "output_dir": "",
+    }
+
+
+def test_parse_submit_summary_keeps_the_rendered_paths():
+    """
+    They are the only record of where a job's files are outside the MCP server.
+
+    Dropping them left every job row with a blank `log_path` and `output_dir`, so
+    the report attached to a debate's FINDING post named no file a reader could
+    open — and nothing pointed at the stderr file where a failed run explains
+    itself.
+    """
+    text = (
+        "job_id: 44039\ncluster: odo\nnodes: 1\nduration: 1:00:00\n"
+        "log_path: /gpfs/out/44039/log-44039.out\n"
+        "err_path: /gpfs/out/44039/log-44039.err\n"
+        "output_dir: /gpfs/out/44039"
+    )
+    parsed = parse_submit_summary(text)
+    assert parsed["log_path"] == "/gpfs/out/44039/log-44039.out"
+    assert parsed["err_path"] == "/gpfs/out/44039/log-44039.err"
+    assert parsed["output_dir"] == "/gpfs/out/44039"
 
 
 def test_parse_submit_summary_raises_without_job_id():
@@ -147,6 +178,34 @@ def test_build_subagents_one_per_role():
     )
     assert set(subagents) == {"alpha", "beta"}
     assert subagents["alpha"].role == "alpha"
+
+
+def test_build_subagents_threads_the_resolved_model_to_every_parser(tmp_path):
+    """
+    A resolved `Model` reaches each role's real parser agent.
+
+    Built without a `parser_factory` so the production `build_skill_parser`
+    path runs: it used to resolve its own model from `Settings`, which cannot
+    see a key from the user's settings row, so a campaign's parsers reached a
+    different endpoint than the agent that dispatched the job.
+    """
+    for role in ("alpha", "beta"):
+        skill_dir = tmp_path / f"{role}-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {role}-skill\ndescription: d\n---\n\nParse {role}.\n",
+            encoding="utf-8",
+        )
+
+    model = build_inference_model(
+        "openai-chat:test-model", api_key="row-key", base_url="https://user.example/v1"
+    )
+    subagents = build_subagents(
+        _manifest(), hpc=FakeHpcTools(), skills_dir=tmp_path, model=model
+    )
+
+    for role in ("alpha", "beta"):
+        assert subagents[role].parser.agent.model is model, f"{role} built its own"
 
 
 # --- CampaignPlanner -------------------------------------------------------
@@ -220,9 +279,172 @@ async def test_collect_job_raises_for_unknown_role(session, alice):
 def test_build_planner_system_prompt_inlines_playbook(tmp_path):
     skill_dir = tmp_path / "test-planner"
     skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(PLANNER_SKILL_MD)
+    (skill_dir / "SKILL.md").write_text(PLANNER_SKILL_MD, encoding="utf-8")
 
     prompt = build_planner_system_prompt(skill_dir)
     assert "planner agent orchestrating" in prompt
     assert "Test planner playbook" in prompt  # the playbook body is inlined
     assert "exit on user confirmation" in prompt
+
+
+# --- render_script_args (pure) ---------------------------------------------
+
+RENDER_MANIFEST_YAML = """
+domain: testdomain
+variables:
+  - {name: a, range: [0, 1]}
+  - {name: b, range: [0, 1]}
+  - {name: c, range: [0, 1]}
+metrics:
+  primary: {name: SCORE}
+subagents:
+  - role: alpha
+    skill: alpha-skill
+    job: alpha_job
+    args:
+      encoding: flags
+      map: {a: --ay, b: --bee}
+      extra: "--fixed 3"
+  - role: beta
+    skill: beta-skill
+    job: beta_job
+    args:
+      encoding: flags
+      map: {c: --see}
+  - {role: gamma, skill: gamma-skill, job: gamma_job}
+  - role: delta
+    skill: delta-skill
+    job: delta_job
+    args:
+      encoding: json
+"""
+
+
+def _render_manifest() -> CampaignManifest:
+    import yaml
+
+    return CampaignManifest.model_validate(yaml.safe_load(RENDER_MANIFEST_YAML))
+
+
+def test_render_flags_uses_manifest_variable_order_not_candidate_order():
+    m = _render_manifest()
+    # Candidate deliberately in reverse declaration order.
+    rendered = render_script_args(m, m.subagent("alpha"), {"b": 2, "a": 1})
+    assert rendered == "--ay 1 --bee 2 --fixed 3"
+
+
+def test_render_flags_excludes_unmapped_variables():
+    m = _render_manifest()
+    # `c` is declared and present, but alpha does not map it.
+    rendered = render_script_args(m, m.subagent("alpha"), {"a": 1, "b": 2, "c": 3})
+    assert "--see" not in rendered
+    assert rendered == "--ay 1 --bee 2 --fixed 3"
+
+
+def test_render_gives_each_role_its_own_subset():
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2, "c": 3}
+    assert (
+        render_script_args(m, m.subagent("alpha"), candidate)
+        == "--ay 1 --bee 2 --fixed 3"
+    )
+    assert render_script_args(m, m.subagent("beta"), candidate) == "--see 3"
+
+
+def test_render_without_extra_omits_it():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("beta"), {"c": 0.5}) == "--see 0.5"
+
+
+def test_render_json_encoding_is_opt_in():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("delta"), {"a": 1}) == """'{"a": 1}'"""
+
+
+def test_render_without_args_block_serializes_the_candidate_as_json():
+    """Non-adopters keep the pre-contract encoding: the whole candidate as JSON."""
+    import json
+    import shlex
+
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2.5, "c": "x"}
+    rendered = render_script_args(m, m.subagent("gamma"), candidate)
+    assert rendered == shlex.quote(json.dumps(candidate))
+
+
+@pytest.mark.parametrize("role", ["gamma", "delta"])
+def test_render_json_survives_the_dispatchers_shlex_split(role):
+    """
+    Every dispatcher runs `shlex.split(script_args)`. The JSON must come out the other
+    side as one argv word that parses back to the candidate, spaces and quotes included.
+    """
+    import json
+    import shlex
+
+    m = _render_manifest()
+    candidate = {"a": 1, "b": 2.5, "c": 'O\'Brien "x" y'}
+    argv = shlex.split(render_script_args(m, m.subagent(role), candidate))
+    assert len(argv) == 1
+    assert json.loads(argv[0]) == candidate
+
+
+def test_render_without_args_block_and_empty_candidate_is_none():
+    m = _render_manifest()
+    assert render_script_args(m, m.subagent("gamma"), {}) is None
+    assert render_script_args(m, m.subagent("gamma"), None) is None
+
+
+def test_render_flags_with_bool_uses_store_true_style():
+    m = _render_manifest()
+    spec = m.subagent("beta")
+    assert render_script_args(m, spec, {"c": True}) == "--see"
+    assert render_script_args(m, spec, {"c": False}) is None
+
+
+@pytest.mark.anyio
+async def test_dispatch_candidate_submits_rendered_flags(session, alice):
+    """The rendered string is what actually reaches submit_hpc_job."""
+    import yaml
+
+    manifest = CampaignManifest.model_validate(yaml.safe_load(RENDER_MANIFEST_YAML))
+    hpc = FakeHpcTools()
+    hpc.script_args_seen = []
+
+    original_submit = hpc.submit
+
+    async def recording_submit(*, job, cluster, node_count, duration, script_args):
+        hpc.script_args_seen.append((job, script_args))
+        return await original_submit(
+            job=job,
+            cluster=cluster,
+            node_count=node_count,
+            duration=duration,
+            script_args=script_args,
+        )
+
+    hpc.submit = recording_submit
+    subagents = build_subagents(
+        manifest,
+        hpc=hpc,
+        skills_dir="/unused",
+        parser_factory=lambda skill_dir, role: CallableResultParser(
+            lambda **_: ParsedResult(ok=True)
+        ),
+    )
+    planner = CampaignPlanner(manifest=manifest, subagents=subagents)
+    run = await _make_run(session, alice)
+
+    await planner.dispatch_candidate(
+        session,
+        run_id=run.id,
+        user_id=alice.id,
+        candidate={"a": 1, "b": 2, "c": 3},
+        cycle=0,
+    )
+
+    seen = dict(hpc.script_args_seen)
+    assert seen["alpha_job"] == "--ay 1 --bee 2 --fixed 3"
+    assert seen["beta_job"] == "--see 3"
+    assert (
+        seen["gamma_job"] == """'{"a": 1, "b": 2, "c": 3}'"""
+    )  # one JSON word for non-adopters

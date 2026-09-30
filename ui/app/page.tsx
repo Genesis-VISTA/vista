@@ -9,6 +9,7 @@ import ElicitationModal from "@/components/ElicitationModal";
 import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
 import CampaignPanel from "@/components/CampaignPanel";
 import { AppTopBar } from "@/components/AppTopBar";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
@@ -17,6 +18,7 @@ import {
 } from "@/components/SkillEditorModal";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { labelForTool } from "@/lib/tool-labels";
+import { fileLinkProps } from "@/lib/file-links";
 import {
   readActiveProjectName,
   useActiveProject,
@@ -1231,6 +1233,7 @@ export default function HomePage() {
                 </button>
               </div>
             ) : null}
+            <ModelPicker />
           </div>
         }
       />
@@ -1632,7 +1635,7 @@ export default function HomePage() {
                     onZoom={setLightbox}
                   />
                 ) : (
-                  <a href={latestResult.ui.url} target="_blank" rel="noreferrer" className="chat-bubble">
+                  <a href={latestResult.ui.url} {...fileLinkProps(latestResult.ui.url)} className="chat-bubble">
                     Download {latestResult.ui.name ?? "file"}
                   </a>
                 )

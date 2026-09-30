@@ -9,6 +9,7 @@
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
+#   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -65,11 +66,18 @@ run_job() {
   local allow_failure="$2"
   shift 2
   log "$name"
-  if "$@"; then
+  # Capture the status from the command itself, not from after the `if`.
+  #
+  # A compound `if` whose condition fails and which has no `else` returns 0, so
+  # `$?` afterwards is the *if statement's* status — which is why real failures
+  # were reported as "fail: … (exit 0)", a line that reads like a bug in the
+  # harness and invites disbelieving the failure.
+  local rc=0
+  "$@" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
     echo "ok: $name"
     return 0
   fi
-  local rc=$?
   if [[ "$allow_failure" -eq 1 && "$STRICT" != true ]]; then
     echo "warn: $name failed (advisory; pass --strict to fail)" >&2
     return 0
@@ -88,29 +96,40 @@ ensure_npm() {
 
 backend_lint() {
   ensure_uv
-  log "backend:lint (ruff $RUFF_VERSION)"
-  (
-    cd "$REPO_ROOT/backend"
+  local rc=0
+  # Gate through run_job so a ruff failure actually fails this script. A bare subshell
+  # took the exit status of its LAST command and nothing checked it, so `ruff check`
+  # errors were printed and then discarded: the script said "All requested checks
+  # passed" and exited 0 while GitLab failed the same commit.
+  run_job "backend:lint (ruff $RUFF_VERSION)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/backend"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  ' || rc=1
   if [[ "$FAST" == true ]]; then
-    return 0
+    return "$rc"
   fi
   # Match CI: typecheck is a required gate (the pyright baseline is clean);
   # security is advisory (allow_failure).
   run_job "backend:typecheck" 0 bash -c '
+    set -e
     cd "'"$REPO_ROOT"'/backend"
     uv sync --frozen
     uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
-  '
+  ' || rc=1
   run_job "backend:security" 1 bash -c '
+    set -e
     cd "'"$REPO_ROOT"'/backend"
     uvx "bandit@${BANDIT_VERSION}" -r src/ -ll -q
   '
+  return "$rc"
 }
 
 PYTEST_HERMETIC_MARKERS='not live and not hpc and not sandbox'
+# Surface text I/O that relies on the locale's encoding; the pytest config turns it into
+# an error. Matches the test jobs in .gitlab-ci.yml.
+export PYTHONWARNDEFAULTENCODING=1
 
 backend_test() {
   ensure_uv
@@ -124,36 +143,41 @@ backend_test() {
 
 mcp_lint() {
   ensure_uv
-  log "vista-mcp:lint (ruff tests/)"
-  (
-    cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
+  local rc=0
+  # See backend_lint: these must gate, not just print.
+  run_job "vista-mcp:lint (ruff tests/)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/mcp_servers/vista_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check tests/
     uvx "ruff@${RUFF_VERSION}" format --check tests/
-  )
-  log "dev-mcp:lint (ruff)"
-  (
-    cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
+  ' || rc=1
+  run_job "dev-mcp:lint (ruff)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/mcp_servers/dev_mcp_server"
     uvx "ruff@${RUFF_VERSION}" check src/ tests/
     uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
-  )
+  ' || rc=1
+  return "$rc"
 }
 
 mcp_test() {
   ensure_uv
+  local rc=0
   # Required (matches GitLab vista-mcp:test)
   log "vista-mcp:test"
   (
     cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  ) || rc=1
   # Required: container-dependent tests are marked `sandbox` and excluded here.
   log "dev-mcp:test"
   (
     cd "$REPO_ROOT/mcp_servers/dev_mcp_server"
     uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
-  )
+  ) || rc=1
+  return "$rc"
 }
 
 ui_lint() {
@@ -196,6 +220,39 @@ ui_test() {
   )
 }
 
+# The VISTA window (electron/). Mirrors electron:typecheck and electron:test:
+# neither needs the Electron binary, so a fresh install skips downloading it.
+electron_install() {
+  if [[ "$FAST" == true && -d node_modules ]]; then
+    return 0
+  fi
+  if [[ -d node_modules ]]; then
+    npm ci --prefer-offline
+  else
+    ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --prefer-offline
+  fi
+}
+
+electron_lint() {
+  ensure_npm
+  log "electron:typecheck"
+  (
+    cd "$REPO_ROOT/electron"
+    electron_install
+    npm run typecheck
+  )
+}
+
+electron_test() {
+  ensure_npm
+  log "electron:test"
+  (
+    cd "$REPO_ROOT/electron"
+    electron_install
+    npm test
+  )
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -220,7 +277,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|all)
+    backend|ui|mcp|electron|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -279,7 +336,20 @@ FAILED=0
 run_section() {
   local label="$1"
   shift
-  if ! "$@"; then
+  # Run the section in a subshell that re-arms errexit, and capture its status
+  # outside any tested context.
+  #
+  # The obvious `if ! "$@"` is wrong here: bash disables errexit for the whole
+  # duration of a function called in a condition, so a lint function whose
+  # `ruff check` failed would keep going and return the status of its *last*
+  # command instead. That silently passed backend lint errors for as long as
+  # this script has existed.
+  local status=0
+  set +e
+  ( set -e; "$@" )
+  status=$?
+  set -e
+  if (( status != 0 )); then
     echo "fail: $label" >&2
     FAILED=1
   fi
@@ -302,6 +372,12 @@ if want_target ui && want_action lint; then
 fi
 if want_target ui && want_action test; then
   ui_test
+fi
+if want_target electron && want_action lint; then
+  run_section "electron lint" electron_lint
+fi
+if want_target electron && want_action test; then
+  run_section "electron test" electron_test
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then

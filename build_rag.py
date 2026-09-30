@@ -28,6 +28,7 @@ Legacy variables ENDPOINT_URL and DEPLOYMENT_NAME are still honored as
 fallbacks but log a deprecation warning the first time they're used.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import json
@@ -125,6 +126,42 @@ CITATION_FIELDS = [
 
 
 # ---------------------------------------------------------------------------
+# Retrieval instructions
+# ---------------------------------------------------------------------------
+# The embedding model is instruction-tuned. Its model card's FAQ: "Do I need
+# to add instructions to the query? Yes, this is how the model is trained,
+# otherwise you will see a performance degradation." Its
+# `config_sentence_transformers.json` leaves `default_prompt_name` null, so
+# sentence-transformers prepends nothing unless a caller passes `prompt`.
+#
+# The same FAQ: "there is no need to add instructions to the document side."
+# So `embed_text` and `embed_text_batched` encode chunks bare, and only the
+# `query*` methods pass a prompt. That asymmetry is what makes this safe to
+# add to an existing deployment: no stored vector changes, so no reindex.
+#
+# QUERY_INSTRUCTION is kept byte-identical to
+# `vista_mcp_server.config.Settings.rag_query_instruction`, which is the
+# *query* encoder the MCP server actually serves `rag_search` from.
+# `test_embedding_model.py` fails if the two drift. It names no subject
+# matter: Knowledge Bases are user-built and may hold any corpus.
+QUERY_INSTRUCTION = (
+    "Given a search query, retrieve relevant passages from documents"
+)
+
+# The citation collection holds "Title. Authors. Journal (Year). DOI"
+# strings, not prose, so searching it is a different task than searching
+# chunks and gets its own instruction.
+CITATION_QUERY_INSTRUCTION = (
+    "Given a description of a document, retrieve its bibliographic record"
+)
+
+
+def query_prompt(instruction: str) -> str:
+    """Wrap a task description in the format the encoder was trained on."""
+    return f"Instruct: {instruction.strip()}\nQuery: "
+
+
+# ---------------------------------------------------------------------------
 # Azure OpenAI helper
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -149,6 +186,32 @@ CITATION_FIELDS = [
 
 # Module-level guards so we only warn once per process.
 _warned_legacy_vars = False
+
+
+@dataclass(frozen=True)
+class LLMCredentials:
+    """
+    An explicitly supplied inference credential for citation extraction.
+
+    Everything below resolves the LLM from the process environment, which is
+    right for a deployment configured through `.env` but cannot see a key the
+    researcher typed into the settings modal -- that lives encrypted in their
+    database row, and `vista_backend.agents.inference` is what knows how to
+    resolve it. Passing one of these in lets the caller do that resolution and
+    hand down the answer, so a user-created knowledge base gets citations
+    instead of silently getting none.
+
+    `api_key` is what makes an instance usable; with it unset the env chain
+    runs as before.
+    """
+
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+
+    @property
+    def is_usable(self) -> bool:
+        return bool(self.api_key)
 
 
 def _parse_backend_model() -> tuple[str | None, str | None]:
@@ -192,12 +255,38 @@ class _LLMConfig:
         self.endpoint = endpoint
 
 
-def _resolve_llm_config(timeout: float) -> _LLMConfig:
+def _resolve_llm_config(
+    timeout: float, credentials: "LLMCredentials | None" = None
+) -> _LLMConfig:
     """
     Decide which LLM provider to use and build the corresponding client.
     See the comment block above for the resolution order.
+
+    A usable `credentials` wins outright and skips that order entirely: the
+    caller has already decided which endpoint and key to use -- typically from
+    a user's settings row -- and re-deriving it from the environment could only
+    contradict them.
     """
     global _warned_legacy_vars
+
+    if credentials is not None and credentials.is_usable:
+        base_url = (credentials.base_url or "https://api.openai.com/v1").rstrip("/")
+        model = credentials.model or _parse_backend_model()[1] or "gpt-4o-mini"
+        log.info(
+            "  LLM provider: OpenAI-compatible (supplied) | base_url=%s | model=%s",
+            base_url, model,
+        )
+        return _LLMConfig(
+            provider="openai",
+            model=model,
+            client=OpenAI(
+                base_url=base_url,
+                api_key=credentials.api_key,
+                timeout=timeout,
+                max_retries=1,
+            ),
+            endpoint=base_url,
+        )
 
     azure_endpoint = (os.getenv("AZURE_OPENAI_ENDPOINT") or "").rstrip("/")
     azure_key = os.getenv("AZURE_OPENAI_API_KEY") or ""
@@ -466,6 +555,7 @@ def send_prompt_to_chatgpt(
     *,
     max_tokens: int = 4096,
     timeout: float = 60.0,
+    credentials: "LLMCredentials | None" = None,
 ) -> str:
     """
     Send a prompt to the configured LLM and return the response text.
@@ -492,7 +582,7 @@ def send_prompt_to_chatgpt(
     (prompt_tokens / completion_tokens / reasoning_tokens) on the
     response so empty-output failures are diagnosable.
     """
-    config = _resolve_llm_config(timeout)
+    config = _resolve_llm_config(timeout, credentials)
 
     prompt_chars = len(prompt)
     is_reasoning = _is_reasoning_model(config.model)
@@ -637,11 +727,17 @@ class TextRAG:
         self,
         pdf_folder: str,
         db_path: str = "./chroma_db",
-        text_model: str = "google/embeddinggemma-300m",
+        # Ungated (MIT) and 640-dimension. Kept byte-identical to
+        # `vista_mcp_server.config.Settings.rag_model`, which is the *query*
+        # encoder: a Chroma collection locks to the dimension of its first
+        # insert, so the two names must never diverge. Change one, change
+        # the other.
+        text_model: str = "microsoft/harrier-oss-v1-270m",
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
         citation_max_chars: int = 12_000,
+        llm_credentials: "LLMCredentials | None" = None,
     ):
         """
         Initialize text-only RAG system with optional citation extraction.
@@ -658,6 +754,9 @@ class TextRAG:
                                 citation extraction.
             citation_max_chars: Max characters of front-matter text to send
                                 to the LLM.
+            llm_credentials:    Inference credential for citation extraction.
+                                When omitted, resolved from the environment.
+                                See `LLMCredentials`.
         """
         self.pdf_folder = Path(pdf_folder)
         self.db_path = db_path
@@ -665,10 +764,22 @@ class TextRAG:
         self.extract_citations = extract_citations
         self.citation_max_pages = citation_max_pages
         self.citation_max_chars = citation_max_chars
+        self.llm_credentials = llm_credentials
 
-        # Text embedding model
-        log.info("Loading text model: %s", text_model)
-        self.text_encoder = SentenceTransformer(text_model, device="cpu")
+        # Text embedding model.
+        #
+        # `device=None` lets sentence-transformers pick the best available
+        # accelerator -- cuda, then mps, then cpu. Previously pinned to cpu,
+        # which measured at 28s per batch of 8 chunks against 0.5s on mps:
+        # hours versus minutes to index the molten-salt corpus, paid on every
+        # packaging build and on any first run that has to index. Set
+        # `VISTA_EMBED_DEVICE` to force one (e.g. `cpu`) if an accelerator
+        # misbehaves. The same variable pins the *query* encoder in
+        # `vista_mcp_server.rag_mcp`; the device changes only how fast the
+        # vectors are computed, not what they are, so the two need not agree.
+        device = os.environ.get("VISTA_EMBED_DEVICE") or None
+        log.info("Loading text model: %s (device=%s)", text_model, device or "auto")
+        self.text_encoder = SentenceTransformer(text_model, device=device)
 
         self.client = chromadb.PersistentClient(
             path=db_path,
@@ -678,6 +789,14 @@ class TextRAG:
         self.db_exists = self._check_database_exists()
 
         # Collections
+        # Both collections are created without an `embedding_function`, so
+        # Chroma attaches its default (`ONNXMiniLM_L6_V2`). That default
+        # downloads an ONNX archive from a public S3 bucket -- but only inside
+        # its `__call__`, which never fires because every write below passes
+        # `embeddings=` and every read passes `query_embeddings=`, computed by
+        # `embed_text` from `self.text_model`. Do not add a call that omits
+        # them: it would reach the network on a machine meant to work offline,
+        # and write 384-dimension vectors into a 640-dimension collection.
         self.text_collection = self.client.get_or_create_collection(
             name="text_chunks",
             metadata={"hnsw:space": "cosine"},
@@ -780,7 +899,9 @@ class TextRAG:
             filename=pdf_path.name,
         )
         try:
-            raw = send_prompt_to_chatgpt(prompt, max_tokens=4096)
+            raw = send_prompt_to_chatgpt(
+                prompt, max_tokens=4096, credentials=self.llm_credentials
+            )
         except Exception as exc:  # noqa: BLE001
             log.error("  Citation API call failed for %s: %s", pdf_path.name, exc)
             return None
@@ -822,8 +943,17 @@ class TextRAG:
     # ------------------------------------------------------------------
     # Embedding
     # ------------------------------------------------------------------
-    def embed_text(self, texts: List[str]) -> List[List[float]]:
-        embeddings = self.text_encoder.encode(texts, convert_to_numpy=True)
+    def embed_text(
+        self, texts: List[str], *, prompt: Optional[str] = None
+    ) -> List[List[float]]:
+        """
+        Encode `texts`. `prompt` defaults to None, which is what every
+        indexing call wants: the model card says documents take no
+        instruction. Query callers pass `query_prompt(...)`.
+        """
+        embeddings = self.text_encoder.encode(
+            texts, prompt=prompt, convert_to_numpy=True
+        )
         return embeddings.tolist()
 
     def embed_text_batched(
@@ -1252,7 +1382,9 @@ class TextRAG:
 
     def query(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search text chunks collection."""
-        query_embedding = self.embed_text([query])[0]
+        query_embedding = self.embed_text(
+            [query], prompt=query_prompt(QUERY_INSTRUCTION)
+        )[0]
         return self.text_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
@@ -1260,7 +1392,9 @@ class TextRAG:
 
     def query_citations(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search the citation metadata collection."""
-        query_embedding = self.embed_text([query])[0]
+        query_embedding = self.embed_text(
+            [query], prompt=query_prompt(CITATION_QUERY_INSTRUCTION)
+        )[0]
         return self.citation_collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,

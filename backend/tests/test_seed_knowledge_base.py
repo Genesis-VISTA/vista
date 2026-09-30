@@ -41,7 +41,7 @@ async def test_nested_pdfs_are_passed_as_relative_paths(tmp_path, indexer_calls)
     _pdf(pdfs / "top.pdf")
     _pdf(pdfs / "thermo/nested.pdf")
     _pdf(pdfs / "thermo/2024/deep.pdf")
-    (pdfs / "thermo/README.md").write_text("not a paper")
+    (pdfs / "thermo/README.md").write_text("not a paper", encoding="utf-8")
 
     await _build_knowledge_base(kb_dir)
 
@@ -65,3 +65,44 @@ async def test_existing_chroma_db_short_circuits_the_build(tmp_path, indexer_cal
     await _build_knowledge_base(kb_dir)
 
     assert indexer_calls == []
+
+
+async def test_nested_publication_opens_by_basename(tmp_path, monkeypatch):
+    """
+    A citation from a corpus organised into subdirectories has to open.
+
+    Retrieval reports each chunk's source as a bare filename, while the bundled
+    molten-salt corpus keeps every paper under a per-topic folder -- so a
+    basename-only lookup against the top of the folder finds nothing and every
+    citation is a dead link.
+    """
+    from pathlib import Path
+
+    from fastapi import HTTPException
+
+    from vista_backend.api import knowledge_bases as kb_api
+
+    pdfs = tmp_path / "pdfs"
+    (pdfs / "lit-MS" / "Sub-MS-breed").mkdir(parents=True)
+    nested = pdfs / "lit-MS" / "Sub-MS-breed" / "paper.pdf"
+    nested.write_bytes(b"%PDF-1.4 nested")
+
+    class _KB:
+        pdfs_dir = str(pdfs)
+
+    async def _get_kb(_session, _slug):
+        return _KB()
+
+    monkeypatch.setattr(kb_api.kb_service, "get_kb", _get_kb)
+
+    response = await kb_api.download_publication("any-slug", "paper.pdf", None)
+    assert Path(response.path) == nested
+
+    # A name that is nowhere in the tree is still a 404, and a path separator is
+    # still rejected outright.
+    with pytest.raises(HTTPException) as absent:
+        await kb_api.download_publication("any-slug", "absent.pdf", None)
+    assert absent.value.status_code == 404
+    with pytest.raises(HTTPException) as traversal:
+        await kb_api.download_publication("any-slug", "../escape.pdf", None)
+    assert traversal.value.status_code == 400

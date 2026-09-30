@@ -1,0 +1,62 @@
+#!/bin/sh
+# Prints the extra arguments the VISTA window needs on this Linux host: nothing,
+# or --no-sandbox. When it prints --no-sandbox it also says why on stderr, and
+# names the one-time step that turns the sandbox back on where there is one
+# (linux-desktop-window design D1). The package launcher, ./launch.sh --electron
+# and the build's smoke test all call it, so the rule lives here only.
+#
+# Shipped as app/window/window-sandbox, next to VISTA and vista-window.apparmor.
+#
+# Overridable for electron/test/window-sandbox.test.js only:
+#   VISTA_WINDOW_SANDBOX_UID      instead of `id -u`
+#   VISTA_WINDOW_SANDBOX_PROBE    instead of `unshare`
+#   VISTA_WINDOW_SANDBOX_SYSCTL   instead of /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+#   VISTA_WINDOW_SANDBOX_PROFILE  instead of /etc/apparmor.d/vista-window
+
+uid="${VISTA_WINDOW_SANDBOX_UID:-$(id -u)}"
+probe="${VISTA_WINDOW_SANDBOX_PROBE:-unshare}"
+sysctl="${VISTA_WINDOW_SANDBOX_SYSCTL:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
+profile="${VISTA_WINDOW_SANDBOX_PROFILE:-/etc/apparmor.d/vista-window}"
+
+here="$(cd "$(dirname "$0")" && pwd)"
+
+without() {
+  echo "--no-sandbox"
+  echo "The VISTA window is running without Chromium's sandbox: $1" >&2
+}
+
+# Ubuntu 23.10+ grants capabilities in a new user namespace only to programs an
+# AppArmor profile allows.
+ubuntu_restricts() {
+  [ "$(cat "$sysctl" 2>/dev/null)" = 1 ]
+}
+
+# 1. Chromium refuses to start as root without it. Only the build's smoke test
+#    gets here; the launcher opens no window for root.
+if [ "$uid" = 0 ]; then
+  without "it is running as root."
+  exit 0
+fi
+
+# 2. Ask the host directly whether an unprivileged user namespace with
+#    capabilities can be made, which is what the sandbox needs. Without
+#    unshare, fall back to Ubuntu's own setting.
+if command -v "$probe" >/dev/null 2>&1; then
+  "$probe" -Ur true >/dev/null 2>&1 && exit 0
+else
+  ubuntu_restricts || exit 0
+fi
+
+# 3. VISTA's profile grants the window what unshare itself is not granted, so
+#    this comes after the probe, which fails on Ubuntu with the profile loaded.
+[ -e "$profile" ] && exit 0
+
+# 4. The host blocks it.
+if ubuntu_restricts; then
+  without "Ubuntu restricts unprivileged user namespaces, and VISTA's AppArmor profile is not installed.
+To turn the sandbox on, run these once (they need sudo):
+  sudo install -m 644 '$here/vista-window.apparmor' /etc/apparmor.d/vista-window
+  sudo apparmor_parser -r /etc/apparmor.d/vista-window"
+else
+  without "this host does not allow unprivileged user namespaces, which the sandbox needs (for example inside a container)."
+fi

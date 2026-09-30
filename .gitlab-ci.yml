@@ -51,8 +51,18 @@ variables:
   image:
     name: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
     entrypoint: [""]
+  # Runs before the cache is saved. Drops wheels downloaded pre-built from PyPI
+  # (quicker to fetch again than to zip and unzip) and keeps wheels built from
+  # source, such as the PALISADE git dependency.
+  after_script:
+    - uv cache prune --ci
 
 # ─── Cache anchors ──────────────────────────────────────────────────────────
+#
+# Only uv's cache is kept, never a project's .venv/. uv installs managed Python
+# (python-preference = "only-managed") under the home directory, which is not
+# cached, so a restored .venv links to an interpreter that no longer exists and
+# uv discards it. Rebuilding it from .uv-cache/ takes about a second.
 
 .cache-uv-backend: &cache-uv-backend
   cache:
@@ -62,7 +72,6 @@ variables:
         - backend/uv.lock
     paths:
       - .uv-cache/
-      - backend/.venv/
 
 .cache-uv-dev-mcp: &cache-uv-dev-mcp
   cache:
@@ -72,7 +81,6 @@ variables:
         - mcp_servers/dev_mcp_server/uv.lock
     paths:
       - .uv-cache/
-      - mcp_servers/dev_mcp_server/.venv/
 
 .cache-uv-vista-mcp: &cache-uv-vista-mcp
   cache:
@@ -82,7 +90,6 @@ variables:
         - mcp_servers/vista_mcp_server/uv.lock
     paths:
       - .uv-cache/
-      - mcp_servers/vista_mcp_server/.venv/
 
 .cache-npm-ui: &cache-npm-ui
   cache:
@@ -141,6 +148,9 @@ backend:security:
 
 backend:test:
   stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
   <<: [*python-image, *cache-uv-backend]
   before_script:
     # uv shells out to git to fetch the PALISADE sidecar at its release tag, and
@@ -173,7 +183,25 @@ vista-mcp:lint:
 
 vista-mcp:test:
   stage: test
-  <<: [*python-image, *cache-uv-vista-mcp]
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
+  <<: *python-image
+  # Also caches dev_mcp_server's own venv, spelled out here rather than by
+  # merging *cache-uv-dev-mcp too: a `<<:` merge only keeps the first `cache:`
+  # key when two merged anchors each define one, so the second would be
+  # silently dropped instead of adding a second cache entry. And each of
+  # *cache-uv-vista-mcp's and *cache-uv-dev-mcp's own value is itself a
+  # `{cache: {key, paths}}` map (one cache entry, not a list item's own
+  # `key`/`paths`), so merging either directly into a list item here would
+  # nest one level too deep instead of producing a `{key, paths}` entry.
+  cache:
+    - key:
+        prefix: uv-vista-mcp
+        files:
+          - mcp_servers/vista_mcp_server/uv.lock
+      paths:
+        - .uv-cache/
   # Required job — must NOT set allow_failure.
   script:
     - cd mcp_servers/vista_mcp_server
@@ -200,6 +228,9 @@ dev-mcp:lint:
 
 dev-mcp:test:
   stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
   <<: [*python-image, *cache-uv-dev-mcp]
   before_script:
     # python-magic (dep of dev_mcp_server) requires the libmagic system library
@@ -217,6 +248,45 @@ dev-mcp:test:
     reports:
       junit: mcp_servers/dev_mcp_server/junit.xml
     expire_in: 1 week
+
+# ─── VISTA window (electron/) ───────────────────────────────────────────────
+#
+# Hermetic: the routing rules are plain functions, so neither job needs the
+# Electron binary or a display. The window's own behaviour -- child windows,
+# downloads, single instance -- is Playwright-driven and needs a display, so it
+# runs in the validation lane (docs/validation-lane.md), not here.
+
+.cache-npm-electron: &cache-npm-electron
+  cache:
+    key:
+      prefix: npm-electron
+      files:
+        - electron/package-lock.json
+    paths:
+      - electron/node_modules/
+
+electron:typecheck:
+  stage: lint
+  image: node:22-slim
+  <<: *cache-npm-electron
+  variables:
+    ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  script:
+    - cd electron
+    - npm ci --prefer-offline
+    - npm run typecheck
+
+# Required job — must NOT set allow_failure.
+electron:test:
+  stage: test
+  image: node:22-slim
+  <<: *cache-npm-electron
+  variables:
+    ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  script:
+    - cd electron
+    - npm ci --prefer-offline
+    - npm test
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
