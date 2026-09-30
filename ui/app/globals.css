@@ -1653,6 +1653,65 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-top: 4px;
 }
 
+/* A report is read, not filled in, so it gets more width than the skill form. */
+.report-modal {
+  width: min(860px, 95vw);
+}
+
+.report-summary {
+  margin: 0;
+  color: var(--muted);
+}
+
+.report-status {
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-body {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.report-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+}
+
+.report-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.report-body th,
+.report-body td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.report-body pre {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.report-regenerate {
+  display: flex;
+  gap: 8px;
+}
+
+.report-regenerate > .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .modal-body {
   padding: 16px;
   display: flex;
