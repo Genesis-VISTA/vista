@@ -1,7 +1,8 @@
 @echo off
 setlocal
-rem Start VISTA from cmd or by double-clicking. Installed at the package root as
-rem vista.cmd, beside vista.ps1, which does the work.
+rem Start VISTA. Installed at the package root as vista.cmd, beside vista.ps1,
+rem which does the work. This is the entry point, from cmd, PowerShell, or a
+rem double-click: vista.ps1 run directly skips the execution-policy step below.
 set "VISTA_PS1=%~dp0vista.ps1"
 
 rem -ExecutionPolicy Bypass loses to an execution policy set by Group Policy, as

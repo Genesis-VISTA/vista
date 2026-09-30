@@ -1,9 +1,12 @@
 # Start VISTA from an unpacked Windows package. Installed at the package root
-# as `vista.ps1`, with `vista.cmd` beside it for cmd and double-clicking. The
+# as `vista.ps1`, behind `vista.cmd`, which is the entry point: run that, from
+# cmd, PowerShell, or by double-clicking. It clears the mark of the web from
+# this file and names an execution policy this script cannot run under, so run
+# directly this script can fail with only PowerShell's own message. The
 # Windows counterpart of package_launcher.sh, step for step.
 #
-#   .\vista.ps1            first-run setup if needed, then start and open the window
-#   .\vista.ps1 --help     show this
+#   .\vista.cmd            first-run setup if needed, then start and open the window
+#   .\vista.cmd --help     show this
 #
 # Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
 # console. VISTA is a desktop application: in a session that cannot show its
@@ -299,12 +302,17 @@ if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
     # decodes it with the OEM code page, so a successful import reads as a
     # failure in setup.log. Stringified and decoded as UTF-8, the log holds
     # msb's own words.
+    # Restored in finally: the code page belongs to the whole console, so a
+    # failure or Ctrl-C here would otherwise leave the parent cmd on UTF-8.
     $consoleEncoding = [Console]::OutputEncoding
-    [Console]::OutputEncoding = $Utf8NoBom
-    & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE 2>&1 | ForEach-Object { "$_" } |
-      Out-File -Append -Encoding utf8 "$LOGS\setup.log"
-    $loaded = ($LASTEXITCODE -eq 0)
-    [Console]::OutputEncoding = $consoleEncoding
+    try {
+      [Console]::OutputEncoding = $Utf8NoBom
+      & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE 2>&1 | ForEach-Object { "$_" } |
+        Out-File -Append -Encoding utf8 "$LOGS\setup.log"
+      $loaded = ($LASTEXITCODE -eq 0)
+    } finally {
+      [Console]::OutputEncoding = $consoleEncoding
+    }
   }
   $ErrorActionPreference = 'Stop'
   if (-not $present -and -not $loaded) { Die "could not import the sandbox image; see $LOGS\setup.log" }
@@ -402,13 +410,21 @@ $services = @()
 # loses its first and last quote characters -- which here are the ones around
 # the executable and the log file -- and cmd refuses the line, so no service
 # starts and no log is written.
+#
+# cmd's console is suppressed with CreateNoWindow rather than Start-Process
+# -WindowStyle Hidden. The latter hands cmd a SW_HIDE show state, cmd passes it
+# on to what it starts, and Windows applies it to that program's first
+# top-level window -- so the VISTA window could open hidden. CreateNoWindow
+# gives cmd a console with no window and sets no show state at all.
 function Start-VistaService([string]$Name, [string]$Command) {
-  $proc = Start-Process -FilePath 'cmd.exe' `
-    -ArgumentList '/d', '/s', '/c', "`"$Command > `"$LOGS\$Name.log`" 2>&1`"" `
-    -WorkingDirectory $PACKAGE -WindowStyle Hidden -PassThru
-  # Read once now: without an open handle, .NET cannot report ExitCode after
-  # the process has gone, and the window's exit code says why it closed.
-  $null = $proc.Handle
+  $info = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe'
+  $info.Arguments = "/d /s /c `"$Command > `"$LOGS\$Name.log`" 2>&1`""
+  $info.WorkingDirectory = $PACKAGE
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  # Started directly, the process keeps its handle, so ExitCode can still be
+  # read after it has gone -- the window's exit code says why it closed.
+  $proc = [System.Diagnostics.Process]::Start($info)
   $script:services += $proc
   return $proc
 }
@@ -482,7 +498,9 @@ try {
   # The window closing or quitting ends the session; the finally below stops
   # the rest. 75 is what it exits with when another VISTA window already holds
   # the single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
-  $window.WaitForExit()
+  # Polled rather than a bare WaitForExit(): Ctrl-C cannot interrupt a blocking
+  # .NET call in PowerShell 5.1, only the gap between two statements.
+  while (-not $window.WaitForExit(500)) {}
   $windowStatus = $window.ExitCode
   if ($windowStatus -eq 75) {
     Die 'VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it.'

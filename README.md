@@ -204,7 +204,9 @@ the MCP app; it skips only the indexing pass and its per-paper model calls.
 
 Run the same script from Git Bash (it comes with Git for Windows). It builds a
 `win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
-they run `vista.cmd`, or `vista.ps1` from PowerShell.
+they run `vista.cmd`, from cmd, PowerShell, or by double-clicking. That is the
+entry point; `vista.ps1` does the work behind it but is not meant to be run
+directly, since only `vista.cmd` gets it past a Group Policy execution policy.
 
 ```bash
 ./scripts/build_local_package.sh --check
