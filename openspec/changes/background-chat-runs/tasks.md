@@ -1,8 +1,8 @@
 ## 1. Backend: run state and partial history
 
-- [ ] 1.1 Add `run_state` (default `idle`), `run_unseen` (default false) and `run_events` (nullable JSON) to `ChatSessionBase` in `backend/src/vista_backend/db/schemas.py`, and an optional `run_id` to `ChatTranscriptMessage`. Verify `init_db` adds the columns to an existing database by extending `backend/tests/test_migrate_columns.py`.
-- [ ] 1.2 Write the D3 trim as a pure function: given prior history and captured messages, return the completed steps plus a closing text part. Verify with unit tests covering a dangling tool call, a completed tool round-trip, and a text-only turn.
-- [ ] 1.3 Wrap `run_stream_events` in `capture_run_messages()` inside `ProjectAgent.run_stream` (`agents/agents.py`) and expose the captured messages when the run is cancelled or fails. Verify with a `FunctionModel` test that cancels mid-tool and still sees the completed tool call. If it can't, switch to `agent.iter()` per design D3 and note it here.
+- [x] 1.1 Add `run_state` (default `idle`), `run_unseen` (default false) and `run_events` (nullable JSON) to `ChatSessionBase` in `backend/src/vista_backend/db/schemas.py`, and an optional `run_id` to `ChatTranscriptMessage`. Verify `init_db` adds the columns to an existing database by extending `backend/tests/test_migrate_columns.py`.
+- [x] 1.2 Write the D3 trim as a pure function: given prior history and captured messages, return the completed steps plus a closing text part. Verify with unit tests covering a dangling tool call, a completed tool round-trip, and a text-only turn.
+- [x] 1.3 Wrap `run_stream_events` in `capture_run_messages()` inside `ProjectAgent.run_stream` (`agents/agents.py`) and expose the captured messages when the run is cancelled or fails. Verify with a `FunctionModel` test that cancels mid-tool and still sees the completed tool call. If it can't, switch to `agent.iter()` per design D3 and note it here.
 
 ## 2. Backend: run registry
 

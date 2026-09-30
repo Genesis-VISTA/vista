@@ -98,6 +98,9 @@ async def create_chat_session(
         message_history=[],
         messages=[],
         latest_result=None,
+        run_state="idle",
+        run_unseen=False,
+        run_events=None,
         created_at=now,
         updated_at=now,
     )

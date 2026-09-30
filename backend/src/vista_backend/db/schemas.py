@@ -5,7 +5,7 @@ Data models / schemas
 import re
 import uuid
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Column, String
+from sqlalchemy import JSON, Boolean, Column, String, false
 from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
@@ -730,6 +730,11 @@ class ChatTranscriptMessage(BaseModel):
     role: ChatMessageRole
     content: str
     intermediate: bool | None = None
+    run_id: str | None = None
+    """ The chat run that drew this bubble, so replaying that run can redraw it without duplicates. """
+
+
+ChatRunState = Literal["idle", "running", "done", "failed", "interrupted", "stopped"]
 
 
 class ChatSessionBase(SQLModel):
@@ -746,6 +751,27 @@ class ChatSessionBase(SQLModel):
     ]
     latest_result: A[
         dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    # Run state (openspec change background-chat-runs). The server defaults let
+    # `init_db` add these to an existing database: `_add_missing_columns` skips
+    # NOT NULL columns that have none.
+    run_state: A[
+        str,
+        Field(
+            default="idle",
+            sa_column=Column(String, nullable=False, server_default="idle"),
+        ),
+    ]
+    run_unseen: A[
+        bool,
+        Field(
+            default=False,
+            sa_column=Column(Boolean, nullable=False, server_default=false()),
+        ),
+    ]
+    run_events: A[
+        list[dict[str, Any]] | None,
         Field(default=None, sa_column=Column(JSON, nullable=True)),
     ]
 
