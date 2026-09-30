@@ -11,7 +11,7 @@ All tasks are hermetic (PR CI). None need live, HPC, or sandbox markers.
 
 ## 3. Agent pointer (backend)
 
-- [ ] 3.1 Add the two-sentence uploads/reports note to `backend/src/vista_backend/agents/base_system_prompt.md`. Verify with an assertion (in `backend/tests/test_skills_prompt.py` or a new `backend/tests/test_system_prompt.py`) that the built prompt contains `/mnt/data/uploads/` and `/mnt/data/uploads/reports/`; then run `./scripts/ci-local.sh backend` and confirm it passes.
+- [x] 3.1 Add the two-sentence uploads/reports note to `backend/src/vista_backend/agents/base_system_prompt.md`. Verify with an assertion (in `backend/tests/test_skills_prompt.py` or a new `backend/tests/test_system_prompt.py`) that the built prompt contains `/mnt/data/uploads/` and `/mnt/data/uploads/reports/`; then run `./scripts/ci-local.sh backend` and confirm it passes.
 
 ## 4. Report modal (UI)
 

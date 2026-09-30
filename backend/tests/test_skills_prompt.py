@@ -137,6 +137,31 @@ async def test_project_skills_appear_in_the_system_prompt(monkeypatch, tmp_path:
     assert "Run OpenMM+MACE density jobs." in prompt
 
 
+async def test_system_prompt_points_at_uploads_and_reports(monkeypatch, tmp_path: Path):
+    """
+    The agent is told where uploads and saved reports live, but saved reports
+    are not enumerated -- it looks them up itself (conversation-report).
+    """
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    project = make_project()
+    user = make_user()
+    reports = (
+        tmp_path
+        / "volumes"
+        / f"{project.id}-{user.id}"
+        / "data"
+        / "uploads"
+        / "reports"
+    )
+    reports.mkdir(parents=True)
+    (reports / "eutectic-sweep.md").write_text("---\ntitle: x\n---\n", encoding="utf-8")
+
+    prompt = await _system_prompt_for(project, user)
+    assert "`/mnt/data/uploads/`" in prompt
+    assert "`/mnt/data/uploads/reports/`" in prompt
+    assert "eutectic-sweep" not in prompt
+
+
 # ---------------------------------------------------------------------------
 # Missing skill slug — warn and skip (current production behavior)
 # ---------------------------------------------------------------------------
