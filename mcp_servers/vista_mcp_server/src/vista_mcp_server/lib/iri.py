@@ -58,6 +58,8 @@ class IriResourceSpec(BaseModel):
     processes_per_node: int | None = None
     cpu_cores_per_process: int | None = None
     exclusive_node_use: bool = True
+    gpus_per_node: int | None = None
+    """ Lux only: rendered as `#SBATCH --gpus-per-node`. The IRI clusters bind GPUs themselves. """
 
 
 class IriAttributes(BaseModel):
@@ -78,6 +80,18 @@ class IriDefaults(BaseModel):
     """ Seconds """
     resources: IriResourceSpec = IriResourceSpec()
     iri: IriAttributes = IriAttributes()
+    account: str | None = None
+    """
+    OLCF project to charge, overriding the cluster's deployment-wide account
+    (`frontier_account`, `lux_account`) for this job only. On Frontier the
+    user's S3M token must belong to this project. Honored on Frontier and Lux.
+    """
+    remote_dir: str | None = None
+    """
+    Base dir for this job's sources and outputs, overriding the cluster's
+    `*_remote_dir`. Goes with `account`: it must be writable by that project.
+    Honored on Frontier and Lux.
+    """
 
 
 class IriClient:

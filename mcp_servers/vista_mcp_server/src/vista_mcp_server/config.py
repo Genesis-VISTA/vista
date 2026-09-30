@@ -156,6 +156,27 @@ class AppSettings(BaseSettings):
     own refresh token, which is what reads and writes file contents.
     """
 
+    lux_ssh_hosts: CommaSeparatedList[str] = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
+    """
+    SSH hop chain to a Lux login node, ending at the login node. Lux has no IRI
+    service, so its jobs are submitted with `sbatch` over SSH. Its login node is
+    not public yet, hence the hub hop; each hop asks the researcher for their own
+    PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
+    """
+    lux_account: str = "stf218"
+    """ OLCF project name used as the Slurm account for Lux jobs. """
+    lux_remote_dir: str = "/lustre/orion/stf218/proj-shared/vista"
+    """
+    Base dir on Lux (Orion Lustre, also mounted on Frontier) where job sources
+    and outputs live. Jobs run as the researcher, so it only needs to be writable
+    by `lux_account` members.
+    """
+    lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
+    """
+    HTTP(S) proxy exported to Lux setup scripts and jobs, which have no direct
+    outbound network (e.g. to clone a repo). None to export nothing.
+    """
+
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     """ Base URL for the NERSC IRI API. """
     nersc_machine: str = "perlmutter"

@@ -14,14 +14,15 @@ import { useSyncExternalStore } from "react";
  * card reads Couldn't verify: a result nobody can refresh must not stay green.
  */
 
-export type HpcCluster = "frontier" | "odo" | "perlmutter";
+export type HpcCluster = "frontier" | "odo" | "perlmutter" | "lux";
 
-export const HPC_CLUSTERS: readonly HpcCluster[] = ["frontier", "odo", "perlmutter"];
+export const HPC_CLUSTERS: readonly HpcCluster[] = ["frontier", "odo", "perlmutter", "lux"];
 
 export const HPC_CLUSTER_TITLES: Record<HpcCluster, string> = {
   frontier: "Frontier",
   odo: "Odo",
   perlmutter: "Perlmutter",
+  lux: "Lux",
 };
 
 /** The backend's per-cluster state. */

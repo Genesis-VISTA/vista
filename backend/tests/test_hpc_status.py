@@ -6,6 +6,9 @@ Globus is faked at the probe. Every scenario in the `hpc-availability` spec's
 check and state requirements has a case here.
 """
 
+import asyncio
+import contextlib
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +26,7 @@ from vista_backend.services.hpc_status import (
     ClusterChecks,
     GlobusSessionExpired,
     HpcStatusService,
+    SshProbeError,
     globus_source,
     resolve_state,
 )
@@ -154,6 +158,20 @@ class FakeGlobus:
             raise self.result
 
 
+class FakeLux:
+    """Stands in for the Lux hub's SSH server."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.result: BaseException | None = None
+
+    async def __call__(self, host: str, *, timeout: float) -> str:
+        self.calls.append(host)
+        if self.result:
+            raise self.result
+        return "SSH-2.0-OpenSSH_8.7"
+
+
 class Clock:
     def __init__(self) -> None:
         self.t = 1000.0
@@ -168,11 +186,13 @@ def make_service(
     *,
     settings=S,
     clock: Clock | None = None,
+    lux: FakeLux | None = None,
 ) -> HpcStatusService:
     return HpcStatusService(
         settings=settings,
         transport=httpx.MockTransport(fac.handler),
         globus_probe=globus or FakeGlobus(),
+        lux_probe=lux or FakeLux(),
         now=lambda: NOW,
         monotonic=clock or Clock(),
     )
@@ -251,7 +271,7 @@ def test_resolve_state(facility, credential, globus, state):
 async def test_all_ready():
     fac, globus = healthy(), FakeGlobus()
     result = await statuses(make_service(fac, globus), user(**CONNECTED))
-    assert list(result) == ["frontier", "odo", "perlmutter"]
+    assert list(result) == ["frontier", "odo", "perlmutter", "lux"]
     assert {c: s.state for c, s in result.items()} == dict.fromkeys(result, "ready")
     assert result["perlmutter"].checks.globus is None
     assert result["odo"].checks.credential.expires_at == datetime(
@@ -357,6 +377,9 @@ async def test_facility_feed_is_shared_across_users():
 async def test_no_token_means_not_connected_and_no_authenticated_call():
     fac = healthy()
     result = await statuses(make_service(fac), user())
+    # Lux has no credential to be missing; it is Ready once its hub answers.
+    lux = result.pop("lux")
+    assert lux.state == "ready"
     assert {s.state for s in result.values()} == {"not_connected"}
     assert not any("authorization" in r.headers for r in fac.calls)
     # The facility is still checked, so the details can say it is up.
@@ -661,7 +684,230 @@ async def test_route_passes_fresh_and_cluster_through(monkeypatch):
     monkeypatch.setattr(hs, "hpc_status_service", service)
     u = user(**CONNECTED)
     first = await users_api.get_hpc_status(u)
-    assert [c.cluster for c in first.clusters] == ["frontier", "odo", "perlmutter"]
+    assert [c.cluster for c in first.clusters] == [
+        "frontier",
+        "odo",
+        "perlmutter",
+        "lux",
+    ]
     before = fac.calls_to(NERSC)
     await users_api.get_hpc_status(u, fresh=True, cluster="odo")
     assert fac.calls_to(NERSC) == before
+
+
+# ---------------------------------------------------------------------------
+# Lux: a hub probe instead of IRI, and no credential (spec: Facility check,
+# Credential check)
+# ---------------------------------------------------------------------------
+
+ONLY_LUX = dict(hpc_hidden_clusters=["frontier", "odo", "perlmutter"])
+
+
+@pytest.mark.anyio
+async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
+    fac, lux = healthy(), FakeLux()
+    result = await statuses(make_service(fac, lux=lux), user(**ONLY_LUX))
+    lx = result["lux"]
+    assert lx.state == "ready"
+    assert "hub.ccs.ornl.gov" in lx.checks.facility.message
+    assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
+    assert lx.checks.credential.ok
+    assert lx.checks.credential.project == "stf218"
+    assert lx.checks.credential.message == hs.LUX_SIGN_IN
+    assert lx.checks.globus is None
+    assert lux.calls == ["hub.ccs.ornl.gov"]  # the hub only, never the login node
+    assert fac.calls == []  # no IRI, S3M, or other outbound call
+
+
+@pytest.mark.parametrize(
+    ("error", "said"),
+    [
+        (TimeoutError(), "did not answer within 5 s"),
+        (socket.gaierror(8, "nodename nor servname provided"), "could not be resolved"),
+        (ConnectionRefusedError(61, "Connection refused"), "refused the connection"),
+        (OSError(65, "No route to host"), "could not be reached (No route to host)"),
+        (
+            SshProbeError("answered, but not with an SSH greeting"),
+            "not with an SSH greeting",
+        ),
+    ],
+)
+@pytest.mark.anyio
+async def test_any_hub_failure_is_couldnt_verify_never_degraded(error, said):
+    lux = FakeLux()
+    lux.result = error
+    lx = (await statuses(make_service(healthy(), lux=lux), user(**ONLY_LUX)))["lux"]
+    assert lx.state == "unverifiable"
+    assert lx.checks.facility.reason == "unreachable"
+    assert said in lx.checks.facility.message
+    assert "hub.ccs.ornl.gov" in lx.checks.facility.message
+    assert lx.checks.credential.ok  # sign-in is still only described
+
+
+@pytest.mark.anyio
+async def test_hub_probe_is_shared_across_researchers_until_fresh_or_expired():
+    lux, clock = FakeLux(), Clock()
+    service = make_service(healthy(), lux=lux, clock=clock)
+    await service.status(user(**ONLY_LUX))
+    await service.status(user(**ONLY_LUX))  # another researcher, same minute
+    assert len(lux.calls) == 1
+    clock.t += hs.LUX_PROBE_MIN_INTERVAL + 1
+    await service.status(user(**ONLY_LUX), fresh=True)
+    assert len(lux.calls) == 2
+    clock.t += hs.FACILITY_TTL + 1
+    await service.status(user(**ONLY_LUX))
+    assert len(lux.calls) == 3
+
+
+@pytest.mark.anyio
+async def test_fresh_rechecks_do_not_probe_the_hub_more_than_every_few_seconds():
+    lux, clock = FakeLux(), Clock()
+    service = make_service(healthy(), lux=lux, clock=clock)
+    u = user(**ONLY_LUX)
+    for _ in range(5):  # a researcher mashing Recheck
+        await service.status(u, fresh=True, cluster="lux")
+    assert len(lux.calls) == 1
+    clock.t += hs.LUX_PROBE_MIN_INTERVAL + 1
+    await service.status(u, fresh=True, cluster="lux")
+    assert len(lux.calls) == 2
+
+
+@pytest.mark.anyio
+async def test_concurrent_requests_share_one_probe():
+    release = asyncio.Event()
+
+    class SlowLux(FakeLux):
+        async def __call__(self, host: str, *, timeout: float) -> str:
+            self.calls.append(host)
+            await release.wait()
+            return "SSH-2.0-OpenSSH_8.7"
+
+    lux = SlowLux()
+    service = make_service(healthy(), lux=lux)
+    pending = asyncio.gather(
+        *(service.status(user(**ONLY_LUX), fresh=True) for _ in range(4))
+    )
+    await asyncio.sleep(0)
+    release.set()
+    results = await pending
+    assert len(lux.calls) == 1
+    assert {r.clusters[0].state for r in results} == {"ready"}
+
+
+@pytest.mark.anyio
+async def test_a_failed_probe_is_retried_after_a_few_seconds_not_a_minute():
+    lux, clock = FakeLux(), Clock()
+    lux.result = TimeoutError()
+    service = make_service(healthy(), lux=lux, clock=clock)
+    u = user(**ONLY_LUX)
+    assert (await statuses(service, u))["lux"].state == "unverifiable"
+    lux.result = None
+    clock.t += hs.LUX_PROBE_FAILURE_TTL + 1  # well inside FACILITY_TTL and RESULT_TTL
+    assert (await statuses(service, u))["lux"].state == "ready"
+    assert len(lux.calls) == 2
+
+
+@pytest.mark.anyio
+async def test_no_configured_hub_is_couldnt_verify_and_the_other_clusters_still_answer():
+    lux = FakeLux()
+    settings = HpcClusterSettings.model_validate({"lux_ssh_hosts": []})
+    result = await statuses(
+        make_service(healthy(), lux=lux, settings=settings), user(**CONNECTED)
+    )
+    assert result["lux"].state == "unverifiable"
+    assert "VISTA_MCP_LUX_SSH_HOSTS" in result["lux"].checks.facility.message
+    assert result["frontier"].state == "ready"
+    assert lux.calls == []
+
+
+@pytest.mark.anyio
+async def test_an_unexpected_probe_error_is_couldnt_verify_not_a_500():
+    lux = FakeLux()
+    lux.result = UnicodeError(
+        "label empty or too long"
+    )  # a host name IDNA can't encode
+    result = await statuses(make_service(healthy(), lux=lux), user(**CONNECTED))
+    assert result["lux"].state == "unverifiable"
+    assert "UnicodeError" in result["lux"].checks.facility.message
+    assert result["odo"].state == "ready"
+
+
+@pytest.mark.anyio
+async def test_hidden_lux_is_not_probed():
+    lux = FakeLux()
+    u = user(**CONNECTED, hpc_hidden_clusters=["lux"])
+    result = await statuses(make_service(healthy(), lux=lux), u)
+    assert "lux" not in result
+    assert lux.calls == []
+
+
+@pytest.mark.anyio
+async def test_probe_uses_the_first_configured_host():
+    lux = FakeLux()
+    settings = HpcClusterSettings.model_validate(
+        {"lux_ssh_hosts": ["hub.example", "login.example"]}
+    )
+    await make_service(healthy(), lux=lux, settings=settings).status(user(**ONLY_LUX))
+    assert lux.calls == ["hub.example"]
+
+
+# --- the real probe, against local servers (hermetic: 127.0.0.1 only) --------
+
+
+@contextlib.asynccontextmanager
+async def local_server(first_line: bytes | None):
+    """A TCP server on 127.0.0.1 that sends `first_line` (or nothing) and records the reply."""
+    received = bytearray()
+
+    async def handle(reader, writer):
+        if first_line is not None:
+            writer.write(first_line)
+            await writer.drain()
+        with contextlib.suppress(TimeoutError, ConnectionError):
+            received.extend(await asyncio.wait_for(reader.read(200), 1.0))
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    async with server:
+        yield server.sockets[0].getsockname()[1], received
+
+
+@pytest.mark.anyio
+async def test_probe_reads_the_greeting_and_names_itself():
+    async with local_server(b"SSH-2.0-OpenSSH_8.7\r\n") as (port, received):
+        greeting = await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
+        await asyncio.sleep(0.05)  # let the server read the reply
+    assert greeting == "SSH-2.0-OpenSSH_8.7"
+    assert bytes(received) == hs.PROBE_IDENTIFICATION
+
+
+@pytest.mark.anyio
+async def test_probe_refuses_a_server_that_is_not_ssh():
+    async with local_server(b"HTTP/1.1 400 Bad Request\r\n") as (port, received):
+        with pytest.raises(SshProbeError, match="not with an SSH greeting"):
+            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
+    assert bytes(received) == b""  # nothing sent to a non-SSH server
+
+
+@pytest.mark.anyio
+async def test_probe_refuses_an_overlong_first_line():
+    async with local_server(b"SSH-" + b"x" * 400 + b"\r\n") as (port, _):
+        with pytest.raises(SshProbeError, match="too long"):
+            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
+
+
+@pytest.mark.anyio
+async def test_probe_times_out_on_a_silent_server():
+    async with local_server(None) as (port, _):
+        with pytest.raises(TimeoutError):
+            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=0.2)
+
+
+@pytest.mark.anyio
+async def test_probe_reports_a_refused_port():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]  # closed again on exit: nothing listens there
+    # A generous timeout: Windows retries the SYN and refuses only after ~2 s.
+    with pytest.raises(ConnectionRefusedError):
+        await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=10.0)

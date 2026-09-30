@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
-import type { HpcStatusView } from "@/lib/hpc-status";
+import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { UserPublicWithConfig } from "@/lib/user";
 
 const { fetchCurrentUserWithConfigMock, updateCurrentUserMock } = vi.hoisted(() => ({
@@ -54,7 +54,11 @@ function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConf
 
 function statusView(): HpcStatusView {
   const ok = { ok: true, reason: null, message: "ok" };
-  const entry = (cluster: "frontier" | "odo" | "perlmutter", state: "ready" | "not_connected") => ({
+  const entry = (
+    cluster: HpcCluster,
+    state: "ready" | "not_connected",
+    checks: Partial<HpcClusterStatus["checks"]> = {},
+  ) => ({
     cluster,
     state,
     rechecking: false,
@@ -62,11 +66,17 @@ function statusView(): HpcStatusView {
       cluster,
       state,
       checked_at: "2026-09-25T15:00:00Z",
-      checks: { facility: ok, credential: ok, globus: null },
+      checks: { facility: ok, credential: ok, globus: null, ...checks },
     },
   });
+  const luxEntry = entry("lux", "ready", { credential: { ...ok, project: "stf218" } });
   return {
-    clusters: [entry("frontier", "ready"), entry("odo", "ready"), entry("perlmutter", "not_connected")],
+    clusters: [
+      entry("frontier", "ready"),
+      entry("odo", "ready"),
+      entry("perlmutter", "not_connected"),
+      luxEntry,
+    ],
     lastSuccessAt: 0,
     failing: false,
     unavailable: false,
@@ -201,5 +211,29 @@ describe("UserSettingsModal saving", () => {
     expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("UserSettingsModal: Lux", () => {
+  it("opened from the Lux card, shows only the sidebar switch", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    const lux = await section("Lux");
+    expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
+    expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
+    expect(header("Lux")).toHaveTextContent("Ready");
+    expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
+    expect(lux.querySelectorAll("input:not([role=switch]), textarea, a")).toHaveLength(0);
+    expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
+  });
+
+  it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.click(await screen.findByRole("switch", { name: "Show Lux in sidebar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] });
+    expect(recheckMock).not.toHaveBeenCalled();
+    expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 });

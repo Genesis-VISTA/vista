@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from .seed import seed_db
+from .seed import seed_db, sync_bundled_skills
 
 
 @functools.cache
@@ -138,6 +138,8 @@ async def init_db() -> None:
         await conn.run_sync(_add_missing_columns)
 
     await seed_db(engine)
+    # seed_db is first-run only; this picks up skills bundled since then.
+    await sync_bundled_skills(engine)
 
 
 EngineDep = A[AsyncEngine, Depends(get_engine)]

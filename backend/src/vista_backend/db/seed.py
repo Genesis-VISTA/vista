@@ -11,7 +11,13 @@ from sqlmodel import select, func
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
-from .schemas import KnowledgeBaseTable, ProjectMemberTable, ProjectTable, UserTable
+from .schemas import (
+    KnowledgeBaseTable,
+    ProjectMemberTable,
+    ProjectTable,
+    SkillTable,
+    UserTable,
+)
 from ..agents.skills import read_skill
 from ..services._helpers import new_storage_path
 from ..services.skills import build_skill_row
@@ -21,6 +27,20 @@ from ..utils.misc import now_iso
 SYSTEM_PROMPTS = Path(__file__).parent / "system_prompts"
 SKILLS_SRC = Path(__file__).parent / "skills"
 REPO_ROOT = Path(__file__).parents[4]
+
+SKILL_ASSETS = {
+    "model-fine-tuning": {
+        "assets/Molten_Salt_Thermophysical_Properties.csv": "mstdb/Molten_Salt_Thermophysical_Properties.csv"
+    },
+    "salt-analysis": {
+        "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json"
+    },
+    "salt-prediction": {
+        "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json",
+        "assets/elemental-properties.csv": "mstdb/elemental-properties.csv",
+    },
+}
+""" Bundled skills whose assets come from vista-data: `{skill: {dest in skill: src in vista-data}}`. """
 
 
 class GitlabRepoClient:
@@ -294,21 +314,9 @@ async def seed_db(engine: AsyncEngine) -> None:
             )
             await _build_knowledge_base(molten_salt_kb_dir)
 
-        SKILL_ASSETS = {
-            "model-fine-tuning": {
-                "assets/Molten_Salt_Thermophysical_Properties.csv": "mstdb/Molten_Salt_Thermophysical_Properties.csv"
-            },
-            "salt-analysis": {
-                "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json"
-            },
-            "salt-prediction": {
-                "assets/Molten_Salt_Thermophysical_Properties.json": "mstdb/Molten_Salt_Thermophysical_Properties.json",
-                "assets/elemental-properties.csv": "mstdb/elemental-properties.csv",
-            },
-        }
         skipped_skills = set()
 
-        for src in sorted(p for p in SKILLS_SRC.iterdir() if p.is_dir()):
+        for src in _bundled_skill_dirs():
             path = new_storage_path()
             if vista_data_client:
                 for asset_dest, asset_src in SKILL_ASSETS.get(src.name, {}).items():
@@ -445,3 +453,63 @@ async def seed_db(engine: AsyncEngine) -> None:
             )
 
         await session.commit()
+
+
+def _bundled_skill_dirs() -> list[Path]:
+    """
+    The bundled skill folders. A folder without a SKILL.md -- e.g. one left
+    behind holding nothing but `__pycache__` after its skill was moved -- is not
+    a skill, and is skipped rather than failing startup.
+    """
+    return sorted(p for p in SKILLS_SRC.iterdir() if (p / "SKILL.md").is_file())
+
+
+async def sync_bundled_skills(engine: AsyncEngine) -> list[str]:
+    """
+    Register bundled skills that are missing from the skill library, on every
+    startup. Returns the names added.
+
+    `seed_db` runs once, on an empty database, so without this a skill bundled
+    after a deployment was first seeded would never reach its library. Additive
+    only: a skill already in the library (by name) is left exactly as it is --
+    including any edits made to it since -- and no project is changed, so a new
+    skill shows up in the library for projects to opt in to, not in any project.
+
+    Skills that need vista-data assets (`SKILL_ASSETS`) are left to `seed_db`,
+    which knows how to fetch them.
+
+    A bundled skill deleted from the library comes back on the next startup;
+    there is no record of the deletion to tell it apart from a skill that was
+    never registered.
+    """
+    async with AsyncSession(engine) as session:
+        existing = set((await session.exec(select(SkillTable.name))).all())
+        added: list[str] = []
+        for src in _bundled_skill_dirs():
+            if src.name in existing or src.name in SKILL_ASSETS:
+                continue
+            skill = read_skill(src)
+            if skill.name in existing:
+                continue
+            path = new_storage_path()
+            shutil.copytree(
+                src,
+                settings.data_dir / path,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            session.add(
+                build_skill_row(
+                    read_skill(settings.data_dir / path),
+                    path=path,
+                    author=skill.author or "VISTA Team",
+                    repo_url=None,
+                    is_public=True,
+                    now=now_iso(),
+                )
+            )
+            added.append(skill.name)
+        if added:
+            await session.commit()
+            logging.info(f"Registered bundled skills new since the last seed: {added}")
+        return added

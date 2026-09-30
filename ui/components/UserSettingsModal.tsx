@@ -122,6 +122,7 @@ const CREDENTIAL_FIELDS: Record<HpcCluster, Array<keyof UserSelfUpdate>> = {
   odo: ["odo_s3m_token"],
   frontier: ["frontier_s3m_token"],
   perlmutter: ["nersc_iri_token"],
+  lux: [], // nothing stored: a researcher signs in from a chat
 };
 
 function UserSettingsForm({
@@ -537,7 +538,8 @@ function ClusterSection({
             <span className="user-settings-switch-text">
               <span className="user-settings-switch-label">Show in sidebar</span>
               <span className="user-settings-hint">
-                Hiding it also stops VISTA checking {title}. Its credentials are kept.
+                Hiding it also stops VISTA checking {title}.
+                {CREDENTIAL_FIELDS[cluster].length > 0 && " Its credentials are kept."}
               </span>
             </span>
             <button

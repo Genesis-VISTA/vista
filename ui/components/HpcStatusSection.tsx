@@ -45,9 +45,10 @@ const SUBTITLES: Record<HpcCluster, string> = {
   frontier: "OLCF · moderate enclave · jobs via AmSC IRI",
   odo: "OLCF · open enclave · jobs via AmSC IRI",
   perlmutter: "NERSC · jobs via NERSC IRI",
+  lux: "OLCF · Slurm over SSH",
 };
 
-const SHORT: Record<HpcCluster, string> = { frontier: "Fr", odo: "Od", perlmutter: "Pm" };
+const SHORT: Record<HpcCluster, string> = { frontier: "Fr", odo: "Od", perlmutter: "Pm", lux: "Lx" };
 
 /** A state's dot. Shape and color both vary by state; see globals.css. */
 export function HpcStatusDot({ state }: { state: HpcDisplayState }) {
@@ -80,7 +81,14 @@ function clock(iso: string): string {
 
 type Row = { ok: boolean | null; title: string; detail: string };
 
-function facilityRow(check: HpcCheck): Row {
+function facilityRow(cluster: HpcCluster, check: HpcCheck): Row {
+  // Lux is in no facility status feed; its check is whether the hub's SSH
+  // server answers, and a failure there is never a reported outage.
+  if (cluster === "lux") {
+    return check.ok
+      ? { ok: true, title: "Hub is reachable", detail: check.message }
+      : { ok: null, title: "Couldn't reach the hub", detail: check.message };
+  }
   if (check.ok) return { ok: true, title: "Facility is up", detail: check.message };
   if (check.reason === "degraded") {
     const incident = check.incident;
@@ -97,6 +105,11 @@ function facilityRow(check: HpcCheck): Row {
 }
 
 function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
+  if (cluster === "lux") {
+    // Nothing is stored to check: the row says how sign-in works.
+    const parts = [check.project ? `Project ${check.project}` : null, check.message].filter(Boolean);
+    return { ok: check.ok, title: "Sign in from a chat", detail: parts.join(" · ") };
+  }
   const kind = cluster === "perlmutter" ? "NERSC IRI token" : "S3M token";
   if (check.ok) {
     // Only S3M carries an expiry; nothing is said about any other credential's.
@@ -354,7 +367,7 @@ function HpcDetails({
   const title = HPC_CLUSTER_TITLES[cluster];
   const rows: Row[] = status
     ? [
-        facilityRow(status.checks.facility),
+        facilityRow(cluster, status.checks.facility),
         credentialRow(cluster, status.checks.credential, now),
         ...(status.checks.globus ? [globusRow(status.checks.globus)] : []),
       ]

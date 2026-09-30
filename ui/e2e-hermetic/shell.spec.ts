@@ -288,6 +288,30 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
   });
 
+  test("Lux is Ready from its hub, and its settings are only the sidebar switch", async ({ page }) => {
+    const stub = await installStub(page);
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await rail.getByRole("button", { name: "Lux: Ready" }).click();
+
+    const details = page.getByRole("dialog", { name: "Lux connection details" });
+    await expect(details).toContainText("Hub is reachable");
+    await expect(details).toContainText("Project stf218");
+    await expect(details).not.toContainText("Globus");
+    await details.getByRole("button", { name: "Recheck" }).click();
+    await expect
+      .poll(() => stub.requests())
+      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=lux");
+
+    await details.getByRole("button", { name: "Settings" }).click();
+    const settings = page.getByRole("dialog", { name: "User settings" });
+    await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-expanded", "true");
+    const lux = settings.getByRole("region", { name: "Lux" });
+    await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
+    await expect(lux.getByRole("textbox")).toHaveCount(0);
+    expect(await stub.unstubbed()).toEqual([]);
+  });
+
   test("a card's Settings link opens settings at that cluster only", async ({ page }) => {
     await installStub(page);
     await page.goto("/skills");
@@ -344,7 +368,7 @@ test.describe("HPC availability cards", () => {
 
   test("with every cluster hidden the section is gone", async ({ page }) => {
     await installStub(page, {
-      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["frontier", "odo", "perlmutter"] },
+      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["frontier", "odo", "perlmutter", "lux"] },
     });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });

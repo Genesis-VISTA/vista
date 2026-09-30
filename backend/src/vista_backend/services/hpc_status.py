@@ -19,6 +19,11 @@ from a bad one (see the hpc-cards change's design.md):
 - Globus: exchange both refresh tokens, then list the collection home. A lapsed
   High Assurance session survives the exchange and fails only the listing.
 
+Lux is the exception (see the lux-hpc-card change): it has no IRI service and
+no stored credential -- a researcher signs in with a PIN and RSA passcode when
+a chat first uses it. Its facility check is whether the hub's SSH server
+answers, and its credential check always passes, saying how sign-in works.
+
 The checks run here rather than as an MCP tool because the rail is global --
 it shows with no project open, and MCP tools are reachable only through a
 project's agent -- and because the agent has no reason to see a UI check.
@@ -27,8 +32,10 @@ project's agent -- and because the agent has no reason to see a UI check.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
+import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,7 +50,7 @@ from ..db.schemas import HpcCluster
 
 log = logging.getLogger(__name__)
 
-CLUSTERS: tuple[HpcCluster, ...] = ("frontier", "odo", "perlmutter")
+CLUSTERS: tuple[HpcCluster, ...] = ("frontier", "odo", "perlmutter", "lux")
 """ In the order the rail shows them. """
 
 HTTP_TIMEOUT = 5.0
@@ -59,6 +66,14 @@ RESULT_TTL = 60.0
 """ How long one researcher's result for one cluster is reused. """
 FACILITY_TTL = 60.0
 """ How long a facility's public status feed is reused, across researchers. """
+LUX_PROBE_MIN_INTERVAL = 10.0
+"""
+The Lux hub is probed at most this often, even for a fresh check: every probe
+is a pre-login SSH connection from the VISTA host, the same address the MCP
+server submits Lux jobs from, and sshd penalises bursts of those.
+"""
+LUX_PROBE_FAILURE_TTL = 10.0
+""" How long a failed hub probe is reused. Shorter than a success, so one dropped connection doesn't keep Lux grey for a minute. """
 INTROSPECT_TTL = 600.0
 """ A token's project does not change; matches the MCP server's introspection cache. """
 
@@ -66,7 +81,17 @@ _TITLES: dict[HpcCluster, str] = {
     "frontier": "Frontier",
     "odo": "Odo",
     "perlmutter": "Perlmutter",
+    "lux": "Lux",
 }
+
+SSH_PORT = 22
+PROBE_IDENTIFICATION = b"SSH-2.0-VISTA_status_probe\r\n"
+"""
+Sent back after the hub's greeting, so the hub logs a named client that hung
+up before key exchange rather than a silent connection -- the pattern scanners
+leave and fail2ban-style filters match.
+"""
+LUX_SIGN_IN = "Sign in with PIN + RSA passcode when a chat first uses Lux."
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +138,10 @@ class Check(BaseModel):
     http_status: int | None = None
     incident: Incident | None = None
     project: str | None = None
-    """ The S3M token's project, when it was learned. A project name, not a secret. """
+    """
+    The project the cluster's jobs run under: the S3M token's, once learned, or
+    Lux's configured one. A project name, not a secret.
+    """
     expected_project: str | None = None
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
@@ -126,7 +154,7 @@ class ClusterChecks(BaseModel):
     facility: Check
     credential: Check
     globus: Check | None = None
-    """ Odo and Frontier only; Perlmutter moves no files through Globus. """
+    """ Odo and Frontier only; Perlmutter and Lux move no files through Globus. """
 
 
 class ClusterStatus(BaseModel):
@@ -279,6 +307,67 @@ def globus_source(
 
 
 # ---------------------------------------------------------------------------
+# Lux
+# ---------------------------------------------------------------------------
+
+
+class SshProbeError(Exception):
+    """The host answered, but not as an SSH server."""
+
+
+class LuxProbe(Protocol):
+    async def __call__(self, host: str, *, timeout: float) -> str: ...
+
+
+async def probe_ssh_greeting(host: str, *, timeout: float, port: int = SSH_PORT) -> str:
+    """The SSH greeting `host` sends, e.g. `SSH-2.0-OpenSSH_8.7`.
+
+    Reads the server's first line, answers with `PROBE_IDENTIFICATION`, and
+    hangs up: no key exchange, no authentication. Raises `TimeoutError`,
+    `OSError` (DNS, refused, unreachable), or `SshProbeError`.
+    """
+
+    async def talk() -> str:
+        # RFC 4253 caps the identification line at 255 bytes; a longer first
+        # line overruns the reader's limit and is not an SSH server.
+        reader, writer = await asyncio.open_connection(host, port, limit=256)
+        try:
+            try:
+                line = await reader.readline()
+            except ValueError as error:
+                raise SshProbeError(
+                    "sent a first line too long for an SSH greeting"
+                ) from error
+            if not line:
+                raise SshProbeError("closed the connection without a greeting")
+            if not line.startswith(b"SSH-"):
+                raise SshProbeError("answered, but not with an SSH greeting")
+            writer.write(PROBE_IDENTIFICATION)
+            await writer.drain()
+            return line.decode("ascii", "replace").strip()
+        finally:
+            writer.close()
+            with contextlib.suppress(OSError):
+                await writer.wait_closed()
+
+    return await asyncio.wait_for(talk(), timeout)
+
+
+def _probe_failure(error: BaseException, timeout: float) -> str:
+    if isinstance(error, TimeoutError):
+        return f"did not answer within {timeout:g} s"
+    if isinstance(error, socket.gaierror):
+        return "could not be resolved"
+    if isinstance(error, ConnectionRefusedError):
+        return "refused the connection"
+    if isinstance(error, SshProbeError):
+        return str(error)
+    if isinstance(error, OSError):
+        return f"could not be reached ({error.strerror or type(error).__name__})"
+    return f"could not be checked ({type(error).__name__})"
+
+
+# ---------------------------------------------------------------------------
 # The service
 # ---------------------------------------------------------------------------
 
@@ -301,7 +390,7 @@ class HpcStatusService:
     """Runs the checks, with the caches that keep them cheap.
 
     Everything that reaches the network is injectable -- the HTTP transport,
-    the Globus probe, and the clock -- so the tests run with none.
+    the Globus and Lux probes, and the clock -- so the tests run with none.
     """
 
     def __init__(
@@ -310,12 +399,14 @@ class HpcStatusService:
         settings: HpcClusterSettings = hpc_settings,
         transport: httpx.AsyncBaseTransport | None = None,
         globus_probe: GlobusProbe = probe_globus,
+        lux_probe: LuxProbe = probe_ssh_greeting,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
         self._transport = transport
         self._globus_probe = globus_probe
+        self._lux_probe = lux_probe
         self._now = now
         self._monotonic = monotonic
         self._results: dict[
@@ -323,6 +414,8 @@ class HpcStatusService:
         ] = {}
         self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
         self._introspections: dict[str, tuple[float, dict]] = {}
+        self._ssh_probes: dict[str, tuple[float, Check]] = {}
+        self._ssh_inflight: dict[str, asyncio.Future[Check]] = {}
 
     async def status(
         self, user: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
@@ -356,7 +449,7 @@ class HpcStatusService:
             not fresh
             and cached is not None
             and cached[1] == fingerprint
-            and self._monotonic() - cached[0] < RESULT_TTL
+            and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
             return cached[2]
 
@@ -376,8 +469,17 @@ class HpcStatusService:
         self._results[key] = (self._monotonic(), fingerprint, result)
         return result
 
+    @staticmethod
+    def _result_ttl(result: ClusterStatus) -> float:
+        """A failed Lux hub probe is kept no longer per researcher than it is shared."""
+        if result.cluster == "lux" and not result.checks.facility.ok:
+            return LUX_PROBE_FAILURE_TTL
+        return RESULT_TTL
+
     def _credential_fingerprint(self, user: Any, cluster: HpcCluster) -> str:
         """Changes whenever a credential this cluster's checks use changes."""
+        if cluster == "lux":
+            return _digest()  # no credential feeds Lux's checks
         if cluster == "perlmutter":
             return _digest(user.nersc_iri_token)
         s3m = user.odo_s3m_token if cluster == "odo" else user.frontier_s3m_token
@@ -467,6 +569,8 @@ class HpcStatusService:
     async def _facility(
         self, client: httpx.AsyncClient, cluster: HpcCluster, *, fresh: bool
     ) -> Check:
+        if cluster == "lux":
+            return await self._lux_facility(fresh=fresh)
         title = _TITLES[cluster]
         try:
             resources, incidents = await self._facility_feed(
@@ -503,6 +607,54 @@ class HpcStatusService:
                 incident=incident,
             )
         return Check(ok=True, message=f"The facility reports {title} up.")
+
+    async def _lux_facility(self, *, fresh: bool) -> Check:
+        """Whether the Lux hub's SSH server answers. Shared across researchers.
+
+        Every failure is `unreachable` (Couldn't verify), never `degraded`: a
+        probe that fails cannot tell Lux being down from a network that does
+        not reach ORNL. Concurrent callers share one probe, and even a fresh
+        check reuses a probe younger than `LUX_PROBE_MIN_INTERVAL`.
+        """
+        hosts = self._settings.lux_ssh_hosts
+        if not hosts:
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message="No Lux hub is configured (VISTA_MCP_LUX_SSH_HOSTS is empty).",
+            )
+        host = hosts[0]
+        cached = self._ssh_probes.get(host)
+        if cached:
+            age = self._monotonic() - cached[0]
+            ttl = FACILITY_TTL if cached[1].ok else LUX_PROBE_FAILURE_TTL
+            if age < LUX_PROBE_MIN_INTERVAL or (not fresh and age < ttl):
+                return cached[1]
+        inflight = self._ssh_inflight.get(host)
+        if inflight is None:
+            inflight = asyncio.ensure_future(self._probe_lux_hub(host))
+            self._ssh_inflight[host] = inflight
+            inflight.add_done_callback(lambda _: self._ssh_inflight.pop(host, None))
+        # Shielded: one caller giving up must not cancel the others' probe.
+        return await asyncio.shield(inflight)
+
+    async def _probe_lux_hub(self, host: str) -> Check:
+        try:
+            greeting = await self._lux_probe(host, timeout=HTTP_TIMEOUT)
+        except Exception as error:  # noqa: BLE001 -- any failure is "couldn't tell", never a 500
+            log.info("Lux hub %s probe failed: %s", host, type(error).__name__)
+            check = Check(
+                ok=False,
+                reason="unreachable",
+                message=f"The Lux hub {host} {_probe_failure(error, HTTP_TIMEOUT)}.",
+            )
+        else:
+            check = Check(
+                ok=True,
+                message=f"The Lux hub {host} answered ({greeting}).",
+            )
+        self._ssh_probes[host] = (self._monotonic(), check)
+        return check
 
     # --- credential --------------------------------------------------------
 
@@ -543,6 +695,11 @@ class HpcStatusService:
     async def _credential(
         self, client: httpx.AsyncClient, cluster: HpcCluster, user: Any
     ) -> Check:
+        if cluster == "lux":
+            # Nothing is stored to check; see LUX_SIGN_IN.
+            return Check(
+                ok=True, message=LUX_SIGN_IN, project=self._settings.lux_account
+            )
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
         token = {

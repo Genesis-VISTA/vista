@@ -131,7 +131,14 @@ async def test_hidden_clusters_round_trip(session, alice):
 
 def test_unknown_cluster_is_rejected():
     with pytest.raises(ValueError, match="hpc_hidden_clusters"):
-        UserSelfUpdate.model_validate({"hpc_hidden_clusters": ["lux"]})
+        UserSelfUpdate.model_validate({"hpc_hidden_clusters": ["polaris"]})
+
+
+@pytest.mark.anyio
+async def test_lux_can_be_hidden(session, alice):
+    row = await session.get(UserTable, alice.id)
+    saved = await update_me(UserSelfUpdate(hpc_hidden_clusters=["lux"]), session, row)
+    assert saved.hpc_hidden_clusters == ["lux"]
 
 
 def test_existing_database_gains_the_hidden_clusters_column(tmp_path):

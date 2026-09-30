@@ -3,6 +3,8 @@ MCP for remote HPC job submission. Dispatches between:
 - Odo (OLCF, open enclave) via the AmSC IRI API (`lib/iri.py`) + Globus file ops (`lib/globus.py`)
 - Frontier (OLCF, moderate enclave) via the AmSC IRI API + Globus file ops
 - Perlmutter (NERSC) via the NERSC IRI API and amscrot SDK (`lib/iri.py`)
+- Lux (OLCF) via `sbatch` over SSH (`lib/slurm_ssh.py`) -- it has no IRI service. The
+  researcher logs in through the hub with their own passcodes, once per chat session.
 
 The OLCF file ops are HTTPS `GET`/`PUT` straight against the cluster's own
 Globus collection, with directory listing and `mkdir` still on the Transfer API
@@ -28,13 +30,15 @@ from .lib.globus import (
     GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
 )
 from .lib.olcf_token import require_s3m_project
+from .lib import slurm_ssh
+from .lib.ssh import get_ssh_conn_mcp_elicitation
 from .lib.user_config import UserConfig, get_vista_meta
-from .lib.misc import parse_time_limit, validate_job_id
+from .lib.misc import get_tool_call_string, parse_time_limit, validate_job_id
 from .metrics import stage as metrics_stage
 from . import dry_run, faults
 
 
-Cluster = Literal["odo", "perlmutter", "frontier"]
+Cluster = Literal["odo", "perlmutter", "frontier", "lux"]
 """ Supported HPC clusters. """
 
 PERLMUTTER_JOB_SCRIPT = "job.perlmutter.slurm"
@@ -46,6 +50,10 @@ FRONTIER_SETUP_SCRIPT = "setup_frontier.sh"
 
 ODO_JOB_SCRIPT = "job.odo.slurm"
 ODO_SETUP_SCRIPT = "setup_odo.sh"
+
+LUX_JOB_SCRIPT = "job.lux.slurm"
+LUX_SETUP_SCRIPT = "setup_lux.sh"
+""" Unlike the IRI clusters' setup scripts, this runs on the Lux LOGIN node, before sbatch. """
 
 # Orchestration metadata files Vista uses to drive submission — never uploaded to remote
 # RUN_DIR (each cluster-dispatcher inlines them differently into the JobSpec).
@@ -60,6 +68,8 @@ _HPC_JOB_METADATA_FILES = {
     PERLMUTTER_SETUP_SCRIPT,
     FRONTIER_JOB_SCRIPT,
     FRONTIER_SETUP_SCRIPT,
+    LUX_JOB_SCRIPT,
+    LUX_SETUP_SCRIPT,
 }
 
 
@@ -71,6 +81,8 @@ class ClusterDefaults(BaseModel):
     odo: IriDefaults | None = None
     perlmutter: IriDefaults | None = None
     frontier: IriDefaults | None = None
+    lux: IriDefaults | None = None
+    """ Same shape as the IRI sections; rendered into `#SBATCH` directives instead of a JobSpec. """
 
 
 @dataclasses.dataclass
@@ -80,7 +92,7 @@ class JobInfo:
     cluster_defaults: ClusterDefaults
 
 
-_CLUSTER_JOB_SCRIPTS = (ODO_JOB_SCRIPT, PERLMUTTER_JOB_SCRIPT, FRONTIER_JOB_SCRIPT)
+_CLUSTER_JOB_SCRIPTS = (ODO_JOB_SCRIPT, PERLMUTTER_JOB_SCRIPT, FRONTIER_JOB_SCRIPT, LUX_JOB_SCRIPT)
 
 
 def get_available_jobs() -> dict[str, JobInfo]:
@@ -166,6 +178,10 @@ class SubmittedJob:
     way, both of them argparse rejecting invented flags with exit status 2.
     """
     output_dir: str | None = None
+    # OLCF project the job was charged to, when a job overrode the cluster's
+    # default (`account` in cluster_defaults.json). Status and outputs verify
+    # the S3M token against THAT project, so it is remembered here.
+    account: str | None = None
 
 
 # Durable registry of job_id -> SubmittedJob. Used by get_hpc_job_status /
@@ -191,6 +207,7 @@ def _serialize_jobs(jobs: dict[str, SubmittedJob]) -> dict[str, dict]:
             "log_path": s.log_path,
             "err_path": s.err_path,
             "output_dir": s.output_dir,
+            "account": s.account,
         }
         for jid, s in jobs.items()
     }
@@ -206,6 +223,7 @@ def _deserialize_jobs(data: dict) -> dict[str, SubmittedJob]:
             log_path=rec.get("log_path"),
             err_path=rec.get("err_path"),
             output_dir=rec.get("output_dir"),
+            account=rec.get("account"),
         )
     return jobs
 
@@ -247,6 +265,12 @@ def _record_submitted_job(job_id: str, submitted: SubmittedJob) -> None:
 
 # Rehydrate from disk at import so a restarted server remembers prior submissions.
 _submitted_jobs.update(_load_submitted_jobs())
+
+
+def _submitted_account(job_id: str) -> str | None:
+    """ The OLCF project a job overrode its cluster's default with, if any. """
+    submitted = _submitted_jobs.get(job_id)
+    return submitted.account if submitted is not None else None
 
 
 def _default_cluster(cfg: UserConfig) -> Cluster:
@@ -300,10 +324,11 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig, job_id: str | Non
 
         Args:
             job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
-            cluster: Which cluster to submit to ("odo", "frontier", or "perlmutter"). If only
-                one cluster is configured, this can be omitted. Odo and Frontier use OLCF's
+            cluster: Which cluster to submit to ("odo", "frontier", "perlmutter", or "lux"). If
+                only one cluster is configured, this can be omitted. Odo and Frontier use OLCF's
                 IRI service (compute) plus Globus (files), each with its own per-enclave S3M
-                token; Perlmutter uses NERSC IRI.
+                token; Perlmutter uses NERSC IRI. Lux has no token and must always be named
+                explicitly; it uses SSH, and the user is prompted to log in (once per session).
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
@@ -341,6 +366,7 @@ async def submit_hpc_job(
         "odo": "odo",
         "frontier": "frontier",
         "perlmutter": f"{settings.nersc_machine} (NERSC)",
+        "lux": "lux",
     }[cluster]
 
     # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a synthetic
@@ -387,6 +413,19 @@ async def submit_hpc_job(
                     output_dir=output_dir,
                 ),
             )
+        elif cluster == "lux":
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_lux_job(
+                ctx, job, node_count, duration_int, script_args,
+            )
+            _record_submitted_job(
+                job_id,
+                SubmittedJob(
+                    cluster="lux",
+                    log_path=log_path,
+                    err_path=err_path,
+                    output_dir=output_dir,
+                ),
+            )
         else:  # "frontier"
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
                 cfg, job, node_count, duration_int, script_args,
@@ -398,6 +437,7 @@ async def submit_hpc_job(
                     log_path=log_path,
                     err_path=err_path,
                     output_dir=output_dir,
+                    account=AVAILABLE_JOBS[job].cluster_defaults.frontier.account,
                 ),
             )
 
@@ -773,7 +813,9 @@ async def _submit_frontier_job(
     the deployment-wide Globus refresh token grants access to the OLCF DTN.
 
     The Slurm account is the global `settings.frontier_account` (one shared
-    OLCF project for all Vista users); the user's S3M token must belong to it.
+    OLCF project for all Vista users) unless the job's cluster_defaults.json
+    names its own `account` (and `remote_dir`); the user's S3M token must
+    belong to whichever applies.
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
@@ -790,12 +832,15 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    await _require_olcf_access(cfg, "frontier")
-    iri_client = await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
+    account = defaults.account or settings.frontier_account
+    s3m_token = await _require_olcf_access(cfg, "frontier", defaults.account)
+    iri_client = await create_olcf_iri_client(
+        iri_token=s3m_token or cfg.require_s3m_token("frontier"),
+    )
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
-    base = settings.frontier_remote_dir.rstrip('/')
+    base = (defaults.remote_dir or settings.frontier_remote_dir).rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
     src_dir = f"{base}/{job}/src"
@@ -868,6 +913,8 @@ async def _submit_frontier_job(
     iri_env = {
         "RUN_DIR_Frontier": src_dir,
         "FORGE_MODEL_Frontier": f"{base}/{job}/model",
+        "VISTA_REMOTE_BASE": base,
+        "VISTA_JOB_DIR": f"{base}/{job}",
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
 
@@ -897,7 +944,7 @@ async def _submit_frontier_job(
         "attributes": {
             "resource_id": iri_client.compute_resource_id,
             "queue_name": defaults.iri.queue_name,
-            "account": settings.frontier_account,
+            "account": account,
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
@@ -924,6 +971,173 @@ async def _submit_frontier_job(
         nodes,
         duration,
     )
+
+
+async def _lux_conn(ctx: Context, tool: str, **call_args):
+    """
+    The researcher's SSH connection to a Lux login node, through the hub. Cached
+    per chat session by `get_ssh_conn_mcp_elicitation`, so only the first Lux
+    call in a session asks for passcodes; `tool`/`call_args` label that prompt.
+    """
+    return await get_ssh_conn_mcp_elicitation(
+        ctx,
+        message=get_tool_call_string(tool, cluster="lux", **call_args),
+        host=list(settings.lux_ssh_hosts),
+    )
+
+
+def _lux_exports(env: dict[str, str]) -> str:
+    return "\n".join(f"export {k}={shlex.quote(str(v))}" for k, v in env.items())
+
+
+def _lux_proxy_env() -> dict[str, str]:
+    if not settings.lux_proxy:
+        return {}
+    return {
+        "https_proxy": settings.lux_proxy,
+        "http_proxy": settings.lux_proxy,
+        "no_proxy": "localhost,127.0.0.1,0.0.0.0",
+    }
+
+
+async def _submit_lux_job(
+    ctx: Context, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+) -> tuple[str, str, str, int, int]:
+    """
+    Lux dispatch: plain Slurm over SSH, since Lux has no IRI service.
+
+    Same layout and job-script contract as Frontier (Lux mounts the same Orion
+    Lustre), so a job's `job.lux.slurm` sees `VISTA_OUT`, `RUN_DIR_Lux`, the
+    proxy, and its `cluster_defaults.json` environment. The differences:
+
+    - Jobs run as the researcher (their SSH login), not a project service user,
+      so there is no S3M introspection and no setgid dance on `lux_remote_dir`.
+    - Sources go up over SFTP on the same connection instead of Globus.
+    - `setup_lux.sh`, if present, runs on the LOGIN node before `sbatch`, where
+      the network (via the proxy) is: it is the place to clone or update code.
+      A failure there is a tool error at submit time, not a failed job later.
+    - Resources become `#SBATCH` directives; the job body goes to `sbatch` on
+      stdin, so nothing but outputs is written per submission.
+
+    Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
+    """
+    job_info = AVAILABLE_JOBS[job]
+    defaults = job_info.cluster_defaults.lux
+    if defaults is None:
+        raise ValueError(f"Job '{job}' has no \"lux\" section in cluster_defaults.json")
+
+    local_job_dir = settings.local_hpc_jobs_dir / job
+    job_script_path = local_job_dir / LUX_JOB_SCRIPT
+    if not job_script_path.exists():
+        raise ValueError(
+            f"Job '{job}' has no Lux script at {job_script_path}. "
+            f"Add a {LUX_JOB_SCRIPT} to enable Lux submission."
+        )
+
+    nodes = node_count or defaults.resources.node_count or 1
+    duration = duration_int or defaults.duration
+
+    conn = await _lux_conn(
+        ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
+    )
+
+    base = (defaults.remote_dir or settings.lux_remote_dir).rstrip('/')
+    session_dir = f"{base}/{settings.session_id}"
+    out_dir = f"{session_dir}/out"
+    src_dir = f"{base}/{job}/src"
+
+    await slurm_ssh.makedirs(conn, out_dir)
+    await _sync_job_sources_ssh(conn, job, src_dir)
+
+    job_env = {
+        "RUN_DIR_Lux": src_dir,
+        "VISTA_REMOTE_BASE": base,
+        "VISTA_JOB_DIR": f"{base}/{job}",
+        **defaults.iri.environment,  # user-supplied JSON entries win
+    }
+
+    setup_script_path = local_job_dir / LUX_SETUP_SCRIPT
+    if setup_script_path.exists():
+        setup_cmd = "\n".join([
+            _lux_exports({**_lux_proxy_env(), **job_env}),
+            setup_script_path.read_text(encoding="utf-8"),
+        ])
+        result = await slurm_ssh.run(conn, setup_cmd, login_shell=True)
+        if result.exit_status != 0:
+            tail = "\n".join(result.output.splitlines()[-40:])
+            raise ToolError(f"{LUX_SETUP_SCRIPT} failed on the Lux login node (exit {result.exit_status}):\n{tail}")
+        logging.info(f"{LUX_SETUP_SCRIPT} for {job} OK:\n{result.output[-2000:]}")
+
+    body_lines = [
+        _lux_exports(job_env),
+        f'export VISTA_OUT={shlex.quote(out_dir)}/"$SLURM_JOB_ID"',
+        'mkdir -p "$VISTA_OUT"',
+    ]
+    if _lux_proxy_env():
+        body_lines.append(_lux_exports(_lux_proxy_env()))
+    job_cmd_args = shlex.join(shlex.split(script_args or ""))
+    if job_cmd_args:
+        body_lines.append(f"set -- {job_cmd_args}")
+    body_lines.append(job_script_path.read_text(encoding="utf-8"))
+
+    stdout_template = f"{out_dir}/log-%j.out"
+    stderr_template = f"{out_dir}/log-%j.err"
+    script = slurm_ssh.render_batch_script(
+        job_name=f"vista-{job}",
+        account=defaults.account or settings.lux_account,
+        node_count=nodes,
+        duration_s=duration,
+        stdout_path=stdout_template,
+        stderr_path=stderr_template,
+        workdir=session_dir,
+        body="\n".join(body_lines) + "\n",
+        # queue_name has an IRI-side default ("regular", Perlmutter's QOS); on Lux
+        # only a queue the job's JSON names explicitly is passed to Slurm.
+        queue=defaults.iri.queue_name if "queue_name" in defaults.iri.model_fields_set else None,
+        constraint=defaults.iri.constraint,
+        exclusive=bool(defaults.resources.exclusive_node_use),
+        ntasks_per_node=defaults.resources.processes_per_node,
+        gpus_per_node=defaults.resources.gpus_per_node,
+    )
+    try:
+        job_id = await slurm_ssh.sbatch(conn, script)
+    except slurm_ssh.SlurmSshError as e:
+        raise ToolError(str(e)) from e
+    logging.info(f"Submitted job {job_id} via sbatch to lux")
+    return (
+        job_id,
+        stdout_template.replace("%j", job_id),
+        stderr_template.replace("%j", job_id),
+        f"{out_dir}/{job_id}",
+        nodes,
+        duration,
+    )
+
+
+async def _sync_job_sources_ssh(conn, job: str, src_dir: str) -> None:
+    """
+    `_sync_job_sources` for an SSH cluster: the same upload set, and the same
+    rule for skipping it (every file already there at its full length -- see
+    the reasoning there), moved over SFTP instead of Globus.
+    """
+    local_job_dir = settings.local_hpc_jobs_dir / job
+    sources = [
+        f for f in sorted(local_job_dir.iterdir())
+        if f.is_file() and not f.name.startswith(".")
+        and f.name not in _HPC_JOB_METADATA_FILES
+    ]
+    if not sources:
+        logging.warning(f"no source files to upload from {local_job_dir} (only metadata?)")
+        return
+
+    existing = await slurm_ssh.list_file_sizes(conn, src_dir)
+    stale = [f for f in sources if existing.get(f.name) != f.stat().st_size]
+    if not stale:
+        logging.debug(f"src dir {src_dir} already holds every source; skipping upload")
+        return
+    await slurm_ssh.makedirs(conn, src_dir)
+    await slurm_ssh.upload_files(conn, stale, src_dir)
+    logging.info(f"Uploaded {len(stale)} source file(s) to {src_dir}: {[f.name for f in stale]}")
 
 
 async def _sync_job_sources(
@@ -1077,11 +1291,17 @@ def _read_log_tail(path: Path) -> str:
     return "\n".join(lines[-_LOG_TAIL_LINES:])
 
 
-async def _create_olcf_iri_for(cluster: Cluster, cfg: UserConfig) -> IriClient:
-    """ IRI client for an OLCF cluster: "odo" (open enclave) or "frontier" (moderate). """
+async def _create_olcf_iri_for(
+    cluster: Cluster, cfg: UserConfig, s3m_token: str | None = None,
+) -> IriClient:
+    """
+    IRI client for an OLCF cluster: "odo" (open enclave) or "frontier" (moderate).
+    `s3m_token` is the token `_require_olcf_access` verified for the job's
+    project; without one, the user's token for the cluster.
+    """
     if cluster == "odo":
-        return await create_odo_iri_client(iri_token=cfg.require_s3m_token("odo"))
-    return await create_olcf_iri_client(iri_token=cfg.require_s3m_token("frontier"))
+        return await create_odo_iri_client(iri_token=s3m_token or cfg.require_s3m_token("odo"))
+    return await create_olcf_iri_client(iri_token=s3m_token or cfg.require_s3m_token("frontier"))
 
 
 def _olcf_collection_id(cluster: Cluster) -> str:
@@ -1091,21 +1311,26 @@ def _olcf_collection_id(cluster: Cluster) -> str:
     return settings.frontier_globus_collection_id
 
 
-async def _require_olcf_access(cfg: UserConfig, cluster: Cluster) -> None:
+async def _require_olcf_access(
+    cfg: UserConfig, cluster: Cluster, account: str | None = None,
+) -> str:
     """
-    Verify the user's S3M token belongs to the cluster's OLCF project before
-    any file op. A researcher who has not connected their own Globus account
-    falls back to the deployment's shared identity, so this introspection is
-    what authorizes them — it must guard every path that touches Globus,
-    including `_get_olcf_job_outputs`, which never calls IRI.
+    Verify the user's S3M token belongs to the job's OLCF project (`account`,
+    default the cluster's) before any file op, and return the token. A
+    researcher who has not connected their own Globus account falls back to the
+    deployment's shared identity, so this introspection is what authorizes them
+    — it must guard every path that touches Globus, including
+    `_get_olcf_job_outputs`, which never calls IRI.
     """
     if cluster == "odo":
-        account, url = settings.odo_account, settings.odo_introspect_url
+        default_account, url = settings.odo_account, settings.odo_introspect_url
     else:
-        account, url = settings.frontier_account, settings.frontier_introspect_url
+        default_account, url = settings.frontier_account, settings.frontier_introspect_url
+    token = cfg.require_s3m_token(cluster)
     await require_s3m_project(
-        cfg.require_s3m_token(cluster), account, cluster=cluster, introspect_url=url,
+        token, account or default_account, cluster=cluster, introspect_url=url,
     )
+    return token
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
@@ -1136,6 +1361,9 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
             return dry_run.status_text(job_id)
         if cluster == "perlmutter":
             return await _get_perlmutter_job_status(cfg, job_id)
+        if cluster == "lux":
+            host_output_dir = Path(meta.project_paths.require_output_dir())
+            return await _get_lux_job_status(ctx, host_output_dir, job_id)
         # Odo/Frontier accumulate the job's log on disk and tail it from there;
         # need the per-agent output dir from project_paths to know where it lands.
         host_output_dir = Path(meta.project_paths.require_output_dir())
@@ -1212,9 +1440,10 @@ async def _get_olcf_job_status(
     what comes back is the END of it — which is what a researcher watching a
     running or failed job is looking for.
     """
-    await _require_olcf_access(cfg, cluster)
+    account = _submitted_account(job_id)
+    s3m_token = await _require_olcf_access(cfg, cluster, account)
     remote_collection = _olcf_collection_id(cluster)
-    iri_client = await _create_olcf_iri_for(cluster, cfg)
+    iri_client = await _create_olcf_iri_for(cluster, cfg, s3m_token)
     status = await iri_client.get_job_status(job_id)
     state = status.get("state", "UNKNOWN").upper()
 
@@ -1382,6 +1611,93 @@ async def _get_olcf_job_status(
     ])
 
 
+async def _get_lux_job_status(ctx: Context, host_output_dir: Path, job_id: str) -> str:
+    """
+    Lux status over the cached SSH connection: `squeue`/`sacct` for the state
+    (reported in the same vocabulary as the IRI clusters, plus the raw Slurm
+    state), the log tailed incrementally over SFTP by the same
+    `_tail_remote_log` Odo/Frontier use, and `find` for the output listing.
+    """
+    conn = await _lux_conn(ctx, "get_hpc_job_status", job_id=job_id)
+    js = await slurm_ssh.job_state(conn, job_id)
+
+    metadata = {"JOB_ID": job_id, "CLUSTER": "lux", "STATE": js.state, "SLURM_STATE": js.slurm_state}
+    if js.exit_code is not None:
+        metadata["EXIT_CODE"] = js.exit_code
+    if js.reason:
+        metadata["REASON"] = js.reason
+    header = "\n".join(f"{k}={v}" for k, v in metadata.items())
+
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.log_path is None:
+        return "\n\n".join([
+            header,
+            "(no log path cached for this job; logs and outputs only available "
+            "for jobs submitted through this server)",
+        ])
+    if js.state in _PRE_RUN_STATES:
+        return "\n\n".join([
+            header,
+            "(job has not started yet; logs and outputs will appear once it runs)",
+        ])
+
+    logs = "(no logs yet)"
+    try:
+        logs = await _tail_remote_log(
+            slurm_ssh.SftpLogReader(conn),
+            collection_id="lux",
+            remote_path=submitted.log_path,
+            local_path=host_output_dir / job_id / Path(submitted.log_path).name,
+        )
+    except slurm_ssh.RemoteFileNotFound:
+        pass  # started, but Slurm has not opened the log yet
+    except Exception as e:
+        logs = f"(unable to fetch logs: {e})"
+
+    # stderr, tailed the same way (see `_get_olcf_job_status` for why it is
+    # fetched at all). A missing file is the good case: Slurm creates it only
+    # when something writes to it.
+    if submitted.err_path is None:
+        errs = "(no stderr path cached for this job)"
+    else:
+        errs = "(nothing on stderr)"
+        try:
+            errs = (
+                await _tail_remote_log(
+                    slurm_ssh.SftpLogReader(conn),
+                    collection_id="lux",
+                    remote_path=submitted.err_path,
+                    local_path=host_output_dir / job_id / Path(submitted.err_path).name,
+                )
+                or "(nothing on stderr)"
+            )
+        except slurm_ssh.RemoteFileNotFound:
+            pass
+        except Exception as e:
+            errs = f"(unable to fetch stderr: {e})"
+
+    listing = "(no output files yet)"
+    files: list[str] = []
+    if not submitted.output_dir:
+        listing = "(no output directory recorded for this job)"
+    else:
+        try:
+            files = await slurm_ssh.list_files(conn, submitted.output_dir)
+        except Exception as e:
+            logging.warning(f"could not list output dir {submitted.output_dir}: {e}")
+            listing = f"(output files unavailable: {e})"
+
+    return "\n\n".join([
+        header,
+        "--- LOGS ---",
+        logs.strip() if logs.strip() else "(no logs yet)",
+        "--- STDERR ---",
+        errs.strip() if errs.strip() else "(nothing on stderr)",
+        "--- OUTPUT FILES ---",
+        "\n".join(files) if files else listing,
+    ])
+
+
 def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
     """
     Walk an amscrot ls() result and return file paths relative to *root*.
@@ -1437,6 +1753,8 @@ async def get_hpc_job_outputs(
 
     if cluster == "perlmutter":
         return await _get_perlmutter_job_outputs(cfg, host_output_dir, job_id, files)
+    if cluster == "lux":
+        return await _get_lux_job_outputs(ctx, host_output_dir, job_id, files)
     return await _get_olcf_job_outputs(cfg, host_output_dir, job_id, files, cluster=cluster)
 
 
@@ -1512,7 +1830,7 @@ async def _get_olcf_job_outputs(
     re-fetched, so a follow-up `display_file` costs nothing. To force a fresh
     pull (e.g. a checkpoint updated mid-training), delete the local copy first.
     """
-    await _require_olcf_access(cfg, cluster)
+    await _require_olcf_access(cfg, cluster, _submitted_account(job_id))
     submitted = _submitted_jobs.get(job_id)
     if submitted is None or submitted.output_dir is None:
         raise ValueError(
@@ -1560,6 +1878,38 @@ async def _get_olcf_job_outputs(
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
 
 
+async def _get_lux_job_outputs(ctx: Context, host_output_dir: Path, job_id: str, files: list[str]) -> str:
+    """
+    Lux output retrieval over SFTP on the cached SSH connection. Same contract
+    as `_get_olcf_job_outputs`: binary-safe, no size cap, and files already held
+    locally are not fetched again.
+    """
+    submitted = _submitted_jobs.get(job_id)
+    if submitted is None or submitted.output_dir is None:
+        raise ValueError(
+            f"No output directory cached for job {job_id!r}. Output retrieval is only "
+            f"available for jobs submitted through this server."
+        )
+    local_out_dir = host_output_dir / job_id
+    sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
+    remote_out_dir = submitted.output_dir.rstrip("/")
+
+    wanted: list[tuple[str, Path]] = []
+    sandbox_paths: list[str] = []
+    for file in files:
+        local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
+        sandbox_paths.append(str(sandbox_path))
+        if not (local_path.exists() and local_path.stat().st_size > 0):
+            wanted.append((f"{remote_out_dir}/{file}", local_path))
+
+    if wanted:
+        conn = await _lux_conn(ctx, "get_hpc_job_outputs", job_id=job_id, files=files)
+        for remote_path, local_path in wanted:
+            await slurm_ssh.download_file(conn, remote_path, local_path)
+    logging.info(f"SFTP-fetched {len(wanted)} file(s); served {len(files) - len(wanted)} from local cache")
+    return "Downloaded files:\n" + "\n".join(sandbox_paths)
+
+
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
     """
@@ -1598,6 +1948,14 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
         return dry_run.cancel(job_id)
     cfg = get_vista_meta(ctx).user
     cluster = _resolve_cluster(cluster, cfg, job_id)
+    if cluster == "lux":
+        conn = await _lux_conn(ctx, "cancel_hpc_job", job_id=job_id)
+        try:
+            await slurm_ssh.scancel(conn, job_id)
+        except slurm_ssh.SlurmSshError as e:
+            raise ToolError(str(e)) from e
+        logging.info(f"Cancelled job {job_id} on lux")
+        return f"Cancellation requested for job {job_id} on lux."
     if cluster == "perlmutter":
         iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     else:  # "odo" / "frontier"

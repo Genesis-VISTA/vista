@@ -1,0 +1,9 @@
+{
+  "lux": {
+    "duration": 300,
+    "resources": {
+      "node_count": 1,
+      "exclusive_node_use": false
+    }
+  }
+}
