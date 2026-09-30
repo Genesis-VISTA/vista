@@ -2,8 +2,12 @@
 # as `vista.ps1`, with `vista.cmd` beside it for cmd and double-clicking. The
 # Windows counterpart of package_launcher.sh, step for step.
 #
-#   .\vista.ps1            first-run setup if needed, then start
+#   .\vista.ps1            first-run setup if needed, then start and open the window
 #   .\vista.ps1 --help     show this
+#
+# Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
+# console. VISTA is a desktop application: in a session that cannot show its
+# window, such as SSH, it says why and stops.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -235,6 +239,28 @@ $env:VISTA_DEV_MCP_DOCKERFILE = ' '
 $env:VISTA_DEV_MCP_IMAGE = 'vista-sandbox:latest'
 $LOGS = "$STATE\logs"
 
+# --- window ------------------------------------------------------------------
+
+# VISTA is a desktop application: there is no browser mode to fall back to, so a
+# session that cannot show the window is refused here, before anything is
+# started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
+# alone and is for the build's smoke test, which has no one to look at a window.
+# The manifest writes it with /, which cmd can misread as a switch.
+$WINDOW_EXE = if ($manifest.window) { $manifest.window.exe.Replace('/', '\') } else { '' }
+if ($env:VISTA_NO_WINDOW -ne '1') {
+  if (-not $WINDOW_EXE -or -not (Test-Path "$PACKAGE\$WINDOW_EXE")) {
+    Die 'this package has no VISTA window; rebuild it with build_local_package.sh.'
+  }
+  # A window started over SSH, or from a service, lands on a desktop no one
+  # is looking at, if on any.
+  if ($env:SSH_CONNECTION -or $env:SSH_CLIENT) {
+    Die 'cannot open the VISTA window: this is a remote shell session.'
+  }
+  if (-not [Environment]::UserInteractive) {
+    Die 'cannot open the VISTA window: this session has no desktop (is it running as a service?).'
+  }
+}
+
 # --- first-run setup ---------------------------------------------------------
 
 New-Item -ItemType Directory -Force -Path $STATE, $LOGS | Out-Null
@@ -268,8 +294,17 @@ if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
   $present = ($LASTEXITCODE -eq 0)
   if (-not $present) {
     Log 'First run: importing the code-execution sandbox image...'
-    & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE *>> "$LOGS\setup.log"
+    # msb reports progress on stderr, in UTF-8. Redirected with `*>>`,
+    # PowerShell 5.1 wraps every stderr line in a NativeCommandError record and
+    # decodes it with the OEM code page, so a successful import reads as a
+    # failure in setup.log. Stringified and decoded as UTF-8, the log holds
+    # msb's own words.
+    $consoleEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = $Utf8NoBom
+    & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE 2>&1 | ForEach-Object { "$_" } |
+      Out-File -Append -Encoding utf8 "$LOGS\setup.log"
     $loaded = ($LASTEXITCODE -eq 0)
+    [Console]::OutputEncoding = $consoleEncoding
   }
   $ErrorActionPreference = 'Stop'
   if (-not $present -and -not $loaded) { Die "could not import the sandbox image; see $LOGS\setup.log" }
@@ -371,7 +406,11 @@ function Start-VistaService([string]$Name, [string]$Command) {
   $proc = Start-Process -FilePath 'cmd.exe' `
     -ArgumentList '/d', '/s', '/c', "`"$Command > `"$LOGS\$Name.log`" 2>&1`"" `
     -WorkingDirectory $PACKAGE -WindowStyle Hidden -PassThru
+  # Read once now: without an open handle, .NET cannot report ExitCode after
+  # the process has gone, and the window's exit code says why it closed.
+  $null = $proc.Handle
   $script:services += $proc
+  return $proc
 }
 
 # taskkill /T takes each service's whole tree -- cmd, the service, and the
@@ -405,26 +444,52 @@ Log "VISTA $VERSION"
 Log "Starting services (logs in $LOGS)..."
 
 try {
-  Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
+  $null = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
     "--transport=http --port $MCP_PORT")
   Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server'
 
   if ($FIRST_RUN) {
     Log 'First run: preparing the database and corpus (this takes a minute)...'
   }
-  Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
+  $null = Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
   Wait-For "$env:VISTA_BACKEND_URL/openapi.json" 600 "$LOGS\backend.log" 'the backend'
 
   $env:PORT = $UI_PORT
   $env:HOSTNAME = '127.0.0.1'
-  Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
+  $null = Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
   Wait-For "http://127.0.0.1:$UI_PORT/" 120 "$LOGS\ui.log" 'the web interface'
 
-  Log ''
-  Log "VISTA is running at http://localhost:$UI_PORT"
-  Log 'Press Ctrl-C to stop.'
+  # 127.0.0.1, not localhost: it is what the UI binds, and localhost can
+  # resolve to ::1 first. It is also the origin the window's storage is kept
+  # under, so it has to be the same on every run.
+  $UI_URL = "http://127.0.0.1:$UI_PORT"
 
-  $services | Wait-Process
+  if ($env:VISTA_NO_WINDOW -eq '1') {
+    Log ''
+    Log "VISTA is running at $UI_URL (no window: VISTA_NO_WINDOW is set)"
+    Log 'Press Ctrl-C to stop.'
+    $services | Wait-Process
+    exit 0
+  }
+
+  # Under cmd like the services, so its output lands in window.log; cmd waits
+  # for it and passes its exit code on.
+  $window = Start-VistaService 'window' "`"$PACKAGE\$WINDOW_EXE`" --url=$UI_URL"
+  Log ''
+  Log "VISTA is open in its own window ($UI_URL)."
+  Log 'Close the window, or press Ctrl-C here, to stop.'
+
+  # The window closing or quitting ends the session; the finally below stops
+  # the rest. 75 is what it exits with when another VISTA window already holds
+  # the single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
+  $window.WaitForExit()
+  $windowStatus = $window.ExitCode
+  if ($windowStatus -eq 75) {
+    Die 'VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it.'
+  }
+  if ($windowStatus -ne 0) {
+    Die "the VISTA window stopped unexpectedly (exit $windowStatus); see $LOGS\window.log."
+  }
 } finally {
   Stop-VistaServices
 }
