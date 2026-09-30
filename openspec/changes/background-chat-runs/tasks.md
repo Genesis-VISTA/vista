@@ -24,14 +24,14 @@
 
 ## 4. Backend: API and lifespan
 
-- [ ] 4.1 Rework `POST /projects/{p}/agent/run` in `api/agent.py`:
+- [x] 4.1 Rework `POST /projects/{p}/agent/run` in `api/agent.py`:
   - streaming requires `chat_session_id`, starts through the registry and subscribes from seq 0, and answers 409 when busy;
   - non-streaming starts and awaits through the registry.
 
   Verify with the existing `backend/tests/test_agent_api.py`, updated for these changes.
-- [ ] 4.2 Add `GET …/chat-sessions/{id}/run/events?after=N` (SSE with `id:` set to seq; 204 when idle), `POST …/chat-sessions/{id}/run/stop`, and `GET /projects/{p}/chat-runs/status`. Verify with API tests.
-- [ ] 4.3 In `api/chat_sessions.py`, return `run_status`, `run_unseen` and `run_events` from the chat-session GET. `PUT` ignores `message_history` and accepts `ack_run` to clear the unseen flag and the events. Verify by updating `backend/tests/test_chat_sessions.py`.
-- [ ] 4.4 Lifespan in `api/api.py`: at startup, sweep `running` rows to `interrupted` and unseen. At shutdown, run `stop_all(reason="interrupted")` with a ~5 s bound before `project_agent_pool.clear()`. Verify with a test that starts the app over a DB holding a `running` row.
+- [x] 4.2 Add `GET …/chat-sessions/{id}/run/events?after=N` (SSE with `id:` set to seq; 204 when idle), `POST …/chat-sessions/{id}/run/stop`, and `GET /projects/{p}/chat-runs/status`. Verify with API tests.
+- [x] 4.3 In `api/chat_sessions.py`, return `run_status`, `run_unseen` and `run_events` from the chat-session GET. `PUT` ignores `message_history` and accepts `ack_run` to clear the unseen flag and the events. Verify by updating `backend/tests/test_chat_sessions.py`.
+- [x] 4.4 Lifespan in `api/api.py`: at startup, sweep `running` rows to `interrupted` and unseen. At shutdown, run `stop_all(reason="interrupted")` with a ~5 s bound before `project_agent_pool.clear()`. Verify with a test that starts the app over a DB holding a `running` row.
 
 ## 5. Backend: acceptance tests
 

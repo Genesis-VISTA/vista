@@ -783,8 +783,11 @@ class ChatSessionCreate(BaseModel):
 class ChatSessionUpdate(BaseModel):
     title: str | None = None
     message_history: list[dict[str, Any]] | None = None
+    """ Ignored: the backend is the only writer of model history. Accepted so a stale page does not error. """
     messages: list[ChatTranscriptMessage] | None = None
     latest_result: dict[str, Any] | None = None
+    ack_run: bool = False
+    """ The researcher has seen the last run: clear its unseen flag and its stored events. """
 
 
 class ChatSessionSummary(BaseModel):
@@ -802,6 +805,8 @@ class ChatSessionPublic(ChatSessionBase):
     project_id: uuid.UUID
     created_at: str
     updated_at: str
+    run_status: str = "idle"
+    """ `working`, `needs_you`, `done`, `failed`, `interrupted` or `idle`, live rather than as saved. """
 
 
 class ChatSessionTable(ChatSessionBase, table=True):

@@ -148,13 +148,7 @@ async def update_chat_session(
         user_id=user_id,
         chat_session_id=chat_session_id,
     )
-    if updates.message_history is not None:
-        normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(
-            updates.message_history
-        )
-        row.message_history = _MESSAGE_HISTORY_ADAPTER.dump_python(
-            normalized_history, mode="json"
-        )
+    # `updates.message_history` is ignored: only the backend writes model history.
     if updates.messages is not None:
         # Stored as JSON dicts; the model type is for read-time API serialization.
         row.messages = cast(
@@ -163,6 +157,10 @@ async def update_chat_session(
         )
     if updates.latest_result is not None:
         row.latest_result = updates.latest_result
+    if updates.ack_run and row.run_state != "running":
+        row.run_unseen = False
+        row.run_events = None
+        row.run_state = "idle"
     if updates.title is not None and updates.title.strip():
         row.title = updates.title.strip()
     row.updated_at = now_iso()

@@ -166,9 +166,13 @@ async def test_a_run_can_be_started_subscribed_to_and_awaited(env):
     await run.wait()
 
     assert seen[0].kind == "run_started"
-    assert json.loads(seen[0].data) == {"run_id": run.run_id, "user_prompt": "go"}
+    assert json.loads(seen[0].data) == {
+        "event_kind": "run_started",
+        "run_id": run.run_id,
+        "user_prompt": "go",
+    }
     assert seen[-1].kind == "run_finished"
-    assert json.loads(seen[-1].data) == {"state": "done"}
+    assert json.loads(seen[-1].data) == {"event_kind": "run_finished", "state": "done"}
     assert [e.seq for e in seen] == list(range(1, len(seen) + 1))
     assert env.registry.get(row.id) is None, "a finished run leaves the registry"
 
@@ -296,7 +300,7 @@ async def test_stop_keeps_the_tool_call_that_completed(env):
     assert calls == ["quick"]
     assert returns == ["job 42 submitted"]
     assert _texts(history)[-1] == STOPPED_NOTE
-    assert json.loads(run.events[-1].data) == {"state": "stopped"}
+    assert json.loads(run.events[-1].data)["state"] == "stopped"
     assert env.registry.get(row.id) is None
 
 

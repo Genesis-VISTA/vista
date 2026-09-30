@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 from pydantic_ai.messages import ModelMessage
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import (
@@ -31,6 +32,7 @@ from ..agents.agents import (
     RunCapture,
 )
 from ..db.db import get_engine
+from ..db.schemas import ChatSessionTable
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
 from .project_agent import (
@@ -254,7 +256,11 @@ class ChatRunRegistry:
                     await run.append(
                         "run_started",
                         json.dumps(
-                            {"run_id": run.run_id, "user_prompt": run.user_prompt}
+                            {
+                                "event_kind": "run_started",
+                                "run_id": run.run_id,
+                                "user_prompt": run.user_prompt,
+                            }
                         ),
                     )
                     async for event in agent.run_stream(
@@ -307,7 +313,10 @@ class ChatRunRegistry:
                 user_prompt=run.user_prompt,
                 note=_END_NOTES.get(run.state, FAILED_NOTE),
             )
-        await run.append("run_finished", json.dumps({"state": run.state}))
+        await run.append(
+            "run_finished",
+            json.dumps({"event_kind": "run_finished", "state": run.state}),
+        )
         try:
             await asyncio.shield(
                 _write_row(
@@ -348,7 +357,9 @@ async def resolve_prompt(
         if elicitation_id in run.pending:
             await run.append(
                 "prompt_resolved",
-                json.dumps({"elicitation_id": elicitation_id}),
+                json.dumps(
+                    {"event_kind": "prompt_resolved", "elicitation_id": elicitation_id}
+                ),
                 prompt_id=elicitation_id,
             )
     return True
@@ -379,6 +390,51 @@ async def _write_row(
         row.updated_at = now_iso()
         db.add(row)
         await db.commit()
+
+
+def live_status(run: ChatRun | None) -> str | None:
+    """`working` or `needs_you` for an active run, None when there is none."""
+    if run is None:
+        return None
+    return "needs_you" if run.pending else "working"
+
+
+def row_status(row: ChatSessionTable) -> str:
+    """
+    A conversation's status as the list shows it, from its saved row and live run.
+
+    `done`, `failed` and `interrupted` are reported only while unseen. A `stopped`
+    turn leaves no dot, since the researcher did it themselves.
+    """
+    live = live_status(chat_run_registry.get(row.id))
+    if live is not None:
+        return live
+    if row.run_state == "running":
+        return "working"  # Saved as running a moment before the run registered.
+    if row.run_state in _UNSEEN_STATES and row.run_unseen:
+        return row.run_state
+    return "idle"
+
+
+async def sweep_interrupted_runs() -> int:
+    """
+    At startup, turn every `running` row into `interrupted` and unseen.
+
+    No run survives a restart, so a row still saying `running` belongs to a turn
+    that died with the previous process (design D4).
+    """
+    async with session_factory() as db:
+        rows = (
+            await db.exec(
+                select(ChatSessionTable).where(ChatSessionTable.run_state == "running")
+            )
+        ).all()
+        for row in rows:
+            row.run_state = "interrupted"
+            row.run_unseen = True
+            db.add(row)
+        await db.commit()
+    return len(rows)
 
 
 def compact_events(events: list[RunEvent]) -> list[dict[str, Any]]:
