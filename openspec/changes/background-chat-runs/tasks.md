@@ -6,15 +6,15 @@
 
 ## 2. Backend: run registry
 
-- [ ] 2.1 Add `backend/src/vista_backend/services/chat_run.py`:
+- [x] 2.1 Add `backend/src/vista_backend/services/chat_run.py`:
   - `ChatRun` (task, seq'd event list, status, pending prompts, condition) and a registry keyed by `chat_session_id`;
   - the run task holds the `project_agent_pool` lease and its own session from a module-level factory;
   - `run_started` and `run_finished` events.
 
   Verify with unit tests that one run can be started, subscribed to and awaited.
-- [ ] 2.2 Persist on completion: history (prior history plus new messages), `run_state`, `run_unseen = true`, and compacted `run_events` (design D7: parts collapsed, prompt events dropped). Verify that a test reads the row back and finds no `PartDeltaEvent` and no prompt events.
-- [ ] 2.3 Implement `stop(chat_session_id, reason)`: cancel the task, save the 1.2 trimmed history, and set state to `stopped` or `interrupted`. Verify with a test that stops a run after a completed tool call and checks the saved history.
-- [ ] 2.4 Refuse a second start while a run is active, and allow parallel runs across conversations. Verify with tests for both.
+- [x] 2.2 Persist on completion: history (prior history plus new messages), `run_state`, `run_unseen = true`, and compacted `run_events` (design D7: parts collapsed, prompt events dropped). Verify that a test reads the row back and finds no `PartDeltaEvent` and no prompt events.
+- [x] 2.3 Implement `stop(chat_session_id, reason)`: cancel the task, save the 1.2 trimmed history, and set state to `stopped` or `interrupted`. Verify with a test that stops a run after a completed tool call and checks the saved history.
+- [x] 2.4 Refuse a second start while a run is active, and allow parallel runs across conversations. Verify with tests for both.
 
 ## 3. Backend: prompts that wait
 

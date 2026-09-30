@@ -216,6 +216,12 @@ async def get_effective_message_history(
     return _MESSAGE_HISTORY_ADAPTER.validate_python(fallback_history or [])
 
 
+def dump_message_history(message_history: list[ModelMessage]) -> list[dict]:
+    """Validate and serialize model history into the JSON stored on the row."""
+    normalized = _MESSAGE_HISTORY_ADAPTER.validate_python(message_history)
+    return _MESSAGE_HISTORY_ADAPTER.dump_python(normalized, mode="json")
+
+
 async def save_message_history(
     session: AsyncSession,
     *,
