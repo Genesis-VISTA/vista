@@ -2,7 +2,7 @@ All tasks are hermetic (PR CI). None need live, HPC, or sandbox markers.
 
 ## 1. Report drafting (backend)
 
-- [ ] 1.1 Add `backend/src/vista_backend/agents/report_authoring.py` with `ConversationReport` (`title`, `slug_suggestion`, `summary`, `body`) and `generate_report_draft(message_history, hint, user)` mirroring `skill_authoring.py`; the system prompt asks for a readable summary then `## Record`, with outputs referenced by `/mnt/data/output/...` path. Verify with a new `backend/tests/test_report_authoring.py` that uses a `FunctionModel` (pattern: `backend/tests/test_campaign_driver.py`) and asserts the structured draft is returned and the hint reaches the user prompt.
+- [x] 1.1 Add `backend/src/vista_backend/agents/report_authoring.py` with `ConversationReport` (`title`, `slug_suggestion`, `summary`, `body`) and `generate_report_draft(message_history, hint, user)` mirroring `skill_authoring.py`; the system prompt asks for a readable summary then `## Record`, with outputs referenced by `/mnt/data/output/...` path. Verify with a new `backend/tests/test_report_authoring.py` that uses a `FunctionModel` (pattern: `backend/tests/test_campaign_driver.py`) and asserts the structured draft is returned and the hint reaches the user prompt.
 
 ## 2. Report saving (backend)
 
