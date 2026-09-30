@@ -11,6 +11,7 @@ import json
 import uuid
 from contextlib import ExitStack, asynccontextmanager
 
+import mcp.types
 import pytest
 from pydantic_ai.messages import (
     ModelResponse,
@@ -28,6 +29,7 @@ from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
 from vista_backend.services.chat_run import (
     ChatRunRegistry,
+    resolve_prompt,
     RunBusy,
     RunEvent,
     compact_events,
@@ -35,6 +37,12 @@ from vista_backend.services.chat_run import (
 from vista_backend.services.run_history import STOPPED_NOTE
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
+
+
+async def _until(condition, timeout: float = 10) -> None:
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.005)
 
 
 class Env:
@@ -58,7 +66,7 @@ class Env:
         await self.session.refresh(row)
         self.session.expunge(row)  # later commits must not expire it
         agent = ProjectAgent(make_project(tools=["*"]), make_user(), row.id)
-        toolset = self._toolset().filtered(
+        toolset = self._toolset(agent).filtered(
             lambda ctx, tool: agent._tool_allowed(tool.name)
         )
         self.stack.enter_context(
@@ -67,9 +75,23 @@ class Env:
         self.agents[row.id] = agent
         return row, (row.id, self.project.id, self.user.id)
 
-    def _toolset(self) -> FunctionToolset:
+    def _toolset(self, agent: ProjectAgent) -> FunctionToolset:
         toolset = FunctionToolset()
         hang_started = self.hang_started
+
+        @toolset.tool_plain
+        async def ask() -> str:
+            """Ask the researcher a question, as Lux's SSH login does."""
+            callback = agent._cur_mcp_elicitation_callback
+            assert callback is not None
+            result = await callback(
+                None,
+                mcp.types.ElicitRequestFormParams(
+                    message="SSH login",
+                    requestedSchema={"type": "object", "properties": {}},
+                ),
+            )
+            return f"action: {result.action}"
 
         @toolset.tool_plain
         async def quick() -> str:
@@ -118,6 +140,7 @@ async def env(engine, session, monkeypatch):
     monkeypatch.setattr(chat_run, "project_agent_pool", Pool)
     with ExitStack() as stack:
         holder = Env(engine, session, stack)
+        monkeypatch.setattr(chat_run, "chat_run_registry", holder.registry)
         user = await seed_user(session)
         holder.user = user
         holder.project = await seed_project(session, user)
@@ -247,7 +270,7 @@ async def test_stop_keeps_the_tool_call_that_completed(env):
     row, key = await env.conversation([call("quick"), call("hang"), say("unreachable")])
     run = await env.start(row, key, prompt="submit it")
 
-    await asyncio.wait_for(env.hang_started.wait(), timeout=10)
+    await _until(env.hang_started.is_set)
     assert await env.registry.stop(row.id) is True
 
     saved = await env.row(row.id)
@@ -284,7 +307,7 @@ async def test_stop_reports_false_when_nothing_is_running(env):
 async def test_a_second_start_in_a_busy_conversation_is_refused(env):
     row, key = await env.conversation([call("hang"), say("unreachable")])
     run = await env.start(row, key)
-    await asyncio.wait_for(env.hang_started.wait(), timeout=10)
+    await _until(env.hang_started.is_set)
 
     with pytest.raises(RunBusy):
         await env.start(row, key, prompt="again")
@@ -298,7 +321,7 @@ async def test_different_conversations_run_at_the_same_time(env):
     row_b, key_b = await env.conversation([say("b's answer")])
 
     run_a = await env.start(row_a, key_a)
-    await asyncio.wait_for(env.hang_started.wait(), timeout=10)
+    await _until(env.hang_started.is_set)
     run_b = await env.start(row_b, key_b)
     await run_b.wait()
 
@@ -317,10 +340,99 @@ async def test_different_conversations_run_at_the_same_time(env):
 async def test_stop_all_interrupts_every_run(env):
     row, key = await env.conversation([call("hang"), say("unreachable")])
     await env.start(row, key)
-    await asyncio.wait_for(env.hang_started.wait(), timeout=10)
+    await _until(env.hang_started.is_set)
 
     await env.registry.stop_all(reason="interrupted")
 
     saved = await env.row(row.id)
     assert saved.run_state == "interrupted"
     assert saved.run_unseen is True
+
+
+# ---------------------------------------------------------------------------
+# Prompts wait for the researcher
+# ---------------------------------------------------------------------------
+
+PROMPTS = {"mcp_form_elicitation", "mcp_url_elicitation", "mcp_tool_approval"}
+
+
+async def test_a_prompt_does_not_time_out_and_stop_ends_it(env, monkeypatch):
+    async def no_timeouts(*args, **kwargs):
+        raise AssertionError("a prompt must not be waited on with a timeout")
+
+    row, key = await env.conversation([call("ask"), say("unreachable")])
+    run = await env.start(row, key)
+    await _until(lambda: bool(run.pending))
+    monkeypatch.setattr(asyncio, "wait_for", no_timeouts)
+
+    await asyncio.sleep(0.05)  # long enough for any timeout written as a wait_for
+    assert run.state == "running" and run.pending, "still waiting for the researcher"
+
+    assert await env.registry.stop(row.id) is True
+    assert (await env.row(row.id)).run_state == "stopped"
+    assert await resolve_prompt(next(iter(run.pending)), "accept") is False, (
+        "the prompt was withdrawn"
+    )
+
+
+async def test_replay_shows_only_unanswered_prompts_and_a_live_view_sees_resolution(
+    env,
+):
+    row, key = await env.conversation([call("ask"), call("ask"), say("done")])
+    run = await env.start(row, key)
+
+    live: list = []
+
+    async def watch():
+        async for event in run.subscribe():
+            live.append(event)
+
+    watcher = asyncio.create_task(watch())
+    await _until(lambda: len(run.pending) == 1)
+    first = next(iter(run.pending))
+    assert await resolve_prompt(first, "accept", {"password": "hunter2"}) is True
+    await _until(lambda: len(run.pending) == 1 and first not in run.pending)
+    second = next(iter(run.pending))
+
+    late = []
+    late_watcher = asyncio.create_task(_collect(run, late))
+    await _until(lambda: any(e.prompt_id == second for e in late))
+    assert await resolve_prompt(second, "decline") is True
+    await run.wait()
+    await asyncio.gather(watcher, late_watcher)
+
+    def seen(events):
+        return [(e.kind, e.prompt_id) for e in events if e.prompt_id is not None]
+
+    assert ("prompt_resolved", first) in seen(live), "a live view clears the prompt"
+    assert ("prompt_resolved", second) in seen(live)
+    assert [k for k, i in seen(late) if i == first] == [], "answered before it joined"
+    assert ("mcp_form_elicitation", second) in seen(late)
+    assert ("prompt_resolved", second) in seen(late), "it saw this one live"
+    assert "hunter2" not in "".join(e.data for e in run.events), (
+        "answers are not stored"
+    )
+    assert "hunter2" not in json.dumps((await env.row(row.id)).run_events)
+
+
+async def _collect(run, into: list) -> None:
+    async for event in run.subscribe():
+        into.append(event)
+
+
+async def test_a_second_answer_is_refused(env):
+    row, key = await env.conversation([call("ask"), say("done")])
+    run = await env.start(row, key)
+    await _until(lambda: bool(run.pending))
+    prompt = next(iter(run.pending))
+
+    assert await resolve_prompt(prompt, "accept") is True
+    assert await resolve_prompt(prompt, "accept") is False
+    await run.wait()
+
+
+def test_the_vista_mcp_server_waits_up_to_a_day_for_a_tool_call():
+    from vista_backend.agents.agents import get_dev_mcp_server, get_vista_mcp_server
+
+    assert get_vista_mcp_server().read_timeout == 24 * 60 * 60
+    assert get_dev_mcp_server([]).read_timeout == 1800 + 60, "sandbox is unchanged"

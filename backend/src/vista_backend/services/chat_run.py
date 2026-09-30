@@ -18,7 +18,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import TypeAdapter
 from pydantic_ai.messages import ModelMessage
@@ -33,7 +33,12 @@ from ..agents.agents import (
 from ..db.db import get_engine
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
-from .project_agent import ProjectAgentKey, project_agent_pool, register_elicitation
+from .project_agent import (
+    ProjectAgentKey,
+    project_agent_pool,
+    register_elicitation,
+    resolve_elicitation,
+)
 from .run_history import (
     FAILED_NOTE,
     INTERRUPTED_NOTE,
@@ -79,6 +84,8 @@ class RunEvent:
     """ The SSE event name, e.g. `part_start`, `log`, `run_started`. """
     data: str
     """ The JSON payload. """
+    prompt_id: str | None = None
+    """ The elicitation id, on a prompt event or its `prompt_resolved`. """
 
 
 @dataclass
@@ -97,13 +104,25 @@ class ChatRun:
     result: ProjectAgentResult | None = None
     task: asyncio.Task | None = None
     capture: RunCapture = field(default_factory=RunCapture)
+    pending: set[str] = field(default_factory=set)
+    """ Ids of prompts waiting for the researcher; non-empty means the run "needs you". """
+    resolved: set[str] = field(default_factory=set)
     _cond: asyncio.Condition = field(default_factory=asyncio.Condition)
     _started: asyncio.Event = field(default_factory=asyncio.Event)
 
-    async def append(self, kind: str, data: str) -> RunEvent:
+    async def append(
+        self, kind: str, data: str, prompt_id: str | None = None
+    ) -> RunEvent:
         async with self._cond:
-            event = RunEvent(seq=len(self.events) + 1, kind=kind, data=data)
+            event = RunEvent(
+                seq=len(self.events) + 1, kind=kind, data=data, prompt_id=prompt_id
+            )
             self.events.append(event)
+            if kind in PROMPT_EVENT_KINDS and prompt_id is not None:
+                self.pending.add(prompt_id)
+            elif kind == "prompt_resolved" and prompt_id is not None:
+                self.pending.discard(prompt_id)
+                self.resolved.add(prompt_id)
             self._cond.notify_all()
         return event
 
@@ -118,16 +137,29 @@ class ChatRun:
 
         Any number of subscribers may watch one run. Each receives every event,
         and closing one affects nobody else.
+
+        A prompt that was already answered when its event is read is skipped,
+        together with its `prompt_resolved`: a view that arrives late has
+        nothing to answer and nothing to clear. A view that saw the prompt live
+        still gets the `prompt_resolved` that clears it.
         """
         index = max(after, 0)
+        skipped: set[str] = set()
         while True:
             async with self._cond:
                 await self._cond.wait_for(
                     lambda: index < len(self.events) or self.finished
                 )
                 batch = self.events[index:]
+                resolved = set(self.resolved)
                 done = self.finished
             for event in batch:
+                if event.prompt_id is not None:
+                    if event.kind in PROMPT_EVENT_KINDS and event.prompt_id in resolved:
+                        skipped.add(event.prompt_id)
+                        continue
+                    if event.kind == "prompt_resolved" and event.prompt_id in skipped:
+                        continue
                 yield event
             index += len(batch)
             if done:
@@ -232,13 +264,17 @@ class ChatRunRegistry:
                         db_session=db,
                         capture=run.capture,
                     ):
+                        prompt_id = None
                         if isinstance(event, McpElicitationEvent):
-                            # POST /projects/{p}/elicitation resolves it.
+                            # `resolve_prompt` answers it.
                             register_elicitation(event.elicitation_id, agent)
+                            prompt_id = event.elicitation_id
                         if isinstance(event, ProjectAgentResultEvent):
                             run.result = event.result
                         await run.append(
-                            event.event_kind, _EVENT_ADAPTER.dump_json(event).decode()
+                            event.event_kind,
+                            _EVENT_ADAPTER.dump_json(event).decode(),
+                            prompt_id=prompt_id,
                         )
             run.state = "done"
             if run.result is not None:
@@ -291,6 +327,31 @@ class ChatRunRegistry:
             await run._finish()
         if reraise is not None:
             raise reraise
+
+
+async def resolve_prompt(
+    elicitation_id: str,
+    action: Literal["accept", "decline", "cancel"],
+    content: dict[str, Any] | None = None,
+) -> bool:
+    """
+    Answer a pending prompt (tool approval, form or URL elicitation).
+
+    Returns False when no such prompt is waiting, such as a second view
+    answering after the first. On success, appends `prompt_resolved` so every
+    other view clears it. The answer itself goes only to the agent, never into
+    the run's events.
+    """
+    if not resolve_elicitation(elicitation_id, action, content):
+        return False
+    for run in chat_run_registry.active():
+        if elicitation_id in run.pending:
+            await run.append(
+                "prompt_resolved",
+                json.dumps({"elicitation_id": elicitation_id}),
+                prompt_id=elicitation_id,
+            )
+    return True
 
 
 async def _write_row(

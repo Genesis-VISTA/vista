@@ -253,6 +253,11 @@ ProjectAgentStreamEvent = A[
 ]
 
 
+VISTA_MCP_READ_TIMEOUT = 24 * 60 * 60
+""" Seconds one VISTA MCP tool call may take. An SSH login raised inside a tool call
+(Lux job submission) waits for the researcher, who may be away for hours. """
+
+
 def get_vista_mcp_server(
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
@@ -266,7 +271,7 @@ def get_vista_mcp_server(
         log_handler=log_handler,
         log_level="info" if log_handler else None,
         timeout=10,
-        read_timeout=1800 + 60,
+        read_timeout=VISTA_MCP_READ_TIMEOUT,
     )
 
 
@@ -782,10 +787,10 @@ class ProjectAgent:
                 return mcp.types.ElicitResult(action="cancel")
             self._eval_metrics_capability.note_human_intervention()
 
+            # No timeout: the researcher may be on another page for hours. The
+            # wait ends when they answer, or when Stop cancels this task.
             try:
-                return await asyncio.wait_for(future, timeout=5 * 60)
-            except asyncio.TimeoutError:
-                return mcp.types.ElicitResult(action="cancel")
+                return await future
             finally:
                 self._elicitations.pop(event.elicitation_id, None)
 
@@ -852,13 +857,12 @@ class ProjectAgent:
                 )
             self._eval_metrics_capability.note_human_intervention()
 
+            # No timeout, as for elicitations: it waits for an answer or a Stop.
             try:
-                result = await asyncio.wait_for(future, timeout=5 * 60)
-            except asyncio.TimeoutError:
+                result = await future
+            except asyncio.CancelledError:
                 self._sidecar.note_approval_outcome(tool_call_id, approved=False)
-                return ApprovalOutcome(
-                    approved=False, message="Approval request timed out."
-                )
+                raise
             finally:
                 self._elicitations.pop(tool_call_id, None)
 

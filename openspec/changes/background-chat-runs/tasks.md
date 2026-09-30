@@ -18,9 +18,9 @@
 
 ## 3. Backend: prompts that wait
 
-- [ ] 3.1 Remove the 5-minute `wait_for` on elicitations and tool approvals in `agents/agents.py`, so cancellation releases the waiting future. Verify with a test that a pending approval outlives a mocked clock advance and that Stop ends it.
-- [ ] 3.2 Raise `get_vista_mcp_server(read_timeout=...)` to 24 h, leaving `dev_mcp_server` as is. Verify with a unit assertion on the constructed server's timeout.
-- [ ] 3.3 Track pending prompts in the registry. Make `resolve_elicitation` append `prompt_resolved`, and have replay skip resolved prompts. Verify with tests that a replay shows only unanswered prompts, and that a second subscriber sees `prompt_resolved`.
+- [x] 3.1 Remove the 5-minute `wait_for` on elicitations and tool approvals in `agents/agents.py`, so cancellation releases the waiting future. Verify with a test that a pending approval outlives a mocked clock advance and that Stop ends it.
+- [x] 3.2 Raise `get_vista_mcp_server(read_timeout=...)` to 24 h, leaving `dev_mcp_server` as is. Verify with a unit assertion on the constructed server's timeout.
+- [x] 3.3 Track pending prompts in the registry. Make `resolve_elicitation` append `prompt_resolved`, and have replay skip resolved prompts. Verify with tests that a replay shows only unanswered prompts, and that a second subscriber sees `prompt_resolved`.
 
 ## 4. Backend: API and lifespan
 
