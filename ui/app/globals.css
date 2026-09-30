@@ -1285,6 +1285,18 @@ textarea.input {
   line-height: 1.5;
 }
 
+/* How a turn ended when it did not finish: "Stopped", "Interrupted when VISTA
+   quit". A quiet line in the thread, not a message from either side. */
+.chat-bubble.system {
+  align-self: center;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .chat-bubble.tool {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -4048,6 +4060,22 @@ button.chat-bubble.intermediate.collapsed:hover {
 .composer-send:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
+}
+
+/* Stop takes Send's place while a run is going: same size, but it reads as a
+   different action, not as a primary one. */
+.composer-send.composer-stop {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+}
+
+.composer-send.composer-stop:hover:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.input:disabled {
+  cursor: default;
 }
 
 .input::placeholder {

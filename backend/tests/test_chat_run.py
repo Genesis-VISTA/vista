@@ -440,3 +440,16 @@ def test_the_vista_mcp_server_waits_up_to_a_day_for_a_tool_call():
 
     assert get_vista_mcp_server().read_timeout == 24 * 60 * 60
     assert get_dev_mcp_server([]).read_timeout == 1800 + 60, "sandbox is unchanged"
+
+
+async def test_a_watcher_that_sees_run_finished_finds_the_outcome_saved(env):
+    """A page acknowledges a run the moment it sees `run_finished`; the row must be final."""
+    row, key = await env.conversation([say("hello")])
+    run = await env.start(row, key)
+
+    async for event in run.subscribe():
+        if event.kind == "run_finished":
+            saved = await env.row(row.id)
+            assert saved.run_state == "done" and saved.run_unseen is True
+            assert env.registry.get(row.id) is None, "no longer reported as running"
+            assert [e["event"] for e in saved.run_events or []][-1] == "run_finished"

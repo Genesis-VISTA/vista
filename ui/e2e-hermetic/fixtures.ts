@@ -187,6 +187,7 @@ export const ROUTES: Record<string, unknown> = {
   // No conversation is working or has an unseen outcome, so no dots show.
   "GET /api/chat/runs/status": [],
   "POST /api/chat/run/stop": { ok: true },
+  "POST /api/chat/elicitation": { ok: true },
   "GET /api/campaigns": [],
   "GET /api/knowledge-bases/molten-salt-papers": KNOWLEDGE_BASE,
   "GET /api/knowledge-bases/molten-salt-papers/publications": [],

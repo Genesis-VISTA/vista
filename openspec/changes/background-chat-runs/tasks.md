@@ -52,16 +52,16 @@
 
 ## 7. UI: chat page
 
-- [ ] 7.1 Move the SSE parsing and event dispatch out of the send closure in `ui/app/page.tsx` into a reusable renderer that tags bubbles with `run_id`. Verify the existing `ui/e2e-hermetic/chat.spec.ts` still passes.
-- [ ] 7.2 Give the send fetch and the re-attach stream an `AbortController`, aborted on conversation switch and unmount. Stop writing `messageHistory` in the save effect. Verify that a hermetic test switching conversations mid-run shows no events in the wrong thread.
-- [ ] 7.3 When a conversation opens:
+- [x] 7.1 Move the SSE parsing and event dispatch out of the send closure in `ui/app/page.tsx` into a reusable renderer that tags bubbles with `run_id`. Verify the existing `ui/e2e-hermetic/chat.spec.ts` still passes.
+- [x] 7.2 Give the send fetch and the re-attach stream an `AbortController`, aborted on conversation switch and unmount. Stop writing `messageHistory` in the save effect. Verify that a hermetic test switching conversations mid-run shows no events in the wrong thread.
+- [x] 7.3 When a conversation opens:
   - if a run is active, remove that run's bubbles and re-attach from 0;
   - otherwise, if `run_events` is present, replay them, save with `ack_run`, and clear the dot;
   - otherwise, if the conversation is unseen, save with `ack_run`.
 
   Verify with a hermetic test: navigate to Skills and back, and the answer is drawn once.
-- [ ] 7.4 Disable input while a run is active and show a Stop button that calls the stop route. Show a stopped turn as "Stopped" and an interrupted turn as "Interrupted when VISTA quit". Handle a 409 on send by re-attaching. Verify with a hermetic test.
-- [ ] 7.5 Re-show a still-pending prompt on re-attach, and clear it on `prompt_resolved`, for form elicitation (the SSH login modal), URL elicitation and tool approval. Verify with a hermetic test driving a Lux-style SSH login form (username plus password fields) that appears after navigating back.
+- [x] 7.4 Disable input while a run is active and show a Stop button that calls the stop route. Show a stopped turn as "Stopped" and an interrupted turn as "Interrupted when VISTA quit". Handle a 409 on send by re-attaching. Verify with a hermetic test.
+- [x] 7.5 Re-show a still-pending prompt on re-attach, and clear it on `prompt_resolved`, for form elicitation (the SSH login modal), URL elicitation and tool approval. Verify with a hermetic test driving a Lux-style SSH login form (username plus password fields) that appears after navigating back.
 
 ## 8. UI: status dots and nav rail
 

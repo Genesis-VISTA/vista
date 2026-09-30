@@ -313,26 +313,37 @@ class ChatRunRegistry:
                 user_prompt=run.user_prompt,
                 note=_END_NOTES.get(run.state, FAILED_NOTE),
             )
-        await run.append(
-            "run_finished",
-            json.dumps({"event_kind": "run_finished", "state": run.state}),
-        )
+        # `run_finished` goes out only after the outcome is saved and the run has
+        # left the registry. A page that acknowledges the run the moment it sees
+        # this event then finds the row final, and a fetch of the conversation
+        # no longer reports a run in progress.
+        finished_data = json.dumps({"event_kind": "run_finished", "state": run.state})
         try:
             await asyncio.shield(
                 _write_row(
                     run,
                     state=run.state,
                     unseen=run.state in _UNSEEN_STATES,
-                    events=compact_events(run.events),
+                    events=compact_events(
+                        [
+                            *run.events,
+                            RunEvent(
+                                seq=len(run.events) + 1,
+                                kind="run_finished",
+                                data=finished_data,
+                            ),
+                        ]
+                    ),
                     history=history,
                 )
             )
         except Exception:
             log.exception("Could not save chat run %s", run.run_id)
         finally:
-            # Only now: `start` must keep refusing a second run until the
-            # outcome is saved, or the new turn would read stale history.
+            # `start` keeps refusing a second run until the outcome is saved, or
+            # the new turn would read stale history.
             self._runs.pop(run.chat_session_id, None)
+            await run.append("run_finished", finished_data)
             await run._finish()
         if reraise is not None:
             raise reraise
