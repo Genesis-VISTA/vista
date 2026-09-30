@@ -29,8 +29,8 @@
 
 ## 5. Verification and docs (D6)
 
-- [ ] 5.1 Point `scripts/smoke_test_package.sh`'s retrieval check at `/projects/ai-safety-autonomous-labs/mcp/call` with `kb_slug: ai-safety`, and add the no-science-data assertion for default builds; verify a full default build (`./scripts/build_local_package.sh --payload ~/.vista-build/vista-data` after pulling it) passes its smoke test
-- [ ] 5.2 Verify a `--science-projects --science-projects-vector-store ~/.vista-build/rag_db` build also passes, with both corpora retrievable
-- [ ] 5.3 Update `ui/e2e/smoke.spec.ts` to look for the `ai-safety-autonomous-labs` card and `docs/validation-lane.md` to match; verify `cd ui && npm run lint` passes
-- [ ] 5.4 Rewrite the stale default-project sections of `docs/project-onboarding.md` (no `defaults.py`; first-run seed plus AI-safety sync; the science flag; deleted default restored); verify every file path it links exists
-- [ ] 5.5 Run `./scripts/ci-local.sh` and `openspec validate ai-safety-default-project --strict`; verify both pass
+- [x] 5.1 Point `scripts/smoke_test_package.sh`'s retrieval check at `/projects/ai-safety-autonomous-labs/mcp/call` with `kb_slug: ai-safety`, and add the no-science-data assertion for default builds; verify a full default build (`./scripts/build_local_package.sh --payload ~/.vista-build/vista-data` after pulling it) passes its smoke test
+- [x] 5.2 Verify a `--science-projects --science-projects-vector-store ~/.vista-build/rag_db` build also passes, with both corpora retrievable
+- [x] 5.3 Update `ui/e2e/smoke.spec.ts` to look for the `ai-safety-autonomous-labs` card and `docs/validation-lane.md` to match; verify `cd ui && npm run lint` passes
+- [x] 5.4 Rewrite the stale default-project sections of `docs/project-onboarding.md` (no `defaults.py`; first-run seed plus AI-safety sync; the science flag; deleted default restored); verify every file path it links exists
+- [x] 5.5 Run `./scripts/ci-local.sh` and `openspec validate ai-safety-default-project --strict`; verify both pass

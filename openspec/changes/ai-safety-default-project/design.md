@@ -158,9 +158,9 @@ The description reads as a one-line "AI Safety in Autonomous Labs" summary.
   in LLM agents, and autonomous-driving security and privacy as a cyber-physical analogue
   whose findings transfer to lab automation;
 - a preference for citing `ai-safety` passages;
-- encouragement to discover and run the available HPC jobs with its tools, naming none.
+- nothing about HPC jobs. The project allows the HPC tools (`["*", "!agenthpc_*"]`), and the agent discovers the available jobs itself when a question needs one (Sam's call during review).
 
-The draft is written during implementation and reviewed by Sam.
+The draft was written during implementation and edited by Sam.
 
 ## Risks / Trade-offs
 
