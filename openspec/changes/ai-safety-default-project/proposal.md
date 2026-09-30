@@ -71,4 +71,5 @@ one switch away for development and for builds that need them.
 - **Data**: vista-data `ai-safety/` (already committed). No MCP server change —
   `rag_search` already discovers any `knowledge_bases_dir/<slug>/rag_db`.
 - **Out of scope**: per-project HPC job scoping, removing legacy data from existing installs,
-  VISTAGuard's `g3_kb_policy.json`.
+  VISTAGuard's `g3_kb_policy.json`, and verifying the PowerShell launcher on Windows (its
+  `parts.txt` change is written but unverified, and is left to the windows-support work).

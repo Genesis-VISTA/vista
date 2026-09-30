@@ -12,7 +12,7 @@
 - [x] 2.3 Implement D3's failure handling: network/token errors and a missing client warn and continue; on the payload path the sync never indexes and only asserts the bundled `ai-safety` index, raising if it is absent or empty; apply the same payload-never-indexes rule to `molten-salt-papers` in `seed_db`; verify with tests for no client (project without KB, warning logged, startup completes), a fake client raising `httpx.HTTPStatusError` (same), an empty bundled store (raises), and a payload with PDFs but no `rag_db` for each corpus (raises naming the corpus, with the indexer patched to fail the test if called)
 - [x] 2.4 Call `sync_default_projects` from `db/db.py` after `seed_db` and before `sync_bundled_skills`; verify an upgrade test: a DB pre-seeded with only the science projects gains the AI-safety project and KB and its science rows are byte-identical afterwards
 - [x] 2.5 Add sync idempotency tests: an edited system prompt survives restart; a user-attached extra KB is kept; a KB that becomes available on a later boot is created and attached; a deleted project is restored; science projects are not added to an existing DB with the flag on; verify all pass under the hermetic filter
-- [ ] 2.6 Run the dev stack against your real `vista.db` with the token in `.env` (`./launch.sh logs`) and ask the new project about memory poisoning; verify the answer cites an `ai-safety` passage and the existing molten-salt projects are untouched
+- [x] 2.6 Run the dev stack against your real `vista.db` with the token in `.env` (`./launch.sh logs`) and ask the new project about memory poisoning; verify the answer cites an `ai-safety` passage and the existing molten-salt projects are untouched
 
 ## 3. Package build: AI-safety always, science optional (D5)
 
@@ -24,7 +24,7 @@
 ## 4. Launchers install missing corpora per corpus (D4)
 
 - [x] 4.1 Change `scripts/package_launcher.sh` to read `payload/parts.txt` and extract only members missing from `$STATE`; verify by running an unpacked default package against a copy of a state dir from an earlier molten-salt package: `ai-safety` is installed, molten-salt data is untouched, and the new project's retrieval works
-- [ ] 4.2 Make the same change in `scripts/package_launcher.ps1`; verify on Windows (or leave unchecked with a note in the change for the next Windows session, per the windows-support handoff)
+- Out of scope (Sam, 2026-09-30): Windows. `scripts/package_launcher.ps1` got the same `parts.txt` change as the bash launcher, but it is unverified and is left to the windows-support work.
   - Note (2026-09-30): implemented in `package_launcher.ps1` (reads `payload\parts.txt`, extracts only members missing from `$STATE` with `tar.exe`), but not run: no Windows or `pwsh` on the machine that did it. For the next Windows session (see `windows-support/handoff.md`): unpack a default package over a state dir from an earlier molten-salt package and check that `vista-data\ai-safety` and `knowledge-bases\ai-safety` appear, molten-salt data is untouched, and a second run extracts nothing. Also confirm `Get-Content -Encoding UTF8` plus forward-slash members work with `tar.exe`.
 
 ## 5. Verification and docs (D6)
