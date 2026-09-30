@@ -14,10 +14,20 @@ export type PersistedChatSessionSummary = {
   updated_at: string;
 };
 
+/** One event of a run the researcher did not watch, as stored by the backend (compacted). */
+export type StoredRunEvent = { event: string; data: Record<string, unknown> };
+
 export type PersistedChatSession = PersistedChatSessionSummary & {
+  /** Written only by the backend. The page reads it but never sends it back. */
   message_history: ModelMessage[];
   messages: ChatMessage[];
   latest_result: ExecutionResult | null;
+  run_state: "idle" | "running" | "done" | "failed" | "interrupted" | "stopped";
+  /** Live: `working` and `needs_you` come from the running turn, the rest from the saved outcome. */
+  run_status: "idle" | "working" | "needs_you" | "done" | "failed" | "interrupted" | "stopped";
+  run_unseen: boolean;
+  /** The events of the last run, kept until the page has drawn them and acknowledged the run. */
+  run_events: StoredRunEvent[] | null;
 };
 
 export class PersistedChatSessionError extends Error {

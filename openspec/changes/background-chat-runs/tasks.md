@@ -47,8 +47,8 @@
 
 ## 6. UI: proxy routes and data
 
-- [ ] 6.1 Read the route-handler and streaming docs in `ui/node_modules/next/dist/docs/`. Then add Next proxy routes for run events (streamed through), stop and status under `ui/app/api/chat/`, following `ui/app/api/chat/route.ts`. Verify with `npm run lint` and a hermetic stub fixture for each route.
-- [ ] 6.2 Add a `useChatRunStatus(projectName)` hook in `ui/lib/`. It polls the status route every 3 s while the document is visible, and is shared by the conversation list and the nav rail. Verify with a vitest in `ui/tests/`.
+- [x] 6.1 Read the route-handler and streaming docs in `ui/node_modules/next/dist/docs/`. Then add Next proxy routes for run events (streamed through), stop and status under `ui/app/api/chat/`, following `ui/app/api/chat/route.ts`. Verify with `npm run lint` and a hermetic stub fixture for each route.
+- [x] 6.2 Add a `useChatRunStatus(projectName)` hook in `ui/lib/`. It polls the status route every 3 s while the document is visible, and is shared by the conversation list and the nav rail. Verify with a vitest in `ui/tests/`.
 
 ## 7. UI: chat page
 

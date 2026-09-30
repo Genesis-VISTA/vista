@@ -43,9 +43,9 @@ export async function PUT(request: Request) {
     project_name?: unknown;
     chat_session_id?: unknown;
     title?: unknown;
-    message_history?: unknown;
     messages?: unknown;
     latest_result?: unknown;
+    ack_run?: unknown;
   };
   try {
     body = await request.json();
@@ -73,9 +73,11 @@ export async function PUT(request: Request) {
         headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           title: typeof body.title === "string" ? body.title : null,
-          message_history: body.message_history ?? null,
+          // Model history is written only by the backend, so it is never forwarded.
           messages: body.messages ?? null,
           latest_result: body.latest_result ?? null,
+          // The researcher has seen the last run: clears its unseen flag and stored events.
+          ack_run: body.ack_run === true,
         }),
       }
     );
