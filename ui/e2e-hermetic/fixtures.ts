@@ -40,7 +40,7 @@ export const HPC_STATUS = {
           project: "chm243",
           expires_at: "2026-01-02T00:00:00+00:00",
         },
-        globus: { ...OK("Globus reaches Frontier's files."), identity: "own" },
+        globus: OK("Globus reaches Frontier's files."),
       },
     },
     {

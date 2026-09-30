@@ -630,8 +630,8 @@ async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str)
     except Exception as e:
         raise ToolError(
             f"Cannot list {base} on the Odo Globus collection ({e}). Check that "
-            "VISTA_MCP_ODO_REMOTE_DIR exists on Odo and that the deployment's "
-            "Globus identity has access to it."
+            "VISTA_MCP_ODO_REMOTE_DIR exists on Odo and that your Globus "
+            "identity has access to it."
         )
     out_entry = next(
         (e for e in entries if e.get("name") == "out" and e.get("type") == "dir"),
@@ -810,7 +810,7 @@ async def _submit_frontier_job(
     ops (mkdir / source upload / log fetch / output download) go through Globus
     via `lib/globus.py` — the OLCF moderate-enclave token's
     `iri-frontend-moderate` scope doesn't authorize IRI storage discovery, so
-    the deployment-wide Globus refresh token grants access to the OLCF DTN.
+    the researcher's own Globus connection grants access to the OLCF DTN.
 
     The Slurm account is the global `settings.frontier_account` (one shared
     OLCF project for all Vista users) unless the job's cluster_defaults.json
@@ -1316,11 +1316,7 @@ async def _require_olcf_access(
 ) -> str:
     """
     Verify the user's S3M token belongs to the job's OLCF project (`account`,
-    default the cluster's) before any file op, and return the token. A
-    researcher who has not connected their own Globus account falls back to the
-    deployment's shared identity, so this introspection is what authorizes them
-    — it must guard every path that touches Globus, including
-    `_get_olcf_job_outputs`, which never calls IRI.
+    default the cluster's) before any file op, and return the token.
     """
     if cluster == "odo":
         default_account, url = settings.odo_account, settings.odo_introspect_url

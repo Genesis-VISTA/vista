@@ -58,6 +58,8 @@ def user_cfg() -> UserConfig:
         nersc_iri_token="nersc-token",
         nersc_account="m1234",
         nersc_remote_dir="/fake/nersc/home/user/vista",
+        globus_token="fake-transfer-refresh",
+        globus_https_token="fake-https-refresh",
     )
 
 
@@ -79,14 +81,6 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
-    monkeypatch.setattr(settings, "odo_globus_refresh_token", "fake-odo-refresh")
-    monkeypatch.setattr(
-        settings, "frontier_globus_refresh_token", "fake-frontier-refresh"
-    )
-    monkeypatch.setattr(settings, "odo_globus_https_refresh_token", "fake-odo-https")
-    monkeypatch.setattr(
-        settings, "frontier_globus_https_refresh_token", "fake-frontier-https"
-    )
 
 
 async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg):

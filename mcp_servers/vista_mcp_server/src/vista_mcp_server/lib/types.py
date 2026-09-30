@@ -52,8 +52,9 @@ class GlobusTokens(NamedTuple):
     the pair is per-cluster rather than global.
 
     They are resolved together and never mixed between sources -- a transfer
-    token from the researcher and an HTTPS token from the deployment would act
-    as two different POSIX identities on the same cluster.
+    token from one connection and an HTTPS token from another can belong to
+    two different Globus identities, and so act as two different POSIX
+    identities on the same cluster.
     """
 
     transfer: str

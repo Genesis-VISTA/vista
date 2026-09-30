@@ -139,11 +139,7 @@ function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
 
 function globusRow(check: HpcCheck): Row {
   if (check.ok) {
-    return {
-      ok: true,
-      title: "Globus file transfer connected",
-      detail: check.identity === "deployment" ? "The deployment's shared identity" : "Your own identity",
-    };
+    return { ok: true, title: "Globus file transfer connected", detail: "Your own identity" };
   }
   switch (check.reason) {
     case "not_connected":

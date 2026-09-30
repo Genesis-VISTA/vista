@@ -285,15 +285,12 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Deployment-wide Globus Transfer fallback for Odo — directory listings and `mkdir`. Used only when a researcher has not connected their own in the UI. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`, which writes this and the next one together | None |
-| VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN | The other half: Odo's collection over the Globus HTTPS interface, which is what reads and writes the files. Both or neither — one alone finds an output directory it cannot open | None |
-| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Same pair, for Frontier. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None |
-| VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN | " | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
 Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
 env vars — each user connects them in the UI under User settings. Globus is a one-time
-authorization per cluster. An S3M token is scoped to one OLCF project, so Odo and Frontier
+authorization per cluster, and every Odo and Frontier file operation acts as that researcher's
+own identity: there is no deployment-wide Globus login to fall back on. An S3M token is scoped to one OLCF project, so Odo and Frontier
 each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).

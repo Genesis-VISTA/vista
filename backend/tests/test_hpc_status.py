@@ -16,7 +16,6 @@ import httpx
 import pytest
 import requests
 from globus_sdk import GlobusAPIError, TransferAPIError
-from pydantic import SecretStr
 
 from vista_backend.config import HpcClusterSettings
 from vista_backend.db.schemas import UserPublicWithConfig
@@ -451,44 +450,37 @@ async def test_unexpected_iri_answer_is_unverifiable(status):
 
 
 def test_globus_source_order():
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "odo_globus_refresh_token": SecretStr("dep-gt"),
-            "odo_globus_https_refresh_token": SecretStr("dep-gh"),
-        }
-    )
     own = user(
         odo_globus_token="o-gt",
         odo_globus_https_token="o-gh",
         globus_token="s-gt",
         globus_https_token="s-gh",
     )
-    assert globus_source("odo", own, deployment).transfer == "o-gt"
+    assert globus_source("odo", own).transfer == "o-gt"
     shared = user(globus_token="s-gt", globus_https_token="s-gh")
-    assert globus_source("odo", shared, deployment).identity == "own"
-    assert globus_source("odo", shared, deployment).transfer == "s-gt"
-    # Half a pair does not count; the deployment's whole pair takes over.
+    assert globus_source("odo", shared).transfer == "s-gt"
+    # Half a pair does not count, and there is nothing after the shared pair.
     half = user(odo_globus_token="o-gt")
-    picked = globus_source("odo", half, deployment)
-    assert (picked.transfer, picked.identity) == ("dep-gt", "deployment")
-    assert globus_source("odo", half, S) is None
-    assert globus_source("frontier", half, deployment) is None
+    assert globus_source("odo", half) is None
+    half_and_shared = user(
+        odo_globus_token="o-gt", globus_token="s-gt", globus_https_token="s-gh"
+    )
+    assert globus_source("odo", half_and_shared).transfer == "s-gt"
+    assert globus_source("frontier", half) is None
 
 
 @pytest.mark.anyio
-async def test_deployment_globus_counts_as_ready():
+async def test_deployment_globus_variables_do_not_count(monkeypatch):
+    """The variables that used to be a deployment-wide Globus login are
+    ignored: a researcher who connected nothing is not connected."""
+    monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN", "dep-gt")
+    monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN", "dep-gh")
     fac, globus = healthy(), FakeGlobus()
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "odo_globus_refresh_token": SecretStr("dep-gt"),
-            "odo_globus_https_refresh_token": SecretStr("dep-gh"),
-        }
-    )
+    settings = HpcClusterSettings()
     u = user(odo_s3m_token="odo-tok")
-    odo = (await statuses(make_service(fac, globus, settings=deployment), u))["odo"]
-    assert odo.state == "ready"
-    assert odo.checks.globus.identity == "deployment"
-    assert globus.calls[0]["collection_id"] == S.odo_globus_collection_id
+    odo = (await statuses(make_service(fac, globus, settings=settings), u))["odo"]
+    assert odo.state == "globus_not_connected"
+    assert globus.calls == []
 
 
 @pytest.mark.anyio
@@ -661,17 +653,9 @@ async def test_no_secret_ever_appears_in_the_response():
     fac.iri[(NERSC, "pm-tok")] = 500
     globus = FakeGlobus()
     globus.result = GlobusSessionExpired("token odo-gt refused")
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "frontier_globus_refresh_token": SecretStr("dep-secret-gt"),
-            "frontier_globus_https_refresh_token": SecretStr("dep-secret-gh"),
-        }
-    )
-    u = user(**{**CONNECTED, "frontier_globus_token": None})
-    body = (
-        await make_service(fac, globus, settings=deployment).status(u)
-    ).model_dump_json()
-    for secret in [*CONNECTED.values(), "dep-secret-gt", "dep-secret-gh", "Bearer"]:
+    u = user(**CONNECTED)
+    body = (await make_service(fac, globus).status(u)).model_dump_json()
+    for secret in [*CONNECTED.values(), "Bearer"]:
         assert secret not in body, secret
 
 

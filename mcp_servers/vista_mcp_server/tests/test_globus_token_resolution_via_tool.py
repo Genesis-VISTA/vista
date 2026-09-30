@@ -71,14 +71,15 @@ async def _submit(cfg: UserConfig) -> None:
 
 
 @pytest.fixture
-def deployment_tokens(monkeypatch):
-    monkeypatch.setattr(settings, "odo_globus_refresh_token", "deployment-odo")
-    monkeypatch.setattr(
-        settings, "odo_globus_https_refresh_token", "deployment-odo-https"
+def deployment_vars(monkeypatch):
+    """The variables that used to be a deployment-wide Globus login."""
+    monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN", "deployment-odo")
+    monkeypatch.setenv(
+        "VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN", "deployment-odo-https"
     )
 
 
-async def test_the_researchers_own_cluster_token_wins(monkeypatch, deployment_tokens):
+async def test_the_researchers_own_cluster_token_wins(monkeypatch):
     calls = _capture_globus(monkeypatch)
     cfg = UserConfig(
         odo_s3m_token="s3m",
@@ -93,7 +94,7 @@ async def test_the_researchers_own_cluster_token_wins(monkeypatch, deployment_to
     assert calls == [GlobusTokens(transfer="mine-odo", https="mine-odo-https")]
 
 
-async def test_the_shared_token_is_the_second_choice(monkeypatch, deployment_tokens):
+async def test_the_shared_token_is_the_second_choice(monkeypatch):
     calls = _capture_globus(monkeypatch)
     cfg = UserConfig(
         odo_s3m_token="s3m",
@@ -106,37 +107,29 @@ async def test_the_shared_token_is_the_second_choice(monkeypatch, deployment_tok
     assert calls == [GlobusTokens(transfer="mine-shared", https="mine-shared-https")]
 
 
-async def test_the_deployment_token_is_the_last_resort(monkeypatch, deployment_tokens):
+async def test_a_pre_https_connection_falls_through_to_the_shared_pair(monkeypatch):
+    """A researcher who connected Odo before VISTA moved to the HTTPS interface
+    has a Transfer token and nothing to read files with. Using it would list the
+    output directory and fail on every file in it, so their complete shared
+    pair is used instead."""
     calls = _capture_globus(monkeypatch)
-    cfg = UserConfig(odo_s3m_token="s3m")
+    cfg = UserConfig(
+        odo_s3m_token="s3m",
+        odo_globus_token="stale-odo",
+        globus_token="mine-shared",
+        globus_https_token="mine-shared-https",
+    )
 
     await _submit(cfg)
 
-    assert calls == [
-        GlobusTokens(transfer="deployment-odo", https="deployment-odo-https")
-    ]
+    assert calls == [GlobusTokens(transfer="mine-shared", https="mine-shared-https")]
 
 
-async def test_a_pre_https_connection_falls_through_to_the_deployment(
-    monkeypatch, deployment_tokens
+async def test_nothing_connected_refuses_before_touching_globus(
+    monkeypatch, deployment_vars
 ):
-    """A researcher who connected before VISTA moved to the HTTPS interface has
-    a Transfer token and nothing to read files with. Using it would list the
-    output directory and fail on every file in it, so the complete deployment
-    credential is the better answer until they connect again."""
-    calls = _capture_globus(monkeypatch)
-    cfg = UserConfig(odo_s3m_token="s3m", odo_globus_token="stale-odo")
-
-    await _submit(cfg)
-
-    assert calls == [
-        GlobusTokens(transfer="deployment-odo", https="deployment-odo-https")
-    ]
-
-
-async def test_nothing_configured_refuses_before_touching_globus(monkeypatch):
-    monkeypatch.setattr(settings, "odo_globus_refresh_token", None)
-    monkeypatch.setattr(settings, "odo_globus_https_refresh_token", None)
+    """Refused even with the old deployment-wide variables set: they are not a
+    source any more."""
     calls = _capture_globus(monkeypatch)
     cfg = UserConfig(odo_s3m_token="s3m")
 

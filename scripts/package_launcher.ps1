@@ -15,16 +15,6 @@
 #   VISTA_UI_PORT       default 3000
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
-#
-#   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN
-#                       Deployment-wide Globus credentials for file transfer to
-#                       Odo and Frontier, for a hosted install where one
-#                       identity serves everyone. On a desktop, connect Globus
-#                       in the VISTA user settings instead: nothing to export,
-#                       and nothing to set up in this terminal.
 
 $ErrorActionPreference = 'Stop'
 

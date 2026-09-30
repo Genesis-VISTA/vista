@@ -59,7 +59,6 @@ export type HpcCheck = {
   expected_project?: string | null;
   expires_at?: string | null;
   active_from?: string | null;
-  identity?: "own" | "deployment" | null;
 };
 
 export type HpcClusterStatus = {

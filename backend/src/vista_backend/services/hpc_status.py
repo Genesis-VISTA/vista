@@ -146,8 +146,6 @@ class Check(BaseModel):
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
     active_from: datetime | None = None
-    identity: Literal["own", "deployment"] | None = None
-    """ Whose Globus connection was verified. """
 
 
 class ClusterChecks(BaseModel):
@@ -268,18 +266,17 @@ def probe_globus(
 class _GlobusSource:
     transfer: str
     https: str
-    identity: Literal["own", "deployment"]
 
 
 def globus_source(
-    cluster: Literal["odo", "frontier"], user: Any, settings: HpcClusterSettings
+    cluster: Literal["odo", "frontier"], user: Any
 ) -> _GlobusSource | None:
     """The Globus pair this cluster's file operations would use, or None.
 
     The same order as the MCP server's `UserConfig.require_globus_token`: the
-    researcher's pair for this cluster, then their shared pair, then the
-    deployment's. A source counts only with both halves -- half a pair lists a
-    directory it cannot read.
+    researcher's pair for this cluster, then their shared pair. There is no
+    deployment-wide pair. A source counts only with both halves -- half a pair
+    lists a directory it cannot read.
     """
     own = (
         (user.odo_globus_token, user.odo_globus_https_token)
@@ -288,21 +285,7 @@ def globus_source(
     )
     for transfer, https in (own, (user.globus_token, user.globus_https_token)):
         if transfer and https:
-            return _GlobusSource(transfer, https, "own")
-    deployment = (
-        (settings.odo_globus_refresh_token, settings.odo_globus_https_refresh_token)
-        if cluster == "odo"
-        else (
-            settings.frontier_globus_refresh_token,
-            settings.frontier_globus_https_refresh_token,
-        )
-    )
-    if deployment[0] and deployment[1]:
-        return _GlobusSource(
-            deployment[0].get_secret_value(),
-            deployment[1].get_secret_value(),
-            "deployment",
-        )
+            return _GlobusSource(transfer, https)
     return None
 
 
@@ -803,7 +786,7 @@ class HpcStatusService:
 
     async def _globus(self, cluster: Literal["odo", "frontier"], user: Any) -> Check:
         title = _TITLES[cluster]
-        source = globus_source(cluster, user, self._settings)
+        source = globus_source(cluster, user)
         if source is None:
             return Check(
                 ok=False,
@@ -831,7 +814,6 @@ class HpcStatusService:
                 ok=False,
                 reason="session_expired",
                 message=f"The Globus session for {title} has expired; connect Globus again.",
-                identity=source.identity,
             )
         except Exception as error:  # noqa: BLE001 -- any other failure is "couldn't tell"
             log.info("%s Globus check failed: %s", title, type(error).__name__)
@@ -839,20 +821,8 @@ class HpcStatusService:
                 ok=False,
                 reason="unverifiable",
                 message=f"Globus did not confirm {title}'s file transfer.",
-                identity=source.identity,
             )
-        return Check(
-            ok=True,
-            message=(
-                f"Globus reaches {title}'s files"
-                + (
-                    " with the deployment's shared identity."
-                    if source.identity == "deployment"
-                    else "."
-                )
-            ),
-            identity=source.identity,
-        )
+        return Check(ok=True, message=f"Globus reaches {title}'s files.")
 
 
 async def _none() -> None:

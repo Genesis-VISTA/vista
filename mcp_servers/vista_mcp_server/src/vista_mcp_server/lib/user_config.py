@@ -9,7 +9,6 @@ from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from ..config import settings
 from .types import GlobusTokens
 
 
@@ -38,22 +37,19 @@ class UserConfig(BaseModel):
     def require_globus_token(
         self, cluster: Literal["odo", "frontier"]
     ) -> GlobusTokens:
-        """The Globus credential authorizing this cluster's file operations.
+        """The researcher's Globus credential for this cluster's file operations.
 
-        Three sources, in order: the researcher's own tokens for this cluster,
-        their shared pair, then the deployment's environment variables. The
-        deployment coming last is what lets a researcher on a shared server use
-        their own identity, and the deployment coming at all is what leaves that
-        server working for everyone who has not connected one -- which matters
-        because Odo's permissions model assumes a single shared identity.
+        Two sources, in order: the researcher's own tokens for this cluster,
+        then their pair shared by both clusters. There is no deployment-wide
+        credential: every file operation acts as the researcher's own mapped
+        POSIX identity, so the facility decides what they may read and write.
 
         A source counts only when it has *both* tokens, and the pair is taken
         whole. Half a credential is the case that matters here: a connection
         made before VISTA moved to the HTTPS interface has a Transfer token and
         no collection token, and using it would list a directory and then fail
-        to read anything in it. Skipping such a source lets the deployment's
-        complete pair take over; when nothing has both, the refusal below says
-        to connect again.
+        to read anything in it. Skipping such a source lets the other one take
+        over; when neither has both, the refusal below says to connect again.
         """
         for transfer, https in (
             (
@@ -66,10 +62,6 @@ class UserConfig(BaseModel):
         ):
             if transfer and https:
                 return GlobusTokens(transfer=transfer, https=https)
-
-        deployment = settings.globus_tokens(cluster)
-        if deployment is not None:
-            return deployment
 
         raise ToolError(
             f"Globus file transfer is not connected for {cluster.title()}. "

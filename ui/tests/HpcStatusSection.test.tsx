@@ -139,7 +139,7 @@ describe("HpcStatusSection", () => {
         {
           status: status("frontier", "ready", {
             credential: { ...OK, project: "chm243", expires_at: "2026-09-26T13:00:00Z" },
-            globus: { ...OK, identity: "own" },
+            globus: OK,
           }),
         },
       ]),
@@ -206,7 +206,7 @@ describe("HpcStatusSection", () => {
     useHpcStatusMock.mockReturnValue(
       view([
         { status: status("perlmutter", "ready") },
-        { status: status("odo", "ready", { globus: { ...OK, identity: "deployment" } }) },
+        { status: status("odo", "ready", { globus: OK }) },
       ]),
     );
     renderSection({ visible: ["perlmutter", "odo"] });
@@ -214,7 +214,7 @@ describe("HpcStatusSection", () => {
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/expire/i);
     await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
     const odo = screen.getByRole("dialog", { name: "Odo connection details" });
-    expect(within(odo).getByText("The deployment's shared identity")).toBeInTheDocument();
+    expect(within(odo).getByText("Your own identity")).toBeInTheDocument();
     expect(odo).not.toHaveTextContent(/expire|lapse|3 days/i);
   });
 

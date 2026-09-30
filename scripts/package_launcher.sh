@@ -24,16 +24,6 @@
 #                       still needs its own repository, set in the project's
 #                       settings, and git 2.34 or later on PATH. Set false to
 #                       turn the lab off for every project.
-#
-#   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN
-#                       Deployment-wide Globus credentials for file transfer to
-#                       Odo and Frontier, for a hosted install where one
-#                       identity serves everyone. On a desktop, connect Globus
-#                       in the VISTA user settings instead: nothing to export,
-#                       and nothing to set up in this terminal.
 
 set -euo pipefail
 

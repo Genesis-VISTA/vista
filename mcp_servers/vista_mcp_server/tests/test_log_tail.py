@@ -241,12 +241,6 @@ class TestWhatAStatusQuerySays:
         The case that makes it real: a researcher who connected Globus before
         VISTA moved to the HTTPS interface has half a credential, which is not
         one. They should still be able to see that their job finished."""
-        for field in (
-            "frontier_globus_refresh_token",
-            "frontier_globus_https_refresh_token",
-        ):
-            monkeypatch.setattr(settings, field, None)
-
         text = await _get_olcf_job_status(
             UserConfig(frontier_s3m_token="s3m", frontier_globus_token="stale"),
             tmp_path,

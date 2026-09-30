@@ -6,7 +6,7 @@ from typing import Annotated as A, Literal
 import getpass
 import uuid
 from datetime import datetime
-from .lib.types import ResolvedPath, CommaSeparatedList, GlobusTokens
+from .lib.types import ResolvedPath, CommaSeparatedList
 from .metrics import MetricsSettings
 
 
@@ -111,20 +111,6 @@ class AppSettings(BaseSettings):
     """
     UUID of the Globus Collection that exposes Odo's filesystem (open enclave)
     """
-    odo_globus_refresh_token: str | None = None
-    """
-    Globus Transfer refresh token for Odo (open enclave) directory listings and
-    `mkdir`, to work around the lack of IRI File API support.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster odo --save-env
-    """
-    odo_globus_https_refresh_token: str | None = None
-    """
-    Refresh token for Odo's collection over the Globus HTTPS interface -- the
-    one that moves bytes. A second token because Globus issues one per resource
-    server and this one's is the collection UUID, not `transfer.api.globus.org`.
-    Written by the same `--save-env` run as the Transfer token above.
-    """
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
@@ -142,18 +128,6 @@ class AppSettings(BaseSettings):
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
     """
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
-    """
-    frontier_globus_refresh_token: str | None = None
-    """
-    Deployment-wide Globus Transfer refresh token for Frontier (moderate
-    enclave) directory listings and `mkdir`.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster frontier --save-env
-    """
-    frontier_globus_https_refresh_token: str | None = None
-    """
-    Frontier's counterpart to `odo_globus_https_refresh_token`: the collection's
-    own refresh token, which is what reads and writes file contents.
     """
 
     lux_ssh_hosts: CommaSeparatedList[str] = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
@@ -184,8 +158,8 @@ class AppSettings(BaseSettings):
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
-    Globus Native App client UUID used to mint refresh-token authorizers from
-    the deployment's Globus refresh token.
+    Globus Native App client UUID the researchers' Globus refresh tokens were
+    minted for, used to build the authorizers that refresh their access tokens.
     """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
@@ -226,30 +200,6 @@ class AppSettings(BaseSettings):
         the box.
         """
         return self.data_dir / "knowledge-bases"
-
-    def globus_tokens(self, cluster: Literal["odo", "frontier"]) -> GlobusTokens | None:
-        """The deployment's Globus credential for a cluster, or None.
-
-        The last of the three sources `UserConfig.require_globus_token` tries,
-        and the only one a hosted deployment has ever had. Returning None rather
-        than refusing, because this is a fallback: only the caller knows whether
-        the two sources ahead of it also came up empty, and so only the caller
-        can say to go and connect one.
-
-        Both halves or neither. A deployment that has the Transfer token but not
-        the collection's could list directories and read nothing, which looks
-        like an empty output dir -- the exact confusion the HTTPS move exists to
-        remove.
-        """
-        if cluster == "odo":
-            transfer = self.odo_globus_refresh_token
-            https = self.odo_globus_https_refresh_token
-        else:
-            transfer = self.frontier_globus_refresh_token
-            https = self.frontier_globus_https_refresh_token
-        if not (transfer and https):
-            return None
-        return GlobusTokens(transfer=transfer, https=https)
 
     embed_device: A[str | None, Field(validation_alias="VISTA_EMBED_DEVICE")] = None
     """
