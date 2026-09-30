@@ -94,8 +94,16 @@ KB dir.
   continue without the KB. The next boot retries. This keeps zero-config startup intact:
   this very session hit a revoked token and a GitLab 502.
 - **No client** (no token, no payload): warn once per boot while the KB is missing.
-- **A payload whose `ai-safety/` index is absent or empty**: raise, as today. That's a
-  packaging defect, and the laptop-distribution spec requires setup to fail on it.
+- **Payload source never indexes.** A package distributes its index, built at package time
+  (D5), so when the source is a payload the sync does not call `_build_knowledge_base`. It
+  only runs `_assert_knowledge_base_indexed` on the extracted `rag_db`. An absent or empty
+  index raises, naming the corpus: that's a packaging defect, and the laptop-distribution
+  spec requires setup to fail on it. Reusing `_build_knowledge_base` unchanged would
+  instead re-embed the corpus on the researcher's machine, making LLM calls for citations,
+  whenever the index was missing. `seed_db` applies the same rule to `molten-salt-papers`
+  on the payload path, so both bundled corpora behave alike; today it has the same latent
+  hole.
+- **Indexing at runtime happens only on the token (dev) path.**
 - **Citations**: `_build_knowledge_base` already passes `citation_credentials()`, and the
   indexer skips citation extraction when there are none. So a dev boot with no LLM
   credentials indexes text only instead of failing. Three papers take about a minute.

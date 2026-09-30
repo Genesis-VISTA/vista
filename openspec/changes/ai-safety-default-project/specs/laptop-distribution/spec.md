@@ -25,6 +25,13 @@ artifact built without them SHALL contain none of that data.
 - **THEN** setup fails with a message identifying the incomplete corpus, rather than
   creating a knowledge base that reports itself ready and returns nothing
 
+#### Scenario: The installed artifact never indexes
+
+- **WHEN** an installed artifact starts, on first run or later, including when a bundled
+  index is missing
+- **THEN** no corpus is embedded and no citation-extraction call is made on the
+  researcher's machine; a missing index fails setup as above
+
 #### Scenario: Default artifact carries no science data
 
 - **WHEN** an artifact is built without the science projects enabled
