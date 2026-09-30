@@ -35,7 +35,7 @@
 
 ## 5. Backend: acceptance tests
 
-- [ ] 5.1 Add `backend/tests/test_chat_runs.py` (unit/integration, hermetic, `FunctionModel`), covering the spec scenarios end to end through the API:
+- [x] 5.1 Add `backend/tests/test_chat_runs.py` (unit/integration, hermetic, `FunctionModel`), covering the spec scenarios end to end through the API:
   - a disconnect mid-run completes and saves;
   - re-attaching replays from the start;
   - a send while busy returns 409;
