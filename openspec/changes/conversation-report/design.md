@@ -44,6 +44,11 @@ parameters and failures; outputs referenced by their `/mnt/data/output/...`
 path, images as markdown images. *Alternative:* one prompt producing report and
 skill together — rejected in grilling; the two want different shapes, and most
 users won't make a skill.
+The prompt is passed as `instructions=`, not `system_prompt=`: PydanticAI
+omits a system prompt when `message_history` is non-empty, and the chat's
+history always is (it carries VISTA's own prompt). Live testing showed the
+report ignoring its structure for exactly this reason, and `skill_authoring.py`
+had the same bug, so it gets the same one-line fix.
 
 **2. Project-scoped endpoints in a new `api/reports.py`.**
 - `POST /projects/{name}/reports/generate` — body `{message_history, hint?}`,

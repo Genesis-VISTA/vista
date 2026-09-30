@@ -10,6 +10,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -91,3 +92,25 @@ async def test_blank_hint_is_ignored(seen):
     await generate_report_draft(_history(), hint="   ")
 
     assert "User hint" not in _user_prompts(seen[0])[-1]
+
+
+@pytest.mark.anyio
+async def test_instructions_reach_the_model_despite_chat_history(seen):
+    """
+    A real chat's history starts with VISTA's own system prompt. The report
+    instructions must still be sent; a `system_prompt=` would be dropped here.
+    """
+    history = [
+        ModelRequest(
+            parts=[SystemPromptPart("You are VISTA."), UserPromptPart("Plot x^2.")]
+        ),
+        ModelResponse(parts=[TextPart("Done.")]),
+    ]
+
+    await generate_report_draft(history)
+
+    last = seen[0][-1]
+    assert isinstance(last, ModelRequest)
+    assert last.instructions is not None
+    assert "## Summary" in last.instructions
+    assert "## Record" in last.instructions

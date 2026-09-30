@@ -70,7 +70,9 @@ async def generate_skill_draft(
     """
     agent = Agent(
         model=build_model_for(user),
-        system_prompt=_SYSTEM_PROMPT,
+        # `instructions`, not `system_prompt`: PydanticAI drops a system prompt
+        # when `message_history` is non-empty, and the chat history always is.
+        instructions=_SYSTEM_PROMPT,
         output_type=SkillDraft,
     )
     user_prompt = "Draft a SKILL.md from the conversation above." + (

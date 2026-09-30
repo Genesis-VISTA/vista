@@ -38,15 +38,18 @@ Output strictly:
 - slug_suggestion: a kebab-case slug (lowercase, dashes only, 2-6 words).
 - summary: one sentence saying what was done and what was found.
 - body: Markdown only, with no YAML frontmatter (the --- delimited block) and
-  no top-level # title. Structure it as:
+  no top-level # title. It MUST contain exactly these two sections, with these
+  exact headings, in this order (use ### subheadings inside them if needed):
   1. ## Summary - a few short paragraphs or bullets: the goal, the approach, the
      key results, and open questions or next steps. Readable on its own.
   2. ## Record - the detailed record: exact values and units, compositions,
      parameters and settings, tool calls that mattered, HPC job IDs and
      clusters, file paths, and what failed and why. Prefer bullets and tables.
-  Reference output files by their sandbox path (e.g. /mnt/data/output/...);
-  embed images as ![caption](/mnt/data/output/...). Do not invent paths,
-  values, or results that do not appear in the conversation.
+  Reference output files by their sandbox path (e.g. /mnt/data/output/...).
+  Embed every image the conversation produced or displayed (.png, .jpg, .svg)
+  as ![caption](/mnt/data/output/...) using its exact path, so it renders in
+  the report. Do not invent paths, values, or results that do not appear in
+  the conversation.
 """
 
 
@@ -72,7 +75,9 @@ async def generate_report_draft(
     """
     agent = Agent(
         model=build_model_for(user),
-        system_prompt=_SYSTEM_PROMPT,
+        # `instructions`, not `system_prompt`: PydanticAI drops a system prompt
+        # when `message_history` is non-empty, and the chat history always is.
+        instructions=_SYSTEM_PROMPT,
         output_type=ConversationReport,
     )
     user_prompt = "Write a report of the conversation above." + (

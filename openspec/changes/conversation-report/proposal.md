@@ -60,4 +60,6 @@ current spec covers them.
   agent-side tool for saving reports.
 - Trimming long histories before drafting (a follow-up that would also apply to
   skills).
-- Any change to skill drafting itself or to VISTAGuard.
+- Any change to skill drafting itself or to VISTAGuard, apart from one bug fix:
+  skill drafting passed its instructions as a system prompt, which PydanticAI
+  drops when chat history is supplied, so the model never received them.
