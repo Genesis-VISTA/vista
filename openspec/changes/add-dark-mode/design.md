@@ -141,9 +141,19 @@ contrast test in task 2.3.
 | `--success` / `--success-tint` / `--success-line` | `#0b730b` / `#f0f6f1` / `#cde0d1` | `#78cc8f` / `#132c25` / `#2b5a45` |
 | `--warning` (fill) / `--warning-ink` / `--warning-line` / `--warning-tint` | `#e6c500` / `#a06a00` / `#d8b04a` / `#fff6e5` | `#e8c15a` / `#e8c15a` / `#8a7330` / `#2a2a1e` |
 | `--danger` / `--danger-ink` / `--danger-line` / `--danger-tint` | `#d61200` / `#b01000` / `#e8a4a0` / `#fdecea` | `#ff8a7a` / `#ff8a7a` / `#7a3a40` / `#2f1d24` |
-| `--hover` / `--hover-strong` | `rgba(0,0,0,.05)` / `rgba(0,0,0,.06)` | `rgba(255,255,255,.05)` / `rgba(255,255,255,.08)` |
-| `--scrim` | `rgba(28,26,23,.4)` | `rgba(3,8,15,.7)` |
-| `--shadow-card` | `0 10px 28px rgba(17,42,77,.16)` | `0 10px 28px rgba(0,0,0,.45)` |
+| `--brand-fill-hover` / `--link-hover` | `#112a4d` / `#112a4d` | `#2a6699` / `#c4e0f8` |
+| `--brand-wash` / `--brand-wash-strong` | `rgba(0,69,115,.07)` / `.08` | `rgba(146,198,242,.1)` / `.13` |
+| `--accent` | `#4a7fb5` | `#6fa3d6` |
+| `--scrollbar-thumb` / `-hover` | `#004573` / `#112a4d` | `#335a82` / `#4a76a3` |
+| `--wash-faint` / `--wash` / `--wash-strong` | black at `.04` / `.05` / `.06` | white at `.04` / `.06` / `.08` |
+| `--surface-2` / `-mid` / `-strong` | 50% grey at `.08` / `.10` / `.12` | unchanged (grey reads on both) |
+| `--warning-strong` / `--warning-text` / `--warning-mark` | `#7a5c00` / `#5c4600` / `#d8a400` | `#d9b450` / `#f0d98f` / `#e8c15a` |
+| `--ok` | `#1a7f4b` | `#6fcf97` |
+| `--kind-finding` / `--kind-done` | `#0b6b53` / `#3b2f7a` | `#5fcfae` / `#b7a9f2` |
+| `--sim-done` / `-waiting` / `-stalled` / `-failed` | `#3f9a5a` / `#b8862b` / `#b8532b` / `#a8353a` | `#5fb878` / `#d9a648` / `#e08050` / `#e06470` |
+| `--scrim` / `--scrim-strong` | `rgba(28,26,23,.4)` / `.66` | `rgba(3,8,15,.6)` / `.82` |
+| `--shadow-menu` / `-popover` / `-float` / `-modal` | navy- and ink-tinted, see `globals.css` | black at `.45` / `.45` / `.4` / `.55` |
+| `--media-mat` | `#ffffff` | `#ffffff` (agent content keeps its page) |
 | `--term-bg` / `--term-bg-2` | `#12100e` / `#1a1714` | `#08111c` / `#0d1826` |
 | `--term-ink` / `--term-muted` / `--term-line` | `#c9c1b6` / `#8a8278` / `#2a2520` | `#c9d3de` / `#8193a8` / `#1a2a3d` |
 | `--term-ok` / `--term-warn` / `--term-error` | `#5a9e6f` / `#d4a843` / `#c9503c` | `#6fb58a` / `#d4a843` / `#e0705c` |

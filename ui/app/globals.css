@@ -53,6 +53,8 @@
   --brand-wash: rgba(0, 69, 115, 0.07);
   --brand-wash-strong: rgba(0, 69, 115, 0.08);
   --accent: #4a7fb5;
+  --scrollbar-thumb: #004573;
+  --scrollbar-thumb-hover: #112a4d;
 
   /* status (AmSC guide, verbatim) */
   --success: #0b730b;
@@ -116,6 +118,165 @@
   --panel-2: var(--surface);
 }
 
+/* ---------- Deep Navy (dark) ----------------------------------------
+   System follows the OS through the media query; an explicit choice sets
+   data-theme on <html> (see ui/lib/theme.ts). The two blocks carry the same
+   values — tests/theme-tokens.test.ts holds them to that. Only tokens are
+   redefined here; no component rule names a theme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a1524;
+    --surface: #112235;
+    --surface-sunken: #0e1c2d;
+    --surface-active: #1b3049;
+    --wash-faint: rgba(255, 255, 255, 0.04);
+    --wash: rgba(255, 255, 255, 0.06);
+    --wash-strong: rgba(255, 255, 255, 0.08);
+
+    --line: #213852;
+    --line-soft: #1a2e45;
+    --line-strong: #2a4566;
+
+    --ink: #e8eef5;
+    --ink-2: #c6d2de;
+    --muted: #97aabf;
+    --muted-2: #8a9db3;
+
+    --brand: #92c6f2;
+    --brand-dark: #06101c;
+    --brand-tint: #173352;
+    --brand-line: #28496d;
+    --brand-line-strong: #335a82;
+    --brand-2: #f0707a;
+    --brand-fill: #3577b0;
+    --brand-fill-hover: #2a6699;
+    --on-brand: #ffffff;
+    --link-hover: #c4e0f8;
+    --brand-wash: rgba(146, 198, 242, 0.1);
+    --brand-wash-strong: rgba(146, 198, 242, 0.13);
+    --accent: #6fa3d6;
+    --scrollbar-thumb: #335a82;
+    --scrollbar-thumb-hover: #4a76a3;
+
+    --success: #78cc8f;
+    --success-tint: #132c25;
+    --success-line: #2b5a45;
+    --warning: #e8c15a;
+    --warning-ink: #e8c15a;
+    --warning-line: #8a7330;
+    --danger: #ff8a7a;
+    --danger-line: #7a3a40;
+    --danger-ink: #ff8a7a;
+    --danger-tint: #2f1d24;
+    --warning-tint: #2a2a1e;
+    --warning-strong: #d9b450;
+    --warning-text: #f0d98f;
+    --warning-mark: #e8c15a;
+    --ok: #6fcf97;
+
+    --kind-finding: #5fcfae;
+    --kind-done: #b7a9f2;
+    --sim-done: #5fb878;
+    --sim-waiting: #d9a648;
+    --sim-stalled: #e08050;
+    --sim-failed: #e06470;
+
+    --shadow-menu: 0 10px 28px rgba(0, 0, 0, 0.45);
+    --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45);
+    --shadow-float: 0 8px 20px rgba(0, 0, 0, 0.4);
+    --shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.55);
+    --scrim: rgba(3, 8, 15, 0.6);
+    --scrim-strong: rgba(3, 8, 15, 0.82);
+
+    --term-bg: #08111c;
+    --term-bg-2: #0d1826;
+    --term-ink: #c9d3de;
+    --term-muted: #8193a8;
+    --term-line: #1a2a3d;
+    --term-ok: #6fb58a;
+    --term-warn: #d4a843;
+    --term-error: #e0705c;
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a1524;
+  --surface: #112235;
+  --surface-sunken: #0e1c2d;
+  --surface-active: #1b3049;
+  --wash-faint: rgba(255, 255, 255, 0.04);
+  --wash: rgba(255, 255, 255, 0.06);
+  --wash-strong: rgba(255, 255, 255, 0.08);
+
+  --line: #213852;
+  --line-soft: #1a2e45;
+  --line-strong: #2a4566;
+
+  --ink: #e8eef5;
+  --ink-2: #c6d2de;
+  --muted: #97aabf;
+  --muted-2: #8a9db3;
+
+  --brand: #92c6f2;
+  --brand-dark: #06101c;
+  --brand-tint: #173352;
+  --brand-line: #28496d;
+  --brand-line-strong: #335a82;
+  --brand-2: #f0707a;
+  --brand-fill: #3577b0;
+  --brand-fill-hover: #2a6699;
+  --on-brand: #ffffff;
+  --link-hover: #c4e0f8;
+  --brand-wash: rgba(146, 198, 242, 0.1);
+  --brand-wash-strong: rgba(146, 198, 242, 0.13);
+  --accent: #6fa3d6;
+  --scrollbar-thumb: #335a82;
+  --scrollbar-thumb-hover: #4a76a3;
+
+  --success: #78cc8f;
+  --success-tint: #132c25;
+  --success-line: #2b5a45;
+  --warning: #e8c15a;
+  --warning-ink: #e8c15a;
+  --warning-line: #8a7330;
+  --danger: #ff8a7a;
+  --danger-line: #7a3a40;
+  --danger-ink: #ff8a7a;
+  --danger-tint: #2f1d24;
+  --warning-tint: #2a2a1e;
+  --warning-strong: #d9b450;
+  --warning-text: #f0d98f;
+  --warning-mark: #e8c15a;
+  --ok: #6fcf97;
+
+  --kind-finding: #5fcfae;
+  --kind-done: #b7a9f2;
+  --sim-done: #5fb878;
+  --sim-waiting: #d9a648;
+  --sim-stalled: #e08050;
+  --sim-failed: #e06470;
+
+  --shadow-menu: 0 10px 28px rgba(0, 0, 0, 0.45);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-float: 0 8px 20px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 20px 50px rgba(0, 0, 0, 0.55);
+  --scrim: rgba(3, 8, 15, 0.6);
+  --scrim-strong: rgba(3, 8, 15, 0.82);
+
+  --term-bg: #08111c;
+  --term-bg-2: #0d1826;
+  --term-ink: #c9d3de;
+  --term-muted: #8193a8;
+  --term-line: #1a2a3d;
+  --term-ok: #6fb58a;
+  --term-warn: #d4a843;
+  --term-error: #e0705c;
+
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -137,7 +298,7 @@
 .modal-body,
 .output-card {
   scrollbar-width: thin;
-  scrollbar-color: var(--brand) var(--line);
+  scrollbar-color: var(--scrollbar-thumb) var(--line);
 }
 
 .panel-body::-webkit-scrollbar,
@@ -172,7 +333,7 @@
 .reference-list::-webkit-scrollbar-thumb,
 .modal-body::-webkit-scrollbar-thumb,
 .output-card::-webkit-scrollbar-thumb {
-  background: var(--brand);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
   border: 2px solid var(--line);
 }
@@ -185,7 +346,7 @@
 .reference-list::-webkit-scrollbar-thumb:hover,
 .modal-body::-webkit-scrollbar-thumb:hover,
 .output-card::-webkit-scrollbar-thumb:hover {
-  background: var(--brand-dark);
+  background: var(--scrollbar-thumb-hover);
 }
 
 html, body {
@@ -934,7 +1095,7 @@ main {
 .button {
   border: none;
   background: var(--brand-fill);
-  color: var(--surface);
+  color: var(--on-brand);
   padding: 8px 14px;
   border-radius: var(--r-control);
   font-family: inherit;
@@ -1491,7 +1652,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   transform: translateX(-50%);
   border: none;
   background: var(--brand-fill);
-  color: var(--surface);
+  color: var(--on-brand);
   border-radius: 999px;
   width: 34px;
   height: 34px;
@@ -1709,7 +1870,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .output-card {
   background: var(--brand-dark);
-  color: var(--surface-sunken);
+  color: var(--on-brand);
   padding: 12px;
   border-radius: 12px;
   border: 1px solid var(--brand);
@@ -2627,7 +2788,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .project-card-badge.active {
   background: var(--brand-fill);
-  color: var(--surface);
+  color: var(--on-brand);
 }
 
 .project-card-desc {
@@ -3994,7 +4155,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   border: none;
   border-radius: 9px;
   background: var(--brand-fill);
-  color: var(--surface);
+  color: var(--on-brand);
   font: inherit;
   cursor: pointer;
   transition: background 120ms ease;
@@ -4048,12 +4209,12 @@ button.chat-bubble.intermediate.collapsed:hover {
 /* The one solid navy fill in the rail: the open project's active child. */
 .nav-rail-entry.project-child.active {
   background: var(--brand-fill);
-  color: var(--surface);
+  color: var(--on-brand);
   font-weight: 400;
 }
 
 .nav-rail-entry.project-child.active .nav-rail-icon {
-  color: var(--surface);
+  color: var(--on-brand);
 }
 
 /* ---------------------------------------------------------------------------
