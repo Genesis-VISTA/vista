@@ -1019,6 +1019,7 @@ stage_window_windows() {
   (
     cd "$REPO_ROOT/electron"
     npm ci --prefer-offline >/dev/null
+    npx --no install-electron
   )
   # The packager prints a Windows path; bash's own tools want its POSIX form.
   built="$(node "$REPO_ROOT/electron/scripts/package.js" \
