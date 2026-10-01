@@ -42,12 +42,13 @@ Testing roadmap requirements are OpenSpec-first — canonical specs are in
 ## Common Commands
 
 ### Full Development Setup
-Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively.
+Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively, and opens the UI in the VISTA window.
 ```bash
-./launch.sh logs
+./launch.sh logs                # services + the VISTA window
+./launch.sh logs --no-electron  # services only; use a browser (e.g. over SSH)
 ```
 
-Note that the `./launch.sh` script will not terminate until cancelled, and then on cancel will automatically clean up all 3 processes.
+Note that the `./launch.sh` script will not terminate until the window is closed or the script is cancelled, and then will automatically clean up all 3 processes. With no display it fails and asks for `--no-electron` rather than falling back to a browser.
 
 On Windows, run `launch.sh` and `build.sh` from Git Bash (installed with Git for Windows).
 
@@ -60,7 +61,7 @@ To build everything without launching, run
 `electron/` is a window onto the UI and nothing else: it loads the `--url` it is given and never
 starts services. The launchers own its lifetime, and closing it stops VISTA.
 ```bash
-./launch.sh logs --electron   # dev stack in the window (installs it via build.sh --electron)
+./launch.sh logs              # dev stack in the window (installs it via build.sh --electron)
 cd electron && npm test       # routing rules (hermetic, in PR CI)
 cd electron && npm run test:e2e  # window behaviour via Playwright; needs a display
 ```
@@ -72,7 +73,7 @@ manifest's `window.exe`. There is no browser mode: the launcher refuses a sessio
 the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
 
 On Linux, whether the window gets `--no-sandbox` is decided in one place,
-`electron/linux/window-sandbox`. The package launcher, `./launch.sh --electron` and the
+`electron/linux/window-sandbox`. The package launcher, `./launch.sh` and the
 build's smoke test all call it, so don't hardcode the flag anywhere else. It prints the flag
 only when the host blocks Chromium's sandbox: as root, or where unprivileged user namespaces
 are blocked and VISTA's AppArmor profile (`electron/linux/vista-window.apparmor`, shipped next

@@ -23,20 +23,41 @@ MODE="logs"
 PROD=''
 NO_BUILD=false
 ELECTRON=''
+NO_ELECTRON=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
     --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
-    --electron) ELECTRON=true ;; # Open the UI in the VISTA window; closing it stops the stack.
+    --electron) ELECTRON=true ;; # The default in logs mode; kept so existing invocations still work.
+    --no-electron) NO_ELECTRON=true ;; # Services only; open http://localhost:3000 in a browser.
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--electron]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron]" >&2; exit 1 ;;
   esac
 done
+
+if [[ -n "$ELECTRON" && "$NO_ELECTRON" == true ]]; then
+  echo "--electron and --no-electron contradict each other; pass one." >&2
+  exit 1
+fi
 
 # The window's lifetime is the stack's, which only `logs` mode owns: tmux and
 # terminal hand the services to other windows and return.
 if [[ -n "$ELECTRON" && "$MODE" != logs ]]; then
   echo "--electron works in logs mode only; $MODE mode does not own the services' lifetime." >&2
+  exit 1
+fi
+
+# So in logs mode the UI opens in the VISTA window unless asked not to, and
+# closing the window stops the stack.
+if [[ "$MODE" == logs && "$NO_ELECTRON" != true ]]; then
+  ELECTRON=true
+fi
+
+# Fail before building rather than after: without a display the window cannot
+# open, and a session with no window has to say so rather than fall back.
+if [[ -n "$ELECTRON" && "$(uname -s)" == Linux && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+  echo "No display (DISPLAY and WAYLAND_DISPLAY are unset), so the VISTA window cannot open." >&2
+  echo "Pass --no-electron to start the services alone and use a browser." >&2
   exit 1
 fi
 
@@ -49,7 +70,7 @@ fi
 # binary. The .bin/electron link exists without it, after any bare `npm ci`,
 # and then fails to start with a confusing message.
 if [[ -n "$ELECTRON" && ! -f "$REPO_ROOT/electron/node_modules/electron/path.txt" ]]; then
-  echo "The VISTA window is not installed; run ./scripts/build.sh --electron first." >&2
+  echo "The VISTA window is not installed; run ./scripts/build.sh --electron first, or pass --no-electron." >&2
   exit 1
 fi
 
