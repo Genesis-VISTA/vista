@@ -182,10 +182,10 @@ to `prefers-color-scheme`, so System needs no IPC.
 
 ### 9. Literal-color guard
 
-`./scripts/ci-local.sh ui lint` gains a check that fails on a hex or `rgb(a)(` literal in
-`globals.css` outside the token blocks, and on a hex color in an inline `style` in
-`ui/components/`. Allowed exceptions are listed explicitly in the check (for example the
-sandboxed iframe's own document).
+`ui/scripts/check-colors.mjs`, chained into `npm run lint` so `ci-local.sh`, the pre-commit
+hook and GitLab's `ui:lint` all run it from one place, fails on a hex or `rgb(a)(` literal in
+`globals.css` outside the three token blocks, and on any in `.ts`/`.tsx` under `app/`,
+`components/` or `lib/`. Deliberate exceptions go in its `ALLOWED` list; it starts empty.
 
 ## Risks / Trade-offs
 

@@ -2959,6 +2959,54 @@ button.chat-bubble.intermediate.collapsed:hover {
   margin-top: 4px;
 }
 
+/* Appearance: three choices always visible, the checked one raised like a
+   tab — the same form the OS uses for the same setting. */
+.user-settings-appearance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-bottom: 14px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.theme-choice {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface-sunken);
+}
+
+.theme-choice-option {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.theme-choice-option:hover {
+  background: var(--wash);
+}
+
+.theme-choice-option[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.theme-choice-option:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
 .user-settings-globus {
   display: flex;
   flex-direction: column;

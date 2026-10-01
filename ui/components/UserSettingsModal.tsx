@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   completeGlobusLogin,
   fetchCurrentUserWithConfig,
@@ -19,6 +19,7 @@ import {
   useHpcStatus,
   type HpcCluster,
 } from "@/lib/hpc-status";
+import { useTheme, type ThemeChoice } from "@/lib/theme";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
 /**
@@ -84,6 +85,11 @@ export function UserSettingsModal({
           </button>
         </div>
         <div className="modal-body">
+          {/* Outside the form: the theme is this machine's, not the user
+              row's, so it shows before the user loads and applies at once
+              rather than on Save. */}
+          <AppearanceSetting />
+
           {loading && !user && (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading…</div>
           )}
@@ -773,6 +779,61 @@ function GlobusConnect({
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+/**
+ * System / Light / Dark. A radio group rather than a select so all three are
+ * visible at once, with the WAI-ARIA keyboard model: one tab stop on the
+ * checked option, arrow keys move and select together.
+ */
+function AppearanceSetting() {
+  const { choice, setChoice } = useTheme();
+  const labelId = useId();
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const steps: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    const step = steps[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const current = THEME_OPTIONS.findIndex((o) => o.value === choice);
+    const next = (current + step + THEME_OPTIONS.length) % THEME_OPTIONS.length;
+    setChoice(THEME_OPTIONS[next].value);
+    refs.current[next]?.focus();
+  }
+
+  return (
+    <div className="user-settings-appearance">
+      <div id={labelId} className="user-settings-section-label">
+        Appearance
+      </div>
+      <div className="theme-choice" role="radiogroup" aria-labelledby={labelId} onKeyDown={onKeyDown}>
+        {THEME_OPTIONS.map((option, i) => (
+          <button
+            key={option.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={choice === option.value}
+            tabIndex={choice === option.value ? 0 : -1}
+            className="theme-choice-option"
+            onClick={() => setChoice(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <span className="user-settings-hint">System matches your computer&apos;s light or dark setting.</span>
     </div>
   );
 }
