@@ -44,9 +44,10 @@ if [[ "$NO_BUILD" != true ]]; then
   ./scripts/build.sh ${PROD:+--prod} ${ELECTRON:+--electron}
 fi
 
-# path.txt is what Electron's installer writes once it has the binary. The
-# .bin/electron link exists without it (`ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci`
-# leaves one), and then fails to start with a confusing message.
+# path.txt is what Electron's installer (`install-electron`, which build.sh
+# runs after `npm ci`; Electron 44 has no postinstall) writes once it has the
+# binary. The .bin/electron link exists without it, after any bare `npm ci`,
+# and then fails to start with a confusing message.
 if [[ -n "$ELECTRON" && ! -f "$REPO_ROOT/electron/node_modules/electron/path.txt" ]]; then
   echo "The VISTA window is not installed; run ./scripts/build.sh --electron first." >&2
   exit 1
