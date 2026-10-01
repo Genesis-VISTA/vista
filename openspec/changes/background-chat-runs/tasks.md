@@ -76,11 +76,15 @@
 
 ## 9. Verification
 
-- [ ] 9.1 Run `./scripts/ci-local.sh` (lint and test for backend, ui and mcp) and confirm it is green.
-- [ ] 9.2 **Manual, not in PR CI (live):** on the desktop stack (`./launch.sh logs --electron`):
+- [x] 9.1 Run `./scripts/ci-local.sh` (lint and test for backend, ui and mcp) and confirm it is green.
+- [x] 9.2 **Manual, not in PR CI (live):** on the desktop stack (`./launch.sh logs --electron`):
   1. Send a prompt that runs a few tools, navigate to Skills, return, and see the green dot and the answer.
   2. Start a Lux submission, leave before the SSH login appears, come back more than 5 minutes later, log in, and confirm the job submits.
   3. Stop a run after a tool call and check the agent's next answer knows what already ran.
   4. Quit VISTA mid-run and see the red interrupted dot after relaunch.
 
   Record the results in the MR.
+
+  Results (2026-10-01, macOS, Electron dev stack): all four passed. Note for check 4: the window
+  reopens at `/` and into the last active conversation, which counts as opening it, so the red
+  dot only shows on a conversation that was not the active one when VISTA quit.
