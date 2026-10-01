@@ -3,9 +3,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Annotated as A, Literal
-import getpass
-import uuid
-from datetime import datetime
 from .lib.types import ResolvedPath, CommaSeparatedList
 from .metrics import MetricsSettings
 
@@ -149,9 +146,6 @@ class AppSettings(BaseSettings):
     """
     hpc_ssh_user: str | None = None
     """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
-
-    session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
-    """ Unique id for the Vista session """
 
     omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
     omd_api_key: str | None = None

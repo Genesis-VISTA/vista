@@ -56,9 +56,6 @@ def lux(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", jobs_dir)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
     monkeypatch.setattr(settings, "lux_proxy", "http://proxy.ccs.ornl.gov:3128")
-    monkeypatch.setattr(settings, "session_id", "test-session")
-    monkeypatch.setattr(m, "_submitted_jobs", {})
-    monkeypatch.setattr(m, "_persist_submitted_jobs", lambda *a, **k: None)
 
     conn = FakeSshConn(tmp_path / "remote")
     conn.on("sbatch --parsable", (0, "4242\n", ""))
@@ -84,10 +81,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     )
     assert job_id == "4242"
     assert (nodes, duration) == (16, 1800)
-    session = f"{BASE}/test-session"
-    assert log_path == f"{session}/out/log-4242.out"
-    assert err_path == f"{session}/out/log-4242.err"
-    assert out_dir == f"{session}/out/4242"
+    assert log_path == f"{BASE}/out/log-4242.out"
+    assert err_path == f"{BASE}/out/log-4242.err"
+    assert out_dir == f"{BASE}/out/4242"
 
     script = _submitted_script(lux)
     header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
@@ -95,9 +91,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
         "#SBATCH -J vista-lux-demo",
         "#SBATCH -N 16",
         "#SBATCH -t 0:30:00",
-        f"#SBATCH -o {session}/out/log-%j.out",
-        f"#SBATCH -e {session}/out/log-%j.err",
-        f"#SBATCH --chdir={session}",
+        f"#SBATCH -o {BASE}/out/log-%j.out",
+        f"#SBATCH -e {BASE}/out/log-%j.err",
+        f"#SBATCH --chdir={BASE}",
     ]
     assert "#SBATCH --exclusive" in header
     # No account: the job runs as the researcher, so Slurm charges their default.
@@ -114,7 +110,8 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     assert script.index("#SBATCH -A ignored") > script.index("export RUN_DIR_Lux")
     assert f"export RUN_DIR_Lux={BASE}/lux-demo/src" in script
     assert "export FOO='bar baz'" in script
-    assert f'export VISTA_OUT={session}/out/"$SLURM_JOB_ID"' in script
+    assert f'export VISTA_OUT={BASE}/out/"$SLURM_JOB_ID"' in script
+    assert 'mkdir -p -m 2775 "$VISTA_OUT"' in script
     assert "export https_proxy=http://proxy.ccs.ornl.gov:3128" in script
     assert "set -- MODEL=forge-m --flag" in script
 
@@ -124,7 +121,8 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
     # by VISTA, never uploaded.
     assert lux.puts == [f"{BASE}/lux-demo/src/run.py"]
-    assert lux.local(f"{BASE}/test-session/out").is_dir()
+    # Only the source tree is made ahead of time; Slurm makes out/.
+    assert not lux.local(f"{BASE}/out").exists()
 
     lux.puts.clear()
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
@@ -166,10 +164,8 @@ async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
     job_id, log_path, err_path, out_dir, *_ = await m._submit_lux_job(
         None, CFG, "lux-demo", None, None, None
     )
-    m._submitted_jobs[job_id] = m.SubmittedJob(
-        cluster="lux", log_path=log_path, err_path=err_path, output_dir=out_dir
-    )
     lux.on("squeue", (0, "RUNNING|None\n", ""))
+    lux.local(log_path).parent.mkdir(parents=True)  # what Slurm does at job start
     lux.local(log_path).write_text(
         "step 1 loss 9.1\nstep 2 loss 8.7\n", encoding="utf-8"
     )
@@ -178,7 +174,7 @@ async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
     lux.on("find .", (0, "checkpoints/latest\n", ""))
 
     host_out = tmp_path / "host_out"
-    text = await m._get_lux_job_status(None, host_out, job_id)
+    text = await m._get_lux_job_status(None, CFG, host_out, job_id)
     assert "STATE=ACTIVE" in text
     assert "SLURM_STATE=RUNNING" in text
     assert "step 2 loss 8.7" in text
@@ -190,40 +186,30 @@ async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
         "Traceback (most recent call last):\nKeyError: 'SLURM_NTASKS'\n",
         encoding="utf-8",
     )
-    text = await m._get_lux_job_status(None, host_out, job_id)
+    text = await m._get_lux_job_status(None, CFG, host_out, job_id)
     assert "KeyError: 'SLURM_NTASKS'" in text.split("--- STDERR ---")[1]
 
     # Incremental: the next poll only fetches what was appended.
     with lux.local(log_path).open("a", encoding="utf-8") as f:
         f.write("step 3 loss 8.2\n")
-    text = await m._get_lux_job_status(None, host_out, job_id)
+    text = await m._get_lux_job_status(None, CFG, host_out, job_id)
     assert "step 3 loss 8.2" in text
     local_log = host_out / job_id / "log-4242.out"
     assert local_log.read_text(encoding="utf-8").count("step 1") == 1
 
 
 async def test_status_of_pending_job_skips_log_fetch(lux, tmp_path):
-    m._submitted_jobs["77"] = m.SubmittedJob(
-        cluster="lux",
-        log_path=f"{BASE}/s/out/log-77.out",
-        output_dir=f"{BASE}/s/out/77",
-    )
     lux.on("squeue", (0, "PENDING|Priority\n", ""))
-    text = await m._get_lux_job_status(None, tmp_path, "77")
+    text = await m._get_lux_job_status(None, CFG, tmp_path, "77")
     assert "STATE=PENDING" in text
     assert "REASON=Priority" in text
     assert "has not started yet" in text
 
 
 async def test_status_falls_back_to_sacct_after_job_leaves_queue(lux, tmp_path):
-    m._submitted_jobs["78"] = m.SubmittedJob(
-        cluster="lux",
-        log_path=f"{BASE}/s/out/log-78.out",
-        output_dir=f"{BASE}/s/out/78",
-    )
     lux.on("squeue", (0, "", ""))
     lux.on("sacct", (0, "TIMEOUT|0:0\n", ""))
-    text = await m._get_lux_job_status(None, tmp_path, "78")
+    text = await m._get_lux_job_status(None, CFG, tmp_path, "78")
     assert "STATE=FAILED" in text
     assert "SLURM_STATE=TIMEOUT" in text
     assert "EXIT_CODE=0:0" in text
@@ -231,23 +217,20 @@ async def test_status_falls_back_to_sacct_after_job_leaves_queue(lux, tmp_path):
 
 
 async def test_outputs_download_over_sftp_and_cache_locally(lux, tmp_path):
-    out_dir = f"{BASE}/s/out/79"
-    m._submitted_jobs["79"] = m.SubmittedJob(
-        cluster="lux", log_path=None, output_dir=out_dir
-    )
+    out_dir = f"{BASE}/out/79"
     lux.local(out_dir).mkdir(parents=True)
     (lux.local(out_dir) / "metrics.csv").write_bytes(b"iter,loss\n1,9.1\n")
 
-    text = await m._get_lux_job_outputs(None, tmp_path, "79", ["metrics.csv"])
+    text = await m._get_lux_job_outputs(None, CFG, tmp_path, "79", ["metrics.csv"])
     assert "/mnt/data/output/79/metrics.csv" in text
     assert (tmp_path / "79" / "metrics.csv").read_bytes() == b"iter,loss\n1,9.1\n"
 
     lux.labels.clear()
-    await m._get_lux_job_outputs(None, tmp_path, "79", ["metrics.csv"])
+    await m._get_lux_job_outputs(None, CFG, tmp_path, "79", ["metrics.csv"])
     assert lux.labels == []  # served from local cache, no login needed
 
     with pytest.raises(ValueError):
-        await m._get_lux_job_outputs(None, tmp_path, "79", ["../escape"])
+        await m._get_lux_job_outputs(None, CFG, tmp_path, "79", ["../escape"])
 
 
 async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(

@@ -24,8 +24,8 @@
 # WHY THAT SHARED SCRATCH IS *NOT* $VISTA_OUT:
 #   `get_hpc_job_status` does a recursive Globus listing of the output dir; a build
 #   tree plus a .git dir in there makes a status check hang for minutes. $VISTA_OUT's
-#   parent (<odo_remote_dir>/out) is pre-created group-writable, so a sibling
-#   directory there is shared, writable, and out of the listing's path. Only
+#   parent (<odo_remote_dir>/out) is created by Slurm as the job's own user, so a
+#   sibling directory there is shared, writable, and out of the listing's path. Only
 #   results.json and the small analysis artifacts are written to $VISTA_OUT.
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:

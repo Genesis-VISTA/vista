@@ -51,8 +51,9 @@ from the environment.
 Each researcher SHALL set, per cluster, the folder on that cluster where
 VISTA puts job sources and outputs: Odo, Frontier, Perlmutter and Lux each
 have their own setting. The system SHALL NOT supply a default or fall back to
-a deployment-wide folder. Submission, status, outputs and cancel on a cluster
-whose folder is not set SHALL fail, naming the setting to fill in. Researchers
+a deployment-wide folder. Submission, status and output retrieval on a
+cluster whose folder is not set SHALL fail, naming the setting to fill in.
+Cancellation SHALL NOT need the folder, since it acts on the job id alone. Researchers
 who set the same folder share it; the system SHALL NOT separate their files.
 
 #### Scenario: Folder not set

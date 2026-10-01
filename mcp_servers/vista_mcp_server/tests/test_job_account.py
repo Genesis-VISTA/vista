@@ -62,10 +62,10 @@ async def test_no_token_is_refused_before_introspection(introspected):
 @pytest.fixture
 def submit_env(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", REPO_ROOT / "hpc_jobs")
-    monkeypatch.setattr(settings, "session_id", "test-session")
     iri = FakeIriClient(job_id="42")
     globus = FakeGlobusClient()
-    globus.seed_odo_out_dir("/fake/odo/vista")
+    globus.seed_remote_dir("/fake/odo/vista")
+    globus.seed_remote_dir("/fake/frontier/vista")
 
     async def _iri(*, iri_token: str):
         return iri
@@ -129,37 +129,27 @@ def no_introspection(monkeypatch):
     monkeypatch.setattr(m, "get_s3m_token_project", forbidden)
 
 
-@pytest.fixture
-def registry(monkeypatch):
-    monkeypatch.setattr(
-        m,
-        "_submitted_jobs",
-        {"10": m.SubmittedJob(cluster="frontier", output_dir="/o/10")},
-    )
-
-
-async def test_status_does_not_introspect(
-    no_introspection, registry, monkeypatch, tmp_path
-):
+async def test_status_does_not_introspect(no_introspection, monkeypatch, tmp_path):
     async def iri_for(cluster, cfg):
         return FakeIriClient(status={"state": "QUEUED"})
 
     monkeypatch.setattr(m, "_create_olcf_iri_for", iri_for)
     text = await m._get_olcf_job_status(
-        UserConfig(frontier_s3m_token="tok"), tmp_path, "10", cluster="frontier"
+        UserConfig(frontier_s3m_token="tok", frontier_remote_dir="/o"),
+        tmp_path,
+        "10",
+        cluster="frontier",
     )
     assert "STATE=QUEUED" in text
 
 
-async def test_outputs_do_not_introspect(
-    no_introspection, registry, monkeypatch, tmp_path
-):
+async def test_outputs_do_not_introspect(no_introspection, monkeypatch, tmp_path):
     globus = FakeGlobusClient()
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     (tmp_path / "10").mkdir()
     (tmp_path / "10" / "a.txt").write_text("cached", encoding="utf-8")
     text = await m._get_olcf_job_outputs(
-        UserConfig(frontier_s3m_token="tok"),
+        UserConfig(frontier_s3m_token="tok", frontier_remote_dir="/o"),
         tmp_path,
         "10",
         ["a.txt"],

@@ -304,6 +304,19 @@ be writable by the project's group; create it once with `mkdir -p -m 2775 <dir>`
 the same project who choose the same directory share it. Lux jobs pass no `--account`, so Slurm
 charges the researcher's default account.
 
+Every cluster lays a job out the same way under that directory, so VISTA finds a job's files again
+from its id alone, after a restart or from another install sharing the directory:
+
+```
+<remote dir>/<job>/src/          sources VISTA uploads; the job only reads them
+<remote dir>/out/log-<id>.out    Slurm stdout, with log-<id>.err beside it
+<remote dir>/out/<id>/           the job's outputs, exported to it as $VISTA_OUT
+```
+
+VISTA keeps no record of submitted jobs. Status, outputs and cancel take the cluster that
+`submit_hpc_job` reported, and changing a remote directory loses sight of the jobs under the old
+one.
+
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
 ```bash

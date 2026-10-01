@@ -33,7 +33,6 @@ def _odo_environment(monkeypatch):
     """Everything `_submit_odo_job` needs that is not the Globus credential
     itself, so each test below varies only the thing it is testing."""
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
-    monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
 
     async def _introspect(token, *, introspect_url):
@@ -52,7 +51,7 @@ def _capture_globus(monkeypatch) -> list[GlobusTokens]:
     that is exactly the gap this test closes."""
     calls: list[GlobusTokens] = []
     globus = FakeGlobusClient()
-    globus.seed_odo_out_dir("/fake/odo/vista")
+    globus.seed_remote_dir("/fake/odo/vista")
 
     def _create(*, tokens: GlobusTokens, cluster: str):
         calls.append(tokens)

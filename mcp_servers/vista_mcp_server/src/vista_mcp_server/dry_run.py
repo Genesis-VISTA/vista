@@ -34,9 +34,10 @@ class _DryJob:
     cancelled: bool = False
 
 
-# In-process registry of dry-run jobs. Lives alongside submit_job_mcp's
-# `_submitted_jobs` (which still records cluster/paths for dispatch); this
-# adds the synthetic-state bookkeeping the real path gets from IRI.
+# In-process registry of dry-run jobs: the synthetic-state bookkeeping the real
+# path gets from IRI. Real jobs need no registry -- their paths follow from the
+# job id (see `submit_job_mcp.RemoteLayout`) -- but a dry-run job has no
+# cluster to ask, so it is remembered here, cluster and all.
 _dry_jobs: dict[str, _DryJob] = {}
 
 
@@ -46,6 +47,11 @@ def enabled() -> bool:
 
 def is_dry_job(job_id: str) -> bool:
     return job_id in _dry_jobs
+
+
+def cluster_of(job_id: str) -> str:
+    """The cluster a dry-run job was submitted to."""
+    return _dry_jobs[job_id].cluster
 
 
 def record_submit(cluster: str, job: str, nodes: int, duration_s: int) -> str:

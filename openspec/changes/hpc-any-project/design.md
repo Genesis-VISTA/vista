@@ -95,11 +95,16 @@ it is dropped anyway so every cluster follows one rule.
 **6. Folder check before submitting.** `_require_odo_out_dir` becomes
 `_require_group_writable(globus, collection, base)` for Odo and Frontier. It
 lists `dirname(base)` and finds the entry named `basename(base)`:
-- entry missing: refuse, giving `mkdir -p -m 2775 <base>`;
+- entry missing, or the parent itself not found: refuse, giving
+  `mkdir -p -m 2775 <base>`;
 - entry has no group-write bit: refuse, giving `chmod 2775 <base>`;
 - listing fails with `GlobusSessionExpired`: re-raise;
 - listing fails with anything else (for example the parent is not listable
   under the researcher's identity): log it and continue.
+
+To tell "parent not found" from "could not look", a plain (non-recursive)
+`operation_ls` of a missing path now raises `GlobusFileNotFound`, the type the
+HTTPS side already raises, instead of the raw `TransferAPIError`.
 
 *Alternative:* list `<base>` itself. Rejected: a Globus listing reports its
 entries' permissions, not those of the folder it lists.
@@ -108,10 +113,11 @@ entries' permissions, not those of the folder it lists.
 and `_submitted_account` are deleted, and so are `list_hpc_jobs` and its
 entries in `HPC_TOOLS` (`agents.py`), the molten-salt system prompt,
 `ui/lib/tool-labels.ts` and `docs/project-onboarding.md`.
-`_resolve_cluster(cluster, cfg)` loses its `job_id` lookup. Status, outputs and
-cancel check `dry_run.is_dry_job(job_id)` before resolving a cluster, so
-dry-run jobs keep working without credentials. `dry_run` keeps its own
-in-process `_dry_jobs`. The Perlmutter paths no longer say "only for jobs
+`_resolve_cluster(cluster, cfg)` loses its `job_id` lookup. Status and cancel
+check `dry_run.is_dry_job(job_id)` before resolving a cluster, so dry-run jobs
+keep working without credentials; status takes the cluster from
+`dry_run.cluster_of`. (Outputs never served dry-run jobs.) `dry_run` keeps its
+own in-process `_dry_jobs`. Cancellation needs no remote folder. The Perlmutter paths no longer say "only for jobs
 submitted in the current session".
 
 **8. Lux passes no account.** `slurm_ssh.render_batch_script` loses its

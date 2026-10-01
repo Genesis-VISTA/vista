@@ -515,7 +515,6 @@ def test_setup_lux_fails_on_missing_env_script(cluster):
 async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "session_id", "sess")
     conn = FakeSshConn(tmp_path)
     conn.on("sbatch --parsable", (0, "99\n", ""))
 
@@ -535,7 +534,7 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
         "MODEL=forge-m",
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
-    assert out_dir == "/lustre/vista/sess/out/99"
+    assert out_dir == "/lustre/vista/out/99"
     src = "/lustre/vista/forge-pretrain/src"
     assert sorted(conn.puts) == [
         f"{src}/forge_common.sh",
@@ -569,8 +568,8 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
     monkeypatch.setattr(settings, "frontier_globus_collection_id", "fr-coll")
-    monkeypatch.setattr(settings, "session_id", "sess")
     iri, globus = FakeIriClient(job_id="777"), FakeGlobusClient()
+    globus.seed_remote_dir(base)
     seen: dict = {}
 
     async def introspect(token, *, introspect_url):
@@ -595,7 +594,7 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         cfg, "forge-pretrain", None, None, "MODEL=forge-s"
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)
-    assert out_dir == f"{base}/sess/out/777"
+    assert out_dir == f"{base}/out/777"
     # The account is whatever project the token belongs to.
     assert seen == {"introspected": "chm243-token", "iri_token": "chm243-token"}
 
@@ -603,7 +602,7 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
     attrs = spec["attributes"]
     assert attrs["account"] == "chm243"
     assert attrs["queue_name"] == "batch"
-    assert attrs["directory"] == f"{base}/sess"
+    assert attrs["directory"] == base
     env = attrs["environment"]
     assert env["VISTA_JOB_DIR"] == f"{base}/forge-pretrain"
     assert env["RUN_DIR_Frontier"] == f"{base}/forge-pretrain/src"

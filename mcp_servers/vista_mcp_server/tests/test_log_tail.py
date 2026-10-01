@@ -27,18 +27,16 @@ from vista_mcp_server.config import settings
 from vista_mcp_server.lib.globus import GlobusSessionExpired
 from vista_mcp_server.lib.user_config import UserConfig
 from vista_mcp_server.submit_job_mcp import (
-    SubmittedJob,
     _get_olcf_job_status,
     _read_log_tail,
-    _record_submitted_job,
-    _submitted_jobs,
     _tail_remote_log,
 )
 from fakes import FakeGlobusClient, FakeIriClient
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
-REMOTE_LOG = "/lustre/orion/chm243/proj-shared/vista/out/log-1.out"
+BASE = "/lustre/orion/abc123/proj-shared/vista"
+REMOTE_LOG = f"{BASE}/out/log-1.out"
 COLLECTION = "frontier-collection"
 
 
@@ -163,17 +161,6 @@ class TestWhatAStatusQuerySays:
         monkeypatch.setattr(
             submit_job_mcp, "create_globus_client", lambda **kwargs: globus
         )
-        _submitted_jobs.clear()
-        _record_submitted_job(
-            "1",
-            SubmittedJob(
-                cluster="frontier",
-                log_path=REMOTE_LOG,
-                output_dir="/lustre/orion/chm243/proj-shared/vista/out/1",
-            ),
-        )
-        yield
-        _submitted_jobs.clear()
 
     async def status(self, tmp_path: Path) -> str:
         return await _get_olcf_job_status(
@@ -181,6 +168,7 @@ class TestWhatAStatusQuerySays:
                 frontier_s3m_token="s3m",
                 frontier_globus_token="t",
                 frontier_globus_https_token="h",
+                frontier_remote_dir=BASE,
             ),
             tmp_path,
             "1",
@@ -196,6 +184,8 @@ class TestWhatAStatusQuerySays:
         assert "STATE=RUNNING" in text
 
     async def test_the_tail_appears_under_the_logs_heading(self, globus, tmp_path):
+        """Found from the job id and the remote folder alone: nothing in this
+        process recorded job 1, as after a restart or from another install."""
         globus.files[REMOTE_LOG] = b"Traceback\nValueError: no\n"
 
         text = await self.status(tmp_path)
@@ -238,7 +228,11 @@ class TestWhatAStatusQuerySays:
         VISTA moved to the HTTPS interface has half a credential, which is not
         one. They should still be able to see that their job finished."""
         text = await _get_olcf_job_status(
-            UserConfig(frontier_s3m_token="s3m", frontier_globus_token="stale"),
+            UserConfig(
+                frontier_s3m_token="s3m",
+                frontier_globus_token="stale",
+                frontier_remote_dir=BASE,
+            ),
             tmp_path,
             "1",
             cluster="frontier",
@@ -261,7 +255,7 @@ class TestWhatAStatusQuerySays:
         unless it is passed on."""
 
         async def _refused(**kwargs):
-            raise RuntimeError("permission denied on /lustre/orion/chm243")
+            raise RuntimeError("permission denied on /lustre/orion/abc123")
 
         monkeypatch.setattr(globus, "operation_ls", _refused)
 
@@ -287,7 +281,7 @@ class TestWhatAStatusQuerySays:
         """`.git` and `__pycache__` are noise as directories, but a file that
         merely contains the string -- `.gitignore`, `run.github.log` -- is output
         the researcher asked for, and must not vanish from the listing."""
-        out = "/lustre/orion/chm243/proj-shared/vista/out/1"
+        out = f"{BASE}/out/1"
         globus.ls_entries[out] = [
             {"type": "file", "path": f"{out}/{rel}"}
             for rel in (
@@ -306,17 +300,6 @@ class TestWhatAStatusQuerySays:
         assert "run.github.log" in text
         assert ".git/HEAD" not in text
         assert "a.cpython-312.pyc" not in text
-
-    async def test_a_job_with_no_output_dir_says_that_much(self, globus, tmp_path):
-        """Nothing was ever recorded to list. Distinct from an empty one."""
-        _submitted_jobs.clear()
-        _record_submitted_job(
-            "1", SubmittedJob(cluster="frontier", log_path=REMOTE_LOG, output_dir=None)
-        )
-
-        text = await self.status(tmp_path)
-
-        assert "(no output directory recorded for this job)" in text
 
     async def test_an_unreachable_collection_still_reports_the_job_state(
         self, globus, monkeypatch, tmp_path

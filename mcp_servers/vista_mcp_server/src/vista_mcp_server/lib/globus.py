@@ -489,6 +489,12 @@ class GlobusClient:
                 if recursive and e.http_status == 404:
                     continue
                 if not recursive:
+                    if e.http_status == 404:
+                        # The same type the HTTPS side raises, so a caller can
+                        # tell "not there" from "could not look".
+                        raise GlobusFileNotFound(
+                            f"{cur} is not on {self.cluster.title()}."
+                        ) from e
                     raise
                 logging.debug(f"globus ls subtree skipped ({cur}): {e.message}")
                 continue

@@ -13,7 +13,7 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import json, logging, os, shlex, textwrap, dataclasses
+import logging, os, posixpath, shlex, textwrap, dataclasses
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal
 
@@ -160,105 +160,70 @@ entirely while the job is in one of these.
 mcp = FastMCP("Submit Job")
 
 
-@dataclasses.dataclass
-class SubmittedJob:
-    cluster: Cluster
-    # Rendered absolute paths after %j substitution (all clusters).
-    log_path: str | None = None
-    err_path: str | None = None
+@dataclasses.dataclass(frozen=True)
+class RemoteLayout:
     """
-    The job's stderr file, which is where a failure explains itself.
+    Where a job's files live under the researcher's remote folder for a cluster.
 
-    Every cluster spec has always written one — `stdout_path` and `stderr_path`
-    are set side by side — but only stdout was recorded, so only stdout was ever
-    fetched. A job that died with a Python traceback or an argparse usage message
-    therefore looked silent: the `.out` file held the setup script's echoes and
-    stopped, and the reason was in a file nothing in Vista knew existed. Two
-    debate simulations were reported to an agent as "no outputs recorded" that
-    way, both of them argparse rejecting invented flags with exit status 2.
+        <base>/<job>/src/           sources, uploaded by VISTA; the job only reads them
+        <base>/out/log-<id>.out     Slurm stdout, and `.err` beside it
+        <base>/out/<id>/            the job's outputs, exported to it as `VISTA_OUT`
+
+    The same on every cluster, and a function of the folder and the job id
+    alone. So a job is found again from its id -- by a later status call, after
+    a restart, or from another install sharing the folder -- with nothing
+    recorded at submit time. Changing the folder setting loses sight of the
+    jobs under the old one, which is the price of keeping no record.
+
+    VISTA never creates anything under `out/`. On Odo and Frontier the job runs
+    as the project's IRI automation user, and a directory made through the
+    researcher's Globus identity is not group-writable, so the automation user
+    could not write in it. Slurm creates `out/` for the logs, as whichever user
+    runs the job, and the job's prefix creates `<id>/`.
     """
-    output_dir: str | None = None
+
+    base: str
+
+    def src(self, job: str) -> str:
+        return f"{self.base}/{job}/src"
+
+    @property
+    def out(self) -> str:
+        return f"{self.base}/out"
+
+    @property
+    def stdout_template(self) -> str:
+        """ The Slurm `%j` pattern for stdout; see `log_path` for a job's. """
+        return f"{self.out}/log-%j.out"
+
+    @property
+    def stderr_template(self) -> str:
+        return f"{self.out}/log-%j.err"
+
+    def log_path(self, job_id: str) -> str:
+        return self.stdout_template.replace("%j", job_id)
+
+    def err_path(self, job_id: str) -> str:
+        """
+        The job's stderr file, which is where a failure explains itself.
+
+        Every cluster spec writes one beside stdout, but only stdout used to be
+        fetched. A job that died with a Python traceback or an argparse usage
+        message therefore looked silent: the `.out` file held the setup script's
+        echoes and stopped, and the reason was in a file nothing in Vista knew
+        existed. Two debate simulations were reported to an agent as "no outputs
+        recorded" that way, both of them argparse rejecting invented flags with
+        exit status 2.
+        """
+        return self.stderr_template.replace("%j", job_id)
+
+    def output_dir(self, job_id: str) -> str:
+        return f"{self.out}/{job_id}"
 
 
-# Durable registry of job_id -> SubmittedJob. Used by get_hpc_job_status /
-# get_hpc_job_outputs / list_hpc_jobs to dispatch when the caller doesn't pass an
-# explicit `cluster` arg, and to resolve per-job log/output paths.
-#
-# Persisted to disk (see _persist_submitted_jobs) and reloaded on startup so a job
-# submitted before an MCP-server restart stays pollable: the rendered log/output
-# paths can't be recomputed after the fact (they depend on the submitting session's
-# session_id), so we remember them.
-_submitted_jobs: dict[str, SubmittedJob] = {}
-
-
-def _registry_path() -> Path:
-    """ On-disk location of the persisted job registry. """
-    return settings.data_dir / "hpc_job_registry.json"
-
-
-def _serialize_jobs(jobs: dict[str, SubmittedJob]) -> dict[str, dict]:
-    return {
-        jid: {
-            "cluster": s.cluster,
-            "log_path": s.log_path,
-            "err_path": s.err_path,
-            "output_dir": s.output_dir,
-        }
-        for jid, s in jobs.items()
-    }
-
-
-def _deserialize_jobs(data: dict) -> dict[str, SubmittedJob]:
-    jobs: dict[str, SubmittedJob] = {}
-    for jid, rec in data.items():
-        if not isinstance(rec, dict) or "cluster" not in rec:
-            continue  # skip malformed entries rather than failing the whole load
-        jobs[jid] = SubmittedJob(
-            cluster=rec["cluster"],
-            log_path=rec.get("log_path"),
-            err_path=rec.get("err_path"),
-            output_dir=rec.get("output_dir"),
-        )
-    return jobs
-
-
-def _load_submitted_jobs(path: Path | None = None) -> dict[str, SubmittedJob]:
-    """ Read the persisted registry. Missing or corrupt file -> empty dict (best-effort). """
-    path = path or _registry_path()
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except (json.JSONDecodeError, OSError) as e:
-        logging.warning(f"Ignoring unreadable HPC job registry at {path}: {e}")
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return _deserialize_jobs(data)
-
-
-def _persist_submitted_jobs(path: Path | None = None) -> None:
-    """ Atomically write the current registry. Best-effort: never raises into a tool call. """
-    path = path or _registry_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_serialize_jobs(_submitted_jobs), f)
-        os.replace(tmp, path)
-    except OSError as e:
-        logging.warning(f"Could not persist HPC job registry to {path}: {e}")
-
-
-def _record_submitted_job(job_id: str, submitted: SubmittedJob) -> None:
-    """ Add a job to the in-memory registry and persist the registry to disk. """
-    _submitted_jobs[job_id] = submitted
-    _persist_submitted_jobs()
-
-
-# Rehydrate from disk at import so a restarted server remembers prior submissions.
-_submitted_jobs.update(_load_submitted_jobs())
+def _layout(cfg: UserConfig, cluster: Cluster) -> RemoteLayout:
+    """ The layout under the researcher's remote folder for `cluster`. """
+    return RemoteLayout(cfg.require_remote_dir(cluster))
 
 
 def _default_cluster(cfg: UserConfig) -> Cluster:
@@ -294,14 +259,15 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
     )
 
 
-def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig, job_id: str | None = None) -> Cluster:
+def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     """
-    Pick a cluster for a tool call. Priority: explicit arg > job_id cache > sole-configured cluster.
+    Pick a cluster for a tool call: the explicit argument, else the only
+    cluster the researcher has credentials for. A job id says nothing about its
+    cluster -- the ids are only unique within one -- so the submit summary names
+    the cluster and the caller passes it back.
     """
     if cluster is not None:
         return cluster
-    if job_id is not None and job_id in _submitted_jobs:
-        return _submitted_jobs[job_id].cluster
     return _default_cluster(cfg)
 
 
@@ -366,7 +332,6 @@ async def submit_hpc_job(
     # M3 stage timing: the full submission round-trip (source upload + IRI
     # submit) — the platform-attributable part of E3. Facility queue wait
     # is observed separately via status polls (stage.hpc.status).
-    # Record + persist so status/outputs survive an MCP-server restart (see _persist_submitted_jobs).
     with metrics_stage("hpc.submit", tool_name="submit_hpc_job",
                        payload={"cluster": cluster, "job": job}):
         if dry_run.enabled():
@@ -374,58 +339,21 @@ async def submit_hpc_job(
             eff_nodes = node_count or 1
             eff_duration = duration_int or 3600
             job_id = dry_run.record_submit(cluster, job, eff_nodes, eff_duration)
-            _record_submitted_job(job_id, SubmittedJob(cluster=cluster))
         elif cluster == "odo":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
                 cfg, job, node_count, duration_int, script_args,
-            )
-            _record_submitted_job(
-                job_id,
-                SubmittedJob(
-                    cluster="odo",
-                    log_path=log_path,
-                    err_path=err_path,
-                    output_dir=output_dir,
-                ),
             )
         elif cluster == "perlmutter":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
                 cfg, job, node_count, duration_int, script_args,
             )
-            _record_submitted_job(
-                job_id,
-                SubmittedJob(
-                    cluster="perlmutter",
-                    log_path=log_path,
-                    err_path=err_path,
-                    output_dir=output_dir,
-                ),
-            )
         elif cluster == "lux":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_lux_job(
                 ctx, cfg, job, node_count, duration_int, script_args,
             )
-            _record_submitted_job(
-                job_id,
-                SubmittedJob(
-                    cluster="lux",
-                    log_path=log_path,
-                    err_path=err_path,
-                    output_dir=output_dir,
-                ),
-            )
         else:  # "frontier"
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
                 cfg, job, node_count, duration_int, script_args,
-            )
-            _record_submitted_job(
-                job_id,
-                SubmittedJob(
-                    cluster="frontier",
-                    log_path=log_path,
-                    err_path=err_path,
-                    output_dir=output_dir,
-                ),
             )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
@@ -437,11 +365,9 @@ async def submit_hpc_job(
         f"nodes: {eff_nodes}",
         f"duration: {h}:{m:02d}:{s:02d} ({eff_duration}s)",
     ]
-    # The rendered paths, so a caller can record where this job's files are.
-    # They were kept only in this process's registry, which is enough for later
-    # status calls and no use to anyone else: Vista's own job rows had blank
-    # `log_path` and `output_dir`, so the report attached to a debate's FINDING
-    # post named no file a human could go and read.
+    # The rendered paths, so a caller can record where this job's files are:
+    # without them, the report attached to a debate's FINDING post named no
+    # file a human could go and read.
     if not dry_run.enabled():
         summary += [
             f"log_path: {log_path}",
@@ -461,20 +387,13 @@ async def _submit_odo_job(
     - open-enclave IRI endpoint (`settings.odo_iri_url`) with a pinned compute
       resource id (`settings.odo_compute_resource_id`)
     - the Slurm account is the S3M token's own project (see `_olcf_project`)
-    - the remote base is the researcher's Odo remote directory setting
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
-    - Globus NEVER creates the output dir (see below); the researcher
-      pre-creates `<remote dir>/out` once with `mkdir -p -m 2775`
 
-    Permissions model: Globus mkdir/transfer runs as the user's mapped account
-    with the DTN's umask, so Globus-created dirs are NOT group-writable, and
-    unlike Frontier, Odo has no setfacl to grant the IRI automation user
-    (<project>_auser) write access after the fact. Globus is therefore only
-    allowed to create/write things the auser merely READS (the `<job>/src`
-    tree). Everything the auser WRITES lives under the pre-created,
-    group-writable `<base>/out`: Slurm logs land directly in it, and the
-    per-job `$VISTA_OUT` subdir is mkdir'd at runtime by the auser itself.
+    Files go where `RemoteLayout` says, under the researcher's Odo remote
+    directory, which must be writable by the project's group (checked by
+    `_require_group_writable`): the job runs as the project's IRI automation
+    user, and Globus only ever creates what that user merely reads.
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
@@ -491,19 +410,17 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
-    base = cfg.require_remote_dir("odo")
+    layout = _layout(cfg, "odo")
+    base, src_dir = layout.base, layout.src(job)
     s3m_token, project = await _olcf_project(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
-    # No session prefix: job ids are unique, and the out dir must be the
-    # pre-created group-writable one — a fresh per-session dir would have to be
-    # created by Globus, which is exactly what breaks auser write access.
-    out_dir = f"{base}/out"
-    src_dir = f"{base}/{job}/src"
 
-    await _require_odo_out_dir(globus, base=base, out_dir=out_dir)
+    await _require_group_writable(
+        globus, collection_id=settings.odo_globus_collection_id, base=base, cluster="odo",
+    )
     await _sync_job_sources(
         globus, job, src_dir, base=base,
         remote_endpoint=settings.odo_globus_collection_id,
@@ -526,7 +443,7 @@ async def _submit_odo_job(
     # into the synced source dir to preserve the job.odo.slurm contract of
     # running from the job directory.
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
+        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
 
         export HOME="${{HOME:-$VISTA_OUT}}"
@@ -558,8 +475,6 @@ async def _submit_odo_job(
     if defaults.iri.module is not None:
         iri_env["VISTA_ODO_MODULE"] = defaults.iri.module
 
-    stdout_template = f"{out_dir}/log-%j.out"
-    stderr_template = f"{out_dir}/log-%j.err"
 
     spec = {
         "executable": "bash",
@@ -579,8 +494,8 @@ async def _submit_odo_job(
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
             "directory": base,
-            "stdout_path": stdout_template,
-            "stderr_path": stderr_template,
+            "stdout_path": layout.stdout_template,
+            "stderr_path": layout.stderr_template,
             "environment": iri_env,
         },
     }
@@ -588,54 +503,67 @@ async def _submit_odo_job(
     logging.info(f"Submitted job {job_id} via IRI to odo")
     return (
         job_id,
-        stdout_template.replace("%j", job_id),
-        stderr_template.replace("%j", job_id),
-        f"{out_dir}/{job_id}",
+        layout.log_path(job_id),
+        layout.err_path(job_id),
+        layout.output_dir(job_id),
         nodes,
         duration,
     )
 
 
-async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str) -> None:
+async def _require_group_writable(
+    globus: GlobusClient, *, collection_id: str, base: str, cluster: Cluster,
+) -> None:
     """
-    Verify the pre-created, group-writable `<base>/out` exists before submitting.
+    Refuse an Odo or Frontier submission unless the remote directory exists and
+    its group may write to it.
 
-    We deliberately do NOT create it via Globus — the DTN applies the user's
-    umask, so a Globus-made dir would deny the IRI automation user write access
-    and the job would die at Slurm-log creation with no useful error. Checking
-    up front turns that into an actionable message. Globus `ls` reports a
-    `permissions` octal string per entry; group-write is the bit we need.
+    The job runs as the project's IRI automation user, and Slurm creates `out/`
+    for the job's logs as that user. Without group write the job dies at log
+    creation with no log to say why, so this turns it into an error naming the
+    command that fixes it. Globus cannot do it for the researcher: a directory
+    it creates belongs to their mapped identity with the DTN's umask, which is
+    not group-writable.
+
+    Globus reports permissions for the entries of a listing, not for the
+    directory listed, so this lists the parent. When the parent cannot be
+    listed -- common above a project's own directories -- the answer is unknown
+    and the submission goes ahead, rather than refusing on a guess.
     """
-    try:
-        entries = await globus.operation_ls(
-            endpoint=settings.odo_globus_collection_id, path=base,
-        )
-    except GlobusSessionExpired:
-        # Says what to do about it; the message below would say the wrong thing.
-        raise
-    except Exception as e:
-        raise ToolError(
-            f"Cannot list {base} on the Odo Globus collection ({e}). Check that "
-            "your Odo remote directory exists on Odo and that your Globus "
-            "identity has access to it."
-        )
-    out_entry = next(
-        (e for e in entries if e.get("name") == "out" and e.get("type") == "dir"),
-        None,
+    title = cluster.title()
+    parent, name = posixpath.split(base)
+    if not name:
+        return  # "/": nothing above it to ask
+    why = (
+        "Jobs run as your project's IRI automation user, so the directory must "
+        "be writable by the project's group."
     )
-    if out_entry is None:
+    missing = (
+        f"Your {title} remote directory {base} does not exist. Create it once, "
+        f"on {title}:\n  mkdir -p -m 2775 {base}\n{why}"
+    )
+    try:
+        entries = await globus.operation_ls(endpoint=collection_id, path=parent)
+    except GlobusSessionExpired:
+        # Says which connection to redo; the messages below would say the wrong thing.
+        raise
+    except GlobusFileNotFound:
+        raise ToolError(missing)
+    except Exception as e:
+        logging.warning(f"could not read the permissions of {base} on {title} ({e}); submitting anyway")
+        return
+    entry = next((e for e in entries if e.get("name") == name), None)
+    if entry is None or entry.get("type") != "dir":
+        raise ToolError(missing)
+    perms = entry.get("permissions")
+    try:
+        group_writable = int(perms, 8) & 0o020 if perms else True
+    except ValueError:
+        group_writable = True  # a format we cannot read; do not refuse on it
+    if not group_writable:
         raise ToolError(
-            f"Missing output directory {out_dir} on Odo. One-time setup — log in "
-            f"to Odo and run:\n  mkdir -p -m 2775 {out_dir}\nThis lets the IRI "
-            "automation user write job logs and outputs (Globus cannot create "
-            "group-writable directories, and Odo has no setfacl)."
-        )
-    perms = out_entry.get("permissions")
-    if perms and not (int(perms, 8) & 0o020):
-        raise ToolError(
-            f"{out_dir} exists but is not group-writable (permissions {perms}), so "
-            f"the IRI automation user cannot write job logs there. Run on Odo:\n"
-            f"  chmod 2775 {out_dir}"
+            f"Your {title} remote directory {base} is not writable by its group "
+            f"(permissions {perms}). {why} Fix it once, on {title}:\n  chmod 2775 {base}"
         )
 
 
@@ -648,7 +576,8 @@ async def _submit_perlmutter_job(
             "No NERSC account configured for this user. Set it in the Vista user "
             "settings page before submitting jobs to Perlmutter."
         )
-    base = cfg.require_remote_dir("perlmutter")
+    layout = _layout(cfg, "perlmutter")
+    base = layout.base
 
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.perlmutter
@@ -664,10 +593,7 @@ async def _submit_perlmutter_job(
         )
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
-    session_dir = f"{base}/{settings.session_id}"
-    out_dir = f"{session_dir}/out"
-    src_dir = f"{base}/{job}/src"
-    await iri_client.mkdir(out_dir)
+    src_dir = layout.src(job)
     await _sync_perlmutter_sources(iri_client, job, src_dir)
 
     job_script_text = job_script_path.read_text(encoding="utf-8")
@@ -684,8 +610,8 @@ async def _submit_perlmutter_job(
     # Mirror the Odo/Frontier setup-snippet UX: the user's job.perlmutter.slurm runs
     # with $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
-        mkdir -p "$VISTA_OUT"
+        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
+        mkdir -p -m 2775 "$VISTA_OUT"
     """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
@@ -694,7 +620,7 @@ async def _submit_perlmutter_job(
     body_lines.append(job_script_text)
     job_cmd = "\n".join(body_lines) + "\n"
 
-    # Convention-driven layout under VISTA_MCP_NERSC_REMOTE_DIR: each job gets a flat
+    # Convention-driven layout under the NERSC remote directory: each job gets a flat
     # <remote_dir>/<job>/{src,model} tree. The user's job.perlmutter.slurm reads
     # RUN_DIR_Perlmutter and FORGE_MODEL_Perlmutter from the job environment.
     # Advanced users can override either by setting iri.environment in cluster_defaults.json.
@@ -717,8 +643,6 @@ async def _submit_perlmutter_job(
     if defaults.iri.constraint != "cpu":
         iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
 
-    stdout_template = f"{out_dir}/log-%j.out"
-    stderr_template = f"{out_dir}/log-%j.err"
 
     spec = {
         "executable": "bash",
@@ -737,9 +661,9 @@ async def _submit_perlmutter_job(
             "duration": duration,
             "custom_attributes": {"constraint": defaults.iri.constraint},
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": session_dir,
-            "stdout_path": stdout_template,
-            "stderr_path": stderr_template,
+            "directory": base,
+            "stdout_path": layout.stdout_template,
+            "stderr_path": layout.stderr_template,
             "environment": iri_env,
         },
     }
@@ -747,9 +671,9 @@ async def _submit_perlmutter_job(
     logging.info(f"Submitted job {job_id} via IRI to {settings.nersc_machine}")
     return (
         job_id,
-        stdout_template.replace("%j", job_id),
-        stderr_template.replace("%j", job_id),
-        f"{out_dir}/{job_id}",
+        layout.log_path(job_id),
+        layout.err_path(job_id),
+        layout.output_dir(job_id),
         nodes,
         duration,
     )
@@ -810,29 +734,21 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    base = cfg.require_remote_dir("frontier")
+    layout = _layout(cfg, "frontier")
+    base, src_dir = layout.base, layout.src(job)
     s3m_token, project = await _olcf_project(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
-    session_dir = f"{base}/{settings.session_id}"
-    out_dir = f"{session_dir}/out"
-    src_dir = f"{base}/{job}/src"
 
-    # File ops via Globus. The OLCF DTN's mkdir doesn't take a mode, so the
-    # Frontier remote directory must have been one-time chmod'd to 2775
-    # (setgid + g+rwx) so created subdirs inherit group + setgid. Without
-    # that, the IRI service's automation user (e.g. chm243_auser) can't
-    # traverse Vista-created dirs and Slurm's prolog kills the job at
-    # startup. See README → Frontier setup.
-    #
-    # Globus's MKD is one-level-only; we walk under `base` to create
-    # <session>/out and <job>/src (two levels each).
-    await globus.operation_mkdir_p(
-        endpoint=settings.frontier_globus_collection_id,
-        path=out_dir,
-        parents_below=base,
+    # File ops via Globus, which only ever creates the source tree the job
+    # reads. Everything the job writes is created by Slurm and the job itself,
+    # as the project's IRI automation user, in a remote directory the project's
+    # group can write to (see `RemoteLayout`).
+    await _require_group_writable(
+        globus, collection_id=settings.frontier_globus_collection_id, base=base,
+        cluster="frontier",
     )
     await _sync_job_sources(
         globus, job, src_dir, base=base,
@@ -865,8 +781,8 @@ async def _submit_frontier_job(
     # `module load xforge` — stacked libsci/PE in LD_LIBRARY_PATH then conflicts
     # with the xforge-provided versions and PyTorch segfaults at import).
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{out_dir}/$SLURM_JOB_ID"
-        mkdir -p "$VISTA_OUT"
+        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
+        mkdir -p -m 2775 "$VISTA_OUT"
 
         export HOME="${{HOME:-$VISTA_OUT}}"
 
@@ -903,8 +819,6 @@ async def _submit_frontier_job(
     # (Perlmutter's dispatch sets it because shifter reads it for per-task GCD
     # binding inside the container; Frontier doesn't use shifter here.)
 
-    stdout_template = f"{out_dir}/log-%j.out"
-    stderr_template = f"{out_dir}/log-%j.err"
 
     spec = {
         "executable": "bash",
@@ -923,9 +837,9 @@ async def _submit_frontier_job(
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": session_dir,
-            "stdout_path": stdout_template,
-            "stderr_path": stderr_template,
+            "directory": base,
+            "stdout_path": layout.stdout_template,
+            "stderr_path": layout.stderr_template,
             "environment": iri_env,
             # Keep `inherit_environment` at its default (True). Setting False strips
             # the IRI service host's LD_LIBRARY_PATH / PYTHONPATH but ALSO blocks
@@ -940,9 +854,9 @@ async def _submit_frontier_job(
     logging.info(f"Submitted job {job_id} via IRI to {settings.frontier_machine}")
     return (
         job_id,
-        stdout_template.replace("%j", job_id),
-        stderr_template.replace("%j", job_id),
-        f"{out_dir}/{job_id}",
+        layout.log_path(job_id),
+        layout.err_path(job_id),
+        layout.output_dir(job_id),
         nodes,
         duration,
     )
@@ -1010,7 +924,8 @@ async def _submit_lux_job(
             f"Add a {LUX_JOB_SCRIPT} to enable Lux submission."
         )
 
-    base = cfg.require_remote_dir("lux")
+    layout = _layout(cfg, "lux")
+    base, src_dir = layout.base, layout.src(job)
     nodes = node_count or defaults.resources.node_count or 1
     duration = duration_int or defaults.duration
 
@@ -1018,11 +933,6 @@ async def _submit_lux_job(
         ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
     )
 
-    session_dir = f"{base}/{settings.session_id}"
-    out_dir = f"{session_dir}/out"
-    src_dir = f"{base}/{job}/src"
-
-    await slurm_ssh.makedirs(conn, out_dir)
     await _sync_job_sources_ssh(conn, job, src_dir)
 
     job_env = {
@@ -1046,8 +956,8 @@ async def _submit_lux_job(
 
     body_lines = [
         _lux_exports(job_env),
-        f'export VISTA_OUT={shlex.quote(out_dir)}/"$SLURM_JOB_ID"',
-        'mkdir -p "$VISTA_OUT"',
+        f'export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"',
+        'mkdir -p -m 2775 "$VISTA_OUT"',
     ]
     if _lux_proxy_env():
         body_lines.append(_lux_exports(_lux_proxy_env()))
@@ -1056,15 +966,13 @@ async def _submit_lux_job(
         body_lines.append(f"set -- {job_cmd_args}")
     body_lines.append(job_script_path.read_text(encoding="utf-8"))
 
-    stdout_template = f"{out_dir}/log-%j.out"
-    stderr_template = f"{out_dir}/log-%j.err"
     script = slurm_ssh.render_batch_script(
         job_name=f"vista-{job}",
         node_count=nodes,
         duration_s=duration,
-        stdout_path=stdout_template,
-        stderr_path=stderr_template,
-        workdir=session_dir,
+        stdout_path=layout.stdout_template,
+        stderr_path=layout.stderr_template,
+        workdir=base,
         body="\n".join(body_lines) + "\n",
         # queue_name has an IRI-side default ("regular", Perlmutter's QOS); on Lux
         # only a queue the job's JSON names explicitly is passed to Slurm.
@@ -1081,9 +989,9 @@ async def _submit_lux_job(
     logging.info(f"Submitted job {job_id} via sbatch to lux")
     return (
         job_id,
-        stdout_template.replace("%j", job_id),
-        stderr_template.replace("%j", job_id),
-        f"{out_dir}/{job_id}",
+        layout.log_path(job_id),
+        layout.err_path(job_id),
+        layout.output_dir(job_id),
         nodes,
         duration,
     )
@@ -1128,12 +1036,12 @@ async def _sync_job_sources(
     `base` is the cluster's remote base dir (assumed pre-existing); we use it
     as the parents_below floor for the recursive mkdir.
 
-    Permissions: the IRI auto-user (e.g. gen150_auser / chm243_auser) only
+    Permissions: the project's IRI automation user only
     needs to READ the src tree, which the DTN's default umask grants
     (755 dirs / 644 files); correct group ownership is inherited from `base`,
     which the user one-time `chmod 2775`'d. Globus-created dirs are NOT
     group-writable — anything the auto-user must WRITE has to live elsewhere
-    (see `_require_odo_out_dir` for Odo; Frontier relies on setfacl).
+    (see `RemoteLayout`).
     Pre-creating `<base>/<job>/src` manually also works — the mkdir here is
     idempotent and the transfer just adds files.
     """
@@ -1304,13 +1212,17 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
 
     Args:
         job_id: The job id returned by submit_hpc_job
-        cluster: Which cluster the job was submitted to. If omitted, looked up from the
-            in-session cache; falls back to the only-configured cluster.
+        cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
+            May be omitted only when one cluster is configured.
     """
     job_id = validate_job_id(job_id)
     meta = get_vista_meta(ctx)
     cfg = meta.user
-    cluster = _resolve_cluster(cluster, cfg, job_id)
+    # A dry-run job knows its own cluster, and needs no credentials to answer.
+    cluster = (
+        dry_run.cluster_of(job_id) if dry_run.is_dry_job(job_id)
+        else _resolve_cluster(cluster, cfg)
+    )
 
     # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a poll
     # timeout or an expired credential mid-campaign (E7a / E7b 24h case).
@@ -1327,7 +1239,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
             return await _get_perlmutter_job_status(cfg, job_id)
         if cluster == "lux":
             host_output_dir = Path(meta.project_paths.require_output_dir())
-            return await _get_lux_job_status(ctx, host_output_dir, job_id)
+            return await _get_lux_job_status(ctx, cfg, host_output_dir, job_id)
         # Odo/Frontier accumulate the job's log on disk and tail it from there;
         # need the per-agent output dir from project_paths to know where it lands.
         host_output_dir = Path(meta.project_paths.require_output_dir())
@@ -1335,6 +1247,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None 
 
 
 async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
+    layout = _layout(cfg, "perlmutter")
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     status = await iri_client.get_job_status(job_id)
     state = status.get("state", "UNKNOWN").upper()
@@ -1349,35 +1262,25 @@ async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
     if status.get("message"):
         metadata["MESSAGE"] = status["message"]
 
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.log_path is None:
-        return "\n\n".join([
-            "\n".join(f"{k}={v}" for k, v in metadata.items()),
-            "(no log path cached for this job; logs and outputs only available "
-            "for jobs submitted in the current session)",
-        ])
-
     try:
-        logs = await iri_client.head(submitted.log_path, lines=200)
+        logs = await iri_client.head(layout.log_path(job_id), lines=200)
     except Exception as e:
         logs = f"(unable to fetch logs: {e})"
 
     # stderr as well as stdout. A job that failed wrote its reason here, and
     # reading only stdout is how a traceback became "no output".
-    errs = "(no stderr path cached for this job)"
-    if submitted.err_path:
-        try:
-            errs = await iri_client.head(submitted.err_path, lines=200)
-        except Exception as e:
-            errs = f"(unable to fetch stderr: {e})"
+    try:
+        errs = await iri_client.head(layout.err_path(job_id), lines=200)
+    except Exception as e:
+        errs = f"(unable to fetch stderr: {e})"
 
     files: list[str] = []
-    if submitted.output_dir:
-        try:
-            ls_result = await iri_client.ls(submitted.output_dir, recursive=True)
-            files = _flatten_ls_paths(ls_result, root=submitted.output_dir)[:20]
-        except Exception as e:
-            logging.info(f"output dir not readable yet ({submitted.output_dir}): {e}")
+    output_dir = layout.output_dir(job_id)
+    try:
+        ls_result = await iri_client.ls(output_dir, recursive=True)
+        files = _flatten_ls_paths(ls_result, root=output_dir)[:20]
+    except Exception as e:
+        logging.info(f"output dir not readable yet ({output_dir}): {e}")
 
     return "\n\n".join([
         "\n".join(f"{k}={v}" for k, v in metadata.items()),
@@ -1404,6 +1307,10 @@ async def _get_olcf_job_status(
     what comes back is the END of it — which is what a researcher watching a
     running or failed job is looking for.
     """
+    layout = _layout(cfg, cluster)
+    log_path, err_path, output_dir = (
+        layout.log_path(job_id), layout.err_path(job_id), layout.output_dir(job_id),
+    )
     remote_collection = _olcf_collection_id(cluster)
     iri_client = await _create_olcf_iri_for(cluster, cfg)
     status = await iri_client.get_job_status(job_id)
@@ -1418,14 +1325,6 @@ async def _get_olcf_job_status(
         metadata["EXIT_CODE"] = status["exit_code"]
     if status.get("message"):
         metadata["MESSAGE"] = status["message"]
-
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.log_path is None:
-        return "\n\n".join([
-            "\n".join(f"{k}={v}" for k, v in metadata.items()),
-            "(no log path cached for this job; logs and outputs only available "
-            "for jobs submitted in the current session)",
-        ])
 
     # While the job is still waiting for resources, neither the log file nor the
     # output dir exists. Answer from the IRI state alone — and, since this comes
@@ -1464,13 +1363,13 @@ async def _get_olcf_job_status(
     # local copy is the offset — its size is how much of the remote file we
     # already hold — so the state survives a server restart and needs no
     # registry of its own.
-    local_log_path = host_output_dir / job_id / Path(submitted.log_path).name
+    local_log_path = host_output_dir / job_id / Path(log_path).name
     if globus is not None:
         try:
             logs = await _tail_remote_log(
                 globus,
                 collection_id=remote_collection,
-                remote_path=submitted.log_path,
+                remote_path=log_path,
                 local_path=local_log_path,
             )
         except GlobusFileNotFound:
@@ -1497,9 +1396,7 @@ async def _get_olcf_job_status(
     # answer — and the HTTPS interface can tell that apart from a fetch that
     # could not be made, which is the difference between silence we verified and
     # silence we could not look at.
-    if submitted.err_path is None:
-        errs = "(no stderr path cached for this job)"
-    elif globus is None:
+    if globus is None:
         errs = "(stderr unavailable: no Globus connection)"
     else:
         errs = "(nothing on stderr)"
@@ -1508,8 +1405,8 @@ async def _get_olcf_job_status(
                 await _tail_remote_log(
                     globus,
                     collection_id=remote_collection,
-                    remote_path=submitted.err_path,
-                    local_path=host_output_dir / job_id / Path(submitted.err_path).name,
+                    remote_path=err_path,
+                    local_path=host_output_dir / job_id / Path(err_path).name,
                 )
                 or "(nothing on stderr)"
             )
@@ -1524,9 +1421,7 @@ async def _get_olcf_job_status(
     # (recursive BFS-walk; see lib/globus.py). The HTTPS interface has no
     # listing, so this stays on Transfer. Drop venv/pycache noise.
     files: list[str] = []
-    if not submitted.output_dir:
-        listing = "(no output directory recorded for this job)"
-    elif globus is not None:
+    if globus is not None:
         # Pruned at the TRAVERSAL level, not just filtered out of the results below:
         # the walk costs one sequential API call per directory, so descending into a
         # venv/.git only to drop the entries afterwards is what turns a status check
@@ -1535,7 +1430,7 @@ async def _get_olcf_job_status(
         try:
             entries = await globus.operation_ls(
                 endpoint=remote_collection,
-                path=submitted.output_dir,
+                path=output_dir,
                 recursive=True,
                 exclude_segments=excludes,
             )
@@ -1543,7 +1438,7 @@ async def _get_olcf_job_status(
                 if e.get("type") != "file":
                     continue
                 p = e.get("path", "")
-                rel = p[len(submitted.output_dir):].lstrip("/")
+                rel = p[len(output_dir):].lstrip("/")
                 # Whole path segments of the part under output_dir, never substrings
                 # of the absolute path: `.gitignore`, `run.github.log`, or an
                 # output_dir like `/proj/my.git-runs/` must not vanish from the listing.
@@ -1559,7 +1454,7 @@ async def _get_olcf_job_status(
             # subtree in `lib/globus.py`), so reaching here is a real failure —
             # a 403, a collection that is down, a transport error — and it is
             # reported rather than dressed up as an empty directory.
-            logging.warning(f"could not list output dir {submitted.output_dir}: {e}")
+            logging.warning(f"could not list output dir {output_dir}: {e}")
             listing = f"(output files unavailable: {e})"
 
     return "\n\n".join([
@@ -1573,13 +1468,19 @@ async def _get_olcf_job_status(
     ])
 
 
-async def _get_lux_job_status(ctx: Context, host_output_dir: Path, job_id: str) -> str:
+async def _get_lux_job_status(
+    ctx: Context, cfg: UserConfig, host_output_dir: Path, job_id: str,
+) -> str:
     """
     Lux status over the cached SSH connection: `squeue`/`sacct` for the state
     (reported in the same vocabulary as the IRI clusters, plus the raw Slurm
     state), the log tailed incrementally over SFTP by the same
     `_tail_remote_log` Odo/Frontier use, and `find` for the output listing.
     """
+    layout = _layout(cfg, "lux")
+    log_path, err_path, output_dir = (
+        layout.log_path(job_id), layout.err_path(job_id), layout.output_dir(job_id),
+    )
     conn = await _lux_conn(ctx, "get_hpc_job_status", job_id=job_id)
     js = await slurm_ssh.job_state(conn, job_id)
 
@@ -1590,13 +1491,6 @@ async def _get_lux_job_status(ctx: Context, host_output_dir: Path, job_id: str) 
         metadata["REASON"] = js.reason
     header = "\n".join(f"{k}={v}" for k, v in metadata.items())
 
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.log_path is None:
-        return "\n\n".join([
-            header,
-            "(no log path cached for this job; logs and outputs only available "
-            "for jobs submitted through this server)",
-        ])
     if js.state in _PRE_RUN_STATES:
         return "\n\n".join([
             header,
@@ -1608,8 +1502,8 @@ async def _get_lux_job_status(ctx: Context, host_output_dir: Path, job_id: str) 
         logs = await _tail_remote_log(
             slurm_ssh.SftpLogReader(conn),
             collection_id="lux",
-            remote_path=submitted.log_path,
-            local_path=host_output_dir / job_id / Path(submitted.log_path).name,
+            remote_path=log_path,
+            local_path=host_output_dir / job_id / Path(log_path).name,
         )
     except slurm_ssh.RemoteFileNotFound:
         pass  # started, but Slurm has not opened the log yet
@@ -1619,35 +1513,29 @@ async def _get_lux_job_status(ctx: Context, host_output_dir: Path, job_id: str) 
     # stderr, tailed the same way (see `_get_olcf_job_status` for why it is
     # fetched at all). A missing file is the good case: Slurm creates it only
     # when something writes to it.
-    if submitted.err_path is None:
-        errs = "(no stderr path cached for this job)"
-    else:
-        errs = "(nothing on stderr)"
-        try:
-            errs = (
-                await _tail_remote_log(
-                    slurm_ssh.SftpLogReader(conn),
-                    collection_id="lux",
-                    remote_path=submitted.err_path,
-                    local_path=host_output_dir / job_id / Path(submitted.err_path).name,
-                )
-                or "(nothing on stderr)"
+    errs = "(nothing on stderr)"
+    try:
+        errs = (
+            await _tail_remote_log(
+                slurm_ssh.SftpLogReader(conn),
+                collection_id="lux",
+                remote_path=err_path,
+                local_path=host_output_dir / job_id / Path(err_path).name,
             )
-        except slurm_ssh.RemoteFileNotFound:
-            pass
-        except Exception as e:
-            errs = f"(unable to fetch stderr: {e})"
+            or "(nothing on stderr)"
+        )
+    except slurm_ssh.RemoteFileNotFound:
+        pass
+    except Exception as e:
+        errs = f"(unable to fetch stderr: {e})"
 
     listing = "(no output files yet)"
     files: list[str] = []
-    if not submitted.output_dir:
-        listing = "(no output directory recorded for this job)"
-    else:
-        try:
-            files = await slurm_ssh.list_files(conn, submitted.output_dir)
-        except Exception as e:
-            logging.warning(f"could not list output dir {submitted.output_dir}: {e}")
-            listing = f"(output files unavailable: {e})"
+    try:
+        files = await slurm_ssh.list_files(conn, output_dir)
+    except Exception as e:
+        logging.warning(f"could not list output dir {output_dir}: {e}")
+        listing = f"(output files unavailable: {e})"
 
     return "\n\n".join([
         header,
@@ -1701,8 +1589,8 @@ async def get_hpc_job_outputs(
     Args:
         job_id: The job id returned by submit_hpc_job
         files: List of file paths to download. Relative to the jobs output directory (as shown by get_hpc_job_status).
-        cluster: Which cluster the job was submitted to. If omitted, looked up from the
-            in-session cache.
+        cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
+            May be omitted only when one cluster is configured.
 
     Returns:
         The downloaded file paths.
@@ -1711,12 +1599,12 @@ async def get_hpc_job_outputs(
     meta = get_vista_meta(ctx)
     cfg = meta.user
     host_output_dir = Path(meta.project_paths.require_output_dir())
-    cluster = _resolve_cluster(cluster, cfg, job_id)
+    cluster = _resolve_cluster(cluster, cfg)
 
     if cluster == "perlmutter":
         return await _get_perlmutter_job_outputs(cfg, host_output_dir, job_id, files)
     if cluster == "lux":
-        return await _get_lux_job_outputs(ctx, host_output_dir, job_id, files)
+        return await _get_lux_job_outputs(ctx, cfg, host_output_dir, job_id, files)
     return await _get_olcf_job_outputs(cfg, host_output_dir, job_id, files, cluster=cluster)
 
 
@@ -1754,12 +1642,7 @@ def _job_output_paths(
 
 async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
     # IRI filesystem download is currently text-only; binary checkpoints are not supported here.
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.output_dir is None:
-        raise ValueError(
-            f"No output directory cached for job {job_id!r}. Output retrieval is only "
-            f"available for Perlmutter jobs submitted in the current session."
-        )
+    remote_out_dir = _layout(cfg, "perlmutter").output_dir(job_id)
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     local_out_dir = host_output_dir / job_id
@@ -1768,7 +1651,7 @@ async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, jo
     downloaded = []
     for file in files:
         local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
-        remote_path = f"{submitted.output_dir.rstrip('/')}/{file}"
+        remote_path = f"{remote_out_dir}/{file}"
         local_path.parent.mkdir(parents=True, exist_ok=True)
         await iri_client.download(remote_path, local_path)
         downloaded.append(str(sandbox_path))
@@ -1792,16 +1675,9 @@ async def _get_olcf_job_outputs(
     re-fetched, so a follow-up `display_file` costs nothing. To force a fresh
     pull (e.g. a checkpoint updated mid-training), delete the local copy first.
     """
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.output_dir is None:
-        raise ValueError(
-            f"No output directory cached for job {job_id!r}. Output retrieval is only "
-            f"available for jobs submitted in the current session."
-        )
-
+    remote_out_dir = _layout(cfg, cluster).output_dir(job_id)
     local_out_dir = host_output_dir / job_id
     sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
-    remote_out_dir = submitted.output_dir.rstrip("/")
 
     wanted: list[tuple[str, Path]] = []
     sandbox_paths: list[str] = []
@@ -1835,21 +1711,17 @@ async def _get_olcf_job_outputs(
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
 
 
-async def _get_lux_job_outputs(ctx: Context, host_output_dir: Path, job_id: str, files: list[str]) -> str:
+async def _get_lux_job_outputs(
+    ctx: Context, cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str],
+) -> str:
     """
     Lux output retrieval over SFTP on the cached SSH connection. Same contract
     as `_get_olcf_job_outputs`: binary-safe, no size cap, and files already held
     locally are not fetched again.
     """
-    submitted = _submitted_jobs.get(job_id)
-    if submitted is None or submitted.output_dir is None:
-        raise ValueError(
-            f"No output directory cached for job {job_id!r}. Output retrieval is only "
-            f"available for jobs submitted through this server."
-        )
+    remote_out_dir = _layout(cfg, "lux").output_dir(job_id)
     local_out_dir = host_output_dir / job_id
     sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
-    remote_out_dir = submitted.output_dir.rstrip("/")
 
     wanted: list[tuple[str, Path]] = []
     sandbox_paths: list[str] = []
@@ -1867,26 +1739,6 @@ async def _get_lux_job_outputs(ctx: Context, host_output_dir: Path, job_id: str,
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
-async def list_hpc_jobs(ctx: Context, cluster: Cluster | None = None) -> str:
-    """
-    List HPC jobs known to this server (persisted across restarts).
-
-    Args:
-        cluster: Which cluster to list jobs for. If omitted, lists from the only-configured cluster.
-    """
-    cfg = get_vista_meta(ctx).user
-    cluster = _resolve_cluster(cluster, cfg)
-    # None of the IRI services expose user-job listing, so this is the server's
-    # registry of jobs submitted via this MCP server. The registry is persisted to
-    # disk and reloaded on startup, so this also covers jobs from before a restart.
-    # (The old Odo path ran sacct over SSH; that went away with the SSH conn.)
-    ids = [jid for jid, s in _submitted_jobs.items() if s.cluster == cluster]
-    if not ids:
-        return f"No {cluster} jobs known to this server."
-    return "\n".join(ids)
-
-
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
 async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = None) -> str:
     """
@@ -1894,8 +1746,8 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
 
     Args:
         job_id: The job id returned by submit_hpc_job.
-        cluster: Which cluster the job was submitted to. If omitted, looked up from
-            the in-session cache.
+        cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
+            May be omitted only when one cluster is configured.
 
     Returns:
         Confirmation of the cancellation request.
@@ -1904,7 +1756,7 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
     if dry_run.is_dry_job(job_id):
         return dry_run.cancel(job_id)
     cfg = get_vista_meta(ctx).user
-    cluster = _resolve_cluster(cluster, cfg, job_id)
+    cluster = _resolve_cluster(cluster, cfg)
     if cluster == "lux":
         conn = await _lux_conn(ctx, "cancel_hpc_job", job_id=job_id)
         try:

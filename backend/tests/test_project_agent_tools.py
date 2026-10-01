@@ -52,6 +52,9 @@ def _agent(project=None, user=None) -> ProjectAgent:
         (["!run_bash"], "create_file", True),
         # Matching is case sensitive.
         (["run_bash"], "RUN_BASH", False),
+        # A stored deny of a tool that no longer exists (list_hpc_jobs) is a
+        # no-op: it matches nothing, and the rest of the toolchain is allowed.
+        (["*", "!list_hpc_jobs"], "get_hpc_job_status", True),
     ],
 )
 def test_tool_allowed_patterns(patterns, tool, expected):
@@ -145,7 +148,6 @@ def test_vista_metadata_paths_are_scoped_per_project_and_user():
         "submit_hpc_job",
         "get_hpc_job_status",
         "get_hpc_job_outputs",
-        "list_hpc_jobs",
         "cancel_hpc_job",
     ],
 )

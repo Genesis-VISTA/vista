@@ -57,7 +57,7 @@ Examples from the two default projects:
 ```python
 # alloy-design: everything except the generic HPC submission tools
 tools = ["*", "!submit_hpc_job", "!get_hpc_job_status",
-         "!get_hpc_job_outputs", "!list_hpc_jobs"]
+         "!get_hpc_job_outputs", "!cancel_hpc_job"]
 
 # molten-salt: everything except the alloy-design HPC toolchain
 tools = ["*", "!agenthpc_*"]

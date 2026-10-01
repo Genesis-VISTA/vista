@@ -22,8 +22,7 @@ from vista_mcp_server.lib.globus import GlobusFileNotFound
 class FakeGlobusClient:
     """Records Globus mkdir / ls calls, and serves an in-memory remote tree."""
 
-    def __init__(self, *, out_dir_permissions: str = "2775", cluster: str = "odo"):
-        self.out_dir_permissions = out_dir_permissions
+    def __init__(self, *, cluster: str = "odo"):
         self.cluster = cluster
         self.ls_calls: list[tuple[str, str]] = []
         self.mkdir_p_calls: list[tuple[str, str, str | None]] = []
@@ -39,15 +38,13 @@ class FakeGlobusClient:
         # path -> list of entry dicts ({name, type, permissions})
         self.ls_entries: dict[str, list[dict[str, Any]]] = {}
 
-    def seed_odo_out_dir(self, base: str) -> None:
-        """Make ``_require_odo_out_dir`` succeed for ``base``."""
-        self.ls_entries[base] = [
-            {
-                "name": "out",
-                "type": "dir",
-                "permissions": self.out_dir_permissions,
-            }
-        ]
+    def seed_remote_dir(self, base: str, *, permissions: str = "2775") -> None:
+        """List ``base`` in its parent with ``permissions``, which is where
+        ``_require_group_writable`` reads them from."""
+        parent, name = base.rstrip("/").rsplit("/", 1)
+        self.ls_entries.setdefault(parent or "/", []).append(
+            {"name": name, "type": "dir", "permissions": permissions}
+        )
 
     # --- Transfer -----------------------------------------------------------
 
@@ -73,8 +70,9 @@ class FakeGlobusClient:
             # right answer for a job that has not written any, and what leaves
             # a raised error meaning something actually went wrong.
             return []
-        # Empty src dir → triggers upload path in ``_sync_job_sources``
-        raise FileNotFoundError(f"no such path: {path}")
+        # What the real client raises for a listing of a path that is not there.
+        # An empty src dir therefore triggers the upload in ``_sync_job_sources``.
+        raise GlobusFileNotFound(f"{path} is not on {self.cluster}.")
 
     async def operation_mkdir_p(
         self,
