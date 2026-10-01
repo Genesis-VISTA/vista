@@ -165,6 +165,7 @@ async def test_remote_dirs_round_trip_and_reach_the_mcp_server(session, alice):
             odo_remote_dir="/odo/proj/vista",
             frontier_remote_dir="/frontier/proj/vista",
             lux_remote_dir="/lux/me/vista",
+            lux_account="abc123",
         ),
         session,
         row,
@@ -172,12 +173,14 @@ async def test_remote_dirs_round_trip_and_reach_the_mcp_server(session, alice):
     assert saved.odo_remote_dir == "/odo/proj/vista"
     assert saved.frontier_remote_dir == "/frontier/proj/vista"
     assert saved.lux_remote_dir == "/lux/me/vista"
+    assert saved.lux_account == "abc123"
 
     meta = build_metadata(UserPublicWithConfig.model_validate(row), {})
     user = meta["vista"]["user"]
     assert user["odo_remote_dir"] == "/odo/proj/vista"
     assert user["frontier_remote_dir"] == "/frontier/proj/vista"
     assert user["lux_remote_dir"] == "/lux/me/vista"
+    assert user["lux_account"] == "abc123"
 
 
 @pytest.mark.anyio
@@ -219,4 +222,9 @@ def test_existing_database_gains_the_remote_dir_columns(tmp_path):
         )
         _add_missing_columns(conn)
         columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
-    assert {"odo_remote_dir", "frontier_remote_dir", "lux_remote_dir"} <= columns
+    assert {
+        "odo_remote_dir",
+        "frontier_remote_dir",
+        "lux_remote_dir",
+        "lux_account",
+    } <= columns

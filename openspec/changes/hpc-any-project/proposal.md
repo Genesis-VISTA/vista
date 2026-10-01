@@ -20,13 +20,14 @@ anything. It only stops other projects from using VISTA.
   (`VISTA_MCP_{ODO,FRONTIER}_GLOBUS_*REFRESH_TOKEN`) is removed.
 - **BREAKING** The remote folder is a required per-user setting for Odo,
   Frontier and Lux, as it already is for Perlmutter. The deployment defaults
-  (`*_remote_dir`, `lux_account`) are removed. Lux jobs no longer pass
-  `--account`, so Slurm uses the researcher's default account.
-- Every cluster uses one folder layout beside the researcher's remote folder:
-  sources in `<remote_dir>.jobs/<job>/src/` (uploaded through the researcher's
-  Globus identity), Slurm logs and outputs in `<remote_dir>.out/`
-  (`log-<id>.out`/`.err`, and `<id>/` as `VISTA_OUT`). The per-server-run
-  `session_id` folder is removed.
+  (`*_remote_dir`, `lux_account`) are removed; the Lux account becomes a
+  per-user setting too, since Lux has no token to take a project from.
+- The OLCF clusters use one folder layout beside the researcher's remote
+  folder: sources in `<remote_dir>.<user>.jobs/<job>/src/` (one per researcher,
+  uploaded through their Globus identity), Slurm logs and outputs in a shared,
+  group-writable `<remote_dir>.out/` (`log-<id>.out`/`.err`, and `<id>/` as
+  `VISTA_OUT`). Perlmutter keeps both inside the folder (`<remote_dir>/jobs`,
+  `<remote_dir>/out`). The per-server-run `session_id` folder is removed.
 - **BREAKING** Because every path follows from the job id and the remote
   folder, the job registry (`data/hpc_job_registry.json`) and the
   `list_hpc_jobs` tool are removed. Status, outputs and cancel work for any job

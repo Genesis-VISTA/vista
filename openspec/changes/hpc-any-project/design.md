@@ -83,7 +83,9 @@ Perlmutter's existing `nersc_remote_dir` check moves into the same helper.
 
 **4. One path helper, two sibling folders.**
 ```
-RemoteLayout(base): jobs=<base>.jobs  src=<jobs>/<job>/src  out=<base>.out
+OLCF:       RemoteLayout(base, user): jobs=<base>.<user>.jobs  out=<base>.out
+Perlmutter: RemoteLayout(base, nested=True): jobs=<base>/jobs   out=<base>/out
+src = <jobs>/<job>/src
 stdout = <out>/log-%j.out   stderr = <out>/log-%j.err   VISTA_OUT = <out>/$SLURM_JOB_ID
 job_dir = <out>/<job>   (VISTA_JOB_DIR; FORGE_MODEL_<cluster> defaults to <job_dir>/model)
 ```
@@ -161,11 +163,30 @@ no credentials. (Outputs never served dry-run jobs.) `dry_run` keeps its
 own in-process `_dry_jobs`. Cancellation needs no remote folder. The Perlmutter paths no longer say "only for jobs
 submitted in the current session".
 
-**8. Lux passes no account.** `slurm_ssh.render_batch_script` loses its
-`account` parameter and writes no `-A` directive. Lux was its only caller, so
-an optional parameter would only ever have been `None`. `lux_account` and
-`lux_remote_dir` are deleted from both configs. The Lux credential check stops
-reporting a project.
+**8. The Lux account is a user setting.** OLCF's Slurm needs an explicit
+project, and Lux has no token to take one from, so `UserTable` gains
+`lux_account`, `UserConfig.require_lux_account` refuses a missing or non-plain
+value, and `render_batch_script` writes `-A <account>`. The deployment's
+`lux_account` and `lux_remote_dir` are deleted from both configs. The Lux
+credential check reports the researcher's account as its project.
+*Earlier choice, reversed:* passing no `-A` and relying on a default account,
+which review found OLCF's Slurm normally rejects.
+
+**10. Per-researcher sources, shared outputs (review findings 5 and 8).** On
+OLCF the sources folder carries the researcher's account, `<base>.<user>.jobs`,
+so two researchers sharing `<base>` never write into each other's 755 folder:
+Globus creates folders only as the researcher and cannot chmod. The account is
+the owner Globus reports for `/~/` (`GlobusClient.home_owner`: one Transfer
+`stat`, cached per collection and credential; it differs between enclaves, so it
+is asked per cluster) and the SSH login on Lux (`slurm_ssh.username`). Status
+and outputs never need it: they read `.out`. The output folder stays shared, and
+every job begins with `_shared_out_prefix`: `umask 002`, then a best-effort
+`chgrp <project>` and `chmod 2775 <base>.out`, which succeed only for its owner
+-- whichever identity made it -- so the first job fixes it for all later ones,
+and setgid keeps the group on everything below. On Lux VISTA runs the same lines
+when it creates `.out`, and the login-node setup script runs under `umask 002`.
+That lets the automation user, the researcher's Lux jobs and colleagues all
+write `.out` and `VISTA_JOB_DIR`.
 
 **9. The example job writes under `$VISTA_OUT`.** Both scripts create the venv
 at `"$VISTA_OUT/.venv"`. On Odo the source folder is read-only to the
@@ -188,6 +209,12 @@ automation user, so creating it in the working directory fails there today.
 - [`VISTA_JOB_DIR` moves from `<base>/<job>` to `<base>.out/<job>`] → a job's
   shared state (for example `forge-pretrain`'s checkout) is fetched again into
   the new place on its first run.
+- [Frontier and Lux sharing one remote folder] → their Slurm job ids can
+  collide, mixing `log-<id>.out` and `<id>/` of two jobs. Rare: Frontier's ids
+  are far higher. Accepted.
+- [A project's Unix group is not named like its project id] → the `chgrp` fails
+  quietly, and `.out` keeps the group it was created with, typically the
+  project's through `proj-shared`'s setgid.
 - [Two sibling folders instead of one] → `<base>` names a pair the researcher
   never sees as one folder. The settings hint and README say so. Temporary,
   until S3M supports IRI filesystem operations.

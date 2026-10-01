@@ -35,18 +35,54 @@ PROJ = "/lustre/orion/abc123/proj-shared"
 BASE = f"{PROJ}/foo"
 
 
-def test_the_layout():
-    layout = m.RemoteLayout(BASE)
+def test_the_olcf_layout():
+    layout = m.RemoteLayout(BASE, user="jdoe")
     assert layout.parent == PROJ
-    assert layout.jobs == f"{BASE}.jobs"
+    # Sources per researcher: two people sharing BASE never write into each
+    # other's folder, which Globus creates 755.
+    assert layout.jobs == f"{BASE}.jdoe.jobs"
     assert layout.out == f"{BASE}.out"
-    assert layout.src("example") == f"{BASE}.jobs/example/src"
+    assert layout.src("example") == f"{BASE}.jdoe.jobs/example/src"
     assert layout.job_dir("example") == f"{BASE}.out/example"
     assert layout.stdout_template == f"{BASE}.out/log-%j.out"
     assert layout.stderr_template == f"{BASE}.out/log-%j.err"
     assert layout.log_path("42") == f"{BASE}.out/log-42.out"
     assert layout.err_path("42") == f"{BASE}.out/log-42.err"
     assert layout.output_dir("42") == f"{BASE}.out/42"
+
+
+def test_the_olcf_sources_folder_needs_a_username():
+    """Status and outputs read `.out` alone, so only submission needs one."""
+    layout = m.RemoteLayout(BASE)
+    assert layout.output_dir("42") == f"{BASE}.out/42"
+    with pytest.raises(RuntimeError, match="username"):
+        layout.jobs
+
+
+def test_the_perlmutter_layout_is_one_folder():
+    """Perlmutter runs as the researcher, and VISTA manages its files through
+    the NERSC IRI filesystem API, so nothing needs splitting there."""
+    layout = m.RemoteLayout("/pscratch/me/vista", nested=True)
+    assert layout.parent == "/pscratch/me/vista"
+    assert layout.jobs == "/pscratch/me/vista/jobs"
+    assert layout.src("forge-tune") == "/pscratch/me/vista/jobs/forge-tune/src"
+    assert layout.out == "/pscratch/me/vista/out"
+    assert layout.log_path("7") == "/pscratch/me/vista/out/log-7.out"
+    assert layout.output_dir("7") == "/pscratch/me/vista/out/7"
+    assert layout.job_dir("forge-tune") == "/pscratch/me/vista/out/forge-tune"
+
+
+def test_the_shared_out_prefix_makes_out_group_writable():
+    prefix = m._shared_out_prefix(f"{BASE}.out", "abc123").splitlines()
+    assert prefix == [
+        "umask 002",
+        f"chgrp abc123 {BASE}.out 2>/dev/null || true",
+        f"chmod 2775 {BASE}.out 2>/dev/null || true",
+    ]
+    assert m._shared_out_prefix("/o", None).splitlines() == [
+        "umask 002",
+        "chmod 2775 /o 2>/dev/null || true",
+    ]
 
 
 def test_nothing_is_kept_between_calls():

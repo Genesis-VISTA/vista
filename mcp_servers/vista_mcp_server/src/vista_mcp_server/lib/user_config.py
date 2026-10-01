@@ -32,6 +32,7 @@ class UserConfig(BaseModel):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_globus_token: str | None = None
     frontier_globus_token: str | None = None
     globus_token: str | None = None
@@ -126,6 +127,20 @@ class UserConfig(BaseModel):
                 "folder such as your project's proj-shared/vista."
             )
         return path
+
+    def require_lux_account(self) -> str:
+        """ The Slurm account Lux jobs are charged to; Lux has no token to take one from. """
+        if not self.lux_account:
+            raise ToolError(
+                "No Lux account is set. Set it in the VISTA user settings to the "
+                "OLCF project Lux jobs should be charged to."
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", self.lux_account):
+            raise ToolError(
+                f"The Lux account {self.lux_account!r} is not a project name. Use "
+                "only letters, digits, _ and -, as in the OLCF project id."
+            )
+        return self.lux_account
 
     def require_nersc_iri_token(self) -> str:
         if not self.nersc_iri_token:

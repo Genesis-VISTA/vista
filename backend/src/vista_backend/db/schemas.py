@@ -421,6 +421,7 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "odo_remote_dir",
     "frontier_remote_dir",
     "lux_remote_dir",
+    "lux_account",
     "odo_s3m_token",
     "frontier_s3m_token",
     "nersc_iri_token",
@@ -448,6 +449,7 @@ class UserCreate(UserBase):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -474,6 +476,7 @@ class UserUpdate(UserBase):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -506,6 +509,7 @@ class UserSelfUpdate(UserBase):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -561,6 +565,7 @@ class UserPublicWithConfig(UserBase):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -629,8 +634,8 @@ class UserTable(SQLModel, table=True):
     """
     odo_remote_dir: str | None = None
     """
-    Names where VISTA puts job sources and outputs on Odo: `<dir>.jobs` and
-    `<dir>.out` beside it (the folder itself is never created). Required for
+    Names where VISTA puts job sources and outputs on Odo: `<dir>.<user>.jobs`
+    and `<dir>.out` beside it (the folder itself is never created). Required for
     Odo. Jobs run as the project's IRI automation user, which creates
     `<dir>.out`, so the folder holding `<dir>` must be writable by the
     project's group -- `proj-shared` is; elsewhere `mkdir -p -m 2775 <dir>.out`.
@@ -639,8 +644,13 @@ class UserTable(SQLModel, table=True):
     """ Same as `odo_remote_dir`, for Frontier. Required for Frontier. """
     lux_remote_dir: str | None = None
     """
-    Folder on Lux where VISTA puts job sources and outputs. Required for Lux.
-    Lux jobs run as the researcher, so their own write access is enough.
+    Names where VISTA puts job sources and outputs on Lux (`<dir>.<user>.jobs`
+    and `<dir>.out` beside it). Required for Lux.
+    """
+    lux_account: str | None = None
+    """
+    The OLCF project Lux jobs are charged to (`#SBATCH -A`). Required for Lux,
+    which has no token to take a project from. Not a secret.
     """
     s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)

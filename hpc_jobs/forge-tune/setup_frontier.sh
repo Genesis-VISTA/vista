@@ -9,7 +9,7 @@
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py), derived from
 # the user's frontier_remote_dir + cluster_defaults.json:
-#   RUN_DIR_Frontier      <remote_dir>.jobs/<job>/src    (vista uploads here via scp)
+#   RUN_DIR_Frontier      <remote_dir>.<user>.jobs/<job>/src    (vista uploads here via scp)
 #   FORGE_MODEL_Frontier  path to pre-downloaded FORGE weights (from cluster_defaults.json
 #                         iri.environment; world-shared, no per-submission download needed).
 

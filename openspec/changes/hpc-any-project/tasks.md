@@ -64,3 +64,11 @@ reopen the hole the check was closing.
 - [x] 8.3 Lux creates `<dir>.out` over SSH before `sbatch`, as Perlmutter does through IRI; only Odo's and Frontier's Slurm were seen to create a missing log folder (`tests/test_lux_submit.py`).
 - [x] 8.4 `require_remote_dir` refuses characters a shell or Slurm would read specially (whitespace, quotes, `$`, backticks, `;`, `*`, `%`) and `/` itself; the bash prefixes also `shlex.quote` the paths (`tests/test_remote_dir.py`).
 - [x] 8.5 Correct the stale text (the `odo_remote_dir` docstring, the llm-pretraining skill, `forge-pretrain`'s and `lux-hello`'s script comments) and drop the unused `base` variables.
+
+## 9. Shared folders and the Lux account (review findings 3, 5, 8)
+
+- [x] 9.1 A required per-user Lux account: `UserTable.lux_account` (API, settings modal, `UserConfig.require_lux_account`, refusing non-plain names), `#SBATCH -A` back in `render_batch_script`, and the Lux card names it (`tests/test_home_owner.py`, `tests/test_lux_submit.py`, `backend/tests/test_user_tokens.py`, `backend/tests/test_hpc_status.py`, `ui/tests/UserSettingsModal.test.tsx`, `ui/e2e-hermetic/shell.spec.ts`).
+- [x] 9.2 OLCF sources in `<base>.<user>.jobs`: `GlobusClient.home_owner` (Transfer `stat` of `/~/`, cached; confirmed live on Odo and Frontier to return the researcher's POSIX account, which differs between enclaves) and `slurm_ssh.username` on Lux (`tests/test_home_owner.py`, `tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`).
+- [x] 9.3 Perlmutter keeps one folder: `<base>/jobs`, `<base>/out` (`tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`).
+- [x] 9.4 Every job prefix runs `_shared_out_prefix` (`umask 002`, best-effort `chgrp <project>` and `chmod 2775 <base>.out`); Lux runs it when creating `.out`, and its setup script under `umask 002` (`tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`).
+- [x] 9.5 README, settings hints, job-script comments, the llm-pretraining skill and the schema docstrings describe the new layout and the Lux account.

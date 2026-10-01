@@ -4,7 +4,7 @@
 # call instead of a queued job.
 #
 # Env vars exported by vista's Lux dispatcher (submit_job_mcp._submit_lux_job):
-#   RUN_DIR_Lux      <remote_dir>.jobs/forge-pretrain/src, already holding the uploaded sources
+#   RUN_DIR_Lux      <remote_dir>.<user>.jobs/forge-pretrain/src, already holding the uploaded sources
 #   VISTA_JOB_DIR    <remote_dir>.out/forge-pretrain
 #   http(s)_proxy    OLCF proxy (the login node has no direct outbound network)
 #   FORGE_*, LUX_ENV_SCRIPT   from cluster_defaults.json -> lux.iri.environment

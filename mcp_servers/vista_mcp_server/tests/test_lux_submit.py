@@ -21,7 +21,7 @@ from fakes import FakeSshConn
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 BASE = "/lustre/orion/abc123/proj-shared/vista"
-CFG = UserConfig(lux_remote_dir=BASE)
+CFG = UserConfig(lux_remote_dir=BASE, lux_account="abc123")
 
 
 def _write_job(root: Path, *, setup: str | None = "echo setup-ran\n") -> Path:
@@ -87,20 +87,27 @@ async def test_submit_renders_sbatch_header_and_env(lux):
 
     script = _submitted_script(lux)
     header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
-    assert header[:6] == [
+    assert header[:7] == [
         "#SBATCH -J vista-lux-demo",
+        "#SBATCH -A abc123",
         "#SBATCH -N 16",
         "#SBATCH -t 0:30:00",
         f"#SBATCH -o {BASE}.out/log-%j.out",
         f"#SBATCH -e {BASE}.out/log-%j.err",
-        f"#SBATCH --chdir={BASE}.jobs",
+        f"#SBATCH --chdir={BASE}.researcher.jobs",  # sources: one folder per researcher
     ]
     assert "#SBATCH --exclusive" in header
-    # No account: the job runs as the researcher, so Slurm charges their default.
-    # The only -A is the job script's own, which comes after commands (below).
+    # The account is the researcher's Lux account setting; the job script's own
+    # -A comes after commands (below), so Slurm ignores it.
     assert [line for line in header if line.startswith("#SBATCH -A")] == [
-        "#SBATCH -A ignored"
+        "#SBATCH -A abc123",
+        "#SBATCH -A ignored",
     ]
+    # `.out` is shared by identities that differ, so the job keeps it writable
+    # by the project's group before anything else.
+    assert script.index("umask 002") < script.index("export VISTA_OUT")
+    assert f"chgrp abc123 {BASE}.out 2>/dev/null || true" in script
+    assert f"chmod 2775 {BASE}.out 2>/dev/null || true" in script
     # Not requested by the demo job: no per-node tasks / GPUs directives.
     assert not any("--ntasks-per-node" in line or "--gpus" in line for line in header)
     assert not any(
@@ -108,7 +115,7 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     )  # no IRI default queue
     # The job's own directive comes after commands, so Slurm ignores it.
     assert script.index("#SBATCH -A ignored") > script.index("export RUN_DIR_Lux")
-    assert f"export RUN_DIR_Lux={BASE}.jobs/lux-demo/src" in script
+    assert f"export RUN_DIR_Lux={BASE}.researcher.jobs/lux-demo/src" in script
     assert "export FOO='bar baz'" in script
     assert f'export VISTA_OUT={BASE}.out/"$SLURM_JOB_ID"' in script
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in script
@@ -120,7 +127,7 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
     # by VISTA, never uploaded.
-    assert lux.puts == [f"{BASE}.jobs/lux-demo/src/run.py"]
+    assert lux.puts == [f"{BASE}.researcher.jobs/lux-demo/src/run.py"]
     # The log folder is made ahead of time too: Lux runs as the researcher, and
     # its Slurm has not been seen to create a missing one.
     assert lux.local(f"{BASE}.out").is_dir()
@@ -133,7 +140,7 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
 async def test_setup_runs_on_login_node_with_env_before_sbatch(lux):
     await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
     [(setup_cmd, _)] = lux.ran("echo setup-ran")
-    assert f"export RUN_DIR_Lux={BASE}.jobs/lux-demo/src" in setup_cmd
+    assert f"export RUN_DIR_Lux={BASE}.researcher.jobs/lux-demo/src" in setup_cmd
     # State the job's runs share goes where the job's own user can write.
     assert f"export VISTA_JOB_DIR={BASE}.out/lux-demo" in setup_cmd
     assert "export https_proxy=http://proxy.ccs.ornl.gov:3128" in setup_cmd
@@ -254,11 +261,14 @@ async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
     assert "#SBATCH -t 0:05:00" in header
     assert "#SBATCH --exclusive" not in header
     assert not any("--gpus" in line or "--ntasks-per-node" in line for line in header)
-    # No setup_lux.sh and no sources: besides creating directories, sbatch is the
-    # only command, and nothing is uploaded.
-    assert [c for c, _ in lux.commands if not c.startswith("mkdir -p ")] == [
-        "sbatch --parsable"
-    ]
+    # No setup_lux.sh and no sources: besides creating directories and making
+    # the shared `.out` group-writable, sbatch is the only command, and nothing
+    # is uploaded.
+    assert [
+        c
+        for c, _ in lux.commands
+        if not c.startswith("mkdir -p ") and not c.startswith("umask 002")
+    ] == ["sbatch --parsable"]
     assert lux.puts == []
     assert 'tee "${VISTA_OUT}/hello.txt"' in script
 
@@ -329,6 +339,7 @@ async def test_scancel_failure_raises(tmp_path):
 async def test_render_batch_script_optional_directives():
     script = slurm_ssh.render_batch_script(
         job_name="j",
+        account="a",
         node_count=1,
         duration_s=3725,
         stdout_path="o",
@@ -349,6 +360,7 @@ async def test_render_batch_script_optional_directives():
 async def test_render_batch_script_tasks_and_gpus_per_node():
     script = slurm_ssh.render_batch_script(
         job_name="j",
+        account="a",
         node_count=2,
         duration_s=60,
         stdout_path="o",

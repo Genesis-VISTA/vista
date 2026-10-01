@@ -32,8 +32,8 @@ is neither success nor 401 SHALL be reported as unverifiable, not as rejected.
 
 For Lux, the credential check SHALL always pass without any call. It SHALL say
 that the researcher signs in with a PIN and RSA passcode when a chat first uses
-Lux. It SHALL NOT name a project. No outcome of a chat's sign-in SHALL change
-it.
+Lux, and SHALL name the researcher's Lux account when one is set. No outcome
+of a chat's sign-in SHALL change it.
 
 #### Scenario: Token accepted
 - **WHEN** the IRI service answers the authenticated call successfully
@@ -61,7 +61,7 @@ it.
 
 #### Scenario: Lux sign-in is described, not checked
 - **WHEN** any researcher's Lux status is checked
-- **THEN** Lux's credential check passes, says sign-in happens in a chat with a PIN and RSA passcode, names no project, and makes no outbound call
+- **THEN** Lux's credential check passes, says sign-in happens in a chat with a PIN and RSA passcode, names the researcher's Lux account if set, and makes no outbound call
 
 #### Scenario: A failed chat sign-in does not reject Lux
 - **WHEN** a researcher's Lux sign-in failed in a chat and the hub still answers
@@ -127,13 +127,13 @@ cluster's section SHALL contain:
 - its "Show in sidebar" switch;
 - all of its settings: for Odo and Frontier, the S3M token, the remote
   directory, and the Globus connection; for Perlmutter, the NERSC account,
-  remote directory, and IRI token; for Lux, the remote directory;
+  remote directory, and IRI token; for Lux, the Lux account and remote directory;
 - in its header, the same status dot and word the rail shows.
 
 The S3M token fields SHALL say that a token from any OLCF project with S3M
 access works. The Odo and Frontier remote directory fields SHALL say that VISTA
-keeps `<dir>.jobs` and `<dir>.out` beside the directory, and that the folder
-containing them must be writable by the project's group.
+keeps `<dir>.<user>.jobs` and `<dir>.out` beside the directory, and that the
+folder containing them must be writable by the project's group.
 
 Opened from the rail's settings button, every cluster section SHALL start
 collapsed. Opened from a cluster's details, only that cluster's section SHALL
@@ -154,7 +154,7 @@ SHALL trigger a fresh check of that cluster.
 
 #### Scenario: Lux section
 - **WHEN** a researcher expands the Lux section
-- **THEN** it shows the "Show in sidebar" switch and the Lux remote directory, and no credential fields
+- **THEN** it shows the "Show in sidebar" switch, the Lux account and the Lux remote directory, and no credential fields
 
 #### Scenario: Remote directory saved
 - **WHEN** a researcher enters a Frontier remote directory and saves
@@ -195,7 +195,7 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Lux details
 - **WHEN** a researcher opens the Lux card
-- **THEN** the details show the hub's reachability and the sign-in note, with no project, no Globus row and no expiry
+- **THEN** the details show the hub's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
 
 #### Scenario: Collapsed rail is labelled
 - **WHEN** the rail is collapsed

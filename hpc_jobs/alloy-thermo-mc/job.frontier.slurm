@@ -31,7 +31,7 @@
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT             per-job output dir, already mkdir'd. results.json lands here.
-#   RUN_DIR_Frontier      <frontier_remote_dir>.jobs/<job>/src — where vista staged run_state_point.py.
+#   RUN_DIR_Frontier      <frontier_remote_dir>.<user>.jobs/<job>/src — where vista staged run_state_point.py.
 #   ALLOYMC_REPO_URL      public alloy-thermo-skill repo to clone (engine + scripts + DFT spec).
 #   ALLOYMC_REPO_REF      branch/tag/SHA to check out (default: main).
 #   ALLOYMC_SCRATCH_DIR   optional override for the shared build/run scratch dir.

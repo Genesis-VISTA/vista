@@ -22,8 +22,10 @@ from vista_mcp_server.lib.globus import GlobusFileNotFound
 class FakeGlobusClient:
     """Records Globus mkdir / ls calls, and serves an in-memory remote tree."""
 
-    def __init__(self, *, cluster: str = "odo"):
+    def __init__(self, *, cluster: str = "odo", home_user: str = "researcher"):
         self.cluster = cluster
+        self.home_user = home_user
+        """What `stat /~/` names as the owner of the researcher's home."""
         self.ls_calls: list[tuple[str, str]] = []
         self.mkdir_p_calls: list[tuple[str, str, str | None]] = []
         self.uploads: list[tuple[str, str]] = []
@@ -57,6 +59,9 @@ class FakeGlobusClient:
         )
 
     # --- Transfer -----------------------------------------------------------
+
+    async def home_owner(self, *, collection_id: str) -> str:
+        return self.home_user
 
     async def operation_ls(
         self,

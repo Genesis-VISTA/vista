@@ -309,7 +309,8 @@ test.describe("HPC availability cards", () => {
     await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-expanded", "true");
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    await expect(lux.getByRole("textbox")).toHaveCount(1);
+    await expect(lux.getByRole("textbox")).toHaveCount(2);
+    await expect(lux.getByLabel("Lux account")).toBeVisible();
     await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
     expect(await stub.unstubbed()).toEqual([]);
   });

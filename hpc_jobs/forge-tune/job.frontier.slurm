@@ -10,7 +10,7 @@
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py):
 #   VISTA_OUT            per-job output dir, already mkdir'd. Use for checkpoints + logs.
-#   RUN_DIR_Frontier     <frontier_remote_dir>.jobs/<job>/src (scp'd by vista)
+#   RUN_DIR_Frontier     <frontier_remote_dir>.<user>.jobs/<job>/src (scp'd by vista)
 #   FORGE_MODEL_Frontier path to FORGE base model weights (from cluster_defaults.json
 #                        -> iri.environment).
 #   SLURM_NNODES         node count from the IRI allocation

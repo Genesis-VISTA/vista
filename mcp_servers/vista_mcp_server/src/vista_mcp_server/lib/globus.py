@@ -59,6 +59,9 @@ _CHUNK_BYTES = 1024 * 1024
 """ Streaming read size for `download_file` -- how much is held at once, not
 what is asked for: the request is one range covering the whole file. """
 
+_home_owners: dict[tuple[str, str], str] = {}
+""" (collection id, Transfer refresh token) -> the POSIX user it maps to. """
+
 _TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0)
 """
 Generous on read/write, short on connect. A file op crossing to OLCF can take
@@ -431,6 +434,33 @@ class GlobusClient:
             )
 
     # --- filesystem operations on a collection ------------------------------
+
+    async def home_owner(self, *, collection_id: str) -> str:
+        """
+        The POSIX account the researcher's Globus identity is mapped to on this
+        collection: the owner of their home folder, from one Transfer `stat` of
+        `/~/`. It differs between enclaves (one researcher can be `jhi` on Odo
+        and `hinesjr` on Frontier), so it is asked per collection, and cached per
+        credential, since a mapping does not change.
+        """
+        key = (collection_id, self._tokens.transfer)
+        if key not in _home_owners:
+            entry = await asyncio.to_thread(self._operation_stat, collection_id, "/~/")
+            user = entry.get("user")
+            if not user:
+                raise ToolError(
+                    f"Globus did not say which {self.cluster.title()} account your "
+                    "home folder belongs to, so VISTA cannot name your sources folder."
+                )
+            _home_owners[key] = user
+        return _home_owners[key]
+
+    def _operation_stat(self, endpoint: str, path: str) -> dict[str, Any]:
+        try:
+            return self._transfer().operation_stat(endpoint, path=path).data
+        except globus_sdk.TransferAPIError as e:
+            self._raise_for_transfer_error(e)
+            raise
 
     async def operation_ls(
         self, *, endpoint: str, path: str, recursive: bool = False,

@@ -47,15 +47,15 @@ default, and a user with several OLCF tokens has no single default either.
 
 What each cluster needs from the user:
 
-- **Lux:** an OLCF account on Lux, and a **Lux remote directory** in their VISTA
-  settings. The job is charged to their default Slurm account. Logging in is
+- **Lux:** an OLCF account on Lux, and a **Lux account** (the project to charge)
+  and **Lux remote directory** in their VISTA settings. Logging in is
   interactive (see step 3).
 - **Frontier:** the same setup as fine-tuning on Frontier:
   - An S3M token in their VISTA settings. The job is charged to that token's
     project.
   - Globus connected for Frontier (VISTA settings → File transfer).
   - A **Frontier remote directory** in their VISTA settings. VISTA keeps
-    `<dir>.jobs` and `<dir>.out` beside it, so the folder holding it must be
+    `<dir>.<user>.jobs` and `<dir>.out` beside it, so the folder holding it must be
     writable by the project's group; any folder directly under `proj-shared`
     is.
 - If submission fails, show the message as it is. It says what to set or fix:

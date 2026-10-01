@@ -148,6 +148,7 @@ function UserSettingsForm({
     user.frontier_remote_dir ?? "",
   );
   const [luxRemoteDir, setLuxRemoteDir] = useState(user.lux_remote_dir ?? "");
+  const [luxAccount, setLuxAccount] = useState(user.lux_account ?? "");
   const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
   const [frontierS3mToken, setFrontierS3mToken] = useState(
     user.frontier_s3m_token ?? "",
@@ -211,6 +212,7 @@ function UserSettingsForm({
         blankToNull(frontierRemoteDir),
       ],
       ["lux_remote_dir", user.lux_remote_dir ?? null, blankToNull(luxRemoteDir)],
+      ["lux_account", user.lux_account ?? null, blankToNull(luxAccount)],
       ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
       [
         "frontier_s3m_token",
@@ -402,7 +404,9 @@ function UserSettingsForm({
                     spellCheck={false}
                   />
                   <span className="user-settings-hint">
-                    Absolute remote dir on the NERSC machine. Required for Perlmutter.
+                    Absolute remote dir on the NERSC machine. Required for Perlmutter. VISTA
+                    keeps <code>jobs/</code> (sources) and <code>out/</code> (logs and outputs)
+                    inside it.
                   </span>
                 </label>
 
@@ -424,13 +428,28 @@ function UserSettingsForm({
               </>
             )}
             {cluster === "lux" && (
-              <RemoteDirField
-                label="Lux remote directory"
-                value={luxRemoteDir}
-                onChange={setLuxRemoteDir}
-                placeholder="/lustre/orion/<project>/proj-shared/vista"
-                hint="Required for Lux. VISTA keeps <dir>.jobs (sources) and <dir>.out (logs and outputs) beside this directory. Lux jobs run as you, so your own write access is enough."
-              />
+              <>
+                <label className="project-modal-label">
+                  Lux account
+                  <input
+                    className="input"
+                    value={luxAccount}
+                    onChange={(e) => setLuxAccount(e.target.value)}
+                    placeholder="e.g. abc123"
+                    spellCheck={false}
+                  />
+                  <span className="user-settings-hint">
+                    Required for Lux. The OLCF project Lux jobs are charged to.
+                  </span>
+                </label>
+                <RemoteDirField
+                  label="Lux remote directory"
+                  value={luxRemoteDir}
+                  onChange={setLuxRemoteDir}
+                  placeholder="/lustre/orion/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
+                />
+              </>
             )}
           </ClusterSection>
         ))}
@@ -505,18 +524,25 @@ function RemoteDirField({
 }
 
 /**
- * Odo and Frontier jobs run as the project's IRI automation user, not as the
- * researcher. VISTA uploads `<dir>.jobs` as the researcher, and Slurm creates
- * `<dir>.out` as that user, so the folder holding them must be writable by the
+ * On the OLCF clusters VISTA keeps a researcher's sources in
+ * `<dir>.<user>.jobs` and everyone's logs and outputs in a shared `<dir>.out`
+ * beside it. Odo and Frontier jobs run as the project's IRI automation user,
+ * which creates `<dir>.out`, so the folder holding them must be writable by the
  * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
  */
-function GroupWritableHint({ cluster }: { cluster: string }) {
+function GroupWritableHint({
+  cluster,
+  runsAs = "your project's IRI automation user",
+}: {
+  cluster: string;
+  runsAs?: string;
+}) {
   return (
     <>
-      Required for {cluster}. VISTA keeps <code>&lt;dir&gt;.jobs</code> (sources) and{" "}
-      <code>&lt;dir&gt;.out</code> (logs and outputs) beside this directory. Jobs run as your
-      project&apos;s IRI automation user, so the folder holding them must be writable by the
-      project&apos;s group, as <code>proj-shared</code> already is.
+      Required for {cluster}. VISTA keeps <code>&lt;dir&gt;.&lt;user&gt;.jobs</code> (your
+      sources) and <code>&lt;dir&gt;.out</code> (logs and outputs, shared with your project)
+      beside this directory. Jobs run as {runsAs}, so the folder holding them must be writable
+      by the project&apos;s group, as <code>proj-shared</code> already is.
     </>
   );
 }

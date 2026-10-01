@@ -163,49 +163,70 @@ mcp = FastMCP("Submit Job")
 @dataclasses.dataclass(frozen=True)
 class RemoteLayout:
     """
-    Where a job's files live, in two folders beside the researcher's remote
-    folder `<base>` for a cluster. `<base>` itself is never created.
+    Where a job's files live, given the researcher's remote folder `<base>` for
+    a cluster. On the OLCF clusters (Odo, Frontier, Lux), two folders beside
+    `<base>`, which itself is never created:
 
-        <base>.jobs/<job>/src/       sources, uploaded by VISTA; the job only reads them
-        <base>.out/log-<id>.out      Slurm stdout, and `.err` beside it
-        <base>.out/<id>/             the job's outputs, exported to it as `VISTA_OUT`
-        <base>.out/<job>/            state shared by a job's runs (a checkout, a
-                                     downloaded model), exported as `VISTA_JOB_DIR`
+        <base>.<user>.jobs/<job>/src/  sources, uploaded by VISTA; the job only reads them
+        <base>.out/log-<id>.out        Slurm stdout, and `.err` beside it
+        <base>.out/<id>/               the job's outputs, exported to it as `VISTA_OUT`
+        <base>.out/<job>/              state shared by a job's runs (a checkout, a
+                                       downloaded model), exported as `VISTA_JOB_DIR`
 
-    The same on every cluster, and a function of the folder and the job id
-    alone. So a job is found again from its id -- by a later status call, after
-    a restart, or from another install sharing the folder -- with nothing
-    recorded at submit time. Changing the folder setting loses sight of the
-    jobs under the old one, which is the price of keeping no record.
+    On Perlmutter, one folder: `<base>/jobs/...` and `<base>/out/...`, laid out
+    the same way inside it (`nested`).
 
-    Two folders, because on Odo and Frontier each is created by the only
-    identity that writes to it. VISTA uploads `.jobs` through the researcher's
-    Globus identity, so it belongs to them, mode 755. The job runs as the
-    project's IRI automation user, and Slurm creates `.out` for the logs as that
-    user, which VISTA cannot do: Globus creates only as the researcher and
-    cannot chmod. So `.out` needs only the folder holding `<base>` to be
-    writable by the project's group, which OLCF's `proj-shared` is (770).
+    Every path but the sources is a function of the folder and the job id alone.
+    So a job is found again from its id -- by a later status call, after a
+    restart, or from another install sharing the folder -- with nothing recorded
+    at submit time. Changing the folder setting loses sight of the jobs under the
+    old one, which is the price of keeping no record.
 
-    TEMPORARY: this split works around S3M tokens having no access to the IRI
+    Why OLCF splits them: each folder is created by the only identity that writes
+    to it. VISTA uploads sources through the researcher's Globus identity (SFTP
+    on Lux), so `.<user>.jobs` belongs to them, mode 755 -- one per researcher,
+    so two researchers sharing `<base>` never write into each other's. On Odo and
+    Frontier the job runs as the project's IRI automation user, and Slurm creates
+    `.out` for the logs as that user, which VISTA cannot do: Globus creates only
+    as the researcher and cannot chmod. So `.out` needs only the folder holding
+    `<base>` to be writable by the project's group, which OLCF's `proj-shared` is
+    (770), and every job prefix makes `.out` itself group-writable (see
+    `_shared_out_prefix`), so the automation user, the researcher on Lux, and
+    their colleagues can all write there.
+
+    Perlmutter runs as the researcher, and VISTA manages its files through the
+    NERSC IRI filesystem API, so nothing there needs splitting.
+
+    TEMPORARY: the OLCF split works around S3M tokens having no access to the IRI
     filesystem API. Once they do, VISTA can create one group-writable folder as
-    the automation user (IRI `mkdir` + `chmod`) and the layout can go back to a
-    single folder.
+    the automation user (IRI `mkdir` + `chmod`) and use Perlmutter's layout.
     """
 
     base: str
+    nested: bool = False
+    """ Perlmutter's one-folder layout (`<base>/jobs`, `<base>/out`). """
+    user: str | None = None
+    """
+    The researcher's POSIX username, naming their sources folder on OLCF. Only
+    submission needs it; status and outputs read `.out` alone.
+    """
 
     @property
     def jobs(self) -> str:
-        return f"{self.base}.jobs"
+        if self.nested:
+            return f"{self.base}/jobs"
+        if not self.user:
+            raise RuntimeError("the OLCF sources folder needs the researcher's username")
+        return f"{self.base}.{self.user}.jobs"
 
     @property
     def out(self) -> str:
-        return f"{self.base}.out"
+        return f"{self.base}/out" if self.nested else f"{self.base}.out"
 
     @property
     def parent(self) -> str:
-        """ The folder holding `.jobs` and `.out`; it must already exist. """
-        return posixpath.dirname(self.base) or "/"
+        """ The folder that must already exist: the one holding the sources and `out`. """
+        return self.base if self.nested else (posixpath.dirname(self.base) or "/")
 
     def src(self, job: str) -> str:
         return f"{self.jobs}/{job}/src"
@@ -244,9 +265,31 @@ class RemoteLayout:
         return f"{self.out}/{job_id}"
 
 
-def _layout(cfg: UserConfig, cluster: Cluster) -> RemoteLayout:
-    """ The layout under the researcher's remote folder for `cluster`. """
-    return RemoteLayout(cfg.require_remote_dir(cluster))
+def _layout(cfg: UserConfig, cluster: Cluster, user: str | None = None) -> RemoteLayout:
+    """ The layout for the researcher's remote folder on `cluster`; see `RemoteLayout`. """
+    return RemoteLayout(
+        cfg.require_remote_dir(cluster), nested=cluster == "perlmutter", user=user,
+    )
+
+
+def _shared_out_prefix(out: str, group: str | None) -> str:
+    """
+    The first lines of every job: make `out` and everything the job creates in
+    it writable by the project's group.
+
+    On OLCF, `<base>.out` is shared by identities that differ -- the project's
+    IRI automation user (Odo, Frontier), the researcher (Lux), and colleagues who
+    set the same folder -- and is created by whichever runs first. `chgrp` and
+    `chmod` succeed only for its owner, which is the identity that made it, so
+    the first job fixes it for everyone after; for anyone else they fail
+    quietly. Setgid keeps the group on everything created below, and `umask 002`
+    keeps that group able to write it.
+    """
+    lines = ["umask 002"]
+    if group:
+        lines.append(f"chgrp {shlex.quote(group)} {shlex.quote(out)} 2>/dev/null || true")
+    lines.append(f"chmod 2775 {shlex.quote(out)} 2>/dev/null || true")
+    return "\n".join(lines)
 
 
 def _default_cluster(cfg: UserConfig) -> Cluster:
@@ -436,13 +479,16 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
-    layout = _layout(cfg, "odo")
-    src_dir = layout.src(job)
+    _layout(cfg, "odo")  # an unset remote folder fails before anything is contacted
     s3m_token, project = await _olcf_project(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
+    layout = _layout(
+        cfg, "odo", user=await globus.home_owner(collection_id=settings.odo_globus_collection_id),
+    )
+    src_dir = layout.src(job)
 
     await _require_writable_out(
         globus, collection_id=settings.odo_globus_collection_id, layout=layout, cluster="odo",
@@ -468,7 +514,7 @@ async def _submit_odo_job(
     # purge against host-env Lmod contamination via --export=ALL) plus a `cd`
     # into the synced source dir to preserve the job.odo.slurm contract of
     # running from the job directory.
-    setup_snippet = textwrap.dedent(f"""
+    setup_snippet = "\n".join([_shared_out_prefix(layout.out, project), textwrap.dedent(f"""
         export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
 
@@ -481,7 +527,7 @@ async def _submit_odo_job(
         module purge 2>/dev/null || true
 
         cd {shlex.quote(src_dir)}
-    """).strip()
+    """).strip()])
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
     if job_cmd_args:
@@ -656,10 +702,10 @@ async def _submit_perlmutter_job(
 
     # Mirror the Odo/Frontier setup-snippet UX: the user's job.perlmutter.slurm runs
     # with $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
-    setup_snippet = textwrap.dedent(f"""
+    setup_snippet = "\n".join([_shared_out_prefix(layout.out, cfg.nersc_account), textwrap.dedent(f"""
         export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
-    """).strip()
+    """).strip()])
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
     if job_cmd_args:
@@ -667,9 +713,9 @@ async def _submit_perlmutter_job(
     body_lines.append(job_script_text)
     job_cmd = "\n".join(body_lines) + "\n"
 
-    # Convention-driven layout beside the NERSC remote directory (see
-    # `RemoteLayout`): sources in <remote_dir>.jobs/<job>/src, the downloaded
-    # model in <remote_dir>.out/<job>/model. The user's job.perlmutter.slurm reads
+    # Convention-driven layout inside the NERSC remote directory (see
+    # `RemoteLayout`): sources in <remote_dir>/jobs/<job>/src, the downloaded
+    # model in <remote_dir>/out/<job>/model. The user's job.perlmutter.slurm reads
     # RUN_DIR_Perlmutter and FORGE_MODEL_Perlmutter from the job environment.
     # Advanced users can override either by setting iri.environment in cluster_defaults.json.
     iri_env = {
@@ -782,13 +828,17 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    layout = _layout(cfg, "frontier")
-    base, src_dir = layout.base, layout.src(job)
+    _layout(cfg, "frontier")  # an unset remote folder fails before anything is contacted
     s3m_token, project = await _olcf_project(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
+    layout = _layout(
+        cfg, "frontier",
+        user=await globus.home_owner(collection_id=settings.frontier_globus_collection_id),
+    )
+    base, src_dir = layout.base, layout.src(job)
 
     # File ops via Globus, which only ever creates the source tree the job
     # reads. Everything the job writes is created by Slurm and the job itself,
@@ -827,7 +877,7 @@ async def _submit_frontier_job(
     # modules stacked with refcount > 1 when the job script then does
     # `module load xforge` — stacked libsci/PE in LD_LIBRARY_PATH then conflicts
     # with the xforge-provided versions and PyTorch segfaults at import).
-    setup_snippet = textwrap.dedent(f"""
+    setup_snippet = "\n".join([_shared_out_prefix(layout.out, project), textwrap.dedent(f"""
         export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
 
@@ -838,7 +888,7 @@ async def _submit_frontier_job(
         export no_proxy="localhost,127.0.0.1,0.0.0.0"
 
         module purge 2>/dev/null || true
-    """).strip()
+    """).strip()])
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
     if job_cmd_args:
@@ -947,8 +997,8 @@ async def _submit_lux_job(
     proxy, and its `cluster_defaults.json` environment. The differences:
 
     - Jobs run as the researcher (their SSH login), not a project service user,
-      so there is no S3M introspection and no setgid dance on the remote dir.
-      Nor is there an `--account`: Slurm charges the researcher's default.
+      so there is no S3M introspection. The Slurm account is the researcher's
+      Lux account setting, since there is no token to take a project from.
     - Sources go up over SFTP on the same connection instead of Globus.
     - `setup_lux.sh`, if present, runs on the LOGIN node before `sbatch`, where
       the network (via the proxy) is: it is the place to clone or update code.
@@ -971,8 +1021,8 @@ async def _submit_lux_job(
             f"Add a {LUX_JOB_SCRIPT} to enable Lux submission."
         )
 
-    layout = _layout(cfg, "lux")
-    base, src_dir = layout.base, layout.src(job)
+    _layout(cfg, "lux")  # an unset remote folder fails before anyone is asked to log in
+    account = cfg.require_lux_account()
     nodes = node_count or defaults.resources.node_count or 1
     duration = duration_int or defaults.duration
 
@@ -980,11 +1030,15 @@ async def _submit_lux_job(
         ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
     )
 
+    layout = _layout(cfg, "lux", user=await slurm_ssh.username(conn))
+    base, src_dir = layout.base, layout.src(job)
     await _sync_job_sources_ssh(conn, job, src_dir)
     # Lux runs as the researcher, so VISTA can make the log folder itself, as on
     # Perlmutter. Odo's and Frontier's Slurm were seen creating a missing one;
-    # Lux's has not been checked, and Slurm upstream does not.
+    # Lux's has not been checked, and Slurm upstream does not. Made shared the
+    # same way every job prefix does it (see `_shared_out_prefix`).
     await slurm_ssh.makedirs(conn, layout.out)
+    await slurm_ssh.run(conn, _shared_out_prefix(layout.out, account))
 
     job_env = {
         "RUN_DIR_Lux": src_dir,
@@ -996,6 +1050,7 @@ async def _submit_lux_job(
     setup_script_path = local_job_dir / LUX_SETUP_SCRIPT
     if setup_script_path.exists():
         setup_cmd = "\n".join([
+            "umask 002",  # what it creates in `.out`, a Frontier job may update too
             _lux_exports({**_lux_proxy_env(), **job_env}),
             setup_script_path.read_text(encoding="utf-8"),
         ])
@@ -1006,6 +1061,7 @@ async def _submit_lux_job(
         logging.info(f"{LUX_SETUP_SCRIPT} for {job} OK:\n{result.output[-2000:]}")
 
     body_lines = [
+        _shared_out_prefix(layout.out, account),
         _lux_exports(job_env),
         f'export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"',
         'mkdir -p -m 2775 "$VISTA_OUT"',
@@ -1019,6 +1075,7 @@ async def _submit_lux_job(
 
     script = slurm_ssh.render_batch_script(
         job_name=f"vista-{job}",
+        account=account,
         node_count=nodes,
         duration_s=duration,
         stdout_path=layout.stdout_template,

@@ -49,6 +49,7 @@ function userWithModel(model: string | null): UserPublicWithConfig {
     odo_remote_dir: null,
     frontier_remote_dir: null,
     lux_remote_dir: null,
+    lux_account: null,
     odo_s3m_token: null,
     frontier_s3m_token: null,
     nersc_iri_token: null,

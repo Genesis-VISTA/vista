@@ -41,6 +41,7 @@ function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConf
     odo_remote_dir: null,
     frontier_remote_dir: null,
     lux_remote_dir: null,
+    lux_account: null,
     odo_s3m_token: null,
     frontier_s3m_token: null,
     nersc_iri_token: null,
@@ -147,7 +148,7 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
     expect(within(odo).getByLabelText(/Odo remote directory/)).toHaveValue("/odo/proj/vista");
     const hint = within(odo).getByText(/writable by the project's group/);
-    expect(hint).toHaveTextContent("<dir>.jobs");
+    expect(hint).toHaveTextContent("<dir>.<user>.jobs");
     expect(hint).toHaveTextContent("<dir>.out");
 
     const frontier = await section("Frontier");
@@ -249,19 +250,30 @@ describe("UserSettingsModal saving", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows the sidebar switch and the remote directory", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ lux_remote_dir: "/lux/vista" }));
+  it("opened from the Lux card, shows the sidebar switch, the account and the remote directory", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(
+      user({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
+    );
     render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
     const lux = await section("Lux");
     expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
     expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
     expect(header("Lux")).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    // The folder is its only field: no credential is stored for Lux.
+    // The account and the folder are its only fields: no credential is stored for Lux.
     const fields = lux.querySelectorAll("input:not([role=switch]), textarea, a");
-    expect(fields).toHaveLength(1);
+    expect(fields).toHaveLength(2);
+    expect(within(lux).getByLabelText(/Lux account/)).toHaveValue("abc123");
     expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
+  });
+
+  it("saving the Lux account sends only that field", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_account: "abc123" });
   });
 
   it("clearing the Lux remote directory sends null", async () => {
