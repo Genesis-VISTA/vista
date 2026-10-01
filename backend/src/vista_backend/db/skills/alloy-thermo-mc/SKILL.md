@@ -135,7 +135,7 @@ values sized for a ~5-minute run; the repo's own example spec carries production
 - `thermo.png` — energy, specific heat, susceptibility, Binder cumulant vs T.
 - `order.png` — Warren-Cowley SRO parameters vs T.
 
-Poll with `get_hpc_job_status`; when complete, fetch with
+Poll with `get_hpc_job_status(job_id, cluster="odo")`; when complete, fetch with
 `get_hpc_job_outputs(job_id, files=["results.json"], cluster="odo")`.
 
 ## Sim-skill contract for multi-agent campaigns
@@ -149,7 +149,7 @@ operations a subagent performs:
   `submit_hpc_job(job="alloy-thermo-mc", cluster="odo", script_args=…)`, and record the
   returned `job_id` + `cluster`. **Validate the simplex before submitting** — a bad sum
   is rejected by the wrapper, but a bounced submission still costs a round-trip.
-- **collect(job) → result:** once complete, `get_hpc_job_outputs(... files=["results.json"])`
+- **collect(job) → result:** once complete, `get_hpc_job_outputs(..., files=["results.json"], cluster=...)`
   and parse it into a structured result:
   ```json
   {"Tc_cv_K": <float>, "Tc_chi_K": <float>,

@@ -180,7 +180,6 @@ async def test_alloy_design_seed_snapshot(science_on):
     assert "!submit_hpc_job" not in project.tools
     assert "!get_hpc_job_status" not in project.tools
     assert "!get_hpc_job_outputs" not in project.tools
-    assert "!list_hpc_jobs" not in project.tools
 
     assert (
         "alloy" in project.system_prompt.lower() or "MoNbTaW" in project.system_prompt

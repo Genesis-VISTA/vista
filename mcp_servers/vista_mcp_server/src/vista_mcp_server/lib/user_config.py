@@ -3,14 +3,24 @@ Per-user HPC configuration plumbed in via MCP request metadata.
 
 TODO: Temporary workaround, we are passing the user config in via MCP metadata.
 """
+import re
 from typing import Any, Literal
 
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from ..config import settings
 from .types import GlobusTokens
+
+
+_SAFE_REMOTE_DIR = re.compile(r"/[A-Za-z0-9._+,:=@/-]*")
+"""
+What a remote directory may contain. It is pasted into the job's bash prefix,
+into `#SBATCH` lines on Lux, and into Slurm's `--output` patterns, so anything
+a shell or Slurm would read specially -- whitespace, quotes, `$`, backticks,
+`;`, `*`, and `%`, which Slurm expands in output paths -- is refused rather
+than escaped in four different syntaxes.
+"""
 
 
 class UserConfig(BaseModel):
@@ -19,6 +29,10 @@ class UserConfig(BaseModel):
     nersc_iri_token: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    odo_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_globus_token: str | None = None
     frontier_globus_token: str | None = None
     globus_token: str | None = None
@@ -38,22 +52,19 @@ class UserConfig(BaseModel):
     def require_globus_token(
         self, cluster: Literal["odo", "frontier"]
     ) -> GlobusTokens:
-        """The Globus credential authorizing this cluster's file operations.
+        """The researcher's Globus credential for this cluster's file operations.
 
-        Three sources, in order: the researcher's own tokens for this cluster,
-        their shared pair, then the deployment's environment variables. The
-        deployment coming last is what lets a researcher on a shared server use
-        their own identity, and the deployment coming at all is what leaves that
-        server working for everyone who has not connected one -- which matters
-        because Odo's permissions model assumes a single shared identity.
+        Two sources, in order: the researcher's own tokens for this cluster,
+        then their pair shared by both clusters. There is no deployment-wide
+        credential: every file operation acts as the researcher's own mapped
+        POSIX identity, so the facility decides what they may read and write.
 
         A source counts only when it has *both* tokens, and the pair is taken
         whole. Half a credential is the case that matters here: a connection
         made before VISTA moved to the HTTPS interface has a Transfer token and
         no collection token, and using it would list a directory and then fail
-        to read anything in it. Skipping such a source lets the deployment's
-        complete pair take over; when nothing has both, the refusal below says
-        to connect again.
+        to read anything in it. Skipping such a source lets the other one take
+        over; when neither has both, the refusal below says to connect again.
         """
         for transfer, https in (
             (
@@ -67,10 +78,6 @@ class UserConfig(BaseModel):
             if transfer and https:
                 return GlobusTokens(transfer=transfer, https=https)
 
-        deployment = settings.globus_tokens(cluster)
-        if deployment is not None:
-            return deployment
-
         raise ToolError(
             f"Globus file transfer is not connected for {cluster.title()}. "
             "Connect it in the VISTA user settings, which asks Globus for "
@@ -78,6 +85,62 @@ class UserConfig(BaseModel):
             "connected before, connect again -- VISTA now needs one more "
             "permission than it did, so the older connection is incomplete."
         )
+
+    def require_remote_dir(self, cluster: Literal["odo", "frontier", "perlmutter", "lux"]) -> str:
+        """
+        The folder on `cluster` where VISTA puts this researcher's job sources
+        and outputs, without a trailing slash.
+
+        A user setting with no default: where a project keeps its files is
+        specific to the project and the filesystem, so VISTA does not guess.
+        Must be absolute, since Globus, IRI and SFTP would each read a relative
+        path against a different starting point, and must not be `/`, which has
+        no parent for `<dir>.jobs` and `<dir>.out` to sit in. Only plain path
+        characters are accepted (see `_SAFE_REMOTE_DIR`).
+        """
+        setting, label = {
+            "odo": (self.odo_remote_dir, "Odo remote directory"),
+            "frontier": (self.frontier_remote_dir, "Frontier remote directory"),
+            "perlmutter": (self.nersc_remote_dir, "NERSC remote directory"),
+            "lux": (self.lux_remote_dir, "Lux remote directory"),
+        }[cluster]
+        if not setting:
+            raise ToolError(
+                f"No {label} is set. Set it in the VISTA user settings to the "
+                f"folder on {cluster.title()} where job sources and outputs should go."
+            )
+        if not setting.startswith("/"):
+            raise ToolError(
+                f"The {label} {setting!r} is not an absolute path. Set it in the "
+                "VISTA user settings to a path starting with /."
+            )
+        if not _SAFE_REMOTE_DIR.fullmatch(setting):
+            raise ToolError(
+                f"The {label} {setting!r} contains characters VISTA cannot pass to "
+                "a job safely. Use only letters, digits and . _ + , : = @ - / "
+                "(no spaces, quotes, $ or %)."
+            )
+        path = setting.rstrip("/")
+        if not path:
+            raise ToolError(
+                f"The {label} cannot be /. Set it in the VISTA user settings to a "
+                "folder such as your project's proj-shared/vista."
+            )
+        return path
+
+    def require_lux_account(self) -> str:
+        """ The Slurm account Lux jobs are charged to; Lux has no token to take one from. """
+        if not self.lux_account:
+            raise ToolError(
+                "No Lux account is set. Set it in the VISTA user settings to the "
+                "OLCF project Lux jobs should be charged to."
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", self.lux_account):
+            raise ToolError(
+                f"The Lux account {self.lux_account!r} is not a project name. Use "
+                "only letters, digits, _ and -, as in the OLCF project id."
+            )
+        return self.lux_account
 
     def require_nersc_iri_token(self) -> str:
         if not self.nersc_iri_token:

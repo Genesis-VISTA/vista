@@ -1,20 +1,16 @@
 """
-S3M token introspection — the per-user authorization gate for OLCF file ops.
+S3M token introspection: which OLCF project a researcher's token belongs to.
 
-A researcher who has connected Globus acts as their own mapped POSIX identity,
-and the facility enforces what they may read. A researcher who has not falls
-back to the deployment's shared identity -- and for them, possession of an S3M
-token in the cluster's OLCF project is the only thing that authorizes moving
-files through Vista. S3M tokens are group-scoped: each token carries exactly one
-`project` claim, so one token enables exactly one of Odo / Frontier.
-
-Ported from the introspect check in the deleted `lib/s3m.py`
-(`S3mClient._validate_token`, removed with the SSH/SCP path).
+S3M tokens are group-scoped: each carries exactly one `project` claim, and IRI
+runs the job as that project's automation user. So the project is the only
+Slurm account the token can charge, and VISTA reads it from the token rather
+than asking for it. Any project is accepted -- the facility decides what a
+token may do, and file operations go through the researcher's own Globus
+identity, so there is nothing for VISTA to gate.
 """
 import httpx
 from cachetools import TTLCache
 from fastmcp.exceptions import ToolError
-from typing import Any
 
 _introspect_cache = TTLCache[tuple[str, str], str](maxsize=256, ttl=600.0)
 """ (introspect_url, token) -> project. """
@@ -58,21 +54,3 @@ async def get_s3m_token_project(s3m_token: str, *, introspect_url: str) -> str:
     _introspect_cache[key] = project
     return project
 
-
-async def require_s3m_project(
-    s3m_token: str, expected_project: str, *, cluster: str, introspect_url: str,
-) -> None:
-    """
-    Raise ToolError unless the S3M token belongs to `expected_project`.
-
-    Called before every OLCF file op. For a researcher on the deployment's
-    shared Globus identity, project membership on the S3M token is the only
-    thing standing between them and another project's files.
-    """
-    project = await get_s3m_token_project(s3m_token, introspect_url=introspect_url)
-    if project != expected_project:
-        raise ToolError(
-            f"Your S3M token belongs to project {project!r}, but {cluster} access "
-            f"requires {expected_project!r}. Mint an S3M token for "
-            f"{expected_project!r} and update it in the Vista user settings page."
-        )

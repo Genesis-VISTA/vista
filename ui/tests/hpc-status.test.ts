@@ -16,7 +16,12 @@ function cluster(name: HpcClusterStatus["cluster"], state: HpcState): HpcCluster
     cluster: name,
     state,
     checked_at: "2026-09-25T15:00:00Z",
-    checks: { facility: ok, credential: ok, globus: name === "perlmutter" || name === "lux" ? null : ok },
+    checks: {
+      facility: ok,
+      credential: ok,
+      globus: name === "perlmutter" || name === "lux" ? null : ok,
+      settings: ok,
+    },
   };
 }
 
@@ -74,14 +79,14 @@ function urls(): string[] {
 
 describe("useHpcStatus", () => {
   it("fetches once on mount, shared between subscribers", async () => {
-    answers = [[cluster("frontier", "ready"), cluster("odo", "wrong_project")]];
+    answers = [[cluster("frontier", "ready"), cluster("odo", "rejected")]];
     const a = renderHook(() => useHpcStatus());
     const b = renderHook(() => useHpcStatus());
     expect(a.result.current.clusters).toBeNull(); // the rail shows Checking
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(a.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "wrong_project"]);
-    expect(b.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "wrong_project"]);
+    expect(a.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "rejected"]);
+    expect(b.result.current.clusters?.map((c) => c.state)).toEqual(["ready", "rejected"]);
   });
 
   it("polls every five minutes while visible, and not while hidden", async () => {

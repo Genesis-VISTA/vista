@@ -39,6 +39,10 @@ function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConf
     inference_api_key: null,
     nersc_account: null,
     nersc_remote_dir: null,
+    odo_remote_dir: null,
+    frontier_remote_dir: null,
+    lux_remote_dir: null,
+    lux_account: null,
     odo_s3m_token: null,
     frontier_s3m_token: null,
     nersc_iri_token: null,
@@ -67,10 +71,10 @@ function statusView(): HpcStatusView {
       cluster,
       state,
       checked_at: "2026-09-25T15:00:00Z",
-      checks: { facility: ok, credential: ok, globus: null, ...checks },
+      checks: { facility: ok, credential: ok, globus: null, settings: ok, ...checks },
     },
   });
-  const luxEntry = entry("lux", "ready", { credential: { ...ok, project: "stf218" } });
+  const luxEntry = entry("lux", "ready");
   return {
     clusters: [
       entry("frontier", "ready"),
@@ -127,7 +131,13 @@ describe("UserSettingsModal cluster sections", () => {
 
   it("keeps each field in its own cluster's section", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok", nersc_account: "m1234" }),
+      user({
+        odo_s3m_token: "odo-tok",
+        frontier_s3m_token: "fr-tok",
+        nersc_account: "m1234",
+        odo_remote_dir: "/odo/proj/vista",
+        frontier_remote_dir: "/frontier/proj/vista",
+      }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     await section("Odo");
@@ -137,9 +147,17 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveValue("odo-tok");
     expect(within(odo).getByText("Odo", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
+    expect(within(odo).getByLabelText(/Odo remote directory/)).toHaveValue("/odo/proj/vista");
+    const hint = within(odo).getByText(/writable by the project's group/);
+    expect(hint).toHaveTextContent("<dir>.<user>.jobs");
+    expect(hint).toHaveTextContent("<dir>.out");
 
     const frontier = await section("Frontier");
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
+    expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue(
+      "/frontier/proj/vista",
+    );
+    expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
 
     const perlmutter = await section("Perlmutter");
     expect(within(perlmutter).getByLabelText(/NERSC account/)).toHaveValue("m1234");
@@ -181,6 +199,23 @@ describe("UserSettingsModal saving", () => {
     expect(recheckMock).toHaveBeenCalledWith("frontier");
   });
 
+  it("saving a remote directory sends only that field, trimmed, and rechecks nothing", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+
+    await userEvent.type(
+      await screen.findByLabelText(/Frontier remote directory/),
+      " /lustre/orion/abc123/proj-shared/vista ",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      frontier_remote_dir: "/lustre/orion/abc123/proj-shared/vista",
+    });
+    // The cards check credentials and the facility, not the folder.
+    expect(recheckMock).not.toHaveBeenCalled();
+  });
+
   it("hiding a cluster saves the list, leaves its token alone, and refreshes the rail", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user({ nersc_iri_token: "iri-tok" }));
     render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
@@ -216,16 +251,38 @@ describe("UserSettingsModal saving", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows only the sidebar switch", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+  it("opened from the Lux card, shows the sidebar switch, the account and the remote directory", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(
+      user({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
+    );
     render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
     const lux = await section("Lux");
     expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
     expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
     expect(header("Lux")).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    expect(lux.querySelectorAll("input:not([role=switch]), textarea, a")).toHaveLength(0);
+    // The account and the folder are its only fields: no credential is stored for Lux.
+    const fields = lux.querySelectorAll("input:not([role=switch]), textarea, a");
+    expect(fields).toHaveLength(2);
+    expect(within(lux).getByLabelText(/Lux account/)).toHaveValue("abc123");
+    expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
+  });
+
+  it("saving the Lux account sends only that field", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_account: "abc123" });
+  });
+
+  it("clearing the Lux remote directory sends null", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ lux_remote_dir: "/lux/vista" }));
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.clear(await screen.findByLabelText(/Lux remote directory/));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_remote_dir: null });
   });
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {

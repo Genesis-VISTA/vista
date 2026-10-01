@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -105,8 +106,8 @@ Reason = Literal[
     "not_connected",
     "rejected",
     "not_active",
-    "wrong_project",
     "session_expired",
+    "invalid",
 ]
 """ Why a check failed. The UI maps these to copy; `message` is a fallback. """
 
@@ -115,7 +116,6 @@ State = Literal[
     "unverifiable",
     "not_connected",
     "rejected",
-    "wrong_project",
     "globus_not_connected",
     "globus_session_expired",
     "ready",
@@ -140,14 +140,11 @@ class Check(BaseModel):
     project: str | None = None
     """
     The project the cluster's jobs run under: the S3M token's, once learned, or
-    Lux's configured one. A project name, not a secret.
+    the researcher's Lux account setting. A project name, not a secret.
     """
-    expected_project: str | None = None
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
     active_from: datetime | None = None
-    identity: Literal["own", "deployment"] | None = None
-    """ Whose Globus connection was verified. """
 
 
 class ClusterChecks(BaseModel):
@@ -155,6 +152,12 @@ class ClusterChecks(BaseModel):
     credential: Check
     globus: Check | None = None
     """ Odo and Frontier only; Perlmutter and Lux move no files through Globus. """
+    settings: Check
+    """
+    The researcher's own settings a submission needs: the remote directory,
+    and the account on Perlmutter and Lux. Read from the user row, so it is
+    never cached.
+    """
 
 
 class ClusterStatus(BaseModel):
@@ -174,7 +177,7 @@ class HpcStatus(BaseModel):
 
 
 def _checks(c: ClusterChecks) -> list[Check]:
-    return [c.facility, c.credential] + ([c.globus] if c.globus else [])
+    return [c.facility, c.credential, c.settings] + ([c.globus] if c.globus else [])
 
 
 _PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
@@ -183,9 +186,14 @@ _PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
         "unverifiable",
         lambda c: any(x.reason in ("unreachable", "unverifiable") for x in _checks(c)),
     ),
-    ("not_connected", lambda c: c.credential.reason == "not_connected"),
+    (
+        "not_connected",
+        lambda c: (
+            c.credential.reason == "not_connected"
+            or c.settings.reason in ("not_connected", "invalid")
+        ),
+    ),
     ("rejected", lambda c: c.credential.reason in ("rejected", "not_active")),
-    ("wrong_project", lambda c: c.credential.reason == "wrong_project"),
     (
         "globus_not_connected",
         lambda c: c.globus is not None and c.globus.reason == "not_connected",
@@ -211,6 +219,75 @@ def resolve_state(checks: ClusterChecks) -> State:
     # A failed check whose reason nothing above claims: say so rather than
     # show green.
     return "unverifiable"
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+_SAFE_REMOTE_DIR = re.compile(r"/[A-Za-z0-9._+,:=@/-]*")
+""" The MCP server's rule (`UserConfig.require_remote_dir`): the card refuses what submission would. """
+_PLAIN_ACCOUNT = re.compile(r"[A-Za-z0-9_-]+")
+""" The MCP server's rule for the Lux account (`UserConfig.require_lux_account`). """
+
+
+def settings_check(cluster: HpcCluster, user: Any) -> Check:
+    """Whether the researcher has set what a submission to `cluster` needs.
+
+    Every cluster needs a remote directory, and Perlmutter and Lux an account
+    too. A value submission would refuse -- a relative path, `/`, shell
+    characters, or a `<project>` placeholder left in -- fails the check as
+    well, so the card never shows Ready for a cluster every job would fail on.
+    """
+    title = _TITLES[cluster]
+    remote_dir: str | None = {
+        "odo": user.odo_remote_dir,
+        "frontier": user.frontier_remote_dir,
+        "perlmutter": user.nersc_remote_dir,
+        "lux": user.lux_remote_dir,
+    }[cluster]
+    account: str | None = {
+        "perlmutter": user.nersc_account,
+        "lux": user.lux_account,
+    }.get(cluster)
+    needs_account = cluster in ("perlmutter", "lux")
+    account_label = "NERSC account" if cluster == "perlmutter" else "Lux account"
+
+    missing = [
+        label
+        for label, value, needed in (
+            (account_label, account, needs_account),
+            (f"{title} remote directory", remote_dir, True),
+        )
+        if needed and not value
+    ]
+    if missing or remote_dir is None:
+        return Check(
+            ok=False,
+            reason="not_connected",
+            message=f"No {' or '.join(missing)} is set.",
+        )
+    if not _SAFE_REMOTE_DIR.fullmatch(remote_dir) or not remote_dir.rstrip("/"):
+        return Check(
+            ok=False,
+            reason="invalid",
+            message=(
+                f"The {title} remote directory {remote_dir} can't be used. It must be an "
+                "absolute path other than /, using only letters, digits and "
+                ". _ + , : = @ - /. Replace any <project> with the project's name."
+            ),
+        )
+    if cluster == "lux" and not _PLAIN_ACCOUNT.fullmatch(account or ""):
+        return Check(
+            ok=False,
+            reason="invalid",
+            message=f"The Lux account {account} isn't a project name.",
+        )
+    return Check(
+        ok=True,
+        message=remote_dir.rstrip("/"),
+        project=account if needs_account else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -268,18 +345,17 @@ def probe_globus(
 class _GlobusSource:
     transfer: str
     https: str
-    identity: Literal["own", "deployment"]
 
 
 def globus_source(
-    cluster: Literal["odo", "frontier"], user: Any, settings: HpcClusterSettings
+    cluster: Literal["odo", "frontier"], user: Any
 ) -> _GlobusSource | None:
     """The Globus pair this cluster's file operations would use, or None.
 
     The same order as the MCP server's `UserConfig.require_globus_token`: the
-    researcher's pair for this cluster, then their shared pair, then the
-    deployment's. A source counts only with both halves -- half a pair lists a
-    directory it cannot read.
+    researcher's pair for this cluster, then their shared pair. There is no
+    deployment-wide pair. A source counts only with both halves -- half a pair
+    lists a directory it cannot read.
     """
     own = (
         (user.odo_globus_token, user.odo_globus_https_token)
@@ -288,21 +364,7 @@ def globus_source(
     )
     for transfer, https in (own, (user.globus_token, user.globus_https_token)):
         if transfer and https:
-            return _GlobusSource(transfer, https, "own")
-    deployment = (
-        (settings.odo_globus_refresh_token, settings.odo_globus_https_refresh_token)
-        if cluster == "odo"
-        else (
-            settings.frontier_globus_refresh_token,
-            settings.frontier_globus_https_refresh_token,
-        )
-    )
-    if deployment[0] and deployment[1]:
-        return _GlobusSource(
-            deployment[0].get_secret_value(),
-            deployment[1].get_secret_value(),
-            "deployment",
-        )
+            return _GlobusSource(transfer, https)
     return None
 
 
@@ -444,6 +506,7 @@ class HpcStatusService:
     ) -> ClusterStatus:
         key = (str(user.id), cluster)
         fingerprint = self._credential_fingerprint(user, cluster)
+        settings = settings_check(cluster, user)
         cached = self._results.get(key)
         if (
             not fresh
@@ -451,7 +514,12 @@ class HpcStatusService:
             and cached[1] == fingerprint
             and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
-            return cached[2]
+            # The settings come from the user row, not a facility, so a cached
+            # result always carries the current ones.
+            checks = cached[2].checks.model_copy(update={"settings": settings})
+            return cached[2].model_copy(
+                update={"checks": checks, "state": resolve_state(checks)}
+            )
 
         olcf = cluster in ("odo", "frontier")
         facility, credential, globus = await asyncio.gather(
@@ -459,7 +527,9 @@ class HpcStatusService:
             self._credential(client, cluster, user),
             self._globus(cluster, user) if olcf else _none(),
         )
-        checks = ClusterChecks(facility=facility, credential=credential, globus=globus)
+        checks = ClusterChecks(
+            facility=facility, credential=credential, globus=globus, settings=settings
+        )
         result = ClusterStatus(
             cluster=cluster,
             state=resolve_state(checks),
@@ -697,9 +767,7 @@ class HpcStatusService:
     ) -> Check:
         if cluster == "lux":
             # Nothing is stored to check; see LUX_SIGN_IN.
-            return Check(
-                ok=True, message=LUX_SIGN_IN, project=self._settings.lux_account
-            )
+            return Check(ok=True, message=LUX_SIGN_IN, project=user.lux_account)
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
         token = {
@@ -720,11 +788,10 @@ class HpcStatusService:
                 title, kind, await self._get_status(client, compute_url, token)
             )
 
-        s = self._settings
-        introspect_url, expected = (
-            (s.odo_introspect_url, s.odo_account)
+        introspect_url = (
+            self._settings.odo_introspect_url
             if cluster == "odo"
-            else (s.frontier_introspect_url, s.frontier_account)
+            else self._settings.frontier_introspect_url
         )
         (intro_status, info), iri_status = await asyncio.gather(
             self._introspect(client, introspect_url, token),
@@ -759,21 +826,8 @@ class HpcStatusService:
                 active_from=active_from,
                 expires_at=expires_at,
             )
-        # Before the IRI answer: a token for the other enclave's project is
-        # refused there too, and "wrong project" is the part the researcher
-        # can act on.
-        if project != expected:
-            return Check(
-                ok=False,
-                reason="wrong_project",
-                message=(
-                    f"This token is for project {project!r}; {title} needs a "
-                    f"token minted in {expected!r}."
-                ),
-                project=project,
-                expected_project=expected,
-                expires_at=expires_at,
-            )
+        # Any project is accepted: it is the account the cluster's jobs are
+        # charged to, reported rather than compared with anything.
         check = self._from_iri(title, kind, iri_status)
         return check.model_copy(update={"project": project, "expires_at": expires_at})
 
@@ -803,7 +857,7 @@ class HpcStatusService:
 
     async def _globus(self, cluster: Literal["odo", "frontier"], user: Any) -> Check:
         title = _TITLES[cluster]
-        source = globus_source(cluster, user, self._settings)
+        source = globus_source(cluster, user)
         if source is None:
             return Check(
                 ok=False,
@@ -831,7 +885,6 @@ class HpcStatusService:
                 ok=False,
                 reason="session_expired",
                 message=f"The Globus session for {title} has expired; connect Globus again.",
-                identity=source.identity,
             )
         except Exception as error:  # noqa: BLE001 -- any other failure is "couldn't tell"
             log.info("%s Globus check failed: %s", title, type(error).__name__)
@@ -839,20 +892,8 @@ class HpcStatusService:
                 ok=False,
                 reason="unverifiable",
                 message=f"Globus did not confirm {title}'s file transfer.",
-                identity=source.identity,
             )
-        return Check(
-            ok=True,
-            message=(
-                f"Globus reaches {title}'s files"
-                + (
-                    " with the deployment's shared identity."
-                    if source.identity == "deployment"
-                    else "."
-                )
-            ),
-            identity=source.identity,
-        )
+        return Check(ok=True, message=f"Globus reaches {title}'s files.")
 
 
 async def _none() -> None:

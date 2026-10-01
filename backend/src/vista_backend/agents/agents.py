@@ -652,7 +652,6 @@ class ProjectAgent:
             "submit_hpc_job",
             "get_hpc_job_status",
             "get_hpc_job_outputs",
-            "list_hpc_jobs",
             "cancel_hpc_job",
         }
         if name in HPC_TOOLS:

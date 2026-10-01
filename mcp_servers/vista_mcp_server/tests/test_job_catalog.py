@@ -90,3 +90,60 @@ def test_bad_readme_header_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", tmp_path)
     with pytest.raises(ValueError, match="should start with"):
         get_available_jobs()
+
+
+@pytest.mark.parametrize("script", [ODO_JOB_SCRIPT, FRONTIER_JOB_SCRIPT])
+def test_the_example_job_writes_only_under_vista_out(script):
+    """The demo job has to run from any project. On Odo and Frontier it runs as
+    the project's IRI automation user, which can only read the source folder
+    it starts in, so its virtual environment goes under $VISTA_OUT."""
+    text = (HPC_JOBS_DIR / "example" / script).read_text(encoding="utf-8")
+    commands = [
+        line.strip() for line in text.splitlines() if not line.lstrip().startswith("#")
+    ]
+    venvs = [c.split()[-1] for c in commands if c.startswith("python3 -m venv")]
+    activated = [c.split()[-1] for c in commands if c.startswith("source ")]
+    assert venvs == ['"$VISTA_OUT/.venv"']
+    assert activated == ['"$VISTA_OUT/.venv/bin/activate"']
+
+
+@pytest.mark.parametrize(
+    ("script", "run_dir"),
+    [(ODO_JOB_SCRIPT, "RUN_DIR_Odo"), (FRONTIER_JOB_SCRIPT, "RUN_DIR_Frontier")],
+)
+def test_forge_tune_runs_from_vista_out(script, run_dir):
+    """forge-tune.py saves its final model to the working directory. On Odo and
+    Frontier the job runs as the project's IRI automation user, which can only
+    read the source folder, so the job must run from $VISTA_OUT and reach its
+    sources by absolute path."""
+    text = (HPC_JOBS_DIR / "forge-tune" / script).read_text(encoding="utf-8")
+    commands = [
+        ln.strip() for ln in text.splitlines() if not ln.lstrip().startswith("#")
+    ]
+    assert 'cd "${VISTA_OUT}"' in commands
+    assert f"python -u ${{{run_dir}}}/forge-tune.py" in text
+    assert f"source ${{{run_dir}}}/setup_dist_vars.sh" in text
+    assert "--checkpoint-dir ${VISTA_OUT}" in text
+
+
+@pytest.mark.parametrize(
+    "job_dir",
+    [
+        d
+        for d in _job_dirs()
+        if (d / "cluster_defaults.json").exists()
+        and '"lux"' in (d / "cluster_defaults.json").read_text(encoding="utf-8")
+    ],
+    ids=lambda d: d.name,
+)
+def test_lux_jobs_name_a_partition_and_gpus(job_dir: Path):
+    """Lux's Slurm refuses a job with no partition (`-p`) or no GPU selection,
+    before it is queued, so every Lux job must name both."""
+    defaults = ClusterDefaults.model_validate_json(
+        (job_dir / "cluster_defaults.json").read_text(encoding="utf-8")
+    ).lux
+    assert defaults is not None
+    assert defaults.iri.partition, f"{job_dir.name}: no lux.iri.partition"
+    assert defaults.resources.gpus_per_node, (
+        f"{job_dir.name}: no lux.resources.gpus_per_node"
+    )

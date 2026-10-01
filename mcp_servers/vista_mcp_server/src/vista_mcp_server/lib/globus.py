@@ -59,6 +59,9 @@ _CHUNK_BYTES = 1024 * 1024
 """ Streaming read size for `download_file` -- how much is held at once, not
 what is asked for: the request is one range covering the whole file. """
 
+_home_owners: dict[tuple[str, str], str] = {}
+""" (collection id, Transfer refresh token) -> the POSIX user it maps to. """
+
 _TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=600.0, pool=30.0)
 """
 Generous on read/write, short on connect. A file op crossing to OLCF can take
@@ -432,6 +435,44 @@ class GlobusClient:
 
     # --- filesystem operations on a collection ------------------------------
 
+    async def home_owner(self, *, collection_id: str) -> str:
+        """
+        The POSIX account the researcher's Globus identity is mapped to on this
+        collection: the owner of their home folder, from one Transfer `stat` of
+        `/~/`. It differs between enclaves (one researcher can be `jhi` on Odo
+        and `hinesjr` on Frontier), so it is asked per collection, and cached per
+        credential, since a mapping does not change.
+        """
+        key = (collection_id, self._tokens.transfer)
+        if key not in _home_owners:
+            entry = await self.operation_stat(endpoint=collection_id, path="/~/")
+            user = entry.get("user")
+            if not user:
+                raise ToolError(
+                    f"Globus did not say which {self.cluster.title()} account your "
+                    "home folder belongs to, so VISTA cannot name your sources folder."
+                )
+            _home_owners[key] = user
+        return _home_owners[key]
+
+    async def operation_stat(self, *, endpoint: str, path: str) -> dict[str, Any]:
+        """
+        One file or folder's record (`name`, `type`, `permissions`, `user`,
+        `group`, ...) from a Transfer `stat` -- the cheap way to read a single
+        entry, rather than listing the folder that holds it. A path that is not
+        there raises `GlobusFileNotFound`, like a plain `operation_ls`.
+        """
+        return await asyncio.to_thread(self._operation_stat, endpoint, path)
+
+    def _operation_stat(self, endpoint: str, path: str) -> dict[str, Any]:
+        try:
+            return self._transfer().operation_stat(endpoint, path=path).data
+        except globus_sdk.TransferAPIError as e:
+            self._raise_for_transfer_error(e)
+            if e.http_status == 404:
+                raise GlobusFileNotFound(f"{path} is not on {self.cluster.title()}.") from e
+            raise
+
     async def operation_ls(
         self, *, endpoint: str, path: str, recursive: bool = False,
         exclude_segments: tuple[str, ...] = (),
@@ -489,6 +530,12 @@ class GlobusClient:
                 if recursive and e.http_status == 404:
                     continue
                 if not recursive:
+                    if e.http_status == 404:
+                        # The same type the HTTPS side raises, so a caller can
+                        # tell "not there" from "could not look".
+                        raise GlobusFileNotFound(
+                            f"{cur} is not on {self.cluster.title()}."
+                        ) from e
                     raise
                 logging.debug(f"globus ls subtree skipped ({cur}): {e.message}")
                 continue

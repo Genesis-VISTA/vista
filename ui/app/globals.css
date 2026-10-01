@@ -4604,8 +4604,7 @@ textarea.input:focus {
   border: 1.5px solid var(--muted);
 }
 
-.hpc-dot--rejected,
-.hpc-dot--wrong_project {
+.hpc-dot--rejected {
   width: 7px;
   height: 7px;
   margin: 1px;
@@ -4615,10 +4614,6 @@ textarea.input:focus {
 
 .hpc-dot--rejected {
   background: var(--danger);
-}
-
-.hpc-dot--wrong_project {
-  border: 1.5px solid var(--danger);
 }
 
 .hpc-dot--globus_not_connected {
@@ -4718,7 +4713,6 @@ textarea.input:focus {
 }
 
 .hpc-pill--rejected,
-.hpc-pill--wrong_project,
 .hpc-pill--globus_not_connected,
 .hpc-pill--globus_session_expired {
   color: var(--danger-ink);

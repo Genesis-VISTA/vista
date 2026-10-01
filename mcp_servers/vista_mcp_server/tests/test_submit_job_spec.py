@@ -2,7 +2,8 @@
 JobSpec construction tests for Odo / Perlmutter / Frontier submit paths.
 
 IRI and Globus are faked — no network. Asserts Slurm inlining, VISTA_OUT,
-setup/pre_launch, and source sync.
+setup/pre_launch, source sync, and the one folder layout every cluster shares
+(see `RemoteLayout`): status calls find a job's files from its id alone.
 """
 
 from __future__ import annotations
@@ -16,38 +17,30 @@ from vista_mcp_server.config import settings
 from vista_mcp_server.lib.user_config import UserConfig
 from vista_mcp_server.submit_job_mcp import (
     AVAILABLE_JOBS,
-    SubmittedJob,
     _get_olcf_job_status,
     _get_perlmutter_job_status,
-    _record_submitted_job,
     _submit_frontier_job,
     _submit_odo_job,
     _submit_perlmutter_job,
-    _submitted_jobs,
 )
 from fakes import FakeGlobusClient, FakeIriClient
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+ODO = "/fake/odo/vista"
+FRONTIER = "/fake/frontier/vista"
+NERSC = "/fake/nersc/home/user/vista"
 HPC_JOBS_DIR = REPO_ROOT / "hpc_jobs"
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 
 @pytest.fixture(autouse=True)
-def _hpc_jobs_and_registry(monkeypatch):
+def _hpc_jobs(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"
     )
-    monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
-    monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
-    monkeypatch.setattr(settings, "odo_account", "gen150-vista")
-    monkeypatch.setattr(settings, "frontier_account", "chm243")
-    monkeypatch.setattr(settings, "session_id", "test-session")
-    _submitted_jobs.clear()
-    yield
-    _submitted_jobs.clear()
 
 
 @pytest.fixture
@@ -57,7 +50,11 @@ def user_cfg() -> UserConfig:
         frontier_s3m_token="frontier-token",
         nersc_iri_token="nersc-token",
         nersc_account="m1234",
-        nersc_remote_dir="/fake/nersc/home/user/vista",
+        nersc_remote_dir=NERSC,
+        odo_remote_dir=ODO,
+        frontier_remote_dir=FRONTIER,
+        globus_token="fake-transfer-refresh",
+        globus_https_token="fake-https-refresh",
     )
 
 
@@ -71,29 +68,22 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
     async def _nersc(*, iri_token: str):
         return iri
 
-    async def _noop_access(cfg, cluster, account=None):
-        return None
+    async def _introspect(token, *, introspect_url):
+        # Every token belongs to a project no deployment is configured for.
+        return "abc123"
 
     monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo)
     monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
-    monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
-    monkeypatch.setattr(settings, "odo_globus_refresh_token", "fake-odo-refresh")
-    monkeypatch.setattr(
-        settings, "frontier_globus_refresh_token", "fake-frontier-refresh"
-    )
-    monkeypatch.setattr(settings, "odo_globus_https_refresh_token", "fake-odo-https")
-    monkeypatch.setattr(
-        settings, "frontier_globus_https_refresh_token", "fake-frontier-https"
-    )
+    monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
 
 
 async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg):
     assert "example" in AVAILABLE_JOBS
     iri = FakeIriClient(job_id="odo-123")
     globus = FakeGlobusClient()
-    globus.seed_odo_out_dir("/fake/odo/vista")
+    globus.seed_remote_dir(ODO)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
     job_id, log_path, err_path, out_dir, nodes, duration = await _submit_odo_job(
@@ -107,25 +97,38 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     assert job_id == "odo-123"
     assert nodes == 1
     assert duration == 120  # example cluster_defaults
-    assert log_path.endswith("log-odo-123.out")
+    assert log_path == f"{ODO}.out/log-odo-123.out"
     # The stderr path is rendered beside stdout and was thrown away, which is why
     # a job that failed reached its caller with nothing to explain it.
-    assert err_path.endswith("log-odo-123.err")
-    assert out_dir.endswith("/out/odo-123")
+    assert err_path == f"{ODO}.out/log-odo-123.err"
+    assert out_dir == f"{ODO}.out/odo-123"
 
     assert len(iri.submitted) == 1
     spec, name = iri.submitted[0]
     assert name == "vista-example"
     assert spec["executable"] == "bash"
     job_cmd = spec["arguments"][2]
-    assert 'export VISTA_OUT="/fake/odo/vista/out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT={ODO}.out/"$SLURM_JOB_ID"' in job_cmd
+    assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
+    # `.out` is shared with colleagues and with Lux, so the job keeps it
+    # writable by the token's project group before anything else.
+    assert job_cmd.startswith("umask 002\n")
+    assert f"chgrp abc123 {ODO}.out 2>/dev/null || true" in job_cmd
+    assert f"chmod 2775 {ODO}.out 2>/dev/null || true" in job_cmd
+    assert spec["attributes"]["directory"] == f"{ODO}.researcher.jobs"
+    assert spec["attributes"]["stdout_path"] == f"{ODO}.out/log-%j.out"
+    # Nothing the job writes is made through Globus: only the source tree.
+    assert globus.mkdir_p_calls == [
+        ("odo-collection", f"{ODO}.researcher.jobs/example/src", "/fake/odo")
+    ]
     # Slurm script body is inlined
     slurm = (HPC_JOBS_DIR / "example" / "job.odo.slurm").read_text(encoding="utf-8")
     assert slurm in job_cmd
     assert "set -- a b" in job_cmd
     env = spec["attributes"]["environment"]
-    assert env["RUN_DIR_Odo"] == "/fake/odo/vista/example/src"
-    assert spec["attributes"]["account"] == "gen150-vista"
+    assert env["RUN_DIR_Odo"] == f"{ODO}.researcher.jobs/example/src"
+    assert env["FORGE_MODEL_Odo"] == f"{ODO}.out/example/model"
+    assert spec["attributes"]["account"] == "abc123"
     assert globus.uploads, "expected Globus source upload"
 
 
@@ -146,13 +149,22 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     assert job_id == "pm-99"
     assert nodes == 2
     assert duration == 900
-    assert "test-session/out" in log_path
-    assert err_path.endswith("log-pm-99.err")
+    assert (log_path, err_path, out_dir) == (
+        f"{NERSC}/out/log-pm-99.out",
+        f"{NERSC}/out/log-pm-99.err",
+        f"{NERSC}/out/pm-99",
+    )
 
     spec, name = iri.submitted[0]
     assert name == "vista-forge-tune"
     job_cmd = spec["arguments"][2]
-    assert "export VISTA_OUT=" in job_cmd
+    assert f'export VISTA_OUT={NERSC}/out/"$SLURM_JOB_ID"' in job_cmd
+    # The researcher's own folder, which nothing else writes: NERSC's default
+    # permissions are left alone (no group-writable prefix).
+    assert "umask 002" not in job_cmd
+    assert "chmod 2775" not in job_cmd
+    assert "chgrp" not in job_cmd
+    assert spec["attributes"]["directory"] == f"{NERSC}/jobs"
     slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
         encoding="utf-8"
     )
@@ -163,13 +175,16 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     env = spec["attributes"]["environment"]
     assert env["RUN_DIR_Perlmutter"].endswith("/forge-tune/src")
     assert "VISTA_PM_IMAGE" in env
-    assert iri.mkdirs  # out dir
+    # The source tree, and the log folder: Perlmutter runs as the researcher,
+    # and NERSC's Slurm is not known to create a missing one.
+    assert iri.mkdirs == [f"{NERSC}/jobs/forge-tune/src", f"{NERSC}/out"]
     assert iri.uploads  # source files
 
 
 async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     iri = FakeIriClient(job_id="fr-7")
     globus = FakeGlobusClient()
+    globus.seed_remote_dir(FRONTIER)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
     job_id, log_path, err_path, out_dir, nodes, duration = await _submit_frontier_job(
@@ -183,16 +198,31 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     assert job_id == "fr-7"
     assert nodes == 1
     assert duration == 600
-    assert err_path.endswith("log-fr-7.err")
+    assert (log_path, err_path, out_dir) == (
+        f"{FRONTIER}.out/log-fr-7.out",
+        f"{FRONTIER}.out/log-fr-7.err",
+        f"{FRONTIER}.out/fr-7",
+    )
     spec, _ = iri.submitted[0]
     job_cmd = spec["arguments"][2]
-    assert "VISTA_OUT=" in job_cmd
+    assert f'export VISTA_OUT={FRONTIER}.out/"$SLURM_JOB_ID"' in job_cmd
+    assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
+    assert spec["attributes"]["directory"] == f"{FRONTIER}.researcher.jobs"
     assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(
         encoding="utf-8"
     ) in job_cmd
+    assert "VISTA_REMOTE_BASE" not in spec["attributes"]["environment"]  # never created
     run_dir = spec["attributes"]["environment"].get("RUN_DIR_Frontier")
     assert run_dir is not None and run_dir.endswith("/example/src")
-    assert globus.mkdir_p_calls
+    # Only the source tree: out/ was once made through Globus here, as the
+    # researcher, where the project's automation user could not write to it.
+    assert globus.mkdir_p_calls == [
+        (
+            "frontier-collection",
+            f"{FRONTIER}.researcher.jobs/example/src",
+            "/fake/frontier",
+        )
+    ]
     assert globus.uploads
 
 
@@ -213,22 +243,13 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files["/gpfs/out/44039/log-44039.out"] = (
+    globus.files[f"{ODO}.out/log-44039.out"] = (
         b"[setup_odo] OK: run_state_point.py present\n"
     )
-    globus.files["/gpfs/out/44039/log-44039.err"] = (
+    globus.files[f"{ODO}.out/log-44039.err"] = (
         b"run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
     _patch_clients(monkeypatch, iri=iri, globus=globus)
-    _record_submitted_job(
-        "44039",
-        SubmittedJob(
-            cluster="odo",
-            log_path="/gpfs/out/44039/log-44039.out",
-            err_path="/gpfs/out/44039/log-44039.err",
-            output_dir="/gpfs/out/44039",
-        ),
-    )
 
     text = await _get_olcf_job_status(user_cfg, tmp_path, "44039", cluster="odo")
 
@@ -239,54 +260,30 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     # Both streams are tailed the same incremental way, so stderr costs one more
     # HEAD and one more ranged GET — not a second transfer task.
     assert {path for path, _start, _end in globus.range_reads} == {
-        "/gpfs/out/44039/log-44039.out",
-        "/gpfs/out/44039/log-44039.err",
+        f"{ODO}.out/log-44039.out",
+        f"{ODO}.out/log-44039.err",
     }
 
 
-async def test_odo_status_distinguishes_empty_stderr_from_no_stderr(
+async def test_odo_status_reports_a_missing_stderr_as_nothing_on_stderr(
     monkeypatch, user_cfg, tmp_path
 ):
     """
-    "nothing on stderr" is a fact about the job; "no stderr path" is one about us.
-
     Slurm creates the stderr file only when something writes to it, so a job that
     succeeded leaves none — the fake raises `GlobusFileNotFound` for it, exactly
-    as a real collection does. A reader must not take our own missing bookkeeping
-    for the job having reported no error.
+    as a real collection does. That absence is the answer, not a failure.
     """
     import json
 
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files["/gpfs/out/1/log-1.out"] = b"TBR = 1.14\n"
+    globus.files[f"{ODO}.out/log-1.out"] = b"TBR = 1.14\n"
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    _record_submitted_job(
-        "1",
-        SubmittedJob(
-            cluster="odo",
-            log_path="/gpfs/out/1/log-1.out",
-            err_path="/gpfs/out/1/log-1.err",
-            output_dir="/gpfs/out/1",
-        ),
-    )
     ran = await _get_olcf_job_status(user_cfg, tmp_path, "1", cluster="odo")
     assert "TBR = 1.14" in ran
     assert "(nothing on stderr)" in ran
-
-    # A job recorded by the previous build, with no stderr path at all.
-    _record_submitted_job(
-        "2",
-        SubmittedJob(
-            cluster="odo",
-            log_path="/gpfs/out/1/log-1.out",
-            output_dir="/gpfs/out/1",
-        ),
-    )
-    legacy = await _get_olcf_job_status(user_cfg, tmp_path, "2", cluster="odo")
-    assert "no stderr path cached" in legacy
 
 
 async def test_odo_status_says_when_stderr_could_not_be_fetched(
@@ -305,7 +302,7 @@ async def test_odo_status_says_when_stderr_could_not_be_fetched(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files["/gpfs/out/3/log-3.out"] = b"setup ok\n"
+    globus.files[f"{ODO}.out/log-3.out"] = b"setup ok\n"
 
     real_stat = globus.stat
 
@@ -316,15 +313,6 @@ async def test_odo_status_says_when_stderr_could_not_be_fetched(
 
     globus.stat = _refuse  # type: ignore[method-assign]
     _patch_clients(monkeypatch, iri=iri, globus=globus)
-    _record_submitted_job(
-        "3",
-        SubmittedJob(
-            cluster="odo",
-            log_path="/gpfs/out/3/log-3.out",
-            err_path="/gpfs/out/3/log-3.err",
-            output_dir="/gpfs/out/3",
-        ),
-    )
 
     text = await _get_olcf_job_status(user_cfg, tmp_path, "3", cluster="odo")
     assert "endpoint activation expired" in text
@@ -340,18 +328,12 @@ async def test_perlmutter_status_formats_golden_fixture(
 
     status = json.loads(fixture.read_text(encoding="utf-8"))
     iri = FakeIriClient(status=status)
-    iri.head_content["/remote/log.out"] = "line1\nline2\n"
+    iri.head_content[f"{NERSC}/out/log-pm-1.out"] = "line1\nline2\n"
 
     async def _nersc(*, iri_token: str):
         return iri
 
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
-    _record_submitted_job(
-        "pm-1",
-        SubmittedJob(
-            cluster="perlmutter", log_path="/remote/log.out", output_dir="/remote/out"
-        ),
-    )
 
     text = await _get_perlmutter_job_status(user_cfg, "pm-1")
     assert "JOB_ID=pm-1" in text
@@ -373,8 +355,8 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
     import json
 
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
-    iri.head_content["/remote/log.out"] = "setup ok\n"
-    iri.head_content["/remote/log.err"] = (
+    iri.head_content[f"{NERSC}/out/log-pm-2.out"] = "setup ok\n"
+    iri.head_content[f"{NERSC}/out/log-pm-2.err"] = (
         "run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
 
@@ -382,41 +364,7 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
         return iri
 
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
-    _record_submitted_job(
-        "pm-2",
-        SubmittedJob(
-            cluster="perlmutter",
-            log_path="/remote/log.out",
-            err_path="/remote/log.err",
-            output_dir="/remote/out",
-        ),
-    )
 
     text = await _get_perlmutter_job_status(user_cfg, "pm-2")
     assert "--- STDERR ---" in text
     assert "unrecognized arguments: --salt flibe_90Li6" in text
-
-
-async def test_perlmutter_status_says_when_there_is_no_stderr(monkeypatch, user_cfg):
-    """
-    A job registered before this existed has no stderr path, and stays pollable.
-
-    "(no stderr path cached)" and "(nothing on stderr)" are different facts, and
-    neither may read as "the job printed no error".
-    """
-    fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
-    import json
-
-    iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
-    iri.head_content["/remote/log.out"] = "setup ok\n"
-
-    async def _nersc(*, iri_token: str):
-        return iri
-
-    monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
-    _record_submitted_job(
-        "pm-3", SubmittedJob(cluster="perlmutter", log_path="/remote/log.out")
-    )
-
-    text = await _get_perlmutter_job_status(user_cfg, "pm-3")
-    assert "no stderr path cached" in text

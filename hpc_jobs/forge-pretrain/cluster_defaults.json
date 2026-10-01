@@ -8,6 +8,7 @@
       "exclusive_node_use": true
     },
     "iri": {
+      "partition": "batch",
       "environment": {
         "FORGE_REPO_URL": "https://github.com/at-aaims/forge.git",
         "FORGE_BRANCH": "lux",

@@ -17,7 +17,6 @@ const LABELS: Record<string, string> = {
   submit_job: "Submitting a job to the cluster",
   get_hpc_job_status: "Checking the job",
   get_job_status: "Checking the job",
-  list_hpc_jobs: "Listing cluster jobs",
   get_hpc_job_outputs: "Fetching job output",
   agenthpc_get_search_space: "Reading the search space",
   agenthpc_submit_trial: "Submitting a trial",

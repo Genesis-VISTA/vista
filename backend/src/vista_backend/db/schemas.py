@@ -418,8 +418,10 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "inference_api_key",
     "nersc_account",
     "nersc_remote_dir",
-    "frontier_account",
+    "odo_remote_dir",
     "frontier_remote_dir",
+    "lux_remote_dir",
+    "lux_account",
     "odo_s3m_token",
     "frontier_s3m_token",
     "nersc_iri_token",
@@ -439,14 +441,15 @@ def _empty_str_to_none(v):
 class UserCreate(UserBase):
     email: str
     is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
+    odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -465,14 +468,15 @@ class UserCreate(UserBase):
 
 class UserUpdate(UserBase):
     is_admin: bool | None = None
-    remote_hpc_jobs_dir: str | None
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
+    odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -497,14 +501,15 @@ class UserUpdate(UserBase):
 
 
 class UserSelfUpdate(UserBase):
-    remote_hpc_jobs_dir: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
+    odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -552,14 +557,15 @@ class UserPublicWithConfig(UserBase):
     id: uuid.UUID
     email: str
     is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
-    frontier_account: str | None = None
+    odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
@@ -589,7 +595,11 @@ class UserTable(SQLModel, table=True):
     email: str = Field(unique=True)
     is_admin: bool = False
     remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
-    """ Folder on the HPC cluster (Odo) where hpc_jobs will be copied. """
+    """
+    Legacy. Nothing reads it, and no API schema exposes it: each cluster's
+    remote folder is its own field (`odo_remote_dir`, ...). Kept only because
+    SQLite column drops are not worth it.
+    """
     inference_model: str | None = None
     """
     Chat model for this user, as `provider:name`. Overrides
@@ -618,17 +628,29 @@ class UserTable(SQLModel, table=True):
     """ Absolute remote dir on the NERSC machine (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter. """
     frontier_account: str | None = None
     """
-    OLCF project name used as the Slurm `--account` for Frontier submissions
-    (e.g. "chm243"). Must match the `project` claim on the user's S3M token,
-    since the IRI service submits Slurm jobs as <project>_auser. Required for
-    cluster="frontier".
+    Legacy. Nothing reads it, and no API schema exposes it: a Frontier job is
+    charged to its S3M token's own project. Kept only because SQLite column
+    drops are not worth it.
+    """
+    odo_remote_dir: str | None = None
+    """
+    Names where VISTA puts job sources and outputs on Odo: `<dir>.<user>.jobs`
+    and `<dir>.out` beside it (the folder itself is never created). Required for
+    Odo. Jobs run as the project's IRI automation user, which creates
+    `<dir>.out`, so the folder holding `<dir>` must be writable by the
+    project's group -- `proj-shared` is; elsewhere `mkdir -p -m 2775 <dir>.out`.
     """
     frontier_remote_dir: str | None = None
+    """ Same as `odo_remote_dir`, for Frontier. Required for Frontier. """
+    lux_remote_dir: str | None = None
     """
-    Folder on Frontier where hpc_jobs will be copied (e.g.
-    /lustre/orion/<project>/proj-shared/vista). Required for cluster="frontier";
-    must be writable by the user's Frontier project (typically different from
-    the Odo proj-shared dir).
+    Names where VISTA puts job sources and outputs on Lux (`<dir>.<user>.jobs`
+    and `<dir>.out` beside it). Required for Lux.
+    """
+    lux_account: str | None = None
+    """
+    The OLCF project Lux jobs are charged to (`#SBATCH -A`). Required for Lux,
+    which has no token to take a project from. Not a secret.
     """
     s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
@@ -643,16 +665,17 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    S3M bearer token for Odo (open enclave), minted in Odo's OLCF project.
-    Authorizes Odo job submission through IRI and gates Odo file operations.
-    Encrypted at rest.
+    S3M bearer token for Odo (open enclave), from any OLCF project with S3M
+    access; that project is what Odo jobs are charged to. Authorizes Odo job
+    submission through IRI. Encrypted at rest.
     """
     frontier_s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    S3M bearer token for Frontier (moderate enclave), minted in
-    `frontier_account`'s project. Encrypted at rest.
+    S3M bearer token for Frontier (moderate enclave), from any OLCF project
+    with S3M access; that project is what Frontier jobs are charged to.
+    Encrypted at rest.
     """
     nersc_iri_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)

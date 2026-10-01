@@ -6,8 +6,8 @@
 #
 # Env vars provided by vista (submit_job_mcp._submit_lux_job):
 #   VISTA_OUT        per-job output dir, already created
-#   VISTA_JOB_DIR    <remote_dir>/forge-pretrain; holds the forge checkout
-#   RUN_DIR_Lux      $VISTA_JOB_DIR/src (make_config.py, forge_common.sh)
+#   VISTA_JOB_DIR    <remote_dir>.out/forge-pretrain; holds the forge checkout
+#   RUN_DIR_Lux      <remote_dir>.<user>.jobs/forge-pretrain/src (make_config.py, forge_common.sh)
 #   LUX_ENV_SCRIPT   from cluster_defaults.json
 # Positional args ("$@", from script_args): KEY=VALUE pairs, see README.md.
 

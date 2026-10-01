@@ -1,6 +1,7 @@
 """
-Tests for the S3M token introspection gate (`lib/olcf_token`) and the
-project-based cluster gating in `submit_job_mcp._default_cluster`.
+Tests for S3M token introspection (`lib/olcf_token`), which tells VISTA the
+project a token belongs to, and for per-cluster-token routing in
+`submit_job_mcp._default_cluster`.
 """
 
 import asyncio
@@ -10,7 +11,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from vista_mcp_server.lib import olcf_token
-from vista_mcp_server.lib.olcf_token import get_s3m_token_project, require_s3m_project
+from vista_mcp_server.lib.olcf_token import get_s3m_token_project
 
 INTROSPECT_URL = "https://s3m.example.gov/introspect"
 
@@ -29,7 +30,7 @@ def mock_introspect(monkeypatch):
     MockTransport. Returns a state dict: set `project` / `status_code` to shape
     the response, read `calls` to count round trips.
     """
-    state = {"project": "gen150-vista", "status_code": 200, "calls": 0}
+    state = {"project": "abc123", "status_code": 200, "calls": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         state["calls"] += 1
@@ -50,7 +51,7 @@ def mock_introspect(monkeypatch):
 
 def test_get_project(mock_introspect):
     project = asyncio.run(get_s3m_token_project("tok", introspect_url=INTROSPECT_URL))
-    assert project == "gen150-vista"
+    assert project == "abc123"
 
 
 def test_get_project_cached(mock_introspect):
@@ -58,7 +59,7 @@ def test_get_project_cached(mock_introspect):
         await get_s3m_token_project("tok", introspect_url=INTROSPECT_URL)
         return await get_s3m_token_project("tok", introspect_url=INTROSPECT_URL)
 
-    assert asyncio.run(twice()) == "gen150-vista"
+    assert asyncio.run(twice()) == "abc123"
     assert mock_introspect["calls"] == 1
 
 
@@ -81,30 +82,6 @@ def test_get_project_missing_claim(mock_introspect):
     mock_introspect["project"] = None
     with pytest.raises(ToolError, match="no project claim"):
         asyncio.run(get_s3m_token_project("tok", introspect_url=INTROSPECT_URL))
-
-
-def test_require_project_match(mock_introspect):
-    asyncio.run(
-        require_s3m_project(
-            "tok",
-            "gen150-vista",
-            cluster="odo",
-            introspect_url=INTROSPECT_URL,
-        )
-    )
-
-
-def test_require_project_mismatch(mock_introspect):
-    mock_introspect["project"] = "chm243"
-    with pytest.raises(ToolError, match="'chm243'.*odo.*'gen150-vista'"):
-        asyncio.run(
-            require_s3m_project(
-                "tok",
-                "gen150-vista",
-                cluster="odo",
-                introspect_url=INTROSPECT_URL,
-            )
-        )
 
 
 class TestDefaultCluster:
