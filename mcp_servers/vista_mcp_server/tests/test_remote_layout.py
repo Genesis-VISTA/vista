@@ -64,6 +64,22 @@ async def test_there_is_no_job_listing_tool():
     assert {"submit_hpc_job", "get_hpc_job_status", "cancel_hpc_job"} <= names
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "tool", ["get_hpc_job_status", "get_hpc_job_outputs", "cancel_hpc_job"]
+)
+async def test_follow_up_tools_require_the_cluster(tool):
+    """A job id is only unique within its cluster, and nothing remembers which
+    cluster a job went to. Falling back to "the only cluster with a token"
+    would send a Lux job's cancel -- Lux needs no token -- to whichever job has
+    the same id on that cluster, possibly a colleague's: every project job runs
+    as the same automation user."""
+    [spec] = [t for t in await m.mcp.list_tools() if t.name == tool]
+    schema = spec.parameters
+    assert "cluster" in schema["required"]
+    assert "job_id" in schema["required"]
+
+
 # ------------------------------------------------------------------ folder check
 
 
@@ -176,12 +192,12 @@ class _Ctx:
 
 
 @pytest.mark.anyio
-async def test_a_dry_run_job_needs_no_cluster_and_no_credentials(monkeypatch):
+async def test_a_dry_run_job_needs_no_credentials(monkeypatch):
     monkeypatch.setattr(settings, "hpc_dry_run", True)
     dry_run.reset()
     job_id = dry_run.record_submit("frontier", "example", 1, 60)
     try:
-        text = await m.get_hpc_job_status(_Ctx(), job_id)
+        text = await m.get_hpc_job_status(_Ctx(), job_id, cluster="frontier")
     finally:
         dry_run.reset()
     assert f"JOB_ID={job_id}" in text

@@ -71,7 +71,8 @@ The script reports:
 ## Visualizing training progress
 
 When the user asks for job status, progress, or a plot while training is running:
-1. Call `get_hpc_job_status` to fetch the latest logs.
+1. Call `get_hpc_job_status(job_id, cluster=<cluster>)`, with the cluster `submit_hpc_job`
+   reported, to fetch the latest logs.
 2. Render the per-epoch table (Epoch / LR / Train RMSE / Val RMSE).
 3. Plot Train RMSE and Val RMSE vs Epoch by calling `run_bash` in the sandbox
    with a short matplotlib script. Save the PNG to

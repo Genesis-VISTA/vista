@@ -143,8 +143,11 @@ path.
 
 ### Requirement: Finding a job after submission
 Job status, output retrieval and cancellation SHALL identify a job by its id
-and cluster alone. The cluster SHALL come from the tool's argument, or else
-from the only cluster the researcher has credentials for. The system SHALL
+and cluster alone, and the cluster SHALL be a required argument of each. It
+SHALL NOT be inferred: job ids are unique only within a cluster, and Lux, which
+needs no token, could never be the inferred one, so a guess could reach a
+different job with the same id -- possibly a colleague's, since every project
+job runs as the same automation user. The system SHALL
 work out the job's log and output paths from its id and the researcher's
 current remote folder for that cluster. It SHALL keep no record of submitted
 jobs, and SHALL NOT offer a tool that lists them. Changing the remote folder
@@ -155,16 +158,16 @@ NOT make status or cancel fail.
 - **WHEN** a job was submitted to Frontier, the MCP server has restarted since, and status is requested for its id with `cluster="frontier"`
 - **THEN** the job's state, log tail, stderr tail and output listing are returned
 
-#### Scenario: Cluster omitted with several configured
-- **WHEN** status is requested without a cluster and the researcher has credentials for both Odo and Perlmutter
-- **THEN** the call fails, asking for the cluster
+#### Scenario: Cluster omitted
+- **WHEN** status, outputs or cancel is requested without a cluster, even by a researcher with credentials for one cluster only
+- **THEN** the call is rejected for the missing argument, and no cluster is contacted
 
 #### Scenario: Remote folder changed
 - **WHEN** a researcher changes their Odo remote folder after submitting a job there, and then asks for its status
 - **THEN** the job's state is still reported, the log and output listing are reported as absent, and the call does not fail
 
-#### Scenario: Dry-run job needs no cluster
-- **WHEN** HPC dry-run is on and status is requested for a dry-run job id without a cluster and with no credentials
+#### Scenario: Dry-run job needs no credentials
+- **WHEN** HPC dry-run is on and status is requested for a dry-run job id, with its cluster but no credentials
 - **THEN** the dry-run status is returned
 
 #### Scenario: No job listing tool

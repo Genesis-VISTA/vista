@@ -149,10 +149,14 @@ entries' permissions, not those of the folder it lists.
 and `_submitted_account` are deleted, and so are `list_hpc_jobs` and its
 entries in `HPC_TOOLS` (`agents.py`), the molten-salt system prompt,
 `ui/lib/tool-labels.ts` and `docs/project-onboarding.md`.
-`_resolve_cluster(cluster, cfg)` loses its `job_id` lookup. Status and cancel
-check `dry_run.is_dry_job(job_id)` before resolving a cluster, so dry-run jobs
-keep working without credentials; status takes the cluster from
-`dry_run.cluster_of`. (Outputs never served dry-run jobs.) `dry_run` keeps its
+`_resolve_cluster(cluster, cfg)` loses its `job_id` lookup and is used only by
+submission. Status, outputs and cancel take `cluster` as a required argument:
+with no registry, inferring it from "the only cluster with a token" would send
+a Lux job's cancel (Lux needs no token) to whichever job shares its id on that
+cluster. `submit_hpc_job`'s result names the cluster, and its description, the
+skills and the system prompts tell the agent to pass it back. Status and cancel
+check `dry_run.is_dry_job(job_id)` before anything else, so dry-run jobs need
+no credentials. (Outputs never served dry-run jobs.) `dry_run` keeps its
 own in-process `_dry_jobs`. Cancellation needs no remote folder. The Perlmutter paths no longer say "only for jobs
 submitted in the current session".
 

@@ -284,10 +284,11 @@ def _default_cluster(cfg: UserConfig) -> Cluster:
 
 def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     """
-    Pick a cluster for a tool call: the explicit argument, else the only
-    cluster the researcher has credentials for. A job id says nothing about its
-    cluster -- the ids are only unique within one -- so the submit summary names
-    the cluster and the caller passes it back.
+    Pick the cluster to submit to: the explicit argument, else the only cluster
+    the researcher has credentials for. Submission only: a job id says nothing
+    about its cluster -- the ids are only unique within one, and Lux, which
+    needs no token, is never the fallback -- so status, outputs and cancel
+    require the cluster the submit summary named.
     """
     if cluster is not None:
         return cluster
@@ -1259,23 +1260,19 @@ async def _olcf_project(cfg: UserConfig, cluster: Cluster) -> tuple[str, str]:
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
-async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster | None = None) -> str:
+async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster) -> str:
     """
     Get the status and logs of a submitted HPC job.
 
     Args:
         job_id: The job id returned by submit_hpc_job
         cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
-            May be omitted only when one cluster is configured.
+            Required: a job id is only unique within its cluster, and nothing else
+            remembers which cluster a job went to.
     """
     job_id = validate_job_id(job_id)
     meta = get_vista_meta(ctx)
     cfg = meta.user
-    # A dry-run job knows its own cluster, and needs no credentials to answer.
-    cluster = (
-        dry_run.cluster_of(job_id) if dry_run.is_dry_job(job_id)
-        else _resolve_cluster(cluster, cfg)
-    )
 
     # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a poll
     # timeout or an expired credential mid-campaign (E7a / E7b 24h case).
@@ -1634,7 +1631,7 @@ def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
 async def get_hpc_job_outputs(
-    ctx: Context, job_id: str, files: list[str], cluster: Cluster | None = None,
+    ctx: Context, job_id: str, files: list[str], cluster: Cluster,
 ) -> str:
     """
     Download output files from an HPC job.
@@ -1643,7 +1640,8 @@ async def get_hpc_job_outputs(
         job_id: The job id returned by submit_hpc_job
         files: List of file paths to download. Relative to the jobs output directory (as shown by get_hpc_job_status).
         cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
-            May be omitted only when one cluster is configured.
+            Required: a job id is only unique within its cluster, and nothing else
+            remembers which cluster a job went to.
 
     Returns:
         The downloaded file paths.
@@ -1652,7 +1650,6 @@ async def get_hpc_job_outputs(
     meta = get_vista_meta(ctx)
     cfg = meta.user
     host_output_dir = Path(meta.project_paths.require_output_dir())
-    cluster = _resolve_cluster(cluster, cfg)
 
     if cluster == "perlmutter":
         return await _get_perlmutter_job_outputs(cfg, host_output_dir, job_id, files)
@@ -1793,14 +1790,15 @@ async def _get_lux_job_outputs(
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))
-async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = None) -> str:
+async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster) -> str:
     """
     Cancel a queued or running HPC job.
 
     Args:
         job_id: The job id returned by submit_hpc_job.
         cluster: Which cluster the job was submitted to, as submit_hpc_job reported it.
-            May be omitted only when one cluster is configured.
+            Required: a job id is only unique within its cluster, and nothing else
+            remembers which cluster a job went to.
 
     Returns:
         Confirmation of the cancellation request.
@@ -1809,7 +1807,6 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster | None = No
     if dry_run.is_dry_job(job_id):
         return dry_run.cancel(job_id)
     cfg = get_vista_meta(ctx).user
-    cluster = _resolve_cluster(cluster, cfg)
     if cluster == "lux":
         conn = await _lux_conn(ctx, "cancel_hpc_job", job_id=job_id)
         try:
