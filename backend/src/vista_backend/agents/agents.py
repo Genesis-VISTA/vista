@@ -9,7 +9,8 @@ import shutil
 import stat
 import uuid
 import asyncio
-from typing import AsyncIterator, Literal, Annotated as A, Any
+from contextlib import aclosing
+from typing import AsyncGenerator, AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import quote
@@ -21,6 +22,7 @@ from pydantic_ai import (
     UsageLimits,
     RunUsage,
     AgentRunResultEvent,
+    capture_run_messages,
 )
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import Model
@@ -225,6 +227,19 @@ class ProjectAgentResult(BaseModel):
     out-of-bounds scientific values). Empty when G6 is off or clean. """
 
 
+class RunCapture:
+    """
+    Live view of a turn's PydanticAI messages, for a caller that may cancel it.
+
+    `run_stream` points `messages` at the list `capture_run_messages()` fills as
+    the turn goes. It holds the prior history plus everything exchanged so far,
+    so after a cancel or an error the caller can keep the steps that completed.
+    """
+
+    def __init__(self) -> None:
+        self.messages: list[ModelMessage] = []
+
+
 class ProjectAgentResultEvent(BaseModel):
     """Terminal event of `ProjectAgent.run_stream`, carrying the `ProjectAgentResult`."""
 
@@ -236,6 +251,11 @@ ProjectAgentStreamEvent = A[
     AgentStreamEvent | LogEvent | McpElicitationEvent | ProjectAgentResultEvent,
     Discriminator("event_kind"),
 ]
+
+
+VISTA_MCP_READ_TIMEOUT = 24 * 60 * 60
+""" Seconds one VISTA MCP tool call may take. An SSH login raised inside a tool call
+(Lux job submission) waits for the researcher, who may be away for hours. """
 
 
 def get_vista_mcp_server(
@@ -251,7 +271,7 @@ def get_vista_mcp_server(
         log_handler=log_handler,
         log_level="info" if log_handler else None,
         timeout=10,
-        read_timeout=1800 + 60,
+        read_timeout=VISTA_MCP_READ_TIMEOUT,
     )
 
 
@@ -767,10 +787,10 @@ class ProjectAgent:
                 return mcp.types.ElicitResult(action="cancel")
             self._eval_metrics_capability.note_human_intervention()
 
+            # No timeout: the researcher may be on another page for hours. The
+            # wait ends when they answer, or when Stop cancels this task.
             try:
-                return await asyncio.wait_for(future, timeout=5 * 60)
-            except asyncio.TimeoutError:
-                return mcp.types.ElicitResult(action="cancel")
+                return await future
             finally:
                 self._elicitations.pop(event.elicitation_id, None)
 
@@ -837,13 +857,12 @@ class ProjectAgent:
                 )
             self._eval_metrics_capability.note_human_intervention()
 
+            # No timeout, as for elicitations: it waits for an answer or a Stop.
             try:
-                result = await asyncio.wait_for(future, timeout=5 * 60)
-            except asyncio.TimeoutError:
+                result = await future
+            except asyncio.CancelledError:
                 self._sidecar.note_approval_outcome(tool_call_id, approved=False)
-                return ApprovalOutcome(
-                    approved=False, message="Approval request timed out."
-                )
+                raise
             finally:
                 self._elicitations.pop(tool_call_id, None)
 
@@ -884,6 +903,7 @@ class ProjectAgent:
         message_history: list[ModelMessage] | None = None,
         enable_elicitation: bool = False,
         db_session: AsyncSession | None = None,
+        capture: RunCapture | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
         Run the agent and return a stream of events.
@@ -898,6 +918,8 @@ class ProjectAgent:
 
         Pass db_session to enable campaign mode: the campaign tools persist through this session and
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
+
+        Pass capture to read the turn's messages after it is cancelled or fails (see `RunCapture`).
 
         Raises:
             MissingInferenceCredential: if no inference credential is
@@ -1003,50 +1025,60 @@ class ProjectAgent:
                     # G1 early-rejection runs via the capability's
                     # before_run hook and raises PalisadeDeny (caught
                     # below) before any model request.
-                    async for event in self.agent.run_stream_events(
-                        user_prompt,
-                        message_history=message_history,
-                        usage_limits=usage_limits,
-                    ):
-                        if isinstance(event, AgentRunResultEvent):
-                            yield log("INFO", "Agent", "Turn completed")
-                            # Drain any G6 egress findings recorded during
-                            # this run; the UI renders them as warning blurbs
-                            # following the answer.
-                            result = ProjectAgentResult(
-                                new_messages=event.result.new_messages(),
-                                usage=event.result.usage(),
-                                logs=list(logs),
-                                egress_warnings=[
-                                    EgressWarning(**w)
-                                    for w in self._sidecar.egress_findings
-                                ],
-                            )
-                            yield ProjectAgentResultEvent(result=result)
-                            break  # Ignore any further log events
-                        else:
-                            # Add some logging
-                            if isinstance(event, FunctionToolCallEvent):
-                                yield log(
-                                    "INFO",
-                                    f"Tool:{event.part.tool_name}",
-                                    message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}",
+                    async def model_events() -> AsyncGenerator[Any, None]:
+                        with capture_run_messages() as captured:
+                            if capture is not None:
+                                capture.messages = captured
+                            async for model_event in self.agent.run_stream_events(
+                                user_prompt,
+                                message_history=message_history,
+                                usage_limits=usage_limits,
+                            ):
+                                yield model_event
+
+                    # aclosing: the loop below breaks at the result, and the
+                    # capture context must exit here, in this task.
+                    async with aclosing(model_events()) as model_stream:
+                        async for event in model_stream:
+                            if isinstance(event, AgentRunResultEvent):
+                                yield log("INFO", "Agent", "Turn completed")
+                                # Drain any G6 egress findings recorded during
+                                # this run; the UI renders them as warning blurbs
+                                # following the answer.
+                                result = ProjectAgentResult(
+                                    new_messages=event.result.new_messages(),
+                                    usage=event.result.usage(),
+                                    logs=list(logs),
+                                    egress_warnings=[
+                                        EgressWarning(**w)
+                                        for w in self._sidecar.egress_findings
+                                    ],
                                 )
-                            elif isinstance(event, FunctionToolResultEvent):
-                                if isinstance(event.part, RetryPromptPart):
-                                    yield log(
-                                        "WARNING",
-                                        f"Tool:{event.part.tool_name}",
-                                        f"Tool {event.part.tool_name} failed",
-                                    )
-                                else:
+                                yield ProjectAgentResultEvent(result=result)
+                                break  # Ignore any further log events
+                            else:
+                                # Add some logging
+                                if isinstance(event, FunctionToolCallEvent):
                                     yield log(
                                         "INFO",
                                         f"Tool:{event.part.tool_name}",
-                                        f"Tool {event.part.tool_name} completed",
+                                        message=f"Called {event.part.tool_name} args: {json_dump_if(event.part.args)}",
                                     )
+                                elif isinstance(event, FunctionToolResultEvent):
+                                    if isinstance(event.part, RetryPromptPart):
+                                        yield log(
+                                            "WARNING",
+                                            f"Tool:{event.part.tool_name}",
+                                            f"Tool {event.part.tool_name} failed",
+                                        )
+                                    else:
+                                        yield log(
+                                            "INFO",
+                                            f"Tool:{event.part.tool_name}",
+                                            f"Tool {event.part.tool_name} completed",
+                                        )
 
-                            yield event
+                                yield event
                 except PalisadeDeny as deny:
                     yield log("WARNING", "PALISADE:G1", deny.decision.reason)
                     yield ProjectAgentResultEvent(

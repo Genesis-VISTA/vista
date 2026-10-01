@@ -16,8 +16,13 @@ import {
   type SkillDraftFields,
   type SkillSavedPayload,
 } from "@/components/SkillEditorModal";
+import {
+  ReportModal,
+  type ReportDraft,
+  type ReportSavePayload,
+} from "@/components/ReportModal";
+import { extractError } from "@/lib/user";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
-import { labelForTool } from "@/lib/tool-labels";
 import { fileLinkProps } from "@/lib/file-links";
 import {
   readActiveProjectName,
@@ -37,34 +42,32 @@ import {
   intermediatePreview,
 } from "@/lib/result-parsing";
 import {
+  attachChatRun,
   createPersistedChatSession,
   deletePersistedChatSession,
   fetchPersistedChatSession,
   listPersistedChatSessions,
   notifyActiveChatSessionChanged,
   PersistedChatSessionError,
+  readActiveChatSessionId,
   renamePersistedChatSession,
   savePersistedChatSession,
+  stopChatRun,
+  type PersistedChatSession,
   type PersistedChatSessionSummary,
   useActiveChatSessionId,
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
+import type { ModelMessage } from "@/lib/agent-events";
+import { readSseStream } from "@/lib/run-stream";
 import {
-  htmlFromToolReturnContent,
-  fileFromToolReturnContent,
-  textFromToolReturnContent,
-  type AgentRunResultEvent,
-  type FunctionToolCallEvent,
-  type FunctionToolResultEvent,
-  type LogEvent,
-  type McpFormElicitationEvent,
-  type McpUrlElicitationEvent,
-  type McpToolApprovalEvent,
-  type ModelMessage,
-  type PartDeltaEvent,
-  type PartEndEvent,
-  type PartStartEvent,
-} from "@/lib/agent-events";
+  createRunRenderer,
+  type RunHost,
+  type RunPrompt,
+  type RunRenderer,
+} from "@/lib/run-renderer";
+import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
+import { RunStatusDot } from "@/components/RunStatusDot";
 
 type WorkspaceTab = "artifacts" | "activity" | "jobs";
 
@@ -80,9 +83,9 @@ const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
 ];
 
 const SUGGESTIONS = [
-  "Show me the phase diagram for AlCl3-KCl",
-  "How many fluoride salts are in the database?",
-  "What is the density of FLiBe at 873 K?",
+  "What can you help me with in this project?",
+  "Which tools and skills do you have available?",
+  "What knowledge bases can you search?",
 ];
 
 type LogEntry = {
@@ -183,6 +186,8 @@ export default function HomePage() {
   const activeChatSessionId = useActiveChatSessionId(activeProject?.name ?? null);
   const isConversationListView = !!activeProject && !activeChatSessionId;
   const isConversationOpen = !!activeProject && !!activeChatSessionId;
+  /** Which conversations are working, need the researcher, or have an unseen outcome. */
+  const runStatus = useChatRunStatus(activeProject?.name ?? null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatSessions, setChatSessions] = useState<PersistedChatSessionSummary[]>([]);
@@ -193,10 +198,10 @@ export default function HomePage() {
   const [draftChatSessionTitle, setDraftChatSessionTitle] = useState("");
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<PersistedChatSessionSummary | null>(null);
   /**
-   * Raw PydanticAI `ModelMessage` history — accumulated across turns from each
-   * `agent_run_result.new_messages`. The backend now owns the canonical
-   * session history for chat runs; we still keep this client copy for UI
-   * restore, local features like "Save as skill", and Phase 1/2 compatibility.
+   * Raw PydanticAI `ModelMessage` history, read from the backend when a
+   * conversation opens and again when a run ends. The backend is the only writer
+   * of it; the page keeps a copy for features like "Save as skill" and never
+   * sends it back.
    */
   const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
@@ -212,6 +217,25 @@ export default function HomePage() {
    */
   const [expandedIntermediates, setExpandedIntermediates] = useState<Set<string>>(new Set());
   const [isSessionHydrated, setIsSessionHydrated] = useState(false);
+  /**
+   * The stream the page is watching a run through, and which conversation it
+   * belongs to. Aborting it only stops watching: the run belongs to the backend.
+   */
+  const streamRef = useRef<{ controller: AbortController; conversationId: string } | null>(
+    null
+  );
+  /**
+   * The researcher has now seen the last run, so the next save also
+   * acknowledges it, which clears its dot and the events kept for drawing it.
+   * It rides the save that persists the drawn thread, so the events are only
+   * deleted once the transcript that replaces them is stored.
+   */
+  const [ackPending, setAckPending] = useState(false);
+  /** The latest `resumeRun`, so the hydration effect can call it without re-running when it changes. */
+  const resumeRunRef = useRef<typeof resumeRun | null>(null);
+  useEffect(() => {
+    resumeRunRef.current = resumeRun;
+  });
   const hydratedSessionKeyRef = useRef<string | null>(null);
   const lastPersistedSnapshotRef = useRef<string | null>(null);
   /**
@@ -294,8 +318,10 @@ export default function HomePage() {
 
     let cancelled = false;
     setIsSessionHydrated(false);
+    setAgentLogs([]);
 
     void (async () => {
+      let restored: PersistedChatSession | null = null;
       try {
         const persisted = await fetchPersistedChatSession(projectName, activeChatSessionId);
         if (cancelled) return;
@@ -314,9 +340,9 @@ export default function HomePage() {
         setExpandedIntermediates(new Set());
         lastPersistedSnapshotRef.current = JSON.stringify({
           messages: restoredMessages,
-          messageHistory: restoredHistory,
           latestResult: restoredLatestResult,
         });
+        restored = persisted;
       } catch (error) {
         if (cancelled) return;
         if (error instanceof PersistedChatSessionError && error.status === 404) {
@@ -331,7 +357,6 @@ export default function HomePage() {
         setExpandedIntermediates(new Set());
         lastPersistedSnapshotRef.current = JSON.stringify({
           messages: [],
-          messageHistory: [],
           latestResult: null,
         });
       } finally {
@@ -339,6 +364,11 @@ export default function HomePage() {
           hydratedSessionKeyRef.current = sessionKey;
           setIsSessionHydrated(true);
         }
+      }
+      // What the conversation was doing while it was away: a run still going,
+      // or one that finished with nobody watching.
+      if (!cancelled && restored) {
+        await resumeRunRef.current?.(projectName, activeChatSessionId, restored);
       }
     })();
 
@@ -378,24 +408,54 @@ export default function HomePage() {
     const projectName = activeProject?.name ?? null;
     if (!projectName || !isSessionHydrated) return;
     if (hydratedSessionKeyRef.current !== `${projectName}:${activeChatSessionId ?? ""}`) return;
-    if (messageHistory.length === 0 && messages.length === 0 && latestResult == null) return;
+    const ack = ackPending;
+    if (!ack && messages.length === 0 && latestResult == null) return;
 
-    const snapshot = JSON.stringify({ messages, messageHistory, latestResult });
-    if (snapshot === lastPersistedSnapshotRef.current) return;
+    // Model history is not part of this: only the backend writes it.
+    const snapshot = JSON.stringify({ messages, latestResult });
+    if (!ack && snapshot === lastPersistedSnapshotRef.current) return;
 
     lastPersistedSnapshotRef.current = snapshot;
+    if (ack) setAckPending(false);
     void savePersistedChatSession(projectName, {
       chatSessionId: activeChatSessionId,
       messages,
-      messageHistory,
       latestResult,
-    }).catch(() => {
-      // Best-effort persistence for Phase 1. A failed save should not break the live chat.
-      if (lastPersistedSnapshotRef.current === snapshot) {
-        lastPersistedSnapshotRef.current = null;
-      }
-    });
-  }, [activeProject?.name, activeChatSessionId, isSessionHydrated, messages, messageHistory, latestResult]);
+      ackRun: ack,
+    })
+      .then(() => {
+        if (ack) void refreshChatRunStatus(projectName);
+      })
+      .catch(() => {
+        // Best-effort persistence. A failed save should not break the live chat.
+        if (lastPersistedSnapshotRef.current === snapshot) {
+          lastPersistedSnapshotRef.current = null;
+        }
+        if (ack) setAckPending(true);
+      });
+  }, [
+    activeProject?.name,
+    activeChatSessionId,
+    isSessionHydrated,
+    messages,
+    latestResult,
+    ackPending,
+  ]);
+
+  // Switching conversation, or leaving the chat page, stops watching a run. The
+  // run carries on in the backend, and opening its conversation again re-attaches.
+  useEffect(() => {
+    const stream = streamRef.current;
+    if (stream && stream.conversationId !== activeChatSessionId) {
+      abortRunStream();
+      setIsRunActive(false);
+      setLiveStatus(null);
+      setPendingElicitation(null);
+      setPendingToolApproval(null);
+    }
+  }, [activeChatSessionId]);
+
+  useEffect(() => () => abortRunStream(), []);
 
   // Save-as-skill state. `initial: null` while the LLM is drafting; the
   // modal swaps into edit mode once the draft arrives. We keep an error
@@ -405,12 +465,22 @@ export default function HomePage() {
   const [skillDraft, setSkillDraft] = useState<SkillDraftFields | null>(null);
   const [skillSaveError, setSkillSaveError] = useState<string | null>(null);
 
+  // Generate-report state. `reportDraft: null` while a draft is in flight.
+  // `reportRequestRef` numbers each draft request so a slow earlier one (the
+  // user hit Regenerate) cannot overwrite the draft that replaced it.
+  const [showReport, setShowReport] = useState(false);
+  const [reportDraft, setReportDraft] = useState<ReportDraft | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSavedPath, setReportSavedPath] = useState<string | null>(null);
+  const reportRequestRef = useRef(0);
+
   const [isCalling, setIsCalling] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<McpHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [mcpTools, setMcpTools] = useState<McpToolsResponse | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [isChatLoading, setIsChatLoading] = useState(false);
+  /** A run is active in the open conversation, whoever started it. */
+  const [isRunActive, setIsRunActive] = useState(false);
   const [pendingElicitation, setPendingElicitation] = useState<{
     id: string;
     message: string;
@@ -523,11 +593,89 @@ export default function HomePage() {
   }
 
   /**
+   * Draft a report of the open conversation into the report modal. Used both
+   * to open it and to regenerate with a focus `hint`; either way the modal
+   * shows its drafting state until `/reports/generate` returns.
+   */
+  async function draftReport(hint?: string) {
+    const projectName = activeProject?.name;
+    if (!projectName) return;
+    const request = ++reportRequestRef.current;
+    setReportDraft(null);
+    setReportError(null);
+    setShowReport(true);
+    let draft: ReportDraft = { title: "", slug_suggestion: "", summary: "", body: "" };
+    let error: string | null = null;
+    try {
+      const resp = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/reports/generate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+        }
+      );
+      if (resp.ok) draft = (await resp.json()) as ReportDraft;
+      else error = await extractError(resp);
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Drafting failed.";
+    }
+    if (request !== reportRequestRef.current) return;
+    setReportError(error);
+    setReportDraft(draft);
+  }
+
+  function openGenerateReport() {
+    setReportSavedPath(null);
+    void draftReport();
+  }
+
+  function closeReport() {
+    reportRequestRef.current++;
+    setShowReport(false);
+    setReportDraft(null);
+    setReportError(null);
+    setReportSavedPath(null);
+  }
+
+  /**
+   * Save the report to the project's uploads. The backend keys it on this
+   * chat's session id, so saving again replaces the same file.
+   */
+  async function saveReport(payload: ReportSavePayload) {
+    const projectName = activeProject?.name;
+    if (!projectName || !activeChatSessionId) return;
+    setReportError(null);
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(projectName)}/reports`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, chat_session_id: activeChatSessionId }),
+      });
+      if (!resp.ok) {
+        setReportError(await extractError(resp));
+        return;
+      }
+      const saved = (await resp.json()) as { path: string };
+      setReportSavedPath(saved.path);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Save failed.");
+    }
+  }
+
+  /** Hand the report off to skill drafting: the report steers the skill draft. */
+  function saveReportAsSkill(body: string) {
+    closeReport();
+    void openSaveAsSkill(body);
+  }
+
+  /**
    * Open the Save-as-Skill modal and kick off the LLM draft in parallel.
    * The modal opens immediately in a "Drafting…" state and switches to the
-   * editable form once `/api/skills/generate` returns.
+   * editable form once `/api/skills/generate` returns. `hint` (the report, when
+   * coming from the report modal) steers the draft.
    */
-  async function openSaveAsSkill() {
+  async function openSaveAsSkill(hint?: string) {
     setSkillDraft(null);
     setSkillSaveError(null);
     setShowSkillEditor(true);
@@ -535,7 +683,7 @@ export default function HomePage() {
       const resp = await fetch("/api/skills/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message_history: messageHistory }),
+        body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
@@ -619,9 +767,221 @@ export default function HomePage() {
     setSkillDraft(null);
   }
 
+  /** Stop watching the run, if any. The run itself carries on in the backend. */
+  function abortRunStream() {
+    const stream = streamRef.current;
+    if (!stream) return;
+    stream.controller.abort();
+    streamRef.current = null;
+  }
+
+  function pushLog(level: string, area: string, message: string) {
+    setAgentLogs((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), ts: new Date().toISOString(), level, area, message }
+    ]);
+  }
+
+  /** Put a prompt the run is waiting on in front of the researcher. */
+  function showPrompt(prompt: RunPrompt) {
+    if (prompt.kind === "form") {
+      setPendingElicitation({ id: prompt.id, message: prompt.message, schema: prompt.schema });
+    } else if (prompt.kind === "approval") {
+      setPendingToolApproval({
+        id: prompt.id,
+        toolName: prompt.toolName,
+        message: prompt.message,
+        args: prompt.args,
+        decisionMetadata: prompt.decisionMetadata
+      });
+    } else {
+      // v1: synchronous confirm. The backend is waiting for a POST to
+      // /api/chat/elicitation, so briefly blocking the UI is acceptable. Refine
+      // to a proper modal when the URL flow gets first-class UX.
+      const allow = window.confirm(
+        `${prompt.message}\n\nAllow the agent to open:\n${prompt.url}`
+      );
+      void handleElicitationSubmit(prompt.id, allow ? "accept" : "cancel");
+      if (allow) window.open(prompt.url, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  /**
+   * Applies a run's events to the open conversation, and only while that
+   * conversation is still the one open and the stream is still wanted. After the
+   * researcher switches away, a late event is dropped rather than drawn into the
+   * wrong thread.
+   */
+  function makeRunHost(conversationId: string, controller: AbortController): RunHost {
+    const live = () =>
+      !controller.signal.aborted &&
+      readActiveChatSessionId(readActiveProjectName()) === conversationId;
+    return {
+      setMessages: (update) => {
+        if (live()) setMessages(update);
+      },
+      setLatestIntermediateId: (update) => {
+        if (live()) setLatestIntermediateId(update);
+      },
+      setLiveStatus: (status) => {
+        if (live()) setLiveStatus(status);
+      },
+      setLatestResult: (update) => {
+        if (live()) setLatestResult(update);
+      },
+      pushLog: (level, area, message) => {
+        if (live()) pushLog(level, area, message);
+      },
+      prompt: (prompt) => {
+        if (live()) showPrompt(prompt);
+      },
+      promptResolved: (id) => {
+        if (!live()) return;
+        setPendingElicitation((current) => (current?.id === id ? null : current));
+        setPendingToolApproval((current) => (current?.id === id ? null : current));
+      },
+      scrollToLatest: () => requestAnimationFrame(() => scrollChatToLatest("smooth"))
+    };
+  }
+
+  /** The watch is over, however it ended. */
+  function endRun(controller: AbortController) {
+    if (streamRef.current?.controller === controller) streamRef.current = null;
+    // Aborted means the researcher moved on, and the switch already reset the page.
+    if (controller.signal.aborted) return;
+    setIsRunActive(false);
+    setLiveStatus(null);
+    setPendingElicitation(null);
+    setPendingToolApproval(null);
+  }
+
+  /**
+   * Draw `body`'s events through `renderer` until it ends, then settle the page.
+   *
+   * A run that ended is acknowledged: the researcher has watched it, so its dot
+   * and stored events go once the drawn thread is saved. The model history is
+   * read back rather than assembled here, so it is exactly what the backend kept,
+   * including the closing note of a stopped turn.
+   */
+  async function finishWatching(
+    projectName: string,
+    conversationId: string,
+    controller: AbortController,
+    body: ReadableStream<Uint8Array>,
+    renderer: RunRenderer
+  ) {
+    try {
+      await readSseStream(body, (event) => renderer.dispatch(event.event, event.data));
+    } catch {
+      // Aborted on a switch, or the stream broke; told apart below.
+    }
+    if (controller.signal.aborted) {
+      endRun(controller);
+      return;
+    }
+    const finished = renderer.finishedState !== null || renderer.sawResult;
+    if (!finished) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Agent run did not complete."
+        }
+      ]);
+    }
+    endRun(controller);
+    if (!finished) return;
+    setAckPending(true);
+    try {
+      const persisted = await fetchPersistedChatSession(projectName, conversationId);
+      if (readActiveChatSessionId(projectName) === conversationId) {
+        setMessageHistory(Array.isArray(persisted.message_history) ? persisted.message_history : []);
+      }
+    } catch {
+      // The history only feeds "Save as skill"; the next open reads it again.
+    }
+  }
+
+  /**
+   * Watch a conversation's active run from its start. False when it has none
+   * (it may have ended a moment ago), so the caller can look for what it left.
+   */
+  async function attachToRun(projectName: string, conversationId: string): Promise<boolean> {
+    abortRunStream();
+    const controller = new AbortController();
+    streamRef.current = { controller, conversationId };
+    let response: Response;
+    try {
+      response = await attachChatRun(projectName, conversationId, controller.signal);
+    } catch {
+      const aborted = controller.signal.aborted;
+      endRun(controller);
+      return aborted;
+    }
+    if (response.status !== 200 || !response.body) {
+      endRun(controller);
+      return false;
+    }
+    setIsRunActive(true);
+    setLiveStatus("Working on it");
+    const renderer = createRunRenderer(makeRunHost(conversationId, controller), {
+      drawUserPrompt: true
+    });
+    await finishWatching(projectName, conversationId, controller, response.body, renderer);
+    return true;
+  }
+
+  /**
+   * Draw a turn that ran with nobody watching, from the events the backend kept
+   * for it: the same renderer, so it looks as it would have live. Then the
+   * save that follows acknowledges it.
+   */
+  function replayStoredRun(conversationId: string, events: PersistedChatSession["run_events"]) {
+    const renderer = createRunRenderer(makeRunHost(conversationId, new AbortController()), {
+      drawUserPrompt: true
+    });
+    for (const event of events ?? []) renderer.dispatch(event.event, event.data);
+    setAckPending(true);
+  }
+
+  /** What a conversation was doing while it was closed. */
+  async function resumeRun(
+    projectName: string,
+    conversationId: string,
+    persisted: PersistedChatSession
+  ) {
+    let session = persisted;
+    if (session.run_status === "working" || session.run_status === "needs_you") {
+      if (await attachToRun(projectName, conversationId)) return;
+      // It ended between the fetch and the attach, so what it left is stored now.
+      try {
+        session = await fetchPersistedChatSession(projectName, conversationId);
+      } catch {
+        return;
+      }
+      if (readActiveChatSessionId(projectName) !== conversationId) return;
+    }
+    if (session.run_events && session.run_events.length > 0) {
+      replayStoredRun(conversationId, session.run_events);
+    } else if (session.run_unseen || session.run_state !== "idle") {
+      setAckPending(true);
+    }
+  }
+
+  async function stopRun() {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !activeChatSessionId) return;
+    try {
+      await stopChatRun(projectName, activeChatSessionId);
+    } catch {
+      // The run may already be over; the stream says how it ended.
+    }
+  }
+
   async function sendUserMessage() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || isRunActive) return;
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -678,270 +1038,13 @@ export default function HomePage() {
       }
     }
 
-    setIsChatLoading(true);
-    // Per-turn streaming-part accumulator, keyed by PartStartEvent.index.
-    // Text parts also track the id of the live assistant bubble they update.
-    type PartAcc =
-      | { kind: "text"; bubbleId: string; text: string }
-      | { kind: "thinking"; text: string }
-      | { kind: "tool-call"; toolName: string; argsText: string };
-    const parts = new Map<number, PartAcc>();
-    let finalSignaled = false;
-    let liveAssistantBubbleId: string | null = null;
-    let sawAgentRunResult = false;
-
-    function pushLog(level: string, area: string, message: string) {
-      setAgentLogs((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), ts: new Date().toISOString(), level, area, message }
-      ]);
-    }
-
-    function updateBubbleContent(bubbleId: string, content: string) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === bubbleId ? { ...m, content } : m))
-      );
-    }
-
-    function promoteBubbleToFinal(bubbleId: string) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === bubbleId ? { ...m, intermediate: false } : m))
-      );
-    }
-
-    function dispatchEvent(eventName: string | null, data: unknown) {
-      const kind =
-        eventName ??
-        (data && typeof data === "object"
-          ? ((data as { event_kind?: string }).event_kind ?? null)
-          : null);
-
-      switch (kind) {
-        case "log": {
-          const ev = data as LogEvent;
-          pushLog(ev.level, ev.area, ev.message);
-          break;
-        }
-
-        case "part_start": {
-          const ev = data as PartStartEvent;
-          const part = ev.part;
-          if (!part || typeof part !== "object") break;
-          const pkind = (part as { part_kind?: string }).part_kind;
-          if (pkind === "text") {
-            const initial = ((part as { content?: unknown }).content as string) ?? "";
-            const bubbleId = crypto.randomUUID();
-            const intermediate = !finalSignaled;
-            setMessages((prev) => [
-              ...prev,
-              { id: bubbleId, role: "assistant", content: initial, intermediate }
-            ]);
-            if (intermediate) {
-              setLatestIntermediateId(bubbleId);
-              requestAnimationFrame(() => scrollChatToLatest("smooth"));
-            }
-            liveAssistantBubbleId = bubbleId;
-            parts.set(ev.index, { kind: "text", bubbleId, text: initial });
-          } else if (pkind === "thinking") {
-            const initial = ((part as { content?: unknown }).content as string) ?? "";
-            parts.set(ev.index, { kind: "thinking", text: initial });
-            if (initial) pushLog("INFO", "Agent", `thinking: ${initial}`);
-          } else if (pkind === "tool-call" || pkind === "builtin-tool-call") {
-            const toolName = ((part as { tool_name?: unknown }).tool_name as string) ?? "";
-            parts.set(ev.index, { kind: "tool-call", toolName, argsText: "" });
-          }
-          break;
-        }
-
-        case "part_delta": {
-          const ev = data as PartDeltaEvent;
-          const acc = parts.get(ev.index);
-          if (!acc) break;
-          const delta = ev.delta;
-          if (!delta || typeof delta !== "object") break;
-          const dkind = (delta as { part_delta_kind?: string }).part_delta_kind;
-          if (dkind === "text" && acc.kind === "text") {
-            const chunk = ((delta as { content_delta?: unknown }).content_delta as string) ?? "";
-            if (chunk) {
-              acc.text += chunk;
-              updateBubbleContent(acc.bubbleId, acc.text);
-            }
-          } else if (dkind === "thinking" && acc.kind === "thinking") {
-            const chunk = ((delta as { content_delta?: unknown }).content_delta as string) ?? "";
-            if (chunk) acc.text += chunk;
-          } else if (dkind === "tool_call" && acc.kind === "tool-call") {
-            const nameChunk =
-              ((delta as { tool_name_delta?: unknown }).tool_name_delta as string) ?? "";
-            const argsChunk = (delta as { args_delta?: unknown }).args_delta;
-            if (nameChunk) acc.toolName += nameChunk;
-            if (typeof argsChunk === "string") acc.argsText += argsChunk;
-          }
-          break;
-        }
-
-        case "part_end": {
-          const ev = data as PartEndEvent;
-          const acc = parts.get(ev.index);
-          const part = ev.part;
-          if (acc?.kind === "text" && part && typeof part === "object") {
-            const final = ((part as { content?: unknown }).content as string) ?? acc.text;
-            updateBubbleContent(acc.bubbleId, final);
-          } else if (acc?.kind === "thinking" && acc.text) {
-            pushLog("INFO", "Agent", `thinking: ${acc.text}`);
-          }
-          parts.delete(ev.index);
-          break;
-        }
-
-        case "final_result": {
-          finalSignaled = true;
-          // If a text bubble is already streaming, this turn's text part IS
-          // the final answer — promote it now so it doesn't get collapsed.
-          if (liveAssistantBubbleId) {
-            promoteBubbleToFinal(liveAssistantBubbleId);
-            setLatestIntermediateId((prev) => (prev === liveAssistantBubbleId ? null : prev));
-          }
-          break;
-        }
-
-        case "function_tool_call": {
-          const ev = data as FunctionToolCallEvent;
-          const toolName = ev.part?.tool_name ?? "tool";
-          const newId = crypto.randomUUID();
-          // Still recorded as a step: `messages` is what gets persisted, so it
-          // is also what the Activity tab can show after a reload.
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: newId,
-              role: "assistant",
-              content: `Calling \`${toolName}\`…`,
-              intermediate: true
-            }
-          ]);
-          setLatestIntermediateId(newId);
-          setLiveStatus(labelForTool(toolName));
-          break;
-        }
-
-        case "function_tool_result": {
-          const ev = data as FunctionToolResultEvent;
-          // PydanticAI 1.105 renamed `result` -> `part`; fall back to
-          // `result` for older backends.
-          const result = ev.part ?? ev.result;
-          if (!result) break;
-          if (result.part_kind === "retry-prompt") {
-            pushLog(
-              "WARNING",
-              `Tool:${result.tool_name ?? "unknown"}`,
-              `Tool failed`
-            );
-            break;
-          }
-          setLiveStatus("Working on it");
-          if (result.part_kind === "tool-return" || result.part_kind === "builtin-tool-return") {
-            const file = result.tool_name === "display_file" ? fileFromToolReturnContent(result.content) : null;
-            const html = file ? null : htmlFromToolReturnContent(result.content);
-            const ui = file
-              ? ({ kind: "file", url: file.url, mimeType: file.mimeType, name: file.name } as const)
-              : html
-                ? ({ kind: "html", html } as const)
-                : null;
-            // The text matters even when there is nothing to render: it is
-            // what the prediction summary and references panels read. Before
-            // this it was dropped, and those panels only ever filled from the
-            // salt quick-actions, which called MCP directly.
-            const stdout = file || html ? "" : (textFromToolReturnContent(result.content) ?? "");
-            if (ui || stdout) {
-              setLatestResult((prev) => ({
-                ok: true,
-                // Keep text from an earlier tool in the same turn when this
-                // one only produced a figure, so a run that plots *and*
-                // reports does not lose half of itself.
-                stdout: stdout || prev?.stdout || "",
-                stderr: "",
-                artifacts: [],
-                meta: { tool: result.tool_name },
-                ui: ui ?? prev?.ui
-              }));
-            }
-          }
-          break;
-        }
-
-        case "agent_run_result": {
-          const ev = data as AgentRunResultEvent;
-          sawAgentRunResult = true;
-          setLiveStatus(null);
-          if (ev.result?.new_messages?.length) {
-            setMessageHistory((prev) => [...prev, ...ev.result.new_messages]);
-          }
-          if (liveAssistantBubbleId) {
-            promoteBubbleToFinal(liveAssistantBubbleId);
-          }
-          setLatestIntermediateId(null);
-          break;
-        }
-
-        case "mcp_form_elicitation": {
-          const ev = data as McpFormElicitationEvent;
-          setPendingElicitation({
-            id: ev.elicitation_id,
-            message: ev.message,
-            schema: ev.requested_schema
-          });
-          break;
-        }
-
-        case "mcp_url_elicitation": {
-          const ev = data as McpUrlElicitationEvent;
-          // v1: synchronous confirm. The backend is blocked waiting for a
-          // POST to /api/chat/elicitation, so briefly blocking the UI is
-          // acceptable. Refine to a proper modal when the URL flow gets
-          // first-class UX.
-          const allow = window.confirm(
-            `${ev.message}\n\nAllow the agent to open:\n${ev.url}`
-          );
-          void handleElicitationSubmit(
-            ev.elicitation_id,
-            allow ? "accept" : "cancel"
-          );
-          if (allow) window.open(ev.url, "_blank", "noopener,noreferrer");
-          break;
-        }
-
-        case "mcp_tool_approval": {
-          const ev = data as McpToolApprovalEvent;
-          setPendingToolApproval({
-            id: ev.elicitation_id,
-            toolName: ev.tool_name,
-            message: ev.message,
-            args: ev.args ?? null,
-            decisionMetadata: (ev.decision_metadata as DecisionMetadata) ?? null,
-          });
-          break;
-        }
-      }
-    }
-
-    let currentEvent: string | null = null;
-    let dataLines: string[] = [];
-
-    function dispatchBlock() {
-      if (dataLines.length === 0) {
-        currentEvent = null;
-        return;
-      }
-      const raw = dataLines.join("\n");
-      dataLines = [];
-      const eventName = currentEvent;
-      currentEvent = null;
-      try {
-        dispatchEvent(eventName, JSON.parse(raw));
-      } catch {
-        // Drop malformed event blocks rather than aborting the stream.
-      }
-    }
+    const conversationId = targetChatSessionId;
+    const controller = new AbortController();
+    streamRef.current = { controller, conversationId };
+    setIsRunActive(true);
+    const renderer = createRunRenderer(makeRunHost(conversationId, controller), {
+      userBubbleId: userMessage.id
+    });
 
     try {
       const response = await fetch("/api/chat", {
@@ -949,10 +1052,24 @@ export default function HomePage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           project_name: projectName,
-          chat_session_id: targetChatSessionId,
+          chat_session_id: conversationId,
           user_prompt: text,
-        })
+        }),
+        signal: controller.signal
       });
+
+      if (response.status === 409) {
+        // Another view is already running a turn here. Show that run instead,
+        // and give the researcher their unsent text back.
+        setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
+        setInput(text);
+        if (streamRef.current?.controller === controller) streamRef.current = null;
+        if (!(await attachToRun(projectName, conversationId))) {
+          setIsRunActive(false);
+          setLiveStatus(null);
+        }
+        return;
+      }
 
       if (!response.ok || !response.body) {
         let detail = `Backend returned ${response.status}`;
@@ -966,55 +1083,13 @@ export default function HomePage() {
           ...prev,
           { id: crypto.randomUUID(), role: "assistant", content: `Agent error: ${detail}` }
         ]);
+        endRun(controller);
         return;
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const rawLine of lines) {
-          const line = rawLine.replace(/\r$/, "");
-          if (line === "") {
-            dispatchBlock();
-            continue;
-          }
-          if (line.startsWith(":")) continue; // SSE comment
-          if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            // Strip the single leading space SSE permits after "data:".
-            dataLines.push(line.slice(5).replace(/^ /, ""));
-          }
-        }
-      }
-      // Flush any trailing block held in the buffer.
-      if (buffer) {
-        const line = buffer.replace(/\r$/, "");
-        if (line.startsWith("event:")) currentEvent = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
-      }
-      dispatchBlock();
-
-      if (!sawAgentRunResult) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "Agent run did not complete."
-          }
-        ]);
-      }
+      await finishWatching(projectName, conversationId, controller, response.body, renderer);
     } catch {
+      if (controller.signal.aborted) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -1023,9 +1098,7 @@ export default function HomePage() {
           content: "Agent unavailable: failed to call /api/chat."
         }
       ]);
-    } finally {
-      setIsChatLoading(false);
-      setLiveStatus(null);
+      endRun(controller);
     }
   }
 
@@ -1092,7 +1165,7 @@ export default function HomePage() {
   useEffect(() => {
     if (showJumpToLatest) return;
     scrollChatToLatest("auto");
-  }, [messages, isChatLoading, showJumpToLatest, agentLogs]);
+  }, [messages, isRunActive, showJumpToLatest, agentLogs]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1220,16 +1293,18 @@ export default function HomePage() {
                   disabled={messageHistory.length === 0}
                   title={
                     messageHistory.length === 0
-                      ? "Have a conversation first; the skill is drafted from it."
-                      : "Distill this conversation into a reusable SKILL.md"
+                      ? "Have a conversation first; the report is written from it."
+                      : "Write up this conversation as a report you can save or turn into a skill"
                   }
-                  onClick={() => void openSaveAsSkill()}
+                  onClick={openGenerateReport}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 3H5a2 2 0 0 0-2 2v14l4-3h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
-                    <path d="M19 21V8a2 2 0 0 0-2-2h-3" />
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6" />
+                    <path d="M9 17h6" />
                   </svg>
-                  <span>Save as skill</span>
+                  <span>Generate report</span>
                 </button>
               </div>
             ) : null}
@@ -1262,6 +1337,11 @@ export default function HomePage() {
               )}
               {chatSessions.map((chatSession) => (
                 <div key={chatSession.id} className="conversation-list-item">
+                  {/* Every entry the status endpoint returns earns a dot: seen
+                      outcomes and stopped turns are left out there. */}
+                  {runStatus.byId.get(chatSession.id) && (
+                    <RunStatusDot status={runStatus.byId.get(chatSession.id)!.status} />
+                  )}
                   {editingChatSessionId === chatSession.id ? (
                     <div className="conversation-list-open conversation-list-open-static">
                       <input
@@ -1299,14 +1379,14 @@ export default function HomePage() {
                     <>
                       <button
                         type="button"
-                        className="conversation-list-edit"
+                        className="conversation-action-button primary"
                         onClick={() => void handleRenameConversation()}
                       >
                         Save
                       </button>
                       <button
                         type="button"
-                        className="conversation-list-edit ghost"
+                        className="conversation-action-button"
                         onClick={() => setEditingChatSessionId(null)}
                       >
                         Cancel
@@ -1352,7 +1432,7 @@ export default function HomePage() {
                 )}
                 {messages.length === 0 && (
                   <div className="chat-opener">
-                    <p className="chat-opener-lede">Ask about molten salts.</p>
+                    <p className="chat-opener-lede">Ask a question to get started.</p>
                     <div className="chat-opener-chips">
                       {SUGGESTIONS.map((suggestion) => (
                         <button
@@ -1385,7 +1465,7 @@ export default function HomePage() {
                   </div>
                 ))}
                 {/* One line, updated in place, gone when the answer lands. */}
-                {isChatLoading && (
+                {isRunActive && (
                   <div className="chat-bubble assistant thinking" role="status" aria-live="polite">
                     <span className="thinking-loader" aria-hidden="true">
                       <span />
@@ -1423,9 +1503,10 @@ export default function HomePage() {
           <div className="chat-input-row">
             <input
               className="input"
-              placeholder="Ask about molten salts… (e.g., 'show phase diagram for LiF-NaF')"
+              placeholder="Ask a question… (e.g., 'What can you help me with?')"
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              disabled={isRunActive}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   void sendUserMessage();
@@ -1433,24 +1514,36 @@ export default function HomePage() {
               }}
             />
             <div className="composer-actions">
-              {isChatLoading && <span className="composer-status">Agent working…</span>}
+              {isRunActive && <span className="composer-status">Agent working…</span>}
               <div className="composer-spacer" />
-              <button
-                className={`composer-send${isConversationListView ? " labelled" : ""}`}
-                onClick={() => void sendUserMessage()}
-                disabled={isChatLoading}
-                title={isConversationListView ? "Start chat" : "Send"}
-                aria-label={isConversationListView ? "Start chat" : "Send"}
-              >
-                {isConversationListView ? (
-                  <span>Start chat</span>
-                ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M5 12h13" />
-                    <path d="M13 6l6 6-6 6" />
+              {isRunActive ? (
+                <button
+                  className="composer-send composer-stop"
+                  onClick={() => void stopRun()}
+                  title="Stop the agent"
+                  aria-label="Stop"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="5" y="5" width="14" height="14" rx="2" />
                   </svg>
-                )}
-              </button>
+                </button>
+              ) : (
+                <button
+                  className={`composer-send${isConversationListView ? " labelled" : ""}`}
+                  onClick={() => void sendUserMessage()}
+                  title={isConversationListView ? "Start chat" : "Send"}
+                  aria-label={isConversationListView ? "Start chat" : "Send"}
+                >
+                  {isConversationListView ? (
+                    <span>Start chat</span>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h13" />
+                      <path d="M13 6l6 6-6 6" />
+                    </svg>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1506,7 +1599,7 @@ export default function HomePage() {
             hidden={workspaceTab !== "activity"}
             className="activity-view"
           >
-            {activitySteps.length === 0 && !isChatLoading && (
+            {activitySteps.length === 0 && !isRunActive && (
               <div className="activity-empty">
                 Nothing yet. Steps appear here while the agent works.
               </div>
@@ -1549,7 +1642,7 @@ export default function HomePage() {
                 </div>
               );
             })}
-            {isChatLoading && liveStatus && (
+            {isRunActive && liveStatus && (
               <div className="activity-step activity-step-live">
                 <span className="activity-step-dot live" aria-hidden="true" />
                 <div className="activity-step-body">{liveStatus}…</div>
@@ -1727,6 +1820,18 @@ export default function HomePage() {
           onSubmit={handleElicitationSubmit}
         />
       )}
+
+      <ReportModal
+        open={showReport}
+        projectName={activeProject?.name ?? ""}
+        draft={reportDraft}
+        errorMessage={reportError}
+        savedPath={reportSavedPath}
+        onRegenerate={(hint) => void draftReport(hint)}
+        onSave={saveReport}
+        onSaveAsSkill={saveReportAsSkill}
+        onClose={closeReport}
+      />
 
       <SkillEditorModal
         open={showSkillEditor}

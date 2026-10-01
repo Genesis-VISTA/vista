@@ -86,8 +86,8 @@ wait_for() {
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
 # VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
-# waits for the address line the launcher prints in that mode. The Windows
-# launcher has no window and ignores it.
+# waits for the address line the launcher prints in that mode. Both launchers,
+# vista and vista.ps1, read it.
 export VISTA_NO_WINDOW=1
 LAUNCHER=("$PACKAGE/vista")
 if [[ "$IS_WINDOWS" == true ]]; then
@@ -149,19 +149,29 @@ check "backend serves openapi"   http_ok "$BACKEND_URL/openapi.json"
 check "ui serves its home page"  http_ok "http://127.0.0.1:$UI_PORT/"
 check "ui reaches the backend"   http_ok "http://127.0.0.1:$UI_PORT/api/projects"
 
+# Whether the build packed the science projects, as it recorded in the manifest.
+# It decides which retrieval checks apply and whether the science data must be
+# absent.
+SCIENCE_PROJECTS="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; print("true" if json.load(open(sys.argv[1], encoding="utf-8")).get("science_projects") else "false")' \
+    "$PACKAGE/manifest.json"
+)"
+
 # Retrieval, through the backend's MCP client -- the same path the agent uses,
 # so it covers the store, the embedding weights loading offline, and the
-# knowledge base having actually been registered.
+# knowledge base having actually been registered. Arguments: the project the
+# call goes through, the knowledge base, and a query the corpus should answer.
 retrieval_returns_passages() {
-  local body
+  local project="$1" kb_slug="$2" query="$3" body
   body="$(
     curl -s -m 120 -X POST \
-      "$BACKEND_URL/projects/molten-salt/mcp/call" \
+      "$BACKEND_URL/projects/$project/mcp/call" \
       -H 'content-type: application/json' \
-      -d '{"name":"rag_search","arguments":{"query":"thermal conductivity of molten fluoride salts","kb_slug":"molten-salt-papers"}}'
+      -d "{\"name\":\"rag_search\",\"arguments\":{\"query\":\"$query\",\"kb_slug\":\"$kb_slug\"}}"
   )"
-  echo "$body" > "$LOGS/retrieval.json"
-  "$PACKAGE_PYTHON" - "$LOGS/retrieval.json" <<'PYCHECK'
+  echo "$body" > "$LOGS/retrieval-$kb_slug.json"
+  "$PACKAGE_PYTHON" - "$LOGS/retrieval-$kb_slug.json" <<'PYCHECK'
 import json
 import sys
 
@@ -175,7 +185,34 @@ if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
 PYCHECK
 }
-check "retrieval returns passages" retrieval_returns_passages
+check "AI-safety retrieval returns passages" retrieval_returns_passages \
+  ai-safety-autonomous-labs ai-safety "memory poisoning in LLM agents"
+
+if [[ "$SCIENCE_PROJECTS" == true ]]; then
+  check "molten-salt retrieval returns passages" retrieval_returns_passages \
+    molten-salt molten-salt-papers "thermal conductivity of molten fluoride salts"
+fi
+
+# A default build must carry no science data, in the package or in the state its
+# first run installed: no MSTDB, no molten-salt corpus or index, no forge-tune
+# CSV. Found by name anywhere under both trees, so a copy that landed somewhere
+# unexpected still counts.
+science_data_found() {
+  find "$PACKAGE" "$STATE" \( \
+      -path '*/vista-data/mstdb' -o \
+      -path '*/vista-data/molten-salt-papers' -o \
+      -path '*/knowledge-bases/molten-salt-papers' -o \
+      -path '*/hpc_jobs/forge-tune/*.csv' -o \
+      -name 'Molten_Salt_Thermophysical_Properties*' \
+    \) -print > "$LOGS/science-data-found.txt" 2>/dev/null || true
+  [[ -s "$LOGS/science-data-found.txt" ]]
+}
+if [[ "$SCIENCE_PROJECTS" == true ]]; then
+  skip "the package carries no science data" "built with --science-projects"
+else
+  no_science_data() { ! science_data_found; }
+  check "the package carries no science data" no_science_data
+fi
 
 # The launcher has nothing left to say about file transfer, and this asserts the
 # silence. OLCF file operations are HTTPS requests made inside a tool call, so

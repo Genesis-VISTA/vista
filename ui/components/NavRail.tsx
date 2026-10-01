@@ -7,10 +7,12 @@ import {
   notifyActiveChatSessionChanged,
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
+import { useChatRunStatus } from "@/lib/chat-run-status";
 import { useActiveProject } from "@/lib/projects";
 import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useCurrentUser } from "@/lib/user";
 import { HpcStatusSection } from "./HpcStatusSection";
+import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -162,6 +164,7 @@ export function NavRail() {
   const pathname = usePathname();
   const activeProject = useActiveProject();
   const { user, loading: userLoading } = useCurrentUser();
+  const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Set when settings were opened from a cluster's card, to expand only that section. */
   const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
@@ -261,10 +264,16 @@ export function NavRail() {
     );
   }
 
-  function handleOpenChatList() {
+  /**
+   * Opens the conversation list, or the one conversation waiting on the
+   * researcher when there is exactly one, so its prompt is a click away. This
+   * only ever happens on a click: a status change never navigates.
+   */
+  function handleOpenChat() {
     const projectName = activeProject?.name ?? null;
     if (projectName) {
-      writeActiveChatSessionId(projectName, null);
+      const waiting = runSummary.needsYou.length === 1 ? runSummary.needsYou[0] : null;
+      writeActiveChatSessionId(projectName, waiting);
       notifyActiveChatSessionChanged();
     }
     // With no project, chat redirects to the picker and comes back here.
@@ -272,6 +281,13 @@ export function NavRail() {
   }
 
   const projectEntries = PROJECT_LOCAL_ENTRIES.slice(1);
+
+  // The dot sits inside the aria-hidden icon, so its meaning goes in the name.
+  // The status arrives after hydration, so the server and first client render
+  // both say plain "Chat".
+  const chatLabel = runSummary.status
+    ? `Chat, ${RUN_STATUS_LABELS[runSummary.status].toLowerCase()}`
+    : "Chat";
 
   // Nothing until the user has loaded, so a hidden cluster never flashes in.
   const hidden = new Set(user?.hpc_hidden_clusters ?? []);
@@ -357,16 +373,21 @@ export function NavRail() {
           </div>
         )}
         {/* Chat is a button rather than a link because opening it means
-            leaving the current conversation and landing on the list. */}
+            leaving the current conversation and landing on the list, or on
+            the conversation that needs the researcher. Its dot is the most
+            urgent status across the project's conversations. */}
         <button
           type="button"
           className={`nav-rail-entry${isEntryActive("/") ? " active" : ""} project-child`}
-          onClick={handleOpenChatList}
-          aria-label="Chat"
-          {...tipProps("Chat")}
+          onClick={handleOpenChat}
+          aria-label={chatLabel}
+          {...tipProps(chatLabel)}
         >
           <span className="nav-rail-icon" aria-hidden="true">
             {PROJECT_LOCAL_ENTRIES[0].icon}
+            {runSummary.status && (
+              <RunStatusDot status={runSummary.status} className="nav-rail-run-dot" />
+            )}
           </span>
           {!collapsed && <span className="nav-rail-label">{PROJECT_LOCAL_ENTRIES[0].label}</span>}
         </button>

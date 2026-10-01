@@ -13,7 +13,7 @@ async function openConversation(page: import("@playwright/test").Page) {
     .filter({ hasText: "molten-salt" })
     .getByRole("button", { name: "Open" })
     .click();
-  await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeVisible();
+  await expect(page.getByPlaceholder(/Ask a question/)).toBeVisible();
 }
 
 /** Open the existing conversation, so the thread rather than the list shows. */
@@ -54,7 +54,7 @@ test.describe("chat workspace", () => {
   test("steps land in Activity, not in the conversation", async ({ page }) => {
     await openConversation(page);
 
-    await page.getByPlaceholder(/Ask about molten salts/).fill("What is the density of FLiBe?");
+    await page.getByPlaceholder(/Ask a question/).fill("What is the density of FLiBe?");
     await page.getByRole("button", { name: "Start chat" }).click();
     await stub!.waitForStream();
     await streamOneTurn(stub!);
@@ -98,7 +98,7 @@ test.describe("chat workspace", () => {
     const text = await first.textContent();
     await first.click();
 
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toHaveValue(text!);
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue(text!);
     // Nothing was sent.
     expect(await stub!.requests()).not.toContain("POST /api/chat");
   });
@@ -116,7 +116,7 @@ test.describe("chat workspace", () => {
   test("a tool with no label reads as its own name", async ({ page }) => {
     await openConversation(page);
 
-    await page.getByPlaceholder(/Ask about molten salts/).fill("Do something unusual");
+    await page.getByPlaceholder(/Ask a question/).fill("Do something unusual");
     await page.getByRole("button", { name: "Start chat" }).click();
     await stub!.waitForStream();
 

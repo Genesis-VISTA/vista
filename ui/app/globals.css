@@ -1081,15 +1081,29 @@ main {
   min-height: 0;
 }
 
+/* A hairline underline marks the field at rest; on focus it turns brand
+   and thickens, which is the only focus cue since the outline is removed.
+   A textarea keeps a box instead, since an underline under several lines
+   doesn't show the field's extent. The composer opts out below: its row
+   draws the box. */
 .input {
   width: 100%;
-  padding: 0;
+  padding: 6px 0 7px;
   border: 0;
+  border-bottom: 1px solid var(--line-strong);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
   font-size: 14px;
   font-family: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+textarea.input {
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-control);
+  background: var(--surface);
 }
 
 .button {
@@ -1474,6 +1488,18 @@ main {
   line-height: 1.5;
 }
 
+/* How a turn ended when it did not finish: "Stopped", "Interrupted when VISTA
+   quit". A quiet line in the thread, not a message from either side. */
+.chat-bubble.system {
+  align-self: center;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .chat-bubble.tool {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1855,6 +1881,65 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 4px;
+}
+
+/* A report is read, not filled in, so it gets more width than the skill form. */
+.report-modal {
+  width: min(860px, 95vw);
+}
+
+.report-summary {
+  margin: 0;
+  color: var(--muted);
+}
+
+.report-status {
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-body {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.report-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+}
+
+.report-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.report-body th,
+.report-body td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.report-body pre {
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.report-regenerate {
+  display: flex;
+  gap: 8px;
+}
+
+.report-regenerate > .input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .modal-body {
@@ -2478,6 +2563,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  position: relative;
   width: 15px;
   height: 15px;
   color: var(--muted-2);
@@ -2604,6 +2690,63 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted);
 }
 
+/* A conversation's run status (RunStatusDot). Amber glows while the agent
+   works and gains a ring when it needs the researcher; green and red mark an
+   outcome they have not opened yet. */
+.run-dot {
+  flex: none;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.run-dot[data-status="working"] {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 35%, transparent);
+  animation: run-dot-glow 1.6s ease-in-out infinite;
+}
+
+.run-dot[data-status="needs_you"] {
+  background: var(--warning);
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--warning-ink);
+}
+
+.run-dot[data-status="done"] {
+  background: var(--success);
+}
+
+.run-dot[data-status="failed"],
+.run-dot[data-status="interrupted"] {
+  background: var(--danger);
+}
+
+@keyframes run-dot-glow {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 45%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warning) 10%, transparent); }
+}
+
+/* The glow stays, still, so "working" still reads differently from "needs you". */
+@media (prefers-reduced-motion: reduce) {
+  .run-dot[data-status="working"] {
+    animation: none;
+  }
+}
+
+/* On the rail the dot sits on the Chat icon's corner, so it shows collapsed too. */
+.nav-rail-run-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  margin: 0;
+}
+
 .conversation-action-button,
 .conversation-list-edit,
 .conversation-list-delete,
@@ -2701,15 +2844,14 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: var(--r-control);
 }
 
-.conversation-list-edit.ghost {
-  background: var(--surface);
-  border-color: var(--line);
-  color: var(--ink-2);
-  color: var(--brand-tint);
+/* Save / Cancel while renaming: text buttons, so they keep their width
+   instead of being squeezed by the title field. */
+.conversation-list-item > .conversation-action-button {
+  flex: 0 0 auto;
 }
 
 .conversation-list-title-input {
-  min-width: 220px;
+  min-width: 0;
   max-width: 100%;
   height: 34px;
   padding: 5px 10px;
@@ -4230,12 +4372,48 @@ button.chat-bubble.intermediate.collapsed:hover {
   outline-offset: 2px;
 }
 
+/* Stop takes Send's place while a run is going: same size, but it reads as a
+   different action, not as a primary one. */
+.composer-send.composer-stop {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+}
+
+.composer-send.composer-stop:hover:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.input:disabled {
+  cursor: default;
+}
+
 .input::placeholder {
   color: var(--muted);
 }
 
 .input:focus {
   outline: none;
+  border-bottom-color: var(--brand);
+  box-shadow: 0 1px 0 0 var(--brand);
+}
+
+textarea.input:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input {
+    transition: none;
+  }
+}
+
+.chat-input-row .input,
+.chat-input-row .input:focus {
+  padding: 0;
+  border-bottom: 0;
+  box-shadow: none;
 }
 
 /* ---------- Workspace pane fills ------------------------------------

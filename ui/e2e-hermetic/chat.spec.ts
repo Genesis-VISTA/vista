@@ -34,7 +34,7 @@ test.describe("chat flow", () => {
     await card.getByRole("button", { name: "Open" }).click();
 
     // Landing on the conversation list means the project is active.
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await expect(composer).toBeVisible();
     await expect(page.locator(".project-switcher-button")).toHaveText("molten-salt");
 
@@ -73,7 +73,7 @@ test.describe("chat flow", () => {
       .getByRole("button", { name: "Open" })
       .click();
 
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await composer.fill(QUESTION);
     await page.getByRole("button", { name: "Start chat" }).click();
 
@@ -101,7 +101,7 @@ test.describe("chat flow", () => {
       .getByRole("button", { name: "Open" })
       .click();
 
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await composer.fill(QUESTION);
     await page.getByRole("button", { name: "Start chat" }).click();
 

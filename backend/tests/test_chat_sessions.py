@@ -1,4 +1,5 @@
 import pytest
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 
 from vista_backend.db.schemas import ChatSessionCreate, ChatSessionUpdate, ProjectCreate
 from vista_backend.services import chat_session as chat_session_service
@@ -47,7 +48,9 @@ async def test_create_and_list_chat_sessions_support_multiple_per_project(
 
 
 @pytest.mark.anyio
-async def test_update_chat_session_persists_history_and_messages(session, alice):
+async def test_update_chat_session_persists_messages_but_ignores_history(
+    session, alice
+):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="persist-project", description=None, system_prompt=None),
@@ -104,7 +107,7 @@ async def test_update_chat_session_persists_history_and_messages(session, alice)
     )
 
     assert updated.id == reloaded.id
-    assert reloaded.message_history[0]["kind"] == "request"
+    assert reloaded.message_history == [], "a PUT never writes model history"
     assert reloaded.messages[1]["content"] == "hi there"
     assert reloaded.latest_result["ui"]["html"] == "<div>plot</div>"
 
@@ -125,18 +128,19 @@ async def test_update_chat_session_title_only_preserves_existing_history(
         user_id=alice.id,
     )
 
+    await chat_session_service.save_message_history(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        chat_session_id=created.id,
+        message_history=[ModelRequest(parts=[UserPromptPart(content="hello")])],
+    )
     created = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
         user_id=alice.id,
         chat_session_id=created.id,
         updates=ChatSessionUpdate(
-            message_history=[
-                {
-                    "kind": "request",
-                    "parts": [{"part_kind": "user-prompt", "content": "hello"}],
-                }
-            ],
             messages=[
                 {
                     "id": "m1",
@@ -303,3 +307,57 @@ async def test_delete_chat_session_removes_only_target_session(session, alice):
     )
 
     assert [row.id for row in listed] == [second.id]
+
+
+@pytest.mark.anyio
+async def test_ack_run_clears_the_unseen_flag_and_stored_events(session, alice):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="ack-project", description=None, system_prompt=None),
+        alice,
+    )
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    row.run_state, row.run_unseen, row.run_events = "done", True, [{"event": "x"}]
+    session.add(row)
+    await session.flush()
+
+    acked = await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        chat_session_id=row.id,
+        updates=ChatSessionUpdate(ack_run=True),
+    )
+
+    assert (acked.run_state, acked.run_unseen, acked.run_events) == (
+        "idle",
+        False,
+        None,
+    )
+
+
+@pytest.mark.anyio
+async def test_ack_run_leaves_a_running_turn_alone(session, alice):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="ack-running", description=None, system_prompt=None),
+        alice,
+    )
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    row.run_state = "running"
+    session.add(row)
+    await session.flush()
+
+    acked = await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        user_id=alice.id,
+        chat_session_id=row.id,
+        updates=ChatSessionUpdate(ack_run=True),
+    )
+
+    assert acked.run_state == "running"

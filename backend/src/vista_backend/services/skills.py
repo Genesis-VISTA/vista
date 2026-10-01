@@ -7,7 +7,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from pydantic import ValidationError
 from pydantic_ai.messages import ModelMessage
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +15,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.skill_authoring import SkillDraft, generate_skill_draft
-from ..agents.skill_import import SkillImportError, import_skill_from_github
+from ..agents.skill_import import (
+    SkillImportError,
+    import_skill_from_files,
+    import_skill_from_github,
+)
 from ..agents.skills import (
     ParseError,
     Skill,
@@ -142,7 +146,37 @@ async def import_skill(session: AsyncSession, url: str) -> SkillTable:
         skill = import_skill_from_github(url, settings.data_dir / path)
     except SkillImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return await _register_imported(session, skill, path, repo_url=url)
 
+
+async def import_skill_upload(
+    session: AsyncSession, files: list[UploadFile], paths: list[str]
+) -> SkillTable:
+    """
+    Import a skill from a folder uploaded by the browser. `paths[i]` is
+    `files[i]`'s path relative to the picked folder. Private, like a GitHub
+    import, but with no `repo_url`.
+    """
+    if len(paths) != len(files):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Got {len(files)} files but {len(paths)} paths.",
+        )
+    path = new_storage_path()
+    try:
+        skill = import_skill_from_files(
+            ((rel, upload.file) for rel, upload in zip(paths, files)),
+            settings.data_dir / path,
+        )
+    except SkillImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await _register_imported(session, skill, path, repo_url=None)
+
+
+async def _register_imported(
+    session: AsyncSession, skill: Skill, path: str, *, repo_url: str | None
+) -> SkillTable:
+    """Record a skill already copied to `path`; remove the copy on a name clash."""
     if await get_skill_optional(session, skill.name) is not None:
         shutil.rmtree(settings.data_dir / path, ignore_errors=True)
         raise HTTPException(
@@ -150,7 +184,7 @@ async def import_skill(session: AsyncSession, url: str) -> SkillTable:
         )
 
     row = build_skill_row(
-        skill, path=path, author=None, repo_url=url, is_public=False, now=now_iso()
+        skill, path=path, author=None, repo_url=repo_url, is_public=False, now=now_iso()
     )
     await _insert_skill_row(session, row)
     return row

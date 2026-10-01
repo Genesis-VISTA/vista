@@ -20,13 +20,13 @@ function arg(name) {
   const i = process.argv.indexOf(`--${name}`);
   const value = i >= 0 ? process.argv[i + 1] : undefined;
   if (!value) {
-    console.error(`usage: node scripts/package.js --platform <darwin|linux> --arch <arm64|x64> --out <dir>`);
+    console.error(`usage: node scripts/package.js --platform <darwin|linux|win32> --arch <arm64|x64> --out <dir>`);
     process.exit(2);
   }
   return value;
 }
 
-const PLATFORMS = /** @type {const} */ (['darwin', 'linux']);
+const PLATFORMS = /** @type {const} */ (['darwin', 'linux', 'win32']);
 const ARCHES = /** @type {const} */ (['arm64', 'x64']);
 
 /**
@@ -70,6 +70,14 @@ if (platform === 'darwin') {
   options.appBundleId = 'gov.ornl.vista';
   // No `osxSign`: leaving it unset is what keeps packager from signing.
   const icon = path.join(APP_DIR, 'assets', 'icon.icns');
+  if (existsSync(icon)) options.icon = icon;
+}
+
+if (platform === 'win32') {
+  // Shown in Task Manager and on the SmartScreen prompt an unsigned VISTA.exe
+  // meets, in place of Electron's own.
+  options.win32metadata = { CompanyName: 'ORNL', FileDescription: 'VISTA', ProductName: 'VISTA' };
+  const icon = path.join(APP_DIR, 'assets', 'icon.ico');
   if (existsSync(icon)) options.icon = icon;
 }
 

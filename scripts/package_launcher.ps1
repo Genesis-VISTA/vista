@@ -1,9 +1,16 @@
 # Start VISTA from an unpacked Windows package. Installed at the package root
-# as `vista.ps1`, with `vista.cmd` beside it for cmd and double-clicking. The
+# as `vista.ps1`, behind `vista.cmd`, which is the entry point: run that, from
+# cmd, PowerShell, or by double-clicking. It clears the mark of the web from
+# this file and names an execution policy this script cannot run under, so run
+# directly this script can fail with only PowerShell's own message. The
 # Windows counterpart of package_launcher.sh, step for step.
 #
-#   .\vista.ps1            first-run setup if needed, then start
-#   .\vista.ps1 --help     show this
+#   .\vista.cmd            first-run setup if needed, then start and open the window
+#   .\vista.cmd --help     show this
+#
+# Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
+# console. VISTA is a desktop application: in a session that cannot show its
+# window, such as SSH, it says why and stops.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -235,6 +242,28 @@ $env:VISTA_DEV_MCP_DOCKERFILE = ' '
 $env:VISTA_DEV_MCP_IMAGE = 'vista-sandbox:latest'
 $LOGS = "$STATE\logs"
 
+# --- window ------------------------------------------------------------------
+
+# VISTA is a desktop application: there is no browser mode to fall back to, so a
+# session that cannot show the window is refused here, before anything is
+# started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
+# alone and is for the build's smoke test, which has no one to look at a window.
+# The manifest writes it with /, which cmd can misread as a switch.
+$WINDOW_EXE = if ($manifest.window) { $manifest.window.exe.Replace('/', '\') } else { '' }
+if ($env:VISTA_NO_WINDOW -ne '1') {
+  if (-not $WINDOW_EXE -or -not (Test-Path "$PACKAGE\$WINDOW_EXE")) {
+    Die 'this package has no VISTA window; rebuild it with build_local_package.sh.'
+  }
+  # A window started over SSH, or from a service, lands on a desktop no one
+  # is looking at, if on any.
+  if ($env:SSH_CONNECTION -or $env:SSH_CLIENT) {
+    Die 'cannot open the VISTA window: this is a remote shell session.'
+  }
+  if (-not [Environment]::UserInteractive) {
+    Die 'cannot open the VISTA window: this session has no desktop (is it running as a service?).'
+  }
+}
+
 # --- first-run setup ---------------------------------------------------------
 
 New-Item -ItemType Directory -Force -Path $STATE, $LOGS | Out-Null
@@ -250,9 +279,23 @@ $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 # under the package folder, they would pass the 260-character limit. Extracted
 # straight into the state directory they fit. The tar.exe Windows ships reads
 # it; named by path so no other tar on PATH is picked up.
-$missing = @('vista-data', 'knowledge-bases', 'huggingface') | Where-Object { -not (Test-Path "$STATE\$_") }
+# The parts are the members payload\parts.txt lists, one per corpus, rather than
+# the tar's top-level folders: an upgraded state directory already has
+# vista-data and knowledge-bases, and a corpus a newer package adds
+# (vista-data/ai-safety) must still be installed. An installed member is never
+# replaced or removed.
 $payloadTar = "$PACKAGE\payload\payload.tar"
-if ($missing.Count -gt 0 -and (Test-Path $payloadTar)) {
+$missing = @()
+if (Test-Path $payloadTar) {
+  $partsFile = "$PACKAGE\payload\parts.txt"
+  if (-not (Test-Path $partsFile)) {
+    Die "this package has no payload\parts.txt; rebuild it with build_local_package.sh."
+  }
+  $missing = @(Get-Content -Encoding UTF8 $partsFile |
+    Where-Object { $_.Trim() -and -not (Test-Path "$STATE\$($_.Trim())") } |
+    ForEach-Object { $_.Trim() })
+}
+if ($missing.Count -gt 0) {
   Log "First run: installing $($missing -join ' ')..."
   & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $payloadTar -C $STATE @missing
   if ($LASTEXITCODE -ne 0) { Die "could not extract the payload into $STATE" }
@@ -268,8 +311,22 @@ if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
   $present = ($LASTEXITCODE -eq 0)
   if (-not $present) {
     Log 'First run: importing the code-execution sandbox image...'
-    & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE *>> "$LOGS\setup.log"
-    $loaded = ($LASTEXITCODE -eq 0)
+    # msb reports progress on stderr, in UTF-8. Redirected with `*>>`,
+    # PowerShell 5.1 wraps every stderr line in a NativeCommandError record and
+    # decodes it with the OEM code page, so a successful import reads as a
+    # failure in setup.log. Stringified and decoded as UTF-8, the log holds
+    # msb's own words.
+    # Restored in finally: the code page belongs to the whole console, so a
+    # failure or Ctrl-C here would otherwise leave the parent cmd on UTF-8.
+    $consoleEncoding = [Console]::OutputEncoding
+    try {
+      [Console]::OutputEncoding = $Utf8NoBom
+      & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE 2>&1 | ForEach-Object { "$_" } |
+        Out-File -Append -Encoding utf8 "$LOGS\setup.log"
+      $loaded = ($LASTEXITCODE -eq 0)
+    } finally {
+      [Console]::OutputEncoding = $consoleEncoding
+    }
   }
   $ErrorActionPreference = 'Stop'
   if (-not $present -and -not $loaded) { Die "could not import the sandbox image; see $LOGS\setup.log" }
@@ -367,11 +424,23 @@ $services = @()
 # loses its first and last quote characters -- which here are the ones around
 # the executable and the log file -- and cmd refuses the line, so no service
 # starts and no log is written.
+#
+# cmd's console is suppressed with CreateNoWindow rather than Start-Process
+# -WindowStyle Hidden. The latter hands cmd a SW_HIDE show state, cmd passes it
+# on to what it starts, and Windows applies it to that program's first
+# top-level window -- so the VISTA window could open hidden. CreateNoWindow
+# gives cmd a console with no window and sets no show state at all.
 function Start-VistaService([string]$Name, [string]$Command) {
-  $proc = Start-Process -FilePath 'cmd.exe' `
-    -ArgumentList '/d', '/s', '/c', "`"$Command > `"$LOGS\$Name.log`" 2>&1`"" `
-    -WorkingDirectory $PACKAGE -WindowStyle Hidden -PassThru
+  $info = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe'
+  $info.Arguments = "/d /s /c `"$Command > `"$LOGS\$Name.log`" 2>&1`""
+  $info.WorkingDirectory = $PACKAGE
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  # Started directly, the process keeps its handle, so ExitCode can still be
+  # read after it has gone -- the window's exit code says why it closed.
+  $proc = [System.Diagnostics.Process]::Start($info)
   $script:services += $proc
+  return $proc
 }
 
 # taskkill /T takes each service's whole tree -- cmd, the service, and the
@@ -405,26 +474,54 @@ Log "VISTA $VERSION"
 Log "Starting services (logs in $LOGS)..."
 
 try {
-  Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
+  $null = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
     "--transport=http --port $MCP_PORT")
   Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server'
 
   if ($FIRST_RUN) {
     Log 'First run: preparing the database and corpus (this takes a minute)...'
   }
-  Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
+  $null = Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
   Wait-For "$env:VISTA_BACKEND_URL/openapi.json" 600 "$LOGS\backend.log" 'the backend'
 
   $env:PORT = $UI_PORT
   $env:HOSTNAME = '127.0.0.1'
-  Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
+  $null = Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
   Wait-For "http://127.0.0.1:$UI_PORT/" 120 "$LOGS\ui.log" 'the web interface'
 
-  Log ''
-  Log "VISTA is running at http://localhost:$UI_PORT"
-  Log 'Press Ctrl-C to stop.'
+  # 127.0.0.1, not localhost: it is what the UI binds, and localhost can
+  # resolve to ::1 first. It is also the origin the window's storage is kept
+  # under, so it has to be the same on every run.
+  $UI_URL = "http://127.0.0.1:$UI_PORT"
 
-  $services | Wait-Process
+  if ($env:VISTA_NO_WINDOW -eq '1') {
+    Log ''
+    Log "VISTA is running at $UI_URL (no window: VISTA_NO_WINDOW is set)"
+    Log 'Press Ctrl-C to stop.'
+    $services | Wait-Process
+    exit 0
+  }
+
+  # Under cmd like the services, so its output lands in window.log; cmd waits
+  # for it and passes its exit code on.
+  $window = Start-VistaService 'window' "`"$PACKAGE\$WINDOW_EXE`" --url=$UI_URL"
+  Log ''
+  Log "VISTA is open in its own window ($UI_URL)."
+  Log 'Close the window, or press Ctrl-C here, to stop.'
+
+  # The window closing or quitting ends the session; the finally below stops
+  # the rest. 75 is what it exits with when another VISTA window already holds
+  # the single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
+  # Polled rather than a bare WaitForExit(): Ctrl-C cannot interrupt a blocking
+  # .NET call in PowerShell 5.1, only the gap between two statements.
+  while (-not $window.WaitForExit(500)) {}
+  $windowStatus = $window.ExitCode
+  if ($windowStatus -eq 75) {
+    Die 'VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it.'
+  }
+  if ($windowStatus -ne 0) {
+    Die "the VISTA window stopped unexpectedly (exit $windowStatus); see $LOGS\window.log."
+  }
 } finally {
   Stop-VistaServices
 }
