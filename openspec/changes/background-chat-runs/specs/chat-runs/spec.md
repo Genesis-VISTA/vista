@@ -149,7 +149,7 @@ clear when the prompt is answered. The unseen state SHALL survive a restart of V
 ### Requirement: Nav rail summary
 
 The nav rail's Chat entry SHALL show one summary dot for the most urgent status across the
-project's conversations, in the order: needs you, failed or interrupted, done. When exactly one
+project's conversations, in the order: needs you, failed or interrupted, done, then working. When exactly one
 conversation needs the researcher, activating the Chat entry SHALL open that conversation;
 otherwise it SHALL open the conversation list. VISTA SHALL NOT navigate on its own when a run's
 status changes.

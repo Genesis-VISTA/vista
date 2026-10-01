@@ -65,14 +65,14 @@
 
 ## 8. UI: status dots and nav rail
 
-- [ ] 8.1 Add the conversation-list dots:
+- [x] 8.1 Add the conversation-list dots:
   - amber glowing (working);
   - amber with a ring (needs you);
   - green (done, unseen);
   - red (failed or interrupted, unseen).
 
   Use the existing tokens in `ui/app/globals.css`, and keep the glow still under `prefers-reduced-motion`. Verify with a hermetic test per state, using stubbed status responses.
-- [ ] 8.2 Add the summary dot on the Chat entry in `ui/components/NavRail.tsx`, with urgency order needs you, then failed or interrupted, then done. When exactly one conversation needs you, activating Chat opens it; otherwise it opens the list. Never navigate on a status change. Verify with a hermetic test from the Skills page.
+- [x] 8.2 Add the summary dot on the Chat entry in `ui/components/NavRail.tsx`, with urgency order needs you, then failed or interrupted, then done. When exactly one conversation needs you, activating Chat opens it; otherwise it opens the list. Never navigate on a status change. Verify with a hermetic test from the Skills page.
 
 ## 9. Verification
 

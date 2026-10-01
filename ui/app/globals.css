@@ -2359,6 +2359,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  position: relative;
   width: 15px;
   height: 15px;
   color: var(--muted-2);
@@ -2483,6 +2484,63 @@ button.chat-bubble.intermediate.collapsed:hover {
 .conversation-list-date {
   font-size: 11px;
   color: var(--muted);
+}
+
+/* A conversation's run status (RunStatusDot). Amber glows while the agent
+   works and gains a ring when it needs the researcher; green and red mark an
+   outcome they have not opened yet. */
+.run-dot {
+  flex: none;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.run-dot[data-status="working"] {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 35%, transparent);
+  animation: run-dot-glow 1.6s ease-in-out infinite;
+}
+
+.run-dot[data-status="needs_you"] {
+  background: var(--warning);
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--warning-ink);
+}
+
+.run-dot[data-status="done"] {
+  background: var(--success);
+}
+
+.run-dot[data-status="failed"],
+.run-dot[data-status="interrupted"] {
+  background: var(--danger);
+}
+
+@keyframes run-dot-glow {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 45%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warning) 10%, transparent); }
+}
+
+/* The glow stays, still, so "working" still reads differently from "needs you". */
+@media (prefers-reduced-motion: reduce) {
+  .run-dot[data-status="working"] {
+    animation: none;
+  }
+}
+
+/* On the rail the dot sits on the Chat icon's corner, so it shows collapsed too. */
+.nav-rail-run-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  margin: 0;
 }
 
 .conversation-action-button,

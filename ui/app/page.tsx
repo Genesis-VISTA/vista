@@ -66,7 +66,8 @@ import {
   type RunPrompt,
   type RunRenderer,
 } from "@/lib/run-renderer";
-import { refreshChatRunStatus } from "@/lib/chat-run-status";
+import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
+import { RunStatusDot } from "@/components/RunStatusDot";
 
 type WorkspaceTab = "artifacts" | "activity" | "jobs";
 
@@ -185,6 +186,8 @@ export default function HomePage() {
   const activeChatSessionId = useActiveChatSessionId(activeProject?.name ?? null);
   const isConversationListView = !!activeProject && !activeChatSessionId;
   const isConversationOpen = !!activeProject && !!activeChatSessionId;
+  /** Which conversations are working, need the researcher, or have an unseen outcome. */
+  const runStatus = useChatRunStatus(activeProject?.name ?? null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatSessions, setChatSessions] = useState<PersistedChatSessionSummary[]>([]);
@@ -1334,6 +1337,11 @@ export default function HomePage() {
               )}
               {chatSessions.map((chatSession) => (
                 <div key={chatSession.id} className="conversation-list-item">
+                  {/* Every entry the status endpoint returns earns a dot: seen
+                      outcomes and stopped turns are left out there. */}
+                  {runStatus.byId.get(chatSession.id) && (
+                    <RunStatusDot status={runStatus.byId.get(chatSession.id)!.status} />
+                  )}
                   {editingChatSessionId === chatSession.id ? (
                     <div className="conversation-list-open conversation-list-open-static">
                       <input
