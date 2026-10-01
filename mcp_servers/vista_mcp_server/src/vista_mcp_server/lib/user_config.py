@@ -3,6 +3,7 @@ Per-user HPC configuration plumbed in via MCP request metadata.
 
 TODO: Temporary workaround, we are passing the user config in via MCP metadata.
 """
+import re
 from typing import Any, Literal
 
 from fastmcp import Context
@@ -10,6 +11,16 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from .types import GlobusTokens
+
+
+_SAFE_REMOTE_DIR = re.compile(r"/[A-Za-z0-9._+,:=@/-]*")
+"""
+What a remote directory may contain. It is pasted into the job's bash prefix,
+into `#SBATCH` lines on Lux, and into Slurm's `--output` patterns, so anything
+a shell or Slurm would read specially -- whitespace, quotes, `$`, backticks,
+`;`, `*`, and `%`, which Slurm expands in output paths -- is refused rather
+than escaped in four different syntaxes.
+"""
 
 
 class UserConfig(BaseModel):
@@ -82,7 +93,9 @@ class UserConfig(BaseModel):
         A user setting with no default: where a project keeps its files is
         specific to the project and the filesystem, so VISTA does not guess.
         Must be absolute, since Globus, IRI and SFTP would each read a relative
-        path against a different starting point.
+        path against a different starting point, and must not be `/`, which has
+        no parent for `<dir>.jobs` and `<dir>.out` to sit in. Only plain path
+        characters are accepted (see `_SAFE_REMOTE_DIR`).
         """
         setting, label = {
             "odo": (self.odo_remote_dir, "Odo remote directory"),
@@ -100,7 +113,19 @@ class UserConfig(BaseModel):
                 f"The {label} {setting!r} is not an absolute path. Set it in the "
                 "VISTA user settings to a path starting with /."
             )
-        return setting.rstrip("/") or "/"
+        if not _SAFE_REMOTE_DIR.fullmatch(setting):
+            raise ToolError(
+                f"The {label} {setting!r} contains characters VISTA cannot pass to "
+                "a job safely. Use only letters, digits and . _ + , : = @ - / "
+                "(no spaces, quotes, $ or %)."
+            )
+        path = setting.rstrip("/")
+        if not path:
+            raise ToolError(
+                f"The {label} cannot be /. Set it in the VISTA user settings to a "
+                "folder such as your project's proj-shared/vista."
+            )
+        return path
 
     def require_nersc_iri_token(self) -> str:
         if not self.nersc_iri_token:

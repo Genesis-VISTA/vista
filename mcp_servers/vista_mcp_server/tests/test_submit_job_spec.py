@@ -108,7 +108,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     assert name == "vista-example"
     assert spec["executable"] == "bash"
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{ODO}.out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT={ODO}.out/"$SLURM_JOB_ID"' in job_cmd
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
     assert spec["attributes"]["directory"] == f"{ODO}.jobs"
     assert spec["attributes"]["stdout_path"] == f"{ODO}.out/log-%j.out"
@@ -153,7 +153,7 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     spec, name = iri.submitted[0]
     assert name == "vista-forge-tune"
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{NERSC}.out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT={NERSC}.out/"$SLURM_JOB_ID"' in job_cmd
     assert spec["attributes"]["directory"] == f"{NERSC}.jobs"
     slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
         encoding="utf-8"
@@ -195,7 +195,7 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     )
     spec, _ = iri.submitted[0]
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{FRONTIER}.out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT={FRONTIER}.out/"$SLURM_JOB_ID"' in job_cmd
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
     assert spec["attributes"]["directory"] == f"{FRONTIER}.jobs"
     assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(

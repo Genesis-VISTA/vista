@@ -121,8 +121,9 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
     # by VISTA, never uploaded.
     assert lux.puts == [f"{BASE}.jobs/lux-demo/src/run.py"]
-    # Only the source tree is made ahead of time; Slurm makes out/.
-    assert not lux.local(f"{BASE}.out").exists()
+    # The log folder is made ahead of time too: Lux runs as the researcher, and
+    # its Slurm has not been seen to create a missing one.
+    assert lux.local(f"{BASE}.out").is_dir()
 
     lux.puts.clear()
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
@@ -166,7 +167,6 @@ async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
         None, CFG, "lux-demo", None, None, None
     )
     lux.on("squeue", (0, "RUNNING|None\n", ""))
-    lux.local(log_path).parent.mkdir(parents=True)  # what Slurm does at job start
     lux.local(log_path).write_text(
         "step 1 loss 9.1\nstep 2 loss 8.7\n", encoding="utf-8"
     )

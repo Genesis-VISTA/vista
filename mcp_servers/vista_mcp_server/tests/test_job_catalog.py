@@ -105,3 +105,22 @@ def test_the_example_job_writes_only_under_vista_out(script):
     activated = [c.split()[-1] for c in commands if c.startswith("source ")]
     assert venvs == ['"$VISTA_OUT/.venv"']
     assert activated == ['"$VISTA_OUT/.venv/bin/activate"']
+
+
+@pytest.mark.parametrize(
+    ("script", "run_dir"),
+    [(ODO_JOB_SCRIPT, "RUN_DIR_Odo"), (FRONTIER_JOB_SCRIPT, "RUN_DIR_Frontier")],
+)
+def test_forge_tune_runs_from_vista_out(script, run_dir):
+    """forge-tune.py saves its final model to the working directory. On Odo and
+    Frontier the job runs as the project's IRI automation user, which can only
+    read the source folder, so the job must run from $VISTA_OUT and reach its
+    sources by absolute path."""
+    text = (HPC_JOBS_DIR / "forge-tune" / script).read_text(encoding="utf-8")
+    commands = [
+        ln.strip() for ln in text.splitlines() if not ln.lstrip().startswith("#")
+    ]
+    assert 'cd "${VISTA_OUT}"' in commands
+    assert f"python -u ${{{run_dir}}}/forge-tune.py" in text
+    assert f"source ${{{run_dir}}}/setup_dist_vars.sh" in text
+    assert "--checkpoint-dir ${VISTA_OUT}" in text

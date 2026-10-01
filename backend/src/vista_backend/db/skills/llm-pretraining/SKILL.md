@@ -54,8 +54,10 @@ What each cluster needs from the user:
   - An S3M token in their VISTA settings. The job is charged to that token's
     project.
   - Globus connected for Frontier (VISTA settings → File transfer).
-  - A **Frontier remote directory** in their VISTA settings, writable by the
-    project's group.
+  - A **Frontier remote directory** in their VISTA settings. VISTA keeps
+    `<dir>.jobs` and `<dir>.out` beside it, so the folder holding it must be
+    writable by the project's group; any folder directly under `proj-shared`
+    is.
 - If submission fails, show the message as it is. It says what to set or fix:
   a token, a remote directory, or that directory's permissions.
 

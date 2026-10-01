@@ -437,7 +437,7 @@ async def _submit_odo_job(
         )
 
     layout = _layout(cfg, "odo")
-    base, src_dir = layout.base, layout.src(job)
+    src_dir = layout.src(job)
     s3m_token, project = await _olcf_project(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
@@ -469,7 +469,7 @@ async def _submit_odo_job(
     # into the synced source dir to preserve the job.odo.slurm contract of
     # running from the job directory.
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
+        export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
 
         export HOME="${{HOME:-$VISTA_OUT}}"
@@ -480,7 +480,7 @@ async def _submit_odo_job(
 
         module purge 2>/dev/null || true
 
-        cd "{src_dir}"
+        cd {shlex.quote(src_dir)}
     """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
@@ -621,7 +621,6 @@ async def _submit_perlmutter_job(
             "settings page before submitting jobs to Perlmutter."
         )
     layout = _layout(cfg, "perlmutter")
-    base = layout.base
 
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.perlmutter
@@ -658,7 +657,7 @@ async def _submit_perlmutter_job(
     # Mirror the Odo/Frontier setup-snippet UX: the user's job.perlmutter.slurm runs
     # with $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
+        export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
     """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
@@ -829,7 +828,7 @@ async def _submit_frontier_job(
     # `module load xforge` — stacked libsci/PE in LD_LIBRARY_PATH then conflicts
     # with the xforge-provided versions and PyTorch segfaults at import).
     setup_snippet = textwrap.dedent(f"""
-        export VISTA_OUT="{layout.out}/$SLURM_JOB_ID"
+        export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
         mkdir -p -m 2775 "$VISTA_OUT"
 
         export HOME="${{HOME:-$VISTA_OUT}}"
@@ -982,6 +981,10 @@ async def _submit_lux_job(
     )
 
     await _sync_job_sources_ssh(conn, job, src_dir)
+    # Lux runs as the researcher, so VISTA can make the log folder itself, as on
+    # Perlmutter. Odo's and Frontier's Slurm were seen creating a missing one;
+    # Lux's has not been checked, and Slurm upstream does not.
+    await slurm_ssh.makedirs(conn, layout.out)
 
     job_env = {
         "RUN_DIR_Lux": src_dir,

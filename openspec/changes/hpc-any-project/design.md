@@ -118,9 +118,10 @@ creates `<base>.out`, and the job prefix runs `mkdir -p -m 2775 "$VISTA_OUT"`
 on every cluster, so outputs in a shared folder stay group-writable. Sources are
 uploaded through Globus under `<base>.jobs/<job>/src`, which the automation
 user only reads; the Globus `mkdir` walks down from the parent of `<base>`.
-Perlmutter runs as the researcher, and NERSC's Slurm has not been confirmed to
-create a missing log folder, so VISTA creates `<base>.out` there through IRI
-before submitting, which is harmless if Slurm would have.
+Perlmutter and Lux run as the researcher, and only Odo's and Frontier's Slurm
+have been seen to create a missing log folder (upstream Slurm does not), so
+VISTA creates `<base>.out` on those two before submitting -- through IRI on
+Perlmutter, over SSH on Lux -- which is harmless if Slurm would have.
 
 **6. Folder check before submitting.** `_require_odo_out_dir` becomes
 `_require_writable_out(globus, collection, base)` for Odo and Frontier. With

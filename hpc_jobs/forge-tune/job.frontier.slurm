@@ -39,7 +39,7 @@ differential_lr="${differential_lr:-True}"
 freeze_llm="${freeze_llm:-False}"
 checkpoint="${checkpoint:-}"
 
-TRAIN_CMD="python -u forge-tune.py \
+TRAIN_CMD="python -u ${RUN_DIR_Frontier}/forge-tune.py \
     --model ${FORGE_MODEL_Frontier} \
     --input ${RUN_DIR_Frontier}/Molten_Salt_Thermophysical_Properties.csv \
     --checkpoint-dir ${VISTA_OUT} \
@@ -58,7 +58,10 @@ if [ -n "${checkpoint}" ]; then
     TRAIN_CMD="${TRAIN_CMD} --resume-from ${checkpoint}"
 fi
 
-cd "${RUN_DIR_Frontier}"
+# Run from $VISTA_OUT: the job runs as the project's IRI automation user, which
+# can only read the source folder, and forge-tune.py saves its final model to
+# the working directory.
+cd "${VISTA_OUT}"
 
 # 8 ranks per node × N nodes. setup_dist_vars.sh sets per-rank RANK / LOCAL_RANK /
 # WORLD_SIZE / MASTER_ADDR / MASTER_PORT from SLURM_PROCID, SLURM_LOCALID, SLURM_NTASKS.
@@ -66,5 +69,5 @@ srun --nodes=${SLURM_NNODES} \
      --ntasks=$((SLURM_NNODES * 8)) \
      --gpus-per-node=8 \
      -c 7 \
-     bash -c "source setup_dist_vars.sh; ${TRAIN_CMD}"
+     bash -c "source ${RUN_DIR_Frontier}/setup_dist_vars.sh; ${TRAIN_CMD}"
 

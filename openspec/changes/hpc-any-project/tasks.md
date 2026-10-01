@@ -60,3 +60,7 @@ reopen the hole the check was closing.
 ## 8. Review fixes
 
 - [x] 8.1 Status, outputs and cancel require `cluster` (no inference), so a Lux job, or one whose cluster has no token, can never reach a same-id job on another cluster. Update the tool descriptions, the skills (`model-fine-tuning`, `salt-chemistry-md`, `salt-neutronics-tbr`, `alloy-thermo-mc`) and the molten-salt prompt; `tests/test_remote_layout.py` asserts `cluster` is required in each tool's schema.
+- [x] 8.2 `forge-tune` on Odo and Frontier runs from `$VISTA_OUT` and reaches its sources by absolute path, so its checkpoints and final model are written where the automation user can write (`tests/test_job_catalog.py`).
+- [x] 8.3 Lux creates `<dir>.out` over SSH before `sbatch`, as Perlmutter does through IRI; only Odo's and Frontier's Slurm were seen to create a missing log folder (`tests/test_lux_submit.py`).
+- [x] 8.4 `require_remote_dir` refuses characters a shell or Slurm would read specially (whitespace, quotes, `$`, backticks, `;`, `*`, `%`) and `/` itself; the bash prefixes also `shlex.quote` the paths (`tests/test_remote_dir.py`).
+- [x] 8.5 Correct the stale text (the `odo_remote_dir` docstring, the llm-pretraining skill, `forge-pretrain`'s and `lux-hello`'s script comments) and drop the unused `base` variables.

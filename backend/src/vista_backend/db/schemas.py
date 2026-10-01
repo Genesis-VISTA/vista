@@ -629,9 +629,11 @@ class UserTable(SQLModel, table=True):
     """
     odo_remote_dir: str | None = None
     """
-    Folder on Odo where VISTA puts job sources and outputs. Required for Odo.
-    Jobs run as the project's IRI automation user, so it must be writable by
-    the project's group (`mkdir -p -m 2775 <dir>`).
+    Names where VISTA puts job sources and outputs on Odo: `<dir>.jobs` and
+    `<dir>.out` beside it (the folder itself is never created). Required for
+    Odo. Jobs run as the project's IRI automation user, which creates
+    `<dir>.out`, so the folder holding `<dir>` must be writable by the
+    project's group -- `proj-shared` is; elsewhere `mkdir -p -m 2775 <dir>.out`.
     """
     frontier_remote_dir: str | None = None
     """ Same as `odo_remote_dir`, for Frontier. Required for Frontier. """

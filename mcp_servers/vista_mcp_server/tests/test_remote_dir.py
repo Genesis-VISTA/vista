@@ -57,6 +57,36 @@ def test_relative_path_is_refused():
         UserConfig(frontier_remote_dir="proj/vista").require_remote_dir("frontier")
 
 
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "/proj/my vista",  # a space splits an #SBATCH -o path
+        "/proj/$HOME",  # expanded by the job's shell
+        "/proj/`id`",
+        '/proj/a"b',
+        "/proj/a;rm",
+        "/proj/log%j",  # Slurm expands % in output paths
+        "/proj/*",
+    ],
+)
+def test_characters_a_shell_or_slurm_would_read_are_refused(folder):
+    """The folder is pasted into the job's bash prefix and into Slurm's output
+    patterns, and the job runs as the project's shared automation user."""
+    with pytest.raises(ToolError, match="cannot pass to a job safely"):
+        UserConfig(odo_remote_dir=folder).require_remote_dir("odo")
+
+
+def test_plain_path_characters_are_accepted():
+    folder = "/gpfs/wolf2/olcf/abc123/proj-shared/v1.2_run+a,b:c=d@e"
+    assert UserConfig(odo_remote_dir=folder).require_remote_dir("odo") == folder
+
+
+def test_the_root_is_refused():
+    """`<dir>.jobs` and `<dir>.out` need a parent folder to sit in."""
+    with pytest.raises(ToolError, match="cannot be /"):
+        UserConfig(lux_remote_dir="/").require_remote_dir("lux")
+
+
 def test_the_mcp_server_has_no_folder_of_its_own():
     assert not [f for f in type(settings).model_fields if f.endswith("_remote_dir")]
     assert "lux_account" not in type(settings).model_fields

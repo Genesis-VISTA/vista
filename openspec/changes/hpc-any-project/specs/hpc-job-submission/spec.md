@@ -130,16 +130,20 @@ researcher's Globus identity.
 - **WHEN** the listing that would show the parent's permissions fails with an error other than an expired Globus session or a missing path
 - **THEN** submission continues, and the job is submitted
 
-### Requirement: Perlmutter output folder
-Perlmutter jobs run as the researcher. Before submitting to Perlmutter the
-system SHALL create `<remote_dir>.out` through the NERSC IRI filesystem API,
-because NERSC's Slurm has not been confirmed to create a missing log folder.
-Lux SHALL need no such step: OLCF's Slurm creates missing folders in the log
-path.
+### Requirement: Output folder on Perlmutter and Lux
+Perlmutter and Lux jobs run as the researcher, so VISTA can create their log
+folder itself. Before submitting, the system SHALL create `<remote_dir>.out`:
+on Perlmutter through the NERSC IRI filesystem API, and on Lux over the
+researcher's SSH connection. Only Odo's and Frontier's Slurm have been seen to
+create a missing log folder; upstream Slurm does not.
 
 #### Scenario: Perlmutter creates its output folder
 - **WHEN** a job is submitted to Perlmutter with remote folder `/r`
 - **THEN** `/r.out` is created through IRI before the job is submitted
+
+#### Scenario: Lux creates its output folder
+- **WHEN** a job is submitted to Lux with remote folder `/r`
+- **THEN** `/r.out` is created over SSH before `sbatch` runs
 
 ### Requirement: Finding a job after submission
 Job status, output retrieval and cancellation SHALL identify a job by its id
