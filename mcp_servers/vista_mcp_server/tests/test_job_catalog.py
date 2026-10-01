@@ -90,3 +90,18 @@ def test_bad_readme_header_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", tmp_path)
     with pytest.raises(ValueError, match="should start with"):
         get_available_jobs()
+
+
+@pytest.mark.parametrize("script", [ODO_JOB_SCRIPT, FRONTIER_JOB_SCRIPT])
+def test_the_example_job_writes_only_under_vista_out(script):
+    """The demo job has to run from any project. On Odo and Frontier it runs as
+    the project's IRI automation user, which can only read the source folder
+    it starts in, so its virtual environment goes under $VISTA_OUT."""
+    text = (HPC_JOBS_DIR / "example" / script).read_text(encoding="utf-8")
+    commands = [
+        line.strip() for line in text.splitlines() if not line.lstrip().startswith("#")
+    ]
+    venvs = [c.split()[-1] for c in commands if c.startswith("python3 -m venv")]
+    activated = [c.split()[-1] for c in commands if c.startswith("source ")]
+    assert venvs == ['"$VISTA_OUT/.venv"']
+    assert activated == ['"$VISTA_OUT/.venv/bin/activate"']

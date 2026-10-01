@@ -40,8 +40,8 @@ reopen the hole the check was closing.
 
 ## 5. Example job and remaining text
 
-- [ ] 5.1 Change `hpc_jobs/example/job.odo.slurm` and `job.frontier.slurm` to create the venv at `"$VISTA_OUT/.venv"` and write nothing else outside `$VISTA_OUT`. Add a catalog test asserting that neither script creates `.venv` in the working directory.
-- [ ] 5.2 Update `backend/src/vista_backend/db/skills/llm-pretraining/SKILL.md` so it points to the remote directory setting rather than requiring chm243. Verify by reading it.
+- [x] 5.1 Change `hpc_jobs/example/job.odo.slurm` and `job.frontier.slurm` to create the venv at `"$VISTA_OUT/.venv"` and write nothing else outside `$VISTA_OUT`. Add a catalog test (`tests/test_job_catalog.py`) asserting that both scripts create and activate their venv under `$VISTA_OUT`.
+- [x] 5.2 Update `backend/src/vista_backend/db/skills/llm-pretraining/SKILL.md` so it points to the remote directory settings and the token's own project rather than requiring chm243 (it still says which projects the job was set up under). Verify by reading it and with `tests/test_llm_pretraining_skill.py`.
 
 ## 6. Integration
 

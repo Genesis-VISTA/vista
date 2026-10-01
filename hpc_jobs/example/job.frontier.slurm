@@ -9,6 +9,10 @@
 # Frontier's IRI service launches the batch script once on the head node and
 # leaves task fan-out to the user (mirrors Odo). See hpc_jobs/forge-tune/job.frontier.slurm
 # for an 8-ranks-per-node example.
+#
+# Everything it creates, the virtual environment included, goes under $VISTA_OUT.
+# The job runs as the project's IRI automation user, which can only read the
+# source folder VISTA uploaded, so this is what lets it run from any project.
 
 set -euo pipefail
 
@@ -19,8 +23,8 @@ cd "${RUN_DIR_Frontier}"
 
 module load cray-python
 
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv "$VISTA_OUT/.venv"
+source "$VISTA_OUT/.venv/bin/activate"
 python3 -m pip install --quiet matplotlib
 
 python example.py "$@"
