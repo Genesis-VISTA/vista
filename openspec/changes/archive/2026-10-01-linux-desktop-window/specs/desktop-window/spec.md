@@ -8,8 +8,11 @@ host's own security policy prevents the sandbox from starting for an application
 installed the way VISTA is. Whenever the window runs without it, the launcher SHALL say
 so on every start and, where VISTA ships one, SHALL name the one-time step that allows the
 sandbox on that host.
-The sandbox SHALL NOT be turned off on a host that permits it, and SHALL NOT be turned
-off on macOS.
+The sandbox SHALL NOT be turned off on macOS. Because a check before start-up cannot
+tell every blocked host from a permitted one (an AppArmor profile that is installed but
+not loaded looks the same), a window on Linux that started with the sandbox and exits
+with an error within its first seconds SHALL be started once more without it, and the
+launcher SHALL say that it did so and where the first attempt's log is.
 
 #### Scenario: A host that permits the sandbox
 
@@ -40,10 +43,18 @@ off on macOS.
 - **THEN** the window opens without the renderer sandbox, and the launcher reports that
   it is running without the sandbox and why, naming no install step
 
+#### Scenario: A profile installed but not loaded
+
+- **WHEN** VISTA's AppArmor profile file is present but not loaded, and the window aborts
+  at start-up because its sandbox cannot start
+- **THEN** the launcher reports that the window stopped at start, starts it again without
+  the sandbox, and names the log of the first attempt
+
 #### Scenario: Development window
 
 - **WHEN** a developer opens the development stack in the window on any of these hosts
-- **THEN** the sandbox is decided in the same way and reported in the same way
+- **THEN** the sandbox is decided by the same check, and its reason appears in the
+  window's output and log
 
 ## MODIFIED Requirements
 
@@ -72,34 +83,54 @@ saved to a location the researcher chooses.
 - **WHEN** the researcher downloads a dataset file or an agent-produced file
 - **THEN** a save dialog appears and the file is written where they choose
 
+### Requirement: The window in development
+
+The development launcher SHALL open the development stack in the same window by default
+in its logs mode, with the interface's live reloading intact, and SHALL offer one option
+that starts the services alone, for use in a browser.
+
+#### Scenario: Development window
+
+- **WHEN** a developer starts the development stack in logs mode
+- **THEN** the interface opens in the VISTA window once the development server answers,
+  edits to the interface reload in that window, and closing it stops the stack
+
+#### Scenario: Services only
+
+- **WHEN** a developer starts the development stack with the services-only option
+- **THEN** the services start without a window and the interface is reachable in a
+  browser
+
 ### Requirement: Window mode where it cannot run
 
-Where the window cannot run, the launcher SHALL say so and fall back to browser mode,
-rather than failing after services have started. That covers a platform whose artifact
-has no window, a session with no display, a host missing system libraries the window
-needs, and a window that fails. A window that exits with an error, at start-up or later,
-SHALL NOT stop VISTA's services; only closing or quitting it does.
+VISTA is a desktop application with no browser mode. Where the window cannot run, the
+launcher SHALL say why and stop before starting any service. That covers a package or
+platform with no window, a session with no display (including a remote shell session),
+running the package as root on Linux, and a Linux host missing system libraries the
+window needs. A window that exits with an error SHALL stop VISTA, and the launcher SHALL
+report that it stopped and where its log is; the one exception is the start-up retry
+without the sandbox on Linux.
 
 #### Scenario: No display
 
-- **WHEN** the launcher is started in window mode where no graphical display is available,
-  including a remote shell session
-- **THEN** it reports that the window cannot be shown, reports the address, and keeps the
-  services running as in browser mode
+- **WHEN** the launcher is started where no graphical display is available, including a
+  remote shell session
+- **THEN** it reports that the window cannot be shown and why, and exits without starting
+  any service
 
 #### Scenario: Missing window libraries
 
-- **WHEN** the launcher is started in window mode on a host that lacks system libraries
-  the window needs
-- **THEN** it names the missing libraries, reports the address, and keeps the services
-  running as in browser mode
+- **WHEN** the package launcher is started on a Linux host that lacks system libraries the
+  window needs
+- **THEN** it names the missing libraries and the packages that provide them, and exits
+  without starting any service
 
 #### Scenario: The window fails
 
-- **WHEN** the window exits with an error, such as a crash at start-up because its
-  sandbox cannot start
-- **THEN** the launcher reports that the window failed and where its log is, reports the
-  address, and keeps the services running as in browser mode until it is interrupted
+- **WHEN** a window that started exits with an error, other than at start-up with the
+  sandbox on Linux
+- **THEN** the launcher reports that the window stopped unexpectedly, its exit status and
+  where its log is, and stops every service
 
 #### Scenario: Closing the window still stops VISTA
 

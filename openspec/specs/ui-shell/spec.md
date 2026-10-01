@@ -1,20 +1,24 @@
-## Purpose
+# ui-shell Specification
 
+## Purpose
 Define the chrome VISTA presents on every route: one shared top bar, a project
 that travels with the user instead of being a mode entered from one page, and
 consistent rules for what a route does when no project is selected.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Single application shell
 
-Every user-facing route SHALL render the same top bar and the same navigation
-rail. No route may define its own page-title chrome.
+Every user-facing route SHALL render the same navigation rail, and every route
+except the Hypothesis Lab SHALL render the same top bar. No route other than the
+Hypothesis Lab may define its own page-title chrome.
 
 #### Scenario: Every route carries the shared bar
 
 - **WHEN** a user visits chat, projects, datasets, skills, skill hub, or knowledge bases
-- **THEN** each page SHALL render the shared top bar with the Genesis lockup, the current page title, and the project context control
+- **THEN** each page SHALL render the shared top bar with the current page title
+- **AND** the navigation rail SHALL carry the Genesis lockup while it is expanded
+- **AND** every project-scoped page SHALL show the project switcher in the bar, while the projects page and the global knowledge-base view SHALL NOT
 - **AND** no page SHALL render a second title row or a page-scoped toolbar duplicating controls the shared bar provides
 
 #### Scenario: Knowledge bases drops its scoped toolbar
@@ -22,12 +26,12 @@ rail. No route may define its own page-title chrome.
 - **WHEN** a user opens knowledge bases
 - **THEN** the page-scoped toolbar SHALL be gone
 - **AND** its refresh and create actions SHALL be reachable from the shared bar or the page header
-- **AND** both the project-scoped and global knowledge-base modes SHALL remain available
+- **AND** both modes SHALL remain available, as `/knowledge-bases` (global) and `/knowledge-bases/project` (project-scoped)
 
 ### Requirement: Project is ambient context
 
-The active project SHALL be switchable from any route through a control in the
-shared top bar.
+The active project SHALL be switchable from every project-scoped route through a
+control in the shared top bar.
 
 #### Scenario: Switching project preserves the current route
 
@@ -38,7 +42,8 @@ shared top bar.
 #### Scenario: Active project is visible everywhere
 
 - **WHEN** a project is active
-- **THEN** its name SHALL be visible in the shared top bar on every route
+- **THEN** its name SHALL be shown in the top bar's switcher on every project-scoped route
+- **AND** in the navigation rail's opened-project chip on every route while the rail is expanded
 
 ### Requirement: Routes that require a project
 
@@ -58,9 +63,14 @@ present inert or misleading controls.
 - **THEN** each page SHALL render the same "pick a project first" panel
 - **AND** selecting a project from that panel SHALL keep the user on the page they opened
 
+#### Scenario: Hypothesis Lab without a project
+
+- **WHEN** a user opens the Hypothesis Lab with no project selected
+- **THEN** the page SHALL say that a project must be selected first, and render no debate controls
+
 #### Scenario: Knowledge bases does not redirect
 
-- **WHEN** a user opens knowledge bases with no project selected
+- **WHEN** a user opens `/knowledge-bases` or `/knowledge-bases/project` with no project selected
 - **THEN** the global view SHALL render
 - **AND** no redirect SHALL occur
 

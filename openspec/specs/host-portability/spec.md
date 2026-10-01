@@ -1,8 +1,9 @@
-## Purpose
+# host-portability Specification
 
+## Purpose
 Keeps VISTA's behavior independent of the host operating system. Paths inside the sandbox, text encoding, line endings, host tools and file containment must behave the same way on Windows, macOS and Linux.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Sandbox-side paths are POSIX on every host
 
@@ -44,7 +45,7 @@ A file name that a caller supplies for download SHALL be rejected when it is abs
 
 ### Requirement: Text is UTF-8
 
-Every text file VISTA reads or writes SHALL be decoded and encoded as UTF-8, whatever the host's locale encoding. This includes skills, prompts, seed data, job templates and configuration.
+Every text file VISTA's host-side services read or write SHALL be decoded and encoded as UTF-8, whatever the host's locale encoding. This includes skills, prompts, seed data, job templates and configuration. Skill scripts that run only inside the Linux sandbox are exempt.
 
 #### Scenario: Seeding on a non-UTF-8 locale
 
@@ -67,7 +68,7 @@ The services SHALL NOT depend on host executables that exist only on POSIX syste
 
 ### Requirement: Line endings are stable across checkouts
 
-Files whose meaning depends on LF line endings SHALL be checked out with LF on every host. This includes shell and Python scripts, job templates and anything uploaded to a cluster verbatim. Windows batch files SHALL be checked out with CRLF. Binary and LFS-tracked files SHALL NOT be converted. Adding these rules SHALL NOT change the content of any file already committed.
+Files whose meaning depends on LF line endings SHALL be checked out with LF on every host. This includes shell and Python scripts, job templates and anything uploaded to a cluster verbatim. Windows batch and PowerShell scripts (`*.bat`, `*.cmd`, `*.ps1`) SHALL be checked out with CRLF. Binary and LFS-tracked files SHALL NOT be converted. Adding these rules SHALL NOT change the content of any file already committed.
 
 #### Scenario: Windows checkout
 

@@ -23,7 +23,7 @@ provider, or seeded database.
 - **WHEN** the required hermetic browser job runs
 - **THEN** every backend route the flow touches SHALL be answered from a fixture inside the page, including a streaming response the test drives event by event
 - **AND** a request that escapes those fixtures SHALL fail the run rather than reach a real backend, MCP server, or model provider
-- **AND** a route the fixtures do not cover SHALL fail the run rather than be silently substituted
+- **AND** a request to a route the fixtures do not cover SHALL be answered with an error status and recorded, and a spec that checks the record SHALL fail on it rather than pass with a silent substitute
 - **AND** the job SHALL block the merge on failure
 
 #### Scenario: Seeded smoke stays outside MR CI
@@ -51,6 +51,6 @@ the suite stays green while the defect stands and turns red once it is fixed.
 #### Scenario: A reproduced defect keeps the suite honest
 
 - **WHEN** a test reproduces a defect that this change does not fix
-- **THEN** it SHALL be annotated as an expected failure with a comment naming the cause
+- **THEN** it SHALL be annotated as an expected failure (`it.fails` in Vitest, `test.fail` in Playwright) with a comment naming the cause
 - **AND** it MUST NOT assert the defective behaviour as though it were correct
 - **AND** the suite SHALL fail once the defect is fixed, so the annotation is removed

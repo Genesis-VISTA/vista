@@ -1,8 +1,9 @@
-## Purpose
+# code-execution-sandbox Specification
 
+## Purpose
 Defines what an agent can rely on when it runs code in the sandbox. This covers how output, input, exit status and network access behave, and how the sandbox's stored state behaves across upgrades on every supported host.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Output is streamed as it is produced
 
@@ -76,7 +77,7 @@ Host directories mounted into the sandbox SHALL appear at their configured sandb
 
 ### Requirement: Sandboxes are removed on close
 
-Closing a sandbox SHALL stop it and remove it, so no sandbox outlives the session that created it.
+Closing a sandbox SHALL stop it and remove it. A service that is killed rather than stopped cannot close its sandboxes; those stay in the store, stopped, until they are removed by hand.
 
 #### Scenario: Close
 
@@ -85,7 +86,7 @@ Closing a sandbox SHALL stop it and remove it, so no sandbox outlives the sessio
 
 ### Requirement: Sandbox store survives upgrade
 
-Upgrading the sandbox runtime SHALL carry an installation's existing sandbox store forward in place, without requiring the researcher to re-import or rebuild the sandbox image. Where the upgrade leaves the store unreadable to the previous runtime version, the release SHALL document that, together with the reset that lets the previous version start again.
+Upgrading the sandbox runtime SHALL carry an installation's existing sandbox store forward in place, without requiring the researcher to re-import or rebuild the sandbox image. Where the upgrade leaves the store unreadable to the previous runtime version, that SHALL be documented, together with the reset that lets the previous version start again. For the 0.5.x upgrade this lives in the `windows-support` change's migration note.
 
 #### Scenario: Upgrading an installation
 
