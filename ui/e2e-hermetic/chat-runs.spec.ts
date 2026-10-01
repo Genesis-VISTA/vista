@@ -94,7 +94,7 @@ async function openProject(page: Page) {
     .filter({ hasText: "molten-salt" })
     .getByRole("button", { name: "Open" })
     .click();
-  await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeVisible();
+  await expect(page.getByPlaceholder(/Ask a question/)).toBeVisible();
 }
 
 async function openConversation(page: Page, title: string) {
@@ -103,7 +103,7 @@ async function openConversation(page: Page, title: string) {
 }
 
 async function ask(page: Page, text: string) {
-  await page.getByPlaceholder(/Ask about molten salts/).fill(text);
+  await page.getByPlaceholder(/Ask a question/).fill(text);
   await page.getByRole("button", { name: "Send" }).click();
 }
 
@@ -159,7 +159,7 @@ test.describe("chat runs", () => {
     await expect(page.locator(".chat-list .chat-bubble")).toHaveCount(0);
     await expect(page.getByRole("status")).toHaveCount(0);
     await expect(page.locator(".composer-status")).toHaveCount(0);
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeEnabled();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
     await expect(page.getByText(ANSWER)).toHaveCount(0);
   });
 
@@ -246,7 +246,7 @@ test.describe("chat runs", () => {
     expect(await stub.requests()).not.toContain(
       `GET /api/chat/run/events?project_name=molten-salt&chat_session_id=${SESSION_ID}&after=0`,
     );
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeEnabled();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
   });
 
   // -------------------------------------------------------------------------
@@ -265,7 +265,7 @@ test.describe("chat runs", () => {
     await startRun(stub, QUESTION);
     await toolCall(stub);
 
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeDisabled();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeDisabled();
     await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
     const stop = page.getByRole("button", { name: "Stop" });
     await expect(stop).toBeVisible();
@@ -284,7 +284,7 @@ test.describe("chat runs", () => {
     await stub.end();
     await expect(bubbles(page, "system")).toHaveText("Stopped");
     await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeEnabled();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   });
 
@@ -306,7 +306,7 @@ test.describe("chat runs", () => {
 
     await expect(bubbles(page, "user")).toHaveText(QUESTION);
     await expect(bubbles(page, "system")).toHaveText("Interrupted when VISTA quit");
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeEnabled();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
   });
 
   test("sending into a conversation that is already running re-attaches to that run", async ({
@@ -329,7 +329,7 @@ test.describe("chat runs", () => {
     await expect(page.locator(".chat-bubble").filter({ hasText: "A second question" })).toHaveCount(
       0,
     );
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toHaveValue("A second question");
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("A second question");
     await expect(page.getByRole("status")).toHaveText("Searching the literature…");
 
     await streamAnswer(stub, "attach");

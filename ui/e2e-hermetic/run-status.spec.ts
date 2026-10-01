@@ -38,7 +38,7 @@ async function openProject(page: Page) {
     .filter({ hasText: "molten-salt" })
     .getByRole("button", { name: "Open" })
     .click();
-  await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeVisible();
+  await expect(page.getByPlaceholder(/Ask a question/)).toBeVisible();
 }
 
 const rail = (page: Page) => page.getByRole("complementary", { name: "Primary navigation" });
