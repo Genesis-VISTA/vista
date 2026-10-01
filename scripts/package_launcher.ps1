@@ -279,9 +279,23 @@ $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 # under the package folder, they would pass the 260-character limit. Extracted
 # straight into the state directory they fit. The tar.exe Windows ships reads
 # it; named by path so no other tar on PATH is picked up.
-$missing = @('vista-data', 'knowledge-bases', 'huggingface') | Where-Object { -not (Test-Path "$STATE\$_") }
+# The parts are the members payload\parts.txt lists, one per corpus, rather than
+# the tar's top-level folders: an upgraded state directory already has
+# vista-data and knowledge-bases, and a corpus a newer package adds
+# (vista-data/ai-safety) must still be installed. An installed member is never
+# replaced or removed.
 $payloadTar = "$PACKAGE\payload\payload.tar"
-if ($missing.Count -gt 0 -and (Test-Path $payloadTar)) {
+$missing = @()
+if (Test-Path $payloadTar) {
+  $partsFile = "$PACKAGE\payload\parts.txt"
+  if (-not (Test-Path $partsFile)) {
+    Die "this package has no payload\parts.txt; rebuild it with build_local_package.sh."
+  }
+  $missing = @(Get-Content -Encoding UTF8 $partsFile |
+    Where-Object { $_.Trim() -and -not (Test-Path "$STATE\$($_.Trim())") } |
+    ForEach-Object { $_.Trim() })
+}
+if ($missing.Count -gt 0) {
   Log "First run: installing $($missing -join ' ')..."
   & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $payloadTar -C $STATE @missing
   if ($LASTEXITCODE -ne 0) { Die "could not extract the payload into $STATE" }

@@ -50,7 +50,10 @@ export VISTA_LIVE_BASE_URL=http://127.0.0.1:8001
 The script runs:
 
 1. **Golden agent-mode prompts** — soft tool allowlists per seed project
-   (`molten-salt`, `alloy-design`) via `backend/tests/live/test_golden_prompts.py`
+   (`molten-salt`, `alloy-design`) via `backend/tests/live/test_golden_prompts.py`.
+   Those two are science projects, so the deployment under test must be seeded
+   with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` (a fresh default seed has only
+   `ai-safety-autonomous-labs`)
 2. **Dry-run HPC** — `loadgen.py --campaigns 2 --poll` (tools mode)
 3. **Fault checks** (optional) — `VISTA_RUN_FAULT_CHECKS=1` after starting MCP
    with `VISTA_MCP_FAULT__SUBMIT_FAIL_P=0.2` (see runbook fault-recovery note)
@@ -107,9 +110,10 @@ export PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000
 npx playwright test -c playwright.config.ts
 ```
 
-Flow: open app → open Projects → activate a project → send a chat message →
-observe a tool-call bubble and/or elicitation modal. Selectors prefer
-role/text. **Not** part of required MR CI.
+Flow: open app → open Projects → activate the default
+`ai-safety-autonomous-labs` project → send a chat message asking for a
+`rag_search` over the AI-safety papers → observe a tool-call bubble and/or
+elicitation modal. Selectors prefer role/text. **Not** part of required MR CI.
 
 ## VISTA window (manual)
 
@@ -188,7 +192,7 @@ and walk-through checks above, then:
 # MCP must NOT have VISTA_MCP_HPC_DRY_RUN set
 export VISTA_RUN_HPC=1
 export VISTA_HPC_SMOKE_CLUSTER=odo          # or frontier
-export VISTA_HPC_SMOKE_PROJECT=molten-salt
+export VISTA_HPC_SMOKE_PROJECT=molten-salt   # a science project: seed with VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true
 # User needs S3M / IRI tokens configured (UI → User settings)
 cd backend && uv run pytest tests/live/test_hpc_example_smoke.py -v -m hpc
 ```

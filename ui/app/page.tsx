@@ -86,9 +86,9 @@ const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
 ];
 
 const SUGGESTIONS = [
-  "Show me the phase diagram for AlCl3-KCl",
-  "How many fluoride salts are in the database?",
-  "What is the density of FLiBe at 873 K?",
+  "What can you help me with in this project?",
+  "Which tools and skills do you have available?",
+  "What knowledge bases can you search?",
 ];
 
 type LogEntry = {
@@ -1447,7 +1447,7 @@ export default function HomePage() {
                 )}
                 {messages.length === 0 && (
                   <div className="chat-opener">
-                    <p className="chat-opener-lede">Ask about molten salts.</p>
+                    <p className="chat-opener-lede">Ask a question to get started.</p>
                     <div className="chat-opener-chips">
                       {SUGGESTIONS.map((suggestion) => (
                         <button
@@ -1518,7 +1518,7 @@ export default function HomePage() {
           <div className="chat-input-row">
             <input
               className="input"
-              placeholder="Ask about molten salts… (e.g., 'show phase diagram for LiF-NaF')"
+              placeholder="Ask a question… (e.g., 'What can you help me with?')"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {

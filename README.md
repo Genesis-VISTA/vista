@@ -140,8 +140,8 @@ already exported in your environment wins over the file.
 
 | Variable                                                                          | Needed for                                                                                                    | Skip it with                                                     |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `VISTA_DATA_TOKEN`                                                                | Fetching the molten-salt corpus from `v28/vista-data` on code.ornl.gov                                        | `--payload DIR`, an already-unpacked `vista-data` tree           |
-| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` to reuse a built store, or `--without-citations` |
+| `VISTA_DATA_TOKEN`                                                                | Fetching the AI-safety corpus (and with `--science-projects`, the molten-salt corpus and MSTDB) from `v28/vista-data` on code.ornl.gov | `--payload DIR`, an already-unpacked `vista-data` tree           |
+| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` (and `--science-projects-vector-store DIR`) to reuse built stores, or `--without-citations` |
 | `VISTA_VERSION`                                                                   | Overriding the commit-derived version stamp                                                                   | Optional; omit it                                                |
 
 The preflight treats a missing citation credential as an error, not a
@@ -181,24 +181,41 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | Flag                             | Effect                                                                                                                    |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `--check`                        | Run the preflight and exit; builds nothing                                                                                |
-| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
+| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`. It must hold `ai-safety/`, and with `--science-projects` also `molten-salt-papers/` and `mstdb/` |
 | `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
 | `--archive-format gz\|zstd\|zip\|none` | Defaults to `gz` on unix, `zip` on Windows                                                                          |
-| `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
+| `--vector-store DIR`             | Optional. Reuse an already-built **AI-safety** Chroma store instead of indexing that corpus again. Only for skipping re-embedding, and it makes no model calls; omit it and the build indexes the corpus itself |
+| `--science-projects`             | Also pack the molten-salt corpus and its index, MSTDB and the `forge-tune` CSV, so the package seeds the `molten-salt` and `alloy-design` projects. Also enabled by `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` |
+| `--science-projects-vector-store DIR` | Optional, and only with `--science-projects`. Reuse an already-built **molten-salt** Chroma store instead of indexing that corpus again |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
+
+A default package carries only the AI-safety corpus and its index. The
+molten-salt corpus, MSTDB and the `forge-tune` CSV are packed only with
+`--science-projects`, and a default package contains none of them.
 
 A typical rebuild, once you have a corpus clone and a vector store worth reusing:
 
 ```bash
 ./scripts/build_local_package.sh \
   --payload ~/.vista-build/vista-data \
-  --vector-store ~/.vista-build/rag_db
+  --vector-store ~/.vista-build/ai-safety-rag_db
+```
+
+A package with the science projects, reusing both stores:
+
+```bash
+./scripts/build_local_package.sh --science-projects \
+  --payload ~/.vista-build/vista-data \
+  --vector-store ~/.vista-build/ai-safety-rag_db \
+  --science-projects-vector-store ~/.vista-build/rag_db
 ```
 
 That still downloads the embedding weights, runs `npm ci`, and builds the UI and
-the MCP app; it skips only the indexing pass and its per-paper model calls.
+the MCP app; it skips only the indexing pass and its per-paper model calls. Both
+store options exist only to skip re-embedding. Leaving them out always produces a
+correct build.
 
 ### Building on Windows
 
@@ -210,7 +227,7 @@ directly, since only `vista.cmd` gets it past a Group Policy execution policy.
 
 ```bash
 ./scripts/build_local_package.sh --check
-./scripts/build_local_package.sh --vector-store data/knowledge-bases/molten-salt-papers/rag_db
+./scripts/build_local_package.sh --vector-store data/knowledge-bases/ai-safety/rag_db
 ```
 
 The sandbox image is built with Docker Desktop or Podman Desktop; start its
