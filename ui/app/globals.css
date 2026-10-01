@@ -48,6 +48,9 @@
      the two can part in a theme where one blue cannot do both */
   --brand-fill: #004573;
   --brand-fill-hover: #112a4d;
+  --brand-2-fill: #a6111b; /* the secondary button: brand-2 as a fill, for the same reason */
+  /* The UA's own fieldset border, named so the dark theme can soften it. */
+  --fieldset-line: ThreeDFace;
   --on-brand: #ffffff;
   --link-hover: #112a4d;
   --brand-wash: rgba(0, 69, 115, 0.07);
@@ -150,6 +153,8 @@
     --brand-2: #f0707a;
     --brand-fill: #3577b0;
     --brand-fill-hover: #2a6699;
+    --brand-2-fill: #c94a55;
+    --fieldset-line: #2a4566;
     --on-brand: #ffffff;
     --link-hover: #c4e0f8;
     --brand-wash: rgba(146, 198, 242, 0.1);
@@ -227,6 +232,8 @@
   --brand-2: #f0707a;
   --brand-fill: #3577b0;
   --brand-fill-hover: #2a6699;
+  --brand-2-fill: #c94a55;
+  --fieldset-line: #2a4566;
   --on-brand: #ffffff;
   --link-hover: #c4e0f8;
   --brand-wash: rgba(146, 198, 242, 0.1);
@@ -1125,7 +1132,7 @@ textarea.input {
 }
 
 .button.secondary {
-  background: var(--brand-2);
+  background: var(--brand-2-fill);
 }
 
 .button.ghost {
@@ -2150,6 +2157,12 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--surface-sunken);
   border: 1px solid var(--line);
   border-radius: var(--r-control);
+}
+
+/* RJSF wraps an object schema in a fieldset; the UA border stays as it was in
+   light, and stops being a bright frame in dark. */
+.elicitation-modal fieldset {
+  border-color: var(--fieldset-line);
 }
 
 /* RJSF field labels */

@@ -145,6 +145,8 @@ contrast test in task 2.3.
 | `--warning` (fill) / `--warning-ink` / `--warning-line` / `--warning-tint` | `#e6c500` / `#a06a00` / `#d8b04a` / `#fff6e5` | `#e8c15a` / `#e8c15a` / `#8a7330` / `#2a2a1e` |
 | `--danger` / `--danger-ink` / `--danger-line` / `--danger-tint` | `#d61200` / `#b01000` / `#e8a4a0` / `#fdecea` | `#ff8a7a` / `#ff8a7a` / `#7a3a40` / `#2f1d24` |
 | `--brand-fill-hover` / `--link-hover` | `#112a4d` / `#112a4d` | `#2a6699` / `#c4e0f8` |
+| `--brand-2-fill` (secondary button) | `#a6111b` | `#c94a55` (white label 4.57:1, 3.52:1 against the card) |
+| `--fieldset-line` (RJSF form frame) | `ThreeDFace` (the browser's own) | `#2a4566` |
 | `--brand-wash` / `--brand-wash-strong` | `rgba(0,69,115,.07)` / `.08` | `rgba(146,198,242,.1)` / `.13` |
 | `--accent` | `#4a7fb5` | `#6fa3d6` |
 | `--scrollbar-thumb` / `-hover` | `#004573` / `#112a4d` | `#335a82` / `#4a76a3` |

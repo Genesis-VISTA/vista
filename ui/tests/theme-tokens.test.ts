@@ -83,10 +83,12 @@ const PAIRS: [string, string, number][] = [
   ["on-brand", "brand-fill", 4.5],
   ["on-brand", "brand-fill-hover", 4.5],
   ["on-brand", "brand-dark", 4.5],
+  ["on-brand", "brand-2-fill", 4.5],
   ["surface", "ink", 4.5],
   ["term-ink", "term-bg", 4.5],
   ["term-muted", "term-bg", 4.5],
   ["brand-fill", "surface", 3],
+  ["brand-2-fill", "surface", 3],
 ];
 
 describe("theme tokens", () => {
