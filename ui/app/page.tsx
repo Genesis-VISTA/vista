@@ -1299,14 +1299,14 @@ export default function HomePage() {
                     <>
                       <button
                         type="button"
-                        className="conversation-list-edit"
+                        className="conversation-action-button primary"
                         onClick={() => void handleRenameConversation()}
                       >
                         Save
                       </button>
                       <button
                         type="button"
-                        className="conversation-list-edit ghost"
+                        className="conversation-action-button"
                         onClick={() => setEditingChatSessionId(null)}
                       >
                         Cancel
