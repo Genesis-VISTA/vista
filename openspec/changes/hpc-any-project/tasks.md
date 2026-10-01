@@ -45,5 +45,5 @@ reopen the hole the check was closing.
 
 ## 6. Integration
 
-- [ ] 6.1 Run `./scripts/ci-local.sh` and `openspec validate hpc-any-project --strict`; both pass, apart from failures already present on `main` that come from the sandbox.
+- [x] 6.1 Run `./scripts/ci-local.sh` and `openspec validate hpc-any-project --strict`; both pass, apart from failures already present on `main` that come from the sandbox. Result (2026-10-01): every lint, typecheck, security, UI, browser and electron job passed; backend 917 passed and vista-mcp 299 passed, each with one pre-existing sandbox failure (`test_forum_git::test_two_hosts_posting_at_once_both_land`, and `test_forge_pretrain_job::test_frontier_job_updates_checkout_then_trains_with_xforge`, whose `ulimit` the sandbox refuses). Follow-up: `submit_hpc_job`'s description and the fine-tuning skill now tell the agent to pass the cluster back, since nothing else remembers it.
 - [ ] 6.2 **Manual, `hpc` — not in PR CI.** With Odo and Frontier S3M tokens from projects other than gen150-vista and chm243, the researcher's own Globus connections, and a group-writable remote folder, submit `example` to Frontier and to Odo. Restart the MCP server, then fetch status and `chart.png` by job id and cluster. Record the result here.

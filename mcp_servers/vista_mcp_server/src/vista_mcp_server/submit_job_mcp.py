@@ -289,9 +289,11 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
 
         Returns:
             A multi-line ground-truth summary of the submitted job (job_id, cluster,
-            nodes, duration). Pass the job_id verbatim to get_hpc_job_status and
-            other follow-up tools; report the rest as-is to the user without
-            inventing default values.
+            nodes, duration, and where its log and outputs are). Pass the job_id
+            and the cluster verbatim to get_hpc_job_status and other follow-up
+            tools -- a job id is only unique within its cluster, and nothing else
+            remembers which cluster a job went to. Report the rest as-is to the
+            user without inventing default values.
 
         Available Jobs:
 

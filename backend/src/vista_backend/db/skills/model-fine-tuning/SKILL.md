@@ -101,7 +101,8 @@ acceptable here; the visible plot is the whole point of watch mode.
 
 Per-cycle checklist (do all of these, every cycle):
 
-1. **Call `get_hpc_job_status(job_id)`** — fetch the latest logs.
+1. **Call `get_hpc_job_status(job_id, cluster=<cluster>)`**, with the cluster
+   `submit_hpc_job` reported — fetch the latest logs.
 2. **Call `run_bash`** with a matplotlib script that parses the just-fetched
    epoch / Train RMSE / Val RMSE values and writes a PNG to
    `/mnt/data/output/<job_id>/training_progress.png` (overwrite each cycle).
