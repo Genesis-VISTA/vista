@@ -445,7 +445,7 @@ class GlobusClient:
         """
         key = (collection_id, self._tokens.transfer)
         if key not in _home_owners:
-            entry = await asyncio.to_thread(self._operation_stat, collection_id, "/~/")
+            entry = await self.operation_stat(endpoint=collection_id, path="/~/")
             user = entry.get("user")
             if not user:
                 raise ToolError(
@@ -455,11 +455,22 @@ class GlobusClient:
             _home_owners[key] = user
         return _home_owners[key]
 
+    async def operation_stat(self, *, endpoint: str, path: str) -> dict[str, Any]:
+        """
+        One file or folder's record (`name`, `type`, `permissions`, `user`,
+        `group`, ...) from a Transfer `stat` -- the cheap way to read a single
+        entry, rather than listing the folder that holds it. A path that is not
+        there raises `GlobusFileNotFound`, like a plain `operation_ls`.
+        """
+        return await asyncio.to_thread(self._operation_stat, endpoint, path)
+
     def _operation_stat(self, endpoint: str, path: str) -> dict[str, Any]:
         try:
             return self._transfer().operation_stat(endpoint, path=path).data
         except globus_sdk.TransferAPIError as e:
             self._raise_for_transfer_error(e)
+            if e.http_status == 404:
+                raise GlobusFileNotFound(f"{path} is not on {self.cluster.title()}.") from e
             raise
 
     async def operation_ls(

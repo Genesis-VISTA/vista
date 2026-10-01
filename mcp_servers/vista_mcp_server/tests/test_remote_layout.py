@@ -51,6 +51,13 @@ def test_the_olcf_layout():
     assert layout.output_dir("42") == f"{BASE}.out/42"
 
 
+def test_with_user_names_the_sources_folder_and_nothing_else():
+    layout = m.RemoteLayout(BASE)
+    named = layout.with_user("jdoe")
+    assert named.jobs == f"{BASE}.jdoe.jobs"
+    assert (named.base, named.out) == (layout.base, layout.out)
+
+
 def test_the_olcf_sources_folder_needs_a_username():
     """Status and outputs read `.out` alone, so only submission needs one."""
     layout = m.RemoteLayout(BASE)
@@ -132,7 +139,9 @@ async def test_a_new_folder_in_proj_shared_needs_no_setup():
     globus = FakeGlobusClient()
     globus.seed_remote_dir(BASE, parent_permissions="2770")
     await check(globus)
-    assert globus.ls_calls == [("coll", PROJ), ("coll", "/lustre/orion/abc123")]
+    # One entry each, read with stat, rather than listing proj-shared and its parent.
+    assert globus.stat_calls == [("coll", f"{BASE}.out"), ("coll", PROJ)]
+    assert globus.ls_calls == []
 
 
 @pytest.mark.anyio
@@ -143,7 +152,7 @@ async def test_an_existing_output_folder_is_accepted_whatever_its_mode():
     globus.seed_remote_dir(BASE, parent_permissions="0755")
     globus.seed_out_dir(BASE, permissions="0755")
     await check(globus)
-    assert globus.ls_calls == [("coll", PROJ)]  # no need to look further up
+    assert globus.stat_calls == [("coll", f"{BASE}.out")]  # no need to look further
 
 
 @pytest.mark.anyio
@@ -160,7 +169,7 @@ async def test_a_parent_its_group_cannot_write_is_refused_with_the_fix():
 
 @pytest.mark.anyio
 async def test_a_missing_parent_is_refused_with_the_fix():
-    globus = FakeGlobusClient()  # nothing seeded: listing PROJ is not found
+    globus = FakeGlobusClient()  # nothing seeded: neither .out nor the parent exists
     with pytest.raises(ToolError, match=f"mkdir -p -m 2775 {BASE}.out"):
         await check(globus)
 
@@ -174,32 +183,22 @@ async def test_a_file_where_the_output_folder_should_be_is_refused():
 
 
 @pytest.mark.anyio
-async def test_a_grandparent_that_cannot_be_listed_does_not_block_submission(
-    monkeypatch,
+@pytest.mark.parametrize("unreadable", [f"{BASE}.out", PROJ])
+async def test_an_entry_that_cannot_be_read_does_not_block_submission(
+    monkeypatch, unreadable
 ):
-    """Above a project's own directories, a listing is often refused. Not
-    knowing is not a reason to refuse."""
+    """Above a project's own directories, a stat is often refused. Not knowing
+    is not a reason to refuse."""
     globus = FakeGlobusClient()
-    globus.ls_entries[PROJ] = []
-    real_ls = globus.operation_ls
-
-    async def forbidden_above(**kwargs):
-        if kwargs["path"] != PROJ:
-            raise RuntimeError("403 PermissionDenied")
-        return await real_ls(**kwargs)
-
-    monkeypatch.setattr(globus, "operation_ls", forbidden_above)
-    await check(globus)
-
-
-@pytest.mark.anyio
-async def test_a_parent_that_cannot_be_listed_does_not_block_submission(monkeypatch):
-    globus = FakeGlobusClient()
+    globus.seed_remote_dir(BASE, parent_permissions="0755")  # would be refused
+    real_stat = globus.operation_stat
 
     async def forbidden(**kwargs):
-        raise RuntimeError("403 PermissionDenied")
+        if kwargs["path"] == unreadable:
+            raise RuntimeError("403 PermissionDenied")
+        return await real_stat(**kwargs)
 
-    monkeypatch.setattr(globus, "operation_ls", forbidden)
+    monkeypatch.setattr(globus, "operation_stat", forbidden)
     await check(globus)
 
 
@@ -212,7 +211,7 @@ async def test_an_expired_session_is_not_mistaken_for_a_missing_folder(monkeypat
             "Reconnect Globus for Frontier in the VISTA user settings."
         )
 
-    monkeypatch.setattr(globus, "operation_ls", expired)
+    monkeypatch.setattr(globus, "operation_stat", expired)
     with pytest.raises(GlobusSessionExpired):
         await check(globus)
 

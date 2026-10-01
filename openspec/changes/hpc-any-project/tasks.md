@@ -72,3 +72,11 @@ reopen the hole the check was closing.
 - [x] 9.3 Perlmutter keeps one folder: `<base>/jobs`, `<base>/out` (`tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`).
 - [x] 9.4 Every job prefix runs `_shared_out_prefix` (`umask 002`, best-effort `chgrp <project>` and `chmod 2775 <base>.out`); Lux runs it when creating `.out`, and its setup script under `umask 002` (`tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`).
 - [x] 9.5 README, settings hints, job-script comments, the llm-pretraining skill and the schema docstrings describe the new layout and the Lux account.
+
+## 10. Second review fixes
+
+- [x] 10.1 Perlmutter jobs no longer run `_shared_out_prefix` or `mkdir -m 2775`: the folder is the researcher's own, so NERSC's default permissions stay (`tests/test_submit_job_spec.py`).
+- [x] 10.2 `VISTA_REMOTE_BASE` is no longer exported to Frontier and Lux jobs; `<base>` is never created and no job read it (`tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`).
+- [x] 10.3 `_require_writable_out` reads `<base>.out` and the parent with one Transfer `stat` each (`GlobusClient.operation_stat`, 404 → `GlobusFileNotFound`) instead of listing `proj-shared` and its parent (`tests/test_remote_layout.py`, `tests/test_globus_https.py`).
+- [x] 10.4 `RemoteLayout.with_user`: submission reads the remote folder once up front and names the sources folder once the username is known, instead of building the layout twice (`tests/test_remote_layout.py`).
+- [x] 10.5 `lux-hello`'s comment says the header carries the Lux account.

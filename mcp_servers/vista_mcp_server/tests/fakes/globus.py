@@ -27,6 +27,7 @@ class FakeGlobusClient:
         self.home_user = home_user
         """What `stat /~/` names as the owner of the researcher's home."""
         self.ls_calls: list[tuple[str, str]] = []
+        self.stat_calls: list[tuple[str, str]] = []
         self.mkdir_p_calls: list[tuple[str, str, str | None]] = []
         self.uploads: list[tuple[str, str]] = []
         """(collection_id, remote_path) per ``upload_file``."""
@@ -62,6 +63,16 @@ class FakeGlobusClient:
 
     async def home_owner(self, *, collection_id: str) -> str:
         return self.home_user
+
+    async def operation_stat(self, *, endpoint: str, path: str) -> dict[str, Any]:
+        """One entry, read from its parent's seeded listing; missing raises,
+        as the real client does."""
+        self.stat_calls.append((endpoint, path))
+        parent, name = path.rstrip("/").rsplit("/", 1)
+        for entry in self.ls_entries.get(parent or "/", []):
+            if entry.get("name") == name:
+                return dict(entry)
+        raise GlobusFileNotFound(f"{path} is not on {self.cluster}.")
 
     async def operation_ls(
         self,

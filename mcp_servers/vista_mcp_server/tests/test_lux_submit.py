@@ -116,6 +116,7 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     # The job's own directive comes after commands, so Slurm ignores it.
     assert script.index("#SBATCH -A ignored") > script.index("export RUN_DIR_Lux")
     assert f"export RUN_DIR_Lux={BASE}.researcher.jobs/lux-demo/src" in script
+    assert "VISTA_REMOTE_BASE" not in script  # <base> itself is never created
     assert "export FOO='bar baz'" in script
     assert f'export VISTA_OUT={BASE}.out/"$SLURM_JOB_ID"' in script
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in script

@@ -126,27 +126,28 @@ VISTA creates `<base>.out` on those two before submitting -- through IRI on
 Perlmutter, over SSH on Lux -- which is harmless if Slurm would have.
 
 **6. Folder check before submitting.** `_require_odo_out_dir` becomes
-`_require_writable_out(globus, collection, base)` for Odo and Frontier. With
-`parent = dirname(base)`:
-- list `parent`; if it holds `basename(base).out`, continue. A `.out` that
-  Slurm made is 755 but owned by the automation user, so its mode says nothing
-  about whether that user can write in it, and the check does not read it;
-- `parent` not found: refuse;
-- otherwise list `dirname(parent)` and find `parent`: missing, or no
-  group-write bit, refuse;
+`_require_writable_out(globus, collection, layout)` for Odo and Frontier, with
+at most two Transfer `stat`s (`GlobusClient.operation_stat`), each reading one
+entry:
+- `stat <base>.out`: if it exists, continue. A `.out` that Slurm made is 755
+  but owned by the automation user, so its mode says nothing about whether that
+  user can write in it, and every job keeps it group-writable anyway; a file
+  there is refused;
+- otherwise `stat` the parent of `<base>`: not found, or no group-write bit,
+  refuse;
 - every refusal names one command, `mkdir -p -m 2775 <base>.out`, which works
   whatever the parent's mode, because the researcher creates the folder with
   group write;
-- a listing that fails with `GlobusSessionExpired`: re-raise; with anything
-  else (for example a grandparent the researcher cannot list): log it and
-  continue.
+- a `stat` that fails with `GlobusSessionExpired`: re-raise; with anything else
+  (for example an entry the researcher cannot read): log it and continue.
 
-To tell "parent not found" from "could not look", a plain (non-recursive)
-`operation_ls` of a missing path now raises `GlobusFileNotFound`, the type the
-HTTPS side already raises, instead of the raw `TransferAPIError`.
+To tell "not found" from "could not look", a Transfer `stat` or plain
+(non-recursive) `operation_ls` of a missing path raises `GlobusFileNotFound`,
+the type the HTTPS side already raises, instead of the raw `TransferAPIError`.
 
-*Alternative:* list `<base>` itself. Rejected: a Globus listing reports its
-entries' permissions, not those of the folder it lists.
+*Earlier version, replaced in review:* listing the parent and the grandparent to
+read the two entries. `proj-shared` and the project's folder can be large, and
+`stat` reads exactly the entry needed.
 
 **7. No registry.** `SubmittedJob`, `_submitted_jobs`, the persistence helpers
 and `_submitted_account` are deleted, and so are `list_hpc_jobs` and its
@@ -180,13 +181,16 @@ the owner Globus reports for `/~/` (`GlobusClient.home_owner`: one Transfer
 `stat`, cached per collection and credential; it differs between enclaves, so it
 is asked per cluster) and the SSH login on Lux (`slurm_ssh.username`). Status
 and outputs never need it: they read `.out`. The output folder stays shared, and
-every job begins with `_shared_out_prefix`: `umask 002`, then a best-effort
+every OLCF job begins with `_shared_out_prefix`: `umask 002`, then a best-effort
 `chgrp <project>` and `chmod 2775 <base>.out`, which succeed only for its owner
 -- whichever identity made it -- so the first job fixes it for all later ones,
 and setgid keeps the group on everything below. On Lux VISTA runs the same lines
 when it creates `.out`, and the login-node setup script runs under `umask 002`.
 That lets the automation user, the researcher's Lux jobs and colleagues all
-write `.out` and `VISTA_JOB_DIR`.
+write `.out` and `VISTA_JOB_DIR`. Perlmutter jobs do not run it: their folder is
+the researcher's own and nothing else writes it, so NERSC's default
+permissions are left alone. `VISTA_REMOTE_BASE` is no longer exported, since
+`<base>` itself is never created on OLCF.
 
 **9. The example job writes under `$VISTA_OUT`.** Both scripts create the venv
 at `"$VISTA_OUT/.venv"`. On Odo the source folder is read-only to the

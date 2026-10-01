@@ -159,6 +159,11 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     assert name == "vista-forge-tune"
     job_cmd = spec["arguments"][2]
     assert f'export VISTA_OUT={NERSC}/out/"$SLURM_JOB_ID"' in job_cmd
+    # The researcher's own folder, which nothing else writes: NERSC's default
+    # permissions are left alone (no group-writable prefix).
+    assert "umask 002" not in job_cmd
+    assert "chmod 2775" not in job_cmd
+    assert "chgrp" not in job_cmd
     assert spec["attributes"]["directory"] == f"{NERSC}/jobs"
     slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
         encoding="utf-8"
@@ -206,6 +211,7 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(
         encoding="utf-8"
     ) in job_cmd
+    assert "VISTA_REMOTE_BASE" not in spec["attributes"]["environment"]  # never created
     run_dir = spec["attributes"]["environment"].get("RUN_DIR_Frontier")
     assert run_dir is not None and run_dir.endswith("/example/src")
     # Only the source tree: out/ was once made through Globus here, as the

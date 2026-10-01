@@ -211,6 +211,10 @@ class RemoteLayout:
     submission needs it; status and outputs read `.out` alone.
     """
 
+    def with_user(self, user: str) -> RemoteLayout:
+        """ This layout, now that the researcher's username is known. """
+        return dataclasses.replace(self, user=user)
+
     @property
     def jobs(self) -> str:
         if self.nested:
@@ -265,11 +269,12 @@ class RemoteLayout:
         return f"{self.out}/{job_id}"
 
 
-def _layout(cfg: UserConfig, cluster: Cluster, user: str | None = None) -> RemoteLayout:
-    """ The layout for the researcher's remote folder on `cluster`; see `RemoteLayout`. """
-    return RemoteLayout(
-        cfg.require_remote_dir(cluster), nested=cluster == "perlmutter", user=user,
-    )
+def _layout(cfg: UserConfig, cluster: Cluster) -> RemoteLayout:
+    """
+    The layout for the researcher's remote folder on `cluster`; see
+    `RemoteLayout`. On OLCF, submission adds the username with `with_user`.
+    """
+    return RemoteLayout(cfg.require_remote_dir(cluster), nested=cluster == "perlmutter")
 
 
 def _shared_out_prefix(out: str, group: str | None) -> str:
@@ -479,14 +484,16 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
-    _layout(cfg, "odo")  # an unset remote folder fails before anything is contacted
+    # Read first, so an unset remote folder fails before anything is contacted;
+    # the sources folder is named once Globus says who the researcher is.
+    layout = _layout(cfg, "odo")
     s3m_token, project = await _olcf_project(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
-    layout = _layout(
-        cfg, "odo", user=await globus.home_owner(collection_id=settings.odo_globus_collection_id),
+    layout = layout.with_user(
+        await globus.home_owner(collection_id=settings.odo_globus_collection_id)
     )
     src_dir = layout.src(job)
 
@@ -597,19 +604,16 @@ async def _require_writable_out(
     naming the command that fixes it. VISTA cannot create the folder itself: one
     made through Globus belongs to the researcher, 755, and Globus cannot chmod.
 
-    An existing `.out` is accepted whatever its mode. One made by Slurm is 755
-    but owned by the automation user, so its mode says nothing about whether
-    that user may write in it.
-
-    Globus reports permissions for the entries of a listing, not for the folder
-    listed, so the parent's own mode is read from the grandparent. When a
-    listing cannot be made -- common above a project's own directories -- the
-    answer is unknown and the submission goes ahead, rather than refusing on a
-    guess.
+    Two Transfer `stat`s at most, each reading one entry. An existing `.out` is
+    accepted whatever its mode: one made by Slurm is 755 but owned by the
+    automation user, so its mode says nothing about whether that user may write
+    in it, and every job keeps it group-writable anyway (`_shared_out_prefix`).
+    When an entry cannot be read -- common above a project's own directories --
+    the answer is unknown and the submission goes ahead, rather than refusing on
+    a guess.
     """
     title = cluster.title()
     parent = layout.parent
-    out_name = posixpath.basename(layout.out)
 
     def refuse(reason: str) -> NoReturn:
         raise ToolError(
@@ -620,35 +624,32 @@ async def _require_writable_out(
         )
 
     try:
-        entries = await globus.operation_ls(endpoint=collection_id, path=parent)
+        out = await globus.operation_stat(endpoint=collection_id, path=layout.out)
     except GlobusSessionExpired:
         # Says which connection to redo; the messages below would say the wrong thing.
         raise
     except GlobusFileNotFound:
-        refuse(f"{parent} does not exist.")
+        out = None
     except Exception as e:
-        logging.warning(f"could not list {parent} on {title} ({e}); submitting anyway")
+        logging.warning(f"could not stat {layout.out} on {title} ({e}); submitting anyway")
         return
-    existing = next((e for e in entries if e.get("name") == out_name), None)
-    if existing is not None:
-        if existing.get("type") != "dir":
+    if out is not None:
+        if out.get("type") != "dir":
             refuse(f"{layout.out} is not a folder.")
         return
 
-    grandparent, parent_name = posixpath.split(parent)
-    if not parent_name:
-        return  # the parent is "/": nothing above it to ask
     try:
-        entries = await globus.operation_ls(endpoint=collection_id, path=grandparent)
+        entry = await globus.operation_stat(endpoint=collection_id, path=parent)
     except GlobusSessionExpired:
         raise
+    except GlobusFileNotFound:
+        refuse(f"{parent} does not exist.")
     except Exception as e:
         logging.warning(
             f"could not read the permissions of {parent} on {title} ({e}); submitting anyway"
         )
         return
-    entry = next((e for e in entries if e.get("name") == parent_name), None)
-    perms = entry.get("permissions") if entry is not None else None
+    perms = entry.get("permissions")
     try:
         group_writable = int(perms, 8) & 0o020 if perms else True
     except ValueError:
@@ -702,10 +703,13 @@ async def _submit_perlmutter_job(
 
     # Mirror the Odo/Frontier setup-snippet UX: the user's job.perlmutter.slurm runs
     # with $VISTA_OUT set to a per-job-id output dir that's already mkdir'd.
-    setup_snippet = "\n".join([_shared_out_prefix(layout.out, cfg.nersc_account), textwrap.dedent(f"""
+    #
+    # No `_shared_out_prefix`: the job runs as the researcher in their own folder,
+    # which nothing else writes, so NERSC's default permissions stay as they are.
+    setup_snippet = textwrap.dedent(f"""
         export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
-        mkdir -p -m 2775 "$VISTA_OUT"
-    """).strip()])
+        mkdir -p "$VISTA_OUT"
+    """).strip()
     job_cmd_args = shlex.join(shlex.split(script_args or ""))
     body_lines = [setup_snippet]
     if job_cmd_args:
@@ -828,17 +832,18 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
-    _layout(cfg, "frontier")  # an unset remote folder fails before anything is contacted
+    # Read first, so an unset remote folder fails before anything is contacted;
+    # the sources folder is named once Globus says who the researcher is.
+    layout = _layout(cfg, "frontier")
     s3m_token, project = await _olcf_project(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
-    layout = _layout(
-        cfg, "frontier",
-        user=await globus.home_owner(collection_id=settings.frontier_globus_collection_id),
+    layout = layout.with_user(
+        await globus.home_owner(collection_id=settings.frontier_globus_collection_id)
     )
-    base, src_dir = layout.base, layout.src(job)
+    src_dir = layout.src(job)
 
     # File ops via Globus, which only ever creates the source tree the job
     # reads. Everything the job writes is created by Slurm and the job itself,
@@ -901,7 +906,6 @@ async def _submit_frontier_job(
     iri_env = {
         "RUN_DIR_Frontier": src_dir,
         "FORGE_MODEL_Frontier": f"{layout.job_dir(job)}/model",
-        "VISTA_REMOTE_BASE": base,
         "VISTA_JOB_DIR": layout.job_dir(job),
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
@@ -1021,7 +1025,9 @@ async def _submit_lux_job(
             f"Add a {LUX_JOB_SCRIPT} to enable Lux submission."
         )
 
-    _layout(cfg, "lux")  # an unset remote folder fails before anyone is asked to log in
+    # Read first, so an unset remote folder fails before anyone is asked to log
+    # in; the sources folder is named once the SSH login says who they are.
+    layout = _layout(cfg, "lux")
     account = cfg.require_lux_account()
     nodes = node_count or defaults.resources.node_count or 1
     duration = duration_int or defaults.duration
@@ -1030,8 +1036,8 @@ async def _submit_lux_job(
         ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
     )
 
-    layout = _layout(cfg, "lux", user=await slurm_ssh.username(conn))
-    base, src_dir = layout.base, layout.src(job)
+    layout = layout.with_user(await slurm_ssh.username(conn))
+    src_dir = layout.src(job)
     await _sync_job_sources_ssh(conn, job, src_dir)
     # Lux runs as the researcher, so VISTA can make the log folder itself, as on
     # Perlmutter. Odo's and Frontier's Slurm were seen creating a missing one;
@@ -1042,7 +1048,6 @@ async def _submit_lux_job(
 
     job_env = {
         "RUN_DIR_Lux": src_dir,
-        "VISTA_REMOTE_BASE": base,
         "VISTA_JOB_DIR": layout.job_dir(job),
         **defaults.iri.environment,  # user-supplied JSON entries win
     }

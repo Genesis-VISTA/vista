@@ -598,6 +598,14 @@ class TestTheTransferSide:
         with pytest.raises(GlobusFileNotFound):
             await c.operation_ls(endpoint=COLLECTION, path="/lustre/out")
 
+    async def test_a_missing_path_on_stat_is_file_not_found(self, client, monkeypatch):
+        c, _ = client(lambda r: pytest.fail("HTTPS should not be reached"))
+        error = self.transfer_error(404, "ClientError.NotFound", "no such path")
+        self.refusing_transfer_client(c, monkeypatch, "operation_stat", error)
+
+        with pytest.raises(GlobusFileNotFound):
+            await c.operation_stat(endpoint=COLLECTION, path="/lustre/foo.out")
+
     async def test_an_existing_directory_is_still_a_successful_mkdir(
         self, client, monkeypatch
     ):

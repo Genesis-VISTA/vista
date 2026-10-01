@@ -1,7 +1,7 @@
 #!/bin/bash -l
 # Lux Slurm body for lux-hello. Vista's Lux dispatcher prepends the #SBATCH
-# header (one node, walltime, log paths; no account, so Slurm charges your
-# default) and exports VISTA_OUT, an already-created per-job output directory.
+# header (your Lux account, one node, walltime, log paths) and exports
+# VISTA_OUT, an already-created per-job output directory.
 # Nothing is installed or cloned.
 
 set -euo pipefail

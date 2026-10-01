@@ -132,12 +132,13 @@ system SHALL check:
 Sources, which the job only reads, SHALL still be uploaded through the
 researcher's Globus identity.
 
-Every job SHALL begin by keeping the output folder writable by the project's
+Every OLCF job SHALL begin by keeping the output folder writable by the project's
 group, because it is shared by identities that differ (the automation user,
 the researcher on Lux, colleagues): `umask 002`, then a best-effort `chgrp` to
 the project and `chmod 2775` of `<remote_dir>.out`, which succeed only for the
 folder's owner and are otherwise ignored. On Lux, VISTA SHALL do the same when
-it creates the folder.
+it creates the folder. Perlmutter jobs SHALL NOT change permissions: their
+folder belongs to the researcher alone.
 
 #### Scenario: A new folder in a group-writable parent
 - **WHEN** the Frontier remote folder is `/lustre/orion/abc123/proj-shared/foo`, neither `foo.<user>.jobs` nor `foo.out` exists, and `proj-shared` has permissions `0770`
