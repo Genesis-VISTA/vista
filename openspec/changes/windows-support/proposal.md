@@ -33,7 +33,7 @@ Some researchers who would use VISTA have only Windows laptops. [`prebuilt-lapto
 - Code signing and ORNL endpoint-policy review. These are tracked as risks.
 - Cross-platform builds of any kind.
 - WSL2 as a supported route.
-- The Electron window shell on Windows.
+- The Electron window shell on Windows. (Since added, following `electron-desktop-shell` P1.)
 - The AWS deployment. There is none today; a future one would port the unmerged `beta-deployment-3` sandbox changes onto this change's SDK path.
 - VISTAGuard.
 

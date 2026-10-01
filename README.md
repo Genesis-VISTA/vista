@@ -27,8 +27,8 @@ sandbox image, and seeds the database.
 That takes a few minutes, with each step logged as it happens. Later runs skip
 every setup step and start in seconds.
 
-VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
-the window stops VISTA, and so do Ctrl-C in the terminal and closing the
+VISTA then opens in its own window.
+Closing the window stops VISTA, and so do Ctrl-C in the terminal and closing the
 terminal. VISTA is a desktop application and has no browser mode. In a session
 that can't show the window, the launcher says why and stops before starting
 anything: an SSH session, no display, or, on Linux, running as root or missing
@@ -88,7 +88,8 @@ Each start writes `renderer sandbox: on` or `off (--no-sandbox)` to
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
 `window.log`, `setup.log`). The window's own browser cache is kept apart, in
-`~/Library/Application Support/VISTA` on macOS and `~/.config/VISTA` on Linux.
+`~/Library/Application Support/VISTA` on macOS, `~/.config/VISTA` on Linux, and
+`%APPDATA%\VISTA` on Windows.
 The unpacked package tree is disposable. Upgrading is replacing
 that directory, and starting over is deleting the state directory.
 
@@ -203,7 +204,9 @@ the MCP app; it skips only the indexing pass and its per-paper model calls.
 
 Run the same script from Git Bash (it comes with Git for Windows). It builds a
 `win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
-they run `vista.cmd`, or `vista.ps1` from PowerShell.
+they run `vista.cmd`, from cmd, PowerShell, or by double-clicking. That is the
+entry point; `vista.ps1` does the work behind it but is not meant to be run
+directly, since only `vista.cmd` gets it past a Group Policy execution policy.
 
 ```bash
 ./scripts/build_local_package.sh --check

@@ -443,7 +443,7 @@ shipped corpus returns passages that cite nothing. Pass \
   done
   # The VISTA window: Electron's binary comes from GitHub releases on every
   # target that has a window, and on macOS it is re-signed ad hoc here.
-  if [[ "$TARGET_OS" == macos || "$TARGET_OS" == linux ]]; then
+  if [[ "$TARGET_OS" == macos || "$TARGET_OS" == linux || "$TARGET_OS" == windows ]]; then
     if ! curl -fsS -m 15 --head -o /dev/null https://github.com/electron/electron/releases 2>/dev/null; then
       failures+=("cannot reach github.com — needed to download Electron for the VISTA window")
     fi
@@ -932,8 +932,8 @@ stage_ui() {
 
 # The window `vista` opens once the services are up (electron/, design B1).
 # The launcher finds it through the manifest's `window.exe` rather than a
-# hard-coded path, so a target with no window simply records none and its
-# package opens in a browser, as before.
+# hard-coded path, which each target lays out differently. Every target has
+# one: there is no browser mode, so a target without a window is not built.
 WINDOW_EXE=''
 ELECTRON_VERSION="$(sed -nE 's/.*"electron": "([^"]+)".*/\1/p' "$REPO_ROOT/electron/package.json")"
 
@@ -941,8 +941,41 @@ stage_window() {
   case "$TARGET_OS" in
     macos) stage_window_macos ;;
     linux) stage_window_linux ;;
-    *) log "no VISTA window for $TARGET_OS-$TARGET_ARCH yet; the package opens in a browser" ;;
+    windows) stage_window_windows ;;
+    *) die "no VISTA window for $TARGET_OS-$TARGET_ARCH" ;;
   esac
+}
+
+# electron-desktop-shell P1. Nothing is signed: an unsigned VISTA.exe meets
+# SmartScreen, the same accepted risk as the unsigned msb.exe beside it.
+stage_window_windows() {
+  log "building the VISTA window (Electron $ELECTRON_VERSION)"
+  local arch
+  case "$TARGET_ARCH" in
+    x86_64) arch=x64 ;;
+    *) die "no Electron build known for windows-$TARGET_ARCH" ;;
+  esac
+
+  local out built
+  out="$(mktemp -d)"
+  (
+    cd "$REPO_ROOT/electron"
+    npm ci --prefer-offline >/dev/null
+  )
+  # The packager prints a Windows path; bash's own tools want its POSIX form.
+  built="$(node "$REPO_ROOT/electron/scripts/package.js" \
+    --platform win32 --arch "$arch" --out "$out" | tail -1 | tr -d '\r')"
+  built="$(cygpath -u "$built")"
+  [[ -d "$built" ]] || die "the window packager produced nothing at $built"
+
+  local window="$STAGING_APP/window"
+  rm -rf "$window"
+  mv "$built" "$window"
+  rm -rf "$out"
+
+  WINDOW_EXE="app/window/VISTA.exe"
+  [[ -f "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
+  echo "window      : $(du -sh "$window" | cut -f1) (Electron $ELECTRON_VERSION)"
 }
 
 # linux-desktop-window D7. Nothing is signed on Linux. Next to the window go
@@ -1489,10 +1522,10 @@ from pathlib import Path
 manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
 target_os = sys.argv[2]
 
-# A package without its window would still start -- in a browser -- which is
-# exactly how a packaging mistake would go unnoticed.
+# A package without its window cannot start at all: there is no browser mode,
+# and the launcher refuses. Caught here rather than on a researcher's machine.
 window = manifest.get("window")
-if target_os in ("macos", "linux") and not window:
+if target_os in ("macos", "linux", "windows") and not window:
     sys.exit(f"manifest has no window on {target_os}")
 if window:
     exe = Path(sys.argv[1]).parent / window["exe"]

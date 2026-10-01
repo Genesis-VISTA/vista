@@ -86,8 +86,8 @@ wait_for() {
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
 # VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
-# waits for the address line the launcher prints in that mode. The Windows
-# launcher has no window and ignores it.
+# waits for the address line the launcher prints in that mode. Both launchers,
+# vista and vista.ps1, read it.
 export VISTA_NO_WINDOW=1
 LAUNCHER=("$PACKAGE/vista")
 if [[ "$IS_WINDOWS" == true ]]; then

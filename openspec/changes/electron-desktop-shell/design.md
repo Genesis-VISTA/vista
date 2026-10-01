@@ -246,7 +246,10 @@ still needs:
     launcher (its D9). That launcher's job object replaces L2's process groups and
     signals. It reads `window.exe` (`app\window\VISTA.exe`) from the same manifest
     field.
-  - Staging moves into its `build_windows_package.ps1` (its D10), not this script.
+  - Done in `build_local_package.sh`'s `stage_window_windows`, since Windows packages
+    are built by that script under Git Bash. `vista.ps1` starts the window under `cmd`
+    like the services, so its output lands in `window.log` and its exit code (75 when
+    another window is open) reaches the launcher.
   - An unsigned `VISTA.exe` meets SmartScreen, the same accepted risk as its unsigned
     `msb.exe`.
   - On Windows, W5's menu becomes a window menu bar, and quit is File → Exit or Alt-F4.
