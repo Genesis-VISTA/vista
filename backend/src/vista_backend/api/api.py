@@ -26,6 +26,7 @@ from .mcp import router as mcp_router
 from .models import router as models_router
 from .palisade import router as palisade_router
 from .projects import router as projects_router
+from .reports import router as reports_router
 from .skills import router as skills_router
 from .users import router as users_router
 
@@ -109,6 +110,7 @@ app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)
 app.include_router(models_router)
 app.include_router(projects_router)
+app.include_router(reports_router)
 app.include_router(skills_router)
 app.include_router(files_router)
 app.include_router(users_router)
