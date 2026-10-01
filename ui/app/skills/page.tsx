@@ -143,7 +143,7 @@ export default function SkillsPage() {
               type="button"
               className="button button-sm"
               onClick={() => setShowImport(true)}
-              title="Import a skill from a GitHub repository into this project"
+              title="Import a skill from a GitHub repository or a local folder into this project"
               disabled={!projectName}
             >
               Import…
