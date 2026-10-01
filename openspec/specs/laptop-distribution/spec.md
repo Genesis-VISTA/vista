@@ -72,19 +72,27 @@ artifact. The artifact's own contents SHALL be treated as read-only at run time.
 ### Requirement: Single command to install and run
 
 A single command SHALL perform any outstanding first-run setup and then start VISTA. That
-command SHALL be safe to re-run, and on a subsequent run SHALL skip work already done.
+command SHALL be safe to re-run, and on a subsequent run SHALL skip work already done. The
+command SHALL end by opening VISTA in its application window; VISTA has no browser mode, and
+a session that cannot show the window is refused before any service starts.
 
 #### Scenario: First run
 
 - **WHEN** the command is run for the first time after unpacking
 - **THEN** it prepares the sandbox image, creates the state directory, installs the bundled
-  corpus, seeds the database, starts the services, and reports the address to open
+  corpus, seeds the database, starts the services, and opens the VISTA window
 
 #### Scenario: Subsequent run
 
 - **WHEN** the command is run again on an already-initialised installation
 - **THEN** it starts the services without repeating setup and without re-importing the
   sandbox image
+
+#### Scenario: No window available
+
+- **WHEN** the command is run in a session that cannot show the window, such as one with no
+  display or a remote shell session
+- **THEN** it says why the window cannot open and exits without starting any service
 
 ### Requirement: Preconditions reported before failure
 
@@ -131,25 +139,47 @@ capability, not as a reason to refuse to start.
 
 ### Requirement: Bundled corpus is searchable at first run
 
-The artifact SHALL include the molten-salt corpus already indexed, so retrieval works on
+The artifact SHALL include the AI-safety corpus already indexed, so retrieval works on
 first run without an indexing step. A knowledge base SHALL NOT be presented as ready
-unless its index actually contains content.
+unless its index actually contains content. The molten-salt corpus, its index and MSTDB
+data SHALL be included only in an artifact built with the science projects enabled; an
+artifact built without them SHALL contain none of that data.
 
 #### Scenario: Retrieval works immediately
 
 - **WHEN** a researcher asks a question on their first session after installation
-- **THEN** retrieval returns passages from the bundled corpus with no indexing having run
+- **THEN** retrieval returns passages from the bundled AI-safety corpus with no indexing
+  having run
 
 #### Scenario: Cited sources are readable
 
-- **WHEN** retrieval cites a document from the bundled corpus
+- **WHEN** retrieval cites a document from a bundled corpus
 - **THEN** that document can be opened from the interface
 
 #### Scenario: Missing or empty index is refused
 
-- **WHEN** the bundled index is absent or contains no entries at first run
+- **WHEN** a bundled index is absent or contains no entries at first run
 - **THEN** setup fails with a message identifying the incomplete corpus, rather than
   creating a knowledge base that reports itself ready and returns nothing
+
+#### Scenario: The installed artifact never indexes
+
+- **WHEN** an installed artifact starts, on first run or later, including when a bundled
+  index is missing
+- **THEN** no corpus is embedded and no citation-extraction call is made on the
+  researcher's machine; a missing index fails setup as above
+
+#### Scenario: Default artifact carries no science data
+
+- **WHEN** an artifact is built without the science projects enabled
+- **THEN** it contains no molten-salt corpus, no molten-salt index and no MSTDB file,
+  including inside the HPC job catalog
+
+#### Scenario: Science artifact
+
+- **WHEN** an artifact is built with the science projects enabled
+- **THEN** it also contains the molten-salt corpus already indexed and the MSTDB data, and
+  retrieval against the molten-salt corpus works on first run
 
 ### Requirement: Job submission preserved
 
@@ -186,36 +216,12 @@ offers.
 - **THEN** the artifact guides the researcher through obtaining it, and no step requires a
   source checkout, a development tool, or a file the artifact does not contain
 
-### Requirement: Building for another platform
-
-A build host SHALL be able to produce an artifact for a supported platform other than its
-own, without access to a machine of that platform. Such an artifact SHALL be equivalent to
-one built natively for the target.
-
-#### Scenario: Building for a different platform
-
-- **WHEN** a build is run for a supported target platform that differs from the build
-  host's
-- **THEN** it produces an artifact whose bundled interpreter, language runtime, compiled
-  dependencies, and sandbox image are all the target platform's
-
-#### Scenario: A host component is not substituted for a target one
-
-- **WHEN** a component staged into the artifact could be taken either from the build host
-  or from the target environment
-- **THEN** the copy placed in the artifact is the target platform's, and a component that
-  cannot be obtained for the target fails the build rather than being substituted
-
-#### Scenario: The cross-built artifact is still exercised
-
-- **WHEN** a cross-platform build completes
-- **THEN** the artifact is started and checked in a target-platform environment before the
-  build reports success, on the same terms as a native build
-
 ### Requirement: Stated compatibility floor
 
 An artifact SHALL record the oldest target-platform system libraries it supports, so a host
-that cannot run it can be identified without unpacking and starting it.
+that cannot run it can be identified without unpacking and starting it. On macOS and Windows,
+where the build host's own version is the floor, the artifact SHALL record the version of the
+host it was built on.
 
 #### Scenario: Reading an artifact's requirements
 
@@ -231,18 +237,99 @@ the artifact from a location other than the one it was built in.
 
 #### Scenario: A build prerequisite is missing
 
-- **WHEN** a build is started without one of its required credentials or tools
+- **WHEN** a build is started without one of its required credentials or tools, or without
+  the AI-safety corpus in its source data
 - **THEN** it fails immediately, naming what is missing, rather than producing an
   incomplete artifact
+
+#### Scenario: Science data required only when enabled
+
+- **WHEN** a build is started without the science projects enabled and its source data
+  lacks the molten-salt corpus or MSTDB
+- **THEN** the build proceeds
 
 #### Scenario: The finished artifact is exercised
 
 - **WHEN** a build completes
 - **THEN** the artifact is unpacked to a different location, started, checked for service
-  health, checked with one retrieval query, and shut down before the build reports success
+  health, checked with one retrieval query against the AI-safety corpus, checked to contain
+  no science data unless it was built with the science projects enabled, and shut down
+  before the build reports success
 
 #### Scenario: Contents are recorded
 
 - **WHEN** a build completes
 - **THEN** it records the components included and their sizes, so an incomplete artifact
   can be identified without unpacking it
+
+### Requirement: Upgraded installations receive new bundled corpora
+
+When a newer artifact is run against an existing state directory, first-run setup SHALL
+install any bundled corpus the state directory does not already have, even when other
+bundled corpora are already installed. It SHALL NOT replace or remove a corpus already
+installed.
+
+#### Scenario: Upgrading from a molten-salt package
+
+- **WHEN** a package containing the AI-safety corpus is run against a state directory
+  created by an earlier package that installed only the molten-salt corpus
+- **THEN** the AI-safety corpus and its index are installed, the molten-salt corpus is left
+  in place, and the AI-safety project's literature search works in that session
+
+#### Scenario: Nothing new to install
+
+- **WHEN** a package is run against a state directory that already holds every corpus it
+  bundles
+- **THEN** no corpus is extracted or overwritten
+
+### Requirement: Windows x64 is a supported platform
+
+VISTA SHALL be distributable as an artifact for Windows 10 and 11 on x64. The artifact SHALL meet every other requirement of this capability. It SHALL be started by `vista.cmd`, which needs no shell other than cmd or PowerShell.
+
+#### Scenario: First run on Windows
+
+- **WHEN** a Windows x64 artifact is unpacked and `vista.cmd` is run from cmd, PowerShell or Explorer on a host that meets its preconditions
+- **THEN** it performs first-run setup, starts every service including the code-execution sandbox, and opens the VISTA window
+
+#### Scenario: Agent round trip on Windows
+
+- **WHEN** a researcher on a Windows host sends an agent a message that runs code, writes a plot and displays it
+- **THEN** the plot is displayed in the interface
+
+### Requirement: Windows preconditions reported before failure
+
+On Windows, the launcher SHALL check the host features the sandbox and the unpacked files need, and SHALL name any that are missing before starting a service. For each one it SHALL say how to meet it, and whether meeting it needs administrator rights.
+
+#### Scenario: Sandbox hypervisor not available
+
+- **WHEN** the artifact is started on a Windows host where the hypervisor the code-execution sandbox uses is not available
+- **THEN** it says so, names Windows Hypervisor Platform as what provides it, says enabling it needs administrator rights and a restart, and starts no service
+
+#### Scenario: Unpacked path too long
+
+- **WHEN** the artifact is unpacked where one of its files' full paths exceeds the Windows path-length limit, and long paths are not enabled on the host
+- **THEN** it reports the limit and suggests a shorter unpack location or enabling long paths, before starting any service
+
+#### Scenario: State directory too deep
+
+- **WHEN** the state directory is deep enough that a corpus file extracted into it would exceed the Windows path-length limit, and long paths are not enabled on the host
+- **THEN** it reports the limit and suggests a shorter `VISTA_HOME`, before starting any service
+
+#### Scenario: Extracted to Downloads with Explorer
+
+- **WHEN** a Windows artifact is extracted with Explorer's Extract All, at its default destination, in the user's Downloads folder on a host without long paths enabled
+- **THEN** every file is extracted and the artifact starts
+
+### Requirement: Built and verified on its own platform
+
+An artifact SHALL be built on a host of the platform it targets. That host SHALL be able to run the code-execution sandbox, because the build's verification of the finished artifact SHALL include the checks that go through the sandbox, retrieval among them. No check SHALL be skipped for want of hardware virtualisation; verification is skipped only on an explicit maintainer option.
+
+#### Scenario: Building for Windows
+
+- **WHEN** a Windows artifact is built on a Windows build host
+- **THEN** its bundled interpreter, runtime and dependencies are the Windows x64 ones, its sandbox image is the Linux x64 image, and the build verifies it as any other build does
+
+#### Scenario: A build host that cannot run the sandbox
+
+- **WHEN** a build whose verification is not explicitly skipped runs on a host where the code-execution sandbox cannot run
+- **THEN** the build's verification fails, the build does not report success, and the launcher's message naming the missing requirement is shown

@@ -226,28 +226,3 @@ stored credential SHALL NOT be assumed to authorize another cluster's transfers.
   source checkout and no separately installed tooling
 - **THEN** the credential is obtained and stored, without the researcher running anything
   outside VISTA
-
-### Requirement: A deployment credential is a fallback, not a requirement
-
-Where a deployment configures file-transfer credentials for all of its users, a credential
-a researcher has supplied SHALL take precedence for that researcher, and the deployment's
-SHALL be used when they have supplied none. Neither SHALL be required for VISTA to start.
-
-#### Scenario: Researcher has connected
-
-- **WHEN** a researcher who has connected file transfer performs a file operation on a
-  deployment that also configures a credential
-- **THEN** the researcher's own credential authorizes it
-
-#### Scenario: Researcher has not connected
-
-- **WHEN** a researcher who has not connected performs a file operation on a deployment
-  that configures a credential
-- **THEN** the deployment's credential authorizes it, as it did before any interface
-  existed
-
-#### Scenario: Neither is configured
-
-- **WHEN** no credential is configured by the deployment and none has been supplied
-- **THEN** VISTA starts normally and the file operation reports that file transfer is not
-  connected, naming where to connect it
