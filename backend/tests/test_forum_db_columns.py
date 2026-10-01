@@ -53,3 +53,33 @@ def test_an_existing_database_gains_them_at_startup(tmp_path):
 
     for table, columns in NEW_COLUMNS.items():
         assert columns <= _columns(engine, table)
+
+
+def test_chat_session_run_columns_reach_an_existing_database(tmp_path):
+    """
+    `run_state` and `run_unseen` are NOT NULL, which `_add_missing_columns` only
+    adds when they carry a server default. Existing rows must read back idle.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    _build(engine)
+    run_columns = {"run_state", "run_unseen", "run_events"}
+    with engine.begin() as conn:
+        for column in run_columns:
+            conn.execute(text(f'ALTER TABLE chat_session DROP COLUMN "{column}"'))
+    assert not run_columns & _columns(engine, "chat_session")
+
+    _build(engine)
+
+    assert run_columns <= _columns(engine, "chat_session")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO chat_session (id, user_id, project_id, title, "
+                "message_history, messages, created_at, updated_at) VALUES "
+                "('a', 'u', 'p', 't', '[]', '[]', '', '')"
+            )
+        )
+        row = conn.execute(
+            text("SELECT run_state, run_unseen, run_events FROM chat_session")
+        ).one()
+    assert tuple(row) == ("idle", 0, None)

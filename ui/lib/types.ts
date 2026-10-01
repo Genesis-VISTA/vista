@@ -51,6 +51,11 @@ export type ChatMessage = {
    * only the latest one in the conversation expands automatically.
    */
   intermediate?: boolean;
+  /**
+   * The chat run that drew this bubble. Drawing that run again first removes
+   * its bubbles, so a partly saved thread is redrawn rather than duplicated.
+   */
+  run_id?: string;
 };
 
 /* ---------------------------------------------------------------------- */

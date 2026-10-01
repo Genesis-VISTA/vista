@@ -117,11 +117,19 @@ def _add_missing_columns(conn: Connection) -> None:
                 )
                 continue
             column_type = column.type.compile(conn.dialect)
+            default = ""
+            if column.server_default is not None:
+                # Existing rows take the default, so they read the same as a new row.
+                arg = getattr(column.server_default, "arg", None)
+                if isinstance(arg, str):
+                    default = " DEFAULT '" + arg.replace("'", "''") + "'"
+                elif arg is not None:
+                    default = f" DEFAULT {arg.compile(dialect=conn.dialect)}"
             log.info("Adding missing column %s.%s", table.name, column.name)
             conn.execute(
                 text(
                     f'ALTER TABLE "{table.name}" '
-                    f'ADD COLUMN "{column.name}" {column_type}'
+                    f'ADD COLUMN "{column.name}" {column_type}{default}'
                 )
             )
 

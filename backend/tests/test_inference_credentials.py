@@ -448,6 +448,14 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
     alice = await seed_user(session)
     project = await seed_project(session, alice, name="alices-project")
 
+    from vista_backend.services import chat_session as chat_session_service
+
+    conversation = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    conversation_id = str(conversation.id)
+    await session.commit()
+
     def reject(messages, info):
         raise ModelHTTPError(status_code=401, model_name="claude-sonnet")
 
@@ -455,7 +463,11 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
         with api_client(session, agent=agent) as (client, _):
             response = await client.post(
                 "/projects/alices-project/agent/run",
-                json={"user_prompt": "hi", "stream": True},
+                json={
+                    "user_prompt": "hi",
+                    "stream": True,
+                    "chat_session_id": conversation_id,
+                },
                 headers={"X-Vista-User-Email": alice.email},
             )
 
