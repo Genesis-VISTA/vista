@@ -52,8 +52,7 @@ point. See `references/data_schema.md` in the repo for the full schema.
 ## Prerequisites
 
 Just the standard credentials for whichever cluster you target — for **Odo**, an Odo S3M
-token plus Globus connected for Odo in the user settings (or the deployment's own
-credential, if one is configured); for **Perlmutter**, a NERSC IRI token
+token plus Globus connected for Odo in the user settings; for **Perlmutter**, a NERSC IRI token
 plus `nersc_account` / `nersc_remote_dir` in the user settings. No pre-provisioned env is
 needed on either. The repo URL / ref can be overridden per cluster via `iri.environment`
 in `cluster_defaults.json` (`SALTN_REPO_URL`, `SALTN_REPO_REF`).

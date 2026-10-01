@@ -85,6 +85,7 @@ def render_batch_script(
     stderr_path: str,
     workdir: str,
     body: str,
+    partition: str | None = None,
     queue: str | None = None,
     constraint: str | None = None,
     exclusive: bool = False,
@@ -109,6 +110,8 @@ def render_batch_script(
         f"-e {stderr_path}",
         f"--chdir={workdir}",
     ]
+    if partition:
+        directives.append(f"-p {partition}")
     if queue:
         directives.append(f"-q {queue}")
     if constraint:
@@ -216,6 +219,14 @@ class RemoteFileNotFound(FileNotFoundError):
 @_retry_channel_open
 async def _sftp(conn: asyncssh.SSHClientConnection) -> asyncssh.SFTPClient:
     return await conn.start_sftp_client()
+
+
+async def username(conn: asyncssh.SSHClientConnection) -> str:
+    """ The researcher's login on the far end of the hop chain: the account the job runs as. """
+    name = conn.get_extra_info("username")
+    if name:
+        return name
+    return (await run_checked(conn, "id -un", what="id -un")).strip()
 
 
 async def makedirs(conn: asyncssh.SSHClientConnection, path: str) -> None:

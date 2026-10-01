@@ -22,10 +22,12 @@ from vista_mcp_server.lib.globus import GlobusFileNotFound
 class FakeGlobusClient:
     """Records Globus mkdir / ls calls, and serves an in-memory remote tree."""
 
-    def __init__(self, *, out_dir_permissions: str = "2775", cluster: str = "odo"):
-        self.out_dir_permissions = out_dir_permissions
+    def __init__(self, *, cluster: str = "odo", home_user: str = "researcher"):
         self.cluster = cluster
+        self.home_user = home_user
+        """What `stat /~/` names as the owner of the researcher's home."""
         self.ls_calls: list[tuple[str, str]] = []
+        self.stat_calls: list[tuple[str, str]] = []
         self.mkdir_p_calls: list[tuple[str, str, str | None]] = []
         self.uploads: list[tuple[str, str]] = []
         """(collection_id, remote_path) per ``upload_file``."""
@@ -39,17 +41,38 @@ class FakeGlobusClient:
         # path -> list of entry dicts ({name, type, permissions})
         self.ls_entries: dict[str, list[dict[str, Any]]] = {}
 
-    def seed_odo_out_dir(self, base: str) -> None:
-        """Make ``_require_odo_out_dir`` succeed for ``base``."""
-        self.ls_entries[base] = [
-            {
-                "name": "out",
-                "type": "dir",
-                "permissions": self.out_dir_permissions,
-            }
-        ]
+    def seed_remote_dir(self, base: str, *, parent_permissions: str = "2770") -> None:
+        """Make the folder holding ``base`` exist, with ``parent_permissions``,
+        listed in its own parent -- which is where ``_require_writable_out``
+        reads them from. 2770 is OLCF's ``proj-shared``."""
+        parent = base.rstrip("/").rsplit("/", 1)[0] or "/"
+        grandparent, name = parent.rsplit("/", 1)
+        self.ls_entries.setdefault(parent, [])
+        self.ls_entries.setdefault(grandparent or "/", []).append(
+            {"name": name, "type": "dir", "permissions": parent_permissions}
+        )
+
+    def seed_out_dir(self, base: str, *, permissions: str = "0755") -> None:
+        """An existing ``<base>.out``, as Slurm leaves it after a first job."""
+        parent, name = base.rstrip("/").rsplit("/", 1)
+        self.ls_entries.setdefault(parent or "/", []).append(
+            {"name": f"{name}.out", "type": "dir", "permissions": permissions}
+        )
 
     # --- Transfer -----------------------------------------------------------
+
+    async def home_owner(self, *, collection_id: str) -> str:
+        return self.home_user
+
+    async def operation_stat(self, *, endpoint: str, path: str) -> dict[str, Any]:
+        """One entry, read from its parent's seeded listing; missing raises,
+        as the real client does."""
+        self.stat_calls.append((endpoint, path))
+        parent, name = path.rstrip("/").rsplit("/", 1)
+        for entry in self.ls_entries.get(parent or "/", []):
+            if entry.get("name") == name:
+                return dict(entry)
+        raise GlobusFileNotFound(f"{path} is not on {self.cluster}.")
 
     async def operation_ls(
         self,
@@ -73,8 +96,9 @@ class FakeGlobusClient:
             # right answer for a job that has not written any, and what leaves
             # a raised error meaning something actually went wrong.
             return []
-        # Empty src dir → triggers upload path in ``_sync_job_sources``
-        raise FileNotFoundError(f"no such path: {path}")
+        # What the real client raises for a listing of a path that is not there.
+        # An empty src dir therefore triggers the upload in ``_sync_job_sources``.
+        raise GlobusFileNotFound(f"{path} is not on {self.cluster}.")
 
     async def operation_mkdir_p(
         self,

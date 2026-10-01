@@ -106,6 +106,12 @@ class FakeSftp:
 
 
 class FakeSshConn:
+    username = "researcher"
+    """ The login at the far end of the hop chain. """
+
+    def get_extra_info(self, name: str, default=None):
+        return {"username": self.username}.get(name, default)
+
     def __init__(self, root: Path, handlers: list[tuple[str, Responder]] | None = None):
         self.root = root
         self.handlers = list(handlers or [])

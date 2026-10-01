@@ -464,8 +464,6 @@ class HpcClusterSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, open enclave. """
-    odo_account: str = "gen150-vista"
-    """ The OLCF project an Odo S3M token must belong to. """
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
     """
     Odo's IRI compute resource. Matched by id, not name: the open enclave lists
@@ -473,22 +471,15 @@ class HpcClusterSettings(BaseSettings):
     """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
-    odo_globus_refresh_token: SecretStr | None = None
-    """ Deployment-wide Transfer token: the last Globus source, after the user's own. """
-    odo_globus_https_refresh_token: SecretStr | None = None
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, moderate enclave. """
-    frontier_account: str = "chm243"
-    """ The OLCF project a Frontier S3M token must belong to. """
     frontier_machine: str = "frontier"
     """ Frontier's resource name in the IRI status list, compared case-insensitively. """
     frontier_introspect_url: str = (
         "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     )
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
-    frontier_globus_refresh_token: SecretStr | None = None
-    frontier_globus_https_refresh_token: SecretStr | None = None
 
     nersc_iri_url: str = "https://api.iri.nersc.gov"
     nersc_machine: str = "perlmutter"
@@ -502,8 +493,6 @@ class HpcClusterSettings(BaseSettings):
     The SSH hops to Lux, hub first. Only the hub is probed: Lux has no IRI
     service, and the login node is reachable only through the hub.
     """
-    lux_account: str = "stf218"
-    """ The OLCF project Lux jobs run under. Shown on the card; not checked. """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """ The public client the users' Globus refresh tokens were minted for. """

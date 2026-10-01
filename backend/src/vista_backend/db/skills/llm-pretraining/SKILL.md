@@ -15,8 +15,8 @@ metadata:
 
 Runs the `forge-pretrain` HPC job: the `lux` branch of
 https://github.com/at-aaims/forge, updated to its latest commit on every
-submission, training a FORGE model on the FORGE scientific corpus: under
-project stf218 on Lux, and chm243 on Frontier. It trains a fixed number of
+submission, training a FORGE model on the FORGE scientific corpus. It was set up under
+project stf218 on Lux and chm243 on Frontier. It trains a fixed number of
 iterations (default 50), which makes it a scaling/throughput run or the first
 leg of a longer one, not a full pre-training campaign.
 
@@ -47,13 +47,19 @@ default, and a user with several OLCF tokens has no single default either.
 
 What each cluster needs from the user:
 
-- **Lux:** an OLCF account on Lux in project stf218. Logging in is interactive
-  (see step 3).
+- **Lux:** an OLCF account on Lux, and a **Lux account** (the project to charge)
+  and **Lux remote directory** in their VISTA settings. Logging in is
+  interactive (see step 3).
 - **Frontier:** the same setup as fine-tuning on Frontier:
-  - An S3M token for **chm243** in their VISTA settings.
+  - An S3M token in their VISTA settings. The job is charged to that token's
+    project.
   - Globus connected for Frontier (VISTA settings → File transfer).
-  - If submission fails with a message naming a project, show that message.
-    It says which token is needed.
+  - A **Frontier remote directory** in their VISTA settings. VISTA keeps
+    `<dir>.<user>.jobs` and `<dir>.out` beside it, so the folder holding it must be
+    writable by the project's group; any folder directly under `proj-shared`
+    is.
+- If submission fails, show the message as it is. It says what to set or fix:
+  a token, a remote directory, or that directory's permissions.
 
 ### 2. Run configuration
 

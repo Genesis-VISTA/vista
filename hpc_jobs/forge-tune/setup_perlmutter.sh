@@ -10,8 +10,8 @@
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py), derived from
 # VISTA_MCP_NERSC_REMOTE_DIR / cluster_defaults.json:
-#   RUN_DIR_Perlmutter       <remote_dir>/<job>/src  (user pre-populates with scp)
-#   FORGE_MODEL_Perlmutter   <remote_dir>/<job>/model  (this script downloads here)
+#   RUN_DIR_Perlmutter       <remote_dir>/jobs/<job>/src  (user pre-populates with scp)
+#   FORGE_MODEL_Perlmutter   <remote_dir>/out/<job>/model  (this script downloads here)
 #   FORGE_MODEL_URL          model archive URL (from cluster_defaults.json)
 # Either path can be overridden by adding it to iri.environment in cluster_defaults.json.
 

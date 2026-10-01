@@ -25,14 +25,13 @@
 # WHY THAT SHARED SCRATCH IS *NOT* $VISTA_OUT:
 #   `get_hpc_job_status` does a recursive Globus listing of the output dir; a build
 #   tree plus a .git dir in there makes a status check hang for minutes. $VISTA_OUT's
-#   parent (<session_dir>/out) is writable by the job (Globus grants the IRI automation
-#   user access via setfacl; on Odo the same dir is pre-created group-writable), so a
+#   parent (<frontier_remote_dir>.out) is created by Slurm as the job's own user, so a
 #   sibling directory there is shared, writable, and out of the listing's path. Only
 #   results.json and the small analysis artifacts are written to $VISTA_OUT.
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:
 #   VISTA_OUT             per-job output dir, already mkdir'd. results.json lands here.
-#   RUN_DIR_Frontier      <frontier_remote_dir>/<job>/src — where vista staged run_state_point.py.
+#   RUN_DIR_Frontier      <frontier_remote_dir>.<user>.jobs/<job>/src — where vista staged run_state_point.py.
 #   ALLOYMC_REPO_URL      public alloy-thermo-skill repo to clone (engine + scripts + DFT spec).
 #   ALLOYMC_REPO_REF      branch/tag/SHA to check out (default: main).
 #   ALLOYMC_SCRATCH_DIR   optional override for the shared build/run scratch dir.

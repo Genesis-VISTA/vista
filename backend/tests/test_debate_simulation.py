@@ -1368,20 +1368,19 @@ def _sim_tool(commissioner):
 @pytest.mark.anyio
 async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
     """
-    Retrying a token scoped to the wrong project only spends the request budget.
+    Retrying a refused credential only spends the request budget.
 
-    This is what the live forum did: an S3M token minted for `chm243` was refused
-    by odo, which wants `gen150-vista`, and the role asked again with identical
-    arguments and was refused identically. Two of twelve requests for one fact
-    that was already on the table.
+    This is what the live forum did: odo refused the opener's S3M token, and
+    the role asked again with identical arguments and was refused identically.
+    Two of twelve requests for one fact that was already on the table.
     """
     calls = []
 
     async def commissioner(**kwargs):
         calls.append(kwargs["cluster"])
         raise RuntimeError(
-            "Your S3M token belongs to project 'chm243', but odo access "
-            "requires 'gen150-vista'."
+            "S3M token introspection failed (401). The token may be expired or "
+            "invalid — mint a new one and update it in the Vista user settings page."
         )
 
     tool = _sim_tool(commissioner)
@@ -1389,13 +1388,13 @@ async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     first = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
-    assert "gen150-vista" in first
+    assert "expired or invalid" in first
     assert "only a human can" in first
 
     second = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
     assert calls == ["odo"], "the second attempt never reached the cluster"
     assert "already tried" in second
-    assert "gen150-vista" in second, "and it still says why"
+    assert "expired or invalid" in second, "and it still says why"
 
 
 @pytest.mark.anyio

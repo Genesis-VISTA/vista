@@ -173,7 +173,7 @@ query):
   flags out-of-grid; `input_composition` + `derived.beryllium_multiplier` echo the
   state point. (Full schema: `references/data_schema.md` in the repo.)
 
-Poll with `get_hpc_job_status`; when complete, fetch with
+Poll with `get_hpc_job_status(job_id, cluster=…)`; when complete, fetch with
 `get_hpc_job_outputs(job_id, files=["results.json"], cluster=…)` (the same cluster you
 submitted to).
 
@@ -188,7 +188,7 @@ operations a subagent performs:
   `submit_hpc_job(job="salt-neutronics-tbr", cluster="odo"|"perlmutter", duration="0:10:00", script_args=…)`,
   and record the returned `job_id` + `cluster`.
 - **collect(job) → result:** once the job completes,
-  `get_hpc_job_outputs(... files=["results.json"])` and parse it into a structured
+  `get_hpc_job_outputs(..., files=["results.json"], cluster=...)` and parse it into a structured
   result:
   ```json
   {"tbr": <float>, "is_extrapolated": <bool>,

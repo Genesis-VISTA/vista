@@ -159,7 +159,7 @@ that chemistry (see below); the default Flibe model is only valid for Li/Be/F.
 - `structure.pdb` — the periodic box that was simulated.
 - `equilibration.csv` / production logs — for checking convergence.
 
-Poll with `get_hpc_job_status`; when complete, fetch with
+Poll with `get_hpc_job_status(job_id, cluster="frontier")`; when complete, fetch with
 `get_hpc_job_outputs(job_id, files=["results.json"], cluster="frontier")`.
 
 ## Sim-skill contract for multi-agent campaigns
@@ -172,7 +172,7 @@ operations a subagent performs:
   size/steps/model) into the `script_args` string above, call
   `submit_hpc_job(job="salt-chemistry-md", cluster="frontier", duration=…, script_args=…)`,
   and record the returned `job_id` + `cluster`.
-- **collect(job) → result:** once the job completes, `get_hpc_job_outputs(... files=["results.json"])`
+- **collect(job) → result:** once the job completes, `get_hpc_job_outputs(..., files=["results.json"], cluster=...)`
   and parse it into a structured result:
   ```json
   {"density_g_cm3": <float>, "density_stderr_g_cm3": <float>,

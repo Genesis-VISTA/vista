@@ -71,7 +71,8 @@ The script reports:
 ## Visualizing training progress
 
 When the user asks for job status, progress, or a plot while training is running:
-1. Call `get_hpc_job_status` to fetch the latest logs.
+1. Call `get_hpc_job_status(job_id, cluster=<cluster>)`, with the cluster `submit_hpc_job`
+   reported, to fetch the latest logs.
 2. Render the per-epoch table (Epoch / LR / Train RMSE / Val RMSE).
 3. Plot Train RMSE and Val RMSE vs Epoch by calling `run_bash` in the sandbox
    with a short matplotlib script. Save the PNG to
@@ -101,7 +102,8 @@ acceptable here; the visible plot is the whole point of watch mode.
 
 Per-cycle checklist (do all of these, every cycle):
 
-1. **Call `get_hpc_job_status(job_id)`** — fetch the latest logs.
+1. **Call `get_hpc_job_status(job_id, cluster=<cluster>)`**, with the cluster
+   `submit_hpc_job` reported — fetch the latest logs.
 2. **Call `run_bash`** with a matplotlib script that parses the just-fetched
    epoch / Train RMSE / Val RMSE values and writes a PNG to
    `/mnt/data/output/<job_id>/training_progress.png` (overwrite each cycle).

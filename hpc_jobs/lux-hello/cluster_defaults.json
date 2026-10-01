@@ -3,7 +3,11 @@
     "duration": 300,
     "resources": {
       "node_count": 1,
+      "gpus_per_node": 1,
       "exclusive_node_use": false
+    },
+    "iri": {
+      "partition": "batch"
     }
   }
 }

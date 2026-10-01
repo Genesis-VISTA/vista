@@ -36,7 +36,6 @@ STATES = {
     "unverifiable",
     "not_connected",
     "rejected",
-    "wrong_project",
     "globus_not_connected",
     "globus_session_expired",
 }

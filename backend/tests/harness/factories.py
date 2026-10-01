@@ -41,7 +41,7 @@ def make_user(
     odo_s3m_token: str | None = None,
     frontier_s3m_token: str | None = None,
     nersc_iri_token: str | None = None,
-    frontier_account: str | None = None,
+    odo_remote_dir: str | None = None,
 ) -> UserPublicWithConfig:
     """An in-memory `UserPublicWithConfig`, for tests that never touch the DB."""
     return UserPublicWithConfig(
@@ -51,7 +51,7 @@ def make_user(
         odo_s3m_token=odo_s3m_token,
         frontier_s3m_token=frontier_s3m_token,
         nersc_iri_token=nersc_iri_token,
-        frontier_account=frontier_account,
+        odo_remote_dir=odo_remote_dir,
     )
 
 

@@ -24,8 +24,8 @@ from fakes import FakeGlobusClient
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 COLLECTION = "odo-collection"
-BASE = "/gpfs/vista"
-SRC = f"{BASE}/demo/src"
+PARENT = "/gpfs/proj-shared"
+SRC = f"{PARENT}/vista.jobs/demo/src"
 
 
 @pytest.fixture
@@ -42,7 +42,9 @@ def job_dir(monkeypatch, tmp_path) -> Path:
 
 
 async def sync(globus: FakeGlobusClient) -> None:
-    await _sync_job_sources(globus, "demo", SRC, base=BASE, remote_endpoint=COLLECTION)
+    await _sync_job_sources(
+        globus, "demo", SRC, parents_below=PARENT, remote_endpoint=COLLECTION
+    )
 
 
 def uploaded(globus: FakeGlobusClient) -> set[str]:
@@ -55,7 +57,7 @@ async def test_a_first_submission_uploads_every_source(job_dir):
     await sync(globus)
 
     assert uploaded(globus) == {"run.py", "helper.py"}
-    assert globus.mkdir_p_calls == [(COLLECTION, SRC, BASE)]
+    assert globus.mkdir_p_calls == [(COLLECTION, SRC, PARENT)]
 
 
 async def test_orchestration_metadata_never_goes_to_the_cluster(job_dir):
@@ -180,5 +182,5 @@ async def test_a_job_with_only_metadata_uploads_nothing(monkeypatch, tmp_path):
     await sync(globus)
 
     assert globus.uploads == []
-    # And no directory is made for a set of files that was never going to move.
-    assert globus.mkdir_p_calls == []
+    # The folder is still made: `<base>.jobs` is the job's working directory.
+    assert globus.mkdir_p_calls == [(COLLECTION, SRC, PARENT)]

@@ -37,10 +37,11 @@ export const HPC_STATUS = {
         facility: OK("The facility reports Frontier up."),
         credential: {
           ...OK("Frontier accepted the S3M token."),
-          project: "chm243",
+          project: "abc123",
           expires_at: "2026-01-02T00:00:00+00:00",
         },
-        globus: { ...OK("Globus reaches Frontier's files."), identity: "own" },
+        globus: OK("Globus reaches Frontier's files."),
+        settings: OK("/lustre/orion/abc123/proj-shared/vista"),
       },
     },
     {
@@ -49,12 +50,13 @@ export const HPC_STATUS = {
       checked_at: NOW,
       checks: {
         facility: OK("The facility reports Odo up."),
-        credential: { ...OK("Odo accepted the S3M token."), project: "gen150-vista" },
+        credential: { ...OK("Odo accepted the S3M token."), project: "xyz789" },
         globus: {
           ok: false,
           reason: "not_connected",
           message: "Globus file transfer is not connected for Odo.",
         },
+        settings: OK("/gpfs/wolf2/olcf/xyz789/proj-shared/vista"),
       },
     },
     {
@@ -69,6 +71,11 @@ export const HPC_STATUS = {
           message: "No NERSC IRI token is saved for Perlmutter.",
         },
         globus: null,
+        settings: {
+          ok: false,
+          reason: "not_connected",
+          message: "No NERSC account or Perlmutter remote directory is set.",
+        },
       },
     },
     {
@@ -77,11 +84,9 @@ export const HPC_STATUS = {
       checked_at: NOW,
       checks: {
         facility: OK("The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9)."),
-        credential: {
-          ...OK("Sign in with PIN + RSA passcode when a chat first uses Lux."),
-          project: "stf218",
-        },
+        credential: OK("Sign in with PIN + RSA passcode when a chat first uses Lux."),
         globus: null,
+        settings: { ...OK("/lustre/orion/abc123/proj-shared/vista-lux"), project: "abc123" },
       },
     },
   ],

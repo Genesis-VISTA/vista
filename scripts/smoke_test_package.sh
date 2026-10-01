@@ -103,14 +103,6 @@ export VISTA_HOME="$STATE"
 # microVM, so a host where the launcher refuses to start for want of one
 # cannot verify a package, and this test fails there rather than skipping the
 # checks that go through the sandbox.
-#
-# This test deliberately configures no Globus credential, which is now the
-# ordinary state of a fresh install: one arrives when a researcher connects
-# Globus in the interface. Unset rather than assumed absent, so a maintainer
-# with tokens exported in their own shell tests the same thing the build does.
-unset VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN \
-      VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN \
-      VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN
 
 export VISTA_UI_PORT="$UI_PORT"
 export VISTA_MCP_PORT="$MCP_PORT"

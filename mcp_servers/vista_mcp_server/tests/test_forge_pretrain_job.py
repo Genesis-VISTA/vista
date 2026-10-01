@@ -515,9 +515,6 @@ def test_setup_lux_fails_on_missing_env_script(cluster):
 async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "lux_remote_dir", "/lustre/vista")
-    monkeypatch.setattr(settings, "lux_account", "stf218")
-    monkeypatch.setattr(settings, "session_id", "sess")
     conn = FakeSshConn(tmp_path)
     conn.on("sbatch --parsable", (0, "99\n", ""))
 
@@ -526,12 +523,19 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
     monkeypatch.setattr(m, "_lux_conn", fake_conn)
 
+    from vista_mcp_server.lib.user_config import UserConfig
+
     job_id, _, _, out_dir, nodes, duration = await m._submit_lux_job(
-        None, "forge-pretrain", None, None, "MODEL=forge-m"
+        None,
+        UserConfig(lux_remote_dir="/lustre/vista", lux_account="stf218"),
+        "forge-pretrain",
+        None,
+        None,
+        "MODEL=forge-m",
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
-    assert out_dir == "/lustre/vista/sess/out/99"
-    src = "/lustre/vista/forge-pretrain/src"
+    assert out_dir == "/lustre/vista.out/99"
+    src = "/lustre/vista.researcher.jobs/forge-pretrain/src"
     assert sorted(conn.puts) == [
         f"{src}/forge_common.sh",
         f"{src}/make_config.py",
@@ -540,10 +544,11 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
     [(setup, _)] = conn.ran("prepare_forge.sh")
     assert "export FORGE_BRANCH=lux" in setup
-    assert "export VISTA_JOB_DIR=/lustre/vista/forge-pretrain" in setup
+    # The forge checkout lives where the job's own user can write it.
+    assert "export VISTA_JOB_DIR=/lustre/vista.out/forge-pretrain" in setup
 
     [(_, script)] = conn.ran("sbatch --parsable")
-    assert "#SBATCH -A stf218" in script
+    assert "#SBATCH -A stf218" in script  # the researcher's Lux account setting
     assert "#SBATCH -N 16" in script
     assert "#SBATCH -t 0:30:00" in script
     # As forge's job.sb: without tasks per node the batch env has no
@@ -556,29 +561,27 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
+async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeypatch):
     from fakes import FakeGlobusClient, FakeIriClient
     from vista_mcp_server.lib.user_config import UserConfig
 
     base = "/lustre/orion/chm243/proj-shared/vista"
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "frontier_account", "chm243")
-    monkeypatch.setattr(settings, "frontier_remote_dir", base)
     monkeypatch.setattr(settings, "frontier_globus_collection_id", "fr-coll")
-    monkeypatch.setattr(settings, "session_id", "sess")
     iri, globus = FakeIriClient(job_id="777"), FakeGlobusClient()
+    globus.seed_remote_dir(base)
     seen: dict = {}
 
-    async def access(cfg, cluster, account=None):
-        seen["account"] = account
-        return "chm243-token"
+    async def introspect(token, *, introspect_url):
+        seen["introspected"] = token
+        return "chm243"
 
     async def olcf(*, iri_token):
         seen["iri_token"] = iri_token
         return iri
 
-    monkeypatch.setattr(m, "_require_olcf_access", access)
+    monkeypatch.setattr(m, "get_s3m_token_project", introspect)
     monkeypatch.setattr(m, "create_olcf_iri_client", olcf)
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
 
@@ -586,28 +589,31 @@ async def test_real_job_dir_submits_on_frontier_under_chm243(monkeypatch):
         frontier_s3m_token="chm243-token",
         frontier_globus_token="g-transfer",
         frontier_globus_https_token="g-https",
+        frontier_remote_dir=base,
     )
     job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_frontier_job(
         cfg, "forge-pretrain", None, None, "MODEL=forge-s"
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)
-    assert out_dir == f"{base}/sess/out/777"
-    # No per-job override: the cluster's own account and token, as for forge-tune.
-    assert seen == {"account": None, "iri_token": "chm243-token"}
+    assert out_dir == f"{base}.out/777"
+    # The account is whatever project the token belongs to.
+    assert seen == {"introspected": "chm243-token", "iri_token": "chm243-token"}
 
     [(spec, _)] = iri.submitted
     attrs = spec["attributes"]
     assert attrs["account"] == "chm243"
     assert attrs["queue_name"] == "batch"
-    assert attrs["directory"] == f"{base}/sess"
+    assert attrs["directory"] == f"{base}.researcher.jobs"
     env = attrs["environment"]
-    assert env["VISTA_JOB_DIR"] == f"{base}/forge-pretrain"
-    assert env["RUN_DIR_Frontier"] == f"{base}/forge-pretrain/src"
+    # The checkout is written by the job, as the project's automation user, so
+    # it goes in `.out`, which that user created; the sources it only reads.
+    assert env["VISTA_JOB_DIR"] == f"{base}.out/forge-pretrain"
+    assert env["RUN_DIR_Frontier"] == f"{base}.researcher.jobs/forge-pretrain/src"
     assert env["FORGE_BRANCH"] == "lux"
     assert env["FORGE_DEFAULT_MODEL"] == "forge-s"
     uploaded = sorted(path for _, path in globus.uploads)
     assert uploaded == [
-        f"{base}/forge-pretrain/src/{f}"
+        f"{base}.researcher.jobs/forge-pretrain/src/{f}"
         for f in ("forge_common.sh", "make_config.py", "prepare_forge.sh")
     ]
     body = spec["arguments"][-1]
