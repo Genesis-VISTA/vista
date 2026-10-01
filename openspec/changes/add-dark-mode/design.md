@@ -39,13 +39,27 @@ state) in `localStorage`. The Electron window is created with `show: false` and 
 
 ### 1. Tokens first, as a separate step with no visual change
 
-Every literal moves to a role token before any dark value exists. New tokens: `--brand-fill`
-(filled controls; replaces `--brand` in the 14 `background: var(--brand)` rules), `--on-brand`,
-`--danger-ink`, `--danger-tint`, `--warning-tint`, `--hover`, `--hover-strong`, `--scrim`,
-`--shadow-card`, `--shadow-pop`, `--shadow-modal`, and the three missing ones (`--surface-2`,
-`--accent`, `--ok`) declared with today's fallback values. The light values equal today's
-literals, so this step changes nothing visible and is verified by screenshot comparison on its
-own.
+Every literal moves to a role token before any dark value exists. As landed:
+
+- Brand: `--brand-fill` and `--brand-fill-hover`. These replace `--brand` / `--brand-dark` on
+  the seven filled controls (buttons, composer send, jump-to-latest, active project child,
+  active project badge, settings switch, debate buttons). `--brand` stays on dots, the resizer,
+  the loader and the scrollbar thumb, where it is an accent. Also `--on-brand`, `--link-hover`,
+  `--brand-wash` and `--brand-wash-strong`.
+- Washes: `--wash-faint`, `--wash` and `--wash-strong` (black at 0.04 / 0.05 / 0.06). Also
+  `--surface-2`, `--surface-2-mid` and `--surface-2-strong` (50% grey at 0.08 / 0.10 / 0.12).
+  The old fallbacks had three different strengths, so one `--surface-2` would have moved
+  pixels.
+- Status: `--danger-ink`, `--danger-tint`, `--warning-tint`, `--warning-strong`,
+  `--warning-text`, `--warning-mark` and `--ok`. Debate kinds and simulation rows:
+  `--kind-finding`, `--kind-done` and `--sim-{done,waiting,stalled,failed}`.
+- Elevation: `--shadow-menu`, `--shadow-popover`, `--shadow-float`, `--shadow-modal`,
+  `--scrim` and `--scrim-strong`.
+- Other: `--accent`, `--media-mat`. The legacy aliases (`--panel`, `--panel-2`,
+  `--bg-accent`) now point at their role tokens instead of repeating hex values.
+
+`--brand-dark` stays as the logo and output-card plate. The light values equal today's literals,
+and screenshot comparison confirmed that this step changes nothing visible.
 
 *Alternative:* write the dark overrides per selector (`[data-theme=dark] .foo { … }`). Rejected.
 It doubles every rule, is easy to miss, and the light theme stays full of literals.

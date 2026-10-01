@@ -15,6 +15,16 @@
   --surface: #ffffff;     /* rail, top bar, cards */
   --surface-sunken: #fbfbfa; /* the artifacts column */
   --surface-active: #ececea; /* selected rail entry */
+  /* neutral washes laid over any surface: 50% grey reads in both themes */
+  --surface-2: rgba(127, 127, 127, 0.08);
+  --surface-2-mid: rgba(127, 127, 127, 0.1);
+  --surface-2-strong: rgba(127, 127, 127, 0.12);
+  /* ink-coloured washes: hovers, inline code, table heads */
+  --wash-faint: rgba(0, 0, 0, 0.04);
+  --wash: rgba(0, 0, 0, 0.05);
+  --wash-strong: rgba(0, 0, 0, 0.06);
+  /* agent-made images and HTML assume a white page, in either theme */
+  --media-mat: #ffffff;
 
   /* hairlines: the only thing that separates panes */
   --line: #e2e2de;
@@ -34,6 +44,15 @@
   --brand-line: #dce6ef;
   --brand-line-strong: #cfd8e2;
   --brand-2: #a6111b;
+  /* --brand is the text and accent form; filled controls take --brand-fill so
+     the two can part in a theme where one blue cannot do both */
+  --brand-fill: #004573;
+  --brand-fill-hover: #112a4d;
+  --on-brand: #ffffff;
+  --link-hover: #112a4d;
+  --brand-wash: rgba(0, 69, 115, 0.07);
+  --brand-wash-strong: rgba(0, 69, 115, 0.08);
+  --accent: #4a7fb5;
 
   /* status (AmSC guide, verbatim) */
   --success: #0b730b;
@@ -44,6 +63,29 @@
   --warning-line: #d8b04a;
   --danger: #d61200;
   --danger-line: #e8a4a0;
+  --danger-ink: #b01000;   /* --danger darkened to 4.5:1 on white, for text */
+  --danger-tint: #fdecea;
+  --warning-tint: #fff6e5;
+  --warning-strong: #7a5c00;
+  --warning-text: #5c4600;
+  --warning-mark: #d8a400; /* the degraded-cluster triangle */
+  --ok: #1a7f4b;
+
+  /* debate kinds and simulation rows */
+  --kind-finding: #0b6b53;
+  --kind-done: #3b2f7a;
+  --sim-done: #3f9a5a;
+  --sim-waiting: #b8862b;
+  --sim-stalled: #b8532b;
+  --sim-failed: #a8353a;
+
+  /* elevation and backdrops */
+  --shadow-menu: 0 10px 28px rgba(17, 42, 77, 0.16);
+  --shadow-popover: 0 12px 32px rgba(17, 42, 77, 0.14);
+  --shadow-float: 0 8px 20px rgba(28, 26, 23, 0.14);
+  --shadow-modal: 0 20px 50px rgba(28, 26, 23, 0.2);
+  --scrim: rgba(28, 26, 23, 0.4);
+  --scrim-strong: rgba(28, 26, 23, 0.66);
 
   /* type faces: Figtree carries titles and card names, Roboto the rest, and
      the mono face is confined to tool names, identifiers and raw output */
@@ -69,9 +111,9 @@
   --r-pill: 999px;
 
   /* legacy aliases */
-  --bg-accent: #f4f4f2;
-  --panel: #ffffff;
-  --panel-2: #ffffff;
+  --bg-accent: var(--bg);
+  --panel: var(--surface);
+  --panel-2: var(--surface);
 }
 
 * {
@@ -260,12 +302,12 @@ main {
 }
 
 .project-switcher-button:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--wash);
   color: var(--ink);
 }
 
 .project-switcher-button[aria-expanded="true"] {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--wash);
   border-color: var(--line);
   color: var(--ink);
 }
@@ -297,7 +339,7 @@ main {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(17, 42, 77, 0.16);
+  box-shadow: var(--shadow-menu);
 }
 
 .project-switcher-option {
@@ -317,7 +359,7 @@ main {
 }
 
 .project-switcher-option:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--wash-strong);
 }
 
 .project-switcher-option:focus-visible {
@@ -371,7 +413,7 @@ main {
 }
 
 .project-switcher-manage:hover {
-  background: rgba(0, 69, 115, 0.07);
+  background: var(--brand-wash);
 }
 
 .project-switcher-manage:focus-visible {
@@ -446,7 +488,7 @@ main {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(17, 42, 77, 0.16);
+  box-shadow: var(--shadow-menu);
 }
 
 .model-picker-option {
@@ -467,7 +509,7 @@ main {
 }
 
 .model-picker-option:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--wash-strong);
 }
 
 .model-picker-option:focus-visible {
@@ -891,7 +933,7 @@ main {
 
 .button {
   border: none;
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--surface);
   padding: 8px 14px;
   border-radius: var(--r-control);
@@ -1198,7 +1240,7 @@ main {
 .chat-bubble.assistant h3 { font-size: 1.05em; }
 
 .chat-bubble.assistant code {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--wash-strong);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.92em;
@@ -1208,7 +1250,7 @@ main {
 .chat-bubble.assistant pre {
   margin: 6px 0 8px;
   padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--wash-strong);
   border-radius: 8px;
   overflow-x: auto;
   white-space: pre;
@@ -1257,7 +1299,7 @@ main {
 }
 
 .chat-bubble.assistant th {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--wash-faint);
   font-weight: 600;
 }
 
@@ -1448,7 +1490,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   bottom: 14px;
   transform: translateX(-50%);
   border: none;
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--surface);
   border-radius: 999px;
   width: 34px;
@@ -1460,7 +1502,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 20px rgba(28, 26, 23, 0.14);
+  box-shadow: var(--shadow-float);
   cursor: pointer;
   z-index: 2;
 }
@@ -1521,7 +1563,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(28, 26, 23, 0.4);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1534,7 +1576,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: 16px;
   width: min(520px, 92vw);
   max-height: 88vh;
-  box-shadow: 0 20px 50px rgba(28, 26, 23, 0.2);
+  box-shadow: var(--shadow-modal);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1547,7 +1589,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 24px;
   /* Darker than a form dialog's backdrop: a figure is read against it, and
      the page behind competes with the plot's own ink. */
-  background: rgba(28, 26, 23, 0.66);
+  background: var(--scrim-strong);
 }
 
 /* Sized to the figure, so the bar below lines up with it rather than
@@ -1570,7 +1612,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   height: auto;
   object-fit: contain;
   border-radius: var(--r-card);
-  background: var(--surface);
+  background: var(--media-mat);
   border: 1px solid var(--line);
 }
 
@@ -1610,6 +1652,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   height: auto;
   margin: 0 auto;
   border-radius: var(--r-card);
+  background: var(--media-mat);
 }
 
 .artifact-zoom:focus-visible {
@@ -2054,7 +2097,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .nav-rail-toggle:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--wash-strong);
   color: var(--ink);
 }
 
@@ -2480,7 +2523,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 8px 12px;
   border-radius: 999px;
   align-self: flex-start;
-  background: rgba(0, 69, 115, 0.08);
+  background: var(--brand-wash-strong);
   color: var(--brand);
   font-size: 12px;
   font-weight: 600;
@@ -2583,7 +2626,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .project-card-badge.active {
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--surface);
 }
 
@@ -2784,7 +2827,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .user-settings-globus-status.connected {
-  color: var(--ok, #1a7f4b);
+  color: var(--ok);
 }
 
 .user-settings-globus-status.pending {
@@ -2802,7 +2845,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 11px;
   line-height: 1.4;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
@@ -3103,7 +3146,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .kb-scope-link:hover {
-  background: rgba(0, 69, 115, 0.08);
+  background: var(--brand-wash-strong);
   text-decoration: underline;
 }
 
@@ -3950,7 +3993,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 0;
   border: none;
   border-radius: 9px;
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--surface);
   font: inherit;
   cursor: pointer;
@@ -3965,7 +4008,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .composer-send:hover:not(:disabled) {
-  background: var(--brand-dark);
+  background: var(--brand-fill-hover);
 }
 
 .composer-send:disabled {
@@ -4004,7 +4047,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 /* The one solid navy fill in the rail: the open project's active child. */
 .nav-rail-entry.project-child.active {
-  background: var(--brand);
+  background: var(--brand-fill);
   color: var(--surface);
   font-weight: 400;
 }
@@ -4128,7 +4171,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .hpc-word--urgent {
-  color: #b01000; /* --danger darkened to 4.5:1 on white, for text */
+  color: var(--danger-ink);
 }
 
 /* The dots: each state its own shape as well as its own color. */
@@ -4150,7 +4193,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: 0;
   border-left: 5.5px solid transparent;
   border-right: 5.5px solid transparent;
-  border-bottom: 9.5px solid #d8a400;
+  border-bottom: 9.5px solid var(--warning-mark);
 }
 
 .hpc-dot--unverifiable {
@@ -4222,7 +4265,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-card-lg);
-  box-shadow: 0 12px 32px rgba(17, 42, 77, 0.14);
+  box-shadow: var(--shadow-popover);
   overflow: hidden;
 }
 
@@ -4278,7 +4321,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 .hpc-pill--wrong_project,
 .hpc-pill--globus_not_connected,
 .hpc-pill--globus_session_expired {
-  color: #b01000;
+  color: var(--danger-ink);
   border-color: var(--danger-line);
 }
 
@@ -4311,7 +4354,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .hpc-row-icon--fail {
-  color: #b01000;
+  color: var(--danger-ink);
 }
 
 .hpc-row-icon--unknown {
@@ -4363,7 +4406,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .hpc-link:hover {
-  color: var(--brand-dark);
+  color: var(--link-hover);
   text-decoration: underline;
 }
 
@@ -4499,7 +4542,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .user-settings-switch[aria-checked="true"] {
-  background: var(--brand);
+  background: var(--brand-fill);
   justify-content: flex-end;
 }
 
@@ -4556,7 +4599,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .debate-error {
-  background: #fdecea;
+  background: var(--danger-tint);
   border: 1px solid var(--danger);
   color: var(--danger);
   border-radius: 6px;
@@ -4616,8 +4659,8 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-weight: 600;
   padding: 8px 14px;
   border: 1px solid var(--brand);
-  background: var(--brand);
-  color: #fff;
+  background: var(--brand-fill);
+  color: var(--on-brand);
   border-radius: 6px;
   cursor: pointer;
 }
@@ -4797,7 +4840,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .debate-post__votes {
-  color: #0b6b53;
+  color: var(--kind-finding);
   font-weight: 600;
 }
 
@@ -5071,9 +5114,9 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .debate-warning {
-  background: #fff6e5;
-  border: 1px solid #7a5c00;
-  color: #5c4600;
+  background: var(--warning-tint);
+  border: 1px solid var(--warning-strong);
+  color: var(--warning-text);
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 16px;
@@ -5097,7 +5140,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 0.75rem;
   padding: 0.05rem 0.4rem;
   border-radius: 0.65rem;
-  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  background: var(--surface-2-strong);
   color: var(--text-1, inherit);
   white-space: nowrap;
 }
@@ -5173,7 +5216,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding: 8px 10px;
   max-height: 22rem;
   overflow: auto;
-  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  background: var(--surface-2-mid);
   border-radius: 4px;
   font-size: 0.72rem;
   line-height: 1.45;
@@ -5201,16 +5244,16 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--line);
-  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  background: var(--surface-2);
   border-radius: 3px;
 }
 
-.debate-sims__row--done { border-left-color: #3f9a5a; }
-.debate-sims__row--waiting { border-left-color: #b8862b; }
+.debate-sims__row--done { border-left-color: var(--sim-done); }
+.debate-sims__row--waiting { border-left-color: var(--sim-waiting); }
 /* Distinct from "waiting" on purpose: nothing has looked at this job, which is a
    fact about the deployment rather than about the queue. */
-.debate-sims__row--stalled { border-left-color: #b8532b; }
-.debate-sims__row--failed { border-left-color: #a8353a; }
+.debate-sims__row--stalled { border-left-color: var(--sim-stalled); }
+.debate-sims__row--failed { border-left-color: var(--sim-failed); }
 
 .debate-sims__where,
 .debate-sims__standing {
@@ -5255,8 +5298,8 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 8px;
   margin: 10px 0;
   padding: 8px 12px;
-  border-left: 3px solid var(--accent, #4a7fb5);
-  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
   border-radius: 3px;
   font-size: 0.82rem;
   color: var(--muted);
@@ -5267,7 +5310,7 @@ button.chat-bubble.intermediate.collapsed:hover {
   height: 8px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: var(--accent, #4a7fb5);
+  background: var(--accent);
   animation: debate-pulse 1.4s ease-in-out infinite;
 }
 

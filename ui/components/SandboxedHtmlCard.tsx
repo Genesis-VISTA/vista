@@ -25,7 +25,7 @@ export default function SandboxedHtmlCard({ html }: { html: string }) {
       title="Tool HTML Output"
       sandbox=""
       srcDoc={srcDoc}
-      style={{ width: "100%", minHeight: 360, border: "1px solid #e2d6c6", borderRadius: 12, background: "#fff" }}
+      style={{ width: "100%", minHeight: 360, border: "1px solid var(--line)", borderRadius: 12, background: "var(--media-mat)" }}
     />
   );
 }
