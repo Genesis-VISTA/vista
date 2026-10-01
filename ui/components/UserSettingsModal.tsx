@@ -143,6 +143,11 @@ function UserSettingsForm({
   );
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
+  const [odoRemoteDir, setOdoRemoteDir] = useState(user.odo_remote_dir ?? "");
+  const [frontierRemoteDir, setFrontierRemoteDir] = useState(
+    user.frontier_remote_dir ?? "",
+  );
+  const [luxRemoteDir, setLuxRemoteDir] = useState(user.lux_remote_dir ?? "");
   const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
   const [frontierS3mToken, setFrontierS3mToken] = useState(
     user.frontier_s3m_token ?? "",
@@ -199,6 +204,13 @@ function UserSettingsForm({
       ],
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
+      ["odo_remote_dir", user.odo_remote_dir ?? null, blankToNull(odoRemoteDir)],
+      [
+        "frontier_remote_dir",
+        user.frontier_remote_dir ?? null,
+        blankToNull(frontierRemoteDir),
+      ],
+      ["lux_remote_dir", user.lux_remote_dir ?? null, blankToNull(luxRemoteDir)],
       ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
       [
         "frontier_s3m_token",
@@ -326,6 +338,13 @@ function UserSettingsForm({
                   onChange={setOdoS3mToken}
                   hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
                 />
+                <RemoteDirField
+                  label="Odo remote directory"
+                  value={odoRemoteDir}
+                  onChange={setOdoRemoteDir}
+                  placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Odo" />}
+                />
                 <GlobusConnect
                   cluster="odo"
                   label="Odo"
@@ -341,6 +360,13 @@ function UserSettingsForm({
                   value={frontierS3mToken}
                   onChange={setFrontierS3mToken}
                   hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
+                />
+                <RemoteDirField
+                  label="Frontier remote directory"
+                  value={frontierRemoteDir}
+                  onChange={setFrontierRemoteDir}
+                  placeholder="/lustre/orion/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Frontier" />}
                 />
                 <GlobusConnect
                   cluster="frontier"
@@ -397,6 +423,15 @@ function UserSettingsForm({
                 </label>
               </>
             )}
+            {cluster === "lux" && (
+              <RemoteDirField
+                label="Lux remote directory"
+                value={luxRemoteDir}
+                onChange={setLuxRemoteDir}
+                placeholder="/lustre/orion/<project>/proj-shared/vista"
+                hint="Where VISTA puts job sources and outputs on Lux. Required for Lux. Lux jobs run as you, so your own write access is enough."
+              />
+            )}
           </ClusterSection>
         ))}
       </div>
@@ -432,6 +467,54 @@ function UserSettingsForm({
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
+    </>
+  );
+}
+
+/**
+ * The folder on a cluster where VISTA puts this researcher's job sources and
+ * outputs. No default: where a project keeps its files is specific to the
+ * project and the filesystem, so VISTA does not guess.
+ */
+function RemoteDirField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  hint: ReactNode;
+}) {
+  return (
+    <label className="project-modal-label">
+      {label}
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        spellCheck={false}
+      />
+      <span className="user-settings-hint">{hint}</span>
+    </label>
+  );
+}
+
+/**
+ * Odo and Frontier jobs run as the project's IRI automation user, not as the
+ * researcher, so Slurm can create the job's output folder only where the
+ * project's group may write.
+ */
+function GroupWritableHint({ cluster }: { cluster: string }) {
+  return (
+    <>
+      Where VISTA puts job sources and outputs on {cluster}. Required for {cluster}. Jobs run
+      as your project&apos;s IRI automation user, so the folder must be writable by the
+      project&apos;s group: create it with <code>mkdir -p -m 2775 &lt;dir&gt;</code>.
     </>
   );
 }

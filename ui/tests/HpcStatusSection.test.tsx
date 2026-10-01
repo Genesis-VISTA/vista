@@ -241,7 +241,6 @@ describe("HpcStatusSection: Lux", () => {
     credential: {
       ...OK,
       message: "Sign in with PIN + RSA passcode when a chat first uses Lux.",
-      project: "stf218",
     },
   });
 
@@ -266,9 +265,11 @@ describe("HpcStatusSection: Lux", () => {
     expect(within(dialog).getByText("Hub is reachable")).toBeInTheDocument();
     expect(within(dialog).getByText(/hub\.ccs\.ornl\.gov answered/)).toBeInTheDocument();
     expect(within(dialog).getByText("Sign in from a chat")).toBeInTheDocument();
+    // No project: Lux jobs go to the researcher's default Slurm account.
     expect(
-      within(dialog).getByText("Project stf218 · Sign in with PIN + RSA passcode when a chat first uses Lux."),
+      within(dialog).getByText("Sign in with PIN + RSA passcode when a chat first uses Lux."),
     ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Project/)).toBeNull();
     expect(within(dialog).queryByText(/Globus/)).toBeNull();
     expect(within(dialog).queryByText(/expires/)).toBeNull();
     expect(within(dialog).queryByText("Facility is up")).toBeNull();

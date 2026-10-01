@@ -114,10 +114,11 @@ dry-run jobs keep working without credentials. `dry_run` keeps its own
 in-process `_dry_jobs`. The Perlmutter paths no longer say "only for jobs
 submitted in the current session".
 
-**8. Lux passes no account.** `slurm_ssh.render_batch_script` takes
-`account: str | None` and omits the directive when it is `None`. Submission
-always passes `None`. `lux_account` and `lux_remote_dir` are deleted from both
-configs. The Lux credential check stops reporting a project.
+**8. Lux passes no account.** `slurm_ssh.render_batch_script` loses its
+`account` parameter and writes no `-A` directive. Lux was its only caller, so
+an optional parameter would only ever have been `None`. `lux_account` and
+`lux_remote_dir` are deleted from both configs. The Lux credential check stops
+reporting a project.
 
 **9. The example job writes under `$VISTA_OUT`.** Both scripts create the venv
 at `"$VISTA_OUT/.venv"`. On Odo the source folder is read-only to the

@@ -62,8 +62,6 @@ async def test_no_token_is_refused_before_introspection(introspected):
 @pytest.fixture
 def submit_env(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", REPO_ROOT / "hpc_jobs")
-    monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
-    monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
     monkeypatch.setattr(settings, "session_id", "test-session")
     iri = FakeIriClient(job_id="42")
     globus = FakeGlobusClient()
@@ -83,6 +81,8 @@ CFG = UserConfig(
     frontier_s3m_token="fr-tok",
     globus_token="gt",
     globus_https_token="gh",
+    odo_remote_dir="/fake/odo/vista",
+    frontier_remote_dir="/fake/frontier/vista",
 )
 
 

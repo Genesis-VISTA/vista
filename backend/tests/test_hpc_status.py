@@ -709,7 +709,7 @@ async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     assert "hub.ccs.ornl.gov" in lx.checks.facility.message
     assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
     assert lx.checks.credential.ok
-    assert lx.checks.credential.project == "stf218"
+    assert lx.checks.credential.project is None
     assert lx.checks.credential.message == hs.LUX_SIGN_IN
     assert lx.checks.globus is None
     assert lux.calls == ["hub.ccs.ornl.gov"]  # the hub only, never the login node

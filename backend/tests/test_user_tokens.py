@@ -150,3 +150,73 @@ def test_existing_database_gains_the_hidden_clusters_column(tmp_path):
         _add_missing_columns(conn)
         columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
     assert "hpc_hidden_clusters" in columns
+
+
+# ---------------------------------------------------------------------------
+# Where each cluster's jobs live
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_remote_dirs_round_trip_and_reach_the_mcp_server(session, alice):
+    row = await session.get(UserTable, alice.id)
+    saved = await update_me(
+        UserSelfUpdate(
+            odo_remote_dir="/odo/proj/vista",
+            frontier_remote_dir="/frontier/proj/vista",
+            lux_remote_dir="/lux/me/vista",
+        ),
+        session,
+        row,
+    )
+    assert saved.odo_remote_dir == "/odo/proj/vista"
+    assert saved.frontier_remote_dir == "/frontier/proj/vista"
+    assert saved.lux_remote_dir == "/lux/me/vista"
+
+    meta = build_metadata(UserPublicWithConfig.model_validate(row), {})
+    user = meta["vista"]["user"]
+    assert user["odo_remote_dir"] == "/odo/proj/vista"
+    assert user["frontier_remote_dir"] == "/frontier/proj/vista"
+    assert user["lux_remote_dir"] == "/lux/me/vista"
+
+
+@pytest.mark.anyio
+async def test_a_cleared_remote_dir_is_not_set(session, alice):
+    row = await session.get(UserTable, alice.id)
+    await update_me(
+        UserSelfUpdate(odo_remote_dir="/odo/vista", lux_remote_dir="/lux/vista"),
+        session,
+        row,
+    )
+    saved = await update_me(UserSelfUpdate(lux_remote_dir=""), session, row)
+    assert saved.lux_remote_dir is None
+    assert saved.odo_remote_dir == "/odo/vista"
+
+
+@pytest.mark.anyio
+async def test_retired_hpc_fields_are_not_exposed(session, alice):
+    """`remote_hpc_jobs_dir` and `frontier_account` stay in the table and
+    leave every API schema: nothing reads them any more."""
+    row = await session.get(UserTable, alice.id)
+    row.frontier_account = "chm243"
+    session.add(row)
+    await session.flush()
+
+    shown = (await get_me(row, config=True)).model_dump(mode="json")
+    assert "frontier_account" not in shown
+    assert "remote_hpc_jobs_dir" not in shown
+    update = UserSelfUpdate.model_validate(
+        {"frontier_account": "x", "remote_hpc_jobs_dir": "/x"}
+    )
+    assert update.model_dump(exclude_unset=True) == {}
+
+
+def test_existing_database_gains_the_remote_dir_columns(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE app_user (id CHAR(32) PRIMARY KEY, email VARCHAR)")
+        )
+        _add_missing_columns(conn)
+        columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
+    assert {"odo_remote_dir", "frontier_remote_dir", "lux_remote_dir"} <= columns

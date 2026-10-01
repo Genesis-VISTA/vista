@@ -18,6 +18,9 @@ class UserConfig(BaseModel):
     nersc_iri_token: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
+    odo_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
     odo_globus_token: str | None = None
     frontier_globus_token: str | None = None
     globus_token: str | None = None
@@ -70,6 +73,34 @@ class UserConfig(BaseModel):
             "connected before, connect again -- VISTA now needs one more "
             "permission than it did, so the older connection is incomplete."
         )
+
+    def require_remote_dir(self, cluster: Literal["odo", "frontier", "perlmutter", "lux"]) -> str:
+        """
+        The folder on `cluster` where VISTA puts this researcher's job sources
+        and outputs, without a trailing slash.
+
+        A user setting with no default: where a project keeps its files is
+        specific to the project and the filesystem, so VISTA does not guess.
+        Must be absolute, since Globus, IRI and SFTP would each read a relative
+        path against a different starting point.
+        """
+        setting, label = {
+            "odo": (self.odo_remote_dir, "Odo remote directory"),
+            "frontier": (self.frontier_remote_dir, "Frontier remote directory"),
+            "perlmutter": (self.nersc_remote_dir, "NERSC remote directory"),
+            "lux": (self.lux_remote_dir, "Lux remote directory"),
+        }[cluster]
+        if not setting:
+            raise ToolError(
+                f"No {label} is set. Set it in the VISTA user settings to the "
+                f"folder on {cluster.title()} where job sources and outputs should go."
+            )
+        if not setting.startswith("/"):
+            raise ToolError(
+                f"The {label} {setting!r} is not an absolute path. Set it in the "
+                "VISTA user settings to a path starting with /."
+            )
+        return setting.rstrip("/") or "/"
 
     def require_nersc_iri_token(self) -> str:
         if not self.nersc_iri_token:

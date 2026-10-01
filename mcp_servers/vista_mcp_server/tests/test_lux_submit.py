@@ -15,11 +15,13 @@ from fastmcp.exceptions import ToolError
 import vista_mcp_server.submit_job_mcp as m
 from vista_mcp_server.config import settings
 from vista_mcp_server.lib import slurm_ssh
+from vista_mcp_server.lib.user_config import UserConfig
 from fakes import FakeSshConn
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
-BASE = "/lustre/orion/stf218/proj-shared/vista"
+BASE = "/lustre/orion/abc123/proj-shared/vista"
+CFG = UserConfig(lux_remote_dir=BASE)
 
 
 def _write_job(root: Path, *, setup: str | None = "echo setup-ran\n") -> Path:
@@ -53,8 +55,6 @@ def lux(tmp_path, monkeypatch):
     _write_job(jobs_dir)
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", jobs_dir)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "lux_remote_dir", BASE)
-    monkeypatch.setattr(settings, "lux_account", "stf218")
     monkeypatch.setattr(settings, "lux_proxy", "http://proxy.ccs.ornl.gov:3128")
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(m, "_submitted_jobs", {})
@@ -80,7 +80,7 @@ def _submitted_script(conn: FakeSshConn) -> str:
 
 async def test_submit_renders_sbatch_header_and_env(lux):
     job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_lux_job(
-        None, "lux-demo", None, None, "MODEL=forge-m --flag"
+        None, CFG, "lux-demo", None, None, "MODEL=forge-m --flag"
     )
     assert job_id == "4242"
     assert (nodes, duration) == (16, 1800)
@@ -91,9 +91,8 @@ async def test_submit_renders_sbatch_header_and_env(lux):
 
     script = _submitted_script(lux)
     header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
-    assert header[:7] == [
+    assert header[:6] == [
         "#SBATCH -J vista-lux-demo",
-        "#SBATCH -A stf218",
         "#SBATCH -N 16",
         "#SBATCH -t 0:30:00",
         f"#SBATCH -o {session}/out/log-%j.out",
@@ -101,6 +100,11 @@ async def test_submit_renders_sbatch_header_and_env(lux):
         f"#SBATCH --chdir={session}",
     ]
     assert "#SBATCH --exclusive" in header
+    # No account: the job runs as the researcher, so Slurm charges their default.
+    # The only -A is the job script's own, which comes after commands (below).
+    assert [line for line in header if line.startswith("#SBATCH -A")] == [
+        "#SBATCH -A ignored"
+    ]
     # Not requested by the demo job: no per-node tasks / GPUs directives.
     assert not any("--ntasks-per-node" in line or "--gpus" in line for line in header)
     assert not any(
@@ -116,19 +120,19 @@ async def test_submit_renders_sbatch_header_and_env(lux):
 
 
 async def test_submit_uploads_sources_but_not_metadata(lux):
-    await m._submit_lux_job(None, "lux-demo", 2, 600, None)
+    await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
     # by VISTA, never uploaded.
     assert lux.puts == [f"{BASE}/lux-demo/src/run.py"]
     assert lux.local(f"{BASE}/test-session/out").is_dir()
 
     lux.puts.clear()
-    await m._submit_lux_job(None, "lux-demo", 2, 600, None)
+    await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
     assert lux.puts == []  # already there at full length
 
 
 async def test_setup_runs_on_login_node_with_env_before_sbatch(lux):
-    await m._submit_lux_job(None, "lux-demo", None, None, None)
+    await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
     [(setup_cmd, _)] = lux.ran("echo setup-ran")
     assert f"export RUN_DIR_Lux={BASE}/lux-demo/src" in setup_cmd
     assert f"export VISTA_JOB_DIR={BASE}/lux-demo" in setup_cmd
@@ -142,7 +146,7 @@ async def test_setup_failure_is_a_tool_error_and_nothing_is_submitted(lux):
         0, ("echo setup-ran", lambda c, i: (1, "", "git: proxy refused"))
     )
     with pytest.raises(ToolError, match="proxy refused"):
-        await m._submit_lux_job(None, "lux-demo", None, None, None)
+        await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
     assert lux.ran("sbatch") == []
 
 
@@ -155,12 +159,12 @@ async def test_sbatch_rejection_is_a_tool_error(lux):
         ),
     )
     with pytest.raises(ToolError, match="Invalid account"):
-        await m._submit_lux_job(None, "lux-demo", None, None, None)
+        await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
 
 
 async def test_status_reports_state_log_tail_and_outputs(lux, tmp_path):
     job_id, log_path, err_path, out_dir, *_ = await m._submit_lux_job(
-        None, "lux-demo", None, None, None
+        None, CFG, "lux-demo", None, None, None
     )
     m._submitted_jobs[job_id] = m.SubmittedJob(
         cluster="lux", log_path=log_path, err_path=err_path, output_dir=out_dir
@@ -255,7 +259,7 @@ async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
 
     job_id, *_, nodes, duration = await m._submit_lux_job(
-        None, "lux-hello", None, None, None
+        None, CFG, "lux-hello", None, None, None
     )
     assert job_id == "4242"
     assert (nodes, duration) == (1, 300)
@@ -277,18 +281,23 @@ async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
 
 async def test_lux_is_never_the_implicit_default():
     # No token selects Lux, so a call without cluster= must not land there.
-    from vista_mcp_server.lib.user_config import UserConfig
-
     with pytest.raises(ToolError, match="No HPC cluster configured"):
         m._resolve_cluster(None, UserConfig())
     assert m._resolve_cluster("lux", UserConfig()) == "lux"
+
+
+async def test_unset_remote_dir_is_refused_before_signing_in(lux):
+    with pytest.raises(ToolError, match="Lux remote directory"):
+        await m._submit_lux_job(None, UserConfig(), "lux-demo", None, None, None)
+    assert lux.labels == []  # never asked for passcodes
+    assert lux.commands == []
 
 
 async def test_missing_lux_section_is_rejected(lux, monkeypatch):
     info = m.AVAILABLE_JOBS["lux-demo"]
     monkeypatch.setattr(info, "cluster_defaults", m.ClusterDefaults())
     with pytest.raises(ValueError, match='no "lux" section'):
-        await m._submit_lux_job(None, "lux-demo", None, None, None)
+        await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
 
 
 # ------------------------------------------------------------------ slurm_ssh units
@@ -336,7 +345,6 @@ async def test_scancel_failure_raises(tmp_path):
 async def test_render_batch_script_optional_directives():
     script = slurm_ssh.render_batch_script(
         job_name="j",
-        account="a",
         node_count=1,
         duration_s=3725,
         stdout_path="o",
@@ -357,7 +365,6 @@ async def test_render_batch_script_optional_directives():
 async def test_render_batch_script_tasks_and_gpus_per_node():
     script = slurm_ssh.render_batch_script(
         job_name="j",
-        account="a",
         node_count=2,
         duration_s=60,
         stdout_path="o",

@@ -484,8 +484,6 @@ class HpcClusterSettings(BaseSettings):
     The SSH hops to Lux, hub first. Only the hub is probed: Lux has no IRI
     service, and the login node is reachable only through the hub.
     """
-    lux_account: str = "stf218"
-    """ The OLCF project Lux jobs run under. Shown on the card; not checked. """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """ The public client the users' Globus refresh tokens were minted for. """

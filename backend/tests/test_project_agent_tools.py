@@ -154,7 +154,7 @@ def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
         odo_s3m_token="odo-s3m-secret",
         frontier_s3m_token="frontier-s3m-secret",
         nersc_iri_token="iri-secret",
-        frontier_account="chm243",
+        odo_remote_dir="/odo/proj/vista",
     )
     metadata = _agent(make_project(), user)._build_vista_metadata(tool)["vista"]["user"]
     assert metadata["odo_s3m_token"] == "odo-s3m-secret"
@@ -163,7 +163,7 @@ def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
     # back to it, and a stale copy would disagree with the per-cluster ones.
     assert "s3m_token" not in metadata
     assert metadata["nersc_iri_token"] == "iri-secret"
-    assert metadata["frontier_account"] == "chm243"
+    assert metadata["odo_remote_dir"] == "/odo/proj/vista"
     assert metadata["id"] == str(user.id)
 
 

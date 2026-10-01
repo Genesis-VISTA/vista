@@ -86,8 +86,6 @@ class AppSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the open enclave """
-    odo_remote_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
-    """ Base dir on Odo where job sources and outputs live """
     odo_machine: str = "odo"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
@@ -109,8 +107,6 @@ class AppSettings(BaseSettings):
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
-    frontier_remote_dir: str = "/lustre/orion/chm243/proj-shared/vista"
-    """ Base dir on Frontier where job sources and outputs live """
     frontier_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """ Same as `odo_introspect_url`, for Frontier tokens. """
     frontier_machine: str = "frontier"
@@ -126,14 +122,6 @@ class AppSettings(BaseSettings):
     service, so its jobs are submitted with `sbatch` over SSH. Its login node is
     not public yet, hence the hub hop; each hop asks the researcher for their own
     PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
-    """
-    lux_account: str = "stf218"
-    """ OLCF project name used as the Slurm account for Lux jobs. """
-    lux_remote_dir: str = "/lustre/orion/stf218/proj-shared/vista"
-    """
-    Base dir on Lux (Orion Lustre, also mounted on Frontier) where job sources
-    and outputs live. Jobs run as the researcher, so it only needs to be writable
-    by `lux_account` members.
     """
     lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
     """

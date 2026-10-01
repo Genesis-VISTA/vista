@@ -40,8 +40,6 @@ def _hpc_jobs_and_registry(monkeypatch):
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"
     )
-    monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
-    monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
     monkeypatch.setattr(settings, "session_id", "test-session")
     _submitted_jobs.clear()
     yield
@@ -56,6 +54,8 @@ def user_cfg() -> UserConfig:
         nersc_iri_token="nersc-token",
         nersc_account="m1234",
         nersc_remote_dir="/fake/nersc/home/user/vista",
+        odo_remote_dir="/fake/odo/vista",
+        frontier_remote_dir="/fake/frontier/vista",
         globus_token="fake-transfer-refresh",
         globus_https_token="fake-https-refresh",
     )

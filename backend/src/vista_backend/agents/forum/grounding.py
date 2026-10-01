@@ -254,9 +254,10 @@ def build_toolset(
                 )
             except Exception as exc:  # noqa: BLE001 — a refused job is an answer
                 # Everything left is the deployment, not the request: an expired
-                # token, a scratch directory the submitter could not create. Retrying spends a request to be told the same
-                # thing, so the attempt is remembered and the second call is
-                # answered from memory instead of from the cluster.
+                # token, a scratch directory the submitter could not create.
+                # Retrying spends a request to be told the same thing, so the
+                # attempt is remembered and the second call is answered from
+                # memory instead of from the cluster.
                 ctx.deps.refused_commissions[(job, where)] = str(exc)
                 refused(exc)
                 return (

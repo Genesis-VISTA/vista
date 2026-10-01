@@ -137,8 +137,9 @@ class Check(BaseModel):
     incident: Incident | None = None
     project: str | None = None
     """
-    The project the cluster's jobs run under: the S3M token's, once learned, or
-    Lux's configured one. A project name, not a secret.
+    The project the cluster's jobs run under: the S3M token's, once learned.
+    Lux has none to report -- its jobs go to the researcher's default Slurm
+    account. A project name, not a secret.
     """
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
@@ -676,9 +677,7 @@ class HpcStatusService:
     ) -> Check:
         if cluster == "lux":
             # Nothing is stored to check; see LUX_SIGN_IN.
-            return Check(
-                ok=True, message=LUX_SIGN_IN, project=self._settings.lux_account
-            )
+            return Check(ok=True, message=LUX_SIGN_IN)
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
         token = {

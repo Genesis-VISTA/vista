@@ -403,7 +403,7 @@ async def submit_hpc_job(
             )
         elif cluster == "lux":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_lux_job(
-                ctx, job, node_count, duration_int, script_args,
+                ctx, cfg, job, node_count, duration_int, script_args,
             )
             _record_submitted_job(
                 job_id,
@@ -461,11 +461,11 @@ async def _submit_odo_job(
     - open-enclave IRI endpoint (`settings.odo_iri_url`) with a pinned compute
       resource id (`settings.odo_compute_resource_id`)
     - the Slurm account is the S3M token's own project (see `_olcf_project`)
-    - the remote base is the preset `settings.odo_remote_dir`
+    - the remote base is the researcher's Odo remote directory setting
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
-    - Globus NEVER creates the output dir (see below); an admin pre-creates
-      `<odo_remote_dir>/out` once with `mkdir -p -m 2775`
+    - Globus NEVER creates the output dir (see below); the researcher
+      pre-creates `<remote dir>/out` once with `mkdir -p -m 2775`
 
     Permissions model: Globus mkdir/transfer runs as the user's mapped account
     with the DTN's umask, so Globus-created dirs are NOT group-writable, and
@@ -491,12 +491,12 @@ async def _submit_odo_job(
             f"Add a {ODO_JOB_SCRIPT} to enable Odo submission."
         )
 
+    base = cfg.require_remote_dir("odo")
     s3m_token, project = await _olcf_project(cfg, "odo")
     iri_client = await create_odo_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
-    base = settings.odo_remote_dir.rstrip('/')
     # No session prefix: job ids are unique, and the out dir must be the
     # pre-created group-writable one — a fresh per-session dir would have to be
     # created by Globus, which is exactly what breaks auser write access.
@@ -616,7 +616,7 @@ async def _require_odo_out_dir(globus: GlobusClient, *, base: str, out_dir: str)
     except Exception as e:
         raise ToolError(
             f"Cannot list {base} on the Odo Globus collection ({e}). Check that "
-            "VISTA_MCP_ODO_REMOTE_DIR exists on Odo and that your Globus "
+            "your Odo remote directory exists on Odo and that your Globus "
             "identity has access to it."
         )
     out_entry = next(
@@ -648,11 +648,7 @@ async def _submit_perlmutter_job(
             "No NERSC account configured for this user. Set it in the Vista user "
             "settings page before submitting jobs to Perlmutter."
         )
-    if not cfg.nersc_remote_dir:
-        raise ToolError(
-            "No NERSC remote dir configured for this user. Set it in the Vista user "
-            "settings page before submitting jobs to Perlmutter."
-        )
+    base = cfg.require_remote_dir("perlmutter")
 
     job_info = AVAILABLE_JOBS[job]
     defaults = job_info.cluster_defaults.perlmutter
@@ -668,7 +664,6 @@ async def _submit_perlmutter_job(
         )
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
-    base = cfg.nersc_remote_dir.rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
     src_dir = f"{base}/{job}/src"
@@ -815,18 +810,18 @@ async def _submit_frontier_job(
             f"Add a {FRONTIER_JOB_SCRIPT} to enable Frontier submission."
         )
 
+    base = cfg.require_remote_dir("frontier")
     s3m_token, project = await _olcf_project(cfg, "frontier")
     iri_client = await create_olcf_iri_client(iri_token=s3m_token)
     globus = create_globus_client(
         tokens=cfg.require_globus_token("frontier"), cluster="frontier",
     )
-    base = (defaults.remote_dir or settings.frontier_remote_dir).rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
     src_dir = f"{base}/{job}/src"
 
     # File ops via Globus. The OLCF DTN's mkdir doesn't take a mode, so the
-    # parent `frontier_remote_dir` must have been one-time chmod'd to 2775
+    # Frontier remote directory must have been one-time chmod'd to 2775
     # (setgid + g+rwx) so created subdirs inherit group + setgid. Without
     # that, the IRI service's automation user (e.g. chm243_auser) can't
     # traverse Vista-created dirs and Slurm's prolog kills the job at
@@ -981,7 +976,7 @@ def _lux_proxy_env() -> dict[str, str]:
 
 
 async def _submit_lux_job(
-    ctx: Context, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+    ctx: Context, cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
 ) -> tuple[str, str, str, int, int]:
     """
     Lux dispatch: plain Slurm over SSH, since Lux has no IRI service.
@@ -991,7 +986,8 @@ async def _submit_lux_job(
     proxy, and its `cluster_defaults.json` environment. The differences:
 
     - Jobs run as the researcher (their SSH login), not a project service user,
-      so there is no S3M introspection and no setgid dance on `lux_remote_dir`.
+      so there is no S3M introspection and no setgid dance on the remote dir.
+      Nor is there an `--account`: Slurm charges the researcher's default.
     - Sources go up over SFTP on the same connection instead of Globus.
     - `setup_lux.sh`, if present, runs on the LOGIN node before `sbatch`, where
       the network (via the proxy) is: it is the place to clone or update code.
@@ -1014,6 +1010,7 @@ async def _submit_lux_job(
             f"Add a {LUX_JOB_SCRIPT} to enable Lux submission."
         )
 
+    base = cfg.require_remote_dir("lux")
     nodes = node_count or defaults.resources.node_count or 1
     duration = duration_int or defaults.duration
 
@@ -1021,7 +1018,6 @@ async def _submit_lux_job(
         ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
     )
 
-    base = (defaults.remote_dir or settings.lux_remote_dir).rstrip('/')
     session_dir = f"{base}/{settings.session_id}"
     out_dir = f"{session_dir}/out"
     src_dir = f"{base}/{job}/src"
@@ -1064,7 +1060,6 @@ async def _submit_lux_job(
     stderr_template = f"{out_dir}/log-%j.err"
     script = slurm_ssh.render_batch_script(
         job_name=f"vista-{job}",
-        account=defaults.account or settings.lux_account,
         node_count=nodes,
         duration_s=duration,
         stdout_path=stdout_template,

@@ -33,7 +33,6 @@ def _odo_environment(monkeypatch):
     """Everything `_submit_odo_job` needs that is not the Globus credential
     itself, so each test below varies only the thing it is testing."""
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
-    monkeypatch.setattr(settings, "odo_remote_dir", "/fake/odo/vista")
     monkeypatch.setattr(settings, "session_id", "test-session")
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
 
@@ -64,6 +63,7 @@ def _capture_globus(monkeypatch) -> list[GlobusTokens]:
 
 
 async def _submit(cfg: UserConfig) -> None:
+    cfg = cfg.model_copy(update={"odo_remote_dir": "/fake/odo/vista"})
     await _submit_odo_job(
         cfg, "example", node_count=None, duration_int=None, script_args=None
     )

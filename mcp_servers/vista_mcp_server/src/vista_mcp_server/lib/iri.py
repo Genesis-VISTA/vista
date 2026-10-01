@@ -80,18 +80,6 @@ class IriDefaults(BaseModel):
     """ Seconds """
     resources: IriResourceSpec = IriResourceSpec()
     iri: IriAttributes = IriAttributes()
-    account: str | None = None
-    """
-    Slurm account to charge, overriding `lux_account` for this job only.
-    Honored on Lux. Odo and Frontier always charge the S3M token's own
-    project, which is the only account IRI can run the job under.
-    """
-    remote_dir: str | None = None
-    """
-    Base dir for this job's sources and outputs, overriding the cluster's
-    `*_remote_dir`. Goes with `account`: it must be writable by that project.
-    Honored on Frontier and Lux.
-    """
 
 
 class IriClient:

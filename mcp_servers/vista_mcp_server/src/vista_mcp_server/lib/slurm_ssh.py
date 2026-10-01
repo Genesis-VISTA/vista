@@ -78,7 +78,6 @@ async def run_checked(conn: asyncssh.SSHClientConnection, command: str, *, what:
 def render_batch_script(
     *,
     job_name: str,
-    account: str,
     node_count: int,
     duration_s: int,
     stdout_path: str,
@@ -97,12 +96,14 @@ def render_batch_script(
     Resources come only from the `#SBATCH` header written here. Slurm stops
     reading directives at the first command, so any `#SBATCH` lines left in the
     job's own script (which follows in `body`) are inert, as on the IRI path.
+
+    No `--account`: the job runs as the researcher, and Slurm charges their
+    default account.
     """
     h, rem = divmod(int(duration_s), 3600)
     m, s = divmod(rem, 60)
     directives = [
         f"-J {job_name}",
-        f"-A {account}",
         f"-N {node_count}",
         f"-t {h}:{m:02d}:{s:02d}",
         f"-o {stdout_path}",

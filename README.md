@@ -296,6 +296,14 @@ access works, and Odo and Frontier each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
+Each researcher also sets, per cluster, the **remote directory** where VISTA puts job sources and
+outputs. There is no default: where a project keeps its files is specific to the project and the
+filesystem. Lux and Perlmutter jobs run as the researcher, so their own write access is enough.
+Odo and Frontier jobs run as the project's IRI automation user, so on those two the directory must
+be writable by the project's group; create it once with `mkdir -p -m 2775 <dir>`. Researchers in
+the same project who choose the same directory share it. Lux jobs pass no `--account`, so Slurm
+charges the researcher's default account.
+
 ## Launch
 The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
 ```bash

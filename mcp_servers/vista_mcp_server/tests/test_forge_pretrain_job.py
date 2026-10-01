@@ -515,8 +515,6 @@ def test_setup_lux_fails_on_missing_env_script(cluster):
 async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "lux_remote_dir", "/lustre/vista")
-    monkeypatch.setattr(settings, "lux_account", "stf218")
     monkeypatch.setattr(settings, "session_id", "sess")
     conn = FakeSshConn(tmp_path)
     conn.on("sbatch --parsable", (0, "99\n", ""))
@@ -526,8 +524,15 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
     monkeypatch.setattr(m, "_lux_conn", fake_conn)
 
+    from vista_mcp_server.lib.user_config import UserConfig
+
     job_id, _, _, out_dir, nodes, duration = await m._submit_lux_job(
-        None, "forge-pretrain", None, None, "MODEL=forge-m"
+        None,
+        UserConfig(lux_remote_dir="/lustre/vista"),
+        "forge-pretrain",
+        None,
+        None,
+        "MODEL=forge-m",
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
     assert out_dir == "/lustre/vista/sess/out/99"
@@ -543,7 +548,7 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
     assert "export VISTA_JOB_DIR=/lustre/vista/forge-pretrain" in setup
 
     [(_, script)] = conn.ran("sbatch --parsable")
-    assert "#SBATCH -A stf218" in script
+    assert "#SBATCH -A" not in script  # the researcher's default account
     assert "#SBATCH -N 16" in script
     assert "#SBATCH -t 0:30:00" in script
     # As forge's job.sb: without tasks per node the batch env has no
@@ -563,7 +568,6 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
     base = "/lustre/orion/chm243/proj-shared/vista"
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
     monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    monkeypatch.setattr(settings, "frontier_remote_dir", base)
     monkeypatch.setattr(settings, "frontier_globus_collection_id", "fr-coll")
     monkeypatch.setattr(settings, "session_id", "sess")
     iri, globus = FakeIriClient(job_id="777"), FakeGlobusClient()
@@ -585,6 +589,7 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         frontier_s3m_token="chm243-token",
         frontier_globus_token="g-transfer",
         frontier_globus_https_token="g-https",
+        frontier_remote_dir=base,
     )
     job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_frontier_job(
         cfg, "forge-pretrain", None, None, "MODEL=forge-s"
