@@ -5,7 +5,7 @@
 #
 # Env vars exported by vista's Lux dispatcher (submit_job_mcp._submit_lux_job):
 #   RUN_DIR_Lux      $VISTA_JOB_DIR/src, already holding the uploaded sources
-#   VISTA_JOB_DIR    <remote_dir>/forge-pretrain
+#   VISTA_JOB_DIR    <remote_dir>.out/forge-pretrain
 #   http(s)_proxy    OLCF proxy (the login node has no direct outbound network)
 #   FORGE_*, LUX_ENV_SCRIPT   from cluster_defaults.json -> lux.iri.environment
 

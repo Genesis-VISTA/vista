@@ -15,7 +15,7 @@ identity.
 from __future__ import annotations
 import logging, os, posixpath, shlex, textwrap, dataclasses
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal
+from typing import Literal, NoReturn
 
 from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
@@ -163,11 +163,14 @@ mcp = FastMCP("Submit Job")
 @dataclasses.dataclass(frozen=True)
 class RemoteLayout:
     """
-    Where a job's files live under the researcher's remote folder for a cluster.
+    Where a job's files live, in two folders beside the researcher's remote
+    folder `<base>` for a cluster. `<base>` itself is never created.
 
-        <base>/<job>/src/           sources, uploaded by VISTA; the job only reads them
-        <base>/out/log-<id>.out     Slurm stdout, and `.err` beside it
-        <base>/out/<id>/            the job's outputs, exported to it as `VISTA_OUT`
+        <base>.jobs/<job>/src/       sources, uploaded by VISTA; the job only reads them
+        <base>.out/log-<id>.out      Slurm stdout, and `.err` beside it
+        <base>.out/<id>/             the job's outputs, exported to it as `VISTA_OUT`
+        <base>.out/<job>/            state shared by a job's runs (a checkout, a
+                                     downloaded model), exported as `VISTA_JOB_DIR`
 
     The same on every cluster, and a function of the folder and the job id
     alone. So a job is found again from its id -- by a later status call, after
@@ -175,21 +178,41 @@ class RemoteLayout:
     recorded at submit time. Changing the folder setting loses sight of the
     jobs under the old one, which is the price of keeping no record.
 
-    VISTA never creates anything under `out/`. On Odo and Frontier the job runs
-    as the project's IRI automation user, and a directory made through the
-    researcher's Globus identity is not group-writable, so the automation user
-    could not write in it. Slurm creates `out/` for the logs, as whichever user
-    runs the job, and the job's prefix creates `<id>/`.
+    Two folders, because on Odo and Frontier each is created by the only
+    identity that writes to it. VISTA uploads `.jobs` through the researcher's
+    Globus identity, so it belongs to them, mode 755. The job runs as the
+    project's IRI automation user, and Slurm creates `.out` for the logs as that
+    user, which VISTA cannot do: Globus creates only as the researcher and
+    cannot chmod. So `.out` needs only the folder holding `<base>` to be
+    writable by the project's group, which OLCF's `proj-shared` is (770).
+
+    TEMPORARY: this split works around S3M tokens having no access to the IRI
+    filesystem API. Once they do, VISTA can create one group-writable folder as
+    the automation user (IRI `mkdir` + `chmod`) and the layout can go back to a
+    single folder.
     """
 
     base: str
 
-    def src(self, job: str) -> str:
-        return f"{self.base}/{job}/src"
+    @property
+    def jobs(self) -> str:
+        return f"{self.base}.jobs"
 
     @property
     def out(self) -> str:
-        return f"{self.base}/out"
+        return f"{self.base}.out"
+
+    @property
+    def parent(self) -> str:
+        """ The folder holding `.jobs` and `.out`; it must already exist. """
+        return posixpath.dirname(self.base) or "/"
+
+    def src(self, job: str) -> str:
+        return f"{self.jobs}/{job}/src"
+
+    def job_dir(self, job: str) -> str:
+        """ Where a job's runs share state they write, so the job's user can. """
+        return f"{self.out}/{job}"
 
     @property
     def stdout_template(self) -> str:
@@ -392,10 +415,10 @@ async def _submit_odo_job(
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
 
-    Files go where `RemoteLayout` says, under the researcher's Odo remote
-    directory, which must be writable by the project's group (checked by
-    `_require_group_writable`): the job runs as the project's IRI automation
-    user, and Globus only ever creates what that user merely reads.
+    Files go where `RemoteLayout` says, beside the researcher's Odo remote
+    directory (checked by `_require_writable_out`): the job runs as the
+    project's IRI automation user, and Globus only ever creates what that user
+    merely reads.
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
@@ -420,11 +443,11 @@ async def _submit_odo_job(
         tokens=cfg.require_globus_token("odo"), cluster="odo",
     )
 
-    await _require_group_writable(
-        globus, collection_id=settings.odo_globus_collection_id, base=base, cluster="odo",
+    await _require_writable_out(
+        globus, collection_id=settings.odo_globus_collection_id, layout=layout, cluster="odo",
     )
     await _sync_job_sources(
-        globus, job, src_dir, base=base,
+        globus, job, src_dir, parents_below=layout.parent,
         remote_endpoint=settings.odo_globus_collection_id,
     )
 
@@ -468,7 +491,7 @@ async def _submit_odo_job(
     # Odo-suffixed env vars, mirroring RUN_DIR_Frontier / RUN_DIR_Perlmutter.
     iri_env = {
         "RUN_DIR_Odo": src_dir,
-        "FORGE_MODEL_Odo": f"{base}/{job}/model",
+        "FORGE_MODEL_Odo": f"{layout.job_dir(job)}/model",
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
 
@@ -495,7 +518,7 @@ async def _submit_odo_job(
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": base,
+            "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
             "stderr_path": layout.stderr_template,
             "environment": iri_env,
@@ -513,60 +536,78 @@ async def _submit_odo_job(
     )
 
 
-async def _require_group_writable(
-    globus: GlobusClient, *, collection_id: str, base: str, cluster: Cluster,
+async def _require_writable_out(
+    globus: GlobusClient, *, collection_id: str, layout: RemoteLayout, cluster: Cluster,
 ) -> None:
     """
-    Refuse an Odo or Frontier submission unless the remote directory exists and
-    its group may write to it.
+    Refuse an Odo or Frontier submission when the job could not create its
+    output folder, `<base>.out`.
 
-    The job runs as the project's IRI automation user, and Slurm creates `out/`
-    for the job's logs as that user. Without group write the job dies at log
-    creation with no log to say why, so this turns it into an error naming the
-    command that fixes it. Globus cannot do it for the researcher: a directory
-    it creates belongs to their mapped identity with the DTN's umask, which is
-    not group-writable.
+    The job runs as the project's IRI automation user, and Slurm creates
+    `<base>.out` for the job's logs as that user. That needs the folder holding
+    `<base>` to be writable by the project's group; when it is not, the job
+    dies at log creation with no log to say why, so this turns it into an error
+    naming the command that fixes it. VISTA cannot create the folder itself: one
+    made through Globus belongs to the researcher, 755, and Globus cannot chmod.
 
-    Globus reports permissions for the entries of a listing, not for the
-    directory listed, so this lists the parent. When the parent cannot be
-    listed -- common above a project's own directories -- the answer is unknown
-    and the submission goes ahead, rather than refusing on a guess.
+    An existing `.out` is accepted whatever its mode. One made by Slurm is 755
+    but owned by the automation user, so its mode says nothing about whether
+    that user may write in it.
+
+    Globus reports permissions for the entries of a listing, not for the folder
+    listed, so the parent's own mode is read from the grandparent. When a
+    listing cannot be made -- common above a project's own directories -- the
+    answer is unknown and the submission goes ahead, rather than refusing on a
+    guess.
     """
     title = cluster.title()
-    parent, name = posixpath.split(base)
-    if not name:
-        return  # "/": nothing above it to ask
-    why = (
-        "Jobs run as your project's IRI automation user, so the directory must "
-        "be writable by the project's group."
-    )
-    missing = (
-        f"Your {title} remote directory {base} does not exist. Create it once, "
-        f"on {title}:\n  mkdir -p -m 2775 {base}\n{why}"
-    )
+    parent = layout.parent
+    out_name = posixpath.basename(layout.out)
+
+    def refuse(reason: str) -> NoReturn:
+        raise ToolError(
+            f"Your {title} jobs could not create their output folder {layout.out}: "
+            f"{reason} Create it once, on {title}:\n  mkdir -p -m 2775 {layout.out}\n"
+            "Jobs run as your project's IRI automation user, so the folder must be "
+            "writable by the project's group."
+        )
+
     try:
         entries = await globus.operation_ls(endpoint=collection_id, path=parent)
     except GlobusSessionExpired:
         # Says which connection to redo; the messages below would say the wrong thing.
         raise
     except GlobusFileNotFound:
-        raise ToolError(missing)
+        refuse(f"{parent} does not exist.")
     except Exception as e:
-        logging.warning(f"could not read the permissions of {base} on {title} ({e}); submitting anyway")
+        logging.warning(f"could not list {parent} on {title} ({e}); submitting anyway")
         return
-    entry = next((e for e in entries if e.get("name") == name), None)
-    if entry is None or entry.get("type") != "dir":
-        raise ToolError(missing)
-    perms = entry.get("permissions")
+    existing = next((e for e in entries if e.get("name") == out_name), None)
+    if existing is not None:
+        if existing.get("type") != "dir":
+            refuse(f"{layout.out} is not a folder.")
+        return
+
+    grandparent, parent_name = posixpath.split(parent)
+    if not parent_name:
+        return  # the parent is "/": nothing above it to ask
+    try:
+        entries = await globus.operation_ls(endpoint=collection_id, path=grandparent)
+    except GlobusSessionExpired:
+        raise
+    except Exception as e:
+        logging.warning(
+            f"could not read the permissions of {parent} on {title} ({e}); submitting anyway"
+        )
+        return
+    entry = next((e for e in entries if e.get("name") == parent_name), None)
+    perms = entry.get("permissions") if entry is not None else None
     try:
         group_writable = int(perms, 8) & 0o020 if perms else True
     except ValueError:
         group_writable = True  # a format we cannot read; do not refuse on it
     if not group_writable:
-        raise ToolError(
-            f"Your {title} remote directory {base} is not writable by its group "
-            f"(permissions {perms}). {why} Fix it once, on {title}:\n  chmod 2775 {base}"
-        )
+        refuse(f"{parent} is not writable by its group (permissions {perms}).")
 
 
 async def _submit_perlmutter_job(
@@ -597,6 +638,10 @@ async def _submit_perlmutter_job(
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
     src_dir = layout.src(job)
     await _sync_perlmutter_sources(iri_client, job, src_dir)
+    # Perlmutter runs as the researcher, so VISTA can make the log folder
+    # itself; NERSC's Slurm has not been confirmed to create a missing one, as
+    # OLCF's does.
+    await iri_client.mkdir(layout.out)
 
     job_script_text = job_script_path.read_text(encoding="utf-8")
     setup_script_path = local_job_dir / PERLMUTTER_SETUP_SCRIPT
@@ -622,13 +667,14 @@ async def _submit_perlmutter_job(
     body_lines.append(job_script_text)
     job_cmd = "\n".join(body_lines) + "\n"
 
-    # Convention-driven layout under the NERSC remote directory: each job gets a flat
-    # <remote_dir>/<job>/{src,model} tree. The user's job.perlmutter.slurm reads
+    # Convention-driven layout beside the NERSC remote directory (see
+    # `RemoteLayout`): sources in <remote_dir>.jobs/<job>/src, the downloaded
+    # model in <remote_dir>.out/<job>/model. The user's job.perlmutter.slurm reads
     # RUN_DIR_Perlmutter and FORGE_MODEL_Perlmutter from the job environment.
     # Advanced users can override either by setting iri.environment in cluster_defaults.json.
     iri_env = {
         "RUN_DIR_Perlmutter": src_dir,
-        "FORGE_MODEL_Perlmutter": f"{base}/{job}/model",
+        "FORGE_MODEL_Perlmutter": f"{layout.job_dir(job)}/model",
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
 
@@ -663,7 +709,7 @@ async def _submit_perlmutter_job(
             "duration": duration,
             "custom_attributes": {"constraint": defaults.iri.constraint},
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": base,
+            "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
             "stderr_path": layout.stderr_template,
             "environment": iri_env,
@@ -746,14 +792,13 @@ async def _submit_frontier_job(
 
     # File ops via Globus, which only ever creates the source tree the job
     # reads. Everything the job writes is created by Slurm and the job itself,
-    # as the project's IRI automation user, in a remote directory the project's
-    # group can write to (see `RemoteLayout`).
-    await _require_group_writable(
-        globus, collection_id=settings.frontier_globus_collection_id, base=base,
+    # as the project's IRI automation user, beside it (see `RemoteLayout`).
+    await _require_writable_out(
+        globus, collection_id=settings.frontier_globus_collection_id, layout=layout,
         cluster="frontier",
     )
     await _sync_job_sources(
-        globus, job, src_dir, base=base,
+        globus, job, src_dir, parents_below=layout.parent,
         remote_endpoint=settings.frontier_globus_collection_id,
     )
 
@@ -805,9 +850,9 @@ async def _submit_frontier_job(
     # without colliding with Perlmutter's _Perlmutter-suffixed names.
     iri_env = {
         "RUN_DIR_Frontier": src_dir,
-        "FORGE_MODEL_Frontier": f"{base}/{job}/model",
+        "FORGE_MODEL_Frontier": f"{layout.job_dir(job)}/model",
         "VISTA_REMOTE_BASE": base,
-        "VISTA_JOB_DIR": f"{base}/{job}",
+        "VISTA_JOB_DIR": layout.job_dir(job),
     }
     iri_env.update(defaults.iri.environment)  # user-supplied JSON entries win
 
@@ -839,7 +884,7 @@ async def _submit_frontier_job(
             "duration": duration,
             **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
-            "directory": base,
+            "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
             "stderr_path": layout.stderr_template,
             "environment": iri_env,
@@ -940,7 +985,7 @@ async def _submit_lux_job(
     job_env = {
         "RUN_DIR_Lux": src_dir,
         "VISTA_REMOTE_BASE": base,
-        "VISTA_JOB_DIR": f"{base}/{job}",
+        "VISTA_JOB_DIR": layout.job_dir(job),
         **defaults.iri.environment,  # user-supplied JSON entries win
     }
 
@@ -974,7 +1019,7 @@ async def _submit_lux_job(
         duration_s=duration,
         stdout_path=layout.stdout_template,
         stderr_path=layout.stderr_template,
-        workdir=base,
+        workdir=layout.jobs,
         body="\n".join(body_lines) + "\n",
         # queue_name has an IRI-side default ("regular", Perlmutter's QOS); on Lux
         # only a queue the job's JSON names explicitly is passed to Slurm.
@@ -1012,7 +1057,9 @@ async def _sync_job_sources_ssh(conn, job: str, src_dir: str) -> None:
         and f.name not in _HPC_JOB_METADATA_FILES
     ]
     if not sources:
+        # Still made: `<base>.jobs` is the job's working directory.
         logging.warning(f"no source files to upload from {local_job_dir} (only metadata?)")
+        await slurm_ssh.makedirs(conn, src_dir)
         return
 
     existing = await slurm_ssh.list_file_sizes(conn, src_dir)
@@ -1026,7 +1073,7 @@ async def _sync_job_sources_ssh(conn, job: str, src_dir: str) -> None:
 
 
 async def _sync_job_sources(
-    globus: GlobusClient, job: str, src_dir: str, *, base: str, remote_endpoint: str,
+    globus: GlobusClient, job: str, src_dir: str, *, parents_below: str, remote_endpoint: str,
 ) -> None:
     """
     Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir`, one
@@ -1035,17 +1082,15 @@ async def _sync_job_sources(
     Idempotent: files already on the collection are not re-sent, and a
     submission that follows a partly-failed one uploads only what is missing.
 
-    `base` is the cluster's remote base dir (assumed pre-existing); we use it
-    as the parents_below floor for the recursive mkdir.
+    `parents_below` is the deepest folder assumed to exist already -- the one
+    holding the remote folder -- and the floor for the recursive mkdir.
 
-    Permissions: the project's IRI automation user only
-    needs to READ the src tree, which the DTN's default umask grants
-    (755 dirs / 644 files); correct group ownership is inherited from `base`,
-    which the user one-time `chmod 2775`'d. Globus-created dirs are NOT
-    group-writable — anything the auto-user must WRITE has to live elsewhere
-    (see `RemoteLayout`).
-    Pre-creating `<base>/<job>/src` manually also works — the mkdir here is
-    idempotent and the transfer just adds files.
+    Permissions: the project's IRI automation user only needs to READ the src
+    tree, which the DTN's default umask grants (755 dirs / 644 files).
+    Globus-created dirs are NOT group-writable, which is why everything the
+    job WRITES lives in `<base>.out` instead (see `RemoteLayout`).
+    Pre-creating `<base>.jobs/<job>/src` manually also works — the mkdir here
+    is idempotent and the transfer just adds files.
     """
     # Stage the upload set: scan local_hpc_jobs_dir/<job> for files to push.
     local_job_dir = settings.local_hpc_jobs_dir / job
@@ -1056,7 +1101,11 @@ async def _sync_job_sources(
     ]
 
     if not sources:
+        # Still made: `<base>.jobs` is the job's working directory.
         logging.warning(f"no source files to upload from {local_job_dir} (only metadata?)")
+        await globus.operation_mkdir_p(
+            endpoint=remote_endpoint, path=src_dir, parents_below=parents_below,
+        )
         return
 
     # Probe the remote collection, and skip only when EVERY source is already
@@ -1097,9 +1146,11 @@ async def _sync_job_sources(
         # fall through to mkdir + upload.
         logging.debug(f"src dir {src_dir} not yet readable ({e}); creating + uploading")
 
-    # mkdir -p `<base>/<job>/src` — Globus needs both levels created explicitly,
+    # mkdir -p `<base>.jobs/<job>/src` — Globus makes one level per call,
     # and a PUT into a missing parent is a 404, so this has to come first.
-    await globus.operation_mkdir_p(endpoint=remote_endpoint, path=src_dir, parents_below=base)
+    await globus.operation_mkdir_p(
+        endpoint=remote_endpoint, path=src_dir, parents_below=parents_below,
+    )
 
     for f in sources:
         await globus.upload_file(

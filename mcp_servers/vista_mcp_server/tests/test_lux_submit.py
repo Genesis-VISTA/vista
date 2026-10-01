@@ -81,9 +81,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     )
     assert job_id == "4242"
     assert (nodes, duration) == (16, 1800)
-    assert log_path == f"{BASE}/out/log-4242.out"
-    assert err_path == f"{BASE}/out/log-4242.err"
-    assert out_dir == f"{BASE}/out/4242"
+    assert log_path == f"{BASE}.out/log-4242.out"
+    assert err_path == f"{BASE}.out/log-4242.err"
+    assert out_dir == f"{BASE}.out/4242"
 
     script = _submitted_script(lux)
     header = [line for line in script.splitlines() if line.startswith("#SBATCH")]
@@ -91,9 +91,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
         "#SBATCH -J vista-lux-demo",
         "#SBATCH -N 16",
         "#SBATCH -t 0:30:00",
-        f"#SBATCH -o {BASE}/out/log-%j.out",
-        f"#SBATCH -e {BASE}/out/log-%j.err",
-        f"#SBATCH --chdir={BASE}",
+        f"#SBATCH -o {BASE}.out/log-%j.out",
+        f"#SBATCH -e {BASE}.out/log-%j.err",
+        f"#SBATCH --chdir={BASE}.jobs",
     ]
     assert "#SBATCH --exclusive" in header
     # No account: the job runs as the researcher, so Slurm charges their default.
@@ -108,9 +108,9 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     )  # no IRI default queue
     # The job's own directive comes after commands, so Slurm ignores it.
     assert script.index("#SBATCH -A ignored") > script.index("export RUN_DIR_Lux")
-    assert f"export RUN_DIR_Lux={BASE}/lux-demo/src" in script
+    assert f"export RUN_DIR_Lux={BASE}.jobs/lux-demo/src" in script
     assert "export FOO='bar baz'" in script
-    assert f'export VISTA_OUT={BASE}/out/"$SLURM_JOB_ID"' in script
+    assert f'export VISTA_OUT={BASE}.out/"$SLURM_JOB_ID"' in script
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in script
     assert "export https_proxy=http://proxy.ccs.ornl.gov:3128" in script
     assert "set -- MODEL=forge-m --flag" in script
@@ -120,9 +120,9 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
     # by VISTA, never uploaded.
-    assert lux.puts == [f"{BASE}/lux-demo/src/run.py"]
+    assert lux.puts == [f"{BASE}.jobs/lux-demo/src/run.py"]
     # Only the source tree is made ahead of time; Slurm makes out/.
-    assert not lux.local(f"{BASE}/out").exists()
+    assert not lux.local(f"{BASE}.out").exists()
 
     lux.puts.clear()
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
@@ -132,8 +132,9 @@ async def test_submit_uploads_sources_but_not_metadata(lux):
 async def test_setup_runs_on_login_node_with_env_before_sbatch(lux):
     await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
     [(setup_cmd, _)] = lux.ran("echo setup-ran")
-    assert f"export RUN_DIR_Lux={BASE}/lux-demo/src" in setup_cmd
-    assert f"export VISTA_JOB_DIR={BASE}/lux-demo" in setup_cmd
+    assert f"export RUN_DIR_Lux={BASE}.jobs/lux-demo/src" in setup_cmd
+    # State the job's runs share goes where the job's own user can write.
+    assert f"export VISTA_JOB_DIR={BASE}.out/lux-demo" in setup_cmd
     assert "export https_proxy=http://proxy.ccs.ornl.gov:3128" in setup_cmd
     order = [c for c, _ in lux.commands]
     assert order.index(setup_cmd) < order.index("sbatch --parsable")
@@ -217,7 +218,7 @@ async def test_status_falls_back_to_sacct_after_job_leaves_queue(lux, tmp_path):
 
 
 async def test_outputs_download_over_sftp_and_cache_locally(lux, tmp_path):
-    out_dir = f"{BASE}/out/79"
+    out_dir = f"{BASE}.out/79"
     lux.local(out_dir).mkdir(parents=True)
     (lux.local(out_dir) / "metrics.csv").write_bytes(b"iter,loss\n1,9.1\n")
 

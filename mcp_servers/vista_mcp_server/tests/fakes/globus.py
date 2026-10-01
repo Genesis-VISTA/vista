@@ -38,12 +38,22 @@ class FakeGlobusClient:
         # path -> list of entry dicts ({name, type, permissions})
         self.ls_entries: dict[str, list[dict[str, Any]]] = {}
 
-    def seed_remote_dir(self, base: str, *, permissions: str = "2775") -> None:
-        """List ``base`` in its parent with ``permissions``, which is where
-        ``_require_group_writable`` reads them from."""
+    def seed_remote_dir(self, base: str, *, parent_permissions: str = "2770") -> None:
+        """Make the folder holding ``base`` exist, with ``parent_permissions``,
+        listed in its own parent -- which is where ``_require_writable_out``
+        reads them from. 2770 is OLCF's ``proj-shared``."""
+        parent = base.rstrip("/").rsplit("/", 1)[0] or "/"
+        grandparent, name = parent.rsplit("/", 1)
+        self.ls_entries.setdefault(parent, [])
+        self.ls_entries.setdefault(grandparent or "/", []).append(
+            {"name": name, "type": "dir", "permissions": parent_permissions}
+        )
+
+    def seed_out_dir(self, base: str, *, permissions: str = "0755") -> None:
+        """An existing ``<base>.out``, as Slurm leaves it after a first job."""
         parent, name = base.rstrip("/").rsplit("/", 1)
         self.ls_entries.setdefault(parent or "/", []).append(
-            {"name": name, "type": "dir", "permissions": permissions}
+            {"name": f"{name}.out", "type": "dir", "permissions": permissions}
         )
 
     # --- Transfer -----------------------------------------------------------

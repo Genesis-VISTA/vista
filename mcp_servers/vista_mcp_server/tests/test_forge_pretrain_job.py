@@ -534,8 +534,8 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
         "MODEL=forge-m",
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
-    assert out_dir == "/lustre/vista/out/99"
-    src = "/lustre/vista/forge-pretrain/src"
+    assert out_dir == "/lustre/vista.out/99"
+    src = "/lustre/vista.jobs/forge-pretrain/src"
     assert sorted(conn.puts) == [
         f"{src}/forge_common.sh",
         f"{src}/make_config.py",
@@ -544,7 +544,8 @@ async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
 
     [(setup, _)] = conn.ran("prepare_forge.sh")
     assert "export FORGE_BRANCH=lux" in setup
-    assert "export VISTA_JOB_DIR=/lustre/vista/forge-pretrain" in setup
+    # The forge checkout lives where the job's own user can write it.
+    assert "export VISTA_JOB_DIR=/lustre/vista.out/forge-pretrain" in setup
 
     [(_, script)] = conn.ran("sbatch --parsable")
     assert "#SBATCH -A" not in script  # the researcher's default account
@@ -594,7 +595,7 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         cfg, "forge-pretrain", None, None, "MODEL=forge-s"
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)
-    assert out_dir == f"{base}/out/777"
+    assert out_dir == f"{base}.out/777"
     # The account is whatever project the token belongs to.
     assert seen == {"introspected": "chm243-token", "iri_token": "chm243-token"}
 
@@ -602,15 +603,17 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
     attrs = spec["attributes"]
     assert attrs["account"] == "chm243"
     assert attrs["queue_name"] == "batch"
-    assert attrs["directory"] == base
+    assert attrs["directory"] == f"{base}.jobs"
     env = attrs["environment"]
-    assert env["VISTA_JOB_DIR"] == f"{base}/forge-pretrain"
-    assert env["RUN_DIR_Frontier"] == f"{base}/forge-pretrain/src"
+    # The checkout is written by the job, as the project's automation user, so
+    # it goes in `.out`, which that user created; the sources it only reads.
+    assert env["VISTA_JOB_DIR"] == f"{base}.out/forge-pretrain"
+    assert env["RUN_DIR_Frontier"] == f"{base}.jobs/forge-pretrain/src"
     assert env["FORGE_BRANCH"] == "lux"
     assert env["FORGE_DEFAULT_MODEL"] == "forge-s"
     uploaded = sorted(path for _, path in globus.uploads)
     assert uploaded == [
-        f"{base}/forge-pretrain/src/{f}"
+        f"{base}.jobs/forge-pretrain/src/{f}"
         for f in ("forge_common.sh", "make_config.py", "prepare_forge.sh")
     ]
     body = spec["arguments"][-1]

@@ -1,17 +1,21 @@
 """
-One folder layout on every cluster, found again from the job id alone.
+One folder layout on every cluster, found again from the job id alone. Two
+folders beside the researcher's remote folder `<remote_dir>`:
 
-    <remote_dir>/<job>/src/          sources
-    <remote_dir>/out/log-<id>.out    Slurm stdout, and .err beside it
-    <remote_dir>/out/<id>/           VISTA_OUT
+    <remote_dir>.jobs/<job>/src/     sources
+    <remote_dir>.out/log-<id>.out    Slurm stdout, and .err beside it
+    <remote_dir>.out/<id>/           VISTA_OUT
+    <remote_dir>.out/<job>/          VISTA_JOB_DIR, state a job's runs share
 
 Nothing is recorded at submit time: no registry, and no per-run folder whose
 name only the submitting process knew. That is what lets a status call after a
 restart, or from another install sharing the folder, find a job's files.
 
-On Odo and Frontier the job runs as the project's IRI automation user, so the
-remote directory must be writable by the project's group, and VISTA checks that
-before submitting rather than letting the job die at log creation.
+On Odo and Frontier the job runs as the project's IRI automation user, which
+creates `.out` itself (through Slurm), while `.jobs` belongs to the researcher.
+So the folder holding them must be writable by the project's group, and VISTA
+checks that before submitting rather than letting the job die at log creation.
+Temporary: until S3M tokens can use the IRI filesystem API.
 """
 
 from __future__ import annotations
@@ -22,22 +26,27 @@ from fastmcp.exceptions import ToolError
 import vista_mcp_server.submit_job_mcp as m
 from vista_mcp_server import dry_run
 from vista_mcp_server.config import AppSettings, settings
-from vista_mcp_server.lib.globus import GlobusFileNotFound, GlobusSessionExpired
+from vista_mcp_server.lib.globus import GlobusSessionExpired
 from fakes import FakeGlobusClient
 
 pytestmark = pytest.mark.unit
 
-BASE = "/lustre/orion/abc123/proj-shared/vista"
+PROJ = "/lustre/orion/abc123/proj-shared"
+BASE = f"{PROJ}/foo"
 
 
 def test_the_layout():
     layout = m.RemoteLayout(BASE)
-    assert layout.src("example") == f"{BASE}/example/src"
-    assert layout.stdout_template == f"{BASE}/out/log-%j.out"
-    assert layout.stderr_template == f"{BASE}/out/log-%j.err"
-    assert layout.log_path("42") == f"{BASE}/out/log-42.out"
-    assert layout.err_path("42") == f"{BASE}/out/log-42.err"
-    assert layout.output_dir("42") == f"{BASE}/out/42"
+    assert layout.parent == PROJ
+    assert layout.jobs == f"{BASE}.jobs"
+    assert layout.out == f"{BASE}.out"
+    assert layout.src("example") == f"{BASE}.jobs/example/src"
+    assert layout.job_dir("example") == f"{BASE}.out/example"
+    assert layout.stdout_template == f"{BASE}.out/log-%j.out"
+    assert layout.stderr_template == f"{BASE}.out/log-%j.err"
+    assert layout.log_path("42") == f"{BASE}.out/log-42.out"
+    assert layout.err_path("42") == f"{BASE}.out/log-42.err"
+    assert layout.output_dir("42") == f"{BASE}.out/42"
 
 
 def test_nothing_is_kept_between_calls():
@@ -59,58 +68,80 @@ async def test_there_is_no_job_listing_tool():
 
 
 async def check(globus: FakeGlobusClient, base: str = BASE) -> None:
-    await m._require_group_writable(
-        globus, collection_id="coll", base=base, cluster="frontier"
+    await m._require_writable_out(
+        globus, collection_id="coll", layout=m.RemoteLayout(base), cluster="frontier"
     )
 
 
 @pytest.mark.anyio
-async def test_a_group_writable_folder_passes():
+async def test_a_new_folder_in_proj_shared_needs_no_setup():
+    """The case that used to be refused: a fresh `proj-shared/foo`, nothing
+    created yet. The automation user can make `foo.out` in a 770 parent."""
     globus = FakeGlobusClient()
-    globus.seed_remote_dir(BASE, permissions="2775")
+    globus.seed_remote_dir(BASE, parent_permissions="2770")
     await check(globus)
-    # Asked of the parent: a listing reports its entries' permissions, not its own.
-    assert globus.ls_calls == [("coll", "/lustre/orion/abc123/proj-shared")]
+    assert globus.ls_calls == [("coll", PROJ), ("coll", "/lustre/orion/abc123")]
 
 
 @pytest.mark.anyio
-async def test_a_folder_its_group_cannot_write_is_refused_with_the_fix():
+async def test_an_existing_output_folder_is_accepted_whatever_its_mode():
+    """Slurm leaves `.out` 755 but owned by the automation user, so its mode
+    says nothing about whether that user can write there."""
     globus = FakeGlobusClient()
-    globus.seed_remote_dir(BASE, permissions="0755")
+    globus.seed_remote_dir(BASE, parent_permissions="0755")
+    globus.seed_out_dir(BASE, permissions="0755")
+    await check(globus)
+    assert globus.ls_calls == [("coll", PROJ)]  # no need to look further up
+
+
+@pytest.mark.anyio
+async def test_a_parent_its_group_cannot_write_is_refused_with_the_fix():
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(BASE, parent_permissions="0755")
     with pytest.raises(ToolError) as refusal:
         await check(globus)
     message = str(refusal.value)
-    assert f"chmod 2775 {BASE}" in message
+    assert f"mkdir -p -m 2775 {BASE}.out" in message
     assert "0755" in message
     assert "automation user" in message
 
 
 @pytest.mark.anyio
-async def test_a_missing_folder_is_refused_with_the_fix():
-    globus = FakeGlobusClient()
-    globus.ls_entries["/lustre/orion/abc123/proj-shared"] = [
-        {"name": "someone-else", "type": "dir", "permissions": "2775"}
-    ]
-    with pytest.raises(ToolError, match=f"mkdir -p -m 2775 {BASE}"):
+async def test_a_missing_parent_is_refused_with_the_fix():
+    globus = FakeGlobusClient()  # nothing seeded: listing PROJ is not found
+    with pytest.raises(ToolError, match=f"mkdir -p -m 2775 {BASE}.out"):
         await check(globus)
 
 
 @pytest.mark.anyio
-async def test_a_missing_parent_is_a_missing_folder(monkeypatch):
+async def test_a_file_where_the_output_folder_should_be_is_refused():
     globus = FakeGlobusClient()
-
-    async def not_found(**kwargs):
-        raise GlobusFileNotFound("/lustre/orion/abc123/proj-shared is not on frontier.")
-
-    monkeypatch.setattr(globus, "operation_ls", not_found)
-    with pytest.raises(ToolError, match="does not exist"):
+    globus.ls_entries[PROJ] = [{"name": "foo.out", "type": "file"}]
+    with pytest.raises(ToolError, match="not a folder"):
         await check(globus)
+
+
+@pytest.mark.anyio
+async def test_a_grandparent_that_cannot_be_listed_does_not_block_submission(
+    monkeypatch,
+):
+    """Above a project's own directories, a listing is often refused. Not
+    knowing is not a reason to refuse."""
+    globus = FakeGlobusClient()
+    globus.ls_entries[PROJ] = []
+    real_ls = globus.operation_ls
+
+    async def forbidden_above(**kwargs):
+        if kwargs["path"] != PROJ:
+            raise RuntimeError("403 PermissionDenied")
+        return await real_ls(**kwargs)
+
+    monkeypatch.setattr(globus, "operation_ls", forbidden_above)
+    await check(globus)
 
 
 @pytest.mark.anyio
 async def test_a_parent_that_cannot_be_listed_does_not_block_submission(monkeypatch):
-    """Above a project's own directories, a listing is often refused. Not
-    knowing is not a reason to refuse."""
     globus = FakeGlobusClient()
 
     async def forbidden(**kwargs):

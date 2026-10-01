@@ -97,29 +97,32 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     assert job_id == "odo-123"
     assert nodes == 1
     assert duration == 120  # example cluster_defaults
-    assert log_path == f"{ODO}/out/log-odo-123.out"
+    assert log_path == f"{ODO}.out/log-odo-123.out"
     # The stderr path is rendered beside stdout and was thrown away, which is why
     # a job that failed reached its caller with nothing to explain it.
-    assert err_path == f"{ODO}/out/log-odo-123.err"
-    assert out_dir == f"{ODO}/out/odo-123"
+    assert err_path == f"{ODO}.out/log-odo-123.err"
+    assert out_dir == f"{ODO}.out/odo-123"
 
     assert len(iri.submitted) == 1
     spec, name = iri.submitted[0]
     assert name == "vista-example"
     assert spec["executable"] == "bash"
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{ODO}/out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT="{ODO}.out/$SLURM_JOB_ID"' in job_cmd
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
-    assert spec["attributes"]["directory"] == ODO
-    assert spec["attributes"]["stdout_path"] == f"{ODO}/out/log-%j.out"
+    assert spec["attributes"]["directory"] == f"{ODO}.jobs"
+    assert spec["attributes"]["stdout_path"] == f"{ODO}.out/log-%j.out"
     # Nothing the job writes is made through Globus: only the source tree.
-    assert globus.mkdir_p_calls == [("odo-collection", f"{ODO}/example/src", ODO)]
+    assert globus.mkdir_p_calls == [
+        ("odo-collection", f"{ODO}.jobs/example/src", "/fake/odo")
+    ]
     # Slurm script body is inlined
     slurm = (HPC_JOBS_DIR / "example" / "job.odo.slurm").read_text(encoding="utf-8")
     assert slurm in job_cmd
     assert "set -- a b" in job_cmd
     env = spec["attributes"]["environment"]
-    assert env["RUN_DIR_Odo"] == "/fake/odo/vista/example/src"
+    assert env["RUN_DIR_Odo"] == f"{ODO}.jobs/example/src"
+    assert env["FORGE_MODEL_Odo"] == f"{ODO}.out/example/model"
     assert spec["attributes"]["account"] == "abc123"
     assert globus.uploads, "expected Globus source upload"
 
@@ -142,16 +145,16 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     assert nodes == 2
     assert duration == 900
     assert (log_path, err_path, out_dir) == (
-        f"{NERSC}/out/log-pm-99.out",
-        f"{NERSC}/out/log-pm-99.err",
-        f"{NERSC}/out/pm-99",
+        f"{NERSC}.out/log-pm-99.out",
+        f"{NERSC}.out/log-pm-99.err",
+        f"{NERSC}.out/pm-99",
     )
 
     spec, name = iri.submitted[0]
     assert name == "vista-forge-tune"
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{NERSC}/out/$SLURM_JOB_ID"' in job_cmd
-    assert spec["attributes"]["directory"] == NERSC
+    assert f'export VISTA_OUT="{NERSC}.out/$SLURM_JOB_ID"' in job_cmd
+    assert spec["attributes"]["directory"] == f"{NERSC}.jobs"
     slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
         encoding="utf-8"
     )
@@ -162,8 +165,9 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     env = spec["attributes"]["environment"]
     assert env["RUN_DIR_Perlmutter"].endswith("/forge-tune/src")
     assert "VISTA_PM_IMAGE" in env
-    # Only the source tree is made ahead of time; Slurm makes out/.
-    assert iri.mkdirs == [f"{NERSC}/forge-tune/src"]
+    # The source tree, and the log folder: Perlmutter runs as the researcher,
+    # and NERSC's Slurm is not known to create a missing one.
+    assert iri.mkdirs == [f"{NERSC}.jobs/forge-tune/src", f"{NERSC}.out"]
     assert iri.uploads  # source files
 
 
@@ -185,15 +189,15 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     assert nodes == 1
     assert duration == 600
     assert (log_path, err_path, out_dir) == (
-        f"{FRONTIER}/out/log-fr-7.out",
-        f"{FRONTIER}/out/log-fr-7.err",
-        f"{FRONTIER}/out/fr-7",
+        f"{FRONTIER}.out/log-fr-7.out",
+        f"{FRONTIER}.out/log-fr-7.err",
+        f"{FRONTIER}.out/fr-7",
     )
     spec, _ = iri.submitted[0]
     job_cmd = spec["arguments"][2]
-    assert f'export VISTA_OUT="{FRONTIER}/out/$SLURM_JOB_ID"' in job_cmd
+    assert f'export VISTA_OUT="{FRONTIER}.out/$SLURM_JOB_ID"' in job_cmd
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
-    assert spec["attributes"]["directory"] == FRONTIER
+    assert spec["attributes"]["directory"] == f"{FRONTIER}.jobs"
     assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(
         encoding="utf-8"
     ) in job_cmd
@@ -202,7 +206,7 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     # Only the source tree: out/ was once made through Globus here, as the
     # researcher, where the project's automation user could not write to it.
     assert globus.mkdir_p_calls == [
-        ("frontier-collection", f"{FRONTIER}/example/src", FRONTIER)
+        ("frontier-collection", f"{FRONTIER}.jobs/example/src", "/fake/frontier")
     ]
     assert globus.uploads
 
@@ -224,10 +228,10 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files[f"{ODO}/out/log-44039.out"] = (
+    globus.files[f"{ODO}.out/log-44039.out"] = (
         b"[setup_odo] OK: run_state_point.py present\n"
     )
-    globus.files[f"{ODO}/out/log-44039.err"] = (
+    globus.files[f"{ODO}.out/log-44039.err"] = (
         b"run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
     _patch_clients(monkeypatch, iri=iri, globus=globus)
@@ -241,8 +245,8 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     # Both streams are tailed the same incremental way, so stderr costs one more
     # HEAD and one more ranged GET — not a second transfer task.
     assert {path for path, _start, _end in globus.range_reads} == {
-        f"{ODO}/out/log-44039.out",
-        f"{ODO}/out/log-44039.err",
+        f"{ODO}.out/log-44039.out",
+        f"{ODO}.out/log-44039.err",
     }
 
 
@@ -259,7 +263,7 @@ async def test_odo_status_reports_a_missing_stderr_as_nothing_on_stderr(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files[f"{ODO}/out/log-1.out"] = b"TBR = 1.14\n"
+    globus.files[f"{ODO}.out/log-1.out"] = b"TBR = 1.14\n"
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
     ran = await _get_olcf_job_status(user_cfg, tmp_path, "1", cluster="odo")
@@ -283,7 +287,7 @@ async def test_odo_status_says_when_stderr_could_not_be_fetched(
     fixture = Path(__file__).parent / "fixtures" / "iri_status_completed.json"
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
     globus = FakeGlobusClient()
-    globus.files[f"{ODO}/out/log-3.out"] = b"setup ok\n"
+    globus.files[f"{ODO}.out/log-3.out"] = b"setup ok\n"
 
     real_stat = globus.stat
 
@@ -309,7 +313,7 @@ async def test_perlmutter_status_formats_golden_fixture(
 
     status = json.loads(fixture.read_text(encoding="utf-8"))
     iri = FakeIriClient(status=status)
-    iri.head_content[f"{NERSC}/out/log-pm-1.out"] = "line1\nline2\n"
+    iri.head_content[f"{NERSC}.out/log-pm-1.out"] = "line1\nline2\n"
 
     async def _nersc(*, iri_token: str):
         return iri
@@ -336,8 +340,8 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
     import json
 
     iri = FakeIriClient(status=json.loads(fixture.read_text(encoding="utf-8")))
-    iri.head_content[f"{NERSC}/out/log-pm-2.out"] = "setup ok\n"
-    iri.head_content[f"{NERSC}/out/log-pm-2.err"] = (
+    iri.head_content[f"{NERSC}.out/log-pm-2.out"] = "setup ok\n"
+    iri.head_content[f"{NERSC}.out/log-pm-2.err"] = (
         "run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
 

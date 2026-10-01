@@ -22,17 +22,23 @@ anything. It only stops other projects from using VISTA.
   Frontier and Lux, as it already is for Perlmutter. The deployment defaults
   (`*_remote_dir`, `lux_account`) are removed. Lux jobs no longer pass
   `--account`, so Slurm uses the researcher's default account.
-- Every cluster uses one folder layout, which is Odo's today: sources in
-  `<remote_dir>/<job>/src/`, logs in `<remote_dir>/out/log-<id>.out`/`.err`,
-  outputs in `<remote_dir>/out/<id>/`. The per-server-run `session_id` folder
-  is removed.
+- Every cluster uses one folder layout beside the researcher's remote folder:
+  sources in `<remote_dir>.jobs/<job>/src/` (uploaded through the researcher's
+  Globus identity), Slurm logs and outputs in `<remote_dir>.out/`
+  (`log-<id>.out`/`.err`, and `<id>/` as `VISTA_OUT`). The per-server-run
+  `session_id` folder is removed.
 - **BREAKING** Because every path follows from the job id and the remote
   folder, the job registry (`data/hpc_job_registry.json`) and the
   `list_hpc_jobs` tool are removed. Status, outputs and cancel work for any job
   in the researcher's remote folder, whichever run of VISTA submitted it.
-- VISTA no longer creates a job's `out/` folder through Globus; Slurm creates
-  it. On Odo and Frontier the remote folder must be group-writable by the
-  project, and VISTA checks this before submitting.
+- VISTA creates nothing the job writes through Globus. On Odo and Frontier,
+  Slurm creates `<remote_dir>.out` as the project's IRI automation user, so the
+  folder containing `<remote_dir>` must be writable by the project's group, and
+  VISTA checks this before submitting. OLCF's `proj-shared` is group-writable
+  (770), so a new
+  remote folder directly under it needs no setup. The sibling folders are a
+  temporary workaround until S3M supports IRI filesystem operations, which
+  would let VISTA create one folder as the automation user.
 - The `example` job runs from any project.
 
 ## Non-goals

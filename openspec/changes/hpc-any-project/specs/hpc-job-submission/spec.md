@@ -48,9 +48,9 @@ from the environment.
 - **THEN** Odo file operations use the shared pair
 
 ### Requirement: Remote folder per researcher
-Each researcher SHALL set, per cluster, the folder on that cluster where
-VISTA puts job sources and outputs: Odo, Frontier, Perlmutter and Lux each
-have their own setting. The system SHALL NOT supply a default or fall back to
+Each researcher SHALL set, per cluster, the folder on that cluster that names
+where VISTA puts job sources and outputs (see One folder layout): Odo,
+Frontier, Perlmutter and Lux each have their own setting. The system SHALL NOT supply a default or fall back to
 a deployment-wide folder. Submission, status and output retrieval on a
 cluster whose folder is not set SHALL fail, naming the setting to fill in.
 Cancellation SHALL NOT need the folder, since it acts on the job id alone. Researchers
@@ -62,22 +62,31 @@ who set the same folder share it; the system SHALL NOT separate their files.
 
 #### Scenario: Two researchers share a folder
 - **WHEN** two researchers in the same project set the same Frontier remote folder
-- **THEN** both submit jobs into it, and each job's outputs are in that folder's `out/<job id>/`
+- **THEN** both submit jobs into it, and each job's outputs are in `<remote_dir>.out/<job id>/`
 
 ### Requirement: One folder layout
-On every cluster the system SHALL lay out a job under the researcher's remote
-folder `<remote_dir>` as follows:
-- sources: `<remote_dir>/<job>/src/`
-- Slurm stdout and stderr: `<remote_dir>/out/log-<job id>.out` and `.err`
-- outputs, exported to the job as `VISTA_OUT`: `<remote_dir>/out/<job id>/`
+On every cluster the system SHALL lay out a job in two folders beside the
+researcher's remote folder `<remote_dir>`:
+- sources: `<remote_dir>.jobs/<job>/src/`
+- Slurm stdout and stderr: `<remote_dir>.out/log-<job id>.out` and `.err`
+- outputs, exported to the job as `VISTA_OUT`: `<remote_dir>.out/<job id>/`
+- state a job's runs share and write (a checkout, a downloaded model), exported
+  as `VISTA_JOB_DIR` and as the default of each `FORGE_MODEL_<cluster>`
+  (`<remote_dir>.out/<job>/model`): `<remote_dir>.out/<job>/`
 
-No part of a path SHALL depend on which run of VISTA submitted the job. The
-job's working directory SHALL be `<remote_dir>`, except that Odo keeps
-starting job scripts in the job's source folder.
+`<remote_dir>` itself SHALL NOT be created; it names the pair. No part of a
+path SHALL depend on which run of VISTA submitted the job. The job's working
+directory SHALL be `<remote_dir>.jobs`, except that Odo keeps starting job
+scripts in the job's source folder.
+
+The two folders are separate because on Odo and Frontier the researcher's
+Globus identity creates the first and the project's IRI automation user the
+second, and neither can write in a folder the other created. This is a
+temporary workaround until S3M supports IRI filesystem operations.
 
 #### Scenario: Same layout on each cluster
 - **WHEN** job `example` is submitted to Odo, Frontier, Perlmutter and Lux, each with remote folder `/r`, and receives job id `42`
-- **THEN** on each cluster its sources are in `/r/example/src/`, its logs are `/r/out/log-42.out` and `/r/out/log-42.err`, and `VISTA_OUT` is `/r/out/42`
+- **THEN** on each cluster its sources are in `/r.jobs/example/src/`, its logs are `/r.out/log-42.out` and `/r.out/log-42.err`, `VISTA_OUT` is `/r.out/42`, and `VISTA_JOB_DIR` is `/r.out/example`
 
 #### Scenario: Submit summary names the paths
 - **WHEN** a job is submitted
@@ -85,30 +94,52 @@ starting job scripts in the job's source folder.
 
 ### Requirement: Folder permissions on OLCF clusters
 Odo and Frontier jobs run as the project's IRI automation user, not as the
-researcher, so the system SHALL NOT create any folder the job writes to.
-Slurm and the job create `out/` and `out/<job id>/`. Before submitting to Odo
-or Frontier the system SHALL check that the remote folder exists and is
-writable by its group. If it is missing or not group-writable, submission
-SHALL fail with the command that fixes it (`mkdir -p -m 2775 <remote_dir>` or
-`chmod 2775 <remote_dir>`). If the folder's permissions cannot be read,
-submission SHALL continue. Sources, which the job only reads, SHALL still be
-uploaded through the researcher's Globus identity.
+researcher. The system SHALL NOT create `<remote_dir>.out` or anything in it:
+Slurm creates the log folder as the job's user, and the job creates
+`<job id>/`. So the automation user must be able to create
+`<remote_dir>.out`, which needs the folder containing `<remote_dir>` to be
+writable by the project's group. Before submitting to Odo or Frontier the
+system SHALL check:
+- if `<remote_dir>.out` exists, submission SHALL continue, since an earlier job
+  or the researcher made it;
+- otherwise, if the folder containing `<remote_dir>` is missing or not
+  writable by its group, submission SHALL fail, naming the one command that
+  fixes it: `mkdir -p -m 2775 <remote_dir>.out`;
+- if the permissions cannot be read, submission SHALL continue.
 
-#### Scenario: Folder not group-writable
-- **WHEN** the Frontier remote folder exists with permissions `0755`
-- **THEN** submission fails before the job is submitted, giving `chmod 2775 <remote_dir>`
+Sources, which the job only reads, SHALL still be uploaded through the
+researcher's Globus identity.
 
-#### Scenario: Folder missing
-- **WHEN** the Odo remote folder does not exist
-- **THEN** submission fails, giving `mkdir -p -m 2775 <remote_dir>`
+#### Scenario: A new folder in a group-writable parent
+- **WHEN** the Frontier remote folder is `/lustre/orion/abc123/proj-shared/foo`, neither `foo.jobs` nor `foo.out` exists, and `proj-shared` has permissions `0770`
+- **THEN** submission proceeds with no setup, and VISTA creates no folder under `foo.out` through Globus
 
-#### Scenario: Output folder is left to Slurm
-- **WHEN** a job is submitted to Odo or Frontier with a group-writable remote folder that has no `out/`
-- **THEN** VISTA creates no `out/` folder through Globus, and the submission proceeds
+#### Scenario: A parent the group cannot write
+- **WHEN** the Odo remote folder's parent has permissions `0755` and `<remote_dir>.out` does not exist
+- **THEN** submission fails before the job is submitted, giving `mkdir -p -m 2775 <remote_dir>.out`
+
+#### Scenario: A parent that does not exist
+- **WHEN** the folder containing the Odo remote folder does not exist
+- **THEN** submission fails, giving `mkdir -p -m 2775 <remote_dir>.out`
+
+#### Scenario: The output folder already exists
+- **WHEN** `<remote_dir>.out` exists, whatever its permissions
+- **THEN** submission proceeds
 
 #### Scenario: Permissions unreadable
-- **WHEN** the listing that would show the remote folder's permissions fails with an error other than an expired Globus session
+- **WHEN** the listing that would show the parent's permissions fails with an error other than an expired Globus session or a missing path
 - **THEN** submission continues, and the job is submitted
+
+### Requirement: Perlmutter output folder
+Perlmutter jobs run as the researcher. Before submitting to Perlmutter the
+system SHALL create `<remote_dir>.out` through the NERSC IRI filesystem API,
+because NERSC's Slurm has not been confirmed to create a missing log folder.
+Lux SHALL need no such step: OLCF's Slurm creates missing folders in the log
+path.
+
+#### Scenario: Perlmutter creates its output folder
+- **WHEN** a job is submitted to Perlmutter with remote folder `/r`
+- **THEN** `/r.out` is created through IRI before the job is submitted
 
 ### Requirement: Finding a job after submission
 Job status, output retrieval and cancellation SHALL identify a job by its id
@@ -151,7 +182,7 @@ configured Lux project.
 
 ### Requirement: Demo job works in any project
 The `example` job SHALL run on Odo and Frontier from any project whose remote
-folder is group-writable. It SHALL write only under `VISTA_OUT`, and SHALL
+folder sits in a group-writable folder. It SHALL write only under `VISTA_OUT`, and SHALL
 depend on no path outside the researcher's remote folder except modules the
 cluster provides to every user.
 

@@ -131,8 +131,9 @@ cluster's section SHALL contain:
 - in its header, the same status dot and word the rail shows.
 
 The S3M token fields SHALL say that a token from any OLCF project with S3M
-access works. The Odo and Frontier remote directory fields SHALL say that the
-directory must be writable by the project's group.
+access works. The Odo and Frontier remote directory fields SHALL say that VISTA
+keeps `<dir>.jobs` and `<dir>.out` beside the directory, and that the folder
+containing them must be writable by the project's group.
 
 Opened from the rail's settings button, every cluster section SHALL start
 collapsed. Opened from a cluster's details, only that cluster's section SHALL

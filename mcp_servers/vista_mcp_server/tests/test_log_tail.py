@@ -36,7 +36,7 @@ from fakes import FakeGlobusClient, FakeIriClient
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 BASE = "/lustre/orion/abc123/proj-shared/vista"
-REMOTE_LOG = f"{BASE}/out/log-1.out"
+REMOTE_LOG = f"{BASE}.out/log-1.out"
 COLLECTION = "frontier-collection"
 
 
@@ -281,7 +281,7 @@ class TestWhatAStatusQuerySays:
         """`.git` and `__pycache__` are noise as directories, but a file that
         merely contains the string -- `.gitignore`, `run.github.log` -- is output
         the researcher asked for, and must not vanish from the listing."""
-        out = f"{BASE}/out/1"
+        out = f"{BASE}.out/1"
         globus.ls_entries[out] = [
             {"type": "file", "path": f"{out}/{rel}"}
             for rel in (

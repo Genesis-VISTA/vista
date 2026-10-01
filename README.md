@@ -316,22 +316,34 @@ access works, and Odo and Frontier each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
-Each researcher also sets, per cluster, the **remote directory** where VISTA puts job sources and
-outputs. There is no default: where a project keeps its files is specific to the project and the
-filesystem. Lux and Perlmutter jobs run as the researcher, so their own write access is enough.
-Odo and Frontier jobs run as the project's IRI automation user, so on those two the directory must
-be writable by the project's group; create it once with `mkdir -p -m 2775 <dir>`. Researchers in
-the same project who choose the same directory share it. Lux jobs pass no `--account`, so Slurm
-charges the researcher's default account.
-
-Every cluster lays a job out the same way under that directory, so VISTA finds a job's files again
-from its id alone, after a restart or from another install sharing the directory:
+Each researcher also sets, per cluster, a **remote directory** that names where VISTA puts job
+sources and outputs. There is no default: where a project keeps its files is specific to the
+project and the filesystem. VISTA uses two folders beside it, and never creates the directory
+itself:
 
 ```
-<remote dir>/<job>/src/          sources VISTA uploads; the job only reads them
-<remote dir>/out/log-<id>.out    Slurm stdout, with log-<id>.err beside it
-<remote dir>/out/<id>/           the job's outputs, exported to it as $VISTA_OUT
+<remote dir>.jobs/<job>/src/      sources VISTA uploads; the job only reads them
+<remote dir>.out/log-<id>.out     Slurm stdout, with log-<id>.err beside it
+<remote dir>.out/<id>/            the job's outputs, exported to it as $VISTA_OUT
+<remote dir>.out/<job>/           state a job's runs share, exported as $VISTA_JOB_DIR
 ```
+
+Every cluster uses this layout, so VISTA finds a job's files again from its id alone, after a
+restart or from another install sharing the directory.
+
+Two folders, because on Odo and Frontier each is created by the only identity that writes to it.
+VISTA uploads `.jobs` through the researcher's Globus identity, so it belongs to them. The job
+runs as the project's IRI automation user, and Slurm creates `.out` for its logs as that user. So
+the folder holding the remote directory must be writable by the project's group. OLCF's
+`proj-shared` already is, so a new remote directory directly under it needs no setup. Anywhere
+else, create the output folder once with `mkdir -p -m 2775 <remote dir>.out`. VISTA checks before
+submitting and gives that command if it is needed. This is a temporary workaround: S3M tokens
+cannot use the IRI filesystem API yet, which would let VISTA create one folder as the automation
+user.
+
+Lux and Perlmutter jobs run as the researcher, so their own write access is enough. Researchers in
+the same project who choose the same remote directory share it. Lux jobs pass no `--account`, so
+Slurm charges the researcher's default account.
 
 VISTA keeps no record of submitted jobs. Status, outputs and cancel take the cluster that
 `submit_hpc_job` reported, and changing a remote directory loses sight of the jobs under the old

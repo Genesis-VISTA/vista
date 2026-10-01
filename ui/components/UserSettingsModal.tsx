@@ -429,7 +429,7 @@ function UserSettingsForm({
                 value={luxRemoteDir}
                 onChange={setLuxRemoteDir}
                 placeholder="/lustre/orion/<project>/proj-shared/vista"
-                hint="Where VISTA puts job sources and outputs on Lux. Required for Lux. Lux jobs run as you, so your own write access is enough."
+                hint="Required for Lux. VISTA keeps <dir>.jobs (sources) and <dir>.out (logs and outputs) beside this directory. Lux jobs run as you, so your own write access is enough."
               />
             )}
           </ClusterSection>
@@ -506,15 +506,17 @@ function RemoteDirField({
 
 /**
  * Odo and Frontier jobs run as the project's IRI automation user, not as the
- * researcher, so Slurm can create the job's output folder only where the
- * project's group may write.
+ * researcher. VISTA uploads `<dir>.jobs` as the researcher, and Slurm creates
+ * `<dir>.out` as that user, so the folder holding them must be writable by the
+ * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
  */
 function GroupWritableHint({ cluster }: { cluster: string }) {
   return (
     <>
-      Where VISTA puts job sources and outputs on {cluster}. Required for {cluster}. Jobs run
-      as your project&apos;s IRI automation user, so the folder must be writable by the
-      project&apos;s group: create it with <code>mkdir -p -m 2775 &lt;dir&gt;</code>.
+      Required for {cluster}. VISTA keeps <code>&lt;dir&gt;.jobs</code> (sources) and{" "}
+      <code>&lt;dir&gt;.out</code> (logs and outputs) beside this directory. Jobs run as your
+      project&apos;s IRI automation user, so the folder holding them must be writable by the
+      project&apos;s group, as <code>proj-shared</code> already is.
     </>
   );
 }

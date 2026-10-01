@@ -146,7 +146,9 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(odo).getByText("Odo", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
     expect(within(odo).getByLabelText(/Odo remote directory/)).toHaveValue("/odo/proj/vista");
-    expect(within(odo).getByText(/writable by the project's group/)).toBeInTheDocument();
+    const hint = within(odo).getByText(/writable by the project's group/);
+    expect(hint).toHaveTextContent("<dir>.jobs");
+    expect(hint).toHaveTextContent("<dir>.out");
 
     const frontier = await section("Frontier");
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
