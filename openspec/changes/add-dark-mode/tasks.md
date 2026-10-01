@@ -1,0 +1,35 @@
+## 1. Token pass (no visual change)
+
+- [ ] 1.1 Capture light-theme baseline screenshots with the existing suite (`cd ui && npx playwright test -c playwright.shots.config.ts`) before touching any CSS, and keep the output for comparison in 1.6.
+- [ ] 1.2 Add the new role tokens to the light `:root` block in `ui/app/globals.css` (`--brand-fill`, `--on-brand`, `--danger-ink`, `--danger-tint`, `--warning-tint`, `--hover`, `--hover-strong`, `--scrim`, `--shadow-card`, `--shadow-pop`, `--shadow-modal`, `--media-mat`), with values equal to today's literals. Declare `--surface-2`, `--accent` and `--ok` with their current fallback values and drop the fallbacks at their 7 call sites. Verify `grep -nE "var\(--(surface-2|accent|ok)," ui/app/globals.css` returns nothing.
+- [ ] 1.3 Replace every literal color outside the token block in `globals.css` with a token (shadows, black-alpha hovers, scrims, `#fff` labels, `#b01000`, notice colors, `.debate-sims__row--*` borders). Switch the 14 `background: var(--brand)` filled controls to `--brand-fill`. Move `globals.css:4366` (`color: var(--brand-dark)`) to a text token. Verify with the grep from 4.1 once it exists, or `grep -nE "#[0-9a-fA-F]{3,8}\b|rgba?\(" ui/app/globals.css` showing hits only inside `:root`.
+- [ ] 1.4 Move `ui/components/DebateThread.tsx`'s FINDING / ASK / DONE colors to CSS classes backed by tokens, and `ui/components/SandboxedHtmlCard.tsx`'s inline border to `--line`. The iframe document's own white background stays. Verify `cd ui && npm run typecheck && npm run lint`.
+- [ ] 1.5 Give inline images and plots a padded `--media-mat` background where they render (find the rules for chat images and `ImageLightbox.tsx`). Verify visually in the light theme that nothing moves.
+- [ ] 1.6 Re-run the screenshot suite and compare against 1.1. The light theme must be unchanged. Verify `cd ui && npm test` passes. Commit this group on its own.
+
+## 2. Deep Navy palette
+
+- [ ] 2.1 Add the dark token block under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }`, and the identical block under `:root[data-theme="dark"]`, with the Deep Navy values from design.md §6 and `color-scheme: dark`. Verify by loading the dev UI (`./launch.sh logs`) with macOS set to dark.
+- [ ] 2.2 Check the scoped scrollbar rules (`.panel-body`, `.chat-list`, …), which use `--brand` / `--line` for the thumb and track, and adjust them to read well on navy. Verify by scrolling a long chat and the settings modal in dark mode.
+- [ ] 2.3 Add `ui/tests/theme-tokens.test.ts` (Vitest), which parses `globals.css` and asserts that (a) the two dark blocks define identical token sets and values, (b) every token in them is also defined in light `:root`, and (c) the text pairs from the spec (ink, muted, muted-2, brand, brand-2, warning-ink, danger-ink on `--surface`; `--on-brand` on `--brand-fill`; term-ink and term-muted on `--term-bg`) are ≥ 4.5:1 in both themes, and `--brand-fill` against `--surface` is ≥ 3:1. Verify `cd ui && npm test`.
+
+## 3. Choosing and applying the theme
+
+- [ ] 3.1 Read `ui/node_modules/next/dist/docs/01-app/03-api-reference/02-components/script.md` and the root-layout docs. Then add the synchronous pre-paint inline script to the `<head>` of `ui/app/layout.tsx`. It reads `localStorage["vista.theme"]` in `try/catch` and sets `data-theme` for `light`/`dark` only. Add `suppressHydrationWarning` to `<html>`. Verify there is no hydration warning in the dev console on reload in each mode.
+- [ ] 3.2 Confirm there is no flash. With Dark stored and the OS light, reload with CPU throttling in DevTools and confirm the first painted frame is dark, and do the reverse. If the inline script fails here, switch to `next/script` `beforeInteractive` (design.md §3) and re-check.
+- [ ] 3.3 Add `ui/lib/theme.ts` with `useTheme()` returning `{ choice, resolved, setChoice }`, per design.md §4. It handles refused storage, cross-tab `storage` events and live `matchMedia` changes. Verify with `ui/tests/theme.test.ts` (Vitest, jsdom), covering: default System follows a mocked `matchMedia`; `setChoice("dark")` sets the attribute and storage; `setChoice("system")` removes the attribute; a `storage` event from another tab updates the choice; a throwing `localStorage` still allows an in-session choice.
+
+## 4. Appearance setting
+
+- [ ] 4.1 Add an Appearance section at the top of `ui/components/UserSettingsModal.tsx`: a System / Light / Dark segmented control (`role="radiogroup"`, keyboard arrows) wired to `useTheme()`, with the hint "System matches your computer's light or dark setting." Style it with tokens in `globals.css`. Verify with a test in `ui/tests/UserSettingsModal.test.tsx` that selecting each option calls `setChoice` and marks it checked.
+- [ ] 4.2 Add a literal-color guard to `./scripts/ci-local.sh ui lint`. It fails on hex or `rgb(a)(` literals in `globals.css` outside the token blocks, and on hex colors in inline `style` props under `ui/components/`, with an explicit allow-list (for example `SandboxedHtmlCard`'s iframe document). Verify that it passes on the branch and fails when a `#123456` is added to a rule.
+
+## 5. Electron window
+
+- [ ] 5.1 In `electron/src/main.js` `createMainWindow`, set `backgroundColor` from `nativeTheme.shouldUseDarkColors` (`#0a1524` dark, `#f4f4f2` light). Verify with `cd electron && npm test`, then manually with `./launch.sh logs --electron` on a dark macOS: the window shows no light frame on open or resize.
+
+## 6. Tests and verification
+
+- [ ] 6.1 Add `ui/e2e-hermetic/theme.spec.ts`. It runs the shell, chat and settings modal under `page.emulateMedia({ colorScheme: "dark" })` and asserts the resolved `--bg` on `<html>` is the dark value. It asserts that a stored `light` overrides the dark scheme, and that switching to Dark in the Appearance section updates the page without a reload. Verify `cd ui && npm run test:e2e:hermetic`.
+- [ ] 6.2 Capture dark-theme screenshots of every main screen and modal (chat, projects, skill hub, knowledge bases, datasets, hypothesis lab, settings, tool approval, elicitation, skill editor) by running the shots suite with `colorScheme: "dark"`, and review them for leftover light patches. Fix what shows up.
+- [ ] 6.3 Run `./scripts/ci-local.sh ui lint`, `./scripts/ci-local.sh ui test` and `./scripts/ci-local.sh electron`, and confirm all pass hermetically before requesting review.
