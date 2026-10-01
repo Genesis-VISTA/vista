@@ -26,7 +26,7 @@
 
 ## 5. Electron window
 
-- [ ] 5.1 In `electron/src/main.js` `createMainWindow`, set `backgroundColor` from `nativeTheme.shouldUseDarkColors` (`#0a1524` dark, `#f4f4f2` light). Verify with `cd electron && npm test`, then manually with `./launch.sh logs --electron` on a dark macOS: the window shows no light frame on open or resize.
+- [x] 5.1 In `electron/src/main.js` `createMainWindow`, set `backgroundColor` from `nativeTheme.shouldUseDarkColors` (`#0a1524` dark, `#f4f4f2` light). Verify with `cd electron && npm test`, then manually with `./launch.sh logs --electron` on a dark macOS: the window shows no light frame on open or resize. Done: the colors live in a new Electron-free `electron/src/appearance.js`, following `routing.js`'s pattern. `createMainWindow` passes `backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors)`, and also calls `setBackgroundColor` on `nativeTheme` 'updated', so an OS switch mid-session doesn't leave the old color behind a resize. The listener is removed on close. `electron/test/appearance.test.js` (3 tests, added to `npm test`) reads `--bg` out of `ui/app/globals.css` for light and both dark blocks, so the window and page can't drift apart. `./scripts/ci-local.sh electron` passes: typecheck clean, 38/38. The e2e suite passes 14/15. The one failure ('a second instance exits…', exit 75 instead of 0) fails identically against the committed `main.js`, so it predates this change. The manual dark-macOS open/resize check is left for review.
 
 ## 6. Tests and verification
 
