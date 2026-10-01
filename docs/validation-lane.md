@@ -166,11 +166,11 @@ Both commands should print nothing.
 - Cmd-V into a settings field pastes.
 - Dropping a file outside an upload area leaves the page alone.
 - A second `./vista` or `npm start` exits and brings the first window forward.
-- Over SSH, `./vista` says it has no display and prints the address instead.
+- Over SSH, `./vista` says it cannot open the window and why, and starts nothing.
 
 **On Linux** (`openspec/changes/linux-desktop-window`): a real Ubuntu 24.04 desktop,
-and one of Debian 13 or Fedora. A VM is fine. Without nested virtualisation,
-`VISTA_ALLOW_NO_KVM=1` is acceptable for these window-only checks. Run the stopping
+and one of Debian 13 or Fedora. A VM is fine, but it needs nested virtualisation:
+the launcher has no opt-out for a host without KVM. Run the stopping
 and walk-through checks above, then:
 
 - On stock Ubuntu the window opens without the sandbox, and the launcher prints why along
@@ -179,11 +179,11 @@ and walk-through checks above, then:
 - On Debian or Fedora it opens sandboxed with no step.
 - With the sandbox off, "Open PDF" opens the system browser, not a second window.
 - The window opens in both a Wayland session and an X11 session.
-- Over SSH, and as root, `./vista` gives its reason and the address.
+- Over SSH, and as root, `./vista` gives its reason and starts nothing.
 - With one of the README's window libraries removed, the launcher names what is missing.
 - `kill -SEGV` on the window process makes the launcher say the window stopped
-  unexpectedly, and the services keep answering. Ctrl-C then stops everything.
-- On Ubuntu, `./launch.sh logs --electron` prints the same sandbox message, and the
+  unexpectedly and name its log, and every service stops.
+- On Ubuntu, `./launch.sh logs` prints the same sandbox message, and the
   profile turns the sandbox on for it as well.
 
 ## Weekly / manual real HPC (`hpc_jobs/example`)

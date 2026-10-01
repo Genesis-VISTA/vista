@@ -120,8 +120,6 @@ All verified by `--check`:
 
 - `uv`, `npm`, `git`
 - Docker or Podman
-- The same platform as the package, on a machine that can run the code-execution
-  sandbox (KVM on Linux; `msb doctor` reports ready on Windows).
 - Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
   `amscrot-py` that HPC job submission needs; see
   [Prerequisites](#prerequisites) for the `url.insteadOf` rewrite. Nothing is
@@ -132,6 +130,10 @@ All verified by `--check`:
   token. Probed per host, because a network that allows PyPI and blocks
   HuggingFace is a real configuration worth finding out about in seconds
   rather than an hour in.
+
+Not checked by `--check`, but needed: the same platform as the package, on a
+machine that can run the code-execution sandbox (KVM on Linux; `msb doctor`
+reports ready on Windows). Without it the build's smoke test fails at the end.
 
 ### Build-host env vars
 

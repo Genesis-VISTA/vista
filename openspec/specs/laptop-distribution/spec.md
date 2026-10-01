@@ -219,7 +219,9 @@ offers.
 ### Requirement: Stated compatibility floor
 
 An artifact SHALL record the oldest target-platform system libraries it supports, so a host
-that cannot run it can be identified without unpacking and starting it.
+that cannot run it can be identified without unpacking and starting it. On macOS and Windows,
+where the build host's own version is the floor, the artifact SHALL record the version of the
+host it was built on.
 
 #### Scenario: Reading an artifact's requirements
 
