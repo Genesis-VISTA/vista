@@ -171,12 +171,17 @@ async def test_streaming_turn_emits_the_documented_event_kinds(session):
         session, alice, tools=["*"], knowledge_bases=["msre-reports"]
     )
 
+    chat_session_id = await _new_chat_session(session, project, alice)
     model = step_model([call("rag_search", query="FLiBe"), say("FLiBe is a salt.")])
     with agent_under_test(project, alice, model) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
-                json={"user_prompt": "What is FLiBe?", "stream": True},
+                json={
+                    "user_prompt": "What is FLiBe?",
+                    "stream": True,
+                    "chat_session_id": str(chat_session_id),
+                },
                 headers=_headers(alice),
             )
 
@@ -188,18 +193,26 @@ async def test_streaming_turn_emits_the_documented_event_kinds(session):
     assert "log" in kinds
     assert "function_tool_call" in kinds
     assert "function_tool_result" in kinds
-    assert kinds[-1] == "agent_run_result"
+    assert kinds[0] == "run_started"
+    assert kinds[-1] == "run_finished"
+    assert "agent_run_result" in kinds
 
 
 async def test_streaming_event_names_match_the_payload_event_kind(session):
     alice = await seed_user(session)
     project = await seed_project(session, alice, tools=["*"])
 
+    chat_session_id = await _new_chat_session(session, project, alice)
+
     with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
-                json={"user_prompt": "hi", "stream": True},
+                json={
+                    "user_prompt": "hi",
+                    "stream": True,
+                    "chat_session_id": str(chat_session_id),
+                },
                 headers=_headers(alice),
             )
 
@@ -211,16 +224,21 @@ async def test_streaming_result_event_carries_the_run_result(session):
     alice = await seed_user(session)
     project = await seed_project(session, alice, tools=["*"])
 
+    chat_session_id = await _new_chat_session(session, project, alice)
+
     with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
-                json={"user_prompt": "hi", "stream": True},
+                json={
+                    "user_prompt": "hi",
+                    "stream": True,
+                    "chat_session_id": str(chat_session_id),
+                },
                 headers=_headers(alice),
             )
 
-    name, data = parse_sse(response.text)[-1]
-    assert name == "agent_run_result"
+    name, data = next(e for e in parse_sse(response.text) if e[0] == "agent_run_result")
     result = json.loads(data)["result"]
     assert result["usage"]["requests"] == 1
     assert result["new_messages"]
@@ -390,3 +408,18 @@ async def test_message_history_from_the_body_is_used_when_stateless(session):
     assert "second question" in seen[0]
     # The response carries only this turn's messages, not the replayed history.
     assert "first question" not in json.dumps(second.json()["new_messages"])
+
+
+async def test_streaming_without_a_conversation_is_refused(session):
+    alice = await seed_user(session)
+    project = await seed_project(session, alice, tools=["*"])
+
+    with api_client(session) as (client, _):
+        response = await client.post(
+            RUN.format(name=project.name),
+            json={"user_prompt": "hi", "stream": True},
+            headers=_headers(alice),
+        )
+
+    assert response.status_code == 400
+    assert "chat_session_id" in response.json()["detail"]

@@ -24,9 +24,9 @@ import {
 const KIND_TONE: Record<string, string> = {
   PROPOSAL: "var(--brand)",
   RISK: "var(--brand-2)",
-  FINDING: "#0b6b53",
-  ASK: "#7a5c00",
-  DONE: "#3b2f7a",
+  FINDING: "var(--kind-finding)",
+  ASK: "var(--warning-strong)",
+  DONE: "var(--kind-done)",
   TASK: "var(--muted)",
   CLOSED: "var(--muted)",
 };

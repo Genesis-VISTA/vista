@@ -206,7 +206,7 @@ per delay value (e.g. 5 min / 1 h / 24 h):
 # stop the running stack, then for each delay:
 export VISTA_MCP_HPC_DRY_RUN=true
 export VISTA_MCP_HPC_QUEUE_DELAY_S=300        # then 3600, then 86400
-./launch.sh logs &
+./launch.sh logs --no-electron &
 # in the load shell:
 uv run python scripts/loadgen.py --campaigns 8 --concurrency 4 \
     --queue-delay 300 --poll

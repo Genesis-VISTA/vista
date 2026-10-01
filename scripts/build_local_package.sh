@@ -1019,6 +1019,7 @@ stage_window_windows() {
   (
     cd "$REPO_ROOT/electron"
     npm ci --prefer-offline >/dev/null
+    npx --no install-electron
   )
   # The packager prints a Windows path; bash's own tools want its POSIX form.
   built="$(node "$REPO_ROOT/electron/scripts/package.js" \
@@ -1053,11 +1054,13 @@ stage_window_linux() {
   out="$(mktemp -d)"
   (
     cd "$REPO_ROOT/electron"
-    # A plain install, as on macOS. Skipping the binary would leave
-    # node_modules/.bin/electron without one and break the dev window and the
-    # e2e tests in this same folder; the packager shares the download cache, so
-    # a native-architecture build fetches nothing twice.
+    # The binary too, as on macOS. Without it node_modules/.bin/electron has
+    # nothing to start, which breaks the dev window and the e2e tests in this
+    # same folder; Electron 44 has no postinstall, so `npm ci` alone leaves it
+    # out. The packager shares the download cache, so a native-architecture
+    # build fetches nothing twice.
     npm ci --prefer-offline >/dev/null
+    npx --no install-electron
   )
   built="$(node "$REPO_ROOT/electron/scripts/package.js" \
     --platform linux --arch "$arch" --out "$out" | tail -1)"
@@ -1092,6 +1095,7 @@ stage_window_macos() {
   (
     cd "$REPO_ROOT/electron"
     npm ci --prefer-offline >/dev/null
+    npx --no install-electron
   )
   built="$(node "$REPO_ROOT/electron/scripts/package.js" \
     --platform darwin --arch "$arch" --out "$out" | tail -1)"

@@ -10,10 +10,11 @@
 //   VISTA --smoke-test --url=...               load once, exit 0 or 1 (B3)
 //   --user-data-dir=<dir>                      separate profile (tests)
 
-import { app, BrowserWindow, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, nativeTheme, session, shell } from 'electron';
 import path from 'node:path';
 
 import { classify, originOf } from './routing.js';
+import { windowBackground } from './appearance.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
 
@@ -235,10 +236,17 @@ function createMainWindow() {
     minHeight: 500,
     title: 'VISTA',
     show: false,
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     webPreferences,
   });
+  // The OS can change appearance while VISTA is open (macOS Auto at sunset);
+  // the page follows through prefers-color-scheme, and the frame behind it
+  // has to as well or a resize shows the old ground.
+  const onThemeUpdated = () => win.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors));
+  nativeTheme.on('updated', onThemeUpdated);
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => {
+    nativeTheme.off('updated', onThemeUpdated);
     mainWindow = null;
   });
   win.loadURL(args.url);

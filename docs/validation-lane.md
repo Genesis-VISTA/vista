@@ -123,7 +123,7 @@ real window needs a display, so it is checked here instead.
 **Window tests** (fixture server, no services, ~10 s):
 
 ```bash
-cd electron && npm ci && npm run test:e2e
+cd electron && npm ci && npx --no install-electron && npm run test:e2e
 ```
 
 The same tests on Linux, in a container on any machine with Docker. The image matches the
@@ -133,7 +133,7 @@ pinned `@playwright/test`. It runs as root, so the sandboxed PDF case is skipped
 
 ```bash
 cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
-  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && xvfb-run -a npm run test:e2e'
+  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && npx --no install-electron && xvfb-run -a npm run test:e2e'
 ```
 
 This covers external links and `window.open` going to the system browser, off-origin

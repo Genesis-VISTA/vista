@@ -151,6 +151,10 @@ export const CHAT_SESSION = {
   message_history: [],
   messages: [],
   latest_result: null,
+  run_state: "idle",
+  run_status: "idle",
+  run_unseen: false,
+  run_events: null,
 };
 
 /**
@@ -177,6 +181,10 @@ export const ROUTES: Record<string, unknown> = {
   "POST /api/chat/sessions": CHAT_SESSION_SUMMARY,
   "GET /api/chat/session": CHAT_SESSION,
   "PUT /api/chat/session": CHAT_SESSION,
+  // No conversation is working or has an unseen outcome, so no dots show.
+  "GET /api/chat/runs/status": [],
+  "POST /api/chat/run/stop": { ok: true },
+  "POST /api/chat/elicitation": { ok: true },
   "GET /api/campaigns": [],
   "GET /api/knowledge-bases/molten-salt-papers": KNOWLEDGE_BASE,
   "GET /api/knowledge-bases/molten-salt-papers/publications": [],

@@ -53,6 +53,10 @@ fi
 if [[ "$ELECTRON" == true ]]; then
     cd "$REPO_ROOT/electron"
     npm ci
+    # Electron 44 has no postinstall: `npm ci` leaves the binary undownloaded
+    # and path.txt unwritten. Its installer is a bin; --no keeps npx from
+    # fetching anything but the copy npm ci just installed.
+    npx --no install-electron
 fi
 
 cd "$REPO_ROOT"
