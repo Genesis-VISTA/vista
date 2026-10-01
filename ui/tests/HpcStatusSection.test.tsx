@@ -33,6 +33,7 @@ function status(
       facility: OK,
       credential: OK,
       globus: cluster === "perlmutter" || cluster === "lux" ? null : OK,
+      settings: { ...OK, message: `/proj-shared/${cluster}` },
       ...checks,
     },
   };
@@ -197,6 +198,55 @@ describe("HpcStatusSection", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
     expect(within(dialog).getByText("No NERSC IRI token saved")).toBeInTheDocument();
+  });
+
+  it("a cluster with a token but no remote directory is Not connected, and says so on hover", async () => {
+    const missing = "No Odo remote directory is set.";
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("odo", "not_connected", {
+            settings: { ok: false, reason: "not_connected", message: missing },
+          }),
+        },
+      ]),
+    );
+    renderSection({ visible: ["odo"] });
+    const card = screen.getByRole("button", { name: "Odo: Not connected" });
+    expect(card).toHaveAttribute("title", missing);
+
+    await userEvent.click(card);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
+    expect(within(dialog).getByText("Settings incomplete")).toBeInTheDocument();
+    expect(within(dialog).getByText(missing)).toBeInTheDocument();
+  });
+
+  it("names an unusable setting and shows the folder once it is set", async () => {
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("frontier", "not_connected", {
+            settings: {
+              ok: false,
+              reason: "invalid",
+              message: "The Frontier remote directory /lustre/orion/<project>/vista can't be used.",
+            },
+          }),
+        },
+        { status: status("odo", "ready") },
+      ]),
+    );
+    renderSection({ visible: ["frontier", "odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Frontier: Not connected" }));
+    expect(screen.getByText("A setting can't be used")).toBeInTheDocument();
+
+    const odo = screen.getByRole("button", { name: "Odo: Ready" });
+    expect(odo).not.toHaveAttribute("title");
+    await userEvent.click(odo);
+    const dialog = screen.getByRole("dialog", { name: "Odo connection details" });
+    expect(within(dialog).getByText("Remote directory set")).toBeInTheDocument();
+    expect(within(dialog).getByText("/proj-shared/odo")).toBeInTheDocument();
   });
 
   it("never mentions an expiry for Perlmutter or Globus", async () => {

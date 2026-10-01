@@ -67,6 +67,12 @@ class IriAttributes(BaseModel):
     queue_name: str = "regular"
     constraint: str | None = None
     """ Slurm constraint, e.g. "gpu" on Perlmutter. Omitted on Frontier. """
+    partition: str | None = None
+    """
+    Lux only: rendered as `#SBATCH -p`. Lux refuses a job that names no
+    partition. `queue_name` there is the QOS (`-q`); the IRI clusters choose
+    the partition themselves.
+    """
     image: str | None = None
     module: str | None = None
     pre_launch: str | None = None

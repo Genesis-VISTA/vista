@@ -261,7 +261,11 @@ async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
     assert "#SBATCH -N 1" in header
     assert "#SBATCH -t 0:05:00" in header
     assert "#SBATCH --exclusive" not in header
-    assert not any("--gpus" in line or "--ntasks-per-node" in line for line in header)
+    # Lux refuses a job with no partition or no GPU selection, so one GPU on
+    # the only partition.
+    assert "#SBATCH -p batch" in header
+    assert "#SBATCH --gpus-per-node=1" in header
+    assert not any("--ntasks-per-node" in line for line in header)
     # No setup_lux.sh and no sources: besides creating directories and making
     # the shared `.out` group-writable, sbatch is the only command, and nothing
     # is uploaded.
@@ -347,10 +351,12 @@ async def test_render_batch_script_optional_directives():
         stderr_path="e",
         workdir="w",
         body="echo hi\n",
+        partition="batch",
         queue="debug",
         constraint="nvme",
     )
     assert "#SBATCH -t 1:02:05" in script
+    assert "#SBATCH -p batch" in script
     assert "#SBATCH -q debug" in script
     assert "#SBATCH -C nvme" in script
     assert "--exclusive" not in script

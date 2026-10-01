@@ -45,8 +45,6 @@ nullable columns on startup.
   clusters where they behave the same.
 
 **Non-Goals:**
-- Showing a missing remote directory on the HPC cards. Submission reports it;
-  adding a card state would change the availability spec further than needed.
 - Dropping database columns. `remote_hpc_jobs_dir` and `frontier_account` stay
   in `UserTable`, as the legacy `s3m_token` does, but leave every API schema.
 - Migrating old jobs under `<session_id>/` folders.
@@ -195,6 +193,26 @@ permissions are left alone. `VISTA_REMOTE_BASE` is no longer exported, since
 **9. The example job writes under `$VISTA_OUT`.** Both scripts create the venv
 at `"$VISTA_OUT/.venv"`. On Odo the source folder is read-only to the
 automation user, so creating it in the working directory fails there today.
+
+**11. The cards check the settings too (review finding 8).** A token and Globus
+alone left a card Ready while every submission was refused for a missing remote
+directory. `ClusterChecks` gains `settings`, from `settings_check(cluster,
+user)` in `services/hpc_status.py`: the remote directory on every cluster, plus
+`nersc_account` on Perlmutter and `lux_account` on Lux. Missing values fail as
+`not_connected`, and values the MCP server would refuse fail as `invalid`, with
+the same rules as `UserConfig.require_remote_dir` / `require_lux_account`,
+repeated in the backend since the two services share no code. Either makes the
+cluster Not connected. The check reads only the user row, so it is recomputed on
+every request, cached facility results included, and a saved folder shows at
+once. The rail adds a settings row to the details and, on hover, the messages of
+the failed checks (`failureSummary`): the browser's tooltip on the expanded
+rail, the rail's own tooltip when collapsed.
+
+**12. Lux jobs name a partition.** Lux's Slurm refuses a job that names no
+partition or no GPU selection. `IriAttributes.partition` (Lux only) becomes
+`#SBATCH -p`; `queue_name` stays the QOS (`-q`). Every Lux job sets
+`lux.iri.partition` and `lux.resources.gpus_per_node`, which
+`test_job_catalog.py` asserts.
 
 ## Risks / Trade-offs
 

@@ -71,7 +71,7 @@ function statusView(): HpcStatusView {
       cluster,
       state,
       checked_at: "2026-09-25T15:00:00Z",
-      checks: { facility: ok, credential: ok, globus: null, ...checks },
+      checks: { facility: ok, credential: ok, globus: null, settings: ok, ...checks },
     },
   });
   const luxEntry = entry("lux", "ready");

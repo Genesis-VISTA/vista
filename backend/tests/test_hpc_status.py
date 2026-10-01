@@ -200,8 +200,21 @@ def make_service(
     )
 
 
-def user(**tokens) -> UserPublicWithConfig:
-    return UserPublicWithConfig(id=uuid.uuid4(), email="r@ornl.gov", **tokens)
+SETTINGS = dict(
+    odo_remote_dir="/gpfs/wolf2/olcf/abc123/proj-shared/vista",
+    frontier_remote_dir="/lustre/orion/abc123/proj-shared/vista",
+    nersc_remote_dir="/pscratch/sd/r/r/.vista",
+    nersc_account="m1234",
+    lux_remote_dir="/lustre/orion/abc123/proj-shared/vista-lux",
+    lux_account="abc123",
+)
+""" Everything a submission needs besides credentials. `user` sets it unless a test overrides it. """
+
+
+def user(**fields) -> UserPublicWithConfig:
+    return UserPublicWithConfig(
+        id=uuid.uuid4(), email="r@ornl.gov", **{**SETTINGS, **fields}
+    )
 
 
 CONNECTED = dict(
@@ -259,8 +272,99 @@ def fail(reason) -> Check:
     ],
 )
 def test_resolve_state(facility, credential, globus, state):
-    checks = ClusterChecks(facility=facility, credential=credential, globus=globus)
+    checks = ClusterChecks(
+        facility=facility, credential=credential, globus=globus, settings=OK
+    )
     assert resolve_state(checks) == state
+
+
+@pytest.mark.parametrize(
+    ("facility", "credential", "settings", "state"),
+    [
+        (OK, OK, fail("not_connected"), "not_connected"),
+        (OK, OK, fail("invalid"), "not_connected"),
+        (OK, fail("rejected"), fail("not_connected"), "not_connected"),
+        (fail("degraded"), OK, fail("not_connected"), "degraded"),
+    ],
+)
+def test_missing_settings_are_not_connected(facility, credential, settings, state):
+    checks = ClusterChecks(
+        facility=facility, credential=credential, globus=OK, settings=settings
+    )
+    assert resolve_state(checks) == state
+
+
+@pytest.mark.parametrize(
+    ("cluster", "fields", "reason", "says"),
+    [
+        (
+            "odo",
+            {"odo_remote_dir": None},
+            "not_connected",
+            "No Odo remote directory is set.",
+        ),
+        (
+            "frontier",
+            {"frontier_remote_dir": ""},
+            "not_connected",
+            "No Frontier remote directory",
+        ),
+        (
+            "perlmutter",
+            {"nersc_account": None, "nersc_remote_dir": None},
+            "not_connected",
+            "No NERSC account or Perlmutter remote directory is set.",
+        ),
+        ("lux", {"lux_account": None}, "not_connected", "No Lux account is set."),
+        (
+            "odo",
+            {"odo_remote_dir": "/gpfs/wolf2/olcf/<project>/proj-shared/vista"},
+            "invalid",
+            "Replace any <project>",
+        ),
+        ("frontier", {"frontier_remote_dir": "vista"}, "invalid", "absolute path"),
+        ("odo", {"odo_remote_dir": "/"}, "invalid", "other than /"),
+        ("lux", {"lux_account": "stf 218"}, "invalid", "isn't a project name"),
+    ],
+)
+def test_settings_check_names_what_is_missing(cluster, fields, reason, says):
+    check = hs.settings_check(cluster, user(**fields))
+    assert not check.ok
+    assert check.reason == reason
+    assert says in check.message
+
+
+def test_settings_check_passes_with_everything_set():
+    u = user()
+    assert hs.settings_check("odo", u) == Check(
+        ok=True, message=SETTINGS["odo_remote_dir"]
+    )
+    lux = hs.settings_check("lux", u)
+    assert lux.ok and lux.project == SETTINGS["lux_account"]
+
+
+@pytest.mark.anyio
+async def test_card_is_not_connected_without_a_remote_directory_even_when_cached():
+    """
+    A token and Globus alone are not enough: every job would be refused. And
+    setting the folder updates the card at once, though the facility checks
+    are cached.
+    """
+    fac = healthy()
+    service = make_service(fac)
+    u = user(**CONNECTED, frontier_remote_dir=None)
+    first = (await statuses(service, u))["frontier"]
+    assert first.state == "not_connected"
+    assert first.checks.credential.ok and first.checks.globus.ok
+    assert first.checks.settings.message == "No Frontier remote directory is set."
+
+    calls = len(fac.calls)
+    fixed = u.model_copy(
+        update={"frontier_remote_dir": SETTINGS["frontier_remote_dir"]}
+    )
+    second = (await statuses(service, fixed))["frontier"]
+    assert second.state == "ready"
+    assert len(fac.calls) == calls  # served from the cache, with the new settings
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +821,7 @@ async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     assert "hub.ccs.ornl.gov" in lx.checks.facility.message
     assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
     assert lx.checks.credential.ok
-    assert lx.checks.credential.project is None  # no Lux account set
+    assert lx.checks.credential.project == SETTINGS["lux_account"]
     assert lx.checks.credential.message == hs.LUX_SIGN_IN
     assert lx.checks.globus is None
     assert lux.calls == ["hub.ccs.ornl.gov"]  # the hub only, never the login node

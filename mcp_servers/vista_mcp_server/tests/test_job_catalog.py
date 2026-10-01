@@ -124,3 +124,26 @@ def test_forge_tune_runs_from_vista_out(script, run_dir):
     assert f"python -u ${{{run_dir}}}/forge-tune.py" in text
     assert f"source ${{{run_dir}}}/setup_dist_vars.sh" in text
     assert "--checkpoint-dir ${VISTA_OUT}" in text
+
+
+@pytest.mark.parametrize(
+    "job_dir",
+    [
+        d
+        for d in _job_dirs()
+        if (d / "cluster_defaults.json").exists()
+        and '"lux"' in (d / "cluster_defaults.json").read_text(encoding="utf-8")
+    ],
+    ids=lambda d: d.name,
+)
+def test_lux_jobs_name_a_partition_and_gpus(job_dir: Path):
+    """Lux's Slurm refuses a job with no partition (`-p`) or no GPU selection,
+    before it is queued, so every Lux job must name both."""
+    defaults = ClusterDefaults.model_validate_json(
+        (job_dir / "cluster_defaults.json").read_text(encoding="utf-8")
+    ).lux
+    assert defaults is not None
+    assert defaults.iri.partition, f"{job_dir.name}: no lux.iri.partition"
+    assert defaults.resources.gpus_per_node, (
+        f"{job_dir.name}: no lux.resources.gpus_per_node"
+    )

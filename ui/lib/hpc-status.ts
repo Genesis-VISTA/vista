@@ -45,7 +45,8 @@ export type HpcCheckReason =
   | "not_connected"
   | "rejected"
   | "not_active"
-  | "session_expired";
+  | "session_expired"
+  | "invalid";
 
 export type HpcCheck = {
   ok: boolean;
@@ -66,6 +67,12 @@ export type HpcClusterStatus = {
     facility: HpcCheck;
     credential: HpcCheck;
     globus: HpcCheck | null;
+    /**
+     * The researcher's own settings a submission needs: the remote directory,
+     * and the account on Perlmutter and Lux. Missing or unusable ones make the
+     * cluster Not connected.
+     */
+    settings: HpcCheck;
   };
 };
 

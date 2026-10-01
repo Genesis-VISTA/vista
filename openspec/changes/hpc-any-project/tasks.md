@@ -80,3 +80,13 @@ reopen the hole the check was closing.
 - [x] 10.3 `_require_writable_out` reads `<base>.out` and the parent with one Transfer `stat` each (`GlobusClient.operation_stat`, 404 → `GlobusFileNotFound`) instead of listing `proj-shared` and its parent (`tests/test_remote_layout.py`, `tests/test_globus_https.py`).
 - [x] 10.4 `RemoteLayout.with_user`: submission reads the remote folder once up front and names the sources folder once the username is known, instead of building the layout twice (`tests/test_remote_layout.py`).
 - [x] 10.5 `lux-hello`'s comment says the header carries the Lux account.
+
+## 11. Settings on the HPC cards
+
+- [x] 11.1 Backend: `settings_check` and `ClusterChecks.settings` (design decision 11); a missing or unusable remote directory or account makes the cluster Not connected, and is recomputed past the result cache (`tests/test_hpc_status.py`).
+- [x] 11.2 UI: a settings row in the details, and the failed checks' messages on hover in both rail modes (`tests/HpcStatusSection.test.tsx`, fixtures in `tests/hpc-status.test.ts`, `tests/UserSettingsModal.test.tsx`, `e2e-hermetic/fixtures.ts`).
+
+## 12. Lux partition
+
+- [x] 12.1 MCP: `IriAttributes.partition` rendered as `#SBATCH -p` (`tests/test_lux_submit.py`).
+- [x] 12.2 `lux-hello` (one GPU) and `forge-pretrain` set `lux.iri.partition` to `batch`, Lux's only partition, and `lux.resources.gpus_per_node` (`tests/test_job_catalog.py`, `tests/test_lux_submit.py`). Checked on a Lux login node (2026-10-01): `sinfo` lists `batch` alone, 8 GPUs per node, and `stf218` has the default `normal` QOS, so no `-q` is needed.

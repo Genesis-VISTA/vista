@@ -16,7 +16,12 @@ function cluster(name: HpcClusterStatus["cluster"], state: HpcState): HpcCluster
     cluster: name,
     state,
     checked_at: "2026-09-25T15:00:00Z",
-    checks: { facility: ok, credential: ok, globus: name === "perlmutter" || name === "lux" ? null : ok },
+    checks: {
+      facility: ok,
+      credential: ok,
+      globus: name === "perlmutter" || name === "lux" ? null : ok,
+      settings: ok,
+    },
   };
 }
 

@@ -35,6 +35,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import re
 import socket
 import time
 from dataclasses import dataclass
@@ -106,6 +107,7 @@ Reason = Literal[
     "rejected",
     "not_active",
     "session_expired",
+    "invalid",
 ]
 """ Why a check failed. The UI maps these to copy; `message` is a fallback. """
 
@@ -150,6 +152,12 @@ class ClusterChecks(BaseModel):
     credential: Check
     globus: Check | None = None
     """ Odo and Frontier only; Perlmutter and Lux move no files through Globus. """
+    settings: Check
+    """
+    The researcher's own settings a submission needs: the remote directory,
+    and the account on Perlmutter and Lux. Read from the user row, so it is
+    never cached.
+    """
 
 
 class ClusterStatus(BaseModel):
@@ -169,7 +177,7 @@ class HpcStatus(BaseModel):
 
 
 def _checks(c: ClusterChecks) -> list[Check]:
-    return [c.facility, c.credential] + ([c.globus] if c.globus else [])
+    return [c.facility, c.credential, c.settings] + ([c.globus] if c.globus else [])
 
 
 _PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
@@ -178,7 +186,13 @@ _PRECEDENCE: list[tuple[State, Callable[[ClusterChecks], bool]]] = [
         "unverifiable",
         lambda c: any(x.reason in ("unreachable", "unverifiable") for x in _checks(c)),
     ),
-    ("not_connected", lambda c: c.credential.reason == "not_connected"),
+    (
+        "not_connected",
+        lambda c: (
+            c.credential.reason == "not_connected"
+            or c.settings.reason in ("not_connected", "invalid")
+        ),
+    ),
     ("rejected", lambda c: c.credential.reason in ("rejected", "not_active")),
     (
         "globus_not_connected",
@@ -205,6 +219,75 @@ def resolve_state(checks: ClusterChecks) -> State:
     # A failed check whose reason nothing above claims: say so rather than
     # show green.
     return "unverifiable"
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+_SAFE_REMOTE_DIR = re.compile(r"/[A-Za-z0-9._+,:=@/-]*")
+""" The MCP server's rule (`UserConfig.require_remote_dir`): the card refuses what submission would. """
+_PLAIN_ACCOUNT = re.compile(r"[A-Za-z0-9_-]+")
+""" The MCP server's rule for the Lux account (`UserConfig.require_lux_account`). """
+
+
+def settings_check(cluster: HpcCluster, user: Any) -> Check:
+    """Whether the researcher has set what a submission to `cluster` needs.
+
+    Every cluster needs a remote directory, and Perlmutter and Lux an account
+    too. A value submission would refuse -- a relative path, `/`, shell
+    characters, or a `<project>` placeholder left in -- fails the check as
+    well, so the card never shows Ready for a cluster every job would fail on.
+    """
+    title = _TITLES[cluster]
+    remote_dir: str | None = {
+        "odo": user.odo_remote_dir,
+        "frontier": user.frontier_remote_dir,
+        "perlmutter": user.nersc_remote_dir,
+        "lux": user.lux_remote_dir,
+    }[cluster]
+    account: str | None = {
+        "perlmutter": user.nersc_account,
+        "lux": user.lux_account,
+    }.get(cluster)
+    needs_account = cluster in ("perlmutter", "lux")
+    account_label = "NERSC account" if cluster == "perlmutter" else "Lux account"
+
+    missing = [
+        label
+        for label, value, needed in (
+            (account_label, account, needs_account),
+            (f"{title} remote directory", remote_dir, True),
+        )
+        if needed and not value
+    ]
+    if missing or remote_dir is None:
+        return Check(
+            ok=False,
+            reason="not_connected",
+            message=f"No {' or '.join(missing)} is set.",
+        )
+    if not _SAFE_REMOTE_DIR.fullmatch(remote_dir) or not remote_dir.rstrip("/"):
+        return Check(
+            ok=False,
+            reason="invalid",
+            message=(
+                f"The {title} remote directory {remote_dir} can't be used. It must be an "
+                "absolute path other than /, using only letters, digits and "
+                ". _ + , : = @ - /. Replace any <project> with the project's name."
+            ),
+        )
+    if cluster == "lux" and not _PLAIN_ACCOUNT.fullmatch(account or ""):
+        return Check(
+            ok=False,
+            reason="invalid",
+            message=f"The Lux account {account} isn't a project name.",
+        )
+    return Check(
+        ok=True,
+        message=remote_dir.rstrip("/"),
+        project=account if needs_account else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +506,7 @@ class HpcStatusService:
     ) -> ClusterStatus:
         key = (str(user.id), cluster)
         fingerprint = self._credential_fingerprint(user, cluster)
+        settings = settings_check(cluster, user)
         cached = self._results.get(key)
         if (
             not fresh
@@ -430,7 +514,12 @@ class HpcStatusService:
             and cached[1] == fingerprint
             and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
-            return cached[2]
+            # The settings come from the user row, not a facility, so a cached
+            # result always carries the current ones.
+            checks = cached[2].checks.model_copy(update={"settings": settings})
+            return cached[2].model_copy(
+                update={"checks": checks, "state": resolve_state(checks)}
+            )
 
         olcf = cluster in ("odo", "frontier")
         facility, credential, globus = await asyncio.gather(
@@ -438,7 +527,9 @@ class HpcStatusService:
             self._credential(client, cluster, user),
             self._globus(cluster, user) if olcf else _none(),
         )
-        checks = ClusterChecks(facility=facility, credential=credential, globus=globus)
+        checks = ClusterChecks(
+            facility=facility, credential=credential, globus=globus, settings=settings
+        )
         result = ClusterStatus(
             cluster=cluster,
             state=resolve_state(checks),

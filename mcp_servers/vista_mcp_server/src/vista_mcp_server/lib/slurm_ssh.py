@@ -85,6 +85,7 @@ def render_batch_script(
     stderr_path: str,
     workdir: str,
     body: str,
+    partition: str | None = None,
     queue: str | None = None,
     constraint: str | None = None,
     exclusive: bool = False,
@@ -109,6 +110,8 @@ def render_batch_script(
         f"-e {stderr_path}",
         f"--chdir={workdir}",
     ]
+    if partition:
+        directives.append(f"-p {partition}")
     if queue:
         directives.append(f"-q {queue}")
     if constraint:
