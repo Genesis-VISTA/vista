@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
+import { setThemeChoice } from "@/lib/theme";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { UserPublicWithConfig } from "@/lib/user";
 
@@ -235,5 +236,74 @@ describe("UserSettingsModal: Lux", () => {
     expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] });
     expect(recheckMock).not.toHaveBeenCalled();
     expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("UserSettingsModal appearance", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  afterEach(() => setThemeChoice("system"));
+
+  function radio(name: string) {
+    return within(screen.getByRole("radiogroup", { name: "Appearance" })).getByRole("radio", { name });
+  }
+
+  it("starts on System, and says what System means", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("System")).toBeChecked();
+    expect(radio("Light")).not.toBeChecked();
+    expect(radio("Dark")).not.toBeChecked();
+    expect(screen.getByText(/System matches your computer's light or dark setting/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Dark", "dark"],
+    ["Light", "light"],
+  ])("selecting %s applies and stores it at once, without Save", async (name, value) => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await userEvent.click(radio(name));
+    expect(radio(name)).toBeChecked();
+    expect(document.documentElement.getAttribute("data-theme")).toBe(value);
+    expect(window.localStorage.getItem("vista.theme")).toBe(value);
+    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+  });
+
+  it("selecting System clears the override", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    setThemeChoice("dark");
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("Dark")).toBeChecked();
+    await userEvent.click(radio("System"));
+    expect(radio("System")).toBeChecked();
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(window.localStorage.getItem("vista.theme")).toBeNull();
+  });
+
+  it("arrow keys move and select together, with one tab stop", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("System")).toHaveAttribute("tabindex", "0");
+    expect(radio("Dark")).toHaveAttribute("tabindex", "-1");
+
+    radio("System").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(radio("Light")).toBeChecked();
+    expect(radio("Light")).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(radio("Dark")).toBeChecked();
+    expect(radio("Dark")).toHaveFocus();
+  });
+
+  it("is available before the user record loads", () => {
+    fetchCurrentUserWithConfigMock.mockReturnValue(new Promise(() => {}));
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(radio("System")).toBeChecked();
   });
 });

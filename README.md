@@ -319,7 +319,7 @@ each need their own; mint them per the
 (expires in 24 hours).
 
 ## Launch
-The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
+The launch script will build all dependencies, launch the MCP server, backend and frontend, and open the UI in the VISTA window. Closing the window stops everything.
 ```bash
 ./launch.sh
 ```
@@ -328,21 +328,22 @@ Wait for both to be ready (the MCP server can take a few minutes the first launc
 Globus for Odo and Frontier is untouched by this script: nothing to export first, and nothing
 gated on it starting. Connect it per cluster in the UI once VISTA is running, under User
 settings — there is no endpoint to bring up, only a credential to authorize.
-Then go to https://localhost:3000
 
 You can use
 ```bash
 ./launch.sh terminal
 ```
-to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+to bring up the MCP server and frontend in terminal windows instead (`./launch.sh tmux` uses a
+tmux session); neither opens the VISTA window, so go to http://localhost:3000.
 
-To develop against the VISTA window rather than a browser tab:
+The window is installed by `./scripts/build.sh --electron` (a ~290 MB Electron download that a
+plain `./scripts/build.sh` skips), which `./launch.sh` runs for you, and it opens
+`http://localhost:3000` once the UI answers. Hot reload works as in a browser, DevTools are in
+the View menu, and closing the window stops the stack. To use a browser tab instead — over SSH,
+or anywhere without a display, where the window cannot open — start the services alone:
 ```bash
-./launch.sh logs --electron
+./launch.sh logs --no-electron
 ```
-This installs the window (`./scripts/build.sh --electron`, a ~290 MB Electron download the
-default build skips) and opens `http://localhost:3000` in it once the UI answers. Hot reload
-works as in a browser, DevTools are in the View menu, and closing the window stops the stack.
 It is `logs` mode only, since tmux and terminal modes don't own the services' lifetime.
 From the macOS Dock and app switcher the window reads "Electron" in development; only the
 packaged build is named VISTA. On Linux the development window makes the same sandbox check
