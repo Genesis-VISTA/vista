@@ -68,8 +68,8 @@ cd electron && npm run test:e2e  # window behaviour via Playwright; needs a disp
 Where a link goes is decided by origin alone in `electron/src/routing.js`: VISTA's own origin
 stays in the app, other http(s) goes to the system browser, and everything else is refused. So
 UI links need no Electron-specific code. The prebuilt macOS package ships it as
-`app/window/VISTA.app` and the Linux package as `app/window/VISTA`, both found through the
-manifest's `window.exe`. There is no browser mode: the launcher refuses a session that cannot show
+`app/window/VISTA.app`, the Linux package as `app/window/VISTA`, and the Windows package as
+`app/window/VISTA.exe`, all found through the manifest's `window.exe`. There is no browser mode: the launcher refuses a session that cannot show
 the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
 
 On Linux, whether the window gets `--no-sandbox` is decided in one place,

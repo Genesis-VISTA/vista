@@ -1,7 +1,7 @@
 """
-Import a skill from a GitHub repository.
+Import a skill from a GitHub repository or from a folder uploaded by the browser.
 
-Two URL forms are accepted:
+For GitHub, two URL forms are accepted:
 
   https://github.com/<owner>/<repo>
       The repo's default branch is downloaded and SKILL.md is expected at the
@@ -16,7 +16,10 @@ The tarball is fetched from the GitHub API (no `git` binary needed). If
 `settings.github_token` is set it is passed as a bearer token, enabling private
 repos.
 
-After download we copy the entire skill directory (SKILL.md plus any sibling
+A local import receives the files of a folder the user picked in the browser,
+each with its path relative to that folder (see `import_skill_from_files`).
+
+Either way we copy the entire skill directory (SKILL.md plus any sibling
 scripts / references / assets) to the caller-provided destination directory.
 `repo_url` is filled in from the source URL when missing, and `is_public` is
 forced to `false` so imports land private (the user can publish them via the
@@ -30,8 +33,10 @@ import tarfile
 import tempfile
 import urllib.request
 import urllib.error
+from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 from pydantic import ValidationError
 
 from .skills import (
@@ -157,6 +162,23 @@ def _download_tarball(parsed: ParsedGithubUrl, dest_root: Path) -> Path:
         return dest_root / top
 
 
+def _install_skill(source_dir: Path, dest_dir: Path, where: str) -> Skill:
+    """
+    Validate the skill in `source_dir` and copy it to `dest_dir`.
+
+    `where` names the source in error messages, e.g. "<repo root> in owner/repo".
+    """
+    if find_skill_md(source_dir) is None:
+        raise SkillImportError(f"No SKILL.md found at {where}.")
+    try:
+        skill = read_skill(source_dir)
+    except (SkillError, ValidationError) as e:
+        raise SkillImportError(f"Imported SKILL.md is invalid: {e}") from e
+
+    shutil.copytree(source_dir, dest_dir)
+    return skill
+
+
 def import_skill_from_github(url: str, dest_dir: Path | str) -> Skill:
     """
     Import the skill at `url` into `dest_dir` (which must not already exist).
@@ -174,14 +196,85 @@ def import_skill_from_github(url: str, dest_dir: Path | str) -> Skill:
             raise SkillImportError(
                 f"Subpath {parsed.subpath!r} does not exist in {parsed.owner}/{parsed.repo}."
             )
-        if find_skill_md(source_dir) is None:
-            raise SkillImportError(
-                f"No SKILL.md found at {parsed.subpath or '<repo root>'} in {parsed.owner}/{parsed.repo}."
-            )
-        try:
-            skill = read_skill(source_dir)
-        except (SkillError, ValidationError) as e:
-            raise SkillImportError(f"Imported SKILL.md is invalid: {e}") from e
+        where = f"{parsed.subpath or '<repo root>'} in {parsed.owner}/{parsed.repo}"
+        return _install_skill(source_dir, dest_dir, where)
 
-        shutil.copytree(source_dir, dest_dir)
-        return skill
+
+MAX_UPLOAD_FILES = 2000
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# Clutter a folder picker drags along that never belongs in a skill. Anything
+# under these directories, or with these names, is dropped rather than rejected.
+_IGNORED_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv"})
+_IGNORED_FILES = frozenset({".DS_Store", "Thumbs.db"})
+
+
+def _clean_relpath(raw: str) -> PurePosixPath:
+    """
+    Check one uploaded file's relative path; reject anything that could land
+    outside the skill directory.
+    """
+    if not raw or "\\" in raw or ":" in raw or "\0" in raw:
+        raise SkillImportError(f"Invalid file path in upload: {raw!r}")
+    path = PurePosixPath(raw)
+    if path.is_absolute() or any(part in ("", ".", "..") for part in raw.split("/")):
+        raise SkillImportError(f"Invalid file path in upload: {raw!r}")
+    return path
+
+
+def _is_ignored(path: PurePosixPath) -> bool:
+    return path.name in _IGNORED_FILES or any(
+        part in _IGNORED_DIRS for part in path.parts[:-1]
+    )
+
+
+def import_skill_from_files(
+    files: Iterable[tuple[str, BinaryIO]], dest_dir: Path | str
+) -> Skill:
+    """
+    Import a skill from uploaded files into `dest_dir` (which must not already exist).
+
+    `files` pairs each file's path, relative to the folder the user picked,
+    with its contents. A browser folder picker prefixes every path with the
+    folder's own name ("my-skill/SKILL.md"); when all paths share one leading
+    directory it is stripped, so SKILL.md is expected at the root of the
+    picked folder.
+
+    Returns the imported `Skill`. Raises `SkillImportError` for any
+    user-facing problem.
+    """
+    entries = [(_clean_relpath(raw), stream) for raw, stream in files]
+    entries = [(path, stream) for path, stream in entries if not _is_ignored(path)]
+    if not entries:
+        raise SkillImportError("No files were uploaded.")
+    if len(entries) > MAX_UPLOAD_FILES:
+        raise SkillImportError(
+            f"Too many files ({len(entries)}); a skill may have at most {MAX_UPLOAD_FILES}."
+        )
+
+    tops = {path.parts[0] for path, _ in entries}
+    if len(tops) == 1 and all(len(path.parts) > 1 for path, _ in entries):
+        entries = [(PurePosixPath(*path.parts[1:]), stream) for path, stream in entries]
+
+    seen: set[PurePosixPath] = set()
+    for path, _ in entries:
+        if path in seen:
+            raise SkillImportError(f"Duplicate file in upload: {str(path)!r}")
+        seen.add(path)
+
+    dest_dir = Path(dest_dir).resolve()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        total = 0
+        for path, stream in entries:
+            target = root.joinpath(*path.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                while chunk := stream.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_UPLOAD_BYTES:
+                        raise SkillImportError(
+                            f"Upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+                        )
+                    out.write(chunk)
+        return _install_skill(root, dest_dir, "the root of the uploaded folder")

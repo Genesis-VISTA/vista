@@ -15,9 +15,11 @@ from ..agents.inference import MissingInferenceCredential
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..services.auth import get_user
+from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
+from .chat_runs import router as chat_runs_router
 from .debate import router as debate_router
 from .chat_sessions import router as chat_sessions_router
 from .files import router as files_router
@@ -26,6 +28,7 @@ from .mcp import router as mcp_router
 from .models import router as models_router
 from .palisade import router as palisade_router
 from .projects import router as projects_router
+from .reports import router as reports_router
 from .skills import router as skills_router
 from .users import router as users_router
 
@@ -33,6 +36,11 @@ from .users import router as users_router
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    # No run survives a restart: a row still `running` died with the last process.
+    if await sweep_interrupted_runs():
+        logging.getLogger(__name__).info(
+            "Marked chat runs from the last session as interrupted."
+        )
 
     # The Hypothesis Lab's repository is a property of each project now, so
     # there is nothing deployment-wide to reconcile at boot — a project's forum
@@ -72,6 +80,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             monitor_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await monitor_task
+        # End runs while their agents still exist, each saving its partial history.
+        # Bounded so it fits inside the launcher's 10 s grace on quit.
+        await chat_run_registry.stop_all(reason="interrupted", timeout=5)
         # `project_agent_pool.clear()` runs `_cleanup_project_agent` for every entry,
         # which cancels pending elicitations and drops their tracker entries.
         await project_agent_pool.clear()
@@ -105,10 +116,12 @@ app.include_router(agent_router)
 app.include_router(campaign_router)
 app.include_router(debate_router)
 app.include_router(chat_sessions_router)
+app.include_router(chat_runs_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)
 app.include_router(models_router)
 app.include_router(projects_router)
+app.include_router(reports_router)
 app.include_router(skills_router)
 app.include_router(files_router)
 app.include_router(users_router)

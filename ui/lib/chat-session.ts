@@ -14,10 +14,20 @@ export type PersistedChatSessionSummary = {
   updated_at: string;
 };
 
+/** One event of a run the researcher did not watch, as stored by the backend (compacted). */
+export type StoredRunEvent = { event: string; data: Record<string, unknown> };
+
 export type PersistedChatSession = PersistedChatSessionSummary & {
+  /** Written only by the backend. The page reads it but never sends it back. */
   message_history: ModelMessage[];
   messages: ChatMessage[];
   latest_result: ExecutionResult | null;
+  run_state: "idle" | "running" | "done" | "failed" | "interrupted" | "stopped";
+  /** Live: `working` and `needs_you` come from the running turn, the rest from the saved outcome. */
+  run_status: "idle" | "working" | "needs_you" | "done" | "failed" | "interrupted" | "stopped";
+  run_unseen: boolean;
+  /** The events of the last run, kept until the page has drawn them and acknowledged the run. */
+  run_events: StoredRunEvent[] | null;
 };
 
 export class PersistedChatSessionError extends Error {
@@ -145,9 +155,10 @@ export async function savePersistedChatSession(
   payload: {
     chatSessionId?: string | null;
     title?: string | null;
-    messageHistory?: ModelMessage[] | null;
     messages?: ChatMessage[] | null;
     latestResult?: ExecutionResult | null;
+    /** The researcher has seen the last run: clears its unseen flag and stored events. */
+    ackRun?: boolean;
   }
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/session", {
@@ -157,9 +168,9 @@ export async function savePersistedChatSession(
       project_name: projectName,
       chat_session_id: payload.chatSessionId ?? null,
       title: payload.title ?? null,
-      message_history: payload.messageHistory ?? null,
       messages: payload.messages ?? null,
       latest_result: payload.latestResult ?? null,
+      ack_run: payload.ackRun === true,
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -189,4 +200,39 @@ export async function deletePersistedChatSession(
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await extractError(res));
+}
+
+/**
+ * Open a stream of a conversation's active run, from the start unless `after` says
+ * otherwise. Answers 204 (no body) when the conversation has no active run.
+ *
+ * Watching is all this does: aborting `signal` closes the stream and leaves the
+ * run going.
+ */
+export function attachChatRun(
+  projectName: string,
+  chatSessionId: string,
+  signal: AbortSignal,
+  after = 0,
+): Promise<Response> {
+  const qs = new URLSearchParams({
+    project_name: projectName,
+    chat_session_id: chatSessionId,
+    after: String(after),
+  });
+  return fetch(`/api/chat/run/events?${qs.toString()}`, {
+    headers: { accept: "text/event-stream" },
+    cache: "no-store",
+    signal,
+  });
+}
+
+/** Stop a conversation's run. Already being over is not an error. */
+export async function stopChatRun(projectName: string, chatSessionId: string): Promise<void> {
+  const res = await fetch("/api/chat/run/stop", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ project_name: projectName, chat_session_id: chatSessionId }),
+  });
+  if (!res.ok && res.status !== 404) throw new Error(await extractError(res));
 }

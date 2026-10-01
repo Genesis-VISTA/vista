@@ -1,26 +1,19 @@
 import uuid
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
-from ..agents.agents import (
-    ProjectAgentResult,
-    ProjectAgentResultEvent,
-    McpElicitationEvent,
-)
+from ..agents.agents import ProjectAgentResult
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
-from ..services.project_agent import (
-    get_project_agent_key,
-    project_agent_pool,
-    register_elicitation,
-)
+from ..services.chat_run import RunBusy, chat_run_registry
+from ..services.project_agent import get_project_agent_key, project_agent_pool
 from ..agents.inference import require_inference_credential
 from ..services.auth import UserDep
 
@@ -39,11 +32,15 @@ class AgentRunRequest(BaseModel):
     """
 
     stream: bool = False
-    """ If True, stream the response as Server-Sent Events. """
+    """ If True, stream the response as Server-Sent Events. Requires `chat_session_id`. """
     user_prompt: str
     """ The user prompt to the agent. """
     chat_session_id: uuid.UUID | None = None
-    """ Optional selected chat session. When omitted, use the default/latest session. """
+    """
+    The conversation this turn belongs to. A turn in a conversation runs in the
+    background and finishes whether or not anyone is watching. Without it, a
+    non-streaming request is a stateless one-off that is saved nowhere.
+    """
     message_history: list[ModelMessage] = Field(default_factory=list)
     """ Optional fallback history from older clients; backend session state wins when present. """
 
@@ -68,6 +65,12 @@ async def agent_run(
     https://pydantic.dev/docs/ai/core-concepts/agent/#running-agents
     In addition to Pydantic's event's we also yield LogEvents from the server and mcp servers.
     The final event in streaming contains a `ProjectAgentResult`, same as the result from non streaming.
+
+    A turn with a `chat_session_id` is owned by the backend (`services/chat_run.py`): the stream is
+    only a watcher. If the client disconnects the turn keeps running and saves its own result; watch it
+    again with GET /projects/{project_name}/chat-sessions/{id}/run/events, or cancel it with POST .../run/stop.
+    Each stream starts with a `run_started` event and ends with `run_finished {state}`. A second turn in a
+    conversation that is still running is refused with 409.
 
     Supports MCP elicitation in streaming mode. Elicitation requests arrive as an extra SSE event
     interleaved with the agent events:
@@ -97,48 +100,47 @@ async def agent_run(
         chat_session_id=body.chat_session_id,
     )
 
-    if body.stream:
+    if body.stream and body.chat_session_id is None:
+        raise HTTPException(
+            status_code=400, detail="chat_session_id is required to stream a turn"
+        )
 
-        async def agent_events() -> AsyncGenerator[ServerSentEvent, None]:
-            async with project_agent_pool.get(agent_key) as agent:
-                async for event in agent.run_stream(
-                    user_prompt=body.user_prompt,
-                    message_history=effective_history,
-                    enable_elicitation=True,
-                    db_session=session,
-                ):
-                    if isinstance(event, McpElicitationEvent):
-                        register_elicitation(event.elicitation_id, agent)
-                        # calling /projects/{project_name}/elicitation will resolve the elicitation request
-                    if (
-                        isinstance(event, ProjectAgentResultEvent)
-                        and body.chat_session_id is not None
-                    ):
-                        await chat_session_service.append_message_history(
-                            session,
-                            project_id=project.id,
-                            user_id=user.id,
-                            prior_history=effective_history,
-                            new_messages=event.result.new_messages,
-                            chat_session_id=body.chat_session_id,
-                        )
-                    data = TypeAdapter(Any).dump_json(event).decode()
-                    yield ServerSentEvent(event=event.event_kind, data=data)
-
-        return EventSourceResponse(agent_events())
-    else:
-        async with project_agent_pool.get(agent_key) as agent:
-            result = await agent.run(
-                user_prompt=body.user_prompt,
-                message_history=effective_history,
-            )
-        if body.chat_session_id is not None:
-            await chat_session_service.append_message_history(
-                session,
+    if body.chat_session_id is not None:
+        # The run writes through its own session, so end this request's
+        # transaction first rather than hold a lock it could wait on.
+        await session.commit()
+        try:
+            run = await chat_run_registry.start(
+                chat_session_id=body.chat_session_id,
                 project_id=project.id,
                 user_id=user.id,
+                agent_key=agent_key,
+                user_prompt=body.user_prompt,
                 prior_history=effective_history,
-                new_messages=result.new_messages,
-                chat_session_id=body.chat_session_id,
             )
-        return result
+        except RunBusy:
+            raise HTTPException(
+                status_code=409,
+                detail="This conversation already has a turn running.",
+            )
+
+        if body.stream:
+
+            async def watch() -> AsyncGenerator[ServerSentEvent, None]:
+                async for event in run.subscribe():
+                    yield ServerSentEvent(
+                        event=event.kind, data=event.data, id=str(event.seq)
+                    )
+
+            return EventSourceResponse(watch())
+
+        await run.wait()
+        if run.result is None:
+            raise HTTPException(status_code=500, detail=f"Turn {run.state}.")
+        return run.result
+
+    async with project_agent_pool.get(agent_key) as agent:
+        return await agent.run(
+            user_prompt=body.user_prompt,
+            message_history=effective_history,
+        )

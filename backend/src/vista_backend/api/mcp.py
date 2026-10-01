@@ -7,10 +7,10 @@ from pydantic import BaseModel
 
 from ..db.db import SessionDep
 from ..services import project as project_service
+from ..services.chat_run import resolve_prompt
 from ..services.project_agent import (
     get_project_agent_key,
     project_agent_pool,
-    resolve_elicitation,
 )
 from ..services.auth import UserDep
 
@@ -73,7 +73,7 @@ async def mcp_elicitation(
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
     await project_service.get_project_by_name(session, project_name, user)
-    if not resolve_elicitation(submit.id, submit.action, submit.content):
+    if not await resolve_prompt(submit.id, submit.action, submit.content):
         raise HTTPException(
             status_code=404, detail="Elicitation not found or already resolved"
         )

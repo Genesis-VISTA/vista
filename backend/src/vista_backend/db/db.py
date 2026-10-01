@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from .seed import seed_db, sync_bundled_skills
+from .seed import seed_db, sync_bundled_skills, sync_default_projects
 
 
 @functools.cache
@@ -117,11 +117,19 @@ def _add_missing_columns(conn: Connection) -> None:
                 )
                 continue
             column_type = column.type.compile(conn.dialect)
+            default = ""
+            if column.server_default is not None:
+                # Existing rows take the default, so they read the same as a new row.
+                arg = getattr(column.server_default, "arg", None)
+                if isinstance(arg, str):
+                    default = " DEFAULT '" + arg.replace("'", "''") + "'"
+                elif arg is not None:
+                    default = f" DEFAULT {arg.compile(dialect=conn.dialect)}"
             log.info("Adding missing column %s.%s", table.name, column.name)
             conn.execute(
                 text(
                     f'ALTER TABLE "{table.name}" '
-                    f'ADD COLUMN "{column.name}" {column_type}'
+                    f'ADD COLUMN "{column.name}" {column_type}{default}'
                 )
             )
 
@@ -138,6 +146,9 @@ async def init_db() -> None:
         await conn.run_sync(_add_missing_columns)
 
     await seed_db(engine)
+    # The AI-safety default reaches first runs and upgrades alike, after seed_db so
+    # its empty-database check is unaffected.
+    await sync_default_projects(engine)
     # seed_db is first-run only; this picks up skills bundled since then.
     await sync_bundled_skills(engine)
 
