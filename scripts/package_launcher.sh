@@ -319,14 +319,25 @@ FIRST_RUN=false
 # researcher's to add to. Each part is skipped when already present, which is
 # what makes a second run cheap and an upgrade a directory replacement.
 #
+# The parts are the members `payload/parts.txt` lists, one per corpus, rather
+# than the tar's top-level folders: an upgraded state directory already has
+# `vista-data/` and `knowledge-bases/`, and a corpus a newer package adds
+# (`vista-data/ai-safety`) must still be installed. An installed member is never
+# replaced or removed.
+#
 # It ships as one tar rather than as folders because some corpus file names
 # are long enough that, under the package folder, they would pass Windows'
 # path-length limit; see build_local_package.sh's pack_payload.
 missing=()
-for part in vista-data knowledge-bases huggingface; do
-  [[ -e "$STATE/$part" ]] || missing+=("$part")
-done
-if (( ${#missing[@]} > 0 )) && [[ -f "$PACKAGE/payload/payload.tar" ]]; then
+if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
+  [[ -f "$PACKAGE/payload/parts.txt" ]] \
+    || die "this package has no payload/parts.txt; rebuild it with build_local_package.sh."
+  while IFS= read -r part || [[ -n "$part" ]]; do
+    part="${part%$'\r'}"
+    [[ -z "$part" || -e "$STATE/$part" ]] || missing+=("$part")
+  done < "$PACKAGE/payload/parts.txt"
+fi
+if (( ${#missing[@]} > 0 )); then
   log "First run: installing ${missing[*]}..."
   tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
 fi

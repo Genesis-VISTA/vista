@@ -4,8 +4,9 @@
 # The output is an archive a researcher unpacks and runs with `./vista`: no
 # Docker, no HuggingFace token, no GitLab access, no `.env`. Everything the
 # running system needs -- interpreters, virtual environments, the standalone
-# UI, the sandbox image, the molten-salt corpus and its vector store,
-# the embedding weights -- is inside it.
+# UI, the sandbox image, the AI-safety corpus and its vector store,
+# the embedding weights -- is inside it. The molten-salt corpus and MSTDB are
+# packed only with --science-projects.
 #
 # This script is the opposite side of that bargain: the build host needs the
 # credentials and tooling so the recipient does not.
@@ -14,19 +15,31 @@
 #   ./scripts/build_local_package.sh                    # build for this platform
 #   ./scripts/build_local_package.sh --check            # preflight only, no build
 #   ./scripts/build_local_package.sh --payload DIR      # use an unpacked vista-data tree
+#   ./scripts/build_local_package.sh --science-projects # also pack molten-salt + MSTDB
 #   ./scripts/build_local_package.sh --output-dir DIR   # where the archive lands
 #
 # Options:
 #   --check              Run the preflight and exit; builds nothing
 #   --payload DIR        Unpacked vista-data tree to use instead of fetching it
-#                         with VISTA_DATA_TOKEN
+#                         with VISTA_DATA_TOKEN. Only the folders the build
+#                         needs are copied from it
 #   --output-dir DIR     Archive destination (default: dist/)
 #   --archive-format FMT gz (default), zstd, zip (Windows only, and its
 #                         default), or none to leave the tree unpacked
 #   --without-citations  Build the vector store without citation metadata
 #                         (titles, authors, DOIs), and record that
-#   --vector-store DIR   Reuse an already-built vector store instead of
-#                         indexing the corpus again
+#   --vector-store DIR   Optional. Reuse an already-built AI-safety vector
+#                         store instead of indexing the corpus again. Only for
+#                         skipping re-embedding; omitting it is always correct
+#   --science-projects   Also require and pack the molten-salt corpus, its
+#                         vector store, MSTDB and the forge-tune CSV, so the
+#                         package seeds the molten-salt and alloy-design
+#                         projects. Also enabled by
+#                         VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true
+#   --science-projects-vector-store DIR
+#                         Optional, and only with --science-projects. Reuse an
+#                         already-built molten-salt vector store instead of
+#                         indexing that corpus again
 #   --sandbox-image TAR  Use an already-exported sandbox image archive instead
 #                         of building one, so no container runtime is needed.
 #                         Its architecture must match the target
@@ -133,9 +146,17 @@ OUTPUT_DIR="$REPO_ROOT/dist"
 ARCHIVE_FORMAT=''  # resolved per platform below
 WITHOUT_CITATIONS=false
 REUSE_STORE=''
+SCIENCE_PROJECTS=false
+SCIENCE_STORE=''
 SANDBOX_IMAGE_TAR=''
 SKIP_SMOKE_TEST=false
 KEEP_STAGING=false
+
+# The backend setting that seeds the science projects also says whether to pack
+# them, so one switch in the repo-root .env drives both.
+case "$(printf '%s' "${VISTA_BACKEND_SEED_SCIENCE_PROJECTS:-}" | tr '[:upper:]' '[:lower:]')" in
+  true|1|yes|on) SCIENCE_PROJECTS=true ;;
+esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -145,6 +166,10 @@ while [[ $# -gt 0 ]]; do
     --vector-store)
       [[ $# -ge 2 ]] || die "--vector-store needs a directory"
       REUSE_STORE="$2"; shift ;;
+    --science-projects) SCIENCE_PROJECTS=true ;;
+    --science-projects-vector-store)
+      [[ $# -ge 2 ]] || die "--science-projects-vector-store needs a directory"
+      SCIENCE_STORE="$2"; shift ;;
     --sandbox-image)
       [[ $# -ge 2 ]] || die "--sandbox-image needs a tar archive"
       SANDBOX_IMAGE_TAR="$2"; shift ;;
@@ -163,6 +188,9 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+[[ -z "$SCIENCE_STORE" || "$SCIENCE_PROJECTS" == true ]] \
+  || die "--science-projects-vector-store only applies with --science-projects"
 
 case "$ARCHIVE_FORMAT" in
   ''|gz|zstd|zip|none) ;;
@@ -233,7 +261,7 @@ if [[ "$TARGET_OS" == windows ]]; then
   WIN_TAR="$(cygpath -u "$SYSTEMROOT")/System32/tar.exe"
   # Paths given as C:\... would otherwise read to GNU tar as a remote host
   # (`C:`) and to this script as relative.
-  for var in PAYLOAD_DIR OUTPUT_DIR REUSE_STORE SANDBOX_IMAGE_TAR; do
+  for var in PAYLOAD_DIR OUTPUT_DIR REUSE_STORE SCIENCE_STORE SANDBOX_IMAGE_TAR; do
     [[ -n "${!var}" ]] && printf -v "$var" '%s' "$(cygpath -u "${!var}")"
   done
 fi
@@ -369,9 +397,14 @@ exported elsewhere.")
   if [[ -n "$PAYLOAD_DIR" ]]; then
     [[ -d "$PAYLOAD_DIR" ]] \
       || failures+=("--payload directory does not exist: $PAYLOAD_DIR")
-    [[ -d "$PAYLOAD_DIR/molten-salt-papers" && -d "$PAYLOAD_DIR/mstdb" ]] \
+    [[ -d "$PAYLOAD_DIR/ai-safety" ]] \
       || failures+=("--payload does not look like a vista-data tree: \
-$PAYLOAD_DIR (expected molten-salt-papers/ and mstdb/ inside it)")
+$PAYLOAD_DIR (expected ai-safety/ inside it)")
+    if [[ "$SCIENCE_PROJECTS" == true ]]; then
+      [[ -d "$PAYLOAD_DIR/molten-salt-papers" && -d "$PAYLOAD_DIR/mstdb" ]] \
+        || failures+=("--science-projects needs molten-salt-papers/ and mstdb/ \
+in the --payload tree: $PAYLOAD_DIR")
+    fi
   elif [[ -z "${VISTA_DATA_TOKEN:-}" ]]; then
     failures+=("no corpus source — set VISTA_DATA_TOKEN (a code.ornl.gov token \
 for v28/vista-data) or pass --payload with an already-unpacked copy")
@@ -406,20 +439,34 @@ mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
   #
   # Mirrors the decision in `backend/src/vista_backend/utils/indexer.py`
   # (`has_llm_credentials`); if that resolution order changes, this follows.
-  if [[ -n "$REUSE_STORE" ]]; then
-    [[ -f "$REUSE_STORE/chroma.sqlite3" ]] \
-      || failures+=("--vector-store is not a Chroma store: $REUSE_STORE \
+  #
+  # Only a corpus that is indexed here needs it: each reused store stands in for
+  # one indexing run.
+  local index_needed=false
+  [[ -z "$REUSE_STORE" ]] && index_needed=true
+  if [[ -n "$REUSE_STORE" && ! -f "$REUSE_STORE/chroma.sqlite3" ]]; then
+    failures+=("--vector-store is not a Chroma store: $REUSE_STORE \
 (expected chroma.sqlite3 inside it)")
-  elif [[ "$WITHOUT_CITATIONS" == true ]]; then
-    warn "--without-citations: the vector store will have no titles, authors, \
+  fi
+  if [[ "$SCIENCE_PROJECTS" == true ]]; then
+    [[ -z "$SCIENCE_STORE" ]] && index_needed=true
+    if [[ -n "$SCIENCE_STORE" && ! -f "$SCIENCE_STORE/chroma.sqlite3" ]]; then
+      failures+=("--science-projects-vector-store is not a Chroma store: \
+$SCIENCE_STORE (expected chroma.sqlite3 inside it)")
+    fi
+  fi
+  if [[ "$index_needed" == true ]]; then
+    if [[ "$WITHOUT_CITATIONS" == true ]]; then
+      warn "--without-citations: the vector store will have no titles, authors, \
 or DOIs, and retrieval results will cite nothing"
-  elif [[ -z "${OPENAI_API_KEY:-}" && -z "${AZURE_OPENAI_API_KEY:-}" ]]; then
-    failures+=("no inference credential for citation extraction — set \
+    elif [[ -z "${OPENAI_API_KEY:-}" && -z "${AZURE_OPENAI_API_KEY:-}" ]]; then
+      failures+=("no inference credential for citation extraction — set \
 OPENAI_API_KEY (with OPENAI_BASE_URL and VISTA_BACKEND_MODEL) or the \
 AZURE_OPENAI_* trio, normally through the repo-root .env. Building the vector \
 store calls the model once per paper for title/authors/DOI; without it the \
 shipped corpus returns passages that cite nothing. Pass \
 --without-citations to build that way deliberately.")
+    fi
   fi
 
   # Network, per host rather than as one "is the internet up" question: a
@@ -443,7 +490,7 @@ shipped corpus returns passages that cite nothing. Pass \
   done
   # The VISTA window: Electron's binary comes from GitHub releases on every
   # target that has a window, and on macOS it is re-signed ad hoc here.
-  if [[ "$TARGET_OS" == macos || "$TARGET_OS" == linux ]]; then
+  if [[ "$TARGET_OS" == macos || "$TARGET_OS" == linux || "$TARGET_OS" == windows ]]; then
     if ! curl -fsS -m 15 --head -o /dev/null https://github.com/electron/electron/releases 2>/dev/null; then
       failures+=("cannot reach github.com — needed to download Electron for the VISTA window")
     fi
@@ -510,12 +557,23 @@ package has no launcher without it")
   fi
   echo "corpus source     : ${PAYLOAD_DIR:-VISTA_DATA_TOKEN (code.ornl.gov)}"
   echo "amscrot-py        : reachable"
-  if [[ -n "$REUSE_STORE" ]]; then
-    echo "vector store      : reusing $REUSE_STORE (no indexing, no model calls)"
-  elif [[ "$WITHOUT_CITATIONS" == true ]]; then
-    echo "citations         : omitted (--without-citations)"
+  if [[ "$SCIENCE_PROJECTS" == true ]]; then
+    echo "science projects  : included (molten-salt corpus, MSTDB, forge-tune CSV)"
   else
-    echo "citations         : credential present"
+    echo "science projects  : not included"
+  fi
+  if [[ -n "$REUSE_STORE" ]]; then
+    echo "ai-safety store   : reusing $REUSE_STORE (no indexing, no model calls)"
+  fi
+  if [[ "$SCIENCE_PROJECTS" == true && -n "$SCIENCE_STORE" ]]; then
+    echo "molten-salt store : reusing $SCIENCE_STORE (no indexing, no model calls)"
+  fi
+  if [[ "$index_needed" == true ]]; then
+    if [[ "$WITHOUT_CITATIONS" == true ]]; then
+      echo "citations         : omitted (--without-citations)"
+    else
+      echo "citations         : credential present"
+    fi
   fi
   echo "archive format    : ${ARCHIVE_FORMAT}"
   echo "package           : ${PACKAGE_NAME}"
@@ -932,8 +990,8 @@ stage_ui() {
 
 # The window `vista` opens once the services are up (electron/, design B1).
 # The launcher finds it through the manifest's `window.exe` rather than a
-# hard-coded path, so a target with no window simply records none and its
-# package opens in a browser, as before.
+# hard-coded path, which each target lays out differently. Every target has
+# one: there is no browser mode, so a target without a window is not built.
 WINDOW_EXE=''
 ELECTRON_VERSION="$(sed -nE 's/.*"electron": "([^"]+)".*/\1/p' "$REPO_ROOT/electron/package.json")"
 
@@ -941,8 +999,41 @@ stage_window() {
   case "$TARGET_OS" in
     macos) stage_window_macos ;;
     linux) stage_window_linux ;;
-    *) log "no VISTA window for $TARGET_OS-$TARGET_ARCH yet; the package opens in a browser" ;;
+    windows) stage_window_windows ;;
+    *) die "no VISTA window for $TARGET_OS-$TARGET_ARCH" ;;
   esac
+}
+
+# electron-desktop-shell P1. Nothing is signed: an unsigned VISTA.exe meets
+# SmartScreen, the same accepted risk as the unsigned msb.exe beside it.
+stage_window_windows() {
+  log "building the VISTA window (Electron $ELECTRON_VERSION)"
+  local arch
+  case "$TARGET_ARCH" in
+    x86_64) arch=x64 ;;
+    *) die "no Electron build known for windows-$TARGET_ARCH" ;;
+  esac
+
+  local out built
+  out="$(mktemp -d)"
+  (
+    cd "$REPO_ROOT/electron"
+    npm ci --prefer-offline >/dev/null
+  )
+  # The packager prints a Windows path; bash's own tools want its POSIX form.
+  built="$(node "$REPO_ROOT/electron/scripts/package.js" \
+    --platform win32 --arch "$arch" --out "$out" | tail -1 | tr -d '\r')"
+  built="$(cygpath -u "$built")"
+  [[ -d "$built" ]] || die "the window packager produced nothing at $built"
+
+  local window="$STAGING_APP/window"
+  rm -rf "$window"
+  mv "$built" "$window"
+  rm -rf "$out"
+
+  WINDOW_EXE="app/window/VISTA.exe"
+  [[ -f "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
+  echo "window      : $(du -sh "$window" | cut -f1) (Electron $ELECTRON_VERSION)"
 }
 
 # linux-desktop-window D7. Nothing is signed on Linux. Next to the window go
@@ -1039,16 +1130,21 @@ stage_window_macos() {
 # pack_payload). The tree under `payload/vista-data` deliberately
 # mirrors the repository, so `db/seed.LocalRepoClient` resolves the same
 # repo-relative paths the GitLab client would.
+#
+# Only the folders this build needs are copied: `ai-safety/` always, and with
+# --science-projects the molten-salt corpus and MSTDB as well. A default package
+# therefore carries no science data at all.
 stage_payload() {
   log "assembling the corpus payload"
 
   local vista_data="$STAGING_PAYLOAD/vista-data"
   mkdir -p "$vista_data"
 
-  if [[ -n "$PAYLOAD_DIR" ]]; then
-    copy_tree "$PAYLOAD_DIR" "$vista_data" '.git/'
-  else
-    local tmp
+  local folders=(ai-safety)
+  [[ "$SCIENCE_PROJECTS" == true ]] && folders+=(molten-salt-papers mstdb)
+
+  local source_tree="$PAYLOAD_DIR" tmp=''
+  if [[ -z "$PAYLOAD_DIR" ]]; then
     tmp="$(mktemp -d)"
     # The empty helper first clears any configured ones, so the token is what
     # answers: a stored credential for code.ornl.gov -- which Git Credential
@@ -1060,25 +1156,39 @@ stage_payload() {
       clone --depth 1 https://code.ornl.gov/v28/vista-data.git "$tmp/vista-data" \
       >/dev/null 2>&1 \
       || die "could not clone v28/vista-data — is VISTA_DATA_TOKEN still valid?"
-    copy_tree "$tmp/vista-data" "$vista_data" '.git/'
+    source_tree="$tmp/vista-data"
+  fi
+
+  local folder
+  for folder in "${folders[@]}"; do
+    [[ -d "$source_tree/$folder" ]] || die "payload has no $folder directory"
+    copy_tree "$source_tree/$folder" "$vista_data/$folder" '.git/'
+  done
+  if [[ -n "$tmp" ]]; then
     rm -rf "$tmp"
   fi
 
-  local pdfs="$vista_data/molten-salt-papers"
-  [[ -d "$pdfs" ]] || die "payload has no molten-salt-papers directory"
-  [[ -d "$vista_data/mstdb" ]] || die "payload has no mstdb directory"
   local pdf_count
-  pdf_count="$(find "$pdfs" -name '*.pdf' | wc -l | tr -d ' ')"
-  (( pdf_count > 0 )) || die "payload contains no PDFs"
+  pdf_count="$(find "$vista_data/ai-safety" -name '*.pdf' | wc -l | tr -d ' ')"
+  (( pdf_count > 0 )) || die "payload contains no AI-safety PDFs"
+  echo "corpus      : ai-safety, $pdf_count PDFs, $(du -sh "$vista_data/ai-safety" | cut -f1)"
 
-  # The CSV `hpc_jobs/forge-tune` reads. Staged here rather than left to
-  # first-run seeding so the job works on a package built with a payload.
-  local job_csv="$vista_data/mstdb/Molten_Salt_Thermophysical_Properties.csv"
-  [[ -f "$job_csv" ]] || die "payload has no mstdb CSV for hpc_jobs/forge-tune"
-  mkdir -p "$STAGING_APP/hpc_jobs/forge-tune"
-  cp "$job_csv" "$STAGING_APP/hpc_jobs/forge-tune/"
+  if [[ "$SCIENCE_PROJECTS" == true ]]; then
+    local science_pdfs
+    science_pdfs="$(find "$vista_data/molten-salt-papers" -name '*.pdf' | wc -l | tr -d ' ')"
+    (( science_pdfs > 0 )) || die "payload contains no molten-salt PDFs"
 
-  echo "corpus      : $pdf_count PDFs, $(du -sh "$vista_data" | cut -f1)"
+    # The CSV `hpc_jobs/forge-tune` reads. Staged here rather than left to
+    # first-run seeding so the job works on a package built with a payload.
+    local job_csv="$vista_data/mstdb/Molten_Salt_Thermophysical_Properties.csv"
+    [[ -f "$job_csv" ]] || die "payload has no mstdb CSV for hpc_jobs/forge-tune"
+    mkdir -p "$STAGING_APP/hpc_jobs/forge-tune"
+    cp "$job_csv" "$STAGING_APP/hpc_jobs/forge-tune/"
+    echo "corpus      : molten-salt-papers, $science_pdfs PDFs, plus MSTDB"
+  fi
+
+  # What the launcher installs, one tar member per line (see pack_payload).
+  printf '%s\n' "${PAYLOAD_MEMBERS[@]}" > "$STAGING_PAYLOAD/parts.txt"
 }
 
 # Stage the embedding weights in HuggingFace cache layout, so retrieval loads
@@ -1151,7 +1261,8 @@ print(f"  store covers {len(sources)} of {len(present)} payload documents")
 PYMATCH
 }
 
-# Build the vector store from the payload's PDFs.
+# Build the vector store for one corpus (`$1`, a vista-data folder name) from
+# the payload's PDFs, or reuse the prebuilt one in `$2` when it is given.
 #
 # Shipped prebuilt because indexing is the one first-run step that cannot be
 # made fast: it reads every paper, embeds ~4400 chunks, and calls a model once
@@ -1159,20 +1270,21 @@ PYMATCH
 # when a store is already present, so the researcher's first run finds a
 # searchable corpus and does none of this.
 build_vector_store() {
-  log "staging the vector store"
+  local slug="$1" reuse_store="${2:-}"
+  log "staging the $slug vector store"
 
-  local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
+  local kb="$STAGING_PAYLOAD/knowledge-bases/$slug"
   mkdir -p "$kb"
-  copy_tree "$STAGING_PAYLOAD/vista-data/molten-salt-papers" "$kb/pdfs"
+  copy_tree "$STAGING_PAYLOAD/vista-data/$slug" "$kb/pdfs"
 
   # Reusing a store skips the slowest step in the build -- reading every paper,
   # embedding ~4400 chunks, and calling a model once per paper for citation
   # metadata. Worth having because packaging changes need iterating on and the
   # corpus does not change between them; the consistency check below is what
   # keeps a stale store from being shipped against a different corpus.
-  if [[ -n "$REUSE_STORE" ]]; then
-    log "reusing the vector store from $REUSE_STORE"
-    copy_tree "$REUSE_STORE" "$kb/rag_db"
+  if [[ -n "$reuse_store" ]]; then
+    log "reusing the $slug vector store from $reuse_store"
+    copy_tree "$reuse_store" "$kb/rag_db"
     check_store_matches_corpus "$kb"
     VISTA_DATA_DIR="$STAGING_PAYLOAD" \
       "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb" <<'PYCHECK'
@@ -1187,7 +1299,7 @@ PYCHECK
     return 0
   fi
 
-  log "indexing the corpus (this is the slow part)"
+  log "indexing the $slug corpus (this is the slow part)"
   local citations=1
   [[ "$WITHOUT_CITATIONS" == true ]] && citations=0
 
@@ -1358,9 +1470,18 @@ target_floor() {
 # the builder's LANG unless it is pinned here.
 PAYLOAD_PARTS=(vista-data knowledge-bases huggingface)
 
+# What goes into the tar, finer than the top-level parts above: one member per
+# corpus, so a launcher can install a corpus an upgraded state directory lacks
+# even though its `vista-data/` and `knowledge-bases/` already exist. Listed in
+# `payload/parts.txt`, the contract between this build and its launcher.
+PAYLOAD_MEMBERS=(vista-data/ai-safety knowledge-bases/ai-safety huggingface)
+if [[ "$SCIENCE_PROJECTS" == true ]]; then
+  PAYLOAD_MEMBERS+=(vista-data/molten-salt-papers vista-data/mstdb knowledge-bases/molten-salt-papers)
+fi
+
 pack_payload() {
   log "packing the payload"
-  LC_ALL=C.UTF-8 tar --format=posix -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_PARTS[@]}"
+  LC_ALL=C.UTF-8 tar --format=posix -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_MEMBERS[@]}"
   local part
   for part in "${PAYLOAD_PARTS[@]}"; do
     rm -rf "${STAGING_PAYLOAD:?}/$part"
@@ -1407,14 +1528,11 @@ than C:\\Users\\<name>\\Downloads\\ needs for most names. The deepest files:"
   fi
 }
 
-write_manifest() {
-  log "writing the manifest"
-
-  local kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
-  local chunks citations pdf_count
-  chunks="$(
-    VISTA_DATA_DIR="$STAGING_PAYLOAD" \
-      "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$kb/rag_db" <<'PYCOUNT'
+# Text chunks and citations in the vector store at `$1` (a knowledge-base
+# folder), one count per line.
+count_store() {
+  VISTA_DATA_DIR="$STAGING_PAYLOAD" \
+    "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$1/rag_db" <<'PYCOUNT'
 import sys
 
 import chromadb
@@ -1429,10 +1547,29 @@ for name in ("text_chunks", "citations"):
     except Exception:
         print(0)
 PYCOUNT
-  )"
-  citations="$(echo "$chunks" | sed -n 2p)"
-  chunks="$(echo "$chunks" | sed -n 1p)"
-  pdf_count="$(find "$STAGING_PAYLOAD/vista-data/molten-salt-papers" -name '*.pdf' | wc -l | tr -d ' ')"
+}
+
+write_manifest() {
+  log "writing the manifest"
+
+  local kb="$STAGING_PAYLOAD/knowledge-bases/ai-safety"
+  local chunks citations pdf_count counts
+  counts="$(count_store "$kb")"
+  chunks="$(echo "$counts" | sed -n 1p)"
+  citations="$(echo "$counts" | sed -n 2p)"
+  pdf_count="$(find "$STAGING_PAYLOAD/vista-data/ai-safety" -name '*.pdf' | wc -l | tr -d ' ')"
+
+  # The molten-salt corpus, present only in a --science-projects build.
+  local science_json=null science_citations=1
+  if [[ "$SCIENCE_PROJECTS" == true ]]; then
+    local science_kb="$STAGING_PAYLOAD/knowledge-bases/molten-salt-papers"
+    local science_chunks science_pdfs
+    counts="$(count_store "$science_kb")"
+    science_chunks="$(echo "$counts" | sed -n 1p)"
+    science_citations="$(echo "$counts" | sed -n 2p)"
+    science_pdfs="$(find "$STAGING_PAYLOAD/vista-data/molten-salt-papers" -name '*.pdf' | wc -l | tr -d ' ')"
+    science_json="{ \"corpus\": { \"pdfs\": $science_pdfs, \"bytes\": $(du -sk "$STAGING_PAYLOAD/vista-data/molten-salt-papers" | cut -f1 | awk '{printf "%d", $1 * 1024}') }, \"vector_store\": { \"text_chunks\": $science_chunks, \"citations\": $science_citations, \"bytes\": $(du -sk "$science_kb/rag_db" | cut -f1 | awk '{printf "%d", $1 * 1024}') } }"
+  fi
 
   local size_of
   size_of() { du -sk "$1" 2>/dev/null | cut -f1 | awk '{printf "%d", $1 * 1024}'; }
@@ -1469,11 +1606,14 @@ PYCOUNT
     "sandbox_image": { "reference": "$SANDBOX_IMAGE", "bytes": $(size_of "$STAGING_PAYLOAD/sandbox-image.tar") },
     "corpus": { "pdfs": $pdf_count, "bytes": $(size_of "$STAGING_PAYLOAD/vista-data") },
     "vector_store": { "text_chunks": $chunks, "citations": $citations, "bytes": $(size_of "$kb/rag_db") },
-    "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") }
+    "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") },
+    "science": $science_json,
+    "parts": $(printf '%s\n' "${PAYLOAD_MEMBERS[@]}" | sed 's/.*/"&"/' | paste -sd, - | sed 's/^/[/; s/$/]/')
   },
+  "science_projects": $SCIENCE_PROJECTS,
   "window": $window_json,
   "completeness": {
-    "corpus_citations": $([[ "$citations" -gt 0 ]] && echo true || echo false)
+    "corpus_citations": $([[ "$citations" -gt 0 && "$science_citations" -gt 0 ]] && echo true || echo false)
   }
 }
 EOF
@@ -1489,10 +1629,10 @@ from pathlib import Path
 manifest = json.loads(open(sys.argv[1], encoding="utf-8").read())
 target_os = sys.argv[2]
 
-# A package without its window would still start -- in a browser -- which is
-# exactly how a packaging mistake would go unnoticed.
+# A package without its window cannot start at all: there is no browser mode,
+# and the launcher refuses. Caught here rather than on a researcher's machine.
 window = manifest.get("window")
-if target_os in ("macos", "linux") and not window:
+if target_os in ("macos", "linux", "windows") and not window:
     sys.exit(f"manifest has no window on {target_os}")
 if window:
     exe = Path(sys.argv[1]).parent / window["exe"]
@@ -1512,6 +1652,12 @@ for section, keys in (
         sys.exit(f"manifest is missing {section}: {missing}")
 if manifest["payload"]["vector_store"]["text_chunks"] < 1:
     sys.exit("manifest reports an empty vector store")
+# The science data is in the package exactly when the build said it would be.
+science = manifest["payload"]["science"]
+if bool(science) != manifest["science_projects"]:
+    sys.exit("manifest's science_projects disagrees with the science payload")
+if science and science["vector_store"]["text_chunks"] < 1:
+    sys.exit("manifest reports an empty molten-salt vector store")
 PYVALID
 
   echo "manifest    : $STAGING/manifest.json"
@@ -1685,7 +1831,10 @@ stage_window
 create_environments
 stage_payload
 stage_embedding_weights
-build_vector_store
+build_vector_store ai-safety "$REUSE_STORE"
+if [[ "$SCIENCE_PROJECTS" == true ]]; then
+  build_vector_store molten-salt-papers "$SCIENCE_STORE"
+fi
 export_sandbox_image
 write_manifest
 pack_payload

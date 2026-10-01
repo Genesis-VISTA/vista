@@ -81,7 +81,7 @@ test.describe("project context", () => {
       .click();
 
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByPlaceholder(/Ask about molten salts/)).toBeVisible();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeVisible();
   });
 
   test("a project that no longer exists does not strand the chat page", async ({ page }) => {

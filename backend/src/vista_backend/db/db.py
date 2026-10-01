@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from .seed import seed_db, sync_bundled_skills
+from .seed import seed_db, sync_bundled_skills, sync_default_projects
 
 
 @functools.cache
@@ -138,6 +138,9 @@ async def init_db() -> None:
         await conn.run_sync(_add_missing_columns)
 
     await seed_db(engine)
+    # The AI-safety default reaches first runs and upgrades alike, after seed_db so
+    # its empty-database check is unaffected.
+    await sync_default_projects(engine)
     # seed_db is first-run only; this picks up skills bundled since then.
     await sync_bundled_skills(engine)
 

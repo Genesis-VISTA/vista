@@ -169,7 +169,8 @@ test.describe("shared shell", () => {
     await page.locator(".conversation-list-open").first().click();
     await expect(header.getByRole("heading", { level: 1 })).toHaveText("Chat");
     await expect(header.getByRole("button", { name: "Back to conversations" })).toBeVisible();
-    await expect(header.getByRole("button", { name: /Save as skill/ })).toBeVisible();
+    await expect(header.getByRole("button", { name: /Generate report/ })).toBeVisible();
+    await expect(header.getByRole("button", { name: /Save as skill/ })).toHaveCount(0);
     await expect(header.getByRole("button", { name: "New conversation" })).toHaveCount(0);
     await expect(page.locator(".workspace > .panel:first-of-type .panel-header")).toHaveCount(0);
 

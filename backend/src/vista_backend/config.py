@@ -342,6 +342,15 @@ class Settings(BaseSettings):
     read_repository access. Generate at https://code.ornl.gov/v28/vista-data/-/settings/access_tokens
     """
 
+    seed_science_projects: bool = False
+    """
+    Seed the `molten-salt` and `alloy-design` science projects, the
+    `molten-salt-papers` knowledge base and the MSTDB-derived skill assets on first
+    run from a `vista_data_token`. Set with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true`.
+    Off by default: VISTA's out-of-the-box project is AI Safety in Autonomous Labs.
+    A bundled payload is seeded by what it contains and ignores this setting.
+    """
+
     version: A[str, Field(validation_alias="VISTA_VERSION")] = "dev"
     """
     Human-readable build identifier, surfaced as the API's version.

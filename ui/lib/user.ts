@@ -100,7 +100,7 @@ function notifyUser(): void {
   userListeners.forEach((cb) => cb());
 }
 
-async function extractError(res: Response): Promise<string> {
+export async function extractError(res: Response): Promise<string> {
   try {
     const data = await res.json();
     const detail = (data as { detail?: unknown; error?: unknown }).detail ??

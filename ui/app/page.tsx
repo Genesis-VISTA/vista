@@ -16,6 +16,12 @@ import {
   type SkillDraftFields,
   type SkillSavedPayload,
 } from "@/components/SkillEditorModal";
+import {
+  ReportModal,
+  type ReportDraft,
+  type ReportSavePayload,
+} from "@/components/ReportModal";
+import { extractError } from "@/lib/user";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { labelForTool } from "@/lib/tool-labels";
 import { fileLinkProps } from "@/lib/file-links";
@@ -80,9 +86,9 @@ const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
 ];
 
 const SUGGESTIONS = [
-  "Show me the phase diagram for AlCl3-KCl",
-  "How many fluoride salts are in the database?",
-  "What is the density of FLiBe at 873 K?",
+  "What can you help me with in this project?",
+  "Which tools and skills do you have available?",
+  "What knowledge bases can you search?",
 ];
 
 type LogEntry = {
@@ -405,6 +411,15 @@ export default function HomePage() {
   const [skillDraft, setSkillDraft] = useState<SkillDraftFields | null>(null);
   const [skillSaveError, setSkillSaveError] = useState<string | null>(null);
 
+  // Generate-report state. `reportDraft: null` while a draft is in flight.
+  // `reportRequestRef` numbers each draft request so a slow earlier one (the
+  // user hit Regenerate) cannot overwrite the draft that replaced it.
+  const [showReport, setShowReport] = useState(false);
+  const [reportDraft, setReportDraft] = useState<ReportDraft | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSavedPath, setReportSavedPath] = useState<string | null>(null);
+  const reportRequestRef = useRef(0);
+
   const [isCalling, setIsCalling] = useState(false);
   const [mcpHealth, setMcpHealth] = useState<McpHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
@@ -523,11 +538,89 @@ export default function HomePage() {
   }
 
   /**
+   * Draft a report of the open conversation into the report modal. Used both
+   * to open it and to regenerate with a focus `hint`; either way the modal
+   * shows its drafting state until `/reports/generate` returns.
+   */
+  async function draftReport(hint?: string) {
+    const projectName = activeProject?.name;
+    if (!projectName) return;
+    const request = ++reportRequestRef.current;
+    setReportDraft(null);
+    setReportError(null);
+    setShowReport(true);
+    let draft: ReportDraft = { title: "", slug_suggestion: "", summary: "", body: "" };
+    let error: string | null = null;
+    try {
+      const resp = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/reports/generate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+        }
+      );
+      if (resp.ok) draft = (await resp.json()) as ReportDraft;
+      else error = await extractError(resp);
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Drafting failed.";
+    }
+    if (request !== reportRequestRef.current) return;
+    setReportError(error);
+    setReportDraft(draft);
+  }
+
+  function openGenerateReport() {
+    setReportSavedPath(null);
+    void draftReport();
+  }
+
+  function closeReport() {
+    reportRequestRef.current++;
+    setShowReport(false);
+    setReportDraft(null);
+    setReportError(null);
+    setReportSavedPath(null);
+  }
+
+  /**
+   * Save the report to the project's uploads. The backend keys it on this
+   * chat's session id, so saving again replaces the same file.
+   */
+  async function saveReport(payload: ReportSavePayload) {
+    const projectName = activeProject?.name;
+    if (!projectName || !activeChatSessionId) return;
+    setReportError(null);
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(projectName)}/reports`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, chat_session_id: activeChatSessionId }),
+      });
+      if (!resp.ok) {
+        setReportError(await extractError(resp));
+        return;
+      }
+      const saved = (await resp.json()) as { path: string };
+      setReportSavedPath(saved.path);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "Save failed.");
+    }
+  }
+
+  /** Hand the report off to skill drafting: the report steers the skill draft. */
+  function saveReportAsSkill(body: string) {
+    closeReport();
+    void openSaveAsSkill(body);
+  }
+
+  /**
    * Open the Save-as-Skill modal and kick off the LLM draft in parallel.
    * The modal opens immediately in a "Drafting…" state and switches to the
-   * editable form once `/api/skills/generate` returns.
+   * editable form once `/api/skills/generate` returns. `hint` (the report, when
+   * coming from the report modal) steers the draft.
    */
-  async function openSaveAsSkill() {
+  async function openSaveAsSkill(hint?: string) {
     setSkillDraft(null);
     setSkillSaveError(null);
     setShowSkillEditor(true);
@@ -535,7 +628,7 @@ export default function HomePage() {
       const resp = await fetch("/api/skills/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message_history: messageHistory }),
+        body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
@@ -1220,16 +1313,18 @@ export default function HomePage() {
                   disabled={messageHistory.length === 0}
                   title={
                     messageHistory.length === 0
-                      ? "Have a conversation first; the skill is drafted from it."
-                      : "Distill this conversation into a reusable SKILL.md"
+                      ? "Have a conversation first; the report is written from it."
+                      : "Write up this conversation as a report you can save or turn into a skill"
                   }
-                  onClick={() => void openSaveAsSkill()}
+                  onClick={openGenerateReport}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M12 3H5a2 2 0 0 0-2 2v14l4-3h5a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z" />
-                    <path d="M19 21V8a2 2 0 0 0-2-2h-3" />
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+                    <path d="M14 3v5h5" />
+                    <path d="M9 13h6" />
+                    <path d="M9 17h6" />
                   </svg>
-                  <span>Save as skill</span>
+                  <span>Generate report</span>
                 </button>
               </div>
             ) : null}
@@ -1299,14 +1394,14 @@ export default function HomePage() {
                     <>
                       <button
                         type="button"
-                        className="conversation-list-edit"
+                        className="conversation-action-button primary"
                         onClick={() => void handleRenameConversation()}
                       >
                         Save
                       </button>
                       <button
                         type="button"
-                        className="conversation-list-edit ghost"
+                        className="conversation-action-button"
                         onClick={() => setEditingChatSessionId(null)}
                       >
                         Cancel
@@ -1352,7 +1447,7 @@ export default function HomePage() {
                 )}
                 {messages.length === 0 && (
                   <div className="chat-opener">
-                    <p className="chat-opener-lede">Ask about molten salts.</p>
+                    <p className="chat-opener-lede">Ask a question to get started.</p>
                     <div className="chat-opener-chips">
                       {SUGGESTIONS.map((suggestion) => (
                         <button
@@ -1423,7 +1518,7 @@ export default function HomePage() {
           <div className="chat-input-row">
             <input
               className="input"
-              placeholder="Ask about molten salts… (e.g., 'show phase diagram for LiF-NaF')"
+              placeholder="Ask a question… (e.g., 'What can you help me with?')"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -1727,6 +1822,18 @@ export default function HomePage() {
           onSubmit={handleElicitationSubmit}
         />
       )}
+
+      <ReportModal
+        open={showReport}
+        projectName={activeProject?.name ?? ""}
+        draft={reportDraft}
+        errorMessage={reportError}
+        savedPath={reportSavedPath}
+        onRegenerate={(hint) => void draftReport(hint)}
+        onSave={saveReport}
+        onSaveAsSkill={saveReportAsSkill}
+        onClose={closeReport}
+      />
 
       <SkillEditorModal
         open={showSkillEditor}

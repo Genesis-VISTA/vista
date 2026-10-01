@@ -5,7 +5,7 @@ tools, usage limits) that scopes a chat session. Picking a project decides
 what the agent knows about, what skills it has access to, what MCP tools it
 can call, and how aggressively it can spend on a turn.
 
-This doc covers the project data model, the two default projects, the
+This doc covers the project data model, the default projects, the
 CRUD UI at `/projects`, and how a project's record actually feeds the agent
 loop at runtime.
 
@@ -16,10 +16,12 @@ If you just want to start chatting, pick a project on `/projects` and click
 
 Projects are rows in the backend SQLite DB (default: `vista.db` at the repo
 root; override with `VISTA_BACKEND_DATABASE_URL`). The table is created and
-seeded on backend startup by [db.py:19](../backend/src/vista_backend/db/db.py)
-from [defaults.py](../backend/src/vista_backend/db/defaults.py); existing
-rows are **upserted** by id on each boot, which means edits to
-`DEFAULT_PROJECTS` propagate but user-created projects are never overwritten.
+seeded on backend startup by `init_db` in
+[db.py](../backend/src/vista_backend/db/db.py), which calls into
+[seed.py](../backend/src/vista_backend/db/seed.py). Seeding is **additive**:
+it inserts what is missing, matched by a fixed id, and never overwrites a row
+that exists, so edits you make to a project survive a restart and user-created
+projects are never touched. See [Default projects](#default-projects).
 
 The system prompt for each default project is loaded from a sibling
 Markdown file under [system_prompts/](../backend/src/vista_backend/db/system_prompts).
@@ -52,14 +54,10 @@ The list is consumed by `tool_allowed` in
 - Patterns are `fnmatch`-style — `*` and `?` wildcards over the tool name.
 - An empty list (or all-deny list) implicitly allows everything (`*`).
 
-Examples from the two default projects:
+Every default project uses the same list, so HPC job submission is available
+and only the retired `agenthpc_*` SSH tools are denied:
 
 ```python
-# alloy-design: everything except the generic HPC submission tools
-tools = ["*", "!submit_hpc_job", "!get_hpc_job_status",
-         "!get_hpc_job_outputs", "!cancel_hpc_job"]
-
-# molten-salt: everything except the alloy-design HPC toolchain
 tools = ["*", "!agenthpc_*"]
 ```
 
@@ -77,9 +75,10 @@ Common fields:
 | `output_tokens_limit`| Max output tokens per turn.                              | unlimited      |
 | `total_tokens_limit` | Combined input+output cap per turn.                      | unlimited      |
 
-The molten-salt project uses `{"request_limit": 10}` (short Q&A flows);
-alloy-design uses `{"request_limit": 600}` (long agentic loops on HPC).
-Empty `{}` falls back to engine defaults.
+The default projects use `{"request_limit": 50}` (ai-safety-autonomous-labs),
+`{"request_limit": 100}` (molten-salt) and `{"request_limit": 600}`
+(alloy-design, long agentic loops on HPC). Empty `{}` falls back to engine
+defaults.
 
 The schema's `_validate_usage_limits` validator normalizes the dict through
 PydanticAI's `TypeAdapter` on write, so a typo in a key surfaces as a
@@ -87,20 +86,64 @@ PydanticAI's `TypeAdapter` on write, so a typo in a key surfaces as a
 
 ## Default projects
 
-Seeded once at first launch from
-[defaults.py](../backend/src/vista_backend/db/defaults.py):
+Seeding lives in [seed.py](../backend/src/vista_backend/db/seed.py). There is
+no `defaults.py`: the project rows are written inline there, each with a fixed
+UUID so they can be recognised across restarts.
 
-- **alloy-design** — High-entropy alloy design on HPC. Skills:
-  `["alloy-design"]`. Forbids the generic `submit_hpc_job` family so the
-  agent has to go through the project-specific `agenthpc_*` tools.
-- **molten-salt** — Molten-salt thermophysical properties. Skills:
-  `["salt-analysis"]`. Forbids `agenthpc_*` so chats don't accidentally
-  spend HPC budget.
+**Always seeded**
 
-Editing or deleting a default project from the UI is allowed — but note that
-the next backend startup will **re-upsert** it from `defaults.py` (matched by
-UUID), so structural changes won't survive a restart unless you also change
-the code. User-created projects are never touched by the seeder.
+- **ai-safety-autonomous-labs** — AI Safety in Autonomous Labs. Its system
+  prompt frames a small literature corpus on the safety and security of
+  autonomous labs and LLM agents. It has no mandated skills, allows every tool
+  except `agenthpc_*`, and has `request_limit` 50. It comes with the
+  `ai-safety` knowledge base ("AI Safety Papers"), built from vista-data's
+  `ai-safety/` folder.
+
+**Science projects, off by default**
+
+- **molten-salt** — Molten-salt thermophysical properties and the SPLASH
+  campaign, with the `molten-salt-papers` knowledge base.
+- **alloy-design** — High-entropy alloy design on HPC.
+
+The science projects, the molten-salt corpus and the MSTDB assets behind the
+`salt-analysis`, `salt-prediction` and `model-fine-tuning` skills are seeded
+only when `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` (from a vista-data token;
+a prebuilt package instead seeds whatever its payload contains and ignores the
+setting). Every other bundled skill is registered either way.
+
+### When each default is seeded
+
+- **First run, empty database** (`seed_db`): the science projects if enabled,
+  the bundled skills, and the dev test users.
+- **Every startup** (`sync_default_projects`): the AI-safety project and its
+  knowledge base. This is what brings the project to a database that already
+  exists. It inserts the project and the knowledge base if either is missing,
+  and appends the `ai-safety` slug to the project's knowledge bases when the
+  knowledge base exists and is not attached. It overwrites nothing else and
+  removes nothing.
+
+The science projects are never added to a database that already has projects,
+even with the setting on.
+
+### Where the AI-safety corpus comes from
+
+With `VISTA_DATA_TOKEN` set, the first startup downloads `ai-safety/` from
+vista-data and indexes it (about a minute, with citations when an inference key
+is configured). If vista-data cannot be reached, startup still completes: the
+project is seeded without the knowledge base, a warning names the missing
+corpus, and the next startup tries again. With neither a token nor a bundled
+payload the project exists but has no literature search.
+
+A prebuilt package ships the corpus already indexed, and its first-run setup
+never indexes; an absent or empty bundled index fails setup naming the corpus.
+
+### Editing and deleting defaults
+
+Editing a default project from the UI is safe: the next startup leaves your
+changes alone, and a knowledge base you attach stays attached. **Deleting
+`ai-safety-autonomous-labs` brings it back on the next startup**, with its
+default settings, because nothing records that it was deleted. The science
+projects are only created on first run, so deleting them is permanent.
 
 ## Creating and editing projects in the UI
 
@@ -116,8 +159,8 @@ is the CRUD surface.
    generated or imported skill without publishing it first. Mandated skills
    live forever in `project.skills`; users can still **add** extra skills per
    project via the hub's Load button (see the [skill onboarding doc](skill-onboarding.md#how-a-skill-becomes-loaded-for-a-project)).
-3. **Tools field.** Comma-separated fnmatch patterns. Same syntax as
-   `defaults.py`, e.g. `*, !agenthpc_*`.
+3. **Tools field.** Comma-separated fnmatch patterns. Same syntax as the
+   default projects' lists, e.g. `*, !agenthpc_*`.
 4. **System prompt.** Free-form Markdown appended after the base prompt.
    Reference the project's skills by their slug — at runtime the agent sees
    an `<available_skills>` block listing each skill's `SKILL.md` path inside
@@ -194,10 +237,19 @@ a different one or delete the existing project first.
 `UsageLimits`. Run `python -c "from pydantic_ai import UsageLimits; help(UsageLimits)"`
 to see the accepted fields.
 
-**Edited a default project, restarted, my changes vanished.** — `db/db.py:init_db`
-upserts default projects on every boot, matched by UUID. To make a default
-edit stick, change [defaults.py](../backend/src/vista_backend/db/defaults.py)
-too. User-created projects are not touched.
+**Deleted `ai-safety-autonomous-labs`, restarted, it is back.** — It is a
+default that is synced on every boot, matched by UUID. Edits to it are kept;
+only a missing project is recreated. See
+[Editing and deleting defaults](#editing-and-deleting-defaults).
+
+**`ai-safety-autonomous-labs` has no literature search.** — Its `ai-safety`
+knowledge base could not be obtained: look for an "AI-safety corpus
+unavailable" warning in the backend log. Set `VISTA_DATA_TOKEN` (or use a
+package built with its payload) and restart.
+
+**`molten-salt` and `alloy-design` are missing.** — They are off by default.
+Set `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` and seed an empty database; they
+are not added to one that already has projects.
 
 **Agent can't see my new tool.** — The MCP server lists tools at
 `http://localhost:8000/mcp`. If the tool is there but the agent ignores it,
@@ -218,8 +270,8 @@ is also `storage`-event synced across tabs.
 ## Reference
 
 - Schema: [backend/src/vista_backend/db/schemas.py](../backend/src/vista_backend/db/schemas.py)
-- Defaults: [backend/src/vista_backend/db/defaults.py](../backend/src/vista_backend/db/defaults.py)
-- DB init / upsert logic: [backend/src/vista_backend/db/db.py](../backend/src/vista_backend/db/db.py)
+- Default projects and their sync: [backend/src/vista_backend/db/seed.py](../backend/src/vista_backend/db/seed.py)
+- DB init: [backend/src/vista_backend/db/db.py](../backend/src/vista_backend/db/db.py)
 - API routes: [backend/src/vista_backend/api/projects.py](../backend/src/vista_backend/api/projects.py)
 - Agent build per project: [backend/src/vista_backend/agents/agents.py](../backend/src/vista_backend/agents/agents.py)
 - Frontend data layer: [ui/lib/projects.ts](../ui/lib/projects.ts)

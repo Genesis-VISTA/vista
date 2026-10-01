@@ -9,15 +9,25 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable, SkillTable
+from vista_backend.db import seed as seed_module
 from vista_backend.db.seed import seed_db
+
+from test_seed_payload import make_payload, make_vector_store
 
 
 @pytest.mark.anyio
 async def test_seed_folds_splash_into_molten_salt(tmp_path, monkeypatch):
-    # Seed offline (no data token -> no downloads) and into a throwaway data dir so the
-    # skill copies / storage land under tmp_path rather than the real data volume.
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    # Seed from a payload (science enabled by its contents) into a throwaway data dir
+    # so skill copies / storage land under tmp_path rather than the real data volume.
+    # The index is prebuilt, so nothing is embedded.
+    data_dir = tmp_path / "data"
+    make_vector_store(data_dir / "knowledge-bases" / "molten-salt-papers" / "rag_db")
+    monkeypatch.setattr(settings, "data_dir", data_dir)
     monkeypatch.setattr(settings, "vista_data_token", None)
+    monkeypatch.setattr(
+        settings, "vista_data_payload_dir", make_payload(tmp_path / "payload")
+    )
+    monkeypatch.setattr(seed_module, "REPO_ROOT", tmp_path / "repo")
 
     engine = create_async_engine(
         "sqlite+aiosqlite://",
