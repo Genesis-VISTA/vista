@@ -88,7 +88,10 @@ script failure leaves the page stuck in light.
 A small synchronous inline `<script>` in the `<head>` of `ui/app/layout.tsx` reads
 `localStorage["vista.theme"]` inside `try/catch` and sets `data-theme` when the value is
 `light` or `dark`. `<html>` gets `suppressHydrationWarning`, because the attribute differs
-between the server render and the client.
+between the server render and the client. The script and the storage key live in
+`ui/lib/theme-init.ts`, which imports nothing from React, because the layout is a Server
+Component. The script also listens for `storage` events, so a choice made in one tab reaches
+every other open tab even when no React component that reads the theme is mounted.
 
 *Alternative:* `next/script` with `strategy="beforeInteractive"`. The Next 16 docs
 (`02-components/script.md`) say it does not block hydration and is "fetched" before first-party
