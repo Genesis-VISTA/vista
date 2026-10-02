@@ -285,7 +285,66 @@ To rerun it locally:
 
 ### Probe results
 
-*Pending: filled in by task 1.2 from the three jobs' summaries.*
+Run [37051824576](https://github.com/sam-baumann/vista-runner-probe/actions/runs/37051824576)
+on 2026-10-02, from `sam-baumann/vista-runner-probe` at its first commit. All three jobs ran
+every check; each took under 40 s.
+
+**ubuntu-24.04** (Ubuntu 24.04.5 LTS, kernel 6.17.0-1022-azure, x86_64)
+
+| check | result |
+|---|---|
+| glibc | 2.39 |
+| disk free (`/`, the workspace) | 14 GB of 72 GB |
+| `/dev/kvm` before udev rule | `crw-rw---- root kvm` |
+| `/dev/kvm` after udev rule | `crw-rw-rw- root kvm`, read+write: yes |
+| docker buildx | v0.37.1 |
+| Python | 3.14.7 |
+| msb | 0.7.2; doctor: "Host setup is ready." |
+| microVM boot | `microvm-ok` |
+| reach HF / PyPI / nodejs / Electron / gitlab.com / code.ornl.gov | 200 / 200 / 200 / 200 / 301 / 302 |
+
+**macos-15** (macOS 15.7.9, Apple M2 Pro (Virtual), kernel `RELEASE_ARM64_VMAPPLE`)
+
+| check | result |
+|---|---|
+| `kern.hv_support` | `unknown oid` (exit 1) |
+| disk free (`/System/Volumes/Data`) | 43 GiB of 320 GiB |
+| Python | 3.14.7 |
+| msb | 0.7.2; doctor: "Host setup is ready." |
+| microVM boot | fails: `build_microvm: Internal(Vm(VmSetup(VmCreate)))` |
+| reach HF / PyPI / nodejs / Electron / gitlab.com / code.ornl.gov | 200 / 200 / 200 / 200 / 301 / 302 |
+
+**windows-2025** (Windows 10.0.26100.33438, Git Bash 5.3.15)
+
+| check | result |
+|---|---|
+| `LongPathsEnabled` | 1 |
+| HypervisorPlatform feature | Enabled |
+| disk free (`D:`, the workspace) | 110 GB of 110 GB (`C:` not measured) |
+| Python | 3.14.7 |
+| msb | 0.7.2; doctor: "Host setup is ready." |
+| microVM boot | `microvm-ok` |
+| reach HF / PyPI / nodejs / Electron / gitlab.com / code.ornl.gov | 200 / 200 / 200 / 200 / 301 / 302 |
+
+**Against the decisions:**
+
+- **D3, glibc floor:** holds. 24.04 has 2.39, exactly the floor.
+- **D3, Linux KVM:** holds. The udev rule makes `/dev/kvm` usable and a microVM boots, so the
+  Linux package gets the full smoke test.
+- **D4, macOS:** holds. The runner is itself a VM without nested virtualisation, and the boot
+  fails even though `doctor` reports ready, which confirms that `doctor` is not a hypervisor
+  check on macOS.
+- **D4, Windows: does not hold.** The hosted Windows runner boots a microVM. Per the Risks
+  entry "A hosted Windows runner might pass `msb doctor`", Windows should run the full smoke
+  test and `--verify-without-sandbox` applies to macOS only. **Revise D2, D4 and the Risks
+  entry before group 6**, and decide whether 5.3 (the `.ps1` bypass) is still wanted.
+- **D8, disk:** holds on Linux, with about 4 GB of margin against the ~10 GB peak once
+  staging is removed early (3.1). macOS and Windows have ample room. Windows' `C:` (where
+  `%TEMP%` lives) was not measured.
+- **Network: the premise in the proposal is wrong.** code.ornl.gov answered `302`, so the
+  runners can reach it, presumably at a sign-in redirect. The private inputs repo (D5) still
+  stands on its other reasons: no LLM credential and no code.ornl.gov token in CI. But the
+  proposal's "code.ornl.gov is unreachable from GitHub's runners" should be reworded.
 
 *Alternative:* learn the same facts from the first full release run. That spends a full
 build's minutes per finding, and the workflow is written against guesses.

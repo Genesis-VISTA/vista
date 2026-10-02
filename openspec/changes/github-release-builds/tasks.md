@@ -42,7 +42,7 @@
 
   Every check ends the job green, so a negative answer is reported rather than hiding the
   rest. Verify `actionlint` is clean.
-- [ ] 1.2 With the maintainer's explicit go-ahead to push, create and run the probe repo. `gh`
+- [x] 1.2 With the maintainer's explicit go-ahead to push, create and run the probe repo. `gh`
   is logged in as `sam-baumann`, and the repo name was free on 2026-10-02.
   1. Copy `openspec/changes/github-release-builds/probe/` to a scratch directory outside the
      repo, then run `git init` and commit there.
