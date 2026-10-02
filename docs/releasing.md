@@ -170,8 +170,7 @@ revoked without touching the others.
 |---|---|---|
 | `BUILD_INPUTS_DEPLOY_KEY` | secret | The private half of a read-only deploy key on `vista-build-inputs`. Preferred, but needs deploy keys enabled for the organisation |
 | `BUILD_INPUTS_TOKEN` | secret | Used only when there is no deploy key: a fine-grained token that can read `vista-build-inputs`' contents and nothing else |
-| `AMSC_GIT_TOKEN` | secret | A gitlab.com token that can read the private `amscrot-py` repository (`amsc2/…/amsc-isro-toolkit`), scope `read_repository` only |
-| `AMSC_GIT_USER` | variable, optional | The token's username. Leave it unset for a personal or project access token. A deploy token needs its own username here |
+| `AMSC_GIT_TOKEN` | secret | A maintainer's gitlab.com fine-grained token that can only download the private `amscrot-py` repository's code (below) |
 | `RELEASE_PLATFORMS` | variable | **Leave unset on the public repository.** Only a private rehearsal sets it (below) |
 
 One of the two inputs credentials must be set, and the package jobs stop early, naming both,
@@ -205,8 +204,31 @@ leaks, it opens only that one repository, whose contents ship inside every publi
 Rotate it by repeating the steps and deleting the old key, which
 `gh repo deploy-key list -R Genesis-VISTA/vista-build-inputs` names by its title.
 
-Set the token with `gh secret set AMSC_GIT_TOKEN -R Genesis-VISTA/vista`, which prompts for the
-value rather than taking it on the command line.
+**Creating the GitLab token.** It is a fine-grained personal access token belonging to a
+maintainer with at least Reporter access to `amsc2/…/amsc-isro-toolkit`, the repository that
+provides `amscrot-py`. A project deploy token would not depend on a person, but needs a
+Maintainer of that project to create it, and the fine-grained token is already confined to one
+project's code. At gitlab.com → Edit profile → Access → Personal access tokens → Generate token →
+**Fine-grained token**:
+
+- **Group and project access:** only the selected project
+  `amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit`;
+- **Resource permissions:** on the Group and project tab, **Code → Download**, and nothing else;
+- **Expiration date:** GitLab allows at most 365 days.
+
+Check it in a terminal before storing it. `read -s` keeps it off the screen:
+
+```bash
+read -rs T && git ls-remote "https://oauth2:$T@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" HEAD && echo TOKEN-OK; unset T
+```
+
+Then store it with `gh secret set AMSC_GIT_TOKEN -R Genesis-VISTA/vista`, which prompts for the
+value rather than taking it on the command line. Run both in an interactive terminal: without one,
+`gh secret set` reads standard input and can store an empty secret.
+
+**Before the token expires**, or if its owner leaves the project, create a new one and set the
+secret again. Otherwise every package job fails its preflight with "no access to the amsc2
+repository that provides amscrot-py".
 
 ## Running a package job's steps locally
 

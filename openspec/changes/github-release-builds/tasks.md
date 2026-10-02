@@ -182,8 +182,9 @@
   - The release job's work is in `render-notes.sh` and `draft-release.sh`. A re-run keeps a
     maintainer's "What's changed" section. The notes come from the plan's per-platform `verify`
     field rather than a marker file. Substitution uses perl, because `envsubst` is not on macOS.
-  - `package.sh` takes an optional `AMSC_GIT_USER`, defaulting to `oauth2`, because a GitLab
-    deploy token authenticates with its own username. Its `AMSC_GIT_TOKEN` path could not be
+  - `package.sh` sends `AMSC_GIT_TOKEN` with the username `oauth2`. (An `AMSC_GIT_USER`
+    override for a GitLab deploy token was added here, then removed in 9.2 when the maintainer
+    chose a fine-grained personal token, which `oauth2` serves.) Its `AMSC_GIT_TOKEN` path could not be
     run locally (no keychain access from the session), so 9.2 is its first real test.
   - 6.2 was verified as the mac job will run it: an image built with `buildx --load` and
     `docker save`, `VERIFY_WITHOUT_SANDBOX=1`, and the same archive name and checks as the
@@ -206,7 +207,7 @@ references stay stable.
     `vista-data/ai-safety/` and `rag_db/` in a checkout of the private
     `Genesis-VISTA/vista-build-inputs`, commit and push without ever rewriting its history,
     then set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`;
-  - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com deploy token, and the
+  - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com fine-grained token, and the
     `BUILD_INPUTS_DEPLOY_KEY` read-only deploy key;
   - rerunning the runner probe in `sam-baumann/vista-runner-probe` whenever a runner version
     in D3 is bumped;

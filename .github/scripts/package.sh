@@ -19,8 +19,6 @@
 #                           through a temporary global git config for this build
 #                           only, so a maintainer's own git credentials are used
 #                           when it is unset
-#   AMSC_GIT_USER           the token's username; `oauth2` unless it is a deploy
-#                           token, whose username is its own
 #
 # Writes `archive=` and `sha256=` to $GITHUB_OUTPUT when that is set.
 
@@ -71,7 +69,7 @@ if [[ -n "${AMSC_GIT_TOKEN:-}" ]]; then
   git_config="$(mktemp)"
   trap 'rm -f "$git_config"' EXIT
   git config --file "$git_config" \
-    "url.https://${AMSC_GIT_USER:-oauth2}:${AMSC_GIT_TOKEN}@gitlab.com/amsc2/.insteadOf" \
+    "url.https://oauth2:${AMSC_GIT_TOKEN}@gitlab.com/amsc2/.insteadOf" \
     "https://gitlab.com/amsc2/"
   export GIT_CONFIG_GLOBAL="$git_config"
 fi

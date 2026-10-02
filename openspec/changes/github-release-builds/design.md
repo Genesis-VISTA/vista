@@ -468,6 +468,11 @@ exists to make safe, and a broken workflow would then be on the public repo's `m
   Nothing enforces it: GitHub refuses branch protection and rulesets on a private repo in a
   free-plan organisation ("Upgrade to GitHub Pro or make this repository public"). The
   maintainer chose to keep it a documented rule rather than tag each pin or upgrade the plan.
+- **[The GitLab token for `amscrot-py` expires, or its owner leaves.]** It is a maintainer's
+  fine-grained personal token (Code → Download on that one project, at most 365 days). The
+  maintainer chose it over asking that project's Maintainers for a deploy token.
+  → The package jobs fail their preflight, naming the amsc2 repository, before building
+  anything. `docs/releasing.md` says how to renew it.
 - **[The deploy key leaks.]**
   → It is read-only and opens one repo, whose contents ship inside every public package
   anyway. Rotate it in the repo's settings.
@@ -487,7 +492,8 @@ There is no data or runtime migration. The rollout order:
    on linux and windows (D12), and fix what it turns up. Then delete that repo.
 4. Land the script changes, the release workflow, the template and `docs/releasing.md` on
    GitLab. The mirror carries them over.
-5. Add two secrets to the mirror: `AMSC_GIT_TOKEN`, a read-only gitlab.com deploy token, and
+5. Add two secrets to the mirror: `AMSC_GIT_TOKEN`, a maintainer's gitlab.com fine-grained
+   token that can only download `amscrot-py`'s code, and
    `BUILD_INPUTS_DEPLOY_KEY`, a deploy key's private half, or `BUILD_INPUTS_TOKEN` until an
    organisation owner allows deploy keys.
 6. When the mirror goes public, so runners are free, do a manual run on `main` and fix
