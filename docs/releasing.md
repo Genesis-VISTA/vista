@@ -109,7 +109,8 @@ rag_db/                 # the Chroma store with its citation metadata, for --vec
 It has no releases and is never offered as a download of its own. Its contents ship only inside
 the packages. Each package job checks it out at the commit pinned in
 [`.github/build-inputs.env`](../.github/build-inputs.env), using the `BUILD_INPUTS_DEPLOY_KEY`
-secret. Until that file holds a real commit, the workflow stops with "no build inputs pinned".
+secret or, failing that, `BUILD_INPUTS_TOKEN` (below). Until that file holds a real commit, the
+workflow stops with "no build inputs pinned".
 
 ### Updating them
 
@@ -167,12 +168,28 @@ revoked without touching the others.
 
 | name | kind | what it is |
 |---|---|---|
-| `BUILD_INPUTS_DEPLOY_KEY` | secret | The private half of a read-only deploy key on `vista-build-inputs` |
+| `BUILD_INPUTS_DEPLOY_KEY` | secret | The private half of a read-only deploy key on `vista-build-inputs`. Preferred, but needs deploy keys enabled for the organisation |
+| `BUILD_INPUTS_TOKEN` | secret | Used only when there is no deploy key: a fine-grained token that can read `vista-build-inputs`' contents and nothing else |
 | `AMSC_GIT_TOKEN` | secret | A gitlab.com token that can read the private `amscrot-py` repository (`amsc2/…/amsc-isro-toolkit`), scope `read_repository` only |
 | `AMSC_GIT_USER` | variable, optional | The token's username. Leave it unset for a personal or project access token. A deploy token needs its own username here |
 | `RELEASE_PLATFORMS` | variable | **Leave unset on the public repository.** Only a private rehearsal sets it (below) |
 
-Creating the deploy key:
+One of the two inputs credentials must be set, and the package jobs stop early, naming both,
+when neither is.
+
+**Deploy keys are disabled for the Genesis-VISTA organisation**, as of 2026-10-02.
+`gh repo deploy-key add` then fails with "Deploy keys are disabled for this repository", and
+only an organisation owner can allow them (Organisation settings → Member privileges). Until
+one does, use the token.
+
+Creating the token: at github.com → Settings → Developer settings → Fine-grained tokens, set
+the resource owner to Genesis-VISTA, give it access to `vista-build-inputs` only, with
+**Contents: read-only** and no other permission, and pick an expiry. The organisation may have
+to approve it. Then store it with `gh secret set BUILD_INPUTS_TOKEN -R <repo>`, which prompts
+for the value. It belongs to the person who made it and stops working when it expires or
+they leave the organisation, which is why the deploy key is preferred.
+
+Creating the deploy key, once they are allowed:
 
 ```bash
 repo=Genesis-VISTA/vista        # the repository whose workflow reads the inputs
@@ -217,8 +234,9 @@ your own account (design D12):
 
 1. Create a private repository, such as `<you>/vista-release-rehearsal`, and push the branch to
    it as `main`, so `workflow_dispatch` sees the workflow.
-2. Add the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets, and set the variable
-   `RELEASE_PLATFORMS` to `["linux-x86","win-x86"]`.
+2. Add the `AMSC_GIT_TOKEN` secret and one inputs credential (`BUILD_INPUTS_DEPLOY_KEY` or
+   `BUILD_INPUTS_TOKEN`), and set the variable `RELEASE_PLATFORMS` to
+   `["linux-x86","win-x86"]`.
 3. Run the workflow by hand. To test the release job, push a tag such as `v0.2.0-rc0` to the
    rehearsal repository. Push it again after a commit to test the draft update.
 4. Delete the draft, the tag and the repository afterwards.

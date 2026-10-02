@@ -226,14 +226,16 @@ references stay stable.
   and `rag_db/` from the maintainer's Mac: the AI-safety corpus and store every package in
   this change was built and smoke-tested with (`~/.vista`; the `~/.vista-build` stores are
   molten-salt ones). Commit the real `BUILD_INPUTS_COMMIT`. Each consumer gets its own
-  read-only deploy key when its secret is set (9.2, 10.1). Branch protection is unavailable
-  (below), so never rewriting the repo's history is a documented rule only.
+  read-only credential when its secret is set (9.2, 10.1). Branch protection is unavailable
+  (design, Risks), so never rewriting the repo's history is a documented rule only. Deploy keys
+  turned out to be disabled for the organisation, so the inputs checkout also accepts a
+  fine-grained token, `BUILD_INPUTS_TOKEN` (design D5).
   Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
   … --vector-store …`. It comes first because the rehearsal uses it (design D12).
 - [ ] 9.2 Rehearse the workflow in the private `sam-baumann/vista-release-rehearsal` (D12).
   1. Create the repo and push this branch to it as `main`.
-  2. Add the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets, and set the variable
-     `RELEASE_PLATFORMS` to `["linux-x86","win-x86"]`.
+  2. Add the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_TOKEN` secrets (the maintainer creates both
+     tokens), and set the variable `RELEASE_PLATFORMS` to `["linux-x86","win-x86"]`.
   3. Run `release.yml` by hand on `main`, then push `v0.2.0-rc0` to the rehearsal repo, and
      push it again after a no-op commit, to exercise the draft update and `--clobber`.
 
@@ -250,7 +252,8 @@ references stay stable.
 ## 10. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
 
 - [ ] 10.1 The maintainer enables Actions on `Genesis-VISTA/vista` and adds the
-  `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets. Verify the release workflow shows
+  `AMSC_GIT_TOKEN` secret and an inputs credential: `BUILD_INPUTS_DEPLOY_KEY` if an
+  organisation owner has allowed deploy keys by then, otherwise `BUILD_INPUTS_TOKEN`. Verify the release workflow shows
   under the repo's Actions tab, and that no organisation policy blocks hosted runners. The
   probe ran under a personal account, so it couldn't check that.
 - [ ] 10.2 Once the mirror is public, so runners are free, make a manual run on `main`. Compare

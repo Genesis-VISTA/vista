@@ -89,7 +89,9 @@ platform's package without anyone building on three machines.
 - **External setup:**
   - A private `Genesis-VISTA/vista-build-inputs` repo.
   - Two GitHub secrets, both read-only and each scoped to one repo: a token for the private
-    `amscrot-py` repo on gitlab.com, and a deploy key for `vista-build-inputs`.
+    `amscrot-py` repo on gitlab.com, and a deploy key for `vista-build-inputs`. Deploy keys
+    are disabled for the Genesis-VISTA organisation, so until an owner allows them a
+    fine-grained read-only token stands in.
   - Actions enabled on the mirror once it is public.
 - **Unchanged:** GitLab CI, the runtime behaviour of an installed package, and the
   researcher-facing launcher behaviour.

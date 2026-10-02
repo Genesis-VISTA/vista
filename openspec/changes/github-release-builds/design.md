@@ -157,6 +157,13 @@ It is a plain repo, with no releases and no tags, so nothing in it is published.
   Each package job checks the inputs repo out at that commit with `actions/checkout`, using
   `ssh-key: ${{ secrets.BUILD_INPUTS_DEPLOY_KEY }}`. A read-only deploy key belongs to the
   repo, not to a person, and opens nothing else.
+- **When deploy keys are disabled.** They are, for the Genesis-VISTA organisation (found at
+  9.1), and only an owner can allow them. So the checkout also takes
+  `token: ${{ secrets.BUILD_INPUTS_TOKEN || github.token }}`: a fine-grained token with
+  read-only Contents on the inputs repo alone. A deploy key wins when both are set. A step
+  before the checkout fails, naming both secrets, when neither is. The token belongs to a
+  person and expires, so it is the fallback, and the maintainer asks an owner to allow deploy
+  keys for the mirror.
 - **Integrity.** A git commit hash already covers every file's contents, so a separate
   sha256 is not needed. A missing commit, or refused access, fails the job before any build
   step.
@@ -391,7 +398,7 @@ Before the MR merges on GitLab, the workflow runs for real in a private repo on 
 maintainer's own account, `sam-baumann/vista-release-rehearsal`. The branch is pushed there
 directly, as that repo's default branch, so `workflow_dispatch` sees the workflow. It gets the
 same two secrets as the mirror will. That catches wiring that `actionlint` can't:
-secrets, the inputs checkout over the deploy key, artifact hand-off between jobs, the Windows
+secrets, the inputs checkout with its credential, artifact hand-off between jobs, the Windows
 job on a real runner, and the `release` job creating and updating a draft.
 
 - **mac is left out of the rehearsal.** Standard `ubuntu-24.04-arm` runners are free only to
@@ -407,7 +414,7 @@ job on a real runner, and the `release` job creating and updating a draft.
 - **Not a way to cut a partial release.** `release` fails before creating anything when the
   variable is set and the repository is public (`github.event.repository.private` is false).
 - **Inputs.** The rehearsal uses the real `Genesis-VISTA/vista-build-inputs`, created first
-  (9.1) for that reason, through a read-only deploy key of its own, revoked with the repo. So the pinned
+  (9.1) for that reason, through a credential of its own, revoked with the repo. So the pinned
   commit is exercised before rollout, and no throwaway inputs repo is needed.
 - **Cost.** Private-repo minutes come from the personal quota: Linux at 1×, Windows at 2×.
   The rehearsal's draft release, its rc tag and the repo itself are deleted afterwards.
@@ -475,13 +482,14 @@ There is no data or runtime migration. The rollout order:
 1. Create the private `sam-baumann/vista-runner-probe`, push the probe workflow to it, run
    it, and record its results here (D10). Revise D3, D4 or D8 if they don't hold.
 2. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
-   maintainer's Mac, add a read-only deploy key, and commit the pin.
+   maintainer's Mac, and commit the pin.
 3. Rehearse the workflow on this branch in the private `sam-baumann/vista-release-rehearsal`,
    on linux and windows (D12), and fix what it turns up. Then delete that repo.
 4. Land the script changes, the release workflow, the template and `docs/releasing.md` on
    GitLab. The mirror carries them over.
 5. Add two secrets to the mirror: `AMSC_GIT_TOKEN`, a read-only gitlab.com deploy token, and
-   `BUILD_INPUTS_DEPLOY_KEY`, the deploy key's private half.
+   `BUILD_INPUTS_DEPLOY_KEY`, a deploy key's private half, or `BUILD_INPUTS_TOKEN` until an
+   organisation owner allows deploy keys.
 6. When the mirror goes public, so runners are free, do a manual run on `main` and fix
    whatever the runners turn up beyond what the probe predicted.
 7. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the
