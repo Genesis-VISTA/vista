@@ -121,10 +121,10 @@
 
 ## 6. Release workflow
 
-- [ ] 6.1 Add `.github/build-inputs.env` with `BUILD_INPUTS_COMMIT`, holding a placeholder
+- [x] 6.1 Add `.github/build-inputs.env` with `BUILD_INPUTS_COMMIT`, holding a placeholder
   that makes the workflow fail with "no build inputs pinned" until 9.1 sets the real commit.
   Verify that the file's own comment names `docs/releasing.md`.
-- [ ] 6.2 Add `.github/scripts/package.sh`, the one script each package job runs (design D11).
+- [x] 6.2 Add `.github/scripts/package.sh`, the one script each package job runs (design D11).
   It takes everything from environment variables:
   - `BUILD_INPUTS_DIR`, `SANDBOX_IMAGE`, an optional `VISTA_VERSION`, and
     `VERIFY_WITHOUT_SANDBOX`;
@@ -138,7 +138,7 @@
   when that is set. Verify by running it on the Mac against a local checkout of the inputs
   repo and an exported image tar: it produces the same archive a direct
   `build_local_package.sh` call does.
-- [ ] 6.3 Add `.github/workflows/release.yml`:
+- [x] 6.3 Add `.github/workflows/release.yml`:
   - triggers: `push: tags: ['v*']` and `workflow_dispatch`;
   - `permissions: contents: read` by default;
   - a concurrency group per ref that cancels only manual runs;
@@ -149,7 +149,7 @@
 
   Verify `actionlint` reports no errors (run it through its Docker image or the release
   binary in `$CLAUDE_JOB_DIR/tmp`).
-- [ ] 6.4 Add the `package` matrix (linux-x86 on `ubuntu-24.04`, mac-arm64 on `macos-15`,
+- [x] 6.4 Add the `package` matrix (linux-x86 on `ubuntu-24.04`, mac-arm64 on `macos-15`,
   win-x86 on `windows-2025` with the Git Bash shell, `fail-fast: false`), narrowed to
   `vars.RELEASE_PLATFORMS` when that is set (D12). Its steps are only:
   - check out VISTA;
@@ -163,17 +163,31 @@
 
   Verify `actionlint` is clean, and that no build logic sits in the YAML that `package.sh`
   doesn't also run locally.
-- [ ] 6.5 Add `.github/release-notes.md` (the template from design D9) and a small fill script
+- [x] 6.5 Add `.github/release-notes.md` (the template from design D9) and a small fill script
   under `.github/scripts/`. Verify by running the script locally against two dummy archives
   with `.sha256` files and reading the rendered notes: the sha256 table, the build-inputs
   commit, the install steps, the quarantine workaround and the unticked real-hardware
   checklist.
-- [ ] 6.6 Add the `release` job: `if: startsWith(github.ref, 'refs/tags/v')`, needs `package`,
+- [x] 6.6 Add the `release` job: `if: startsWith(github.ref, 'refs/tags/v')`, needs `package`,
   `contents: write`. It fails if any archive exceeds 2 GiB, creates the draft (as a
   prerelease when the tag has a suffix) with `gh release create --draft` or updates an
   existing draft, uploads assets with `--clobber`, and sets the rendered notes. Before any
   of that, it fails when `vars.RELEASE_PLATFORMS` is set on a public repository (D12). Verify
   `actionlint` is clean. The rehearsal (9.2) runs it for real, and 10.3 is the live check.
+
+  **As built (group 6):**
+  - A first `plan` job runs `.github/scripts/plan.sh`. It builds both matrices from
+    `RELEASE_PLATFORMS`, because a matrix `include` alone would add back a platform the list
+    leaves out. It also fails a placeholder pin before any runner is spent.
+  - The release job's work is in `render-notes.sh` and `draft-release.sh`. A re-run keeps a
+    maintainer's "What's changed" section. The notes come from the plan's per-platform `verify`
+    field rather than a marker file. Substitution uses perl, because `envsubst` is not on macOS.
+  - `package.sh` takes an optional `AMSC_GIT_USER`, defaulting to `oauth2`, because a GitLab
+    deploy token authenticates with its own username. Its `AMSC_GIT_TOKEN` path could not be
+    run locally (no keychain access from the session), so 9.2 is its first real test.
+  - 6.2 was verified as the mac job will run it: an image built with `buildx --load` and
+    `docker save`, `VERIFY_WITHOUT_SANDBOX=1`, and the same archive name and checks as the
+    direct builds in group 5.
 
 ## 7. Local workflow runs with act (optional, manual, outside PR CI)
 
