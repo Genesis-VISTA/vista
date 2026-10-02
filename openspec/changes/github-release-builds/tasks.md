@@ -1,7 +1,7 @@
 **Working notes.**
 
 - Implementation happens in the worktree `.claude/worktrees/github-release-builds`, on branch
-  `worktree-github-release-builds`.
+  `github-release-builds`.
 - Commit after each task group. Never push or open an MR without the maintainer's explicit
   say-so.
 - A full local build (2.1, 3.1, 4.3, 5.4, 6.2, 9.1) needs the following. Tokens come from
