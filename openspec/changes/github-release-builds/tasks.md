@@ -12,8 +12,13 @@
   - on Linux, whether `/dev/kvm` exists and is read/write once the udev rule (the same one
     6.4 uses) is applied;
   - on macOS, `sysctl kern.hv_support`;
-  - on all three platforms, the output and exit code of `msb doctor` and `msb --version`,
-    from `microsandbox==0.7.2` (the version locked in `mcp_servers/dev_mcp_server/uv.lock`);
+  - on all three platforms, using `microsandbox==0.7.2` (the version locked in
+    `mcp_servers/dev_mcp_server/uv.lock`) installed under Python 3.14 from
+    `actions/setup-python`:
+    - `msb --version`;
+    - `msb doctor`'s verdict;
+    - a real microVM boot, `msb run alpine -- echo microvm-ok`, bounded at 3 minutes. This is
+      the decisive check: on macOS, `doctor` doesn't test the hypervisor at all;
   - on `ubuntu-24.04`, that `docker buildx` is present;
   - on Windows, the `LongPathsEnabled` registry value and the Git Bash version;
   - a reachability check (HTTP status only) for huggingface.co, pypi.org, nodejs.org, the
