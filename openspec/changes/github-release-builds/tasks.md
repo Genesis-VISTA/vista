@@ -197,7 +197,7 @@ references stay stable.
 
 ## 8. Documentation
 
-- [ ] 8.1 Write `docs/releasing.md`. It covers:
+- [x] 8.1 Write `docs/releasing.md`. It covers:
   - cutting a release: tag on GitLab, then the mirror;
   - checking the draft;
   - the real-hardware smoke test on macOS, from the draft asset;
@@ -214,10 +214,10 @@ references stay stable.
     what that leaves untested.
 
   Verify every command in it against the scripts.
-- [ ] 8.2 Link `docs/releasing.md` from `README.md`'s packaging section and from `AGENTS.md`'s
+- [x] 8.2 Link `docs/releasing.md` from `README.md`'s packaging section and from `AGENTS.md`'s
   build notes, and document `--verify-without-sandbox` in the README's build options. Verify
   the links resolve.
-- [ ] 8.3 Run `openspec validate github-release-builds --strict` and `./scripts/ci-local.sh lint`.
+- [x] 8.3 Run `openspec validate github-release-builds --strict` and `./scripts/ci-local.sh lint`.
   Verify both pass.
 
 ## 9. Rehearsal in a private repo (before the MR merges; needs the go-ahead to push)

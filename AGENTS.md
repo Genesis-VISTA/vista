@@ -57,6 +57,12 @@ To build everything without launching, run
 ./scripts/build.sh
 ```
 
+Release packages: `scripts/build_local_package.sh` builds and smoke-tests one for the host it
+runs on. Tagged releases are built by `.github/workflows/release.yml` on the GitHub mirror
+(`Genesis-VISTA/vista`), whose job steps live in `.github/scripts/` so they run the same
+locally. See [`docs/releasing.md`](docs/releasing.md). The mirror overwrites GitHub-only
+commits, so workflow changes land on GitLab like everything else.
+
 ### VISTA window (Electron)
 `electron/` is a window onto the UI and nothing else: it loads the `--url` it is given and never
 starts services. The launchers own its lifetime, and closing it stops VISTA.
