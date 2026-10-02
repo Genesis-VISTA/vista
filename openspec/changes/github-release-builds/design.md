@@ -231,14 +231,26 @@ reproduce:
 - the free disk;
 - which hosts the runners can reach.
 
-`runner-probe.yml` is a manual, secret-free workflow that only reports these, one job per
-runner the release uses. It runs `msb doctor` from the same microsandbox version VISTA locks,
-so its answer is the one the launcher would get.
+`runner-probe.yml` is a manual, secret-free workflow that only reports these. It runs `msb
+doctor` from the same microsandbox version VISTA locks, so its answer is the one the launcher
+would get.
 
-It runs first, on the still-private mirror. A probe costs about 70 quota minutes, against
-roughly 600–1,000 for one full build. Its results are recorded in this design before group 6,
-and they confirm or revise D3, D4 and D8. It stays in the repo, to rerun whenever a pinned
-runner version (D3) is bumped.
+**Where it lives.** It lives in its own private repo, `sam-baumann/vista-runner-probe`, not in
+VISTA. It needs nothing from VISTA (no checkout, no secrets, no inputs), so VISTA's history
+gets no probe commits. Hosted runner images are the same for personal and organisation
+repos, so the results carry over. Organisation-level Actions policies on Genesis-VISTA are not
+tested this way, and they surface at 9.2.
+
+**Runners.** It has one job per hosted runner the release builds on: `ubuntu-24.04`,
+`macos-15` and `windows-2025`. Standard `ubuntu-24.04-arm` runners are available only to
+public repos, so the private probe leaves that runner out. The arm64 sandbox-image build is
+exercised natively by `act` on Apple Silicon instead (7.1), and the first manual run on the
+public mirror confirms it.
+
+**Cost and timing.** It runs first, on the personal Actions quota. A probe costs about 70
+minutes, against roughly 600–1,000 for one full build. Its results are recorded in this
+design before group 6, and they confirm or revise D3, D4 and D8. It is rerun from that repo
+whenever a pinned runner version (D3) is bumped.
 
 *Alternative:* learn the same facts from the first full release run. That spends a full
 build's minutes per finding, and the workflow is written against guesses.
@@ -309,8 +321,8 @@ Taken together, these are the layers of verification:
 
 There is no data or runtime migration. The rollout order:
 
-1. Push the probe workflow to GitLab, enable Actions on the still-private mirror, run the
-   probe, and record its results here (D10). Revise D3, D4 or D8 if they don't hold.
+1. Create the private `sam-baumann/vista-runner-probe`, push the probe workflow to it, run
+   it, and record its results here (D10). Revise D3, D4 or D8 if they don't hold.
 2. Land the script changes, the release workflow, the template and `docs/releasing.md` on
    GitLab. The mirror carries them over.
 3. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a

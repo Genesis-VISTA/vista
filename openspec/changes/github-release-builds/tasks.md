@@ -1,9 +1,12 @@
-## 1. Runner probe (runs first; needs the maintainer to push to GitLab and enable Actions on the private mirror)
+## 1. Runner probe (runs first, off to the side; nothing lands in the VISTA repo)
 
-- [ ] 1.1 Add `.github/workflows/runner-probe.yml`, triggered by `workflow_dispatch` only, with
-  no secrets and `permissions: contents: read`. It has one job per runner the release uses
-  (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15`, `windows-2025`). It reports and builds
-  nothing. Each job prints:
+- [ ] 1.1 Write `.github/workflows/runner-probe.yml` in a scratch directory outside the VISTA
+  repo, for the private `sam-baumann/vista-runner-probe`. It is triggered by
+  `workflow_dispatch` only, holds no secrets, and has `permissions: contents: read`. It has one
+  job per hosted runner the release builds on: `ubuntu-24.04`, `macos-15` and `windows-2025`.
+  `ubuntu-24.04-arm` is left out, because standard arm64 runners are available to public repos
+  only; the arm64 image build is exercised natively by `act` on the Mac instead (7.1). The
+  workflow reports and builds nothing. Each job prints:
   - `df -h`, or the drive free space on Windows;
   - the OS version, plus `ldd --version` on Linux;
   - on Linux, whether `/dev/kvm` exists and is read/write once the udev rule (the same one
@@ -11,7 +14,7 @@
   - on macOS, `sysctl kern.hv_support`;
   - on all three platforms, the output and exit code of `msb doctor` and `msb --version`,
     from `microsandbox==0.7.2` (the version locked in `mcp_servers/dev_mcp_server/uv.lock`);
-  - on `ubuntu-24.04-arm`, that `docker buildx` is present;
+  - on `ubuntu-24.04`, that `docker buildx` is present;
   - on Windows, the `LongPathsEnabled` registry value and the Git Bash version;
   - a reachability check (HTTP status only) for huggingface.co, pypi.org, nodejs.org, the
     Electron release downloads, gitlab.com and code.ornl.gov. code.ornl.gov is expected to
@@ -19,9 +22,10 @@
 
   Every check ends the job green, so a negative answer is reported rather than hiding the
   rest. Verify `actionlint` is clean.
-- [ ] 1.2 The maintainer pushes the branch to GitLab, enables Actions on the private
-  `Genesis-VISTA/vista`, and runs the probe. It costs roughly 70 quota minutes, macOS's 10×
-  multiplier included. Record the results in this change's `design.md`, under a new "Probe
+- [ ] 1.2 With the maintainer's go-ahead, create the private `sam-baumann/vista-runner-probe`
+  with `gh repo create`, push the workflow, and run it with `gh workflow run`. It costs
+  roughly 70 minutes of the personal Actions quota, macOS's 10× multiplier included, and adds
+  no commits to VISTA. Record the results in this change's `design.md`, under a new "Probe
   results" section. Verify each D-decision still holds against them: the macOS sandbox, the
   Windows `msb doctor`, KVM on Linux, the glibc floor and the disk margins. If one doesn't,
   stop and revise the design before group 6.
@@ -145,7 +149,9 @@
   hosted runner. Supply secrets from a git-ignored `.secrets` file, and pass
   `--container-architecture linux/amd64` on Apple Silicon. Verify
   `act workflow_dispatch -j sandbox-image --matrix arch:amd64` builds and saves the amd64
-  image on the Mac.
+  image on the Mac. Also run it with `--matrix arch:arm64 --container-architecture linux/arm64`.
+  That runs natively on Apple Silicon and stands in for the `ubuntu-24.04-arm` runner the
+  private probe can't use.
 - [ ] 7.2 Run the linux-x86 `package` job under `act` with `VERIFY_WITHOUT_SANDBOX=1` passed
   through `--env`, since Docker on a Mac has no KVM. Verify it gets through checkout, inputs,
   image download and a complete build. Under amd64 emulation it is slow, so treat it as a
@@ -165,7 +171,8 @@
     then set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`;
   - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com deploy token, and the
     `BUILD_INPUTS_DEPLOY_KEY` read-only deploy key;
-  - rerunning the runner probe whenever a runner version in D3 is bumped.
+  - rerunning the runner probe in `sam-baumann/vista-runner-probe` whenever a runner version
+    in D3 is bumped.
 
   Verify every command in it against the scripts.
 - [ ] 8.2 Link `docs/releasing.md` from `README.md`'s packaging section and from `AGENTS.md`'s
@@ -182,9 +189,10 @@
   (`~/.vista-build`). Add a read-only deploy key, and commit the real `BUILD_INPUTS_COMMIT`.
   Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
   … --vector-store …`.
-- [ ] 9.2 The maintainer adds the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets to
-  `Genesis-VISTA/vista`. Actions is already enabled from 1.2. Verify the release workflow
-  shows under the repo's Actions tab.
+- [ ] 9.2 The maintainer enables Actions on `Genesis-VISTA/vista` and adds the
+  `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets. Verify the release workflow shows
+  under the repo's Actions tab, and that no organisation policy blocks hosted runners. The
+  probe ran under a personal account, so it couldn't check that.
 - [ ] 9.3 Once the mirror is public, so runners are free, make a manual run on `main`. Compare
   disk use, the macOS first run and the Windows `msb doctor` against the probe results. Fix
   what turns up, for example by gating the image import or dropping the flag on Windows.

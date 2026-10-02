@@ -40,8 +40,9 @@ platform's package without anyone building on three machines.
   run the full smoke test. Before the draft is published, a maintainer runs the full smoke
   test on a real Mac and a real Windows machine.
 - **Verifying before building.** A manual, secret-free runner probe reports what each hosted
-  runner actually offers: hypervisor, KVM, glibc, disk and network. It runs first, on the
-  still-private mirror, so the workflow is written against facts. Each package job's steps
+  runner actually offers: hypervisor, KVM, glibc, disk and network. It runs first, in a
+  separate private repo (`sam-baumann/vista-runner-probe`) so VISTA's history stays clean, and
+  the workflow is written against facts. Each package job's steps
   live in one script that runs the same on a maintainer's Mac, and `act` exercises the Linux
   jobs locally.
 - The release notes are generated from a template: version, platforms, per-archive sha256,
@@ -67,8 +68,7 @@ platform's package without anyone building on three machines.
 
 ## Impact
 
-- **New files:** `.github/workflows/release.yml`, `.github/workflows/runner-probe.yml`,
-  `.github/scripts/package.sh`, a release-notes template, `.actrc`, and a maintainer doc
+- **New files:** `.github/workflows/release.yml`, `.github/scripts/package.sh`, a release-notes template, `.actrc`, and a maintainer doc
   (`docs/releasing.md`) for updating the build inputs, running the workflow locally and the
   pre-publish check.
 - **Changed scripts:**
@@ -79,6 +79,7 @@ platform's package without anyone building on three machines.
     build-only option, never otherwise.
 - **Weights pin:** `vista_mcp_server/config.py`, `rag_mcp.py` and `build_rag.py` load the
   embedding model at the pinned revision. These are the same weights as today, made explicit.
+- **Outside VISTA:** the runner probe lives in the private `sam-baumann/vista-runner-probe`.
 - **External setup:**
   - A private `Genesis-VISTA/vista-build-inputs` repo.
   - Two GitHub secrets, both read-only and each scoped to one repo: a token for the private
