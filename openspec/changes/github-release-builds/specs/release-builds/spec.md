@@ -10,7 +10,9 @@ and verified the same way every time on GitHub-hosted runners rather than by han
 Pushing a tag of the form `v<semver>` SHALL build the linux-x86_64, mac-arm64 and
 windows-x86_64 packages and SHALL create one draft GitHub release for that tag. The draft
 SHALL carry each platform's archive and its `.sha256` file. No release SHALL be created
-unless all three platforms built and passed their verification.
+unless all three platforms built and passed their verification. A private rehearsal
+repository MAY narrow the set of platforms it builds, but a public repository SHALL NOT
+create a release from fewer than all three.
 
 #### Scenario: A release tag is pushed
 
@@ -24,6 +26,11 @@ unless all three platforms built and passed their verification.
 - **WHEN** a release tag is pushed and any one platform's build or verification fails
 - **THEN** no release is created for that tag, and the failing platform is named in the run's
   result
+
+#### Scenario: A narrowed platform set on a public repository
+
+- **WHEN** a release tag is pushed to a public repository whose platform set has been narrowed
+- **THEN** no release is created, and the run says the platform set must be left unset there
 
 #### Scenario: A prerelease tag is pushed
 

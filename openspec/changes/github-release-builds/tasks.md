@@ -143,12 +143,15 @@
   - `permissions: contents: read` by default;
   - a concurrency group per ref that cancels only manual runs;
   - the `sandbox-image` matrix: amd64 on `ubuntu-24.04` and arm64 on `ubuntu-24.04-arm`,
-    using buildx and `docker save`, uploaded as a one-day artifact.
+    using buildx and `docker save`, uploaded as a one-day artifact. It builds only the
+    architectures the platforms in `vars.RELEASE_PLATFORMS` need (design D12; unset means
+    all three platforms).
 
   Verify `actionlint` reports no errors (run it through its Docker image or the release
   binary in `$CLAUDE_JOB_DIR/tmp`).
 - [ ] 6.4 Add the `package` matrix (linux-x86 on `ubuntu-24.04`, mac-arm64 on `macos-15`,
-  win-x86 on `windows-2025` with the Git Bash shell, `fail-fast: false`). Its steps are only:
+  win-x86 on `windows-2025` with the Git Bash shell, `fail-fast: false`), narrowed to
+  `vars.RELEASE_PLATFORMS` when that is set (D12). Its steps are only:
   - check out VISTA;
   - check out `Genesis-VISTA/vista-build-inputs` at `BUILD_INPUTS_COMMIT` with
     `secrets.BUILD_INPUTS_DEPLOY_KEY`;
@@ -168,8 +171,9 @@
 - [ ] 6.6 Add the `release` job: `if: startsWith(github.ref, 'refs/tags/v')`, needs `package`,
   `contents: write`. It fails if any archive exceeds 2 GiB, creates the draft (as a
   prerelease when the tag has a suffix) with `gh release create --draft` or updates an
-  existing draft, uploads assets with `--clobber`, and sets the rendered notes. Verify
-  `actionlint` is clean. The live check is 9.4.
+  existing draft, uploads assets with `--clobber`, and sets the rendered notes. Before any
+  of that, it fails when `vars.RELEASE_PLATFORMS` is set on a public repository (D12). Verify
+  `actionlint` is clean. The rehearsal (9.2) runs it for real, and 10.3 is the live check.
 
 ## 7. Local workflow runs with act (optional, manual, outside PR CI)
 
@@ -201,7 +205,9 @@
   - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com deploy token, and the
     `BUILD_INPUTS_DEPLOY_KEY` read-only deploy key;
   - rerunning the runner probe in `sam-baumann/vista-runner-probe` whenever a runner version
-    in D3 is bumped.
+    in D3 is bumped;
+  - rehearsing a workflow change in a private repo with `RELEASE_PLATFORMS` (design D12), and
+    what that leaves untested.
 
   Verify every command in it against the scripts.
 - [ ] 8.2 Link `docs/releasing.md` from `README.md`'s packaging section and from `AGENTS.md`'s
@@ -210,28 +216,48 @@
 - [ ] 8.3 Run `openspec validate github-release-builds --strict` and `./scripts/ci-local.sh lint`.
   Verify both pass.
 
-## 9. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
+## 9. Rehearsal in a private repo (before the MR merges; needs the go-ahead to push)
 
 - [ ] 9.1 Create the private `Genesis-VISTA/vista-build-inputs` repo, with branch protection on
   its default branch that forbids force-pushes. Push `vista-data/ai-safety/` and `rag_db/`
   from the maintainer's Mac, the same inputs the last hand-built package used
   (`~/.vista-build`). Add a read-only deploy key, and commit the real `BUILD_INPUTS_COMMIT`.
   Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
-  … --vector-store …`.
-- [ ] 9.2 The maintainer enables Actions on `Genesis-VISTA/vista` and adds the
+  … --vector-store …`. It comes first because the rehearsal uses it (design D12).
+- [ ] 9.2 Rehearse the workflow in the private `sam-baumann/vista-release-rehearsal` (D12).
+  1. Create the repo and push this branch to it as `main`.
+  2. Add the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets, and set the variable
+     `RELEASE_PLATFORMS` to `["linux-x86","win-x86"]`.
+  3. Run `release.yml` by hand on `main`, then push `v0.2.0-rc0` to the rehearsal repo, and
+     push it again after a no-op commit, to exercise the draft update and `--clobber`.
+
+  Verify:
+  - the manual run is green with two archives as artifacts and creates no release;
+  - the tag run creates one draft prerelease with both archives, their `.sha256` files and
+    rendered notes naming the pinned inputs commit, and the re-run replaces the assets;
+  - the Windows job's smoke test ran with the sandbox, and both jobs print `df -h`;
+  - no step needs anything the public mirror won't have.
+
+  Fix what turns up here, on this branch, before the MR merges. Then delete the draft, the tag
+  and the repo, and record the minutes used in `docs/releasing.md`.
+
+## 10. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
+
+- [ ] 10.1 The maintainer enables Actions on `Genesis-VISTA/vista` and adds the
   `AMSC_GIT_TOKEN` and `BUILD_INPUTS_DEPLOY_KEY` secrets. Verify the release workflow shows
   under the repo's Actions tab, and that no organisation policy blocks hosted runners. The
   probe ran under a personal account, so it couldn't check that.
-- [ ] 9.3 Once the mirror is public, so runners are free, make a manual run on `main`. Compare
+- [ ] 10.2 Once the mirror is public, so runners are free, make a manual run on `main`. Compare
   disk use, the macOS first run and the Windows full smoke test (sandbox included) against
   the probe results. Fix what turns up, for example by gating the image import on macOS.
-  Verify a green run with three archives downloadable from it.
-- [ ] 9.4 Push `v0.2.0-rc1` from GitLab. Verify:
+  This is the mac job's first real run. Verify a green run with three archives downloadable
+  from it.
+- [ ] 10.3 Push `v0.2.0-rc1` from GitLab. Verify:
   - a draft prerelease appears with three archives, `.sha256` files and correct notes;
   - the full smoke test passes on a real Mac from the draft asset, and the Windows job's own
     smoke test ran with the sandbox.
 
   Then delete the rc release and its tag.
-- [ ] 9.5 Push `v0.2.0`. Publish once the team has cleared redistribution of the AI-safety
+- [ ] 10.4 Push `v0.2.0`. Publish once the team has cleared redistribution of the AI-safety
   PDFs, the embedding weights and `amscrot-py`. Verify the published release's archives
   download and match their `.sha256` files.

@@ -92,7 +92,9 @@ Workflow permissions default to `contents: read`. Only `release` gets `contents:
 concurrency group per ref cancels a superseded manual run but never a tag run.
 
 The three platforms use `fail-fast: false` so one failure still reports the others, and
-`release` needs all three, which is what makes "no partial releases" hold.
+`release` needs all three, which is what makes "no partial releases" hold. The one exception
+is the private rehearsal (D12), which narrows the platform set through a repository variable
+that a public repository refuses to release with.
 
 ### D3: Pinned runners
 
@@ -252,7 +254,7 @@ would get.
 VISTA. It needs nothing from VISTA (no checkout, no secrets, no inputs), so VISTA's history
 gets no probe commits. Hosted runner images are the same for personal and organisation
 repos, so the results carry over. Organisation-level Actions policies on Genesis-VISTA are not
-tested this way, and they surface at 9.2.
+tested this way, and they surface at 10.1.
 
 **Runners.** It has one job per hosted runner the release builds on: `ubuntu-24.04`,
 `macos-15` and `windows-2025`. Standard `ubuntu-24.04-arm` runners are available only to
@@ -385,6 +387,38 @@ Taken together, these are the layers of verification:
 6. an `-rc` draft;
 7. the real-hardware smoke test before publishing.
 
+### D12: Rehearse in a private repo before merging
+
+Before the MR merges on GitLab, the workflow runs for real in a private repo on the
+maintainer's own account, `sam-baumann/vista-release-rehearsal`. The branch is pushed there
+directly, as that repo's default branch, so `workflow_dispatch` sees the workflow. It gets the
+same two secrets as the mirror will. That catches wiring that `actionlint` and `act` can't:
+secrets, the inputs checkout over the deploy key, artifact hand-off between jobs, the Windows
+job on a real runner, and the `release` job creating and updating a draft.
+
+- **mac is left out of the rehearsal.** Standard `ubuntu-24.04-arm` runners are free only to
+  public repos, and the mac job needs the arm64 image they build. A private repo also pays
+  macOS's 10× minute multiplier. So the rehearsal builds linux-x86 and win-x86 only. The mac
+  job, with its `--verify-without-sandbox` path, is first run on the public mirror (10.2). It
+  is the job least covered before then, which the maintainer accepted.
+- **The switch.** A repository variable, `RELEASE_PLATFORMS`, holds a JSON list of platform
+  keys. Unset, which is how the public mirror runs, it means all three. The `package` matrix
+  is built from it, and the `sandbox-image` matrix builds only the architectures those
+  platforms need, so no arm64 runner is requested. The rehearsal sets it to
+  `["linux-x86","win-x86"]`.
+- **Not a way to cut a partial release.** `release` fails before creating anything when the
+  variable is set and the repository is public (`github.event.repository.private` is false).
+- **Inputs.** The rehearsal uses the real `Genesis-VISTA/vista-build-inputs`, created first
+  (9.1) for that reason, with the same read-only deploy key the mirror will hold. So the pinned
+  commit is exercised before rollout, and no throwaway inputs repo is needed.
+- **Cost.** Private-repo minutes come from the personal quota: Linux at 1×, Windows at 2×.
+  The rehearsal's draft release, its rc tag and the repo itself are deleted afterwards.
+- **What it can't show.** Organisation Actions policies on Genesis-VISTA (10.1), the arm64
+  image build on a native runner, and the mac job.
+
+*Alternative:* rehearse on the public mirror after merging. That is the path the change
+exists to make safe, and a broken workflow would then be on the public repo's `main`.
+
 ## Risks / Trade-offs
 
 - **[The macOS launcher's first run may need the hypervisor beyond the agent toolset.]**
@@ -404,7 +438,7 @@ Taken together, these are the layers of verification:
   probe hit this locally (D10). On the macOS runner, the smoke test's state directory comes
   from `mktemp -d /tmp/vista-smoke.XXXXXX` (`build_local_package.sh`'s `run_smoke_test`), which
   is short. But the launcher, not the build, decides where msb's home lands.
-  → During 5.4 and 9.4, check where the package's msb home resolves on macOS. If it can be
+  → During 5.4 and 10.3, check where the package's msb home resolves on macOS. If it can be
   deep, report it as a launcher precondition, like the Windows path-length checks.
 - **[The bypass variable leaks into a real run.]**
   → It is set only inside the smoke test's environment, the launcher prints a notice
@@ -436,17 +470,19 @@ There is no data or runtime migration. The rollout order:
 
 1. Create the private `sam-baumann/vista-runner-probe`, push the probe workflow to it, run
    it, and record its results here (D10). Revise D3, D4 or D8 if they don't hold.
-2. Land the script changes, the release workflow, the template and `docs/releasing.md` on
-   GitLab. The mirror carries them over.
-3. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
+2. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
    maintainer's Mac, add a read-only deploy key, and commit the pin.
-4. Add two secrets: `AMSC_GIT_TOKEN`, a read-only gitlab.com deploy token, and
+3. Rehearse the workflow on this branch in the private `sam-baumann/vista-release-rehearsal`,
+   on linux and windows (D12), and fix what it turns up. Then delete that repo.
+4. Land the script changes, the release workflow, the template and `docs/releasing.md` on
+   GitLab. The mirror carries them over.
+5. Add two secrets to the mirror: `AMSC_GIT_TOKEN`, a read-only gitlab.com deploy token, and
    `BUILD_INPUTS_DEPLOY_KEY`, the deploy key's private half.
-5. When the mirror goes public, so runners are free, do a manual run on `main` and fix
+6. When the mirror goes public, so runners are free, do a manual run on `main` and fix
    whatever the runners turn up beyond what the probe predicted.
-6. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the
+7. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the
    real-hardware smoke test, then delete the rc.
-7. Push `v0.2.0` and publish once redistribution is cleared.
+8. Push `v0.2.0` and publish once redistribution is cleared.
 
 **Rollback:** delete the draft or release and the tag. The workflow can be disabled in
 GitHub's settings without a commit.

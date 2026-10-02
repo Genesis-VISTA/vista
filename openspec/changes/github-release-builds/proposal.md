@@ -44,7 +44,8 @@ platform's package without anyone building on three machines.
 - **Verifying before building.** A manual, secret-free runner probe reports what each hosted
   runner actually offers: hypervisor, KVM, glibc, disk and network. It runs first, in a
   separate private repo (`sam-baumann/vista-runner-probe`) so VISTA's history stays clean, and
-  the workflow is written against facts. Each package job's steps
+  the workflow is written against facts. Before the MR merges, the finished workflow is
+  rehearsed for real in another private repo on the maintainer's account. Each package job's steps
   live in one script that runs the same on a maintainer's Mac, and `act` exercises the Linux
   jobs locally.
 - The release notes are generated from a template: version, platforms, per-archive sha256,
@@ -83,6 +84,9 @@ platform's package without anyone building on three machines.
 - **Weights pin:** `vista_mcp_server/config.py`, `rag_mcp.py` and `build_rag.py` load the
   embedding model at the pinned revision. These are the same weights as today, made explicit.
 - **Outside VISTA:** the runner probe lives in the private `sam-baumann/vista-runner-probe`.
+  Before the MR merges, the workflow is rehearsed in a second private repo,
+  `sam-baumann/vista-release-rehearsal`, on linux and windows only, and that repo is deleted
+  afterwards.
 - **External setup:**
   - A private `Genesis-VISTA/vista-build-inputs` repo.
   - Two GitHub secrets, both read-only and each scoped to one repo: a token for the private
