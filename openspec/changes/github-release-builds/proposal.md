@@ -39,6 +39,11 @@ platform's package without anyone building on three machines.
   ones that do as skipped. CI uses it only on those two platforms. Linux runners have KVM and
   run the full smoke test. Before the draft is published, a maintainer runs the full smoke
   test on a real Mac and a real Windows machine.
+- **Verifying before building.** A manual, secret-free runner probe reports what each hosted
+  runner actually offers: hypervisor, KVM, glibc, disk and network. It runs first, on the
+  still-private mirror, so the workflow is written against facts. Each package job's steps
+  live in one script that runs the same on a maintainer's Mac, and `act` exercises the Linux
+  jobs locally.
 - The release notes are generated from a template: version, platforms, per-archive sha256,
   the build-inputs commit and install instructions. They include the macOS Gatekeeper
   workaround, because the Mac package stays ad-hoc signed with no Developer ID or
@@ -62,8 +67,10 @@ platform's package without anyone building on three machines.
 
 ## Impact
 
-- **New files:** `.github/workflows/package.yml` (or a similar name), a release-notes template,
-  and a maintainer doc for updating the build inputs and running the pre-publish check.
+- **New files:** `.github/workflows/release.yml`, `.github/workflows/runner-probe.yml`,
+  `.github/scripts/package.sh`, a release-notes template, `.actrc`, and a maintainer doc
+  (`docs/releasing.md`) for updating the build inputs, running the workflow locally and the
+  pre-publish check.
 - **Changed scripts:**
   - `scripts/build_local_package.sh`: version fallback, staging removed before the smoke test,
     the Hugging Face revision pin, and the new verification option.

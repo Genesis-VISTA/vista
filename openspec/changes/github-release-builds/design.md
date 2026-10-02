@@ -219,17 +219,68 @@ signed (Q25). The template also has a "Verified on real hardware" checklist for 
 Windows, and a `## What's changed` placeholder. `release` fills it in with `envsubst` and a
 few lines of shell.
 
+### D10: Probe the runners before building on them
+
+The plan's riskiest assumptions are facts about GitHub's runners that no local setup can
+reproduce:
+
+- that macOS can't run the sandbox;
+- whether Windows' `msb doctor` is ready;
+- that Linux exposes KVM;
+- the glibc version;
+- the free disk;
+- which hosts the runners can reach.
+
+`runner-probe.yml` is a manual, secret-free workflow that only reports these, one job per
+runner the release uses. It runs `msb doctor` from the same microsandbox version VISTA locks,
+so its answer is the one the launcher would get.
+
+It runs first, on the still-private mirror. A probe costs about 70 quota minutes, against
+roughly 600–1,000 for one full build. Its results are recorded in this design before group 6,
+and they confirm or revise D3, D4 and D8. It stays in the repo, to rerun whenever a pinned
+runner version (D3) is bumped.
+
+*Alternative:* learn the same facts from the first full release run. That spends a full
+build's minutes per finding, and the workflow is written against guesses.
+
+### D11: One per-job script, so CI's steps run locally
+
+Everything a package job does beyond checkouts, downloads and uploads lives in
+`.github/scripts/package.sh`, which is configured entirely through environment variables. The
+YAML stays at "check out, fetch inputs, call the script, upload". So:
+
+- a maintainer can run exactly what CI runs, on the Mac, with their own credentials (the
+  script uses `AMSC_GIT_TOKEN` only when it is set);
+- the only workflow-specific logic left is wiring, which `actionlint` checks statically and
+  `act` exercises for the Linux jobs.
+
+`act` runs the `sandbox-image` job and the linux-x86 `package` job in Docker on the Mac. It
+can't run macOS or Windows jobs, and Docker on a Mac has no KVM, so the Linux job runs there
+with `VERIFY_WITHOUT_SANDBOX=1`. It is a wiring check, optional and manual, and stays out of PR
+CI.
+
+Taken together, these are the layers of verification:
+
+1. the scripts, on the Mac (groups 2–5 and 6.2);
+2. `actionlint`;
+3. `act`, for the Linux jobs;
+4. the probe, for runner facts;
+5. a manual run;
+6. an `-rc` draft;
+7. the real-hardware smoke test before publishing.
+
 ## Risks / Trade-offs
 
 - **[The macOS launcher's first run may need the hypervisor beyond the agent toolset.]**
   For example, the sandbox image import. If so, the smoke test fails even under
   `--verify-without-sandbox`.
-  → Find out on the first manual run. If it happens, the import is gated by the same variable
-  and reported as skipped.
+  → The probe's `msb doctor` and `kern.hv_support` give a first signal (D10), and the first
+  manual run settles it. If it happens, the import is gated by the same variable and reported
+  as skipped.
 - **[A hosted Windows runner might pass `msb doctor`.]** In that case skipping the sandbox
   checks there is needlessly weak.
-  → The first manual run logs `msb doctor`. If the runner is ready, drop the flag for
-  Windows. That's a one-line matrix change.
+  → The probe reports `msb doctor` before any workflow is written around it (D10). If the
+  runner is ready, drop the flag for Windows. That's a one-line matrix change.
 - **[The bypass variable leaks into a real run.]**
   → It is set only inside the smoke test's environment, the launcher prints a notice
   whenever it is honoured, and the spec's researcher scenario pins the refusal.
@@ -258,18 +309,19 @@ few lines of shell.
 
 There is no data or runtime migration. The rollout order:
 
-1. Land the script changes, the workflow, the template and `docs/releasing.md` on GitLab.
-   The mirror carries them over. The workflow stays dormant until Actions is enabled.
-2. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
+1. Push the probe workflow to GitLab, enable Actions on the still-private mirror, run the
+   probe, and record its results here (D10). Revise D3, D4 or D8 if they don't hold.
+2. Land the script changes, the release workflow, the template and `docs/releasing.md` on
+   GitLab. The mirror carries them over.
+3. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
    maintainer's Mac, add a read-only deploy key, and commit the pin.
-3. When the mirror goes public: enable Actions, and add two secrets: `AMSC_GIT_TOKEN`, a
-   read-only gitlab.com deploy token, and `BUILD_INPUTS_DEPLOY_KEY`, the deploy key's private
-   half.
-4. Do a manual run on `main` and fix whatever the runners turn up: disk, the macOS first-run
-   behaviour, `msb doctor` on Windows.
-5. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the
+4. Add two secrets: `AMSC_GIT_TOKEN`, a read-only gitlab.com deploy token, and
+   `BUILD_INPUTS_DEPLOY_KEY`, the deploy key's private half.
+5. When the mirror goes public, so runners are free, do a manual run on `main` and fix
+   whatever the runners turn up beyond what the probe predicted.
+6. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the
    real-hardware smoke test, then delete the rc.
-6. Push `v0.2.0` and publish once redistribution is cleared.
+7. Push `v0.2.0` and publish once redistribution is cleared.
 
 **Rollback:** delete the draft or release and the tag. The workflow can be disabled in
 GitHub's settings without a commit.
