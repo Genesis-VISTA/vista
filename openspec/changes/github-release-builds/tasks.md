@@ -70,7 +70,7 @@
 
 ## 3. Disk headroom
 
-- [ ] 3.1 Remove the staging tree after `create_archive` and before `run_smoke_test`, unless
+- [x] 3.1 Remove the staging tree after `create_archive` and before `run_smoke_test`, unless
   `--keep-staging` is set, and drop the now-redundant cleanup at the end of the script.
   Verify with a local Mac build:
   - the staging folder under `dist/` is gone while the smoke test runs;

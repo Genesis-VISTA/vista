@@ -1853,6 +1853,13 @@ write_manifest
 pack_payload
 report_path_lengths
 create_archive
+# Nothing reads the staging tree once the archive is written, and the smoke
+# test unpacks a second copy, so removing it here keeps peak disk to one
+# unpacked package plus the archive. That is what fits a hosted runner.
+if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
+  log "removing the staging tree (--keep-staging keeps it)"
+  rm -rf "$STAGING"
+fi
 run_smoke_test
 
 log "built $PACKAGE_NAME"
@@ -1860,8 +1867,5 @@ if [[ -n "$ARCHIVE_PATH" ]]; then
   echo "$ARCHIVE_PATH"
 else
   echo "$STAGING"
-fi
-if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
-  rm -rf "$STAGING"
 fi
 
