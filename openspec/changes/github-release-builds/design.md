@@ -20,14 +20,16 @@ that shapes the approach.
     framework is always present on bare metal.
   - Without a sandbox, the `dev_mcp_server` lifespan fails, so every agent tool call fails,
     retrieval included (`package_launcher.sh:101`).
-  - GitHub's hosted Linux runners expose KVM. The hosted macOS arm64 runners are M1 VMs
-    without nested virtualisation. The hosted Windows runners do not offer nested
-    virtualisation either.
+  - The runner probe (D10) found that GitHub's hosted Linux runners expose KVM and boot the
+    sandbox. The hosted Windows runners have the hypervisor platform enabled, pass `msb
+    doctor` and boot it too. The hosted macOS arm64 runners are VMs without nested
+    virtualisation, and the sandbox cannot start there.
 - **Peak disk.** A mac-arm64 package is 4.0 GB unpacked and 1.7 GB archived. The staging tree
   is removed only after the smoke test, so peak disk is about 13–14 GB against a documented
   14 GB on hosted runners.
 - **What the build needs from outside.**
-  - The AI-safety corpus, from code.ornl.gov, which the runners cannot reach.
+  - The AI-safety corpus, from code.ornl.gov. The runners can reach the host (D10), but
+    fetching from it would need an ORNL credential among a public repo's secrets.
   - An LLM key, to index citations.
   - Read access to the private `amscrot-py` repo on gitlab.com. `palisade` is public now.
   - The embedding weights, from Hugging Face.
@@ -78,7 +80,7 @@ sandbox-image (matrix: amd64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm)
   2. Checks out the private build-inputs repo at the pinned commit (D5).
   3. Configures git access to `amscrot-py` from the secret.
   4. Runs `build_local_package.sh --payload … --vector-store … --sandbox-image …`, plus
-     `--verify-without-sandbox` on macOS and Windows (D4).
+     `--verify-without-sandbox` on macOS only (D4).
   5. Uploads the archive and its `.sha256` file. On a manual run these are workflow
      artifacts with 7-day retention.
 - **`release`** runs only for `refs/tags/v*`. It creates or updates a draft with
@@ -111,9 +113,14 @@ There is a new build option, `--verify-without-sandbox`. Under it the build expo
 `VISTA_VERIFY_WITHOUT_SANDBOX=1` to the smoke test only, following the existing
 `VISTA_NO_WINDOW=1` pattern, which is likewise meant for the smoke test alone.
 
-- **Launchers** (`package_launcher.sh` and `.ps1`): when the variable is set, the hypervisor
-  refusal prints a one-line notice instead of exiting. Nothing a researcher runs sets it,
-  and the notice keeps an accidental use visible.
+- **Where it applies.** CI uses it only on macOS, the one hosted runner that cannot boot the
+  sandbox (D10). Linux and Windows run the full smoke test.
+- **Launcher** (`package_launcher.sh`): when the variable is set, the `/dev/kvm` refusal
+  prints a one-line notice instead of exiting. Nothing a researcher runs sets the variable,
+  and the notice keeps an accidental use visible. The bypass is what lets a Linux build verify
+  without the sandbox locally, for example under `act` (7.2). The macOS launcher has no
+  hypervisor check to bypass. `package_launcher.ps1` is left unchanged, because no Windows
+  build uses the option.
 - **Smoke test:**
   - Every check that needs the sandbox goes through the existing `skip` helper, which
     reports "skipped" with a reason and never "ok". Retrieval is one of them, because the
@@ -126,7 +133,7 @@ There is a new build option, `--verify-without-sandbox`. Under it the build expo
 
 *Alternatives considered:*
 
-- Self-hosted Mac and Windows runners: always-on hardware, and hardening a public repo's
+- Self-hosted Mac runners: always-on hardware, and hardening a public repo's
   self-hosted runners.
 - Paid larger runners: nested virtualisation is not guaranteed on macOS.
 - Shipping Linux only.
@@ -165,6 +172,9 @@ It is a plain repo, with no releases and no tags, so nothing in it is published.
   wanted.
 - GitLab's package registry: it needs a gitlab.com token with wider scope.
 - A self-hosted step inside ORNL.
+- Fetching the corpus from code.ornl.gov in CI. The probe showed the host is reachable, but
+  that puts an ORNL credential in a public repo's secrets, and the store would still need an
+  LLM key to build. The maintainer chose the private inputs repo regardless.
 
 ### D6: Version identifier
 
@@ -218,8 +228,8 @@ archives with their sha256 values, the build-inputs commit, per-platform downloa
 steps, and the macOS quarantine workaround (`xattr -dr com.apple.quarantine`, or approve in
 System Settings → Privacy & Security). The workaround is needed because the app is ad-hoc
 signed: `codesign --sign -`, with no Developer ID and no notarization. The maintainer decided
-to keep it that way, with no Developer ID work planned. The template also has a "Verified on real hardware" checklist for macOS and
-Windows, and a `## What's changed` placeholder. `release` fills it in with `envsubst` and a
+to keep it that way, with no Developer ID work planned. The template also has a "Verified on real hardware" checklist for macOS, the one platform
+CI verifies without the sandbox, and a `## What's changed` placeholder. `release` fills it in with `envsubst` and a
 few lines of shell.
 
 ### D10: Probe the runners before building on them
@@ -334,17 +344,17 @@ every check; each took under 40 s.
 - **D4, macOS:** holds. The runner is itself a VM without nested virtualisation, and the boot
   fails even though `doctor` reports ready, which confirms that `doctor` is not a hypervisor
   check on macOS.
-- **D4, Windows: does not hold.** The hosted Windows runner boots a microVM. Per the Risks
-  entry "A hosted Windows runner might pass `msb doctor`", Windows should run the full smoke
-  test and `--verify-without-sandbox` applies to macOS only. **Revise D2, D4 and the Risks
-  entry before group 6**, and decide whether 5.3 (the `.ps1` bypass) is still wanted.
+- **D4, Windows: did not hold, now revised.** The hosted Windows runner boots a microVM, so
+  Windows runs the full smoke test and `--verify-without-sandbox` applies to macOS only. D2,
+  D4, D9 and the Risks were revised, and the `.ps1` bypass (the former task 5.3) was
+  dropped.
 - **D8, disk:** holds on Linux, with about 4 GB of margin against the ~10 GB peak once
   staging is removed early (3.1). macOS and Windows have ample room. Windows' `C:` (where
   `%TEMP%` lives) was not measured.
-- **Network: the premise in the proposal is wrong.** code.ornl.gov answered `302`, so the
-  runners can reach it, presumably at a sign-in redirect. The private inputs repo (D5) still
-  stands on its other reasons: no LLM credential and no code.ornl.gov token in CI. But the
-  proposal's "code.ornl.gov is unreachable from GitHub's runners" should be reworded.
+- **Network: the premise did not hold, now reworded.** code.ornl.gov answered `302`, so the
+  runners can reach it, presumably at a sign-in redirect. The maintainer kept the private
+  inputs repo (D5), which keeps any ORNL credential and LLM key out of CI. The proposal and
+  Context no longer say the host is unreachable.
 
 *Alternative:* learn the same facts from the first full release run. That spends a full
 build's minutes per finding, and the workflow is written against guesses.
@@ -383,22 +393,24 @@ Taken together, these are the layers of verification:
   → The probe's `msb doctor` and `kern.hv_support` give a first signal (D10), and the first
   manual run settles it. If it happens, the import is gated by the same variable and reported
   as skipped.
-- **[A hosted Windows runner might pass `msb doctor`.]** In that case skipping the sandbox
-  checks there is needlessly weak.
-  → The probe reports `msb doctor` before any workflow is written around it (D10). If the
-  runner is ready, drop the flag for Windows. That's a one-line matrix change.
+- **[The Windows runner stops booting the sandbox.]** The probe saw it boot once, on one
+  image version (D10). A later image, or a different host class behind `windows-2025`, could
+  lose the hypervisor platform, and the Windows package job would then fail its smoke test.
+  → The failure is loud, not a wrong release. Rerun the probe to confirm. Falling back to
+  verification without the sandbox on Windows then needs the `.ps1` bypass that was dropped
+  from this change, plus a real-Windows line on the checklist.
 - **[msb's 104-byte socket limit on macOS.]** If `MSB_HOME`, or whatever msb derives its
   sockets from, sits too deep, the sandbox fails to start with "socket path is too long". The
   probe hit this locally (D10). On the macOS runner, the smoke test's state directory comes
   from `mktemp -d /tmp/vista-smoke.XXXXXX` (`build_local_package.sh`'s `run_smoke_test`), which
   is short. But the launcher, not the build, decides where msb's home lands.
-  → During 5.5 and 9.4, check where the package's msb home resolves on macOS. If it can be
+  → During 5.4 and 9.4, check where the package's msb home resolves on macOS. If it can be
   deep, report it as a launcher precondition, like the Windows path-length checks.
 - **[The bypass variable leaks into a real run.]**
   → It is set only inside the smoke test's environment, the launcher prints a notice
   whenever it is honoured, and the spec's researcher scenario pins the refusal.
 - **[The real-hardware check before publishing is a manual step that can be forgotten.]**
-  → The draft's notes carry an unticked checklist for macOS and Windows, and
+  → The draft's notes carry an unticked checklist for macOS, and
   `docs/releasing.md` makes ticking it the publishing step.
 - **[An archive grows past 2 GiB.]** Today's is 1.7 GB.
   → The `release` job checks sizes and fails with the size named. Science packages are out

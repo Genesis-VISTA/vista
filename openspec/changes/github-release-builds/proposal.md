@@ -22,8 +22,9 @@ platform's package without anyone building on three machines.
   runners cannot build Linux images.
 - The AI-safety corpus and its prebuilt Chroma store come from a small **private** repo,
   `Genesis-VISTA/vista-build-inputs`, that holds only the files the build needs. The workflow
-  checks it out at a commit pinned in this repo. code.ornl.gov is unreachable from GitHub's
-  runners, and building the store in CI would need an LLM credential there. Nothing is
+  checks it out at a commit pinned in this repo. Fetching the corpus from code.ornl.gov in CI
+  would put an ORNL credential in a public repo's secrets, and building the store there would
+  need an LLM credential too. Nothing is
   released from the inputs repo, and it is never offered as a download of its own. A
   maintainer updates it by hand when the corpus changes, following documented steps.
 - The package version comes from the tag. `v0.2.0` builds `vista-0.2.0-<os>-<arch>`. Local
@@ -33,12 +34,13 @@ platform's package without anyone building on three machines.
   every release ships the weights the bundled store was embedded with.
 - The build deletes its staging tree before the smoke test, which brings peak disk under what
   hosted runners have.
-- **Verification on hosted runners.** Hosted macOS and Windows runners are VMs without nested
+- **Verification on hosted runners.** Hosted macOS runners are VMs without nested
   virtualisation, so the code-execution sandbox cannot run there. A new, explicit, build-only
   option lets the smoke test run every check that does not need the sandbox, and report the
-  ones that do as skipped. CI uses it only on those two platforms. Linux runners have KVM and
-  run the full smoke test. Before the draft is published, a maintainer runs the full smoke
-  test on a real Mac and a real Windows machine.
+  ones that do as skipped. CI uses it only on macOS. The runner probe showed that the Linux
+  runners (with KVM) and the Windows runners (with the hypervisor platform) both boot the
+  sandbox, so they run the full smoke test. Before the draft is published, a maintainer runs
+  the full smoke test on a real Mac.
 - **Verifying before building.** A manual, secret-free runner probe reports what each hosted
   runner actually offers: hypervisor, KVM, glibc, disk and network. It runs first, in a
   separate private repo (`sam-baumann/vista-runner-probe`) so VISTA's history stays clean, and
@@ -75,8 +77,9 @@ platform's package without anyone building on three machines.
   - `scripts/build_local_package.sh`: version fallback, staging removed before the smoke test,
     the Hugging Face revision pin, and the new verification option.
   - `scripts/smoke_test_package.sh`: sandbox-dependent checks skippable under that option.
-  - `scripts/package_launcher.sh` and `.ps1`: the hypervisor refusal is bypassed under the
-    build-only option, never otherwise.
+  - `scripts/package_launcher.sh`: the hypervisor refusal is bypassed under the build-only
+    option, never otherwise. The macOS launcher has no hypervisor check to bypass, and
+    `package_launcher.ps1` is unchanged, because Windows is verified with the sandbox.
 - **Weights pin:** `vista_mcp_server/config.py`, `rag_mcp.py` and `build_rag.py` load the
   embedding model at the pinned revision. These are the same weights as today, made explicit.
 - **Outside VISTA:** the runner probe lives in the private `sam-baumann/vista-runner-probe`.

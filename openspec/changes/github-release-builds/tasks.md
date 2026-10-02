@@ -4,7 +4,7 @@
   `worktree-github-release-builds`.
 - Commit after each task group. Never push or open an MR without the maintainer's explicit
   say-so.
-- A full local build (2.1, 3.1, 4.3, 5.5, 6.2, 9.1) needs the following. Tokens come from
+- A full local build (2.1, 3.1, 4.3, 5.4, 6.2, 9.1) needs the following. Tokens come from
   local storage and are never printed:
   - the main checkout's `.env` and `data/` entries symlinked into the worktree;
   - `--payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db`;
@@ -37,8 +37,8 @@
   - on `ubuntu-24.04`, that `docker buildx` is present;
   - on Windows, the `LongPathsEnabled` registry value and the Git Bash version;
   - a reachability check (HTTP status only) for huggingface.co, pypi.org, nodejs.org, the
-    Electron release downloads, gitlab.com and code.ornl.gov. code.ornl.gov is expected to
-    fail, which confirms the premise.
+    Electron release downloads, gitlab.com and code.ornl.gov. code.ornl.gov was expected to
+    fail. It answered `302` instead (see design "Probe results").
 
   Every check ends the job green, so a negative answer is reported rather than hiding the
   rest. Verify `actionlint` is clean.
@@ -105,14 +105,12 @@
   when `VISTA_VERIFY_WITHOUT_SANDBOX=1`. Make no other change in behaviour, and update the
   "There is no way to start without it" comment. Verify by reading the diff: the variable is
   consulted only at the refusal.
-- [ ] 5.3 Make the same change in `scripts/package_launcher.ps1` for the `msb doctor` refusal.
-  Verify the same way, and on the Windows runner in 9.3.
-- [ ] 5.4 In `scripts/smoke_test_package.sh`, under `VISTA_VERIFY_WITHOUT_SANDBOX=1`, report
+- [ ] 5.3 In `scripts/smoke_test_package.sh`, under `VISTA_VERIFY_WITHOUT_SANDBOX=1`, report
   the AI-safety retrieval check (and the molten-salt one) through `skip` with a reason. All
   other checks stay as they are. Update the "no opt-out" comment, and end with "all checks
   passed (verified without the sandbox)". Verify by running it on an unpacked package with the
   variable set: retrieval shows as skipped, never ok.
-- [ ] 5.5 Run a full local Mac build with and without `--verify-without-sandbox`, as a manual
+- [ ] 5.4 Run a full local Mac build with and without `--verify-without-sandbox`, as a manual
   check that stays out of PR CI because it needs the sandbox. Verify:
   - without the flag, every check passes as before, retrieval included;
   - with it, retrieval is skipped and the summary says so.
@@ -153,7 +151,7 @@
   - download the sandbox image for the target;
   - add the udev rule granting `/dev/kvm` on Linux;
   - set `VISTA_VERSION` from the tag on tag runs;
-  - run `.github/scripts/package.sh` with `VERIFY_WITHOUT_SANDBOX=1` on macOS and Windows;
+  - run `.github/scripts/package.sh`, with `VERIFY_WITHOUT_SANDBOX=1` on macOS only;
   - upload the archive and its `.sha256` file as artifacts with 7-day retention.
 
   Verify `actionlint` is clean, and that no build logic sits in the YAML that `package.sh`
@@ -190,7 +188,7 @@
 - [ ] 8.1 Write `docs/releasing.md`. It covers:
   - cutting a release: tag on GitLab, then the mirror;
   - checking the draft;
-  - the real-hardware smoke test on macOS and Windows, from the draft asset;
+  - the real-hardware smoke test on macOS, from the draft asset;
   - publishing;
   - updating the build inputs: index locally with ORNL access and an LLM key, replace
     `vista-data/ai-safety/` and `rag_db/` in a checkout of the private
@@ -221,12 +219,13 @@
   under the repo's Actions tab, and that no organisation policy blocks hosted runners. The
   probe ran under a personal account, so it couldn't check that.
 - [ ] 9.3 Once the mirror is public, so runners are free, make a manual run on `main`. Compare
-  disk use, the macOS first run and the Windows `msb doctor` against the probe results. Fix
-  what turns up, for example by gating the image import or dropping the flag on Windows.
+  disk use, the macOS first run and the Windows full smoke test (sandbox included) against
+  the probe results. Fix what turns up, for example by gating the image import on macOS.
   Verify a green run with three archives downloadable from it.
 - [ ] 9.4 Push `v0.2.0-rc1` from GitLab. Verify:
   - a draft prerelease appears with three archives, `.sha256` files and correct notes;
-  - the full smoke test passes on a real Mac and a real Windows machine from the draft assets.
+  - the full smoke test passes on a real Mac from the draft asset, and the Windows job's own
+    smoke test ran with the sandbox.
 
   Then delete the rc release and its tag.
 - [ ] 9.5 Push `v0.2.0`. Publish once the team has cleared redistribution of the AI-safety

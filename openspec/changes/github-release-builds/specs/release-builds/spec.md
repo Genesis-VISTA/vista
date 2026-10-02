@@ -63,8 +63,7 @@ attached to the draft.
 
 #### Scenario: A platform verified without the sandbox
 
-- **WHEN** a draft's macOS or Windows archive was verified on a host that could not run the
-  sandbox
+- **WHEN** a draft's macOS archive was verified on a host that could not run the sandbox
 - **THEN** the release notes say so, and the release is published only after that archive
   passes the full smoke test on a real machine of that platform
 
