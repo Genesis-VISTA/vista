@@ -6,6 +6,9 @@ env.loadEnvConfig(path.resolve(process.cwd(), '..'), undefined, undefined, true)
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // VISTA Dev.app already exposes Chromium DevTools through its View menu.
+  // Keep Next.js development behaviour without its floating on-screen button.
+  devIndicators: false,
   serverExternalPackages: ["@modelcontextprotocol/sdk"],
   // Emit `.next/standalone` -- a server plus only the traced `node_modules`
   // files, so the prebuilt package ships a runnable UI without the 493 MB

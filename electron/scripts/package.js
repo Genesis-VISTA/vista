@@ -4,10 +4,10 @@
 // (design B1). Prints the path of what it made on its last line.
 //
 //   node scripts/package.js --platform darwin --arch arm64 --out DIR
+//   node scripts/package.js --platform darwin --arch arm64 --out DIR --development
 //
-// Signing is deliberately not done here: on macOS the build signs the bundle
-// itself, ad hoc and scoped to this one path (B2), so nothing else in the
-// package -- `msb` above all -- is ever re-signed.
+// Signing is deliberately not done here: the package build owns the macOS
+// signing policy and keeps it scoped away from the sibling runtime.
 import { packager } from '@electron/packager';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -47,12 +47,18 @@ function oneOf(name, allowed) {
 const platform = oneOf('platform', PLATFORMS);
 const arch = oneOf('arch', ARCHES);
 const out = path.resolve(arg('out'));
+const development = process.argv.includes('--development');
+if (development && platform !== 'darwin') {
+  console.error('--development is available only for macOS packages');
+  process.exit(2);
+}
+const name = development ? 'VISTA Dev' : 'VISTA';
 
 /** @type {import('@electron/packager').Options} */
 const options = {
   dir: APP_DIR,
   out,
-  name: 'VISTA',
+  name,
   platform,
   arch,
   asar: true,
@@ -67,10 +73,13 @@ const options = {
 };
 
 if (platform === 'darwin') {
-  options.appBundleId = 'gov.ornl.vista';
+  options.appBundleId = development ? 'gov.ornl.vista.dev' : 'gov.ornl.vista';
   // No `osxSign`: leaving it unset is what keeps packager from signing.
   const icon = path.join(APP_DIR, 'assets', 'icon.icns');
   if (existsSync(icon)) options.icon = icon;
+  if (development) {
+    options.extraResource = path.join(APP_DIR, 'assets', 'vista-development.json');
+  }
 }
 
 if (platform === 'win32') {
@@ -82,4 +91,4 @@ if (platform === 'win32') {
 }
 
 const [dir] = await packager(options);
-console.log(platform === 'darwin' ? path.join(dir, 'VISTA.app') : dir);
+console.log(platform === 'darwin' ? path.join(dir, `${name}.app`) : dir);

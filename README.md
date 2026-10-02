@@ -3,38 +3,74 @@
 Instructions below cover running or building a prebuilt package. For a
 **development checkout** instead, skip to [Prerequisites](#prerequisites).
 
+## Thin macOS developer app
+
+On a Mac, build a local application backed by the current checkout:
+
+```bash
+./scripts/build_mac_dev_app.sh
+open "dist/mac-dev/VISTA Dev.app"
+```
+
+The first build installs only missing checkout dependencies; later builds
+normally package and ad-hoc-sign the Electron application in seconds. Pass
+`--refresh-dependencies` after lockfile changes. No Apple account, corpus,
+vector store, exported sandbox image, bundled runtime, or access to the private
+`amscrot-py` repository is required.
+
+`VISTA Dev.app` shows the same preparation window as the distributable, then
+starts the MCP server, backend, and Next.js UI directly from this checkout. It
+uses `~/.vista-dev`, the bundle identifier `gov.ornl.vista.dev`, and disables
+live HPC job submission by default. Other local features remain available;
+code-execution still needs the normal local container/sandbox setup when used.
+Closing the app stops all three source services. Logs are in
+`~/.vista-dev/logs/dev-stack.log` and the checkout's `logs/` directory.
+
+The generated app records the checkout's absolute path in
+`dist/mac-dev/dev-root`, so it is a local developer artifact, not something to
+send to another machine. Each developer builds their own copy. Use
+`build_local_package.sh` only for a complete, relocatable release package.
+
 ## Running a prebuilt package
+
+Verify and unpack the download, then keep the entire unpacked folder together.
+On macOS, open the top-level **VISTA.app** from Finder, Spotlight, or the Dock.
+It shows preparation and service-startup activity in its own window, then opens
+the main VISTA interface. Do not move `VISTA.app` out of its folder: `app/`,
+`bin/`, `node/`, `payload/`, `manifest.json`, and `vista` are its runtime.
+
+The `vista` command remains available on macOS for diagnostics. Linux and
+Windows continue to use their package launchers:
 
 ```bash
 shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
 mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
-cd ~/vista/vista-<version>-<platform> && ./vista
+cd ~/vista/vista-<version>-<platform>
+./vista  # Linux, or macOS diagnostics
 ```
 
 Extract with the platform's own `tar`. macOS `bsdtar` stores extended
 attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
-bundled `msb` binary's adhoc code signature, without which the code-execution
+bundled `msb` binary's code signature, without which the code-execution
 sandbox cannot create microVMs.
-
-Start it from a terminal, as above. Don't double-click `vista` or anything
-inside the package: a downloaded file carries macOS's quarantine flag, which
-`./vista` removes before running anything else, and a double-click is blocked
-before it gets the chance.
 
 First run extracts the corpus, vector store, and embedding weights from the
 package's `payload/payload.tar` into the state directory (~1 GB), imports the
 sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. Later runs skip
-every setup step and start in seconds.
+That takes a few minutes. The macOS startup window shows each real activity;
+later runs mark already-prepared work and start in seconds. Startup failures
+offer Retry, Open Logs, Copy Diagnostics, and Quit without exposing a terminal.
 
 VISTA then opens in its own window.
-Closing the window stops VISTA, and so do Ctrl-C in the terminal and closing the
-terminal. VISTA is a desktop application and has no browser mode. In a session
-that can't show the window, the launcher says why and stops before starting
+Closing the window or pressing Cmd-Q stops VISTA on macOS. When using a package
+launcher, Ctrl-C and closing its terminal stop it too. VISTA is a desktop
+application and has no browser mode. In a session that can't show the window,
+the launcher says why and stops before starting
 anything: an SSH session, no display, or, on Linux, running as root or missing
 system libraries (see below). If the window crashes, the launcher reports its exit
-status and stops the services. If another VISTA window is already open, the new
-one refuses to start rather than run a second stack.
+status and stops the services. If another VISTA window is already open, a
+second launch brings the existing startup or main window forward rather than
+starting another stack.
 
 Paste your inference API key into the settings modal. It takes effect
 immediately; no restart. Links to other sites, including the Globus login,

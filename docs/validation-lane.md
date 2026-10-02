@@ -139,7 +139,83 @@ cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
 This covers external links and `window.open` going to the system browser, off-origin
 navigation and redirects being refused, `file:` links, same-origin pop-ups and PDFs
 opening child windows, downloads, the page having no Node access, the single-instance
-lock, and `--smoke-test` exit codes.
+lock, startup progress and retry, startup-to-main handoff, shutdown cleanup, and
+`--smoke-test` exit codes.
+
+### Thin macOS developer app
+
+This validates the source-backed app separately from the complete release
+package:
+
+```bash
+./scripts/build_mac_dev_app.sh
+codesign --verify --deep --strict "dist/mac-dev/VISTA Dev.app"
+open "dist/mac-dev/VISTA Dev.app"
+```
+
+Confirm the preparation window appears without Terminal, transitions to the
+1280 × 860 main window at `http://localhost:3000`, and exposes DevTools in the
+View menu. Quit the app and confirm ports 3000, 8000, and 8001 are released.
+The app is intentionally tied to the checkout named by `dist/mac-dev/dev-root`;
+it does not exercise release payload assembly, relocation, notarization, or
+Gatekeeper.
+
+The checkout launcher has a hermetic lifecycle test:
+
+```bash
+./scripts/tests/mac_dev_launcher_test.sh
+```
+
+### Signed macOS release walk-through
+
+Run this lane manually on the final archive produced with a `Developer ID
+Application` identity and Apple notary credentials. Use a fresh macOS account
+or machine. Do not clear quarantine, override Gatekeeper, or use Open Anyway;
+needing any of those is a release failure.
+
+1. Download the archive through a browser so it receives quarantine, verify its
+   SHA-256 sidecar, and extract it normally. Confirm the whole folder remains
+   together and `xattr -p com.apple.quarantine VISTA.app` reports quarantine.
+2. Before launch, require all of these to pass:
+
+   ```bash
+   codesign --verify --deep --strict --verbose=4 VISTA.app
+   xcrun stapler validate VISTA.app
+   spctl --assess --type execute --verbose=4 VISTA.app
+   ```
+
+   Record the displayed Developer ID team. Locate the bundled `msb`, dump its
+   entitlements with `codesign -d --entitlements :-`, and confirm both
+   `com.apple.security.hypervisor` and
+   `com.apple.security.cs.disable-library-validation` remain true.
+3. Double-click `VISTA.app`. Confirm no Terminal window appears; first-run
+   resource installation, sandbox import, service startup, and the handoff to
+   the main interface are all visible in the app. Start one agent session so a
+   real sandbox is created, and run the bundled `msb doctor` as an additional
+   host check.
+4. Quit with Cmd-Q. Confirm no package process or listener remains, then launch
+   again immediately. The second run must visibly mark prepared work as skipped
+   and reach the main window.
+5. While VISTA is starting, launch `VISTA.app` again. Repeat after the main
+   window appears. Each time the existing window comes forward and only one
+   service stack exists.
+6. Exercise an expected error by occupying port 3000 before launch. Confirm the
+   graphical error names the conflict, Open Logs works, and Retry stays disabled
+   until cleanup finishes. Release the port, select Retry, and confirm startup
+   succeeds.
+7. Copy only `VISTA.app` out of the folder and open the copy. It must show the
+   graphical package-layout error and start no service. Delete the copy and
+   leave the original package intact.
+8. Close the startup window during one run and the main window during another.
+   After every quit, run from the package directory:
+
+   ```bash
+   pgrep -fl "$PWD"
+   lsof -nP -iTCP:3000 -iTCP:8000 -iTCP:8001 -sTCP:LISTEN
+   ```
+
+   Both commands must print nothing. Reopen VISTA immediately after each check
+   to catch delayed cleanup or stale single-instance state.
 
 **Stopping and cleanup** (a built package, ideally with a chat started so a sandbox
 exists). Start `./vista`, then stop it each of these three ways:

@@ -46,8 +46,10 @@ skip() {
 }
 
 IS_WINDOWS=false
+IS_MACOS=false
 case "$(uname -s)" in
   MINGW*|MSYS*) IS_WINDOWS=true ;;
+  Darwin) IS_MACOS=true ;;
 esac
 
 # The package's own interpreter, for the checks below that parse JSON.
@@ -85,16 +87,35 @@ wait_for() {
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
 # would be testing itself.
-# VISTA_NO_WINDOW=1: a build has no one to look at a window, and the check below
-# waits for the address line the launcher prints in that mode. Both launchers,
-# vista and vista.ps1, read it.
-export VISTA_NO_WINDOW=1
+# A macOS build running in a logged-in graphical session starts its top-level
+# application exactly as the user does. Headless builders and the other
+# platforms retain the diagnostic-launcher path.
+WINDOW_EXE="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
+    "$PACKAGE/manifest.json"
+)"
+ENTRYPOINT="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("entrypoint") or "")' \
+    "$PACKAGE/manifest.json"
+)"
+USE_MAC_APP=false
+if [[ "$IS_MACOS" == true && "$ENTRYPOINT" == VISTA.app \
+      && "$(launchctl managername 2>/dev/null)" == Aqua ]]; then
+  USE_MAC_APP=true
+fi
+
 LAUNCHER=("$PACKAGE/vista")
 if [[ "$IS_WINDOWS" == true ]]; then
   [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
   LAUNCHER=(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PACKAGE/vista.ps1")
+elif [[ "$USE_MAC_APP" == true ]]; then
+  [[ -x "$PACKAGE/$WINDOW_EXE" ]] || die "no macOS application executable at $WINDOW_EXE"
+  LAUNCHER=("$PACKAGE/$WINDOW_EXE" "--user-data-dir=$STATE/window-profile")
 else
   [[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
+  export VISTA_NO_WINDOW=1
 fi
 
 export VISTA_HOME="$STATE"
@@ -111,21 +132,29 @@ BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 
 mkdir -p "$STATE" "$LOGS"
 
-log "starting the package launcher"
+if [[ "$USE_MAC_APP" == true ]]; then
+  log "starting the top-level VISTA.app"
+else
+  log "starting the package launcher"
+fi
 "${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
-# The launcher prints one address line when every service is up.
+# The diagnostic launcher prints an address when its services are up. The
+# macOS application reports that its hidden main renderer became visible, so
+# the app-first lane observes the complete startup-to-main transition.
+READY_PATTERN='VISTA is running at'
+[[ "$USE_MAC_APP" == true ]] && READY_PATTERN='vista-window: main window ready'
 for (( i = 0; i < 600; i++ )); do
-  grep -q 'VISTA is running at' "$LOGS/launcher.log" 2>/dev/null && break
+  grep -q "$READY_PATTERN" "$LOGS/launcher.log" 2>/dev/null && break
   if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
     tail -20 "$LOGS/launcher.log" >&2
-    die "the launcher exited before reporting an address"
+    die "VISTA exited before completing startup"
   fi
   perl -e 'select(undef, undef, undef, 1)'
 done
-grep -q 'VISTA is running at' "$LOGS/launcher.log" \
-  || { tail -20 "$LOGS/launcher.log" >&2; die "the launcher never reported an address"; }
+grep -q "$READY_PATTERN" "$LOGS/launcher.log" \
+  || { tail -20 "$LOGS/launcher.log" >&2; die "VISTA never completed startup"; }
 
 # ─── checks ─────────────────────────────────────────────────────────────────
 
@@ -225,15 +254,18 @@ skip "globus file operations work" \
 # and the running service, so a researcher reporting a problem can say which
 # build they have.
 version_is_consistent() {
-  local declared reported
+  local declared reported version_log="$LOGS/launcher.log"
   declared="$(cat "$PACKAGE/VERSION")"
   reported="$(
     curl -s -m 20 "$BACKEND_URL/openapi.json" \
       | "$PACKAGE_PYTHON" -c \
         'import json,sys; print(json.load(sys.stdin.buffer)["info"]["version"])'
   )"
+  # In app-first mode the supervised launcher's stderr is owned by Electron
+  # and appended to window.log; launcher.log contains Electron's own stdout.
+  [[ "$USE_MAC_APP" == true ]] && version_log="$LOGS/window.log"
   [[ -n "$declared" && "$declared" == "$reported" ]] \
-    && grep -q "VISTA $declared" "$LOGS/launcher.log"
+    && grep -q "VISTA $declared" "$version_log"
 }
 check "version matches across manifest, launcher and app" version_is_consistent
 
@@ -242,11 +274,6 @@ check "version matches across manifest, launcher and app" version_is_consistent
 # --smoke-test mode never shows anything and takes no single-instance lock, so
 # a VISTA the builder has open cannot turn this into a false failure. It still
 # needs a GUI session to start at all, which a build over SSH does not have.
-WINDOW_EXE="$(
-  "$PACKAGE_PYTHON" -c \
-    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
-    "$PACKAGE/manifest.json"
-)"
 # On Linux it gets the sandbox arguments the launcher would give it on this
 # host (linux-desktop-window D1), and a virtual display when there is no real
 # one, which is how a build container runs it (D7).
@@ -261,7 +288,10 @@ window_loads_the_ui() {
   ${WINDOW_RUNNER[@]+"${WINDOW_RUNNER[@]}"} "$PACKAGE/$WINDOW_EXE" $sandbox \
     --smoke-test --url="http://127.0.0.1:$UI_PORT/" >> "$LOGS/window-smoke.log" 2>&1
 }
-if [[ -z "$WINDOW_EXE" ]]; then
+if [[ "$USE_MAC_APP" == true ]]; then
+  check "VISTA.app transitions to the main window" \
+    grep -q 'vista-window: main window ready' "$LOGS/launcher.log"
+elif [[ -z "$WINDOW_EXE" ]]; then
   skip "the window loads the UI" "this package has no window"
 elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
   skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
@@ -277,6 +307,31 @@ fi
 
 log "shutting down"
 cleanup
+
+ports_are_free() {
+  "$PACKAGE_PYTHON" - "$MCP_PORT" "$BACKEND_PORT" "$UI_PORT" <<'PYCHECK'
+import socket
+import sys
+
+for raw_port in sys.argv[1:]:
+    with socket.socket() as sock:
+        sock.settimeout(0.25)
+        if sock.connect_ex(("127.0.0.1", int(raw_port))) == 0:
+            raise SystemExit(f"port {raw_port} remains occupied")
+PYCHECK
+}
+package_processes_are_gone() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -z "$pid" || "$pid" == "$$" ]] && continue
+    echo "package process $pid remains" >&2
+    return 1
+  done < <(pgrep -f "$PACKAGE" 2>/dev/null || true)
+}
+if [[ "$USE_MAC_APP" == true ]]; then
+  check "quitting VISTA.app releases all service ports" ports_are_free
+  check "quitting VISTA.app leaves no package process" package_processes_are_gone
+fi
 
 if (( FAILED )); then
   echo >&2
