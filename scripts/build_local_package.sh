@@ -199,11 +199,19 @@ esac
 
 # ─── identity ───────────────────────────────────────────────────────────────
 
-# No tags in this repo and every component sits at 0.1.0, so the commit is what
-# actually identifies a build. Readable, and traceable back to a tree.
+# A release build is given its version (CI takes it from the tag). Otherwise
+# the last release tag plus the commits since it, e.g. 0.2.0+3.g1a2b3c4, so a
+# local build is placed relative to a release and traceable back to a tree.
+# With no release tag reachable it is 0.0.0+g1a2b3c4.
 VERSION="${VISTA_VERSION:-}"
 if [[ -z "$VERSION" ]]; then
-  VERSION="0.1.0+$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  described="$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --long 2>/dev/null || true)"
+  # v<tag>-<n>-g<sha>, where the tag itself may carry a suffix (v0.2.0-rc1).
+  if [[ "$described" =~ ^v(.+)-([0-9]+)-(g[0-9a-f]+)$ ]]; then
+    VERSION="${BASH_REMATCH[1]}+${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+  else
+    VERSION="0.0.0+g$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  fi
   if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
     VERSION="$VERSION-dirty"
   fi
@@ -226,7 +234,7 @@ case "$(uname -s)" in
 esac
 TARGET_ARCH="$(uname -m)"
 
-# The package's folder and archive name, e.g. vista-0.1.0-win-x86. Kept short
+# The package's folder and archive name, e.g. vista-0.2.0-win-x86. Kept short
 # on purpose: the folder name sits in front of every path in the package, and
 # on Windows every one of those counts against the 260-character limit --
 # twice over when Explorer's Extract All makes a folder named after the zip.
@@ -577,6 +585,7 @@ package has no launcher without it")
   fi
   echo "archive format    : ${ARCHIVE_FORMAT}"
   echo "package           : ${PACKAGE_NAME}"
+  echo "version           : ${VERSION}"
   return 0
 }
 

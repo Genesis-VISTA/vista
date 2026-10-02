@@ -59,7 +59,7 @@
 
 ## 2. Build identifier
 
-- [ ] 2.1 In `scripts/build_local_package.sh`, replace the `0.1.0+<sha>` fallback with
+- [x] 2.1 In `scripts/build_local_package.sh`, replace the `0.1.0+<sha>` fallback with
   `git describe --tags --match 'v[0-9]*' --long`, reformatted to `<x.y.z>+<n>.g<sha>`, keeping
   the `-dirty` suffix. Use `0.0.0+g<sha>` when no tag is reachable. Update the "No tags in this
   repo" comment. Verify in a scratch clone outside the repo (`$CLAUDE_JOB_DIR/tmp`):

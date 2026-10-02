@@ -165,8 +165,11 @@ Then build. The archive lands in `dist/` with a `.sha256` and a
 ./scripts/build_local_package.sh
 ```
 
-Build from a clean, committed tree. The version is stamped from the commit as
-`0.1.0+<short-sha>` (plus `-dirty` when the tree is not clean) and recorded in
+Build from a clean, committed tree. Unless `VISTA_VERSION` is set, the version
+is the last release tag plus the commits since it, e.g. `0.2.0+3.g<short-sha>`
+(`0.0.0+g<short-sha>` before any release tag, plus `-dirty` when the tree is
+not clean), and the archive is named after the tag's part,
+`vista-0.2.0-<os>-<arch>`. It is recorded in
 the manifest along with the runtime versions and payload inventory. Budget
 about 7 GB in the output directory, the staging tree plus the archive, for a
 ~2 GB result. The build finishes by unpacking the archive somewhere else and
