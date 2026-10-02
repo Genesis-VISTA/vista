@@ -106,8 +106,12 @@ fi
 # Measured, not assumed: `rag_search` returns HTTP 500 on a host with no
 # /dev/kvm while the MCP server itself has the store open and reports 4401
 # chunks. Serving pages while the agent cannot answer anything is worse than
-# saying so up front. There is no way to start without it: VISTA always needs
-# a microVM.
+# saying so up front. A researcher has no way to start without it: VISTA always
+# needs a microVM. The one exception is VISTA_VERIFY_WITHOUT_SANDBOX=1, which
+# only `build_local_package.sh --verify-without-sandbox` sets, in its smoke
+# test's environment, so a build host without KVM can still check everything
+# that does not go through the sandbox. It is honoured here and nowhere else,
+# and says so when it is.
 if [[ "$HOST_OS" == linux ]]; then
   kvm_problem=''
   if [[ ! -e /dev/kvm ]]; then
@@ -123,7 +127,9 @@ expose nested virtualisation to it."
 \`sudo usermod -aG kvm ${USER:-$(id -un)}\`, then log out and back in so the \
 new group takes effect."
   fi
-  if [[ -n "$kvm_problem" ]]; then
+  if [[ -n "$kvm_problem" && "${VISTA_VERIFY_WITHOUT_SANDBOX:-}" == 1 ]]; then
+    echo "notice: starting without the sandbox (VISTA_VERIFY_WITHOUT_SANDBOX=1, a build-only setting): ${kvm_problem%%$'\n'*}" >&2
+  elif [[ -n "$kvm_problem" ]]; then
     die "VISTA needs hardware virtualisation on Linux, and $kvm_problem
 
   Every agent tool call depends on it, not just running code: the sandbox

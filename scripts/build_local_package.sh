@@ -44,6 +44,12 @@
 #                         of building one, so no container runtime is needed.
 #                         Its architecture must match the target
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
+#   --verify-without-sandbox
+#                         Verify on a host that cannot run the sandbox, such as
+#                         a hosted macOS CI runner: every check that needs it
+#                         is reported as skipped, never as passed, and the
+#                         build says so. A release still needs the full smoke
+#                         test on a real machine
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
 #
@@ -150,6 +156,7 @@ SCIENCE_PROJECTS=false
 SCIENCE_STORE=''
 SANDBOX_IMAGE_TAR=''
 SKIP_SMOKE_TEST=false
+VERIFY_WITHOUT_SANDBOX=false
 KEEP_STAGING=false
 
 # The backend setting that seeds the science projects also says whether to pack
@@ -174,6 +181,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--sandbox-image needs a tar archive"
       SANDBOX_IMAGE_TAR="$2"; shift ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
+    --verify-without-sandbox) VERIFY_WITHOUT_SANDBOX=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
       [[ $# -ge 2 ]] || die "--payload needs a directory"
@@ -586,6 +594,13 @@ package has no launcher without it")
   echo "archive format    : ${ARCHIVE_FORMAT}"
   echo "package           : ${PACKAGE_NAME}"
   echo "version           : ${VERSION}"
+  if [[ "$SKIP_SMOKE_TEST" == true ]]; then
+    echo "verification      : skipped (--skip-smoke-test)"
+  elif [[ "$VERIFY_WITHOUT_SANDBOX" == true ]]; then
+    echo "verification      : without the sandbox (--verify-without-sandbox)"
+  else
+    echo "verification      : full smoke test, sandbox included"
+  fi
   return 0
 }
 
@@ -1826,15 +1841,24 @@ run_smoke_test() {
     rm -rf "$state"
     state="$(mktemp -d "$HOME/.vista-smoke.XXXXXX")"
   fi
+  # The bypass reaches the smoke test, and the launcher it starts, and nothing
+  # else: like VISTA_NO_WINDOW, it is never set where a researcher runs VISTA.
+  local -a smoke_env=()
+  [[ "$VERIFY_WITHOUT_SANDBOX" == true ]] && smoke_env=(VISTA_VERIFY_WITHOUT_SANDBOX=1)
   local failures=0
-  "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
+  env ${smoke_env[@]+"${smoke_env[@]}"} \
+    "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
 
   if (( failures )); then
     die "smoke test failed; the archive at $ARCHIVE_PATH is not usable. The \
 unpacked copy was left at $unpacked for inspection."
   fi
   rm -rf "$root" "$state"
-  echo "smoke test  : passed"
+  if [[ "$VERIFY_WITHOUT_SANDBOX" == true ]]; then
+    echo "smoke test  : passed (verified without the sandbox)"
+  else
+    echo "smoke test  : passed"
+  fi
 }
 
 ARCHIVE_PATH=''
@@ -1870,7 +1894,13 @@ if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
 fi
 run_smoke_test
 
-log "built $PACKAGE_NAME"
+# The path stays the last line of output, for whatever reads it.
+if [[ "$VERIFY_WITHOUT_SANDBOX" == true && "$SKIP_SMOKE_TEST" != true && -n "$ARCHIVE_PATH" ]]; then
+  log "built $PACKAGE_NAME, verified without the sandbox: the checks that need it were \
+skipped, so run the full smoke test on a real machine before releasing it"
+else
+  log "built $PACKAGE_NAME"
+fi
 if [[ -n "$ARCHIVE_PATH" ]]; then
   echo "$ARCHIVE_PATH"
 else

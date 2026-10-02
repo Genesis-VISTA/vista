@@ -100,21 +100,21 @@
 
 ## 5. Verification without the sandbox
 
-- [ ] 5.1 Add `--verify-without-sandbox` to `scripts/build_local_package.sh`, covering the help
+- [x] 5.1 Add `--verify-without-sandbox` to `scripts/build_local_package.sh`, covering the help
   text, argument parsing and the preflight summary. It exports
   `VISTA_VERIFY_WITHOUT_SANDBOX=1` to the smoke test only, and the build ends with a line
   saying the package was verified without the sandbox. Verify `--check --verify-without-sandbox`
   shows the mode in the summary.
-- [ ] 5.2 In `scripts/package_launcher.sh`, turn the `/dev/kvm` refusal into a one-line notice
+- [x] 5.2 In `scripts/package_launcher.sh`, turn the `/dev/kvm` refusal into a one-line notice
   when `VISTA_VERIFY_WITHOUT_SANDBOX=1`. Make no other change in behaviour, and update the
   "There is no way to start without it" comment. Verify by reading the diff: the variable is
   consulted only at the refusal.
-- [ ] 5.3 In `scripts/smoke_test_package.sh`, under `VISTA_VERIFY_WITHOUT_SANDBOX=1`, report
+- [x] 5.3 In `scripts/smoke_test_package.sh`, under `VISTA_VERIFY_WITHOUT_SANDBOX=1`, report
   the AI-safety retrieval check (and the molten-salt one) through `skip` with a reason. All
   other checks stay as they are. Update the "no opt-out" comment, and end with "all checks
   passed (verified without the sandbox)". Verify by running it on an unpacked package with the
   variable set: retrieval shows as skipped, never ok.
-- [ ] 5.4 Run a full local Mac build with and without `--verify-without-sandbox`, as a manual
+- [x] 5.4 Run a full local Mac build with and without `--verify-without-sandbox`, as a manual
   check that stays out of PR CI because it needs the sandbox. Verify:
   - without the flag, every check passes as before, retrieval included;
   - with it, retrieval is skipped and the summary says so.

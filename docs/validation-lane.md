@@ -170,7 +170,8 @@ Both commands should print nothing.
 
 **On Linux** (`openspec/changes/linux-desktop-window`): a real Ubuntu 24.04 desktop,
 and one of Debian 13 or Fedora. A VM is fine, but it needs nested virtualisation:
-the launcher has no opt-out for a host without KVM. Run the stopping
+the launcher refuses a host without KVM. (Its one bypass, the build-only
+`VISTA_VERIFY_WITHOUT_SANDBOX=1`, skips the very checks this needs.) Run the stopping
 and walk-through checks above, then:
 
 - On stock Ubuntu the window opens without the sandbox, and the launcher prints why along
