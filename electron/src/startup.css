@@ -1,0 +1,190 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  background: #f4f4f2;
+  color: #17202b;
+  --muted: #66717d;
+  --line: rgb(23 32 43 / 12%);
+  --panel: rgb(255 255 255 / 72%);
+  --accent: #1769aa;
+  --success: #24845b;
+  --danger: #b33a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #0a1524;
+    color: #edf3f8;
+    --muted: #9caab8;
+    --line: rgb(237 243 248 / 14%);
+    --panel: rgb(19 34 50 / 78%);
+    --accent: #65aee8;
+    --success: #63c795;
+    --danger: #ff8b8b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 460px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% -20%, rgb(71 145 201 / 15%), transparent 48%),
+    inherit;
+}
+
+.startup-shell {
+  width: min(100%, 640px);
+  margin: 0 auto;
+  padding: 42px 48px 34px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+
+.app-mark {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 13px;
+  color: white;
+  background: linear-gradient(145deg, #2488c7, #15558e);
+  box-shadow: 0 8px 24px rgb(20 86 142 / 28%);
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+
+.eyebrow {
+  margin: 1px 0 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+}
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+}
+
+.message {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.activities {
+  margin: 0;
+  padding: 8px 0;
+  overflow: hidden;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 14px 42px rgb(0 0 0 / 8%);
+}
+
+.activities li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activities li:last-child { border-bottom: 0; }
+.activities li[data-state="running"] { color: inherit; font-weight: 550; }
+.activities li[data-state="complete"],
+.activities li[data-state="ready"] { color: var(--success); }
+.activities li[data-state="failed"] { color: var(--danger); }
+
+.indicator {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.48;
+}
+
+[data-state="running"] .indicator {
+  border-color: transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  opacity: 1;
+  animation: spin 0.85s linear infinite;
+}
+
+[data-state="complete"] .indicator,
+[data-state="ready"] .indicator {
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: inset 0 0 0 2px var(--panel);
+  opacity: 1;
+}
+
+[data-state="failed"] .indicator {
+  border-color: var(--danger);
+  background: var(--danger);
+  opacity: 1;
+}
+
+.failure {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.failure p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+}
+
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button.primary { border-color: transparent; color: white; background: #1974b8; }
+button:disabled { cursor: default; opacity: 0.55; }
+
+.footnote {
+  margin: 16px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
