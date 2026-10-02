@@ -46,8 +46,7 @@ platform's package without anyone building on three machines.
   separate private repo (`sam-baumann/vista-runner-probe`) so VISTA's history stays clean, and
   the workflow is written against facts. Before the MR merges, the finished workflow is
   rehearsed for real in another private repo on the maintainer's account. Each package job's steps
-  live in one script that runs the same on a maintainer's Mac, and `act` exercises the Linux
-  jobs locally.
+  live in one script that runs the same on a maintainer's Mac.
 - The release notes are generated from a template: version, platforms, per-archive sha256,
   the build-inputs commit and install instructions. They include the macOS Gatekeeper
   workaround, because the Mac package stays ad-hoc signed with no Developer ID or
@@ -71,7 +70,7 @@ platform's package without anyone building on three machines.
 
 ## Impact
 
-- **New files:** `.github/workflows/release.yml`, `.github/scripts/package.sh`, a release-notes template, `.actrc`, and a maintainer doc
+- **New files:** `.github/workflows/release.yml`, `.github/scripts/package.sh`, a release-notes template, and a maintainer doc
   (`docs/releasing.md`) for updating the build inputs, running the workflow locally and the
   pre-publish check.
 - **Changed scripts:**

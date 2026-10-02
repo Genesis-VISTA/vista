@@ -120,7 +120,7 @@ There is a new build option, `--verify-without-sandbox`. Under it the build expo
 - **Launcher** (`package_launcher.sh`): when the variable is set, the `/dev/kvm` refusal
   prints a one-line notice instead of exiting. Nothing a researcher runs sets the variable,
   and the notice keeps an accidental use visible. The bypass is what lets a Linux build verify
-  without the sandbox locally, for example under `act` (7.2). The macOS launcher has no
+  without the sandbox on a host without KVM, such as a container. The macOS launcher has no
   hypervisor check to bypass. `package_launcher.ps1` is left unchanged, because no Windows
   build uses the option.
 - **Smoke test:**
@@ -259,8 +259,7 @@ tested this way, and they surface at 10.1.
 **Runners.** It has one job per hosted runner the release builds on: `ubuntu-24.04`,
 `macos-15` and `windows-2025`. Standard `ubuntu-24.04-arm` runners are available only to
 public repos, so the private probe leaves that runner out. The arm64 sandbox-image build is
-exercised natively by `act` on Apple Silicon instead (7.1), and the first manual run on the
-public mirror confirms it.
+first run on the public mirror (10.2).
 
 **Cost and timing.** It runs first, on the personal Actions quota. A probe costs about 70
 minutes, against roughly 600–1,000 for one full build. Its results are recorded in this
@@ -370,20 +369,19 @@ YAML stays at "check out, fetch inputs, call the script, upload". So:
 - a maintainer can run exactly what CI runs, on the Mac, with their own credentials (the
   script uses `AMSC_GIT_TOKEN` only when it is set);
 - the only workflow-specific logic left is wiring, which `actionlint` checks statically and
-  `act` exercises for the Linux jobs.
+  the rehearsal (D12) runs for real.
 
-`act` runs the `sandbox-image` job and the linux-x86 `package` job in Docker on the Mac. It
-can't run macOS or Windows jobs, and Docker on a Mac has no KVM, so the Linux job runs there
-with `VERIFY_WITHOUT_SANDBOX=1`. It is a wiring check, optional and manual, and stays out of PR
-CI.
+Running the workflow locally with `act` was planned and then dropped by the maintainer: it
+could only run the Linux jobs, under emulation and without KVM, and the rehearsal covers the
+same wiring on real runners.
 
 Taken together, these are the layers of verification:
 
 1. the scripts, on the Mac (groups 2–5 and 6.2);
 2. `actionlint`;
-3. `act`, for the Linux jobs;
-4. the probe, for runner facts;
-5. a manual run;
+3. the probe, for runner facts;
+4. the private rehearsal, for linux and windows (D12);
+5. a manual run on the public mirror, the mac job's first;
 6. an `-rc` draft;
 7. the real-hardware smoke test before publishing.
 
@@ -392,7 +390,7 @@ Taken together, these are the layers of verification:
 Before the MR merges on GitLab, the workflow runs for real in a private repo on the
 maintainer's own account, `sam-baumann/vista-release-rehearsal`. The branch is pushed there
 directly, as that repo's default branch, so `workflow_dispatch` sees the workflow. It gets the
-same two secrets as the mirror will. That catches wiring that `actionlint` and `act` can't:
+same two secrets as the mirror will. That catches wiring that `actionlint` can't:
 secrets, the inputs checkout over the deploy key, artifact hand-off between jobs, the Windows
 job on a real runner, and the `release` job creating and updating a draft.
 
@@ -440,6 +438,10 @@ exists to make safe, and a broken workflow would then be on the public repo's `m
   is short. But the launcher, not the build, decides where msb's home lands.
   → During 5.4 and 10.3, check where the package's msb home resolves on macOS. If it can be
   deep, report it as a launcher precondition, like the Windows path-length checks.
+- **[The Linux launcher's bypass is never run in CI.]** Hosted Linux runners have KVM, and
+  the `act` runs that would have exercised the `/dev/kvm` notice were dropped. It is a
+  three-line branch, kept for building on a Linux host without KVM.
+  → Read the diff (5.2). If it is ever needed, the first such build shows whether it works.
 - **[The bypass variable leaks into a real run.]**
   → It is set only inside the smoke test's environment, the launcher prints a notice
   whenever it is honoured, and the spec's researcher scenario pins the refusal.

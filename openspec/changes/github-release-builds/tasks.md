@@ -20,7 +20,7 @@
   `workflow_dispatch` only, holds no secrets, and has `permissions: contents: read`. It has one
   job per hosted runner the release builds on: `ubuntu-24.04`, `macos-15` and `windows-2025`.
   `ubuntu-24.04-arm` is left out, because standard arm64 runners are available to public repos
-  only; the arm64 image build is exercised natively by `act` on the Mac instead (7.1). The
+  only; the arm64 image build is first run on the public mirror (10.2). The
   workflow reports and builds nothing. Each job prints:
   - `df -h`, or the drive free space on Windows;
   - the OS version, plus `ldd --version` on Linux;
@@ -189,21 +189,11 @@
     `docker save`, `VERIFY_WITHOUT_SANDBOX=1`, and the same archive name and checks as the
     direct builds in group 5.
 
-## 7. Local workflow runs with act (optional, manual, outside PR CI)
+## 7. Local workflow runs with act (dropped)
 
-- [ ] 7.1 Add `.actrc` and a short "Running the workflow locally" section in
-  `docs/releasing.md`. Use the `catthehacker/ubuntu:act-24.04` image so glibc matches the
-  hosted runner. Supply secrets from a git-ignored `.secrets` file, and pass
-  `--container-architecture linux/amd64` on Apple Silicon. Verify
-  `act workflow_dispatch -j sandbox-image --matrix arch:amd64` builds and saves the amd64
-  image on the Mac. Also run it with `--matrix arch:arm64 --container-architecture linux/arm64`.
-  That runs natively on Apple Silicon and stands in for the `ubuntu-24.04-arm` runner the
-  private probe can't use.
-- [ ] 7.2 Run the linux-x86 `package` job under `act` with `VERIFY_WITHOUT_SANDBOX=1` passed
-  through `--env`, since Docker on a Mac has no KVM. Verify it gets through checkout, inputs,
-  image download and a complete build. Under amd64 emulation it is slow, so treat it as a
-  wiring check, not a timing one. Record anything that behaves differently from the hosted
-  runner in `docs/releasing.md`.
+Dropped by the maintainer on 2026-10-02: the rehearsal in group 9 runs the real workflow on
+real runners, which is the validation that matters. The group's number is kept so later
+references stay stable.
 
 ## 8. Documentation
 
