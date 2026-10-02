@@ -1,7 +1,22 @@
+**Working notes.**
+
+- Implementation happens in the worktree `.claude/worktrees/github-release-builds`, on branch
+  `worktree-github-release-builds`.
+- Commit after each task group. Never push or open an MR without the maintainer's explicit
+  say-so.
+- A full local build (2.1, 3.1, 4.3, 5.5, 6.2, 9.1) needs the following. Tokens come from
+  local storage and are never printed:
+  - the main checkout's `.env` and `data/` entries symlinked into the worktree;
+  - `--payload ~/.vista-build/vista-data --vector-store ~/.vista-build/rag_db`;
+  - `VISTA_BUILD_CA_BUNDLE=~/root-ca.pem`, because the office network inspects TLS;
+  - gitlab.com access for `amscrot-py` from the macOS keychain.
+
 ## 1. Runner probe (runs first, off to the side; nothing lands in the VISTA repo)
 
-- [ ] 1.1 Write `.github/workflows/runner-probe.yml` in a scratch directory outside the VISTA
-  repo, for the private `sam-baumann/vista-runner-probe`. It is triggered by
+- [x] 1.1 Write the probe for the private `sam-baumann/vista-runner-probe`. **Done:** it is saved
+  in this change under `probe/` (`probe.sh`, `.github/workflows/runner-probe.yml`, `README.md`),
+  was run in full on the maintainer's Mac, and passes `actionlint` (design D10 records what the
+  local runs found). It is triggered by
   `workflow_dispatch` only, holds no secrets, and has `permissions: contents: read`. It has one
   job per hosted runner the release builds on: `ubuntu-24.04`, `macos-15` and `windows-2025`.
   `ubuntu-24.04-arm` is left out, because standard arm64 runners are available to public repos
@@ -27,11 +42,18 @@
 
   Every check ends the job green, so a negative answer is reported rather than hiding the
   rest. Verify `actionlint` is clean.
-- [ ] 1.2 With the maintainer's go-ahead, create the private `sam-baumann/vista-runner-probe`
-  with `gh repo create`, push the workflow, and run it with `gh workflow run`. It costs
-  roughly 70 minutes of the personal Actions quota, macOS's 10× multiplier included, and adds
-  no commits to VISTA. Record the results in this change's `design.md`, under a new "Probe
-  results" section. Verify each D-decision still holds against them: the macOS sandbox, the
+- [ ] 1.2 With the maintainer's explicit go-ahead to push, create and run the probe repo. `gh`
+  is logged in as `sam-baumann`, and the repo name was free on 2026-10-02.
+  1. Copy `openspec/changes/github-release-builds/probe/` to a scratch directory outside the
+     repo, then run `git init` and commit there.
+  2. `gh repo create sam-baumann/vista-runner-probe --private --source <dir> --push`.
+  3. `gh workflow run runner-probe.yml -R sam-baumann/vista-runner-probe`, then
+     `gh run watch`.
+  4. Read each job's summary (`gh run view <id> --log`, or the run page).
+
+  It costs roughly 70 minutes of the personal Actions quota, macOS's 10× multiplier included,
+  and adds no commits to VISTA. Record the three result tables in `design.md` under
+  "Probe results". Verify each D-decision still holds against them: the macOS sandbox, the
   Windows `msb doctor`, KVM on Linux, the glibc floor and the disk margins. If one doesn't,
   stop and revise the design before group 6.
 

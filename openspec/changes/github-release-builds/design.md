@@ -153,8 +153,8 @@ It is a plain repo, with no releases and no tags, so nothing in it is published.
   step.
 - **Updating the inputs.** A maintainer runs the existing indexing locally with ORNL access
   and an LLM key, replaces the two directories in a checkout of the inputs repo, commits,
-  pushes, and updates the pin. The steps are documented in `docs/releasing.md`, not scripted
-  (planning decision Q20).
+  pushes, and updates the pin. The steps are documented in `docs/releasing.md`, not scripted.
+  The maintainer decided against a script because updates are rare.
 - **Size.** The store is tens of MB of binary files, so each update grows the repo's history
   by about that much. At an update every few months, plain git is fine, and Git LFS is not
   worth its setup.
@@ -179,7 +179,9 @@ Build metadata goes after `+` because the archive name already strips everything
 and the running app carry the full identifier. `VISTA_COMMIT` continues to work for tree
 exports with no `.git`.
 
-The five manifests' `0.1.0` stay placeholders, because nothing reads them (Q12). Hosted
+The five manifests' `0.1.0` stay placeholders, because nothing reads them. Requiring them to
+match the tag would make every release need a version-bump commit, and was rejected for that
+reason. Hosted
 checkouts are shallow, but tagged runs set the version explicitly, so `git describe` is
 never needed there.
 
@@ -215,7 +217,8 @@ first runs show the real margin.
 archives with their sha256 values, the build-inputs commit, per-platform download/verify/run
 steps, and the macOS quarantine workaround (`xattr -dr com.apple.quarantine`, or approve in
 System Settings → Privacy & Security). The workaround is needed because the app is ad-hoc
-signed (Q25). The template also has a "Verified on real hardware" checklist for macOS and
+signed: `codesign --sign -`, with no Developer ID and no notarization. The maintainer decided
+to keep it that way, with no Developer ID work planned. The template also has a "Verified on real hardware" checklist for macOS and
 Windows, and a `## What's changed` placeholder. `release` fills it in with `envsubst` and a
 few lines of shell.
 
@@ -251,6 +254,38 @@ public mirror confirms it.
 minutes, against roughly 600–1,000 for one full build. Its results are recorded in this
 design before group 6, and they confirm or revise D3, D4 and D8. It is rerun from that repo
 whenever a pinned runner version (D3) is bumped.
+
+**The probe is already written.** It is saved in this change under `probe/`: `probe.sh`, the
+workflow at `.github/workflows/runner-probe.yml`, and a README. That directory becomes the
+probe repo's contents. Before saving, it was run in full on a maintainer's Mac (macOS 26.7,
+Apple M5, bare metal), where every row reported, the microVM boot included. `actionlint` is
+clean.
+
+**What the local runs established:**
+
+- `msb doctor` on macOS checks the binaries, `libkrunfw`, reflink cloning and the CPU
+  architecture, but **not the hypervisor**. It reports "Host setup is ready." regardless. A
+  real boot is the only conclusive check, so the probe runs
+  `msb run alpine -- echo microvm-ok`, bounded at 180 s with `perl -e 'alarm …'` because
+  macOS has no `timeout`. On the Mac it printed `microvm-ok`.
+- microsandbox 0.7.2 ships only `cp310-abi3` wheels, for macOS arm64, manylinux x86_64 and
+  aarch64, and Windows amd64 and arm64. So it needs Python ≥ 3.10. The macOS system Python
+  is 3.9, which is why the probe workflow installs 3.14 (VISTA's pin) with
+  `actions/setup-python`. A uv-created venv has no `pip`, so a local run needs
+  `uv venv --seed`.
+- msb derives Unix socket paths from `MSB_HOME`, and macOS limits those to 104 bytes. A deep
+  `MSB_HOME` fails with "sandbox runtime socket path is too long". The probe uses
+  `mktemp -d /tmp/msb.XXXXXX`. This also bears on the real smoke test; see Risks.
+- On Windows, `python3` can resolve to the Microsoft Store stub, so the probe uses `python`
+  there.
+
+To rerun it locally:
+`uv venv --seed --python 3.14 <dir>`, then
+`PY=<dir>/bin/python RUNNER_TEMP=<scratch> GITHUB_STEP_SUMMARY=<file> bash probe/probe.sh`.
+
+### Probe results
+
+*Pending: filled in by task 1.2 from the three jobs' summaries.*
 
 *Alternative:* learn the same facts from the first full release run. That spends a full
 build's minutes per finding, and the workflow is written against guesses.
@@ -293,6 +328,13 @@ Taken together, these are the layers of verification:
   checks there is needlessly weak.
   → The probe reports `msb doctor` before any workflow is written around it (D10). If the
   runner is ready, drop the flag for Windows. That's a one-line matrix change.
+- **[msb's 104-byte socket limit on macOS.]** If `MSB_HOME`, or whatever msb derives its
+  sockets from, sits too deep, the sandbox fails to start with "socket path is too long". The
+  probe hit this locally (D10). On the macOS runner, the smoke test's state directory comes
+  from `mktemp -d /tmp/vista-smoke.XXXXXX` (`build_local_package.sh`'s `run_smoke_test`), which
+  is short. But the launcher, not the build, decides where msb's home lands.
+  → During 5.5 and 9.4, check where the package's msb home resolves on macOS. If it can be
+  deep, report it as a launcher precondition, like the Windows path-length checks.
 - **[The bypass variable leaks into a real run.]**
   → It is set only inside the smoke test's environment, the launcher prints a notice
   whenever it is honoured, and the spec's researcher scenario pins the refusal.
@@ -314,7 +356,7 @@ Taken together, these are the layers of verification:
   → It is read-only and opens one repo, whose contents ship inside every public package
   anyway. Rotate it in the repo's settings.
 - **[Mac users who download in a browser hit Gatekeeper.]**
-  → This is accepted (Q25). The notes carry the workaround, and the later curl installer
+  → This is accepted (D9: ad-hoc signing stays). The notes carry the workaround, and the later curl installer
   avoids the quarantine flag altogether.
 
 ## Migration Plan

@@ -1,0 +1,29 @@
+name: runner probe
+
+# Reports what each hosted runner VISTA's release builds on offers: virtualisation,
+# glibc, disk, network and the bundled sandbox runtime's own check. Builds nothing
+# and uses no secrets. Run it by hand, and again whenever a runner version changes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Probe
+        run: bash probe.sh
