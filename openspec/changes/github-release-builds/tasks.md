@@ -60,9 +60,9 @@
 
 ## 5. Release workflow
 
-- [ ] 5.1 Add `.github/build-inputs.env` with `BUILD_INPUTS_VERSION` and
-  `BUILD_INPUTS_SHA256`, holding placeholders that make the workflow fail with "no build inputs
-  pinned" until 7.1 sets real values. Verify that the file's own comment names `docs/releasing.md`.
+- [ ] 5.1 Add `.github/build-inputs.env` with `BUILD_INPUTS_COMMIT`, holding a placeholder
+  that makes the workflow fail with "no build inputs pinned" until 7.1 sets the real commit.
+  Verify that the file's own comment names `docs/releasing.md`.
 - [ ] 5.2 Add `.github/workflows/release.yml`:
   - triggers: `push: tags: ['v*']` and `workflow_dispatch`;
   - `permissions: contents: read` by default;
@@ -76,7 +76,8 @@
   win-x86 on `windows-2025` with the Git Bash shell, `fail-fast: false`). Each job:
   - sets `VISTA_VERSION` from the tag on tag runs;
   - adds the udev rule granting `/dev/kvm` on Linux;
-  - fetches the bundle and checks its sha256 against the pin before anything else;
+  - before anything else, checks out `Genesis-VISTA/vista-build-inputs` at
+    `BUILD_INPUTS_COMMIT` with `secrets.BUILD_INPUTS_DEPLOY_KEY`;
   - configures `amscrot-py` access from `secrets.AMSC_GIT_TOKEN`;
   - logs `df -h` before and after the build;
   - logs `msb doctor` on Windows;
@@ -87,7 +88,7 @@
   Verify `actionlint` is clean.
 - [ ] 5.4 Add `.github/release-notes.md` (the template from design D9) and a small fill script
   under `.github/scripts/`. Verify by running the script locally against two dummy archives
-  with `.sha256` files and reading the rendered notes: the sha256 table, the bundle version,
+  with `.sha256` files and reading the rendered notes: the sha256 table, the build-inputs commit,
   the install steps, the quarantine workaround and the unticked real-hardware checklist.
 - [ ] 5.5 Add the `release` job: `if: startsWith(github.ref, 'refs/tags/v')`, needs `package`,
   `contents: write`. It fails if any archive exceeds 2 GiB, creates the draft (as a
@@ -102,10 +103,12 @@
   - checking the draft;
   - the real-hardware smoke test on macOS and Windows, from the draft asset;
   - publishing;
-  - refreshing the corpus bundle: index locally with ORNL access and an LLM key, pack
-    `vista-data/ai-safety/` and `rag_db/`, publish on `Genesis-VISTA/vista-build-inputs`,
-    update `.github/build-inputs.env`;
-  - creating the `AMSC_GIT_TOKEN` deploy token.
+  - updating the build inputs: index locally with ORNL access and an LLM key, replace
+    `vista-data/ai-safety/` and `rag_db/` in a checkout of the private
+    `Genesis-VISTA/vista-build-inputs`, commit and push without ever rewriting its history,
+    then set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`;
+  - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com deploy token, and the
+    `BUILD_INPUTS_DEPLOY_KEY` read-only deploy key.
 
   Verify every command in it against the scripts.
 - [ ] 6.2 Link `docs/releasing.md` from `README.md`'s packaging section and from `AGENTS.md`'s
@@ -116,12 +119,15 @@
 
 ## 7. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
 
-- [ ] 7.1 Build and publish the first corpus bundle from the maintainer's Mac. Create the
-  `Genesis-VISTA/vista-build-inputs` repo, attach the bundle as a release asset, and commit
-  the real version and sha256 to `.github/build-inputs.env`. Verify that downloading the
-  asset and running `shasum -a 256` matches the pin.
+- [ ] 7.1 Create the private `Genesis-VISTA/vista-build-inputs` repo, with branch protection on
+  its default branch that forbids force-pushes. Push `vista-data/ai-safety/` and `rag_db/`
+  from the maintainer's Mac, the same inputs the last hand-built package used
+  (`~/.vista-build`). Add a read-only deploy key, and commit the real `BUILD_INPUTS_COMMIT`.
+  Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
+  … --vector-store …`.
 - [ ] 7.2 The maintainer enables Actions on `Genesis-VISTA/vista` and adds the `AMSC_GIT_TOKEN`
-  secret as a read-only deploy token. Verify the workflow shows under the repo's Actions tab.
+  and `BUILD_INPUTS_DEPLOY_KEY` secrets. Verify the workflow shows under the repo's Actions
+  tab.
 - [ ] 7.3 Make a manual run on `main`. Record the disk margins, whether the macOS first run
   needs the hypervisor beyond the toolset, and what `msb doctor` says on Windows. Fix what
   turns up, for example by gating the image import or dropping the flag on Windows. Verify a

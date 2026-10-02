@@ -78,14 +78,22 @@ attached to the draft.
 
 Everything a release build takes from outside the repository SHALL be fixed by an
 identifier recorded in the repository: the AI-safety corpus with its prebuilt vector store,
-by version and sha256, and the embedding weights, by revision. A build SHALL fail rather
-than build with an input that does not match its pin.
+by a commit of the private build-inputs repository, and the embedding weights, by revision. A
+build SHALL fail rather than build with an input that does not match its pin. The build
+inputs SHALL NOT be published or offered for download on their own. They reach researchers
+only inside the packages.
 
-#### Scenario: Corpus bundle does not match its pin
+#### Scenario: The pinned inputs are unavailable
 
-- **WHEN** the downloaded corpus bundle's sha256 differs from the one recorded in the
-  repository
-- **THEN** the build fails before building any package, naming the mismatch
+- **WHEN** the pinned build-inputs commit cannot be fetched, because it is missing or access
+  is refused
+- **THEN** the build fails before building any package, naming the commit it could not fetch
+
+#### Scenario: Looking for the corpus outside a package
+
+- **WHEN** someone without access to the build-inputs repository looks for the corpus or the
+  vector store on GitHub
+- **THEN** they find neither, except inside a published package
 
 #### Scenario: Two builds of the same tag
 
@@ -95,8 +103,8 @@ than build with an input that does not match its pin.
 ### Requirement: Release builds hold no institutional credentials
 
 A release build SHALL need no ORNL credential and no LLM inference credential. The only
-secret it SHALL use is a read-only token for the repositories its bundled dependencies come
-from.
+secrets it SHALL use are read-only credentials, each scoped to one repository: the
+repositories its bundled dependencies come from, and the build-inputs repository.
 
 #### Scenario: Inspecting what a release build needs
 
@@ -118,13 +126,13 @@ package records changes only when that version is changed on purpose.
 ### Requirement: Release notes describe what was built
 
 Every draft release SHALL carry generated notes stating the version, each platform's archive
-with its sha256, the corpus bundle version, how to download, verify and run each platform's
+with its sha256, the build-inputs commit, how to download, verify and run each platform's
 package, and on macOS how to open a package that Gatekeeper blocks. A maintainer adds the
 description of what changed.
 
 #### Scenario: Reading a draft's notes
 
 - **WHEN** a maintainer opens a draft release
-- **THEN** its notes list the three archives with their sha256 values, the corpus bundle
-  version, the install steps per platform and the macOS quarantine workaround, with a
+- **THEN** its notes list the three archives with their sha256 values, the build-inputs
+  commit, the install steps per platform and the macOS quarantine workaround, with a
   placeholder for the changes

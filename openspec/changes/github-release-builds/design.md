@@ -75,7 +75,7 @@ sandbox-image (matrix: amd64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm)
   emulation of arm64 is 5–10× slower.
 - **`package`**:
   1. Downloads the image for its target (amd64 for Linux and Windows, arm64 for macOS).
-  2. Downloads and verifies the corpus bundle (D5).
+  2. Checks out the private build-inputs repo at the pinned commit (D5).
   3. Configures git access to `amscrot-py` from the secret.
   4. Runs `build_local_package.sh --payload … --vector-store … --sandbox-image …`, plus
      `--verify-without-sandbox` on macOS and Windows (D4).
@@ -134,27 +134,37 @@ There is a new build option, `--verify-without-sandbox`. Under it the build expo
 All three were rejected in favour of the draft gate, where a maintainer runs the full smoke
 test against the downloaded draft asset on a real machine.
 
-### D5: The corpus bundle
+### D5: The build inputs
 
-The bundle is a `vista-build-inputs-<version>.tar.gz` asset on a release of the public
-`Genesis-VISTA/vista-build-inputs` repo. It contains:
+The build inputs live in a private git repo, `Genesis-VISTA/vista-build-inputs`, that holds
+only what the build needs, laid out as the flags expect:
 
-- `vista-data/ai-safety/`, the PDFs, laid out as `--payload` expects;
-- `rag_db/`, the Chroma store with its citation metadata, which `--vector-store` expects.
+- `vista-data/ai-safety/`: the PDFs, for `--payload`;
+- `rag_db/`: the Chroma store with its citation metadata, for `--vector-store`.
 
-The pin is a small checked-in file, `.github/build-inputs.env`, holding
-`BUILD_INPUTS_VERSION` and `BUILD_INPUTS_SHA256`, which the workflow reads. A mismatch fails
-the job before any build step.
+It is a plain repo, with no releases and no tags, so nothing in it is published.
 
-To refresh the bundle, a maintainer runs the existing indexing locally with ORNL access and
-an LLM key, packs the two directories, publishes a new release on the inputs repo and
-updates the pin. The steps are documented in `docs/releasing.md`, not scripted (planning
-decision Q20).
+- **Pin.** A small checked-in file, `.github/build-inputs.env`, holds `BUILD_INPUTS_COMMIT`.
+  Each package job checks the inputs repo out at that commit with `actions/checkout`, using
+  `ssh-key: ${{ secrets.BUILD_INPUTS_DEPLOY_KEY }}`. A read-only deploy key belongs to the
+  repo, not to a person, and opens nothing else.
+- **Integrity.** A git commit hash already covers every file's contents, so a separate
+  sha256 is not needed. A missing commit, or refused access, fails the job before any build
+  step.
+- **Updating the inputs.** A maintainer runs the existing indexing locally with ORNL access
+  and an LLM key, replaces the two directories in a checkout of the inputs repo, commits,
+  pushes, and updates the pin. The steps are documented in `docs/releasing.md`, not scripted
+  (planning decision Q20).
+- **Size.** The store is tens of MB of binary files, so each update grows the repo's history
+  by about that much. At an update every few months, plain git is fine, and Git LFS is not
+  worth its setup.
 
-The bundle repo is separate because the GitLab mirror could prune tags that exist only on
-the main mirror, and a release whose tag is pruned becomes orphaned.
-*Alternatives:* GitLab's package registry, which needs a second secret in GitHub, or a
-self-hosted step inside ORNL.
+*Alternatives:*
+
+- Release assets on a public repo: that publishes the corpus on its own, which is not
+  wanted.
+- GitLab's package registry: it needs a gitlab.com token with wider scope.
+- A self-hosted step inside ORNL.
 
 ### D6: Version identifier
 
@@ -185,7 +195,7 @@ places:
 alongside `rag_model` and calls `snapshot_download(model, revision=…)`. When it reuses the
 host cache, it checks that the pinned snapshot is present and fails if it is not.
 
-This pins the weights in one place, so dev indexing (the corpus bundle refresh), CI packages
+This pins the weights in one place, so dev indexing (updating the build inputs), CI packages
 and the running app all use the same weights. Pinning only in the build script would leave
 local indexing on whatever `main` is today, and the store and weights could silently
 diverge.
@@ -202,7 +212,7 @@ first runs show the real margin.
 ### D9: Release notes
 
 `.github/release-notes.md` is a template with placeholders for the version, a table of
-archives with their sha256 values, the bundle version, per-platform download/verify/run
+archives with their sha256 values, the build-inputs commit, per-platform download/verify/run
 steps, and the macOS quarantine workaround (`xattr -dr com.apple.quarantine`, or approve in
 System Settings → Privacy & Security). The workaround is needed because the app is ad-hoc
 signed (Q25). The template also has a "Verified on real hardware" checklist for macOS and
@@ -232,8 +242,14 @@ few lines of shell.
 - **[The disk margin is wrong on some runner.]**
   → The `df` logging (D8) shows it. On Linux there's a fallback that deletes the preinstalled
   toolchains.
-- **[The inputs repo or its asset is deleted or replaced.]**
-  → The sha256 pin fails the build rather than shipping a different corpus.
+- **[The pinned inputs commit is lost, for example through a force-push that rewrites the
+  inputs repo's history.]**
+  → The checkout fails, so the build stops rather than shipping a different corpus.
+  `docs/releasing.md` says never to rewrite that repo's history. Branch protection on its
+  default branch enforces that.
+- **[The deploy key leaks.]**
+  → It is read-only and opens one repo, whose contents ship inside every public package
+  anyway. Rotate it in the repo's settings.
 - **[Mac users who download in a browser hit Gatekeeper.]**
   → This is accepted (Q25). The notes carry the workaround, and the later curl installer
   avoids the quarantine flag altogether.
@@ -244,10 +260,11 @@ There is no data or runtime migration. The rollout order:
 
 1. Land the script changes, the workflow, the template and `docs/releasing.md` on GitLab.
    The mirror carries them over. The workflow stays dormant until Actions is enabled.
-2. Create `Genesis-VISTA/vista-build-inputs`, publish the first bundle from a maintainer's
-   Mac, and commit the pin.
-3. When the mirror goes public: enable Actions, and add the `AMSC_GIT_TOKEN` secret (a
-   read-only deploy token).
+2. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
+   maintainer's Mac, add a read-only deploy key, and commit the pin.
+3. When the mirror goes public: enable Actions, and add two secrets: `AMSC_GIT_TOKEN`, a
+   read-only gitlab.com deploy token, and `BUILD_INPUTS_DEPLOY_KEY`, the deploy key's private
+   half.
 4. Do a manual run on `main` and fix whatever the runners turn up: disk, the macOS first-run
    behaviour, `msb doctor` on Windows.
 5. Push `v0.2.0-rc1`. Check that the draft prerelease and its notes are right, run the

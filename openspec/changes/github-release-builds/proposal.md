@@ -20,11 +20,12 @@ platform's package without anyone building on three machines.
 - A prep job builds the code-execution sandbox image natively for amd64 and arm64, and the
   platform jobs take it as `--sandbox-image`. macOS runners have no Docker, and Windows
   runners cannot build Linux images.
-- The AI-safety corpus and its prebuilt Chroma store come from a versioned bundle published
-  on a separate public repo, `Genesis-VISTA/vista-build-inputs`, and pinned by sha256 in the
-  workflow. code.ornl.gov is unreachable from GitHub's runners, and building the store in CI
-  would need an LLM credential there. A maintainer refreshes the bundle by hand, following
-  documented steps.
+- The AI-safety corpus and its prebuilt Chroma store come from a small **private** repo,
+  `Genesis-VISTA/vista-build-inputs`, that holds only the files the build needs. The workflow
+  checks it out at a commit pinned in this repo. code.ornl.gov is unreachable from GitHub's
+  runners, and building the store in CI would need an LLM credential there. Nothing is
+  released from the inputs repo, and it is never offered as a download of its own. A
+  maintainer updates it by hand when the corpus changes, following documented steps.
 - The package version comes from the tag. `v0.2.0` builds `vista-0.2.0-<os>-<arch>`. Local
   builds take their version from `git describe --tags` instead of the hardcoded `0.1.0+sha`.
   The first release is `v0.2.0`.
@@ -39,7 +40,7 @@ platform's package without anyone building on three machines.
   run the full smoke test. Before the draft is published, a maintainer runs the full smoke
   test on a real Mac and a real Windows machine.
 - The release notes are generated from a template: version, platforms, per-archive sha256,
-  corpus bundle version and install instructions. They include the macOS Gatekeeper
+  the build-inputs commit and install instructions. They include the macOS Gatekeeper
   workaround, because the Mac package stays ad-hoc signed with no Developer ID or
   notarization.
 
@@ -62,7 +63,7 @@ platform's package without anyone building on three machines.
 ## Impact
 
 - **New files:** `.github/workflows/package.yml` (or a similar name), a release-notes template,
-  and a maintainer doc for refreshing the corpus bundle and running the pre-publish check.
+  and a maintainer doc for updating the build inputs and running the pre-publish check.
 - **Changed scripts:**
   - `scripts/build_local_package.sh`: version fallback, staging removed before the smoke test,
     the Hugging Face revision pin, and the new verification option.
@@ -72,8 +73,9 @@ platform's package without anyone building on three machines.
 - **Weights pin:** `vista_mcp_server/config.py`, `rag_mcp.py` and `build_rag.py` load the
   embedding model at the pinned revision. These are the same weights as today, made explicit.
 - **External setup:**
-  - A public `Genesis-VISTA/vista-build-inputs` repo.
-  - One GitHub secret: a read-only token for the private `amscrot-py` repo on gitlab.com.
+  - A private `Genesis-VISTA/vista-build-inputs` repo.
+  - Two GitHub secrets, both read-only and each scoped to one repo: a token for the private
+    `amscrot-py` repo on gitlab.com, and a deploy key for `vista-build-inputs`.
   - Actions enabled on the mirror once it is public.
 - **Unchanged:** GitLab CI, the runtime behaviour of an installed package, and the
   researcher-facing launcher behaviour.
