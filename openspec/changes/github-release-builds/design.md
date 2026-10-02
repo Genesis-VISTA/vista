@@ -407,7 +407,7 @@ job on a real runner, and the `release` job creating and updating a draft.
 - **Not a way to cut a partial release.** `release` fails before creating anything when the
   variable is set and the repository is public (`github.event.repository.private` is false).
 - **Inputs.** The rehearsal uses the real `Genesis-VISTA/vista-build-inputs`, created first
-  (9.1) for that reason, with the same read-only deploy key the mirror will hold. So the pinned
+  (9.1) for that reason, through a read-only deploy key of its own, revoked with the repo. So the pinned
   commit is exercised before rollout, and no throwaway inputs repo is needed.
 - **Cost.** Private-repo minutes come from the personal quota: Linux at 1×, Windows at 2×.
   The rehearsal's draft release, its rc tag and the repo itself are deleted afterwards.
@@ -457,8 +457,10 @@ exists to make safe, and a broken workflow would then be on the public repo's `m
 - **[The pinned inputs commit is lost, for example through a force-push that rewrites the
   inputs repo's history.]**
   → The checkout fails, so the build stops rather than shipping a different corpus.
-  `docs/releasing.md` says never to rewrite that repo's history. Branch protection on its
-  default branch enforces that.
+  `docs/releasing.md` and the inputs repo's README say never to rewrite that repo's history.
+  Nothing enforces it: GitHub refuses branch protection and rulesets on a private repo in a
+  free-plan organisation ("Upgrade to GitHub Pro or make this repository public"). The
+  maintainer chose to keep it a documented rule rather than tag each pin or upgrade the plan.
 - **[The deploy key leaks.]**
   → It is read-only and opens one repo, whose contents ship inside every public package
   anyway. Rotate it in the repo's settings.

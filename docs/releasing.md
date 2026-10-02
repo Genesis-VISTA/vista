@@ -133,8 +133,9 @@ local copy for `--payload`) and an LLM key for citation extraction, both through
    ```
 
 3. Replace both directories in a checkout of the inputs repo, commit, and push. **Never
-   force-push or rewrite its history.** Every past release's pin must stay resolvable, and the
-   default branch is protected against force-pushes for that reason.
+   force-push or rewrite its history.** Every past release's pin must stay resolvable. Nothing
+   enforces this: the organisation's free plan allows no branch protection on a private repo,
+   so it rests on this rule alone.
 
    ```bash
    git clone git@github.com:Genesis-VISTA/vista-build-inputs.git && cd vista-build-inputs
@@ -161,7 +162,8 @@ update every few months, plain git is fine.
 ## Secrets and variables
 
 Set on `Genesis-VISTA/vista` (and on a rehearsal repo, below), under Settings → Secrets and
-variables → Actions.
+variables → Actions. Each repository that builds gets a deploy key of its own, so one can be
+revoked without touching the others.
 
 | name | kind | what it is |
 |---|---|---|
@@ -173,16 +175,18 @@ variables → Actions.
 Creating the deploy key:
 
 ```bash
-ssh-keygen -t ed25519 -N '' -C 'vista release builds' -f /tmp/vista-build-inputs-key
+repo=Genesis-VISTA/vista        # the repository whose workflow reads the inputs
+ssh-keygen -t ed25519 -N '' -C "release builds for $repo" -f /tmp/vista-build-inputs-key
 gh repo deploy-key add /tmp/vista-build-inputs-key.pub -R Genesis-VISTA/vista-build-inputs \
-  --title 'release builds (read-only)'
-gh secret set BUILD_INPUTS_DEPLOY_KEY -R Genesis-VISTA/vista < /tmp/vista-build-inputs-key
+  --title "release builds: $repo (read-only)"
+gh secret set BUILD_INPUTS_DEPLOY_KEY -R "$repo" < /tmp/vista-build-inputs-key
 rm /tmp/vista-build-inputs-key /tmp/vista-build-inputs-key.pub
 ```
 
 `gh repo deploy-key add` makes a read-only key unless it is given `--allow-write`. If the key
 leaks, it opens only that one repository, whose contents ship inside every public package anyway.
-Rotate it by repeating the steps and deleting the old key.
+Rotate it by repeating the steps and deleting the old key, which
+`gh repo deploy-key list -R Genesis-VISTA/vista-build-inputs` names by its title.
 
 Set the token with `gh secret set AMSC_GIT_TOKEN -R Genesis-VISTA/vista`, which prompts for the
 value rather than taking it on the command line.

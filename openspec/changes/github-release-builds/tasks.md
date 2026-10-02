@@ -222,10 +222,12 @@ references stay stable.
 
 ## 9. Rehearsal in a private repo (before the MR merges; needs the go-ahead to push)
 
-- [ ] 9.1 Create the private `Genesis-VISTA/vista-build-inputs` repo, with branch protection on
-  its default branch that forbids force-pushes. Push `vista-data/ai-safety/` and `rag_db/`
-  from the maintainer's Mac, the same inputs the last hand-built package used
-  (`~/.vista-build`). Add a read-only deploy key, and commit the real `BUILD_INPUTS_COMMIT`.
+- [x] 9.1 Create the private `Genesis-VISTA/vista-build-inputs` repo. Push `vista-data/ai-safety/`
+  and `rag_db/` from the maintainer's Mac: the AI-safety corpus and store every package in
+  this change was built and smoke-tested with (`~/.vista`; the `~/.vista-build` stores are
+  molten-salt ones). Commit the real `BUILD_INPUTS_COMMIT`. Each consumer gets its own
+  read-only deploy key when its secret is set (9.2, 10.1). Branch protection is unavailable
+  (below), so never rewriting the repo's history is a documented rule only.
   Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
   … --vector-store …`. It comes first because the rehearsal uses it (design D12).
 - [ ] 9.2 Rehearse the workflow in the private `sam-baumann/vista-release-rehearsal` (D12).
