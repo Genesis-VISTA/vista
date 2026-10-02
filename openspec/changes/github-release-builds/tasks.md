@@ -78,17 +78,21 @@
 
 ## 4. Pinned embedding weights
 
-- [ ] 4.1 Take the revision hash from the snapshot the existing stores were embedded with
+- [x] 4.1 Take the revision hash from the snapshot the existing stores were embedded with
   (`data/huggingface/hub/models--microsoft--harrier-oss-v1-270m/snapshots/` in the main
   checkout). Add it as `rag_model_revision` next to `rag_model` in
   `mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py`, and pass
   `revision=settings.rag_model_revision` in `rag_mcp.py`. Verify
   `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest` passes.
-- [ ] 4.2 Give `build_rag.TextRAG` a `text_model_revision` parameter whose default matches
+- [x] 4.2 Give `build_rag.TextRAG` a `text_model_revision` parameter whose default matches
   4.1, pass it to `SentenceTransformer`, and have `backend/src/vista_backend/utils/indexer.py`
   pass the configured revision through. Verify
   `cd backend && uv run --extra dev pytest -m "not live and not hpc and not sandbox"` passes.
-- [ ] 4.3 In `stage_embedding_weights`, read `rag_model_revision` with `rag_model` and download
+  **As built:** the backend configures no model, and the indexer passes neither the model nor
+  its revision, so it takes `TextRAG`'s defaults as a pair and needed no change. A drift test
+  in `test_embedding_model.py` ties both revision defaults together, as it already did for
+  the name.
+- [x] 4.3 In `stage_embedding_weights`, read `rag_model_revision` with `rag_model` and download
   with `snapshot_download(model, revision=...)`. When reusing the host cache, fail if the
   pinned snapshot is missing. Verify:
   - a local build stages `snapshots/<pinned-hash>/`;

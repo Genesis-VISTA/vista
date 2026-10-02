@@ -197,6 +197,18 @@ class AppSettings(BaseSettings):
     must never diverge. Change one, change the other.
     """
 
+    rag_model_revision: str = "31de22b673913c7d658c0f03f792d77c2dcf8ebd"
+    """
+    The Hugging Face commit of `rag_model` to load: the snapshot the shipped
+    stores were embedded with.
+
+    Pinned so a new upload to the model's `main` cannot change the weights
+    under a store built with the old ones, and so the package build stages
+    exactly this snapshot. Kept byte-identical to
+    `build_rag.TextRAG.__init__`'s `text_model_revision` default, for the
+    same reason as the name. Change the model, change both revisions.
+    """
+
     rag_query_instruction: str = (
         "Given a search query, retrieve relevant passages from documents"
     )

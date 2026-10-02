@@ -82,6 +82,24 @@ def test_indexing_encoder_names_the_same_model() -> None:
     )
 
 
+def test_both_encoders_pin_the_same_revision() -> None:
+    """
+    The same two copies, for the weights' commit. A store embedded with one
+    snapshot and queried with another returns vectors that no longer line up,
+    with no error to say so.
+    """
+    revision = settings.rag_model_revision
+    assert len(revision) == 40 and all(c in "0123456789abcdef" for c in revision), (
+        f"rag_model_revision must be a full commit hash, got {revision!r}"
+    )
+    assert f'text_model_revision: str = "{revision}"' in BUILD_RAG.read_text(
+        encoding="utf-8"
+    ), (
+        f"build_rag.py's text_model_revision default has drifted from "
+        f"settings.rag_model_revision ({revision!r})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Query-side instruction
 #
@@ -171,7 +189,9 @@ def offline_encoder():
     os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
-        yield SentenceTransformer(settings.rag_model, device="cpu")
+        yield SentenceTransformer(
+            settings.rag_model, revision=settings.rag_model_revision, device="cpu"
+        )
     finally:
         for k, v in saved.items():
             if v is None:

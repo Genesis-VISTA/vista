@@ -1212,29 +1212,37 @@ stage_embedding_weights() {
 
   local hf="$STAGING_PAYLOAD/huggingface"
   mkdir -p "$hf"
-  local model
-  model="$(
-    sed -nE 's/^    rag_model: str = "([^"]+)"/\1/p' \
-      "$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py" | head -1
-  )"
+  local config="$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py"
+  local model revision
+  model="$(sed -nE 's/^    rag_model: str = "([^"]+)"/\1/p' "$config" | head -1)"
+  revision="$(sed -nE 's/^    rag_model_revision: str = "([^"]+)"/\1/p' "$config" | head -1)"
   [[ -n "$model" ]] || die "could not read rag_model from the MCP server config"
+  [[ -n "$revision" ]] || die "could not read rag_model_revision from the MCP server config"
   local cache_name="models--${model//\//--}"
 
+  # The app loads the pinned revision, so that snapshot is what must ship. A
+  # host cache holding only some other snapshot would stage weights the app
+  # never opens and leave it nothing to load offline.
   local host_cache="$REPO_ROOT/data/huggingface/hub/$cache_name"
   if [[ -d "$host_cache" ]]; then
+    [[ -d "$host_cache/snapshots/$revision" ]] \
+      || die "the host's Hugging Face cache has $model but not the pinned revision $revision
+  ($host_cache/snapshots/). Fetch it, or move that cache aside to download it here."
     copy_tree "$host_cache" "$hf/hub/$cache_name"
   else
     HF_HOME="$hf" HF_HUB_DISABLE_TELEMETRY=1 \
-      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$model" <<'PYHF'
+      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$model" "$revision" <<'PYHF' \
+      || die "could not download $model at the pinned revision $revision"
 import sys
 from huggingface_hub import snapshot_download
 
-snapshot_download(sys.argv[1])
+snapshot_download(sys.argv[1], revision=sys.argv[2])
 PYHF
   fi
 
-  [[ -d "$hf/hub/$cache_name" ]] || die "no weights staged for $model"
-  echo "weights     : $model, $(du -sh "$hf" | cut -f1)"
+  [[ -d "$hf/hub/$cache_name/snapshots/$revision" ]] \
+    || die "no weights staged for $model at the pinned revision $revision"
+  echo "weights     : $model@${revision:0:12}, $(du -sh "$hf" | cut -f1)"
 }
 
 # Refuse a reused store that was built from a different corpus.

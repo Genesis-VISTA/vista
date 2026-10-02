@@ -16,6 +16,9 @@ Environment variables:
                                     from it. Default: ../../data
     VISTA_MCP_RAG_MODEL            SentenceTransformers model for query embeddings.
                                     Default: microsoft/harrier-oss-v1-270m
+    VISTA_MCP_RAG_MODEL_REVISION   Hugging Face commit of that model to load,
+                                    the one the shipped stores were embedded
+                                    with. Default: see `config.py`
     VISTA_MCP_RAG_QUERY_INSTRUCTION
                                    One-sentence task description prepended to
                                     every query as `Instruct: ...\\nQuery: `.
@@ -123,11 +126,16 @@ async def app_lifespan(server):
     global _encoder
 
     logger.info(
-        "RAG: loading embedding model %s (device=%s)",
+        "RAG: loading embedding model %s@%s (device=%s)",
         settings.rag_model,
+        settings.rag_model_revision[:12],
         settings.embed_device or "auto",
     )
-    _encoder = SentenceTransformer(settings.rag_model, device=settings.embed_device)
+    _encoder = SentenceTransformer(
+        settings.rag_model,
+        revision=settings.rag_model_revision,
+        device=settings.embed_device,
+    )
 
     discovered = _discover_kb_paths()
     if not discovered:
