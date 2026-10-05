@@ -289,3 +289,77 @@ references stay stable.
 - [ ] 10.4 Push `v0.2.0`. Publish once the team has cleared redistribution of the AI-safety
   PDFs, the embedding weights and `amscrot-py`. Verify the published release's archives
   download and match their `.sha256` files.
+
+## 11. One-line install (follow-up MR, branch `release-install-scripts`)
+
+A user installs and starts VISTA with one command instead of the release notes' per-platform
+steps:
+
+```bash
+curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
+```
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
+```
+
+The scripts are attached to every release as assets with fixed names, so `releases/latest/download/`
+always serves the newest published release's own script (GitHub skips drafts and prereleases
+there), and a prerelease is installed from `releases/download/<tag>/install.sh`. Each script
+has its release's version written in at release time, so it needs no GitHub API call and no
+JSON parsing. The packages are unchanged: the scripts only do what the release notes tell a
+person to do.
+
+- [ ] 11.1 Update the proposal, design (a new decision on the installer) and the
+  `release-builds` spec delta (requirements: one command per platform; verify before
+  unpacking; a re-run of the same version starts the installed copy without downloading;
+  state in `VISTA_HOME` survives an upgrade).
+- [ ] 11.2 `scripts/install.sh` for macOS and Linux, run as `curl … | bash`:
+  - the whole body is inside a function called on the last line, so a truncated download runs
+    nothing; `set -euo pipefail`;
+  - detect the platform from `uname -s`/`uname -m` (`mac-arm64`, `linux-x86`) and refuse any
+    other with the list of what is offered, before downloading;
+  - on Linux, check `/dev/kvm` is usable and there is a desktop session first, reusing the
+    launcher's wording, so a 1.7 GB download is not wasted on a machine that cannot run it;
+  - check free disk (about 7 GB: the archive, the 4.6 GB unpacked package, and first-run
+    state) where it installs;
+  - download the archive and its `.sha256` with `curl -fL` into a temporary directory, verify
+    with `shasum -a 256 -c` or `sha256sum -c`, and stop on a mismatch;
+  - install into `~/.local/share/vista/<version>/` (overridable with `VISTA_INSTALL_DIR`),
+    unpack into a sibling temporary directory and rename it into place, so an interrupted
+    install never leaves a half-unpacked package where the next run would find it;
+  - link `~/.local/bin/vista` to the launcher, and say so (and how to add it to `PATH` when it
+    is not on it);
+  - remove the previous version's package after the new one is in place. State lives in
+    `VISTA_HOME` (`~/.vista`), outside the install, so it is untouched;
+  - start the launcher with `exec … < /dev/tty`, since stdin is the pipe the script came from;
+    `--no-launch` installs only;
+  - `--version <tag>` installs a specific release, including a prerelease.
+- [ ] 11.3 `scripts/install.ps1` for Windows, run with `irm … | iex`, the same steps in
+  PowerShell:
+  - install into `%LOCALAPPDATA%\VISTA\app`, with no version in the folder name: the package
+    leaves only 62 characters for the folder it is unpacked into (176-character longest path,
+    260 limit), and `C:\Users\<name>\AppData\Local\VISTA\vista-0.2.0-rc1-win-x86` would use
+    nearly all of it. Check the length before downloading, using the launcher's own rule;
+  - verify with `Get-FileHash`, unpack with Windows' own `tar.exe` (bsdtar reads zip, and is
+    far faster than `Expand-Archive` on a package this size);
+  - add a Start menu shortcut to `vista.cmd`, so the next start needs no terminal;
+  - start `vista.cmd`, or stop with `-NoLaunch`.
+- [ ] 11.4 Release wiring: `render-notes.sh` (or a sibling) writes the version into both
+  scripts, `draft-release.sh` uploads them with the archives, and the size check ignores them.
+- [ ] 11.5 Rewrite `.github/release-notes.md` around the two commands: one line per platform,
+  then the archive table, with the current manual steps kept in a collapsed `<details>` section
+  for anyone who cannot pipe a script into a shell. Keep the macOS quarantine note there only.
+- [ ] 11.6 Tests:
+  - hermetic, in GitLab PR CI: run each script against a tiny fake package served from a
+    `file://` base URL (`VISTA_INSTALL_BASE_URL`), covering a fresh install, a re-run of the
+    same version (no download), an upgrade (state kept, old package removed), a checksum
+    mismatch (stops, installs nothing) and an unsupported platform. `shellcheck` and
+    PSScriptAnalyzer on the scripts;
+  - in the release workflow's package job, after the smoke test: run the platform's script
+    against the job's own archive over `file://` with `--no-launch`, and check the installed
+    `VERSION`. This catches a script that no longer matches the packages, on every run.
+- [ ] 11.7 Update the README's "Running a prebuilt package" and `docs/releasing.md` to lead with
+  the one-line install.
+- [ ] 11.8 Verify on the mirror after merge: a prerelease tag's `install.sh` installs and starts
+  VISTA on a real Mac and on Linux, and `install.ps1` on Windows, each from its
+  `releases/download/<tag>/` URL. `releases/latest/download/` is first exercised by `v0.2.0`.
