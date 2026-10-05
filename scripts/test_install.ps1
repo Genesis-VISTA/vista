@@ -15,6 +15,15 @@ function Check([string]$What, [bool]$Ok) {
   if ($Ok) { Write-Host "  ok   $What" } else { Write-Host "  FAIL $What"; $script:failures++ }
 }
 
+# Whether a refused run said why. PowerShell wraps an error message at the
+# console width, so line breaks in the output are ignored. Prints the output
+# when the check fails.
+function Check-Refused([string]$What, [hashtable]$Result, [string]$Message) {
+  $said = ($Result.Out -replace '\s+', ' ') -match [regex]::Escape($Message)
+  Check $What ((-not $Result.Ok) -and $said)
+  if ($Result.Ok -or -not $said) { Write-Host $Result.Out }
+}
+
 # A fake package: VERSION, and a vista.cmd that records that it ran.
 function New-Release([string]$Dir, [string]$Version) {
   $name = "vista-$Version-win-x86"
@@ -71,12 +80,12 @@ try {
   Copy-Item -Recurse (Join-Path $root 'releases/2.0.0') $bad
   Add-Content -Path (Join-Path $bad 'vista-2.0.0-win-x86.zip') -Value 'corrupt'
   $r = Invoke-Installer ($common + @{ VISTA_INSTALL_BASE_URL = $bad }) @('-Version', '2.0.0', '-NoLaunch')
-  Check 'a checksum mismatch fails and says so' ((-not $r.Ok) -and $r.Out -match 'does not match its checksum')
+  Check-Refused 'a checksum mismatch fails and says so' $r 'does not match its checksum'
   Check 'a checksum mismatch keeps the installed version' ((Get-Content (Join-Path $installDir 'VERSION')).Trim() -eq '1.1.0')
   Check 'a checksum mismatch leaves no work folder' (-not (Get-ChildItem (Join-Path $root 'VISTA') -Filter '.install.*' -Force))
 
   $r = Invoke-Installer $common @('-NoLaunch')
-  Check 'an unrendered installer without -Version is refused' ((-not $r.Ok) -and $r.Out -match 'no version written in')
+  Check-Refused 'an unrendered installer without -Version is refused' $r 'no version written in'
 
   $rendered = Join-Path $root 'install.ps1'
   (Get-Content $installer -Raw).Replace('@VISTA_VERSION@', '1.0.0') | Set-Content -Path $rendered -NoNewline
