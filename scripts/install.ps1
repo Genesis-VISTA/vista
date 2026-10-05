@@ -199,4 +199,12 @@ function Start-Installed([string]$InstallDir, [bool]$Launch) {
 # taken again here.
 $installVersion = if ($Version) { $Version } else { $env:VISTA_INSTALL_VERSION }
 $launch = -not ($NoLaunch -or $env:VISTA_INSTALL_NO_LAUNCH -eq '1')
-Install-Vista $installVersion $launch
+
+# A refusal is one plain line, not PowerShell's error box with this script's
+# source in it. Run as a file, it exits 1. Through `irm | iex` it only returns:
+# `exit` there would close the window the user typed the command into.
+try { Install-Vista $installVersion $launch }
+catch {
+  Write-Host "error: $($_.Exception.Message)" -ForegroundColor Red
+  if ($PSCommandPath) { exit 1 }
+}
