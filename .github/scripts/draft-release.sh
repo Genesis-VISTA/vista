@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Create or update the draft GitHub release for a tag, and attach its packages.
+# Create or update the draft GitHub release for a tag, and attach its packages
+# and its one-line installers.
 #
-#   .github/scripts/draft-release.sh <dir with the archives and .sha256 files> <notes.md>
+#   .github/scripts/draft-release.sh <dir with the archives, .sha256 files and installers> <notes.md>
 #
 # Takes TAG and VERSION from the environment, and GH_TOKEN for `gh`. A tag
 # with a prerelease suffix (v0.2.0-rc1) makes a prerelease. Run again for the
@@ -19,6 +20,10 @@ die() { echo "error: $*" >&2; exit 1; }
 shopt -s nullglob
 assets=("$dir"/vista-*.tar.gz "$dir"/vista-*.zip "$dir"/vista-*.sha256)
 (( ${#assets[@]} > 0 )) || die "no archives in $dir"
+for installer in install.sh install.ps1; do
+  [[ -f "$dir/$installer" ]] || die "no $installer in $dir; render it with render-installers.sh"
+  assets+=("$dir/$installer")
+done
 
 # GitHub's per-file limit for release assets.
 limit=$((2 * 1024 * 1024 * 1024))
@@ -34,8 +39,10 @@ if gh release view "$TAG" --json isDraft >/dev/null 2>&1; then
   [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] \
     || die "the release for $TAG is already published; delete it, or tag a new version"
   # Carry the maintainer's own section over into the regenerated notes.
+  # A draft edited in the browser comes back with CRLF line endings, which
+  # the section match below would not see.
   current="$(mktemp)"
-  gh release view "$TAG" --json body --jq .body > "$current"
+  gh release view "$TAG" --json body --jq .body | tr -d '\r' > "$current"
   merged="$(mktemp)"
   perl -e '
     my ($current, $fresh) = map { local $/; open my $f, "<", $_ or die "$_: $!"; <$f> } @ARGV;

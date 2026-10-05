@@ -51,6 +51,13 @@ platform's package without anyone building on three machines.
   the build-inputs commit and install instructions. They include the macOS Gatekeeper
   workaround, because the Mac package stays ad-hoc signed with no Developer ID or
   notarization.
+- **One-line install** (task group 11, added after the first release builds). Every release
+  carries `install.sh` (macOS, Linux; `curl … | bash`) and `install.ps1` (Windows;
+  `irm … | iex`) with its version written in, so
+  `releases/latest/download/install.sh` always installs the newest published release. They
+  download the platform's package, check its `.sha256`, install it, and start it; a re-run
+  starts the installed copy. The release notes lead with the two commands and fold the manual
+  steps and the build details away.
 
 ## Capabilities
 
@@ -93,10 +100,9 @@ platform's package without anyone building on three machines.
     are disabled for the Genesis-VISTA organisation, so until an owner allows them a
     fine-grained read-only token stands in.
   - Actions enabled on the mirror once it is public.
-- **Unchanged:** GitLab CI, the runtime behaviour of an installed package, and the
-  researcher-facing launcher behaviour.
+- **Unchanged:** the runtime behaviour of an installed package, and the researcher-facing
+  launcher behaviour. GitLab CI gains only two hermetic jobs for the installers (below).
 - **Out of scope:**
-  - The curl | bash and `irm | iex` install script (a later change).
   - Showing the version in the UI.
   - linux-arm64 and mac-x86_64 packages.
   - Developer ID signing.

@@ -181,5 +181,6 @@ jobs:
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           export TAG="$GITHUB_REF_NAME" VERSION="${GITHUB_REF_NAME#v}"
+          .github/scripts/render-installers.sh dist
           .github/scripts/render-notes.sh dist > "$RUNNER_TEMP/notes.md"
           .github/scripts/draft-release.sh dist "$RUNNER_TEMP/notes.md"

@@ -46,8 +46,8 @@ that shapes the approach.
 
 **Non-Goals:**
 
-- Replacing or touching GitLab CI. It stays the correctness gate. This workflow is
-  packaging only.
+- Replacing GitLab CI. It stays the correctness gate, and this workflow is packaging only.
+  The one addition there is two hermetic jobs for the installers (D13).
 - Running the workflow on pull requests. No PRs exist on the mirror, and keeping
   `pull_request` out means fork code never runs with the secret.
 - Caching builds between runs. Release builds are rare, and reproducibility from pins
@@ -247,6 +247,12 @@ to keep it that way, with no Developer ID work planned. The template also has a 
 CI verifies without the sandbox, and a `## What's changed` placeholder. `release` fills it in with `envsubst` and a
 few lines of shell.
 
+After the first builds (task group 11) the notes were reordered for researchers rather than
+maintainers: a one-line name, then the two install commands (D13), "What's changed", and the
+archive table. The manual steps, now four numbered steps per platform with the quarantine and
+`/dev/kvm` fixes beside the step they belong to, and the commit, inputs commit and checklist,
+each sit in a collapsed `<details>` section.
+
 ### D10: Probe the runners before building on them
 
 The plan's riskiest assumptions are facts about GitHub's runners that no local setup can
@@ -431,6 +437,41 @@ job on a real runner, and the `release` job creating and updating a draft.
 
 *Alternative:* rehearse on the public mirror after merging. That is the path the change
 exists to make safe, and a broken workflow would then be on the public repo's `main`.
+
+### D13: One-line installers, attached to each release
+
+`scripts/install.sh` (macOS, Linux) and `scripts/install.ps1` (Windows) do what the manual
+steps do: pick the platform's archive, download it and its `.sha256`, check it, unpack it into
+a work directory beside the install, rename it into place, remove the older version, and start
+the launcher. They change nothing about the packages.
+
+- **Hosting.** The release job renders both, with the version and repository written in
+  (`render-installers.sh`), and attaches them as assets with fixed names. So
+  `releases/latest/download/install.sh` serves the newest published release's own script,
+  with no GitHub API call, no rate limit and no JSON parsing, and a release page's notes pin
+  `releases/download/<tag>/`. `latest` skips drafts and prereleases, so it first works at
+  `v0.2.0`.
+- **Where it installs.** `~/.local/share/vista/vista-<version>-<platform>` with a
+  `~/.local/bin/vista` link (the launcher resolves its own path through it). On Windows,
+  `%LOCALAPPDATA%\VISTA\app` with no version in the name: the package leaves 62 characters
+  for its folder under the 260-character limit, and a versioned name under `AppData` would use
+  almost all of it. A Start menu entry replaces the link.
+- **Safety.** The bash script is one function called on its last line, so a truncated
+  download runs nothing. Nothing is unpacked before the checksum matches, and the old version
+  is removed only once the new one is in place. State in `VISTA_HOME` is outside the install.
+  The checksum comes from the same release as the archive, so it catches a corrupted download,
+  not a tampered release, as the manual steps always did.
+- **Before the 1.7 GB download** they check the platform, about 7 GB of free disk, the path
+  length on Windows, and on Linux `/dev/kvm` and a display, which would otherwise stop the
+  launcher after the download.
+- **Testing.** `test_install.sh` and `test_install.ps1` run each script against fake packages
+  from a local folder (fresh install, re-run, upgrade, checksum mismatch, unsupported platform,
+  launch), in GitLab CI and `ci-local.sh install`. Every package job also installs its real
+  archive through its platform's installer, so the scripts cannot drift from the packages.
+
+*Alternatives:* serving the scripts from `main` on raw.githubusercontent.com, which would let
+a script drift ahead of the newest release; and asking the GitHub API for the latest tag,
+which needs JSON parsing in bash and PowerShell and is rate-limited per IP.
 
 ## Risks / Trade-offs
 
