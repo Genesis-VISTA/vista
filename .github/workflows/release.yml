@@ -76,6 +76,18 @@ jobs:
       run:
         shell: bash
     steps:
+      # The Linux image leaves about 13 GB of its 72 GB disk free, and the build
+      # plus the smoke test's unpacked copy and sandbox image need more: the
+      # rehearsal's msb load ran out of space. These toolchains are never used
+      # here. Windows has some 70 GB free on D: and needs none of this.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          docker image prune --all --force >/dev/null
+          df -h /
       # Into a folder of its own, so nothing else in the workspace makes the
       # tree look dirty. Full history, so a manual run's version can be
       # described from the last release tag.
