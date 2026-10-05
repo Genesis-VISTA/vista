@@ -279,9 +279,10 @@ minutes, against roughly 600–1,000 for one full build. Its results are recorde
 design before group 6, and they confirm or revise D3, D4 and D8. It is rerun from that repo
 whenever a pinned runner version (D3) is bumped.
 
-**The probe is already written.** It is saved in this change under `probe/`: `probe.sh`, the
-workflow at `.github/workflows/runner-probe.yml`, and a README. That directory becomes the
-probe repo's contents. Before saving, it was run in full on a maintainer's Mac (macOS 26.7,
+**The probe is already written.** It was saved in this change under `probe/`: `probe.sh`, the
+workflow at `.github/workflows/runner-probe.yml`, and a README. That directory became the
+probe repo's contents. Once its results were recorded below, the directory was removed from
+the branch and the probe repo deleted; the code is in the branch's history before that. Before saving, it was run in full on a maintainer's Mac (macOS 26.7,
 Apple M5, bare metal), where every row reported, the microVM boot included. `actionlint` is
 clean.
 
@@ -310,8 +311,9 @@ To rerun it locally:
 ### Probe results
 
 Run [37051824576](https://github.com/sam-baumann/vista-runner-probe/actions/runs/37051824576)
-on 2026-10-02, from `sam-baumann/vista-runner-probe` at its first commit. All three jobs ran
-every check; each took under 40 s.
+on 2026-10-02, from `sam-baumann/vista-runner-probe` at its first commit (the repo has since
+been deleted, so the link no longer resolves). All three jobs ran every check; each took
+under 40 s.
 
 **ubuntu-24.04** (Ubuntu 24.04.5 LTS, kernel 6.17.0-1022-azure, x86_64)
 
@@ -495,7 +497,8 @@ There is no data or runtime migration. The rollout order:
 2. Create the private `Genesis-VISTA/vista-build-inputs` repo, push the first inputs from a
    maintainer's Mac, and commit the pin.
 3. Rehearse the workflow on this branch in the private `sam-baumann/vista-release-rehearsal`,
-   on linux and windows (D12), and fix what it turns up. Then delete that repo.
+   on linux and windows (D12), and fix what it turns up. Then delete that repo, and the probe
+   repo with it.
 4. Land the script changes, the release workflow, the template and `docs/releasing.md` on
    GitLab. The mirror carries them over.
 5. Add two secrets to the mirror: `AMSC_GIT_TOKEN`, a maintainer's gitlab.com fine-grained

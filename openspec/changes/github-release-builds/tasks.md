@@ -13,8 +13,9 @@
 
 ## 1. Runner probe (runs first, off to the side; nothing lands in the VISTA repo)
 
-- [x] 1.1 Write the probe for the private `sam-baumann/vista-runner-probe`. **Done:** it is saved
-  in this change under `probe/` (`probe.sh`, `.github/workflows/runner-probe.yml`, `README.md`),
+- [x] 1.1 Write the probe for the private `sam-baumann/vista-runner-probe`. **Done:** it was saved
+  in this change under `probe/` (`probe.sh`, `.github/workflows/runner-probe.yml`, `README.md`;
+  removed after 9.2, along with the probe repo),
   was run in full on the maintainer's Mac, and passes `actionlint` (design D10 records what the
   local runs found). It is triggered by
   `workflow_dispatch` only, holds no secrets, and has `permissions: contents: read`. It has one
@@ -209,8 +210,8 @@ references stay stable.
     then set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`;
   - creating the two secrets: the `AMSC_GIT_TOKEN` gitlab.com fine-grained token, and the
     `BUILD_INPUTS_DEPLOY_KEY` read-only deploy key;
-  - rerunning the runner probe in `sam-baumann/vista-runner-probe` whenever a runner version
-    in D3 is bumped;
+  - checking a new runner with a manual run before relying on it (the probe repo was deleted
+    after the rehearsal);
   - rehearsing a workflow change in a private repo with `RELEASE_PLATFORMS` (design D12), and
     what that leaves untested.
 
@@ -264,7 +265,8 @@ references stay stable.
     notes naming inputs `c3c71e94`. The re-push was replaced by rerunning only the release job
     against the same artifacts (`gh run rerun --job`): it edited the same draft, kept a
     hand-added "What's changed" line, and replaced both assets.
-  - Not yet done: deleting the draft, the tag and the repo, which waits on the maintainer.
+  - Afterwards the maintainer deleted the rehearsal and probe repos, so the draft and tag went
+    with them, and the probe was removed from this change.
 
 ## 10. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
 

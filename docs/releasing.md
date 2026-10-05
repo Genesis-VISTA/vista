@@ -274,7 +274,7 @@ image build, or Genesis-VISTA's organisation Actions policies. Those are first e
 manual run on the public mirror. The release job refuses to create a release when
 `RELEASE_PLATFORMS` is set on a public repository.
 
-**The 2026-10-05 rehearsal** (`sam-baumann/vista-release-rehearsal`) took six runs and about
+**The 2026-10-05 rehearsal** (in a personal repo, since deleted) took six runs and about
 190 billed minutes: 77 Linux job-minutes and 55 Windows ones at 2×. A green run's jobs took:
 
 | job | minutes |
@@ -298,13 +298,10 @@ So a manual run takes about 25 minutes, all set by Windows. Its fixes, all on th
 - The smoke test now prints the end of `setup.log` as well as the launcher's output when the
   launcher fails, since a hosted runner's temporary directory is gone with the job.
 
-## The runner probe
+## Changing a runner
 
-[`sam-baumann/vista-runner-probe`](https://github.com/sam-baumann/vista-runner-probe) reports what
-each hosted runner offers: the hypervisor, KVM, glibc, disk and network, plus a real microVM
-boot. Its results are recorded in the design. Rerun it whenever a runner pinned in
-`release.yml` changes, before relying on the new one:
-
-```bash
-gh workflow run runner-probe.yml -R sam-baumann/vista-runner-probe
-```
+The runners pinned in `release.yml` were chosen from a one-off probe of what each hosted
+runner offers (the hypervisor, KVM, glibc, disk and network), recorded in the OpenSpec change's
+design. Before relying on a new runner, make a manual run on it. Each package job prints
+`df -h` before and after the build, and on Windows `msb doctor`, and the smoke test says
+whether the sandbox booted.

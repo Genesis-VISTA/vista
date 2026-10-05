@@ -82,9 +82,9 @@ platform's package without anyone building on three machines.
     `package_launcher.ps1` is unchanged, because Windows is verified with the sandbox.
 - **Weights pin:** `vista_mcp_server/config.py`, `rag_mcp.py` and `build_rag.py` load the
   embedding model at the pinned revision. These are the same weights as today, made explicit.
-- **Outside VISTA:** the runner probe lives in the private `sam-baumann/vista-runner-probe`.
+- **Outside VISTA:** the runner probe ran in the private `sam-baumann/vista-runner-probe`.
   Before the MR merges, the workflow is rehearsed in a second private repo,
-  `sam-baumann/vista-release-rehearsal`, on linux and windows only, and that repo is deleted
+  `sam-baumann/vista-release-rehearsal`, on linux and windows only. Both repos are deleted
   afterwards.
 - **External setup:**
   - A private `Genesis-VISTA/vista-build-inputs` repo.
