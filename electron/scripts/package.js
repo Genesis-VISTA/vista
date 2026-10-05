@@ -63,7 +63,8 @@ const options = {
   prune: true,
   // linux/ is for the launchers, which the build copies next to the window, not
   // part of the app itself. Of assets/, only icon.png is: Linux has no icon in
-  // the executable, so main.js hands it to each window.
+  // the executable, so main.js hands it to each window. (icon-mac.png is for
+  // development only; a packaged Mac app has icon.icns.)
   ignore: [/^\/test/, /^\/scripts/, /^\/test-results/, /^\/playwright/, /^\/tsconfig/, /^\/assets\/(?!icon\.png$)/, /^\/linux/],
 };
 

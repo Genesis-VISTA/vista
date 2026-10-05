@@ -10,6 +10,7 @@
 // never run it.
 //
 //   assets/icon.png      1024 px, the Linux window icon (main.js)
+//   assets/icon-mac.png  the same on macOS's grid, the Dock icon in development
 //   assets/icon.ico      Windows: VISTA.exe and the Start menu entry
 //   assets/icon.icns     macOS: VISTA.app
 //   ../ui/app/favicon.ico and ../ui/app/icon.svg, the UI's own
@@ -162,6 +163,7 @@ app.whenReady().then(async () => {
   /** @type {[string, Buffer][]} */
   const outputs = [
     [path.join(ASSETS, 'icon.png'), pick([1024])[0].png],
+    [path.join(ASSETS, 'icon-mac.png'), /** @type {Rendering} */ (mac.get(1024)).png],
     [path.join(ASSETS, 'icon.ico'), ico(pick([16, 24, 32, 48, 64, 128, 256]))],
     [path.join(ASSETS, 'icon.icns'), icns(mac)],
     [path.join(UI_APP, 'favicon.ico'), ico(pick([16, 32, 48]))],

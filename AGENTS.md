@@ -80,7 +80,7 @@ the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke
 
 VISTA's icon is `electron/assets/icon.svg`. Every other icon file is made from it by
 `cd electron && npm run icons` (`scripts/make-icons.js`, which renders with Electron itself):
-`icon.icns`, `icon.ico` and `icon.png` beside it, and the UI's `ui/app/favicon.ico` and
+`icon.icns`, `icon.ico`, `icon.png` and `icon-mac.png` beside it, and the UI's `ui/app/favicon.ico` and
 `ui/app/icon.svg`. They are committed, so a build never regenerates them; rerun it after
 editing the SVG.
 
