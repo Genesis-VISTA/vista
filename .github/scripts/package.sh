@@ -93,6 +93,34 @@ rm -f "$build_log"
 [[ -f "$archive" && -f "$archive.sha256" ]] \
   || die "the build did not end with an archive path: $archive"
 
+# The one-line installer, run against this archive the way a user's machine
+# runs it against the release, so a change to the packages that the installer
+# no longer matches fails here rather than for a user. It installs only, into a
+# scratch folder, with no Start menu entry and no link on PATH.
+log "installing the archive with the one-line installer"
+archive_name="$(basename "$archive")"
+version="${archive_name#vista-}"
+version="${version%-*-*}"
+install_root="$(mktemp -d)"
+if [[ "$host" == windows ]]; then
+  VISTA_INSTALL_BASE_URL="$(cygpath -w "$(dirname "$archive")")" \
+  VISTA_INSTALL_DIR="$(cygpath -w "$install_root")\\app" \
+  VISTA_INSTALL_NO_SHORTCUT=1 \
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$(cygpath -w "$repo/scripts/install.ps1")" \
+      -Version "$version" -NoLaunch
+  installed="$install_root/app"
+else
+  VISTA_INSTALL_BASE_URL="file://$(dirname "$archive")" \
+  VISTA_INSTALL_DIR="$install_root" \
+  VISTA_BIN_DIR="$install_root/bin" \
+    bash "$repo/scripts/install.sh" --version "$version" --no-launch
+  installed="$install_root/${archive_name%%.tar.gz}"
+fi
+installed_version="$(head -1 "$installed/VERSION" | tr -d '\r')"
+[[ "${installed_version%%+*}" == "$version" ]] \
+  || die "the installer did not install VISTA $version into $installed"
+rm -rf "$install_root"
+
 disk "after the build"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
