@@ -48,8 +48,13 @@ Drafts are visible only to people with write access to the repository.
 gh release view v0.2.0 -R Genesis-VISTA/vista
 ```
 
-Check that it has three archives, each with its `.sha256` file, and that the notes name the
-right build-inputs commit.
+Check that it has three archives, each with its `.sha256` file, plus `install.sh` and
+`install.ps1`, and that the notes name the right build-inputs commit under "Build and
+verification".
+
+While the repository is private, its release assets need a signed-in download: plain `curl`
+gets a 404, so the release notes' own commands work only once it is public. Use
+`gh release download`, as below.
 
 ## The real-hardware smoke test (macOS)
 
@@ -66,13 +71,13 @@ mkdir -p /tmp/rel/unpacked && tar -xf vista-0.2.0-mac-arm64.tar.gz -C /tmp/rel/u
 
 Pass a short state directory under `/tmp`, as above. The sandbox derives a Unix socket path from
 it, and macOS caps those at 104 bytes. The run must end with `all checks passed`, with
-retrieval reported as `ok`, not `skip`. Then tick the macOS line under "Verified on real
-hardware" in the draft.
+retrieval reported as `ok`, not `skip`. Then tick the macOS line under "Build and
+verification" in the draft. That section is collapsed, so open it to see the box.
 
 ## Publishing
 
 1. Write the "What's changed" section in the draft's notes.
-2. Tick the real-hardware checklist.
+2. Tick the real-hardware checklist, in the collapsed "Build and verification" section.
 3. Publish it, in the release page's editor or with:
 
    ```bash
@@ -84,6 +89,33 @@ before the first release is published.
 
 **Rollback.** Delete the release and its tag. The workflow can be disabled in the repository's
 Actions settings without a commit.
+
+## The one-line installers
+
+Each release carries `install.sh` (macOS and Linux) and `install.ps1` (Windows), with that
+release's version written in by `.github/scripts/render-installers.sh`. The notes lead with
+them, pinned to the release's own tag. The README uses `releases/latest/download/`, which
+GitHub points at the newest published release, skipping drafts and prereleases, so it works
+from the first published non-prerelease on.
+
+```bash
+curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
+```
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
+```
+
+They do what the notes' manual steps do: download the platform's archive, check it against
+its `.sha256`, unpack it beside the install and rename it into place, then start the launcher.
+macOS and Linux install into `~/.local/share/vista/vista-<version>-<platform>` with a
+`~/.local/bin/vista` link; Windows into `%LOCALAPPDATA%\VISTA\app`, without the version in the
+name because of Windows' path limit, with a Start menu entry. A re-run of the installed version
+downloads nothing. An upgrade removes the old package only once the new one is in place, and
+state in `VISTA_HOME` is never touched.
+
+They are tested three ways: `scripts/test_install.sh` and `scripts/test_install.ps1` against
+fake packages, in GitLab CI (`install:test`) and with `./scripts/ci-local.sh install`; and each
+package job installs its own archive through its platform's installer after the smoke test.
 
 ## A manual build
 
@@ -267,12 +299,12 @@ your own account (design D12):
    replaced.
 4. Delete the draft, the tag and the repository afterwards.
 
-`RELEASE_PLATFORMS` leaves out macOS, because private repositories get no `ubuntu-24.04-arm`
-runner for the arm64 image, and pay a 10× multiplier for macOS minutes. Linux minutes count 1×
-and Windows 2× against your personal quota. So a rehearsal does not test the mac job, the arm64
-image build, or Genesis-VISTA's organisation Actions policies. Those are first exercised by a
-manual run on the public mirror. The release job refuses to create a release when
-`RELEASE_PLATFORMS` is set on a public repository.
+`RELEASE_PLATFORMS` leaves out macOS, because private repositories pay a 10× multiplier for
+macOS minutes. Linux minutes count 1× and Windows 2× against your personal quota. So a
+rehearsal does not test the mac job or Genesis-VISTA's organisation Actions policies. (The
+design assumed private repositories get no `ubuntu-24.04-arm` runner either, but the mirror's
+first run, still private on 2026-10-05, got one, and built the arm64 image on it.) The release
+job refuses to create a release when `RELEASE_PLATFORMS` is set on a public repository.
 
 **The 2026-10-05 rehearsal** (in a personal repo, since deleted) took six runs and about
 190 billed minutes: 77 Linux job-minutes and 55 Windows ones at 2×. A green run's jobs took:

@@ -131,14 +131,45 @@ package records changes only when that version is changed on purpose.
 
 ### Requirement: Release notes describe what was built
 
-Every draft release SHALL carry generated notes stating the version, each platform's archive
-with its sha256, the build-inputs commit, how to download, verify and run each platform's
-package, and on macOS how to open a package that Gatekeeper blocks. A maintainer adds the
-description of what changed.
+Every draft release SHALL carry generated notes that start with the one-line install command
+for each platform, then state each platform's archive with its sha256, the build-inputs
+commit, how to download, verify and run each platform's package by hand, and on macOS how to
+open a package that Gatekeeper blocks. A maintainer adds the description of what changed.
 
 #### Scenario: Reading a draft's notes
 
 - **WHEN** a maintainer opens a draft release
-- **THEN** its notes list the three archives with their sha256 values, the build-inputs
-  commit, the install steps per platform and the macOS quarantine workaround, with a
-  placeholder for the changes
+- **THEN** its notes start with the install commands for macOS and Linux and for Windows,
+  pinned to that release's tag, and list the three archives with their sha256 values, the
+  build-inputs commit, the manual install steps per platform and the macOS quarantine
+  workaround, with a placeholder for the changes
+
+### Requirement: A release installs with one command
+
+Every release SHALL carry an installer for macOS and Linux and one for Windows, each with
+that release's version written in, so one command downloads, verifies, installs and starts
+that release's package for the machine it runs on. An installer SHALL NOT unpack an archive
+that does not match its `.sha256`, SHALL leave a previously installed version in place until
+the new one is, and SHALL NOT touch VISTA's state directory. Run again for a version already
+installed, it SHALL start that copy without downloading.
+
+#### Scenario: Installing the newest release
+
+- **WHEN** a researcher on a supported machine runs the install command from the README
+- **THEN** the newest published release's package for that machine is downloaded, checked,
+  installed and started
+
+#### Scenario: A corrupted download
+
+- **WHEN** the downloaded archive does not match its `.sha256`
+- **THEN** the installer stops, saying so, and nothing is installed or removed
+
+#### Scenario: Upgrading
+
+- **WHEN** a researcher runs the command of a newer release than the one installed
+- **THEN** the newer package replaces the older one, and their chats and settings are kept
+
+#### Scenario: An unsupported machine
+
+- **WHEN** the installer runs on a platform with no package
+- **THEN** it stops before downloading, naming the platforms that have one

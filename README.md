@@ -5,6 +5,30 @@ Instructions below cover running or building a prebuilt package. For a
 
 ## Running a prebuilt package
 
+Install and start the newest release with one command. On macOS (Apple Silicon) or Linux
+(x86-64), in a terminal:
+
+```bash
+curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
+```
+
+On Windows (x64), in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
+```
+
+It downloads the package for your machine, checks it against its `.sha256`, installs it and
+starts VISTA. Run it again to start VISTA, or to upgrade; your state is kept. After the first
+install, `vista` in a terminal (macOS, Linux) or VISTA in the Start menu (Windows) starts it too.
+Pipe it to `bash -s -- --no-launch` instead of `bash` to install only, or add `--version 0.2.0-rc1`
+the same way for another release.
+Packages go in `~/.local/share/vista` (macOS, Linux) or `%LOCALAPPDATA%\VISTA\app` (Windows);
+set `VISTA_INSTALL_DIR` to put them elsewhere.
+
+To install by hand instead, download the archive for your platform and its `.sha256` from the
+[release](https://github.com/Genesis-VISTA/vista/releases), then:
+
 ```bash
 shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
 mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
