@@ -1759,7 +1759,11 @@ create_archive() {
 
 # The checksum and manifest that sit beside every archive, whatever its format.
 write_archive_sidecars() {
-  ( cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ARCHIVE_PATH")" \
+  # Git Bash has sha256sum and no shasum, macOS the reverse. Both write
+  # `<hash>  <name>`, which either one's -c reads.
+  local sha256=(sha256sum)
+  command -v sha256sum >/dev/null 2>&1 || sha256=(shasum -a 256)
+  ( cd "$OUTPUT_DIR" && "${sha256[@]}" "$(basename "$ARCHIVE_PATH")" \
       > "$(basename "$ARCHIVE_PATH").sha256" )
   cp "$STAGING/manifest.json" "$ARCHIVE_PATH.manifest.json"
 
