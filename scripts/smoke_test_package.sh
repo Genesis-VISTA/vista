@@ -124,17 +124,29 @@ log "starting the package launcher"
 "${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
+# The end of the launcher's output, and of setup.log, where first-run steps
+# such as the sandbox image import write their errors. On a CI runner the
+# smoke test's directory is gone with the job, so this is all there is.
+show_launcher_logs() {
+  local f
+  for f in "$LOGS/launcher.log" "$LOGS/setup.log"; do
+    [[ -s "$f" ]] || continue
+    echo "--- last lines of ${f##*/} ---" >&2
+    tail -20 "$f" >&2
+  done
+}
+
 # The launcher prints one address line when every service is up.
 for (( i = 0; i < 600; i++ )); do
   grep -q 'VISTA is running at' "$LOGS/launcher.log" 2>/dev/null && break
   if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
-    tail -20 "$LOGS/launcher.log" >&2
+    show_launcher_logs
     die "the launcher exited before reporting an address"
   fi
   perl -e 'select(undef, undef, undef, 1)'
 done
 grep -q 'VISTA is running at' "$LOGS/launcher.log" \
-  || { tail -20 "$LOGS/launcher.log" >&2; die "the launcher never reported an address"; }
+  || { show_launcher_logs; die "the launcher never reported an address"; }
 
 # ─── checks ─────────────────────────────────────────────────────────────────
 
