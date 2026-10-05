@@ -78,6 +78,12 @@ UI links need no Electron-specific code. The prebuilt macOS package ships it as
 `app/window/VISTA.exe`, all found through the manifest's `window.exe`. There is no browser mode: the launcher refuses a session that cannot show
 the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
 
+VISTA's icon is `electron/assets/icon.svg`. Every other icon file is made from it by
+`cd electron && npm run icons` (`scripts/make-icons.js`, which renders with Electron itself):
+`icon.icns`, `icon.ico` and `icon.png` beside it, and the UI's `ui/app/favicon.ico` and
+`ui/app/icon.svg`. They are committed, so a build never regenerates them; rerun it after
+editing the SVG.
+
 On Linux, whether the window gets `--no-sandbox` is decided in one place,
 `electron/linux/window-sandbox`. The package launcher, `./launch.sh` and the
 build's smoke test all call it, so don't hardcode the flag anywhere else. It prints the flag

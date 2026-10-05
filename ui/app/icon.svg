@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="1024" height="1024">
+  <!-- VISTA's icon, and the master every other icon file is made from:
+       `npm run icons` in electron/ regenerates them (scripts/make-icons.js). -->
+  <defs>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a5a91"/>
+      <stop offset="1" stop-color="#112a4d"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22.5" fill="url(#ground)"/>
+  <polygon points="20,24 37,24 50,59 63,24 80,24 58,79 42,79" fill="#ffffff"/>
+</svg>

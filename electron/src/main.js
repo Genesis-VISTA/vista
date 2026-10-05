@@ -80,6 +80,14 @@ const webPreferences = {
   devTools: args.dev,
 };
 
+// VISTA's icon (assets/, made by scripts/make-icons.js). A packaged window
+// already has it in VISTA.exe or VISTA.app; Linux keeps no icon in the
+// executable, and a development run is Electron's own binary, so those set it
+// here. macOS ignores a window's icon, so development sets the Dock's instead.
+const ICON = path.join(app.getAppPath(), 'assets', 'icon.png');
+/** @type {Partial<Electron.BrowserWindowConstructorOptions>} */
+const windowIcon = process.platform === 'linux' || !app.isPackaged ? { icon: ICON } : {};
+
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 
@@ -106,7 +114,7 @@ app.on('web-contents-created', (_event, contents) => {
       case 'in-app':
         return {
           action: 'allow',
-          overrideBrowserWindowOptions: { width: 1000, height: 800, webPreferences },
+          overrideBrowserWindowOptions: { width: 1000, height: 800, ...windowIcon, webPreferences },
         };
       case 'external':
         openExternally(url);
@@ -237,6 +245,7 @@ function createMainWindow() {
     title: 'VISTA',
     show: false,
     backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
+    ...windowIcon,
     webPreferences,
   });
   // The OS can change appearance while VISTA is open (macOS Auto at sunset);
@@ -319,5 +328,6 @@ app.whenReady().then(() => {
     return;
   }
   Menu.setApplicationMenu(buildMenu());
+  if (!app.isPackaged) app.dock?.setIcon(ICON);
   mainWindow = createMainWindow();
 });

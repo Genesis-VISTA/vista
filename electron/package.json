@@ -10,7 +10,8 @@
     "start": "electron . --dev --url=http://localhost:3000",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/routing.test.js test/window-sandbox.test.js test/appearance.test.js",
-    "test:e2e": "playwright test -c playwright.config.js"
+    "test:e2e": "playwright test -c playwright.config.js",
+    "icons": "electron scripts/make-icons.js"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
