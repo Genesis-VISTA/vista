@@ -99,10 +99,19 @@ fi
 
 export VISTA_HOME="$STATE"
 
-# There is no opt-out for hardware virtualisation: VISTA always needs a
-# microVM, so a host where the launcher refuses to start for want of one
-# cannot verify a package, and this test fails there rather than skipping the
-# checks that go through the sandbox.
+# VISTA always needs a microVM, so by default a host where the launcher refuses
+# to start for want of one cannot verify a package, and this test fails there.
+# The one opt-out is VISTA_VERIFY_WITHOUT_SANDBOX=1, which
+# `build_local_package.sh --verify-without-sandbox` sets for hosts that cannot
+# run the sandbox, such as hosted macOS CI runners. It reaches the launcher
+# through this environment. Every check that goes through the sandbox is then
+# reported as skipped, never as ok, and the result says the package was
+# verified without it. Retrieval is one of them: the sandbox server is part of
+# every agent toolset, so a call through the backend's MCP client fails without
+# it.
+WITHOUT_SANDBOX=false
+[[ "${VISTA_VERIFY_WITHOUT_SANDBOX:-}" == 1 ]] && WITHOUT_SANDBOX=true
+NO_SANDBOX_REASON="verified without the sandbox (VISTA_VERIFY_WITHOUT_SANDBOX=1); run the full smoke test on a machine that can run it"
 
 export VISTA_UI_PORT="$UI_PORT"
 export VISTA_MCP_PORT="$MCP_PORT"
@@ -115,17 +124,29 @@ log "starting the package launcher"
 "${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
+# The end of the launcher's output, and of setup.log, where first-run steps
+# such as the sandbox image import write their errors. On a CI runner the
+# smoke test's directory is gone with the job, so this is all there is.
+show_launcher_logs() {
+  local f
+  for f in "$LOGS/launcher.log" "$LOGS/setup.log"; do
+    [[ -s "$f" ]] || continue
+    echo "--- last lines of ${f##*/} ---" >&2
+    tail -20 "$f" >&2
+  done
+}
+
 # The launcher prints one address line when every service is up.
 for (( i = 0; i < 600; i++ )); do
   grep -q 'VISTA is running at' "$LOGS/launcher.log" 2>/dev/null && break
   if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
-    tail -20 "$LOGS/launcher.log" >&2
+    show_launcher_logs
     die "the launcher exited before reporting an address"
   fi
   perl -e 'select(undef, undef, undef, 1)'
 done
 grep -q 'VISTA is running at' "$LOGS/launcher.log" \
-  || { tail -20 "$LOGS/launcher.log" >&2; die "the launcher never reported an address"; }
+  || { show_launcher_logs; die "the launcher never reported an address"; }
 
 # ─── checks ─────────────────────────────────────────────────────────────────
 
@@ -177,10 +198,16 @@ if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
 PYCHECK
 }
-check "AI-safety retrieval returns passages" retrieval_returns_passages \
-  ai-safety-autonomous-labs ai-safety "memory poisoning in LLM agents"
+if [[ "$WITHOUT_SANDBOX" == true ]]; then
+  skip "AI-safety retrieval returns passages" "$NO_SANDBOX_REASON"
+else
+  check "AI-safety retrieval returns passages" retrieval_returns_passages \
+    ai-safety-autonomous-labs ai-safety "memory poisoning in LLM agents"
+fi
 
-if [[ "$SCIENCE_PROJECTS" == true ]]; then
+if [[ "$SCIENCE_PROJECTS" == true && "$WITHOUT_SANDBOX" == true ]]; then
+  skip "molten-salt retrieval returns passages" "$NO_SANDBOX_REASON"
+elif [[ "$SCIENCE_PROJECTS" == true ]]; then
   check "molten-salt retrieval returns passages" retrieval_returns_passages \
     molten-salt molten-salt-papers "thermal conductivity of molten fluoride salts"
 fi
@@ -283,4 +310,8 @@ if (( FAILED )); then
   echo "error: smoke test failed; logs are in $LOGS" >&2
   exit 1
 fi
-echo "all checks passed"
+if [[ "$WITHOUT_SANDBOX" == true ]]; then
+  echo "all checks passed (verified without the sandbox)"
+else
+  echo "all checks passed"
+fi

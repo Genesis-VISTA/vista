@@ -107,6 +107,10 @@ that directory, and starting over is deleting the state directory.
 
 The build host needs the credentials and tooling so the recipient does not.
 
+Releases are built for all three platforms by GitHub Actions from a version
+tag, and published by hand from a draft: see [docs/releasing.md](docs/releasing.md).
+This section is for building a package on your own machine.
+
 **Each release, review the bundled Electron.** Its version is pinned in
 `electron/package.json`, and each package's manifest records it as
 `window.electron`. Bump it if it has fallen out of Electron's supported
@@ -165,8 +169,11 @@ Then build. The archive lands in `dist/` with a `.sha256` and a
 ./scripts/build_local_package.sh
 ```
 
-Build from a clean, committed tree. The version is stamped from the commit as
-`0.1.0+<short-sha>` (plus `-dirty` when the tree is not clean) and recorded in
+Build from a clean, committed tree. Unless `VISTA_VERSION` is set, the version
+is the last release tag plus the commits since it, e.g. `0.2.0+3.g<short-sha>`
+(`0.0.0+g<short-sha>` before any release tag, plus `-dirty` when the tree is
+not clean), and the archive is named after the tag's part,
+`vista-0.2.0-<os>-<arch>`. It is recorded in
 the manifest along with the runtime versions and payload inventory. Budget
 about 7 GB in the output directory, the staging tree plus the archive, for a
 ~2 GB result. The build finishes by unpacking the archive somewhere else and
@@ -191,6 +198,7 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--science-projects-vector-store DIR` | Optional, and only with `--science-projects`. Reuse an already-built **molten-salt** Chroma store instead of indexing that corpus again |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
+| `--verify-without-sandbox`       | For a build host that cannot run the sandbox, such as a hosted macOS CI runner. The smoke test still runs, but every check that needs the sandbox, retrieval included, is reported as skipped rather than passed, and the build says the package was verified without it. Run the full smoke test on a real machine before shipping such a package |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
 
 A default package carries only the AI-safety corpus and its index. The

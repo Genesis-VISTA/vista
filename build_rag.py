@@ -733,6 +733,10 @@ class TextRAG:
         # insert, so the two names must never diverge. Change one, change
         # the other.
         text_model: str = "microsoft/harrier-oss-v1-270m",
+        # The Hugging Face commit of `text_model`, kept byte-identical to
+        # `Settings.rag_model_revision` for the same reason: a store embedded
+        # with one snapshot is queried with the other.
+        text_model_revision: str = "31de22b673913c7d658c0f03f792d77c2dcf8ebd",
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
@@ -746,6 +750,7 @@ class TextRAG:
             pdf_folder:         Path to folder containing PDFs.
             db_path:            Path to store ChromaDB database.
             text_model:         SentenceTransformers model for text embeddings.
+            text_model_revision: Hugging Face commit of `text_model` to load.
             force_reindex:      If True, rebuild database even if it exists.
             extract_citations:  If True, call Azure OpenAI to extract citation
                                 metadata for each PDF and store it in a
@@ -778,8 +783,15 @@ class TextRAG:
         # `vista_mcp_server.rag_mcp`; the device changes only how fast the
         # vectors are computed, not what they are, so the two need not agree.
         device = os.environ.get("VISTA_EMBED_DEVICE") or None
-        log.info("Loading text model: %s (device=%s)", text_model, device or "auto")
-        self.text_encoder = SentenceTransformer(text_model, device=device)
+        log.info(
+            "Loading text model: %s@%s (device=%s)",
+            text_model,
+            text_model_revision[:12],
+            device or "auto",
+        )
+        self.text_encoder = SentenceTransformer(
+            text_model, revision=text_model_revision, device=device
+        )
 
         self.client = chromadb.PersistentClient(
             path=db_path,

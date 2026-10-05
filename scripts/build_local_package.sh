@@ -44,6 +44,12 @@
 #                         of building one, so no container runtime is needed.
 #                         Its architecture must match the target
 #   --skip-smoke-test    Skip the post-build unpack-and-run verification
+#   --verify-without-sandbox
+#                         Verify on a host that cannot run the sandbox, such as
+#                         a hosted macOS CI runner: every check that needs it
+#                         is reported as skipped, never as passed, and the
+#                         build says so. A release still needs the full smoke
+#                         test on a real machine
 #   --keep-staging       Leave the staging tree in place for inspection
 #   -h, --help           Show this help
 #
@@ -150,6 +156,7 @@ SCIENCE_PROJECTS=false
 SCIENCE_STORE=''
 SANDBOX_IMAGE_TAR=''
 SKIP_SMOKE_TEST=false
+VERIFY_WITHOUT_SANDBOX=false
 KEEP_STAGING=false
 
 # The backend setting that seeds the science projects also says whether to pack
@@ -174,6 +181,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--sandbox-image needs a tar archive"
       SANDBOX_IMAGE_TAR="$2"; shift ;;
     --skip-smoke-test) SKIP_SMOKE_TEST=true ;;
+    --verify-without-sandbox) VERIFY_WITHOUT_SANDBOX=true ;;
     --keep-staging) KEEP_STAGING=true ;;
     --payload)
       [[ $# -ge 2 ]] || die "--payload needs a directory"
@@ -199,11 +207,19 @@ esac
 
 # ─── identity ───────────────────────────────────────────────────────────────
 
-# No tags in this repo and every component sits at 0.1.0, so the commit is what
-# actually identifies a build. Readable, and traceable back to a tree.
+# A release build is given its version (CI takes it from the tag). Otherwise
+# the last release tag plus the commits since it, e.g. 0.2.0+3.g1a2b3c4, so a
+# local build is placed relative to a release and traceable back to a tree.
+# With no release tag reachable it is 0.0.0+g1a2b3c4.
 VERSION="${VISTA_VERSION:-}"
 if [[ -z "$VERSION" ]]; then
-  VERSION="0.1.0+$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  described="$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --long 2>/dev/null || true)"
+  # v<tag>-<n>-g<sha>, where the tag itself may carry a suffix (v0.2.0-rc1).
+  if [[ "$described" =~ ^v(.+)-([0-9]+)-(g[0-9a-f]+)$ ]]; then
+    VERSION="${BASH_REMATCH[1]}+${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+  else
+    VERSION="0.0.0+g$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  fi
   if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
     VERSION="$VERSION-dirty"
   fi
@@ -226,7 +242,7 @@ case "$(uname -s)" in
 esac
 TARGET_ARCH="$(uname -m)"
 
-# The package's folder and archive name, e.g. vista-0.1.0-win-x86. Kept short
+# The package's folder and archive name, e.g. vista-0.2.0-win-x86. Kept short
 # on purpose: the folder name sits in front of every path in the package, and
 # on Windows every one of those counts against the 260-character limit --
 # twice over when Explorer's Extract All makes a folder named after the zip.
@@ -577,6 +593,14 @@ package has no launcher without it")
   fi
   echo "archive format    : ${ARCHIVE_FORMAT}"
   echo "package           : ${PACKAGE_NAME}"
+  echo "version           : ${VERSION}"
+  if [[ "$SKIP_SMOKE_TEST" == true ]]; then
+    echo "verification      : skipped (--skip-smoke-test)"
+  elif [[ "$VERIFY_WITHOUT_SANDBOX" == true ]]; then
+    echo "verification      : without the sandbox (--verify-without-sandbox)"
+  else
+    echo "verification      : full smoke test, sandbox included"
+  fi
   return 0
 }
 
@@ -1203,29 +1227,37 @@ stage_embedding_weights() {
 
   local hf="$STAGING_PAYLOAD/huggingface"
   mkdir -p "$hf"
-  local model
-  model="$(
-    sed -nE 's/^    rag_model: str = "([^"]+)"/\1/p' \
-      "$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py" | head -1
-  )"
+  local config="$REPO_ROOT/mcp_servers/vista_mcp_server/src/vista_mcp_server/config.py"
+  local model revision
+  model="$(sed -nE 's/^    rag_model: str = "([^"]+)"/\1/p' "$config" | head -1)"
+  revision="$(sed -nE 's/^    rag_model_revision: str = "([^"]+)"/\1/p' "$config" | head -1)"
   [[ -n "$model" ]] || die "could not read rag_model from the MCP server config"
+  [[ -n "$revision" ]] || die "could not read rag_model_revision from the MCP server config"
   local cache_name="models--${model//\//--}"
 
+  # The app loads the pinned revision, so that snapshot is what must ship. A
+  # host cache holding only some other snapshot would stage weights the app
+  # never opens and leave it nothing to load offline.
   local host_cache="$REPO_ROOT/data/huggingface/hub/$cache_name"
   if [[ -d "$host_cache" ]]; then
+    [[ -d "$host_cache/snapshots/$revision" ]] \
+      || die "the host's Hugging Face cache has $model but not the pinned revision $revision
+  ($host_cache/snapshots/). Fetch it, or move that cache aside to download it here."
     copy_tree "$host_cache" "$hf/hub/$cache_name"
   else
     HF_HOME="$hf" HF_HUB_DISABLE_TELEMETRY=1 \
-      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$model" <<'PYHF'
+      "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$model" "$revision" <<'PYHF' \
+      || die "could not download $model at the pinned revision $revision"
 import sys
 from huggingface_hub import snapshot_download
 
-snapshot_download(sys.argv[1])
+snapshot_download(sys.argv[1], revision=sys.argv[2])
 PYHF
   fi
 
-  [[ -d "$hf/hub/$cache_name" ]] || die "no weights staged for $model"
-  echo "weights     : $model, $(du -sh "$hf" | cut -f1)"
+  [[ -d "$hf/hub/$cache_name/snapshots/$revision" ]] \
+    || die "no weights staged for $model at the pinned revision $revision"
+  echo "weights     : $model@${revision:0:12}, $(du -sh "$hf" | cut -f1)"
 }
 
 # Refuse a reused store that was built from a different corpus.
@@ -1727,7 +1759,11 @@ create_archive() {
 
 # The checksum and manifest that sit beside every archive, whatever its format.
 write_archive_sidecars() {
-  ( cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$ARCHIVE_PATH")" \
+  # Git Bash has sha256sum and no shasum, macOS the reverse. Both write
+  # `<hash>  <name>`, which either one's -c reads.
+  local sha256=(sha256sum)
+  command -v sha256sum >/dev/null 2>&1 || sha256=(shasum -a 256)
+  ( cd "$OUTPUT_DIR" && "${sha256[@]}" "$(basename "$ARCHIVE_PATH")" \
       > "$(basename "$ARCHIVE_PATH").sha256" )
   cp "$STAGING/manifest.json" "$ARCHIVE_PATH.manifest.json"
 
@@ -1809,15 +1845,24 @@ run_smoke_test() {
     rm -rf "$state"
     state="$(mktemp -d "$HOME/.vista-smoke.XXXXXX")"
   fi
+  # The bypass reaches the smoke test, and the launcher it starts, and nothing
+  # else: like VISTA_NO_WINDOW, it is never set where a researcher runs VISTA.
+  local -a smoke_env=()
+  [[ "$VERIFY_WITHOUT_SANDBOX" == true ]] && smoke_env=(VISTA_VERIFY_WITHOUT_SANDBOX=1)
   local failures=0
-  "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
+  env ${smoke_env[@]+"${smoke_env[@]}"} \
+    "$REPO_ROOT/scripts/smoke_test_package.sh" "$unpacked" "$state" || failures=1
 
   if (( failures )); then
     die "smoke test failed; the archive at $ARCHIVE_PATH is not usable. The \
 unpacked copy was left at $unpacked for inspection."
   fi
   rm -rf "$root" "$state"
-  echo "smoke test  : passed"
+  if [[ "$VERIFY_WITHOUT_SANDBOX" == true ]]; then
+    echo "smoke test  : passed (verified without the sandbox)"
+  else
+    echo "smoke test  : passed"
+  fi
 }
 
 ARCHIVE_PATH=''
@@ -1844,15 +1889,25 @@ write_manifest
 pack_payload
 report_path_lengths
 create_archive
+# Nothing reads the staging tree once the archive is written, and the smoke
+# test unpacks a second copy, so removing it here keeps peak disk to one
+# unpacked package plus the archive. That is what fits a hosted runner.
+if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
+  log "removing the staging tree (--keep-staging keeps it)"
+  rm -rf "$STAGING"
+fi
 run_smoke_test
 
-log "built $PACKAGE_NAME"
+# The path stays the last line of output, for whatever reads it.
+if [[ "$VERIFY_WITHOUT_SANDBOX" == true && "$SKIP_SMOKE_TEST" != true && -n "$ARCHIVE_PATH" ]]; then
+  log "built $PACKAGE_NAME, verified without the sandbox: the checks that need it were \
+skipped, so run the full smoke test on a real machine before releasing it"
+else
+  log "built $PACKAGE_NAME"
+fi
 if [[ -n "$ARCHIVE_PATH" ]]; then
   echo "$ARCHIVE_PATH"
 else
   echo "$STAGING"
-fi
-if [[ "$KEEP_STAGING" != true && -n "$ARCHIVE_PATH" ]]; then
-  rm -rf "$STAGING"
 fi
 

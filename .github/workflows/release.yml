@@ -1,0 +1,185 @@
+name: release
+
+# Builds the VISTA packages on GitHub-hosted runners (OpenSpec change
+# github-release-builds). A `v*` tag, pushed to GitLab and carried here by the
+# mirror, ends in a draft release that a maintainer publishes by hand. A manual
+# run builds any branch into short-lived artifacts and creates no release.
+#
+# Everything a job does beyond checkouts, downloads and uploads is in
+# .github/scripts/, so it runs the same on a maintainer's machine. See
+# docs/releasing.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer manual run replaces an older one on the same ref. A tag run is never
+# cancelled.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+
+jobs:
+  # Which platforms and image architectures to build, and the build-inputs pin.
+  # A missing pin fails here, before any runner is spent.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      package: ${{ steps.plan.outputs.package }}
+      images: ${{ steps.plan.outputs.images }}
+      inputs_commit: ${{ steps.plan.outputs.inputs_commit }}
+      narrowed: ${{ steps.plan.outputs.narrowed }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: plan
+        env:
+          # Unset on the public repository. Only a private rehearsal sets it.
+          RELEASE_PLATFORMS: ${{ vars.RELEASE_PLATFORMS }}
+        run: .github/scripts/plan.sh
+
+  # The code-execution sandbox image, built natively per architecture: macOS
+  # runners have no Docker, and Windows runners cannot build Linux images.
+  sandbox-image:
+    needs: plan
+    strategy:
+      matrix:
+        arch: ${{ fromJSON(needs.plan.outputs.images) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and export the image
+        env:
+          CONTEXT: mcp_servers/dev_mcp_server/src/dev_mcp_server/docker
+        run: |
+          docker buildx build --load -t vista-sandbox:latest -f "$CONTEXT/Dockerfile" "$CONTEXT"
+          docker save -o "sandbox-image-${{ matrix.arch }}.tar" vista-sandbox:latest
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sandbox-image-${{ matrix.arch }}
+          path: sandbox-image-${{ matrix.arch }}.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  package:
+    needs: [plan, sandbox-image]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.package) }}
+    name: package (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The Linux image leaves about 13 GB of its 72 GB disk free, and the build
+      # plus the smoke test's unpacked copy and sandbox image need more: the
+      # rehearsal's msb load ran out of space. These toolchains are never used
+      # here. Windows has some 70 GB free on D: and needs none of this.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          docker image prune --all --force >/dev/null
+          df -h /
+      # Into a folder of its own, so nothing else in the workspace makes the
+      # tree look dirty. Full history, so a manual run's version can be
+      # described from the last release tag.
+      - uses: actions/checkout@v7
+        with:
+          path: vista
+          fetch-depth: 0
+      # Read with a deploy key when the organisation allows them, otherwise with a
+      # fine-grained token that can read only that repository's contents. A
+      # deploy key wins when both are set. See docs/releasing.md.
+      - name: Check there is a credential for the build inputs
+        env:
+          HAS_KEY: ${{ secrets.BUILD_INPUTS_DEPLOY_KEY != '' }}
+          HAS_TOKEN: ${{ secrets.BUILD_INPUTS_TOKEN != '' }}
+        run: |
+          if [[ "$HAS_KEY" != true && "$HAS_TOKEN" != true ]]; then
+            echo "::error::Neither BUILD_INPUTS_DEPLOY_KEY nor BUILD_INPUTS_TOKEN is set, so the private build inputs cannot be read. See docs/releasing.md."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          repository: Genesis-VISTA/vista-build-inputs
+          ref: ${{ needs.plan.outputs.inputs_commit }}
+          ssh-key: ${{ secrets.BUILD_INPUTS_DEPLOY_KEY }}
+          token: ${{ secrets.BUILD_INPUTS_TOKEN || github.token }}
+          path: build-inputs
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: sandbox-image-${{ matrix.arch }}
+          path: sandbox
+      # A full version: setup-uv publishes no floating major tags after v7.
+      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Let the runner user open /dev/kvm
+        if: runner.os == 'Linux'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Take the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "VISTA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - id: build
+        name: Build and verify
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERIFY_WITHOUT_SANDBOX: ${{ matrix.verify == 'without-sandbox' && '1' || '' }}
+          AMSC_GIT_TOKEN: ${{ secrets.AMSC_GIT_TOKEN }}
+        run: |
+          BUILD_INPUTS_DIR="$PWD/build-inputs" \
+          SANDBOX_IMAGE="$PWD/sandbox/sandbox-image-$ARCH.tar" \
+            vista/.github/scripts/package.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.platform }}
+          path: |
+            ${{ steps.build.outputs.archive }}
+            ${{ steps.build.outputs.sha256 }}
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [plan, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse a narrowed platform set on a public repository
+        if: needs.plan.outputs.narrowed == 'true' && !github.event.repository.private
+        run: |
+          echo "::error::RELEASE_PLATFORMS is set, so this run built only some platforms. A public repository releases all of them: unset the variable."
+          exit 1
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Create or update the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_PLAN: ${{ needs.plan.outputs.package }}
+          INPUTS_COMMIT: ${{ needs.plan.outputs.inputs_commit }}
+          COMMIT: ${{ github.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          export TAG="$GITHUB_REF_NAME" VERSION="${GITHUB_REF_NAME#v}"
+          .github/scripts/render-notes.sh dist > "$RUNNER_TEMP/notes.md"
+          .github/scripts/draft-release.sh dist "$RUNNER_TEMP/notes.md"
