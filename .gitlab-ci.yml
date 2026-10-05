@@ -288,6 +288,29 @@ electron:test:
     - npm ci --prefer-offline
     - npm test
 
+# ─── One-line installers ────────────────────────────────────────────────────
+#
+# scripts/install.sh and install.ps1, attached to every GitHub release. The
+# tests install fake packages from a local folder, so they need no network and
+# no real package; the release workflow's package jobs then run each installer
+# against the real archive.
+
+install:lint:
+  stage: lint
+  image:
+    name: koalaman/shellcheck-alpine:v0.11.0
+  script:
+    - shellcheck scripts/install.sh scripts/test_install.sh .github/scripts/*.sh
+
+install:test:
+  stage: test
+  image: mcr.microsoft.com/powershell:7.5-ubuntu-24.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates >/dev/null
+  script:
+    - scripts/test_install.sh
+    - pwsh -NoProfile -File scripts/test_install.ps1
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:
