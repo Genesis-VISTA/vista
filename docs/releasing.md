@@ -260,7 +260,11 @@ your own account (design D12):
    `BUILD_INPUTS_TOKEN`), and set the variable `RELEASE_PLATFORMS` to
    `["linux-x86","win-x86"]`.
 3. Run the workflow by hand. To test the release job, push a tag such as `v0.2.0-rc0` to the
-   rehearsal repository. Push it again after a commit to test the draft update.
+   rehearsal repository. It needs only one platform, so narrow `RELEASE_PLATFORMS` to
+   `["linux-x86"]` first. To test the draft update, add a line under "What's changed" in the
+   draft, then rerun only the release job, which reuses the run's packages:
+   `gh run rerun --job <release job id> -R <repo>`. The line should survive and the assets be
+   replaced.
 4. Delete the draft, the tag and the repository afterwards.
 
 `RELEASE_PLATFORMS` leaves out macOS, because private repositories get no `ubuntu-24.04-arm`
@@ -269,6 +273,30 @@ and Windows 2× against your personal quota. So a rehearsal does not test the ma
 image build, or Genesis-VISTA's organisation Actions policies. Those are first exercised by a
 manual run on the public mirror. The release job refuses to create a release when
 `RELEASE_PLATFORMS` is set on a public repository.
+
+**The 2026-10-05 rehearsal** (`sam-baumann/vista-release-rehearsal`) took six runs and about
+190 billed minutes: 77 Linux job-minutes and 55 Windows ones at 2×. A green run's jobs took:
+
+| job | minutes |
+|---|---|
+| plan | under 1 |
+| sandbox-image (amd64) | 2 |
+| package (linux-x86) | 10, including the disk clean-up |
+| package (win-x86) | 21 |
+| release (one Linux archive) | 2 to 3, mostly the upload |
+
+So a manual run takes about 25 minutes, all set by Windows. Its fixes, all on this branch:
+
+- `astral-sh/setup-uv` publishes no floating major tags after v7, so it is pinned to a full
+  version (`v10.2.0`).
+- The MCP app build ran `npx` through `execFileSync`, which cannot find `npx.cmd` on Windows.
+  It now runs vite's own script under the same Node.
+- Git Bash has `sha256sum` and no `shasum`. The checksum step uses whichever is present.
+- The Linux runner starts with about 14 GB free, and the smoke test's sandbox image import ran
+  out of space. The package job first deletes preinstalled toolchains it never uses, which
+  leaves about 41 GB, and the build ends with 34 GB still free. Windows' `D:` has over 100 GB.
+- The smoke test now prints the end of `setup.log` as well as the launcher's output when the
+  launcher fails, since a hosted runner's temporary directory is gone with the job.
 
 ## The runner probe
 

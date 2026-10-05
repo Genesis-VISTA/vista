@@ -233,7 +233,7 @@ references stay stable.
   fine-grained token, `BUILD_INPUTS_TOKEN` (design D5).
   Verify that a fresh clone at that commit passes `build_local_package.sh --check --payload
   … --vector-store …`. It comes first because the rehearsal uses it (design D12).
-- [ ] 9.2 Rehearse the workflow in the private `sam-baumann/vista-release-rehearsal` (D12).
+- [x] 9.2 Rehearse the workflow in the private `sam-baumann/vista-release-rehearsal` (D12).
   1. Create the repo and push this branch to it as `main`.
   2. Add the `AMSC_GIT_TOKEN` and `BUILD_INPUTS_TOKEN` secrets (the maintainer creates both
      tokens), and set the variable `RELEASE_PLATFORMS` to `["linux-x86","win-x86"]`.
@@ -249,6 +249,22 @@ references stay stable.
 
   Fix what turns up here, on this branch, before the MR merges. Then delete the draft, the tag
   and the repo, and record the minutes used in `docs/releasing.md`.
+
+  As built (2026-10-05):
+  - Six runs, about 190 billed minutes. Green jobs: Linux package 10 minutes, Windows 21,
+    release 2 to 3. Both packages passed the full smoke test with the sandbox, retrieval
+    included, and both jobs printed `df -h`.
+  - Fixed on this branch: `setup-uv` pinned to `v10.2.0` (no `v10` tag exists); the MCP app
+    build runs vite through `node` (`npx` is `npx.cmd` on Windows); the checksum falls back to
+    `sha256sum` (Git Bash has no `shasum`); the Linux package job frees disk first (D8); and
+    the smoke test prints `setup.log` when the launcher fails.
+  - The tag run built Linux only (`RELEASE_PLATFORMS=["linux-x86"]`), since Windows was
+    already proven. It made one draft prerelease, `VISTA 0.2.0-rc0`, with
+    `vista-0.2.0-rc0-linux-x86.tar.gz`, its `.sha256` (matching the notes) and fully rendered
+    notes naming inputs `c3c71e94`. The re-push was replaced by rerunning only the release job
+    against the same artifacts (`gh run rerun --job`): it edited the same draft, kept a
+    hand-added "What's changed" line, and replaced both assets.
+  - Not yet done: deleting the draft, the tag and the repo, which waits on the maintainer.
 
 ## 10. Rollout (manual; needs the public mirror and the maintainer's go-ahead to push)
 

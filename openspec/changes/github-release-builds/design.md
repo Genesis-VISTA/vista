@@ -230,6 +230,12 @@ before `run_smoke_test`. Nothing reads staging after the archive is written. Tha
 peak to about 10 GB. Each package job prints `df -h` at the start and after the build, so the
 first runs show the real margin.
 
+The rehearsal (9.2) showed the margin was not enough on Linux: the runner starts with about
+14 GB free, and the smoke test ran out while importing the sandbox image. So the Linux package
+job first deletes preinstalled toolchains it never uses (the Android SDK, .NET, GHC, CodeQL,
+Boost, Swift) and prunes Docker's cached images, which leaves about 41 GB. The build then ends
+with 34 GB free.
+
 ### D9: Release notes
 
 `.github/release-notes.md` is a template with placeholders for the version, a table of
@@ -459,8 +465,8 @@ exists to make safe, and a broken workflow would then be on the public repo's `m
   → The `release` job checks sizes and fails with the size named. Science packages are out
   of scope for exactly this reason.
 - **[The disk margin is wrong on some runner.]**
-  → The `df` logging (D8) shows it. On Linux there's a fallback that deletes the preinstalled
-  toolchains.
+  → The `df` logging (D8) shows it. It was wrong on Linux, so the Linux package job now
+  deletes the preinstalled toolchains first (D8).
 - **[The pinned inputs commit is lost, for example through a force-push that rewrites the
   inputs repo's history.]**
   → The checkout fails, so the build stops rather than shipping a different corpus.
