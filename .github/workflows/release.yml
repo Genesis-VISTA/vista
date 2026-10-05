@@ -107,7 +107,8 @@ jobs:
         with:
           name: sandbox-image-${{ matrix.arch }}
           path: sandbox
-      - uses: astral-sh/setup-uv@v10
+      # A full version: setup-uv publishes no floating major tags after v7.
+      - uses: astral-sh/setup-uv@v10.2.0
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
