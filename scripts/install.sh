@@ -199,9 +199,9 @@ main() {
     remove_folder "$old"
   done
 
+  say "installed VISTA $version in $package"
   link_launcher "$package" "$bin_dir"
   integrate "$os" "$package" "$data_home"
-  say "installed VISTA $version in $package"
   finish "$os" "$package" "$launch"
 }
 

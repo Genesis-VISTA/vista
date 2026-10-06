@@ -177,7 +177,7 @@ dropped by design D7; `signing-spike.md` keeps their record.
 
 - [ ] 9.1 Run `./scripts/ci-local.sh` (all targets) and a GitHub release build by hand on this
   branch; all three platforms pass, including 6.4.
-- [ ] 9.2 On a Mac, install the hand-built release with the one-line installer and run 8.3's
+- [x] 9.2 On a Mac, install the hand-built release with the one-line installer and run 8.3's
   checklist. **Manual macOS validation; keep out of PR CI.**
 - [ ] 9.3 Run `openspec validate desktop-app-startup` and fix anything it reports.
 - [ ] 9.4 Before opening the MR, on a real Windows machine: run

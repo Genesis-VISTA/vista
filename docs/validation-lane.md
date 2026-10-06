@@ -181,7 +181,9 @@ move it aside to test a first run.
    ```
 
    It installs into `/Applications/VISTA` and opens VISTA, with no Gatekeeper prompt.
-   `xattr -l /Applications/VISTA/VISTA.app` shows no `com.apple.quarantine`.
+   `xattr -l /Applications/VISTA/VISTA.app` shows no `com.apple.quarantine`. A
+   `com.apple.provenance` there is expected: macOS records it on files a process writes, and it
+   brings no Gatekeeper prompt.
 2. **First run.** The startup window appears at once, with the VISTA icon, in the system's light
    or dark appearance. It shows real activity (resources, the sandbox image, the three
    services), then hands over to the 1280 × 860 main window. Start one chat that runs code, so a
@@ -206,8 +208,11 @@ move it aside to test a first run.
    startup window names the port conflict, Open Logs opens the logs folder, Copy Diagnostics
    copies versions, phase and code with no environment values, and Retry stays disabled until
    cleanup finishes. Free the port, select Retry: startup completes.
-8. **Upgrades.** With VISTA open, run the installer again: it says to close VISTA and changes
-   nothing. Close VISTA and run it again: it starts the installed copy without downloading.
+8. **Upgrades.** The installer refuses only to replace a running VISTA, so ask for another
+   version: with VISTA open, add `--version` with any other value
+   (`curl -fsSL <installer URL> | bash -s -- --version 0.0.1`). It says to close VISTA, before
+   downloading anything, and changes nothing. Close VISTA and run the installer as in step 1: it
+   starts the installed copy without downloading.
 9. **A separated app.** Copy only `VISTA.app` out of `/Applications/VISTA` and open the copy. It
    shows the package-layout error and starts no service. Delete the copy.
 10. **The sandbox entitlement.** The build re-signs only the window, so the bundled `msb` keeps
@@ -215,7 +220,7 @@ move it aside to test a first run.
 
     ```bash
     msb="$(find /Applications/VISTA/app -path '*/_bundled/bin/msb' | head -1)"
-    codesign -d --entitlements :- "$msb"
+    codesign -d --entitlements - --xml "$msb"
     ```
 
     Both `com.apple.security.hypervisor` and
