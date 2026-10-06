@@ -14,10 +14,11 @@
 # VISTA_INSTALL_NO_LAUNCH=1 and VISTA_INSTALL_VERSION.
 #
 # It downloads the package, checks it against its .sha256 file, unpacks it into
-# %LOCALAPPDATA%\VISTA\app, adds VISTA to the Start menu, and starts it. Run it
-# again to start the installed copy, which downloads nothing, or to upgrade.
-# VISTA's state (VISTA_HOME, ~\.vista by default) lives outside the install and
-# is never touched.
+# %LOCALAPPDATA%\VISTA\app, adds VISTA to the Start menu, and opens the VISTA
+# application. Run it again to start the installed copy, which downloads
+# nothing, or to upgrade; it refuses while VISTA is running. VISTA's state
+# (VISTA_HOME, ~\.vista by default) lives outside the install and is never
+# touched.
 #
 # Environment:
 #   VISTA_INSTALL_DIR          where the package goes (default: %LOCALAPPDATA%\VISTA\app)
@@ -78,6 +79,11 @@ function Install-Vista([string]$Version, [bool]$Launch) {
   }
 
   # --- before downloading ----------------------------------------------------
+  # D11: replacing files a running VISTA uses fails on locked files, or worse
+  # half-way. Its window, its launcher's services and the sandbox all run from
+  # the package folder.
+  Assert-NotRunning $installDir
+
   # Windows caps a path at 260 characters unless long paths are enabled, and the
   # package's deepest file is 176 characters below its folder. The launcher
   # makes the exact check against the package's manifest; this one keeps a
@@ -137,6 +143,9 @@ function Install-Vista([string]$Version, [bool]$Launch) {
     $fresh = Join-Path $unpacked $name
     if (-not (Test-Path (Join-Path $fresh 'vista.cmd'))) { Die "$archive does not hold $name\vista.cmd" }
 
+    # The download took a while: ask again just before anything is replaced.
+    Assert-NotRunning $installDir
+
     # The previous version goes only once the new one is ready to take its place.
     $old = Join-Path $work 'previous'
     if (Test-Path $installDir) {
@@ -174,7 +183,26 @@ function Get-Asset([string]$Base, [string]$File, [string]$To) {
   }
 }
 
-# A Start menu entry, so the next start needs no terminal.
+# Stops before anything changes when any process runs from the install folder.
+function Assert-NotRunning([string]$InstallDir) {
+  $prefix = $InstallDir.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+  $running = @(Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
+  if ($running.Count -gt 0) {
+    throw "VISTA was not installed: VISTA is running from $InstallDir. Close VISTA, then run this again."
+  }
+}
+
+# The VISTA application in the package (design D10), or nothing for a release
+# from before it was the entry point.
+function Get-Application([string]$InstallDir) {
+  $window = Join-Path $InstallDir 'app\window\VISTA.exe'
+  if (Test-Path $window) { return $window }
+  return $null
+}
+
+# A Start menu entry that opens the VISTA application with no console: VISTA.exe
+# --startup starts the services itself.
 function Add-Shortcut([string]$InstallDir) {
   if ($env:VISTA_INSTALL_NO_SHORTCUT -eq '1' -or -not $env:APPDATA) { return }
   $onWindows = ($PSVersionTable.PSVersion.Major -le 5) -or $IsWindows
@@ -182,20 +210,32 @@ function Add-Shortcut([string]$InstallDir) {
   $lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\VISTA.lnk'
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($lnk)
-  $shortcut.TargetPath = Join-Path $InstallDir 'vista.cmd'
+  $window = Get-Application $InstallDir
+  if ($window) {
+    $shortcut.TargetPath = $window
+    $shortcut.Arguments = '--startup'
+  } else {
+    $shortcut.TargetPath = Join-Path $InstallDir 'vista.cmd'
+  }
   $shortcut.WorkingDirectory = $InstallDir
   $shortcut.Description = 'VISTA'
-  # The icon is in the window's executable; without it the entry shows cmd's.
-  $window = Join-Path $InstallDir 'app\window\VISTA.exe'
-  if (Test-Path $window) { $shortcut.IconLocation = "$window,0" }
+  # The icon is in the window's executable.
+  if ($window) { $shortcut.IconLocation = "$window,0" }
   $shortcut.Save()
-  Write-Host "==> start it later from the Start menu (VISTA), or run $(Join-Path $InstallDir 'vista.cmd')"
+  Write-Host "==> open VISTA from the Start menu; for diagnostics, run $(Join-Path $InstallDir 'vista.cmd')"
 }
 
+# Opens the application, which shows its own startup and needs no console; an
+# older release without one starts through its terminal launcher.
 function Start-Installed([string]$InstallDir, [bool]$Launch) {
   if (-not $Launch) { return }
   Write-Host '==> starting VISTA'
-  & (Join-Path $InstallDir 'vista.cmd')
+  $window = Get-Application $InstallDir
+  if ($window) {
+    Start-Process -FilePath $window -ArgumentList '--startup' -WorkingDirectory $InstallDir
+  } else {
+    & (Join-Path $InstallDir 'vista.cmd')
+  }
 }
 
 # Through `irm | iex` the param() block above may not apply, so its defaults are

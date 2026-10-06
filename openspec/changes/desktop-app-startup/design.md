@@ -238,8 +238,11 @@ already that executable's. The package root is found relative to `VISTA.exe`.
 
 *New.* With fixed folders, an upgrade would replace files a running VISTA is using: it can crash
 on macOS and Linux, and the files are locked on Windows. Both installers therefore first check
-whether VISTA is running, by whether the UI port answers as VISTA or a VISTA window process
-exists. If it is, they stop with "Close VISTA, then run this again" and change nothing.
+whether VISTA is running: whether any process, by any account, was started from a folder they are
+about to replace. VISTA's window, launcher, services and sandbox all run from the package folder,
+so that catches each of them. VISTA's port is not asked, because a development checkout answers on
+it too, and refusing to install over that would be wrong. If VISTA is running, they stop with
+"Close VISTA, then run this again" and change nothing.
 
 After a successful install, they delete the previous layout's versioned folders, so no stale
 4 GB copy is left. On macOS that includes the researcher's own `~/Applications/VISTA/` once VISTA

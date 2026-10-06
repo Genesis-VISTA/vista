@@ -1101,6 +1101,9 @@ stage_window_linux() {
   install -m 755 "$REPO_ROOT/electron/linux/window-sandbox" "$window/window-sandbox"
   install -m 644 "$REPO_ROOT/electron/linux/vista-window.apparmor" "$window/vista-window.apparmor"
   install -m 755 "$REPO_ROOT/electron/linux/vista-app" "$window/vista-app"
+  # The icon the installer puts in the app menu's theme: the window's own copy
+  # is inside app.asar, out of the installer's reach.
+  install -m 644 "$REPO_ROOT/electron/assets/icon.png" "$window/vista.png"
 
   WINDOW_EXE="app/window/VISTA"
   [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"

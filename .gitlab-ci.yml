@@ -306,7 +306,8 @@ install:test:
   stage: test
   image: mcr.microsoft.com/powershell:7.5-ubuntu-24.04
   before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates >/dev/null
+    # procps: pgrep, with which install.sh tells whether VISTA is running.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates procps >/dev/null
   script:
     - scripts/test_install.sh
     - pwsh -NoProfile -File scripts/test_install.ps1

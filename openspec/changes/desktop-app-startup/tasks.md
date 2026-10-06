@@ -128,27 +128,34 @@ dropped by design D7; `signing-spike.md` keeps their record.
   and `amscrot-py`.
 - [x] 7.4 Document and test the dev-app build and its Finder launch
   (`scripts/tests/mac_dev_launcher_test.sh`).
-- [ ] 7.5 `scripts/install.sh`: on macOS, install into `/Applications/VISTA` when it can write
+- [x] 7.5 `scripts/install.sh`: on macOS, install into `/Applications/VISTA` when it can write
   there (the existing `/Applications/VISTA` if there is one, else `/Applications`), otherwise into
   `~/Applications/VISTA`, saying why (design D6). Then register the app with `lsregister -f` and
   `mdimport`. No symlink or alias in `/Applications`. On Linux, install into
   `~/.local/share/vista/app`, write `~/.local/share/applications/vista.desktop` and install the
   icon into `hicolor`. Keep the `~/.local/bin/vista` link. Start VISTA with `open` on macOS and
   `vista-app` on Linux.
-- [ ] 7.6 `scripts/install.ps1`: point the Start-menu shortcut at `app\window\VISTA.exe` with
+- [x] 7.6 `scripts/install.ps1`: point the Start-menu shortcut at `app\window\VISTA.exe` with
   `--startup`, and start VISTA the same way.
-- [ ] 7.7 Both installers refuse while VISTA is running (its UI port answers as VISTA, or a VISTA
-  window process exists), with "Close VISTA, then run this again". They change nothing in that
-  case. On macOS this covers a VISTA running from either install folder.
-- [ ] 7.8 Both installers remove earlier-layout package folders after a successful install, and
+- [x] 7.7 Both installers refuse while VISTA is running, with "Close VISTA, then run this
+  again". They change nothing in that case. On macOS this covers a VISTA running from either
+  install folder. *"Running" is any process started from a folder about to be replaced (design
+  D11), not the UI port, which a development checkout also answers on.*
+- [x] 7.8 Both installers remove earlier-layout package folders after a successful install, and
   never touch `VISTA_HOME`. On macOS that includes the researcher's own `~/Applications/VISTA`
   after an install into `/Applications/VISTA`, and never a `/Applications/VISTA` it did not
   install into. Retry a removal once (Finder can write a `.DS_Store` mid-removal) and report what
   is left rather than failing the install.
-- [ ] 7.9 Extend `scripts/test_install.sh` and `scripts/test_install.ps1`. Cover the fixed
+- [x] 7.9 Extend `scripts/test_install.sh` and `scripts/test_install.ps1`. Cover the fixed
   folders, including the macOS choice between `/Applications/VISTA` and `~/Applications/VISTA`
   (with the system folder faked writable and not), the desktop entry and shortcut, the refusal
   while running, the removal of the old layout, and that a re-run downloads nothing.
+  *`install.sh`'s tests fake `uname`, so the macOS and Linux installs both run on either host;
+  they pass on macOS and in the GitLab image. The Linux package now ships its icon as
+  `app/window/vista.png`, and the release workflow's installer step uses `VISTA_INSTALL_DIR` as
+  the package folder. `install.ps1`'s refusal check needs a stand-in process seen at its own
+  path, so it skips on macOS and under emulation; it runs on Windows (9.4) and amd64 Linux CI.
+  Windows had no earlier layout to remove.*
 
 ## 8. Release notes and documentation
 
