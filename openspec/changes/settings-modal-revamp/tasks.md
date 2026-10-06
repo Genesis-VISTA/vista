@@ -1,13 +1,13 @@
 ## 1. Backend: providers and storage
 
-- [ ] 1.1 Add the provider presets constant (i2, mag, custom: name, URL, default model) beside `resolve_inference_target`, and verify a unit test asserts i2's URL/default and MAG's URL with no default
-- [ ] 1.2 Add nullable `inference_provider`, `inference_mag_api_key` and `inference_custom_api_key` (both `EncryptedStr`) to `app_user` and the user create/update/self-update/with-config schemas, and verify an existing test database gains the columns on startup and the keys are not plaintext in the DB file (`test_user_tokens.py`)
-- [ ] 1.3 Make `resolve_inference_target` provider-aware per design.md's resolution order, adding `provider` and `source` to `InferenceTarget` and allowing no model, and verify `test_inference_credentials.py` covers: row provider for each option, the per-provider key choice, `.env` differing from i2 → custom/config, nothing set → i2 with `claude-sonnet`, and an existing row's `inference_api_key` used as the i2 key
-- [ ] 1.4 Add `MissingInferenceModel`, reported in chat as a named condition like `MissingInferenceCredential`, and verify a chat test on MAG with no model gets that message rather than an internal error
-- [ ] 1.5 In the `PUT /users/me` handler, clear `inference_model` when `inference_provider` changes and the same update does not set a model, and verify both cases in a users API test
-- [ ] 1.6 Add `GET /users/me/inference` (options, effective provider/source/model, is-default, key-set booleans, no secrets), plus its UI proxy route, and verify an API test checks the shape and that no key value appears in the response
-- [ ] 1.7 Normalise the base URL in `api/models.py` (strip a trailing `/v1` and slash before appending `/v1/models`), list using the resolved provider's URL and key, and verify `test_models_api.py` lists models for a base URL with and without `/v1`
-- [ ] 1.8 Make citation extraction use the resolved target, and skip extraction with the existing notice when there is no model, and verify a test in `test_indexer_paths.py` (or alongside it) covers MAG with no model
+- [x] 1.1 Add the provider presets constant (i2, mag, custom: name, URL, default model) beside `resolve_inference_target`, and verify a unit test asserts i2's URL/default and MAG's URL with no default
+- [x] 1.2 Add nullable `inference_provider`, `inference_mag_api_key` and `inference_custom_api_key` (both `EncryptedStr`) to `app_user` and the user create/update/self-update/with-config schemas, and verify an existing test database gains the columns on startup and the keys are not plaintext in the DB file (`test_user_tokens.py`)
+- [x] 1.3 Make `resolve_inference_target` provider-aware per design.md's resolution order, adding `provider` and `source` to `InferenceTarget` and allowing no model, and verify `test_inference_credentials.py` covers: row provider for each option, the per-provider key choice, `.env` differing from i2 → custom/config, nothing set → i2 with `claude-sonnet`, and an existing row's `inference_api_key` used as the i2 key
+- [x] 1.4 Add `MissingInferenceModel`, reported in chat as a named condition like `MissingInferenceCredential`, and verify a chat test on MAG with no model gets that message rather than an internal error
+- [x] 1.5 In the `PUT /users/me` handler, clear `inference_model` when `inference_provider` changes and the same update does not set a model, and verify both cases in a users API test
+- [x] 1.6 Add `GET /users/me/inference` (options, effective provider/source/model, is-default, key-set booleans, no secrets), plus its UI proxy route, and verify an API test checks the shape and that no key value appears in the response
+- [x] 1.7 Normalise the base URL in `api/models.py` (strip a trailing `/v1` and slash before appending `/v1/models`), list using the resolved provider's URL and key, and verify `test_models_api.py` lists models for a base URL with and without `/v1`
+- [x] 1.8 Make citation extraction use the resolved target, and skip extraction with the existing notice when there is no model, and verify a test in `test_indexer_paths.py` (or alongside it) covers MAG with no model
 
 ## 2. UI: agent settings store and model picker
 

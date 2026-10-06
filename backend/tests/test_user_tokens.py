@@ -228,3 +228,151 @@ def test_existing_database_gains_the_remote_dir_columns(tmp_path):
         "lux_remote_dir",
         "lux_account",
     } <= columns
+
+
+# ---------------------------------------------------------------------------
+# Inference provider and its per-provider keys
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def i2_settings(monkeypatch):
+    """An installation whose own configuration is the i2 preset's, keyless."""
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(
+        settings, "openai_base_url", "https://api.i2-core.american-science-cloud.org"
+    )
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+
+def test_existing_database_gains_the_inference_provider_columns(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE app_user (id CHAR(32) PRIMARY KEY, email VARCHAR, "
+                "inference_api_key VARCHAR)"
+            )
+        )
+        _add_missing_columns(conn)
+        columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
+    assert {
+        "inference_provider",
+        "inference_mag_api_key",
+        "inference_custom_api_key",
+    } <= columns
+
+
+@pytest.mark.anyio
+async def test_changing_provider_clears_the_model(session, alice, i2_settings):
+    row = await session.get(UserTable, alice.id)
+    await update_me(UserSelfUpdate(inference_model="openai:claude-opus"), session, row)
+
+    saved = await update_me(UserSelfUpdate(inference_provider="mag"), session, row)
+    assert saved.inference_provider == "mag"
+    assert saved.inference_model is None
+
+
+@pytest.mark.anyio
+async def test_provider_change_with_a_model_keeps_that_model(
+    session, alice, i2_settings
+):
+    row = await session.get(UserTable, alice.id)
+    saved = await update_me(
+        UserSelfUpdate(inference_provider="mag", inference_model="openai:gpt-oss"),
+        session,
+        row,
+    )
+    assert saved.inference_model == "openai:gpt-oss"
+
+
+@pytest.mark.anyio
+async def test_choosing_the_provider_in_effect_keeps_the_model(
+    session, alice, i2_settings
+):
+    """An existing researcher on i2 who picks i2 explicitly loses nothing."""
+    row = await session.get(UserTable, alice.id)
+    await update_me(UserSelfUpdate(inference_model="openai:claude-opus"), session, row)
+    saved = await update_me(UserSelfUpdate(inference_provider="i2"), session, row)
+    assert saved.inference_model == "openai:claude-opus"
+
+
+@pytest.mark.anyio
+async def test_switching_provider_keeps_every_key(session, alice, i2_settings):
+    row = await session.get(UserTable, alice.id)
+    await update_me(UserSelfUpdate(inference_api_key="i2-key"), session, row)
+    await update_me(
+        UserSelfUpdate(inference_provider="mag", inference_mag_api_key="mag-key"),
+        session,
+        row,
+    )
+    saved = await update_me(UserSelfUpdate(inference_provider="i2"), session, row)
+    assert saved.inference_api_key == "i2-key"
+    assert saved.inference_mag_api_key == "mag-key"
+
+
+def test_unknown_provider_is_rejected():
+    with pytest.raises(ValueError):
+        UserSelfUpdate(inference_provider="azure")
+
+
+@pytest.mark.anyio
+async def test_inference_view_has_no_secrets(session, alice, i2_settings):
+    from vista_backend.api.users import get_inference
+
+    row = await session.get(UserTable, alice.id)
+    await update_me(
+        UserSelfUpdate(
+            inference_api_key="i2-secret-value",
+            inference_mag_api_key="mag-secret-value",
+        ),
+        session,
+        row,
+    )
+
+    view = (await get_inference(row)).model_dump(mode="json")
+
+    assert "secret-value" not in str(view)
+    assert [p["id"] for p in view["providers"]] == ["i2", "mag", "custom"]
+    assert view["providers"][0] == {
+        "id": "i2",
+        "name": "AmSC i2",
+        "takes_url": False,
+        "default_model": "claude-sonnet",
+    }
+    assert view["providers"][2]["takes_url"] is True
+    assert view["provider"] == "i2"
+    assert view["source"] == "default"
+    assert view["model"] == "openai:claude-sonnet"
+    assert view["model_is_default"] is True
+    assert view["has_credential"] is True
+    assert view["keys_set"] == {"i2": True, "mag": True, "custom": False}
+
+
+@pytest.mark.anyio
+async def test_inference_view_over_http(session, i2_settings):
+    from harness import api_client, seed_user
+
+    alice = await seed_user(session)
+    with api_client(session) as (client, _):
+        response = await client.get(
+            "/users/me/inference", headers={"X-Vista-User-Email": alice.email}
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["provider"] == "i2"
+
+
+@pytest.mark.anyio
+async def test_inference_view_on_mag_has_no_model(session, alice, i2_settings):
+    from vista_backend.api.users import get_inference
+
+    row = await session.get(UserTable, alice.id)
+    await update_me(UserSelfUpdate(inference_provider="mag"), session, row)
+    view = await get_inference(row)
+    assert view.provider == "mag"
+    assert view.source == "user"
+    assert view.model is None
+    assert view.model_is_default is False
+    assert view.has_credential is False

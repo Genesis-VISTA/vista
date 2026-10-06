@@ -401,6 +401,9 @@ class SkillUpdate(BaseModel):
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
+InferenceProvider = Literal["i2", "mag", "custom"]
+"""The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
+
 
 def _dedupe_clusters(v: list[HpcCluster] | None) -> list[HpcCluster] | None:
     return None if v is None else list(dict.fromkeys(v))
@@ -416,6 +419,9 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "inference_model",
     "inference_base_url",
     "inference_api_key",
+    "inference_provider",
+    "inference_mag_api_key",
+    "inference_custom_api_key",
     "nersc_account",
     "nersc_remote_dir",
     "odo_remote_dir",
@@ -444,6 +450,9 @@ class UserCreate(UserBase):
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
+    inference_provider: InferenceProvider | None = None
+    inference_mag_api_key: str | None = None
+    inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -471,6 +480,9 @@ class UserUpdate(UserBase):
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
+    inference_provider: InferenceProvider | None = None
+    inference_mag_api_key: str | None = None
+    inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -504,6 +516,9 @@ class UserSelfUpdate(UserBase):
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
+    inference_provider: InferenceProvider | None = None
+    inference_mag_api_key: str | None = None
+    inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -560,6 +575,10 @@ class UserPublicWithConfig(UserBase):
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
+    inference_provider: str | None = None
+    """ Plain on the way out, like `hpc_hidden_clusters`: only writes are checked. """
+    inference_mag_api_key: str | None = None
+    inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -602,19 +621,26 @@ class UserTable(SQLModel, table=True):
     """
     inference_model: str | None = None
     """
-    Chat model for this user, as `provider:name`. Overrides
-    `Settings.model` when set. Not a secret -- stored in the clear.
+    Chat model for this user, as `provider:name`; `None` uses the provider's
+    default. Cleared when the provider changes. Not a secret -- stored in the
+    clear.
+    """
+    inference_provider: str | None = None
+    """
+    `i2`, `mag` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
+    until the researcher chooses: i2, or `Settings` where they differ from it.
     """
     inference_base_url: str | None = None
     """
-    OpenAI-compatible endpoint for this user. Overrides
-    `Settings.openai_base_url` when set. Not a secret.
+    The Custom provider's OpenAI-compatible endpoint; unused for the others.
+    Not a secret.
     """
     inference_api_key: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    Access key for `inference_base_url`. Encrypted at rest.
+    The AmSC i2 provider's access key. Encrypted at rest. Saved before
+    providers existed, so every older key reads as i2's.
 
     On a single-user install this row *is* the deployment configuration: it is
     where a researcher's key lands when they paste it into the settings modal,
@@ -622,6 +648,14 @@ class UserTable(SQLModel, table=True):
     this user's pooled agents through `update_user`'s `invalidate_agents` call,
     so the next message picks it up with no restart.
     """
+    inference_mag_api_key: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ The AmSC MAG provider's project access token. Encrypted at rest. """
+    inference_custom_api_key: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ The Custom provider's access key. Encrypted at rest. """
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None

@@ -114,6 +114,86 @@ async def test_lists_models_from_the_configured_endpoint(session, monkeypatch):
     assert seen_requests[0].headers["authorization"] == "Bearer row-secret-key"
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://gateway.example",
+        "https://gateway.example/",
+        "https://gateway.example/v1",
+        "https://gateway.example/v1/",
+    ],
+)
+async def test_lists_models_with_or_without_v1(session, monkeypatch, base_url):
+    """The MAG preset ends in `/v1`; i2's does not. Both must list."""
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice)
+    await user_service.update_user(
+        session,
+        alice.id,
+        UserSelfUpdate(
+            inference_provider="custom",
+            inference_base_url=base_url,
+            inference_custom_api_key="custom-key",
+        ),
+        alice,
+    )
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"id": "m"}]})
+
+    monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
+
+    with api_client(session) as (client, _):
+        response = await client.get(
+            MODELS.format(name=project.name), headers=_headers(alice)
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == [{"id": "m", "owned_by": None}]
+    assert str(seen[0].url) == "https://gateway.example/v1/models"
+    assert seen[0].headers["authorization"] == "Bearer custom-key"
+
+
+@pytest.mark.unit
+async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
+    """Listing is how a model gets chosen on MAG, which has no default."""
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice)
+    await user_service.update_user(
+        session,
+        alice.id,
+        UserSelfUpdate(inference_provider="mag", inference_mag_api_key="mag-token"),
+        alice,
+    )
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-oss"}]})
+
+    monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
+
+    with api_client(session) as (client, _):
+        response = await client.get(
+            MODELS.format(name=project.name), headers=_headers(alice)
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["supported"] is True
+    assert seen[0].url.host == "i2-api.staging.american-science-cloud.org"
+    assert seen[0].url.path == "/v1/models"
+    assert seen[0].headers["authorization"] == "Bearer mag-token"
+
+
 # ---------------------------------------------------------------------------
 # No credential configured
 # ---------------------------------------------------------------------------

@@ -33,6 +33,16 @@ class ModelsListResponse(BaseModel):
     models: list[ModelInfo] = []
 
 
+def _unversioned(base_url: str) -> str:
+    """
+    `base_url` without one trailing `/v1`, so appending `/v1/models` is right
+    either way. Chat takes the endpoint in both forms (the MAG preset ends in
+    `/v1`; i2's does not), so listing has to as well.
+    """
+    stripped = base_url.rstrip("/")
+    return stripped.removesuffix("/v1")
+
+
 @router.get("/projects/{project_name}/models", response_model=ModelsListResponse)
 async def list_models(
     project_name: str, session: SessionDep, user: UserDep
@@ -56,7 +66,9 @@ async def list_models(
     if not target.has_credential:
         raise MissingInferenceCredential(target.model, target.base_url)
 
-    async with httpx.AsyncClient(base_url=target.base_url, timeout=10) as client:
+    async with httpx.AsyncClient(
+        base_url=_unversioned(target.base_url), timeout=10
+    ) as client:
         try:
             response = await client.get(
                 "/v1/models",

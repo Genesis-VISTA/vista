@@ -8,6 +8,7 @@ escapes it. TextRAG is faked — these tests are about which paths reach
 the embedding step, not about chunking or chroma.
 """
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -170,3 +171,35 @@ async def test_llm_credentials_reach_the_rag_instance(fake_rag, tmp_path):
     )
     assert len(fake_rag) == 1
     assert fake_rag[0].llm_credentials is sentinel
+
+
+async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monkeypatch):
+    """
+    On a provider with no model chosen (AmSC MAG), the paper is still indexed,
+    and extraction is off even though the environment has a key: the env
+    chain would otherwise extract with a model the researcher never chose.
+    """
+    from vista_backend.agents.inference import citation_credentials
+    from vista_backend.db.schemas import UserPublicWithConfig
+
+    # `fake_rag` replaces the loader that would put `build_rag` on the path.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+    user = UserPublicWithConfig(
+        id=uuid.uuid4(),
+        email="researcher@example.org",
+        inference_provider="mag",
+        inference_mag_api_key="mag-token",
+    )
+    _pdf(tmp_path / "pdfs" / "paper.pdf")
+
+    results = await indexer.index_publications(
+        rag_db_path=str(tmp_path / "rag_db"),
+        pdfs_dir=str(tmp_path / "pdfs"),
+        filenames=["paper.pdf"],
+        llm_credentials=citation_credentials(user),
+    )
+
+    assert results[0]["status"] == "indexed"
+    assert results[0]["citation_status"] == "disabled"
+    assert fake_rag[0].extract_citations is False
