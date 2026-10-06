@@ -21,7 +21,7 @@ import { classify, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
-import { resolveMacPackage } from './package-root.js';
+import { resolvePackage } from './package-root.js';
 import { formatDiagnostics, StartupStateMachine } from './startup-protocol.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
@@ -433,13 +433,21 @@ app.whenReady().then(() => {
     let launcherPath = args.launcher ? path.resolve(args.launcher) : '';
     if (!launcherPath) {
       try {
-        ({ launcherPath } = resolveMacPackage(process.resourcesPath));
+        ({ launcherPath } = resolvePackage({
+          platform: process.platform,
+          execPath: process.execPath,
+          resourcesPath: process.resourcesPath,
+        }));
       } catch (error) {
         dialog.showMessageBoxSync({
           type: 'error',
           title: 'VISTA cannot start',
-          message: 'VISTA.app must stay inside the folder it was distributed with.',
-          detail: `Move VISTA.app back beside “vista”, “manifest.json”, and the app runtime, then open it again.\n\n${error instanceof Error ? error.message : 'The package layout is invalid.'}`,
+          message: process.platform === 'darwin'
+            ? 'VISTA.app must stay inside the folder it was distributed with.'
+            : 'VISTA must stay inside the folder it was installed in.',
+          detail: `${process.platform === 'darwin'
+            ? 'Move VISTA.app back beside “vista”, “manifest.json”, and the app runtime, then open it again.'
+            : 'The whole VISTA folder is the application: reinstall it, or put back what was moved, then open it again.'}\n\n${error instanceof Error ? error.message : 'The package layout is invalid.'}`,
           buttons: ['Quit'],
         });
         quitAllowed = true;

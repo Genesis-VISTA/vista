@@ -8,6 +8,40 @@ import { ProtocolError, StartupStateMachine } from './startup-protocol.js';
 
 const STOP_TIMEOUT_MS = 12_000;
 
+// What vista.cmd does before it runs vista.ps1, which the application now does
+// itself (design D10). Unblock-File removes the downloaded-file mark that makes a
+// RemoteSigned policy refuse the script; a command, unlike a script file, is
+// not subject to execution policy, so this runs whatever the policy is. An
+// AllSigned policy, which Group Policy can impose over -ExecutionPolicy
+// Bypass, cannot be met by an unsigned package: exit 3 names it.
+const WINDOWS_PREFLIGHT = [
+  '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+  "Unblock-File -LiteralPath $env:VISTA_PS1 -ErrorAction SilentlyContinue; "
+    + "if ((Get-ExecutionPolicy) -eq 'AllSigned') { exit 3 }",
+];
+const EXIT_ALL_SIGNED = 3;
+
+/**
+ * How to run the supervised launcher. vista.ps1 runs under Windows PowerShell,
+ * hidden, after the preflight above; anything else is executed directly, which
+ * is also how the tests' fake launcher runs.
+ *
+ * @param {string} launcherPath
+ * @returns {{ command: string, args: string[], windowsHide: boolean, preflight: string[] | null }}
+ */
+export function launchCommand(launcherPath) {
+  if (launcherPath.toLowerCase().endsWith('.ps1')) {
+    return {
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', launcherPath,
+        '-Supervised', '-Progress', 'jsonl'],
+      windowsHide: true,
+      preflight: WINDOWS_PREFLIGHT,
+    };
+  }
+  return { command: launcherPath, args: ['--supervised', '--progress=jsonl'], windowsHide: false, preflight: null };
+}
+
 /** @typedef {ReturnType<StartupStateMachine['snapshot']>} StartupSnapshot */
 
 export class LauncherController {
@@ -18,9 +52,11 @@ export class LauncherController {
    * @param {(snapshot: StartupSnapshot) => void} options.onState
    * @param {(url: string) => void} options.onReady
    * @param {typeof spawn} [options.spawnProcess]
+   * @param {NodeJS.Platform} [options.platform]
    */
-  constructor({ launcherPath, logPath, onState, onReady, spawnProcess = spawn }) {
+  constructor({ launcherPath, logPath, onState, onReady, spawnProcess = spawn, platform = process.platform }) {
     this.launcherPath = launcherPath;
+    this.platform = platform;
     this.logPath = logPath;
     this.onState = onState;
     this.onReady = onReady;
@@ -46,20 +82,72 @@ export class LauncherController {
     this.readySent = false;
     this.stopping = false;
 
-    mkdirSync(path.dirname(this.logPath), { recursive: true });
-    const log = openSync(this.logPath, 'a');
+    this.exitPromise = new Promise((resolve) => { this.resolveExit = resolve; });
+    const launch = launchCommand(this.launcherPath);
+    if (launch.preflight) {
+      this.runPreflight(launch);
+    } else {
+      this.spawnLauncher(launch);
+    }
+  }
+
+  /**
+   * vista.ps1's preflight: its own short-lived child, which Quit can stop like
+   * the launcher. Only once it succeeds does the launcher start.
+   *
+   * @param {ReturnType<typeof launchCommand>} launch
+   */
+  runPreflight(launch) {
+    const log = this.openLog();
     let child;
     try {
-      child = this.spawnProcess(
-        this.launcherPath,
-        ['--supervised', '--progress=jsonl'],
-        { stdio: ['pipe', 'pipe', log] },
-      );
+      child = this.spawnProcess('powershell.exe', /** @type {string[]} */ (launch.preflight), {
+        stdio: ['ignore', 'ignore', log],
+        windowsHide: true,
+        env: { ...process.env, VISTA_PS1: this.launcherPath },
+      });
     } finally {
       closeSync(log);
     }
     this.child = child;
-    this.exitPromise = new Promise((resolve) => { this.resolveExit = resolve; });
+    this.emit();
+    child.once('error', (error) => {
+      const errorCode = /** @type {NodeJS.ErrnoException} */ (error).code ?? 'process error';
+      this.launcherFailure(`Windows PowerShell could not be started (${errorCode}).`);
+      this.handleExit(child, -1, null);
+    });
+    child.once('exit', (code, signal) => {
+      if (this.child !== child) return;
+      if (code === 0 && !this.stopping) {
+        this.child = null;
+        this.spawnLauncher(launch);
+        return;
+      }
+      if (code === EXIT_ALL_SIGNED) {
+        this.current = this.machine.failPreflight('execution-policy-all-signed');
+      }
+      this.handleExit(child, code, signal);
+    });
+  }
+
+  openLog() {
+    mkdirSync(path.dirname(this.logPath), { recursive: true });
+    return openSync(this.logPath, 'a');
+  }
+
+  /** @param {ReturnType<typeof launchCommand>} launch */
+  spawnLauncher(launch) {
+    const log = this.openLog();
+    let child;
+    try {
+      child = this.spawnProcess(launch.command, launch.args, {
+        stdio: ['pipe', 'pipe', log],
+        windowsHide: launch.windowsHide,
+      });
+    } finally {
+      closeSync(log);
+    }
+    this.child = child;
     this.emit();
 
     if (!child.stdout) {
@@ -144,7 +232,15 @@ export class LauncherController {
     this.stopping = true;
     this.current = this.machine.markStopping();
     this.emit();
-    child.kill('SIGTERM');
+    // On Windows, kill() is TerminateProcess, which runs no cleanup at all: the
+    // end of stdin is vista.ps1's stop request (design D10). Elsewhere TERM
+    // reaches the launcher's own trap.
+    // The preflight has no stdin, and nothing to clean up.
+    if (this.platform === 'win32' && child.stdin) {
+      child.stdin.end();
+    } else {
+      child.kill('SIGTERM');
+    }
     let timer;
     await Promise.race([
       this.exitPromise,

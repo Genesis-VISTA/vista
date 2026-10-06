@@ -1615,12 +1615,25 @@ write_manifest() {
   # byte count; on macOS it is a top-level sibling rather than part of app/.
   local window_json=null entrypoint_json=null diagnostic_launcher_json=null
   if [[ -n "$WINDOW_EXE" ]]; then
+    # What a researcher opens (the application; design D1), and the terminal
+    # launcher kept for diagnostics. The application reads both to find its
+    # package and refuses to start if they do not describe it.
     local window_path="$STAGING_APP/window"
-    if [[ "$TARGET_OS" == macos ]]; then
-      window_path="$STAGING/VISTA.app"
-      entrypoint_json='"VISTA.app"'
-      diagnostic_launcher_json='"vista"'
-    fi
+    case "$TARGET_OS" in
+      macos)
+        window_path="$STAGING/VISTA.app"
+        entrypoint_json='"VISTA.app"'
+        diagnostic_launcher_json='"vista"'
+        ;;
+      linux)
+        entrypoint_json='"app/window/vista-app"'
+        diagnostic_launcher_json='"vista"'
+        ;;
+      windows)
+        entrypoint_json='"app/window/VISTA.exe"'
+        diagnostic_launcher_json='"vista.cmd"'
+        ;;
+    esac
     window_json="{ \"exe\": \"$WINDOW_EXE\", \"electron\": \"$ELECTRON_VERSION\", \"bytes\": $(size_of "$window_path") }"
   fi
 
@@ -1686,14 +1699,21 @@ if window:
         sandbox = exe.parent / "window-sandbox"
         if not (sandbox.is_file() and os.access(sandbox, os.X_OK)):
             sys.exit("the Linux window has no executable window-sandbox next to it")
-if target_os == "macos":
-    if manifest.get("entrypoint") != "VISTA.app":
-        sys.exit("the macOS manifest does not name VISTA.app as its entrypoint")
-    if manifest.get("diagnostic_launcher") != "vista":
-        sys.exit("the macOS manifest does not name vista as its diagnostic launcher")
+# The application's own check of its package (electron/src/package-root.js)
+# expects exactly these.
+expected = {
+    "macos": ("VISTA.app", "vista"),
+    "linux": ("app/window/vista-app", "vista"),
+    "windows": ("app/window/VISTA.exe", "vista.cmd"),
+}.get(target_os)
+if expected:
+    if manifest.get("entrypoint") != expected[0]:
+        sys.exit(f"the {target_os} manifest does not name {expected[0]} as its entrypoint")
+    if manifest.get("diagnostic_launcher") != expected[1]:
+        sys.exit(f"the {target_os} manifest does not name {expected[1]} as its diagnostic launcher")
     launcher = Path(sys.argv[1]).parent / manifest["diagnostic_launcher"]
-    if not (launcher.is_file() and os.access(launcher, os.X_OK)):
-        sys.exit("the macOS diagnostic launcher is missing or not executable")
+    if not (launcher.is_file() and (target_os == "windows" or os.access(launcher, os.X_OK))):
+        sys.exit(f"the {target_os} diagnostic launcher is missing or not executable")
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),

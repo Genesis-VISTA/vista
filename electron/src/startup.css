@@ -1,26 +1,37 @@
+/* The VISTA UI's own tokens and values (ui/app/globals.css), so the startup
+   window and the page it hands over to are one design in either theme.
+   test/appearance.test.js holds the two together. Like the window frame, this
+   follows the OS appearance: a researcher's in-app Light/Dark choice belongs to
+   the UI's origin, which this page cannot read. */
 :root {
   color-scheme: light dark;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  background: #f4f4f2;
-  color: #17202b;
-  --muted: #66717d;
-  --line: rgb(23 32 43 / 12%);
-  --panel: rgb(255 255 255 / 72%);
-  --accent: #1769aa;
-  --success: #24845b;
-  --danger: #b33a3a;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --line: #e2e2de;
+  --ink: #1c1c1a;
+  --muted: #767671;
+  --brand: #004573;
+  --brand-fill: #004573;
+  --on-brand: #ffffff;
+  --success: #0b730b;
+  --danger-ink: #b01000;
+  background: var(--bg);
+  color: var(--ink);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    background: #0a1524;
-    color: #edf3f8;
-    --muted: #9caab8;
-    --line: rgb(237 243 248 / 14%);
-    --panel: rgb(19 34 50 / 78%);
-    --accent: #65aee8;
-    --success: #63c795;
-    --danger: #ff8b8b;
+    --bg: #0a1524;
+    --surface: #112235;
+    --line: #213852;
+    --ink: #e8eef5;
+    --muted: #97aabf;
+    --brand: #92c6f2;
+    --brand-fill: #3577b0;
+    --on-brand: #ffffff;
+    --success: #78cc8f;
+    --danger-ink: #ff8a7a;
   }
 }
 
@@ -30,9 +41,7 @@ body {
   margin: 0;
   min-width: 460px;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 20% -20%, rgb(71 145 201 / 15%), transparent 48%),
-    inherit;
+  background: var(--bg);
 }
 
 .startup-shell {
@@ -88,7 +97,7 @@ h1 {
   list-style: none;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--panel);
+  background: var(--surface);
   box-shadow: 0 14px 42px rgb(0 0 0 / 8%);
 }
 
@@ -108,7 +117,7 @@ h1 {
 .activities li[data-state="running"] { color: inherit; font-weight: 550; }
 .activities li[data-state="complete"],
 .activities li[data-state="ready"] { color: var(--success); }
-.activities li[data-state="failed"] { color: var(--danger); }
+.activities li[data-state="failed"] { color: var(--danger-ink); }
 
 .indicator {
   width: 10px;
@@ -120,8 +129,8 @@ h1 {
 
 [data-state="running"] .indicator {
   border-color: transparent;
-  border-top-color: var(--accent);
-  border-right-color: var(--accent);
+  border-top-color: var(--brand);
+  border-right-color: var(--brand);
   opacity: 1;
   animation: spin 0.85s linear infinite;
 }
@@ -130,22 +139,22 @@ h1 {
 [data-state="ready"] .indicator {
   border-color: var(--success);
   background: var(--success);
-  box-shadow: inset 0 0 0 2px var(--panel);
+  box-shadow: inset 0 0 0 2px var(--surface);
   opacity: 1;
 }
 
 [data-state="failed"] .indicator {
-  border-color: var(--danger);
-  background: var(--danger);
+  border-color: var(--danger-ink);
+  background: var(--danger-ink);
   opacity: 1;
 }
 
 .failure {
   margin-top: 16px;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger-ink) 35%, transparent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  background: color-mix(in srgb, var(--danger-ink) 8%, transparent);
 }
 
 .failure p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
@@ -157,14 +166,14 @@ button {
   border: 1px solid var(--line);
   border-radius: 7px;
   color: inherit;
-  background: var(--panel);
+  background: var(--surface);
   font: inherit;
   font-size: 12px;
 }
 
 button:hover { filter: brightness(1.08); }
 button:active { transform: translateY(1px); }
-button.primary { border-color: transparent; color: white; background: #1974b8; }
+button.primary { border-color: transparent; color: var(--on-brand); background: var(--brand-fill); }
 button:disabled { cursor: default; opacity: 0.55; }
 
 .footnote {

@@ -70,16 +70,18 @@ dropped by design D7; `signing-spike.md` keeps their record.
   port.
 - [x] 4.7 Cover first run, skipped work, failure, retry, quit during startup, hand-off and second
   launch with a fake launcher (`electron/test/`).
-- [ ] 4.8 Resolve the package root on Linux and Windows (`app/window/` two levels below it),
+- [x] 4.8 Resolve the package root on Linux and Windows (`app/window/` two levels below it),
   alongside `resolveMacPackage`, from the manifest's per-platform `entrypoint` and
   `diagnostic_launcher`. Extend `electron/test/package-root.test.js`.
-- [ ] 4.9 Start the right launcher per platform: `vista` on macOS and Linux. On Windows, run
+- [x] 4.9 Start the right launcher per platform: `vista` on macOS and Linux. On Windows, run
   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File vista.ps1 -Supervised -Progress
   jsonl` hidden, after unblocking `vista.ps1` and checking for `AllSigned`, which reports as
   its own failure code. On Windows, stop by closing stdin, then `kill()` after the grace
   period. Cover each in `electron/test/launcher-controller.test.js`.
-- [ ] 4.10 Startup page: show the VISTA icon (`assets/icon.png`; *done 2026-10-06*), follow the UI's light and dark
+- [x] 4.10 Startup page: show the VISTA icon (`assets/icon.png`), follow the UI's light and dark
   palette, use platform-neutral copy, and keep the native frame on every platform.
+  *The page declares the UI's own tokens; `appearance.test.js` checks each against
+  `ui/app/globals.css` in both themes. It follows the OS appearance, like the window frame.*
 - [ ] 4.11 Show the Linux sandbox notice from the pre-window launcher (5.1) in the startup window
   when the window runs without the renderer sandbox.
 
@@ -101,8 +103,10 @@ dropped by design D7; `signing-spike.md` keeps their record.
   record both in `manifest.json`.
 - [x] 6.2 Make the application validate its package root before starting anything, with a
   graphical error when separated.
-- [ ] 6.3 Record `entrypoint` and `diagnostic_launcher` in the Linux and Windows manifests too
+- [x] 6.3 Record `entrypoint` and `diagnostic_launcher` in the Linux and Windows manifests too
   (`app/window/vista-app` and `vista`; `app/window/VISTA.exe` and `vista.cmd`).
+  *Done with 4.8, which reads them. The build checks that the Linux entrypoint exists from 5.1,
+  which adds it.*
 - [ ] 6.4 In `scripts/smoke_test_package.sh`, replace the macOS-only Finder launch with one
   supervised check on every platform (design D12): events in order to `ui`/`ready` with the
   right URL; a forced port conflict giving `preflight`/`failed`/`port-conflict`; a stop leaving
@@ -157,3 +161,7 @@ dropped by design D7; `signing-spike.md` keeps their record.
 - [ ] 9.2 On a Mac, install the hand-built release with the one-line installer and run 8.3's
   checklist. **Manual macOS validation; keep out of PR CI.**
 - [ ] 9.3 Run `openspec validate desktop-app-startup` and fix anything it reports.
+- [ ] 9.4 Before opening the MR, on a real Windows machine: run
+  `scripts\tests\package_launcher_supervised_test.ps1`, install the hand-built release with
+  `install.ps1`, start VISTA from the Start menu, and quit it, leaving no process. **Manual;
+  keep out of PR CI.**

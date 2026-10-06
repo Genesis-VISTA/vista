@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { LauncherController } from '../src/launcher-controller.js';
+import { LauncherController, launchCommand } from '../src/launcher-controller.js';
 
 /**
  * @param {string} phase
@@ -149,4 +149,102 @@ test('an unexpected launcher exit after readiness becomes retryable failure', as
   assert.equal(states.at(-1)?.canRetry, true);
   assert.equal(states.at(-1)?.activities.at(-1)?.state, 'failed');
   rmSync(directory, { recursive: true, force: true });
+});
+
+test('runs vista directly on macOS and Linux, and vista.ps1 hidden under Windows PowerShell', () => {
+  assert.deepEqual(launchCommand('/pkg/vista'), {
+    command: '/pkg/vista',
+    args: ['--supervised', '--progress=jsonl'],
+    windowsHide: false,
+    preflight: null,
+  });
+  const windows = launchCommand('C:\\VISTA\\app\\vista.ps1');
+  assert.equal(windows.command, 'powershell.exe');
+  assert.deepEqual(windows.args, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', 'C:\\VISTA\\app\\vista.ps1', '-Supervised', '-Progress', 'jsonl']);
+  assert.equal(windows.windowsHide, true);
+  assert.match(String(windows.preflight?.at(-1)), /Unblock-File -LiteralPath \$env:VISTA_PS1/);
+  assert.match(String(windows.preflight?.at(-1)), /AllSigned/);
+});
+
+/**
+ * A controller for vista.ps1, recording what it spawns.
+ * @param {any[]} children
+ */
+function windowsController(children) {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vista-controller-'));
+  /** @type {{ command: string, args: string[], options: any }[]} */
+  const spawned = [];
+  /** @type {any[]} */
+  const states = [];
+  const controller = new LauncherController({
+    launcherPath: 'C:\\VISTA\\app\\vista.ps1',
+    logPath: path.join(directory, 'window.log'),
+    onState: (state) => states.push(state),
+    onReady: () => {},
+    platform: 'win32',
+    spawnProcess: /** @type {any} */ ((/** @type {string} */ command, /** @type {string[]} */ args,
+      /** @type {any} */ options) => {
+      spawned.push({ command, args, options });
+      return children.shift();
+    }),
+  });
+  return { controller, spawned, states, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
+}
+
+test('on Windows, the preflight runs first and the launcher starts hidden once it passes', async () => {
+  const preflight = fakeChild();
+  const launcher = fakeChild();
+  const { controller, spawned, cleanup } = windowsController([preflight, launcher]);
+  controller.start();
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].command, 'powershell.exe');
+  assert.equal(spawned[0].options.env.VISTA_PS1, 'C:\\VISTA\\app\\vista.ps1');
+  assert.equal(spawned[0].options.windowsHide, true);
+  preflight.emit('exit', 0, null);
+  assert.equal(spawned.length, 2);
+  assert.ok(spawned[1].args.includes('-Supervised'));
+  assert.equal(spawned[1].options.windowsHide, true);
+  assert.equal(controller.child, launcher);
+  launcher.emit('exit', 0, null);
+  cleanup();
+});
+
+test('on Windows, an AllSigned policy is its own preflight failure, and starts no launcher', () => {
+  const preflight = fakeChild();
+  const { controller, spawned, states, cleanup } = windowsController([preflight]);
+  controller.start();
+  preflight.emit('exit', 3, null);
+  assert.equal(spawned.length, 1);
+  assert.equal(states.at(-1)?.status, 'failed');
+  assert.deepEqual(states.at(-1)?.failure, { phase: 'preflight', code: 'execution-policy-all-signed', log: '' });
+  assert.match(states.at(-1)?.failureMessage, /AllSigned/);
+  assert.equal(states.at(-1)?.canRetry, true);
+  cleanup();
+});
+
+test('on Windows, stop closes the launcher\'s stdin, and kills it only after the grace period', async () => {
+  const preflight = fakeChild();
+  const launcher = fakeChild();
+  let stdinClosed = false;
+  launcher.stdin.on('finish', () => { stdinClosed = true; });
+  const { controller, cleanup } = windowsController([preflight, launcher]);
+  controller.start();
+  preflight.emit('exit', 0, null);
+  await controller.stop(50);
+  assert.equal(stdinClosed, true);
+  assert.deepEqual(launcher.kills, ['SIGKILL']);
+  cleanup();
+});
+
+test('on Windows, a launcher that exits on stdin closing is never killed', async () => {
+  const preflight = fakeChild();
+  const launcher = fakeChild();
+  launcher.stdin.on('finish', () => queueMicrotask(() => launcher.emit('exit', 0, null)));
+  const { controller, cleanup } = windowsController([preflight, launcher]);
+  controller.start();
+  preflight.emit('exit', 0, null);
+  await controller.stop(5_000);
+  assert.deepEqual(launcher.kills, []);
+  cleanup();
 });

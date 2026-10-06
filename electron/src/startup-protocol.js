@@ -28,6 +28,7 @@ const FAILURE_MESSAGES = Object.freeze({
   'health-timeout': 'A VISTA service did not become ready in time.',
   'startup-error': 'VISTA could not complete startup.',
   'protocol-error': 'This VISTA application and launcher are not compatible.',
+  'execution-policy-all-signed': 'Group Policy on this computer lets PowerShell run only signed scripts (AllSigned), and VISTA\'s launcher is not signed. Ask your IT administrator to allow it.',
 });
 /** Every failure code with a message of its own; anything else reads as startup-error. */
 export const FAILURE_CODES = Object.freeze(Object.keys(FAILURE_MESSAGES));
@@ -244,6 +245,17 @@ export class StartupStateMachine {
     this.message = 'Closing services and sandboxes.';
     this.canRetry = false;
     return this.snapshot();
+  }
+
+  /**
+   * A preflight failure found by the application itself, before the launcher
+   * could report anything (on Windows, an AllSigned execution policy).
+   *
+   * @param {keyof typeof FAILURE_MESSAGES} code
+   */
+  failPreflight(code) {
+    this.acceptLine(JSON.stringify({ protocol: PROTOCOL_VERSION, phase: 'preflight', state: 'running' }));
+    return this.acceptLine(JSON.stringify({ protocol: PROTOCOL_VERSION, phase: 'preflight', state: 'failed', code }));
   }
 
   /** @param {string} message */
