@@ -54,7 +54,8 @@ async function run() {
   ];
   for (const [phase, label] of phases) {
     emit(phase, 'running', { label });
-    await pause(90);
+    // Long enough for a cold first window to see the running state.
+    await pause(300);
     emit(phase, 'complete', scenario === 'skipped' ? { skipped: true } : {});
   }
   for (const [phase, label] of [
@@ -62,7 +63,8 @@ async function run() {
     ['backend', 'Preparing VISTA'],
   ]) {
     emit(phase, 'running', { label });
-    await pause(90);
+    // Long enough for a cold first window to see the running state.
+    await pause(300);
     emit(phase, 'ready');
   }
   emit('ui', 'running', { label: 'Starting the interface' });

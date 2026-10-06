@@ -6,14 +6,20 @@ dropped by design D7; `signing-spike.md` keeps their record.
 
 - [x] 1.1 Inventory the macOS package's executables, signatures and `msb`'s entitlements
   (`signing-spike.md`). Kept as the reference for any later signing lane.
-- [ ] 1.2 Rebase `desktop-app-startup` onto `desktop-icon` (!145). Resolve `README.md`,
+- [x] 1.2 Rebase `desktop-app-startup` onto `desktop-icon` (!145). Resolve `README.md`,
   `scripts/build_local_package.sh`, `scripts/smoke_test_package.sh`, `electron/src/main.js` and
   `electron/scripts/package.js`, keeping both the icon wiring and the startup flow. Rebase again
-  onto `main` once !145 is squash-merged.
-- [ ] 1.3 After the rebase, run `cd electron && npm test`, the Electron typecheck,
+  onto `main` once !145 is squash-merged. *Rebased onto `1cb2d1a`; the re-rebase onto `main`
+  waits for !145.* `github-release-builds` is archived on this branch, so the `release-builds`
+  deltas apply.
+- [x] 1.3 After the rebase, run `cd electron && npm test`, the Electron typecheck,
   `scripts/tests/package_launcher_supervised_test.sh` and `./scripts/ci-local.sh install`, and
   record the results. Fix the pre-existing second-instance e2e test that expects exit 0 where the
   launcher contract returns 75.
+  *2026-10-06, macOS 26: `npm test` 59/59, typecheck clean, supervised and dev-launcher tests
+  pass, `ci-local.sh install` and `electron` pass, e2e 21/21. The startup e2e's first-run test
+  was flaky (a cold window missed the 90 ms `resources` running state); the fake launcher now
+  holds each phase 300 ms.*
 
 ## 2. Supervised launcher: macOS and Linux
 
