@@ -29,12 +29,14 @@ FAILED=0
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { printf '\n--> %s\n' "$*"; }
+# A failing check shows what it printed, since a CI log is all there is to go on.
 check() {
-  local label="$1"; shift
-  if "$@" >/dev/null 2>&1; then
+  local label="$1" output="$STATE/check-output"; shift
+  if "$@" > "$output" 2>&1; then
     echo "  ok   $label"
   else
     echo "  FAIL $label" >&2
+    tail -20 "$output" | sed 's/^/         /' >&2
     FAILED=1
   fi
 }
@@ -87,11 +89,6 @@ wait_for() {
 # would be testing itself. The diagnostic launcher starts the services for the
 # checks below; the application's own supervised mode is checked after them, the
 # same way on every platform (desktop-app-startup D12).
-WINDOW_EXE="$(
-  "$PACKAGE_PYTHON" -c \
-    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
-    "$PACKAGE/manifest.json"
-)"
 LAUNCHER=("$PACKAGE/vista")
 SUPERVISED_ARGS=(--supervised --progress=jsonl)
 if [[ "$IS_WINDOWS" == true ]]; then
@@ -276,6 +273,13 @@ check "version matches across manifest, launcher and app" version_is_consistent
 # --smoke-test mode never shows anything and takes no single-instance lock, so
 # a VISTA the builder has open cannot turn this into a false failure. It still
 # needs a GUI session to start at all, which a build over SSH does not have.
+# The package's python runs only once the launcher has pinned its pyvenv.cfg to
+# where the package was unpacked, so the manifest is read here, not earlier.
+WINDOW_EXE="$(
+  "$PACKAGE_PYTHON" -c \
+    'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
+    "$PACKAGE/manifest.json"
+)"
 # On Linux it gets the sandbox arguments the launcher would give it on this
 # host (linux-desktop-window D1), and a virtual display when there is no real
 # one, which is how a build container runs it (D7).
@@ -334,11 +338,17 @@ package_processes_are_gone() {
     [[ "$count" == 0 ]] || { echo "$count package processes remain" >&2; return 1; }
     return 0
   fi
+  # This script was given the package's path, so its own shell and subshells
+  # match too: BSD pgrep leaves out its ancestors, but Linux's does not.
+  local args remaining=0
   while IFS= read -r pid; do
     [[ -z "$pid" || "$pid" == "$$" ]] && continue
-    echo "package process $pid remains" >&2
-    return 1
+    args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+    [[ -z "$args" || "$args" == *smoke_test_package.sh* ]] && continue
+    echo "package process remains: $(ps -o pid=,ppid=,etime=,args= -p "$pid" 2>/dev/null)" >&2
+    remaining=1
   done < <(pgrep -f "$PACKAGE" 2>/dev/null || true)
+  return "$remaining"
 }
 
 # ─── the application's supervised protocol ──────────────────────────────────
