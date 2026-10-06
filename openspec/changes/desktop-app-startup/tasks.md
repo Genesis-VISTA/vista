@@ -9,8 +9,8 @@ dropped by design D7; `signing-spike.md` keeps their record.
 - [x] 1.2 Rebase `desktop-app-startup` onto `desktop-icon` (!145). Resolve `README.md`,
   `scripts/build_local_package.sh`, `scripts/smoke_test_package.sh`, `electron/src/main.js` and
   `electron/scripts/package.js`, keeping both the icon wiring and the startup flow. Rebase again
-  onto `main` once !145 is squash-merged. *Rebased onto `1cb2d1a`; the re-rebase onto `main`
-  waits for !145.* `github-release-builds` is archived on this branch, so the `release-builds`
+  onto `main` once !145 is squash-merged. *Rebased onto `1cb2d1a`, then onto `main` (`b175d69`)
+  once !145 was squash-merged.* `github-release-builds` is archived on this branch, so the `release-builds`
   deltas apply.
 - [x] 1.3 After the rebase, run `cd electron && npm test`, the Electron typecheck,
   `scripts/tests/package_launcher_supervised_test.sh` and `./scripts/ci-local.sh install`, and
