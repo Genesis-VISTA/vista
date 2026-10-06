@@ -19,15 +19,18 @@ const ACTIVITY_LABELS = Object.freeze({
 
 const FAILURE_MESSAGES = Object.freeze({
   'port-conflict': 'A VISTA network port is already in use. Close the other process, then try again.',
-  'invalid-state-path': 'The VISTA data location is too long for the code-execution sandbox.',
+  'invalid-state-path': 'The VISTA data location (VISTA_HOME) has too long a path. Choose a shorter one, then try again.',
+  'package-path-too-long': 'VISTA is in too deep a folder for Windows. Move the VISTA folder somewhere shorter, then try again.',
   'missing-component': 'This VISTA package is incomplete. Keep the whole unpacked folder together.',
   'resource-extraction-failed': 'Bundled VISTA resources could not be installed. Check available disk space.',
   'sandbox-image-import-failed': 'The code-execution sandbox could not be prepared.',
-  'virtualisation-unavailable': 'This computer cannot run the code-execution sandbox: hardware virtualisation (KVM) is unavailable. Open Logs says how to enable it.',
+  'virtualisation-unavailable': 'This computer cannot run the code-execution sandbox: hardware virtualisation is unavailable. Open Logs says how to enable it.',
   'health-timeout': 'A VISTA service did not become ready in time.',
   'startup-error': 'VISTA could not complete startup.',
   'protocol-error': 'This VISTA application and launcher are not compatible.',
 });
+/** Every failure code with a message of its own; anything else reads as startup-error. */
+export const FAILURE_CODES = Object.freeze(Object.keys(FAILURE_MESSAGES));
 
 const ALLOWED_KEYS = new Set(['protocol', 'phase', 'state', 'label', 'skipped', 'url', 'code', 'log']);
 const SAFE_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;

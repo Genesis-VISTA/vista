@@ -281,6 +281,11 @@ install_test() {
 launcher_test() {
   run_job "launcher:test (package_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/package_launcher_supervised_test.sh"
   run_job "launcher:test (mac_dev_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/mac_dev_launcher_test.sh"
+  if command -v pwsh >/dev/null 2>&1; then
+    run_job "launcher:test (vista.ps1)" 0 pwsh -NoProfile -File "$REPO_ROOT/scripts/tests/package_launcher_supervised_test.ps1"
+  else
+    log "launcher:test (vista.ps1) skipped (no pwsh; brew install powershell)"
+  fi
 }
 
 install_hooks() {

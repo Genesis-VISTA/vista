@@ -1,8 +1,10 @@
 // @ts-check
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
+  FAILURE_CODES,
   formatDiagnostics,
   parseProgressLine,
   ProtocolError,
@@ -90,4 +92,19 @@ test('rejects out-of-order activity and supports stopping at any point', () => {
   const stopped = machine.acceptLine(event('stopping', 'running', { label: 'Stopping VISTA' }));
   assert.equal(stopped.status, 'stopping');
   assert.equal(stopped.canRetry, false);
+});
+
+// Both launchers emit codes the application has to explain: one without a
+// message of its own would reach the researcher as a bare "could not complete
+// startup".
+test('every failure code either launcher emits has its own message', () => {
+  const read = (/** @type {string} */ name) =>
+    readFileSync(new URL(`../../scripts/${name}`, import.meta.url), 'utf8');
+  const emitted = new Set([
+    ...[...read('package_launcher.sh').matchAll(/(?:die_with_code|failed '' '' '') ([a-z-]+)/g)].map((m) => m[1]),
+    ...[...read('package_launcher.ps1').matchAll(/(?:Die-WithCode|-Code) ([a-z-]+)/g)].map((m) => m[1]),
+  ]);
+  emitted.delete('code'); // die_with_code's own "$code" argument
+  assert.ok(emitted.has('port-conflict') && emitted.has('package-path-too-long'), [...emitted].join(' '));
+  for (const code of emitted) assert.ok(FAILURE_CODES.includes(code), `no message for ${code}`);
 });

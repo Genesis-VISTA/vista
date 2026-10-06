@@ -131,6 +131,18 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # The supervised launcher protocol the application depends on, before an
+      # hour of build: hermetic, so it costs seconds. Windows is the only place
+      # vista.ps1 runs against the real cmd, taskkill, tar and job object.
+      - name: Launcher tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -NoProfile -File vista/scripts/tests/package_launcher_supervised_test.ps1
+      - name: Launcher tests
+        if: runner.os != 'Windows'
+        run: |
+          bash vista/scripts/tests/package_launcher_supervised_test.sh
+          bash vista/scripts/tests/mac_dev_launcher_test.sh
       - name: Take the version from the tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: echo "VISTA_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"

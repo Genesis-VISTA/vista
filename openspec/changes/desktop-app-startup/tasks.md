@@ -41,14 +41,18 @@ dropped by design D7; `signing-spike.md` keeps their record.
 
 ## 3. Supervised launcher: Windows
 
-- [ ] 3.1 Add `-Supervised -Progress jsonl` to `scripts/package_launcher.ps1` (`vista.ps1`),
+- [x] 3.1 Add `-Supervised -Progress jsonl` to `scripts/package_launcher.ps1` (`vista.ps1`),
   emitting the same phases, states, codes and fields as the bash mode, in the same order. Human
   output goes to stderr.
-- [ ] 3.2 Treat end-of-file on stdin as the stop request and run the existing stop, which takes
+- [x] 3.2 Treat end-of-file on stdin as the stop request and run the existing stop, which takes
   each service's tree with `taskkill /T`. Keep the kill-on-close job object as the backstop.
-- [ ] 3.3 Add hermetic tests in `scripts/tests/package_launcher_supervised_test.ps1` with fake
+- [x] 3.3 Add hermetic tests in `scripts/tests/package_launcher_supervised_test.ps1` with fake
   services: event order, the port-conflict failure, and the stdin stop leaving no process. Run
   them from `./scripts/ci-local.sh` under `pwsh`, and in the Windows CI job.
+  *Passes under pwsh on macOS and in `mcr.microsoft.com/powershell:7.5-ubuntu-24.04` (stand-ins
+  for cmd, taskkill and tar); GitLab `launcher:test` and the release workflow's Windows package
+  job run it. Windows-only codes: `virtualisation-unavailable` (msb doctor) and
+  `package-path-too-long`. Not yet run on Windows itself: the release build or Sam's machine.*
 
 ## 4. The startup application
 
