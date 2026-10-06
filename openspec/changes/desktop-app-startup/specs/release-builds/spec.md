@@ -21,21 +21,24 @@ changed.
 
 - **WHEN** a researcher follows the notes' manual macOS steps
 - **THEN** they download with `curl`, check the sha256, unpack the package into
-  `~/Applications/VISTA`, and start VISTA by opening `VISTA.app`
+  `/Applications/VISTA` (or `~/Applications/VISTA` without administrator rights), and start
+  VISTA by opening `VISTA.app`
 
 ### Requirement: A release installs with one command
 
 Every release SHALL carry an installer for macOS and Linux and one for Windows, each with that
 release's version written in, so one command downloads, verifies, installs and starts that
 release's package for the machine it runs on. An installer SHALL install into one fixed folder per
-platform, whatever the version: `~/Applications/VISTA` on macOS, `~/.local/share/vista/app` on
-Linux, and `%LOCALAPPDATA%\VISTA\app` on Windows. It SHALL make VISTA launchable from that
-platform's usual place, with VISTA's icon.
+platform, whatever the version: on macOS `/Applications/VISTA`, or `~/Applications/VISTA` when the
+installer cannot write there; `~/.local/share/vista/app` on Linux; and `%LOCALAPPDATA%\VISTA\app`
+on Windows. It SHALL make VISTA launchable from that platform's usual place, with VISTA's icon.
 
 An installer SHALL NOT unpack an archive that does not match its `.sha256`. It SHALL leave a
 previously installed version in place until the new one is, SHALL refuse to replace a version
 that is running, and SHALL NOT touch VISTA's state directory. After a successful install it SHALL
-remove package folders left by earlier install layouts. Run again for a version already installed,
+remove package folders left by earlier install layouts, including on macOS the researcher's own
+`~/Applications/VISTA` once VISTA is installed in `/Applications/VISTA`. It SHALL NOT remove a
+`/Applications/VISTA` it did not install into. Run again for a version already installed,
 it SHALL start that copy without downloading. When it starts VISTA, it SHALL start the application
 entry point rather than the diagnostic launcher.
 
@@ -48,8 +51,21 @@ entry point rather than the diagnostic launcher.
 #### Scenario: Launchable after installing
 
 - **WHEN** an install completes
-- **THEN** VISTA is in Spotlight and Launchpad on macOS, in the app menu on Linux, and in the Start
-  menu on Windows, each with VISTA's icon
+- **THEN** VISTA is in Spotlight and the Apps view (Launchpad) on macOS, in the app menu on Linux,
+  and in the Start menu on Windows, each with VISTA's icon
+
+#### Scenario: Visible in Finder's Applications on macOS
+
+- **WHEN** an administrator installs VISTA on a Mac
+- **THEN** it is installed in `/Applications/VISTA`, so Finder's Applications shows it in a `VISTA`
+  folder, without `sudo`
+
+#### Scenario: Installing on a Mac without administrator rights
+
+- **WHEN** the installer cannot write to `/Applications`, or to an existing `/Applications/VISTA`
+  that another account installed
+- **THEN** it installs into `~/Applications/VISTA`, says why, and leaves `/Applications/VISTA`
+  untouched; VISTA is still in Spotlight and the Apps view
 
 #### Scenario: A corrupted download
 

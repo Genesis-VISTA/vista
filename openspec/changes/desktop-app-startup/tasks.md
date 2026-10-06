@@ -124,31 +124,39 @@ dropped by design D7; `signing-spike.md` keeps their record.
   and `amscrot-py`.
 - [x] 7.4 Document and test the dev-app build and its Finder launch
   (`scripts/tests/mac_dev_launcher_test.sh`).
-- [ ] 7.5 `scripts/install.sh`: install into `~/Applications/VISTA` on macOS and
-  `~/.local/share/vista/app` on Linux. Keep the `~/.local/bin/vista` link. On Linux, write
-  `~/.local/share/applications/vista.desktop` and install the icon into `hicolor`. Start VISTA
-  with `open` on macOS and `vista-app` on Linux.
+- [ ] 7.5 `scripts/install.sh`: on macOS, install into `/Applications/VISTA` when it can write
+  there (the existing `/Applications/VISTA` if there is one, else `/Applications`), otherwise into
+  `~/Applications/VISTA`, saying why (design D6). Then register the app with `lsregister -f` and
+  `mdimport`. No symlink or alias in `/Applications`. On Linux, install into
+  `~/.local/share/vista/app`, write `~/.local/share/applications/vista.desktop` and install the
+  icon into `hicolor`. Keep the `~/.local/bin/vista` link. Start VISTA with `open` on macOS and
+  `vista-app` on Linux.
 - [ ] 7.6 `scripts/install.ps1`: point the Start-menu shortcut at `app\window\VISTA.exe` with
   `--startup`, and start VISTA the same way.
 - [ ] 7.7 Both installers refuse while VISTA is running (its UI port answers as VISTA, or a VISTA
   window process exists), with "Close VISTA, then run this again". They change nothing in that
-  case.
+  case. On macOS this covers a VISTA running from either install folder.
 - [ ] 7.8 Both installers remove earlier-layout package folders after a successful install, and
-  never touch `VISTA_HOME`.
+  never touch `VISTA_HOME`. On macOS that includes the researcher's own `~/Applications/VISTA`
+  after an install into `/Applications/VISTA`, and never a `/Applications/VISTA` it did not
+  install into. Retry a removal once (Finder can write a `.DS_Store` mid-removal) and report what
+  is left rather than failing the install.
 - [ ] 7.9 Extend `scripts/test_install.sh` and `scripts/test_install.ps1`. Cover the fixed
-  folders, the desktop entry and shortcut, the refusal while running, the removal of the old
-  layout, and that a re-run downloads nothing.
+  folders, including the macOS choice between `/Applications/VISTA` and `~/Applications/VISTA`
+  (with the system folder faked writable and not), the desktop entry and shortcut, the refusal
+  while running, the removal of the old layout, and that a re-run downloads nothing.
 
 ## 8. Release notes and documentation
 
-- [ ] 8.1 `.github/release-notes.md`: manual macOS steps unpack into `~/Applications/VISTA` and
-  open `VISTA.app`; keep the curl-not-browser note and the `xattr`/System Settings fallback.
+- [ ] 8.1 `.github/release-notes.md`: manual macOS steps unpack into `/Applications/VISTA` (or
+  `~/Applications/VISTA` without administrator rights) and open `VISTA.app`; keep the curl-not-browser note and the `xattr`/System Settings fallback.
   Manual Linux and Windows steps end at the app-menu or Start-menu entry, with the diagnostic
   launcher as the alternative.
 - [ ] 8.2 `README.md`: each platform starts from the application; `vista`/`vista.cmd` are for
   diagnostics; the whole folder must stay together.
 - [ ] 8.3 `docs/validation-lane.md`: a manual macOS checklist (Dock icon and its size against
-  neighbours, Finder and Spotlight launch, curl install, first and later run, error and Retry,
+  neighbours, listed in the Apps view and in Finder's Applications, Finder and Spotlight launch,
+  curl install into `/Applications/VISTA`, first and later run, error and Retry,
   second launch, quit cleanup, immediate restart). **Manual; keep out of PR CI.** It replaces the
   signed/quarantined walk-through.
 - [ ] 8.4 Replace `AGENTS.md`'s "the launchers own its lifetime" description of `electron/` with

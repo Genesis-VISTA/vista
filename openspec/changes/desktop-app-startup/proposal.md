@@ -26,8 +26,9 @@ macOS does not quarantine. Signing stays possible later; `signing-spike.md` keep
   starts and reports failures that leave no window with a desktop notification. A desktop entry
   and icon put VISTA in the app menu.
 - Windows: the Start-menu entry opens `VISTA.exe` with no console.
-- Installers put each platform's package in a fixed folder (`~/Applications/VISTA`,
-  `~/.local/share/vista/app`, `%LOCALAPPDATA%\VISTA\app`). They refuse to upgrade while VISTA
+- Installers put each platform's package in a fixed folder (`/Applications/VISTA`, or
+  `~/Applications/VISTA` where that cannot be written; `~/.local/share/vista/app`;
+  `%LOCALAPPDATA%\VISTA\app`). They refuse to upgrade while VISTA
   is running and remove the previous layout's folders after the new install is in place.
 - The release notes keep both install routes; the manual macOS steps end by opening `VISTA.app`.
 - `VISTA Dev.app` stays as a macOS developer tool.

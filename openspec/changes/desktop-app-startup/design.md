@@ -132,13 +132,33 @@ The installers stop naming the folder after the version:
 
 | Platform | Install folder | Was |
 |---|---|---|
-| macOS | `~/Applications/VISTA/` | `~/.local/share/vista/vista-<ver>-mac-arm64/` |
+| macOS | `/Applications/VISTA/`, else `~/Applications/VISTA/` | `~/.local/share/vista/vista-<ver>-mac-arm64/` |
 | Linux | `~/.local/share/vista/app/` | `~/.local/share/vista/vista-<ver>-linux-x86/` |
 | Windows | `%LOCALAPPDATA%\VISTA\app\` | unchanged |
 
-`~/Applications` is searched by Spotlight and Launchpad. A fixed folder means Dock pins, the
-Linux desktop entry and the Start-menu shortcut never point at a deleted version. State stays in
-`VISTA_HOME`, `~/.vista` by default.
+A fixed folder means Dock pins, the Linux desktop entry and the Start-menu shortcut never point at
+a deleted version. State stays in `VISTA_HOME`, `~/.vista` by default, per user.
+
+On macOS the installer prefers `/Applications/VISTA/` and falls back to `~/Applications/VISTA/`.
+A spike on macOS 26 (2026-10-06) measured the difference:
+
+| Where | Apps view | Spotlight | Finder's Applications |
+|---|---|---|---|
+| `/Applications/VISTA/VISTA.app` | yes | yes | yes, in a `VISTA` folder |
+| `~/Applications/VISTA/VISTA.app` | yes | yes | no: `~/Applications` is not in the sidebar |
+| a symlink or alias in `/Applications` | no | no | yes |
+
+So the system folder is the only one that also shows in Finder's Applications, which is where a
+researcher who does not search will look. A symlink or alias there is not used: it shows in Finder
+only. The names shown are the bundle's file name, so the app stays `VISTA.app`.
+
+`/Applications` is `root:admin` 775, so an administrator writes there without `sudo` and a
+standard user cannot. The installer decides by what it can write, not by group membership: the
+existing `/Applications/VISTA` when there is one, since another administrator's install is theirs
+(`755`) and cannot be upgraded by anyone else, otherwise `/Applications` itself. When neither is
+writable it installs into `~/Applications/VISTA/` and says why. After installing it registers the
+app with LaunchServices (`lsregister -f`) and Spotlight (`mdimport`): left alone, indexing took
+half a minute or more, longer after a rename.
 
 ### D7. Distribution without a signing gate
 
@@ -147,15 +167,21 @@ release gate, and rejected any "bypass" path. This change ships the macOS packag
 That is acceptable because the supported route never quarantines it:
 
 - **Installer:** `curl … | bash` downloads with curl, which sets no quarantine, and installs into
-  `~/Applications/VISTA/`.
+  `/Applications/VISTA/` or `~/Applications/VISTA/` (D6).
 - **By hand:** the release notes' manual steps already say to download with `curl`, not a
-  browser. They end by moving the folder into `~/Applications/VISTA/` and opening `VISTA.app`.
+  browser. They end by moving the folder into `/Applications/VISTA/` (or `~/Applications/VISTA/`)
+  and opening `VISTA.app`.
   The existing `xattr -dr com.apple.quarantine` and System Settings fallback stays for a
   browser download.
 
 The build keeps signing only the window bundle, ad hoc, and never re-signs `msb`, preserving its
 hypervisor entitlement. A later signing lane can replace this without changing the layout.
 Windows stays unsigned, as today.
+
+macOS's App Management protection ("Terminal was prevented from modifying apps") did not interfere
+with upgrading or removing the ad-hoc-signed app from Terminal, in either install folder (spike,
+2026-10-06). That is probably because it has no Team ID to protect. A Developer-ID-signed build
+could start triggering it on upgrade, so a signing lane has to retest the installer's upgrade.
 
 ### D8. Development and test modes stay explicit
 
@@ -215,7 +241,12 @@ whether VISTA is running, by whether the UI port answers as VISTA or a VISTA win
 exists. If it is, they stop with "Close VISTA, then run this again" and change nothing.
 
 After a successful install, they delete the previous layout's versioned folders, so no stale
-4 GB copy is left. There is no other migration.
+4 GB copy is left. On macOS that includes the researcher's own `~/Applications/VISTA/` once VISTA
+is installed in `/Applications/VISTA/` instead. They never delete a `/Applications/VISTA/` they
+did not install into, which can belong to another account on the same Mac. Finder can write a
+`.DS_Store` into a folder while it is open and make one removal fail with "Directory not empty",
+so a removal is retried once, and what is still left is reported rather than failing an install
+that has already succeeded. There is no other migration.
 
 When the installer is asked to start VISTA, it opens the application rather than exec'ing the
 terminal launcher: `open` on macOS, the desktop entry's command on Linux, and `VISTA.exe` on
@@ -258,4 +289,5 @@ Rolling back means installing an older release by hand; its terminal launcher st
 ## Open Questions
 
 - Whether ORNL can provide a Developer ID. If so, a later change adds signing without changing
-  this layout. To be discussed with Feiyi.
+  this layout, and retests the macOS upgrade against App Management (D7). To be discussed with
+  Feiyi.
