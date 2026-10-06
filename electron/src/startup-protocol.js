@@ -9,7 +9,7 @@ export const STATES = /** @type {const} */ (
 );
 
 const ACTIVITY_LABELS = Object.freeze({
-  preflight: 'Checking this Mac',
+  preflight: 'Checking this computer',
   resources: 'Installing bundled resources',
   sandbox: 'Preparing the code-execution sandbox',
   mcp: 'Starting scientific tools',
@@ -23,6 +23,7 @@ const FAILURE_MESSAGES = Object.freeze({
   'missing-component': 'This VISTA package is incomplete. Keep the whole unpacked folder together.',
   'resource-extraction-failed': 'Bundled VISTA resources could not be installed. Check available disk space.',
   'sandbox-image-import-failed': 'The code-execution sandbox could not be prepared.',
+  'virtualisation-unavailable': 'This computer cannot run the code-execution sandbox: hardware virtualisation (KVM) is unavailable. Open Logs says how to enable it.',
   'health-timeout': 'A VISTA service did not become ready in time.',
   'startup-error': 'VISTA could not complete startup.',
   'protocol-error': 'This VISTA application and launcher are not compatible.',

@@ -11,6 +11,7 @@
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
+#   ./scripts/ci-local.sh launcher         # the package launchers' supervised mode
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -275,6 +276,13 @@ install_test() {
   fi
 }
 
+# The package launchers' supervised mode, which the application drives (hermetic:
+# fake services, a faked `uname` for each platform). Mirrors launcher:test.
+launcher_test() {
+  run_job "launcher:test (package_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/package_launcher_supervised_test.sh"
+  run_job "launcher:test (mac_dev_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/mac_dev_launcher_test.sh"
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -299,7 +307,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|electron|install|all)
+    backend|ui|mcp|electron|install|launcher|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -406,6 +414,9 @@ if want_target install && want_action lint; then
 fi
 if want_target install && want_action test; then
   run_section "install test" install_test
+fi
+if want_target launcher && want_action test; then
+  run_section "launcher test" launcher_test
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then

@@ -59,7 +59,7 @@ request_shutdown() {
 trap cleanup EXIT
 trap request_shutdown INT TERM HUP
 
-emit preflight running ',"label":"Checking this Mac"'
+emit preflight running ',"label":"Checking this computer"'
 if [[ ! -f "$ROOT_FILE" ]]; then
   fail_phase preflight missing-component
 fi

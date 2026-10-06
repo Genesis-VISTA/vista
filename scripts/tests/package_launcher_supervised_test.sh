@@ -154,190 +154,203 @@ expect_failure "--supervised requires --progress=jsonl" \
 expect_failure "--progress=jsonl requires --supervised" \
   env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" "$PACKAGE/vista" --progress=jsonl
 
-printf '%s\n' '{"os": "linux", "arch": "arm64", "exe": "missing-window"}' \
-  > "$PACKAGE/manifest.json"
-expect_failure "--supervised is available only in the macOS package" \
-  env TEST_UNAME_S=Linux PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  "$PACKAGE/vista" --supervised --progress=jsonl
+# Every supervised scenario, run once per platform that has the bash mode.
+# Only `uname` is faked, so the Linux pass runs the Linux branches of the
+# launcher on whatever host runs the test. A Mac host has no /dev/kvm, so that
+# pass skips the KVM check the way the build's smoke test does; the check's
+# own failure is covered below.
+supervised_suite() {
+  local os="$1"
+  PLATFORM_ENV=(TEST_UNAME_S="$2")
+  [[ "$os" == linux ]] && PLATFORM_ENV+=(VISTA_VERIFY_WITHOUT_SANDBOX=1)
+  printf '{"os": "%s", "arch": "arm64", "exe": "missing-window"}\n' "$os" \
+    > "$PACKAGE/manifest.json"
+  stop_fake_services
+  rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
+    "$TMP"/service-pids/*.alive "$TMP"/service-pids/*.ready
 
-printf '%s\n' '{"os": "macos", "arch": "arm64", "exe": "missing-window"}' \
-  > "$PACKAGE/manifest.json"
-PORT_BASE=$(( 40000 + $$ % 10000 ))
-mkdir -p "$PACKAGE/payload"
-tar -cf "$PACKAGE/payload/payload.tar" -T /dev/null
-: > "$PACKAGE/payload/parts.txt"
-: > "$PACKAGE/payload/sandbox-image.tar"
+  mkdir -p "$PACKAGE/payload"
+  tar -cf "$PACKAGE/payload/payload.tar" -T /dev/null
+  : > "$PACKAGE/payload/parts.txt"
+  : > "$PACKAGE/payload/sandbox-image.tar"
 
-# Stable failures expose only their phase, code and an optional log basename.
-rm "$PACKAGE/payload/parts.txt"
-missing_status=0
-env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  > "$TMP/missing-stdout" 2> "$TMP/missing-stderr" || missing_status=$?
-[[ "$missing_status" != 0 ]]
-grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"missing-component"}' \
-  "$TMP/missing-stdout"
-: > "$PACKAGE/payload/parts.txt"
+  # Stable failures expose only their phase, code and an optional log basename.
+  rm "$PACKAGE/payload/parts.txt"
+  missing_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/missing-stdout" 2> "$TMP/missing-stderr" || missing_status=$?
+  [[ "$missing_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"missing-component"}' \
+    "$TMP/missing-stdout"
+  : > "$PACKAGE/payload/parts.txt"
 
-long_state="/tmp/vista-launcher-state-that-is-deliberately-too-long-for-microsandbox"
-state_status=0
-env PATH="$TOOLS:$PATH" VISTA_HOME="$long_state" \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  > "$TMP/state-stdout" 2> "$TMP/state-stderr" || state_status=$?
-[[ "$state_status" != 0 ]]
-grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"invalid-state-path"}' \
-  "$TMP/state-stdout"
+  long_state="/tmp/vista-launcher-state-that-is-deliberately-too-long-for-microsandbox"
+  state_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$long_state" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/state-stdout" 2> "$TMP/state-stderr" || state_status=$?
+  [[ "$state_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"invalid-state-path"}' \
+    "$TMP/state-stdout"
 
-# A setup failure stays machine-readable on stdout and identifies its phase.
-printf '%s\n' 'missing-resource' > "$PACKAGE/payload/parts.txt"
-failure_status=0
-env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  > "$TMP/failure-stdout" 2> "$TMP/failure-stderr" || failure_status=$?
-if [[ "$failure_status" == 0 ]]; then
-  printf 'expected resource setup to fail\n' >&2
-  exit 1
-fi
-grep -qx '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}' \
-  "$TMP/failure-stdout"
-if grep -v '^{"protocol":1,' "$TMP/failure-stdout"; then
-  printf 'supervised stdout included a non-protocol line\n' >&2
-  exit 1
-fi
-: > "$PACKAGE/payload/parts.txt"
+  # A setup failure stays machine-readable on stdout and identifies its phase.
+  printf '%s\n' 'missing-resource' > "$PACKAGE/payload/parts.txt"
+  failure_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/failure-stdout" 2> "$TMP/failure-stderr" || failure_status=$?
+  if [[ "$failure_status" == 0 ]]; then
+    printf 'expected resource setup to fail\n' >&2
+    exit 1
+  fi
+  grep -qx '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}' \
+    "$TMP/failure-stdout"
+  if grep -v '^{"protocol":1,' "$TMP/failure-stdout"; then
+    printf 'supervised stdout included a non-protocol line\n' >&2
+    exit 1
+  fi
+  : > "$PACKAGE/payload/parts.txt"
 
-image_status=0
-env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  TEST_IMAGE_PRESENT=0 TEST_MSB_IMPORT_FAIL=1 \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  > "$TMP/image-stdout" 2> "$TMP/image-stderr" || image_status=$?
-[[ "$image_status" != 0 ]]
-grep -qx '{"protocol":1,"phase":"sandbox","state":"failed","code":"sandbox-image-import-failed","log":"setup.log"}' \
-  "$TMP/image-stdout"
+  image_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    TEST_IMAGE_PRESENT=0 TEST_MSB_IMPORT_FAIL=1 \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/image-stdout" 2> "$TMP/image-stderr" || image_status=$?
+  [[ "$image_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"sandbox","state":"failed","code":"sandbox-image-import-failed","log":"setup.log"}' \
+    "$TMP/image-stdout"
 
-mkfifo "$TMP/parent.pipe"
-exec 9<> "$TMP/parent.pipe"
-PARENT_PIPE_OPEN=true
-env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  TEST_SERVICE_PIDS="$TMP/service-pids" \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  < "$TMP/parent.pipe" 9>&- > "$TMP/stdout" 2> "$TMP/stderr" &
-LAUNCHER_PID=$!
+  mkfifo "$TMP/parent-$os.pipe"
+  exec 9<> "$TMP/parent-$os.pipe"
+  PARENT_PIPE_OPEN=true
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    TEST_SERVICE_PIDS="$TMP/service-pids" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    < "$TMP/parent-$os.pipe" 9>&- > "$TMP/stdout" 2> "$TMP/stderr" &
+  LAUNCHER_PID=$!
 
-for (( i = 0; i < 100; i++ )); do
-  grep -q '"phase":"ui","state":"ready"' "$TMP/stdout" 2>/dev/null && break
-  kill -0 "$LAUNCHER_PID" 2>/dev/null || {
-    printf 'supervised launcher exited early:\n' >&2
+  for (( i = 0; i < 100; i++ )); do
+    grep -q '"phase":"ui","state":"ready"' "$TMP/stdout" 2>/dev/null && break
+    kill -0 "$LAUNCHER_PID" 2>/dev/null || {
+      printf 'supervised launcher exited early:\n' >&2
+      cat "$TMP/stdout" "$TMP/stderr" >&2
+      exit 1
+    }
+    sleep 0.05
+  done
+  grep -q '"phase":"ui","state":"ready"' "$TMP/stdout"
+  wait_for_fake_services
+
+  # The missing window executable proves supervised mode skipped both validation
+  # and window creation. Termination must still run the launcher's normal cleanup.
+  kill -TERM "$LAUNCHER_PID"
+  launcher_status=0
+  wait "$LAUNCHER_PID" || launcher_status=$?
+  if [[ "$launcher_status" != 0 && "$launcher_status" != 126 \
+        && "$launcher_status" != 143 ]]; then
+    printf 'supervised launcher exited with unexpected status %s\n' \
+      "$launcher_status" >&2
     cat "$TMP/stdout" "$TMP/stderr" >&2
     exit 1
-  }
-  sleep 0.05
-done
-grep -q '"phase":"ui","state":"ready"' "$TMP/stdout"
-wait_for_fake_services
+  fi
+  # Bash 3.2 can report 126 for a monitor-mode shell whose wait was interrupted
+  # by the signal it handled. The launcher itself must still be gone, and the
+  # existing stop path must have run.
+  if kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+    printf 'supervised launcher survived SIGTERM\n' >&2
+    exit 1
+  fi
+  LAUNCHER_PID=''
+  exec 9>&-
+  PARENT_PIPE_OPEN=false
+  expect_fake_services_stopped
 
-# The missing window executable proves supervised mode skipped both validation
-# and window creation. Termination must still run the launcher's normal cleanup.
-kill -TERM "$LAUNCHER_PID"
-launcher_status=0
-wait "$LAUNCHER_PID" || launcher_status=$?
-if [[ "$launcher_status" != 0 && "$launcher_status" != 126 \
-      && "$launcher_status" != 143 ]]; then
-  printf 'supervised launcher exited with unexpected status %s\n' \
-    "$launcher_status" >&2
-  cat "$TMP/stdout" "$TMP/stderr" >&2
-  exit 1
-fi
-# Bash 3.2 can report 126 for a monitor-mode shell whose wait was interrupted
-# by the signal it handled. The launcher itself must still be gone, and the
-# existing stop path must have run.
-if kill -0 "$LAUNCHER_PID" 2>/dev/null; then
-  printf 'supervised launcher survived SIGTERM\n' >&2
-  exit 1
-fi
-LAUNCHER_PID=''
-exec 9>&-
-PARENT_PIPE_OPEN=false
-expect_fake_services_stopped
+  {
+    printf '%s\n' '{"protocol":1,"phase":"preflight","state":"running","label":"Checking this computer"}'
+    printf '%s\n' '{"protocol":1,"phase":"preflight","state":"complete"}'
+    printf '%s\n' '{"protocol":1,"phase":"resources","state":"running","label":"Installing bundled resources"}'
+    printf '%s\n' '{"protocol":1,"phase":"resources","state":"complete","skipped":true}'
+    printf '%s\n' '{"protocol":1,"phase":"sandbox","state":"running","label":"Preparing the code-execution sandbox"}'
+    printf '%s\n' '{"protocol":1,"phase":"sandbox","state":"complete","skipped":true}'
+    printf '%s\n' '{"protocol":1,"phase":"mcp","state":"running","label":"Starting scientific tools"}'
+    printf '%s\n' '{"protocol":1,"phase":"mcp","state":"ready"}'
+    printf '%s\n' '{"protocol":1,"phase":"backend","state":"running","label":"Preparing VISTA"}'
+    printf '%s\n' '{"protocol":1,"phase":"backend","state":"ready"}'
+    printf '%s\n' '{"protocol":1,"phase":"ui","state":"running","label":"Starting the interface"}'
+    printf '%s\n' \
+      "{\"protocol\":1,\"phase\":\"ui\",\"state\":\"ready\",\"url\":\"http://127.0.0.1:$PORT_BASE\"}"
+    printf '%s\n' '{"protocol":1,"phase":"stopping","state":"running","label":"Stopping VISTA"}'
+  } > "$TMP/expected-stdout"
+  diff -u "$TMP/expected-stdout" "$TMP/stdout"
 
-{
-  printf '%s\n' '{"protocol":1,"phase":"preflight","state":"running","label":"Checking this Mac"}'
-  printf '%s\n' '{"protocol":1,"phase":"preflight","state":"complete"}'
-  printf '%s\n' '{"protocol":1,"phase":"resources","state":"running","label":"Installing bundled resources"}'
-  printf '%s\n' '{"protocol":1,"phase":"resources","state":"complete","skipped":true}'
-  printf '%s\n' '{"protocol":1,"phase":"sandbox","state":"running","label":"Preparing the code-execution sandbox"}'
-  printf '%s\n' '{"protocol":1,"phase":"sandbox","state":"complete","skipped":true}'
-  printf '%s\n' '{"protocol":1,"phase":"mcp","state":"running","label":"Starting scientific tools"}'
-  printf '%s\n' '{"protocol":1,"phase":"mcp","state":"ready"}'
-  printf '%s\n' '{"protocol":1,"phase":"backend","state":"running","label":"Preparing VISTA"}'
-  printf '%s\n' '{"protocol":1,"phase":"backend","state":"ready"}'
-  printf '%s\n' '{"protocol":1,"phase":"ui","state":"running","label":"Starting the interface"}'
-  printf '%s\n' \
-    "{\"protocol\":1,\"phase\":\"ui\",\"state\":\"ready\",\"url\":\"http://127.0.0.1:$PORT_BASE\"}"
-  printf '%s\n' '{"protocol":1,"phase":"stopping","state":"running","label":"Stopping VISTA"}'
-} > "$TMP/expected-stdout"
-diff -u "$TMP/expected-stdout" "$TMP/stdout"
-
-# Losing the application's stdin pipe requests the same normal stop path.
-stop_fake_services
-rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
-  "$TMP"/service-pids/*.ready
-mkfifo "$TMP/parent-eof.pipe"
-exec 9<> "$TMP/parent-eof.pipe"
-PARENT_PIPE_OPEN=true
-env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  TEST_SERVICE_PIDS="$TMP/service-pids" \
-  VISTA_UI_PORT="$PORT_BASE" \
-  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
-  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
-  "$PACKAGE/vista" --supervised --progress=jsonl \
-  < "$TMP/parent-eof.pipe" 9>&- > "$TMP/eof-stdout" 2> "$TMP/eof-stderr" &
-LAUNCHER_PID=$!
-for (( i = 0; i < 100; i++ )); do
-  grep -q '"phase":"ui","state":"ready"' "$TMP/eof-stdout" 2>/dev/null && break
-  kill -0 "$LAUNCHER_PID" 2>/dev/null || {
-    printf 'EOF-test launcher exited early:\n' >&2
+  # Losing the application's stdin pipe requests the same normal stop path.
+  stop_fake_services
+  rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
+    "$TMP"/service-pids/*.ready
+  mkfifo "$TMP/parent-eof-$os.pipe"
+  exec 9<> "$TMP/parent-eof-$os.pipe"
+  PARENT_PIPE_OPEN=true
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    TEST_SERVICE_PIDS="$TMP/service-pids" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    < "$TMP/parent-eof-$os.pipe" 9>&- > "$TMP/eof-stdout" 2> "$TMP/eof-stderr" &
+  LAUNCHER_PID=$!
+  for (( i = 0; i < 100; i++ )); do
+    grep -q '"phase":"ui","state":"ready"' "$TMP/eof-stdout" 2>/dev/null && break
+    kill -0 "$LAUNCHER_PID" 2>/dev/null || {
+      printf 'EOF-test launcher exited early:\n' >&2
+      cat "$TMP/eof-stdout" "$TMP/eof-stderr" >&2
+      exit 1
+    }
+    sleep 0.05
+  done
+  grep -q '"phase":"ui","state":"ready"' "$TMP/eof-stdout"
+  wait_for_fake_services
+  exec 9>&-
+  PARENT_PIPE_OPEN=false
+  eof_status=0
+  wait "$LAUNCHER_PID" || eof_status=$?
+  if [[ "$eof_status" != 0 && "$eof_status" != 126 && "$eof_status" != 129 ]]; then
+    printf 'EOF-test launcher exited with unexpected status %s\n' "$eof_status" >&2
     cat "$TMP/eof-stdout" "$TMP/eof-stderr" >&2
     exit 1
-  }
-  sleep 0.05
-done
-grep -q '"phase":"ui","state":"ready"' "$TMP/eof-stdout"
-wait_for_fake_services
-exec 9>&-
-PARENT_PIPE_OPEN=false
-eof_status=0
-wait "$LAUNCHER_PID" || eof_status=$?
-if [[ "$eof_status" != 0 && "$eof_status" != 126 && "$eof_status" != 129 ]]; then
-  printf 'EOF-test launcher exited with unexpected status %s\n' "$eof_status" >&2
-  cat "$TMP/eof-stdout" "$TMP/eof-stderr" >&2
-  exit 1
-fi
-if kill -0 "$LAUNCHER_PID" 2>/dev/null; then
-  printf 'supervised launcher survived parent EOF\n' >&2
-  exit 1
-fi
-LAUNCHER_PID=''
-grep -qx '{"protocol":1,"phase":"stopping","state":"running","label":"Stopping VISTA"}' \
-  "$TMP/eof-stdout"
-expect_fake_services_stopped
+  fi
+  if kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+    printf 'supervised launcher survived parent EOF\n' >&2
+    exit 1
+  fi
+  LAUNCHER_PID=''
+  grep -qx '{"protocol":1,"phase":"stopping","state":"running","label":"Stopping VISTA"}' \
+    "$TMP/eof-stdout"
+  expect_fake_services_stopped
+}
+
+PORT_BASE=$(( 40000 + $$ % 10000 ))
+supervised_suite macos Darwin
+supervised_suite linux Linux
 
 # The existing diagnostic CLI remains human-readable and does not emit JSON.
+printf '%s\n' '{"os": "macos", "arch": "arm64", "exe": "missing-window"}' \
+  > "$PACKAGE/manifest.json"
 stop_fake_services
 rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
   "$TMP"/service-pids/*.alive "$TMP"/service-pids/*.ready
@@ -369,7 +382,26 @@ wait "$LAUNCHER_PID" 2>/dev/null || true
 LAUNCHER_PID=''
 expect_fake_services_stopped
 
-# Linux keeps its existing platform preflight and never enters the protocol.
+# On Linux without KVM, supervised mode fails in preflight with its own code,
+# so the application can say what is wrong instead of a generic failure.
+if [[ ! -e /dev/kvm ]]; then
+  printf '%s\n' '{"os": "linux", "arch": "arm64", "exe": "missing-window"}' \
+    > "$PACKAGE/manifest.json"
+  kvm_status=0
+  env TEST_UNAME_S=Linux PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/kvm-stdout" 2> "$TMP/kvm-stderr" || kvm_status=$?
+  [[ "$kvm_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"virtualisation-unavailable"}' \
+    "$TMP/kvm-stdout"
+  grep -q 'VISTA needs hardware virtualisation on Linux' "$TMP/kvm-stderr"
+fi
+
+# The ordinary Linux launcher keeps its platform preflight and never enters
+# the protocol.
 printf '%s\n' '{"os": "linux", "arch": "arm64", "exe": "missing-window"}' \
   > "$PACKAGE/manifest.json"
 linux_status=0

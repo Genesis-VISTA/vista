@@ -98,7 +98,7 @@ for arg in "$@"; do
   esac
 done
 
-# This is an internal contract between the macOS application and its service
+# This is an internal contract between the VISTA application and its service
 # supervisor. Requiring the pair keeps either flag from becoming an accidental
 # user-facing mode before the structured progress protocol is active.
 if [[ "$SUPERVISED" == true && "$PROGRESS_FORMAT" != jsonl ]]; then
@@ -127,12 +127,10 @@ case "$(uname -s)" in
 esac
 HOST_ARCH="$(uname -m)"
 
-if [[ "$SUPERVISED" == true && "$HOST_OS" != macos ]]; then
-  die "--supervised is available only in the macOS package"
-fi
-
+# Supervised mode is the application's on macOS and Linux. Windows has its own
+# launcher, vista.ps1, with the same protocol.
 if [[ "$SUPERVISED" == true ]]; then
-  progress_event preflight running "Checking this Mac"
+  progress_event preflight running "Checking this computer"
   PROGRESS_STARTED=true
 fi
 
@@ -198,7 +196,7 @@ new group takes effect."
   if [[ -n "$kvm_problem" && "${VISTA_VERIFY_WITHOUT_SANDBOX:-}" == 1 ]]; then
     echo "notice: starting without the sandbox (VISTA_VERIFY_WITHOUT_SANDBOX=1, a build-only setting): ${kvm_problem%%$'\n'*}" >&2
   elif [[ -n "$kvm_problem" ]]; then
-    die "VISTA needs hardware virtualisation on Linux, and $kvm_problem
+    die_with_code virtualisation-unavailable "VISTA needs hardware virtualisation on Linux, and $kvm_problem
 
   Every agent tool call depends on it, not just running code: the sandbox
   server is started as part of the agent's toolset, so without it retrieval
@@ -590,9 +588,8 @@ trap stop INT TERM HUP EXIT
 # application disappeared without sending TERM, so request the same cleanup
 # path rather than leaving services and microVMs behind.
 watch_parent_stdin() {
-  local ignored
   trap 'exit 0' INT TERM HUP
-  while IFS= read -r ignored; do :; done
+  while IFS= read -r _; do :; done
   kill -HUP "$$" 2>/dev/null || true
 }
 
@@ -680,7 +677,7 @@ start_window() {
 
 if [[ "$SUPERVISED" == true ]]; then
   log ""
-  log "VISTA is running at $UI_URL (supervised by the macOS application)"
+  log "VISTA is running at $UI_URL (supervised by the VISTA application)"
   wait
   exit 0
 fi

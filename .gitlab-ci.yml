@@ -311,6 +311,17 @@ install:test:
     - scripts/test_install.sh
     - pwsh -NoProfile -File scripts/test_install.ps1
 
+# ─── Package launchers ──────────────────────────────────────────────────────
+#
+# The supervised mode the VISTA application starts on macOS and Linux. Hermetic:
+# fake services, and a faked `uname` runs both platforms' branches here.
+launcher:test:
+  stage: test
+  image: ubuntu:24.04
+  script:
+    - bash scripts/tests/package_launcher_supervised_test.sh
+    - bash scripts/tests/mac_dev_launcher_test.sh
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:

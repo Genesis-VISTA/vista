@@ -129,7 +129,7 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only

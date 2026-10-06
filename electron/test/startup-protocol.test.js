@@ -47,7 +47,7 @@ test('rejects malformed, unsupported and unexpectedly broad events', () => {
 
 test('maps ordered startup activity through UI readiness', () => {
   const machine = new StartupStateMachine();
-  machine.acceptLine(event('preflight', 'running', { label: 'Checking this Mac' }));
+  machine.acceptLine(event('preflight', 'running', { label: 'Checking this computer' }));
   machine.acceptLine(event('preflight', 'complete'));
   machine.acceptLine(event('resources', 'running'));
   machine.acceptLine(event('resources', 'complete', { skipped: true }));

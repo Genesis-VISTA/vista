@@ -37,7 +37,7 @@ process.stdin.resume();
 process.stdin.on('end', stop);
 
 async function run() {
-  emit('preflight', 'running', { label: 'Checking this Mac' });
+  emit('preflight', 'running', { label: 'Checking this computer' });
   await pause(80);
 
   if (scenario === 'retry' && attempt && !existsSync(attempt)) {

@@ -31,10 +31,13 @@ dropped by design D7; `signing-spike.md` keeps their record.
   component, resource extraction, image import, health timeout. No environment values.
 - [x] 2.4 Add the parent-stdin EOF watcher that requests normal cleanup.
 - [x] 2.5 Add hermetic tests in `scripts/tests/package_launcher_supervised_test.sh`.
-- [ ] 2.6 Lift the macOS-only restriction on supervised mode for Linux. On Linux, keep
+- [x] 2.6 Lift the macOS-only restriction on supervised mode for Linux. On Linux, keep
   `can_show_window` and `window-sandbox` out of supervised mode; the pre-window launcher (5.1)
   owns them. Extend 2.5's tests to run the Linux path.
-- [ ] 2.7 Make the event labels platform-neutral ("Checking this computer").
+  *Linux without KVM fails with `virtualisation-unavailable`. The tests run every supervised
+  scenario as macOS and as Linux, pass on macOS bash 3.2 and in `ubuntu:24.04`, and now run in CI
+  (`launcher:test`, `./scripts/ci-local.sh launcher`).*
+- [x] 2.7 Make the event labels platform-neutral ("Checking this computer").
 
 ## 3. Supervised launcher: Windows
 

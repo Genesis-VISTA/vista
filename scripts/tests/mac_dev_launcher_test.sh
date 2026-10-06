@@ -65,7 +65,7 @@ for _ in {1..50}; do
   grep -q '"phase":"ui","state":"ready"' "$TMP/stdout" 2>/dev/null && break
   sleep 0.1
 done
-grep -qx '{"protocol":1,"phase":"preflight","state":"running","label":"Checking this Mac"}' "$TMP/stdout"
+grep -qx '{"protocol":1,"phase":"preflight","state":"running","label":"Checking this computer"}' "$TMP/stdout"
 grep -qx '{"protocol":1,"phase":"resources","state":"complete","skipped":true}' "$TMP/stdout"
 grep -qx '{"protocol":1,"phase":"ui","state":"ready","url":"http://localhost:3000"}' "$TMP/stdout"
 
