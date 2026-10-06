@@ -8,8 +8,8 @@ current model once, so changing the endpoint, key or model in Settings leaves it
 until a reload, and an endpoint change keeps a model chosen from the old endpoint.
 
 The inference endpoint is also a free-text URL, while in practice researchers use one of
-two AmSC gateways (the legacy i2 LiteLLM, and the Model Access Gateway that replaces it)
-or, rarely, something custom.
+two AmSC gateways (the legacy i2 LiteLLM, and the Model Access Gateway that replaces it),
+OLCF's own Inference Service, or, rarely, something custom.
 
 ## What Changes
 
@@ -23,17 +23,19 @@ or, rarely, something custom.
   also shows under the field that failed. **BREAKING (UI):** Save and Cancel are removed.
 - **Narrow windows** show the nav as a list; a section opens full-width with a back
   button.
-- **Inference provider dropdown** replaces the endpoint text field: AmSC i2, AmSC MAG, and
-  Custom. Only Custom shows a URL field; the i2 and MAG URLs come from presets the backend
-  defines. Each provider keeps its own API key, so switching provider and back loses
+- **Inference provider dropdown** replaces the endpoint text field: AmSC i2, AmSC MAG,
+  OLCF Inference, and Custom. Only Custom shows a URL field; the i2, MAG and OLCF URLs
+  come from presets the backend defines. Each provider keeps its own API key, so switching provider and back loses
   nothing. Azure is not offered; the typed `azure:` model route is dropped.
-- **Per-provider default model**: i2 defaults to `claude-sonnet`; MAG and Custom have no
-  default, and chatting without a model chosen opens the picker instead of sending.
+- **Per-provider default model**: i2 defaults to `claude-sonnet` and OLCF Inference to
+  `gpt-oss-120b`; MAG and Custom have no default, and chatting without a model chosen opens the picker instead of sending.
 - **The Model field leaves Settings.** The picker is the one place to choose a model. It
   gains a "Use another model…" entry for typing a name, marks a saved model the provider
   does not list, labels the default as "Default (<model>)", and stays in sync with
   Settings. Changing provider clears the chosen model.
-- **Model listing works whether the base URL ends in `/v1` or not** (the MAG URL does).
+- **Model listing works for every provider's base URL**: it asks `<base>/models`, as chat
+  asks `<base>/chat/completions`, and falls back to `<base>/v1/models`. i2's URL has no
+  `/v1`, MAG's ends in it, and OLCF's carries it mid-path.
 - **The rail's HPC section becomes Resources**, with its cards grouped under facility
   headers (OLCF, NERSC), in both the expanded and collapsed rail.
 
@@ -63,7 +65,7 @@ or, rarely, something custom.
   for agent settings, `app/globals.css`, and their tests.
 - **Backend**: `agents/inference.py` (provider-aware target resolution), `api/models.py`
   (URL normalisation), a new read-only providers endpoint, `db/schemas.py` (new nullable
-  columns: `inference_provider`, MAG and Custom keys; `inference_api_key` becomes the i2
+  columns: `inference_provider`, MAG, OLCF and Custom keys; `inference_api_key` becomes the i2
   key), `config.py` (presets), and the users API for the new fields. New nullable columns
   are added on startup by `db/db.py`; no migration.
 - **No new dependencies.** No change to Globus, HPC checks or job submission behaviour.

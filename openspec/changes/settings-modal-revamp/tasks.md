@@ -8,6 +8,8 @@
 - [x] 1.6 Add `GET /users/me/inference` (options, effective provider/source/model, is-default, key-set booleans, no secrets), plus its UI proxy route, and verify an API test checks the shape and that no key value appears in the response
 - [x] 1.7 Normalise the base URL in `api/models.py` (strip a trailing `/v1` and slash before appending `/v1/models`), list using the resolved provider's URL and key, and verify `test_models_api.py` lists models for a base URL with and without `/v1`
 - [x] 1.8 Make citation extraction use the resolved target, and skip extraction with the existing notice when there is no model, and verify a test in `test_indexer_paths.py` (or alongside it) covers MAG with no model
+- [ ] 1.9 Add the `olcf` preset (OLCF Inference, `https://s3m.olcf.ornl.gov/olcf/open/v1/inference`, default `gpt-oss-120b`, ordered before Custom) and a nullable `inference_olcf_api_key` (`EncryptedStr`) on `app_user`, the user schemas and the UI user types, plus the provider lists in the UI test and hermetic fixtures. Verify tests that the preset has that URL and default, an existing database gains the column, the key is not plaintext in the DB file, a row on `olcf` uses that key and not the Odo/Frontier S3M tokens, and `/users/me/inference` lists the four options in order
+- [ ] 1.10 Change model listing in `api/models.py` to `<base>/models`, falling back once to `<base>/v1/models` on a 404, replacing the strip-trailing-`/v1` rule. Verify `test_models_api.py` lists models for OLCF's mid-path `/v1` base (asking `…/v1/inference/models`), for a base ending in `/v1`, and for a base with no `/v1` whose `/models` answers 404
 
 ## 2. UI: agent settings store and model picker
 
@@ -43,4 +45,4 @@
 
 - [ ] 6.1 Update the comments and docs that describe the old form, the Model field, or the endpoint text field (`UserSettingsModal`, `ModelPicker`, `lib/models.ts`, `.env.sample`, `docs/` where they mention it), and verify a grep for "Model field in Settings" and "Signed in as" finds nothing stale
 - [ ] 6.2 Run `./scripts/ci-local.sh` (backend, ui, mcp lint and test) and verify it passes
-- [ ] 6.3 Launch the app (`./launch.sh logs`), walk through: fresh i2 default, switching to MAG and back, a Custom endpoint ending in `/v1`, autosave of a token with the indicator, the narrow layout and the grouped rail. Capture screenshots
+- [ ] 6.3 Launch the app (`./launch.sh logs`), walk through: fresh i2 default, switching to MAG and back, OLCF Inference with an S3M token (its default and its model list), a Custom endpoint ending in `/v1`, autosave of a token with the indicator, the narrow layout and the grouped rail. Capture screenshots

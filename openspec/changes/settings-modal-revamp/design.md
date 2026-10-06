@@ -47,7 +47,14 @@ A constant, next to `resolve_inference_target`, maps each provider id to its dis
 base URL and default model:
 - `i2`: `https://api.i2-core.american-science-cloud.org`, `claude-sonnet`;
 - `mag`: `https://i2-api.staging.american-science-cloud.org/v1`, no default;
+- `olcf` (OLCF Inference): `https://s3m.olcf.ornl.gov/olcf/open/v1/inference`,
+  `gpt-oss-120b`;
 - `custom`: URL from the row, no default.
+
+The options are offered in that order, Custom last. OLCF's key is an S3M project access
+token, minted on myOLCF for a project granted access to the Inference Service. It is
+stored apart from the Odo and Frontier S3M tokens: S3M tokens carry per-token
+permissions, and nothing confirms that a compute token is also accepted for inference.
 
 The backend needs the presets anyway: it turns a provider into a URL, a key and a default
 model. Keeping them only in the UI would split that knowledge. Alternative: a UI constant.
@@ -56,8 +63,9 @@ Rejected, because the backend would have to trust a URL sent by the client.
 ### Storage: an explicit provider, and a key column per provider
 
 New nullable columns on `app_user`:
-- `inference_provider` (`i2` | `mag` | `custom`);
+- `inference_provider` (`i2` | `mag` | `olcf` | `custom`);
 - `inference_mag_api_key` (`EncryptedStr`);
+- `inference_olcf_api_key` (`EncryptedStr`);
 - `inference_custom_api_key` (`EncryptedStr`).
 
 The existing `inference_api_key` becomes the i2 key, so every researcher who saved a key
@@ -125,10 +133,18 @@ PydanticAI splits on the first colon only, so `openai:anthropic.claude-…-v1:0`
 endpoint intact. The `openai:` prefix stays an internal routing detail: the `test` stub and
 `ollama:` in development still depend on prefixes.
 
-### Listing URL normalisation
+### Listing URL
 
-`api/models.py` strips one trailing `/v1` (and any trailing slash) from the base URL before
-appending `/v1/models`. Chat already accepts either form.
+`api/models.py` asks `<base>/models`, the same convention the OpenAI client uses for chat
+(`<base>/chat/completions`), so listing reaches the models wherever chat reaches them. If
+that answers 404, it asks `<base>/v1/models` once. Any trailing slash is dropped first.
+
+The presets need this: i2's base has no `/v1`, MAG's ends in it, and OLCF's carries it
+mid-path (`…/open/v1/inference`), so no rule about a trailing `/v1` fits all three. The
+fallback keeps i2 working without depending on LiteLLM serving `/models` unprefixed.
+
+Alternative: strip a trailing `/v1` and append `/v1/models` (what group 1 first did).
+Rejected: for OLCF it asks `…/v1/inference/v1/models`.
 
 ### Autosave
 
@@ -172,6 +188,12 @@ The modal opens on the Agent section, or on a cluster's section when opened from
   for a single-user backend.
 - **[MAG is staging]** Its URL will change when production MAG arrives. → It is one preset
   value, and nothing about MAG's URL is stored per researcher.
+- **[OLCF's default is unproven]** `gpt-oss-120b` is OLCF's documented example, but whether
+  it handles VISTA's tool calls on OLCF's vLLM has not been tried with a real token. → It
+  is one preset value; the picker still lists and accepts any other OLCF model.
+- **[A second S3M token]** A researcher with an Odo or Frontier token enters another for
+  OLCF Inference, which may turn out to be unnecessary. → Separate storage costs a paste;
+  sharing one field could send a compute-only token to inference, or the reverse.
 - **[Detecting "configured" by comparing with i2's preset]** A `.env` that restates i2's own
   URL and model reads as i2, not "from configuration". → That is the same target, so the
   label is still accurate.
@@ -191,3 +213,7 @@ i2 key. Rollback is reverting the change; the new columns are ignored by older c
   value only.
 - The "Get a key" link for MAG: the portal-lite or production portal address, once
   confirmed.
+- Whether `gpt-oss-120b` handles tool calls on OLCF Inference, to confirm or change its
+  default.
+- Whether one S3M token can serve both compute and the Inference Service, which would let
+  the OLCF key field offer the cluster token.

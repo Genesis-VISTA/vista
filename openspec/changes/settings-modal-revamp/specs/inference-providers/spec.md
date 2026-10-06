@@ -8,18 +8,26 @@ gateways, or a custom endpoint, with a separate credential kept for each.
 ### Requirement: Provider choice
 
 The Agent section of Settings SHALL offer an inference provider choice with exactly these
-options: AmSC i2, AmSC MAG, and Custom. The choice SHALL persist per researcher and take
-effect on the next request without a restart.
+options, in this order: AmSC i2, AmSC MAG, OLCF Inference, and Custom. The choice SHALL
+persist per researcher and take effect on the next request without a restart.
 
-For AmSC i2 and AmSC MAG, VISTA SHALL use that provider's endpoint without showing it or
-asking for it. Only Custom SHALL show an endpoint field. Each option SHALL show its own API
-key field; for AmSC MAG the field SHALL accept a project access token.
+For AmSC i2, AmSC MAG and OLCF Inference, VISTA SHALL use that provider's endpoint without
+showing it or asking for it. Only Custom SHALL show an endpoint field. Each option SHALL
+show its own API key field; for AmSC MAG the field SHALL accept a project access token, and
+for OLCF Inference an S3M project access token with access to the Inference Service, kept
+apart from the Odo and Frontier S3M tokens.
 
 #### Scenario: Choosing MAG
 
 - **WHEN** a researcher chooses AmSC MAG and enters a project access token
 - **THEN** the next chat turn goes to the MAG endpoint with that token, and no endpoint
   field is shown
+
+#### Scenario: Choosing OLCF Inference
+
+- **WHEN** a researcher chooses OLCF Inference and enters an S3M token
+- **THEN** the next chat turn goes to the OLCF Inference endpoint with that token, no
+  endpoint field is shown, and the researcher's Odo and Frontier S3M tokens are unchanged
 
 #### Scenario: Choosing Custom
 
@@ -56,14 +64,19 @@ A key saved before provider choice existed SHALL be the AmSC i2 key.
 ### Requirement: Default model per provider
 
 Each provider option SHALL have its own default model, possibly none. AmSC i2's default
-SHALL be `claude-sonnet`; AmSC MAG and Custom SHALL have none. When the researcher has not
-chosen a model, requests SHALL use the chosen provider's default. Changing provider SHALL
-clear the researcher's chosen model.
+SHALL be `claude-sonnet` and OLCF Inference's `gpt-oss-120b`; AmSC MAG and Custom SHALL
+have none. When the researcher has not chosen a model, requests SHALL use the chosen
+provider's default. Changing provider SHALL clear the researcher's chosen model.
 
 #### Scenario: No model chosen on i2
 
 - **WHEN** a researcher on AmSC i2 has never chosen a model
 - **THEN** chat uses `claude-sonnet`
+
+#### Scenario: No model chosen on OLCF Inference
+
+- **WHEN** a researcher switches to OLCF Inference and has not chosen a model there
+- **THEN** chat uses `gpt-oss-120b`
 
 #### Scenario: Switching provider clears the model
 
@@ -97,12 +110,25 @@ key is configured.
 - **THEN** the text is indexed, citations are not extracted, and the researcher is told
   why
 
-### Requirement: Model listing tolerates a versioned endpoint
+### Requirement: Model listing reaches every provider's endpoint
 
-Listing a provider's models SHALL reach the same models whether that provider's endpoint is
-written with or without a trailing `/v1`.
+Listing a provider's models SHALL reach the models at the endpoint chat uses, whatever its
+path: with no version segment, ending in `/v1`, or carrying `/v1` before further path
+segments.
 
 #### Scenario: Endpoint ending in /v1
 
 - **WHEN** the chosen provider's endpoint ends in `/v1`
 - **THEN** the picker lists that provider's models rather than an error
+
+#### Scenario: Version mid-path
+
+- **WHEN** the chosen provider is OLCF Inference, whose endpoint is
+  `https://s3m.olcf.ornl.gov/olcf/open/v1/inference`
+- **THEN** the picker lists the models that endpoint's `/models` reports
+
+#### Scenario: Endpoint without a version
+
+- **WHEN** the chosen provider's endpoint has no `/v1` and serves its models only under
+  `/v1/models`
+- **THEN** the picker still lists them
