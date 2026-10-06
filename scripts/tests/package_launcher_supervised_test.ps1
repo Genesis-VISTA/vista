@@ -100,8 +100,10 @@ static class Fake {
   & (Join-Path $env:SystemRoot 'System32\tar.exe') -cf (Join-Path $Package 'payload/payload.tar') -C $emptyDir .
   $Shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 } else {
+  # This file is checked out with CRLF (.gitattributes), so its here-strings
+  # carry carriage returns, which bash reads as part of each line.
   function Write-Script([string]$Path, [string]$Body) {
-    Write-Text $Path ("#!/usr/bin/env bash`n" + $Body)
+    Write-Text $Path ("#!/usr/bin/env bash`n" + ($Body -replace "`r", ''))
     & chmod +x $Path
   }
   $service = 'printf ''%s\n'' "$$" > "$TEST_SERVICE_PIDS/${0##*/}.pid"' + "`nexec sleep 600`n"
