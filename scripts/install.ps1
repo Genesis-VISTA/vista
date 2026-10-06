@@ -185,6 +185,9 @@ function Add-Shortcut([string]$InstallDir) {
   $shortcut.TargetPath = Join-Path $InstallDir 'vista.cmd'
   $shortcut.WorkingDirectory = $InstallDir
   $shortcut.Description = 'VISTA'
+  # The icon is in the window's executable; without it the entry shows cmd's.
+  $window = Join-Path $InstallDir 'app\window\VISTA.exe'
+  if (Test-Path $window) { $shortcut.IconLocation = "$window,0" }
   $shortcut.Save()
   Write-Host "==> start it later from the Start menu (VISTA), or run $(Join-Path $InstallDir 'vista.cmd')"
 }
