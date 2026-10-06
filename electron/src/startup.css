@@ -49,18 +49,14 @@ body {
   margin-bottom: 28px;
 }
 
+/* VISTA's icon itself (assets/icon.png), so the window shows what the Dock,
+   the app menu and the Start menu show. */
 .app-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 52px;
   height: 52px;
-  border-radius: 13px;
-  color: white;
-  background: linear-gradient(145deg, #2488c7, #15558e);
-  box-shadow: 0 8px 24px rgb(20 86 142 / 28%);
-  font-size: 25px;
-  font-weight: 650;
-  letter-spacing: -0.04em;
+  box-shadow: 0 8px 24px rgb(17 42 77 / 28%);
+  border-radius: 22.5%;
 }
 
 .eyebrow {

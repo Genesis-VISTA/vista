@@ -68,6 +68,9 @@ test('first run transitions to the main renderer without exposing startup IPC', 
   const fixture = await launchStartup('success');
   await expect(fixture.startup.locator('#startup-title')).toContainText('Preparing');
   await expect(fixture.startup.locator('[data-phase="resources"]')).toHaveAttribute('data-state', 'running');
+  // The page shows VISTA's own icon, the one the Dock and the app menu show.
+  await expect.poll(() => fixture.startup.locator('.app-mark')
+    .evaluate((/** @type {HTMLImageElement} */ img) => img.naturalWidth)).toBe(1024);
   const main = await mainWindow(fixture.application);
   await expect(main).toHaveTitle('VISTA fixture');
   const bounds = await fixture.application.evaluate(({ BrowserWindow }, targetUrl) => {

@@ -71,7 +71,7 @@ dropped by design D7; `signing-spike.md` keeps their record.
   jsonl` hidden, after unblocking `vista.ps1` and checking for `AllSigned`, which reports as
   its own failure code. On Windows, stop by closing stdin, then `kill()` after the grace
   period. Cover each in `electron/test/launcher-controller.test.js`.
-- [ ] 4.10 Startup page: show the VISTA icon (`assets/icon.png`), follow the UI's light and dark
+- [ ] 4.10 Startup page: show the VISTA icon (`assets/icon.png`; *done 2026-10-06*), follow the UI's light and dark
   palette, use platform-neutral copy, and keep the native frame on every platform.
 - [ ] 4.11 Show the Linux sandbox notice from the pre-window launcher (5.1) in the startup window
   when the window runs without the renderer sandbox.
