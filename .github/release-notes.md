@@ -142,7 +142,8 @@ For diagnostics, `~/.local/share/vista/app/vista` starts the same VISTA from a t
    mkdir C:\vista -Force; tar -xf vista-${VERSION}-win-x86.zip -C C:\vista
    ```
 
-4. **Open** VISTA. It shows its startup in its own window, then VISTA; closing it stops
+4. **Open** VISTA by double-clicking `VISTA.exe` in `C:\vista\vista-${VERSION}-win-x86\app\window`,
+   or from PowerShell. It shows its startup in its own window, then VISTA; closing it stops
    VISTA. The one-line installer also adds it to the Start menu.
 
    ```powershell

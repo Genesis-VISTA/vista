@@ -28,10 +28,14 @@ export function parseArgs(argv, platform = process.platform) {
   const url = value('url') ?? '';
   const smokeTest = argv.includes('--smoke-test');
   const launcher = value('launcher');
+  // An application opened with nothing to say starts VISTA: VISTA.app from
+  // Finder, and VISTA.exe double-clicked in its folder rather than through the
+  // Start menu's --startup. Not on Linux: there the window must come through
+  // linux/vista-app, which decides its sandbox before Chromium starts.
   const startup =
     argv.includes('--startup') ||
     launcher !== null ||
-    (platform === 'darwin' && !url && !smokeTest);
+    ((platform === 'darwin' || platform === 'win32') && !url && !smokeTest);
 
   return {
     url,

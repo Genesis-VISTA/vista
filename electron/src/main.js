@@ -48,6 +48,15 @@ if (args.url) {
     fail(`--url must be the http(s) address of the running UI (got "${args.url}")`);
   }
 } else if (!args.startup) {
+  // Only a Linux window opened by hand lands here: its file manager shows no
+  // stderr, so say where VISTA opens from instead of vanishing.
+  if (process.platform === 'linux' && app.isPackaged) {
+    dialog.showErrorBox(
+      'Open VISTA from the app menu',
+      'This is the VISTA window, which VISTA opens itself. Open VISTA from your app menu, '
+        + 'or run app/window/vista-app in the VISTA folder.',
+    );
+  }
   fail(`--url must be the http(s) address of the running UI (got "${args.url}")`);
 }
 

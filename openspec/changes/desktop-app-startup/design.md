@@ -186,7 +186,10 @@ could start triggering it on upgrade, so a signing lane has to retest the instal
 ### D8. Development and test modes stay explicit
 
 *Kept.* `./launch.sh logs` keeps its behaviour: it passes `--dev --url=…`, and startup mode is
-entered only through `--startup`, `--launcher=` or a macOS launch with no URL. `VISTA Dev.app`
+entered only through `--startup`, `--launcher=` or a macOS or Windows launch with no URL. On
+Windows that last one is `VISTA.exe` double-clicked in its folder rather than opened from the
+Start menu. A Linux window started by hand, without `vista-app`, shows a dialog naming the app
+menu instead, since it would skip the sandbox decision (D9). `VISTA Dev.app`
 (macOS only) packages just Electron from the checkout. It runs `./launch.sh logs --no-build
 --no-electron` behind the same startup window, with its own state folder, `~/.vista-dev`. The
 Electron tests use a fake launcher for every startup path.

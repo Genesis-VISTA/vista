@@ -32,9 +32,15 @@ test('a macOS app launch without a URL selects startup mode', () => {
   assert.equal(parseArgs(['VISTA'], 'darwin').startup, true);
 });
 
-test('other platforms retain URL-required window mode', () => {
+test('a Windows launch without a URL selects startup mode, as a double-click in Explorer is', () => {
+  assert.equal(parseArgs(['VISTA.exe'], 'win32').startup, true);
+  assert.equal(parseArgs(['VISTA.exe', '--url=http://127.0.0.1:3000'], 'win32').startup, false);
+  assert.equal(parseArgs(['VISTA.exe', '--smoke-test'], 'win32').startup, false);
+});
+
+test('Linux keeps URL-required window mode: it starts VISTA only through vista-app', () => {
   assert.equal(parseArgs(['VISTA'], 'linux').startup, false);
-  assert.equal(parseArgs(['VISTA'], 'win32').startup, false);
+  assert.equal(parseArgs(['VISTA', '--startup'], 'linux').startup, true);
 });
 
 test('an explicit launcher selects startup mode for development and tests', () => {
