@@ -7,6 +7,9 @@ import readline from 'node:readline';
 import { ProtocolError, StartupStateMachine } from './startup-protocol.js';
 
 const STOP_TIMEOUT_MS = 12_000;
+// How long an exited launcher's remaining output is waited for. Bounded because
+// a process the launcher left behind can hold its stdout open indefinitely.
+const OUTPUT_DRAIN_MS = 250;
 
 // What vista.cmd does before it runs vista.ps1, which the application now does
 // itself (design D10). Unblock-File removes the downloaded-file mark that makes a
@@ -161,12 +164,39 @@ export class LauncherController {
       this.launcherFailure(`The launcher could not be started (${errorCode}).`);
       this.handleExit(child, -1, null);
     });
-    child.once('exit', (code, signal) => this.handleExit(child, code, signal));
+    child.once('exit', (code, signal) => this.afterOutput(child, () => this.handleExit(child, code, signal)));
+  }
+
+  /**
+   * 'exit' can come before the launcher's last lines, usually its failed
+   * event, have been read, so the exit is handled once stdout has ended.
+   *
+   * @param {import('node:child_process').ChildProcess} child
+   * @param {() => void} done
+   */
+  afterOutput(child, done) {
+    const stdout = child.stdout;
+    if (!stdout || stdout.readableEnded || stdout.destroyed) {
+      done();
+      return;
+    }
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      done();
+    };
+    const timer = setTimeout(finish, OUTPUT_DRAIN_MS);
+    stdout.once('end', finish);
+    stdout.once('close', finish);
   }
 
   /** @param {string} line */
   acceptLine(line) {
-    if (!this.child) return;
+    // After a failure the launcher is only cleaning up: what it says then,
+    // well-formed or not, must not replace the failure being shown.
+    if (!this.child || this.current.status === 'failed') return;
     try {
       this.current = this.machine.acceptLine(line);
       this.emit();

@@ -94,6 +94,16 @@ test('rejects out-of-order activity and supports stopping at any point', () => {
   assert.equal(stopped.canRetry, false);
 });
 
+test('stopping after a failure leaves the failure in place', () => {
+  const machine = new StartupStateMachine();
+  machine.acceptLine(event('preflight', 'running'));
+  machine.acceptLine(event('preflight', 'failed', { code: 'port-conflict' }));
+  const after = machine.acceptLine(event('stopping', 'running', { label: 'Stopping VISTA' }));
+  assert.equal(after.status, 'failed');
+  assert.equal(after.failure?.code, 'port-conflict');
+  assert.equal(after.canRetry, true);
+});
+
 // Both launchers emit codes the application has to explain: one without a
 // message of its own would reach the researcher as a bare "could not complete
 // startup".

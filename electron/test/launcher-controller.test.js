@@ -21,6 +21,12 @@ function fakeChild() {
   const child = /** @type {any} */ (new EventEmitter());
   child.stdout = new PassThrough();
   child.stdin = new PassThrough();
+  // A process's stdout ends as it exits, which the controller waits for.
+  const emit = child.emit.bind(child);
+  child.emit = (/** @type {string} */ name, /** @type {any[]} */ ...args) => {
+    if (name === 'exit') child.stdout.end();
+    return emit(name, ...args);
+  };
   child.kills = [];
   /** @param {NodeJS.Signals} signal */
   child.kill = (signal) => {
@@ -30,6 +36,9 @@ function fakeChild() {
   };
   return child;
 }
+
+/** Lets an exited launcher's remaining output be read and its exit handled. */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 test('normalizes launcher events and reports readiness', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'vista-controller-'));
@@ -85,6 +94,7 @@ test('retry remains disabled until a failed launcher exits', async () => {
   assert.equal(states.at(-1)?.canRetry, false);
   assert.equal(controller.retry(), false);
   first.emit('exit', 1, null);
+  await settled();
   assert.equal(states.at(-1)?.canRetry, true);
   assert.equal(controller.retry(), true);
   await controller.stop();
@@ -145,6 +155,7 @@ test('an unexpected launcher exit after readiness becomes retryable failure', as
   }
   await new Promise((resolve) => setImmediate(resolve));
   child.emit('exit', 1, null);
+  await settled();
   assert.equal(states.at(-1)?.status, 'failed');
   assert.equal(states.at(-1)?.canRetry, true);
   assert.equal(states.at(-1)?.activities.at(-1)?.state, 'failed');
@@ -246,5 +257,82 @@ test('on Windows, a launcher that exits on stdin closing is never killed', async
   preflight.emit('exit', 0, null);
   await controller.stop(5_000);
   assert.deepEqual(launcher.kills, []);
+  cleanup();
+});
+
+/** @param {any} child */
+function unixController(child) {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vista-controller-'));
+  /** @type {any[]} */
+  const states = [];
+  const controller = new LauncherController({
+    launcherPath: '/fake/vista',
+    logPath: path.join(directory, 'window.log'),
+    onState: (state) => states.push(state),
+    onReady: () => {},
+    spawnProcess: () => /** @type {any} */ (child),
+  });
+  return { controller, states, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
+}
+
+/** @param {any} child */
+function startServices(child) {
+  /** @type {Array<[string, string]>} */
+  const events = [
+    ['preflight', 'running'], ['preflight', 'complete'],
+    ['resources', 'running'], ['resources', 'complete'],
+    ['sandbox', 'running'], ['sandbox', 'complete'],
+    ['mcp', 'running'], ['mcp', 'ready'],
+    ['backend', 'running'],
+  ];
+  for (const [phase, state] of events) child.stdout.write(line(phase, state));
+}
+
+// Both launchers stop their services on the way out of a failure, so a
+// service's failure is always followed by their stopping event.
+test('a failure keeps its code and log through the launcher\'s own stopping', async () => {
+  const child = fakeChild();
+  const { controller, states, cleanup } = unixController(child);
+  controller.start();
+  startServices(child);
+  child.stdout.write(line('backend', 'failed', { code: 'health-timeout', log: 'backend.log' }));
+  child.stdout.write(line('stopping', 'running', { label: 'Stopping VISTA' }));
+  child.emit('exit', 1, null);
+  await settled();
+  assert.equal(states.at(-1)?.status, 'failed');
+  assert.deepEqual(states.at(-1)?.failure, { phase: 'backend', code: 'health-timeout', log: 'backend.log' });
+  assert.equal(states.at(-1)?.canRetry, true);
+  cleanup();
+});
+
+test('a protocol error stays one, whatever the launcher says while it stops', async () => {
+  const child = fakeChild();
+  // TERM runs the launcher's trap, which reports stopping before it exits.
+  child.kill = (/** @type {NodeJS.Signals} */ signal) => { child.kills.push(signal); return true; };
+  const { controller, states, cleanup } = unixController(child);
+  controller.start();
+  startServices(child);
+  child.stdout.write('{"protocol":1,"phase":"backend","state":"ready","extra":true}\n');
+  await settled();
+  child.stdout.write(line('stopping', 'running', { label: 'Stopping VISTA' }));
+  child.stdout.write('not json\n');
+  child.emit('exit', null, 'SIGTERM');
+  await settled();
+  assert.deepEqual(child.kills, ['SIGTERM']);
+  assert.equal(states.at(-1)?.status, 'failed');
+  assert.equal(states.at(-1)?.failure?.code, 'protocol-error');
+  assert.equal(states.at(-1)?.canRetry, false);
+  cleanup();
+});
+
+test('a failed event written just before the launcher exits is still read', async () => {
+  const child = fakeChild();
+  const { controller, states, cleanup } = unixController(child);
+  controller.start();
+  child.stdout.write(line('preflight', 'running'));
+  child.stdout.write(line('preflight', 'failed', { code: 'port-conflict' }));
+  child.emit('exit', 1, null);
+  await settled();
+  assert.equal(states.at(-1)?.failure?.code, 'port-conflict');
   cleanup();
 });

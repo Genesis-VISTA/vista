@@ -182,6 +182,9 @@ export class StartupStateMachine {
 
     if (event.phase === 'stopping') {
       if (event.state !== 'running') throw new ProtocolError('stopping event must be running');
+      // Both launchers stop their services on the way out of a failure too, so
+      // the failure, which says what went wrong and where, is what stays.
+      if (this.status === 'failed') return;
       this.status = 'stopping';
       this.title = 'Stopping VISTA';
       this.message = event.label ?? 'Closing services and sandboxes.';

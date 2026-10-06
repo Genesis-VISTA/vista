@@ -535,6 +535,11 @@ stop() {
   local i pid group groups=() own_group
   # Never our own group: that one holds the shell this was started from.
   own_group="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)"
+  # A signal can land between a service starting and its PID being recorded.
+  # Under `set -m` it is still a job of this shell, in a group of its own.
+  for pid in $(jobs -p); do
+    [[ "$pid" == "$PARENT_WATCHER_PID" || " ${PIDS[*]-} " == *" $pid "* ]] || PIDS+=("$pid")
+  done
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
     groups+=("$pid")
     for group in $(descendant_groups "$pid"); do
@@ -577,12 +582,18 @@ stop() {
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
     kill -KILL "$pid" 2>/dev/null || true
   done
-  wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
+  # Named, never bare: a bare `wait` also waits for anything not stopped above.
+  (( ${#PIDS[@]} == 0 )) || wait "${PIDS[@]}" 2>/dev/null || true
   if [[ -n "$PARENT_WATCHER_PID" ]]; then
     wait "$PARENT_WATCHER_PID" 2>/dev/null || true
   fi
 }
-trap stop INT TERM HUP EXIT
+# A signal handler that returns resumes the script, which would go on starting
+# services nothing will stop. After a signal, stopping is the launcher's last act.
+trap 'stop; exit 130' INT
+trap 'stop; exit 143' TERM
+trap 'stop; exit 129' HUP
+trap stop EXIT
 
 # Electron owns the write end of stdin in supervised mode. EOF means that the
 # application disappeared without sending TERM, so request the same cleanup
