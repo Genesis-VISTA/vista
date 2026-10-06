@@ -1064,7 +1064,8 @@ stage_window_windows() {
 # linux-desktop-window D7. Nothing is signed on Linux. Next to the window go
 # the two files that decide its sandbox: window-sandbox, which the launcher
 # and the smoke test run for its arguments (D1), and the AppArmor profile it
-# tells an Ubuntu researcher how to install (D2).
+# tells an Ubuntu researcher how to install (D2). And vista-app, the package's
+# entrypoint, which the app-menu entry runs (desktop-app-startup D9).
 stage_window_linux() {
   log "building the VISTA window (Electron $ELECTRON_VERSION)"
   local arch
@@ -1099,6 +1100,7 @@ stage_window_linux() {
   chmod 755 "$window"
   install -m 755 "$REPO_ROOT/electron/linux/window-sandbox" "$window/window-sandbox"
   install -m 644 "$REPO_ROOT/electron/linux/vista-window.apparmor" "$window/vista-window.apparmor"
+  install -m 755 "$REPO_ROOT/electron/linux/vista-app" "$window/vista-app"
 
   WINDOW_EXE="app/window/VISTA"
   [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
@@ -1714,6 +1716,9 @@ if expected:
     launcher = Path(sys.argv[1]).parent / manifest["diagnostic_launcher"]
     if not (launcher.is_file() and (target_os == "windows" or os.access(launcher, os.X_OK))):
         sys.exit(f"the {target_os} diagnostic launcher is missing or not executable")
+    entrypoint = Path(sys.argv[1]).parent / manifest["entrypoint"]
+    if not entrypoint.exists() or (target_os == "linux" and not os.access(entrypoint, os.X_OK)):
+        sys.exit(f"the {target_os} entrypoint {manifest['entrypoint']} is missing or not executable")
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),

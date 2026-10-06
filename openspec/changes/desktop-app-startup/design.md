@@ -210,10 +210,11 @@ Failures in steps 1–2, the only ones that leave no window to report in, are sh
 `notify-send` when it exists, and always written to `~/.vista/logs/window.log`.
 
 The installer writes `~/.local/share/applications/vista.desktop` (`Terminal=false`,
-`Exec=<install>/app/window/vista-app`, `Icon=vista`, `StartupWMClass=VISTA`). It installs
+`Exec=<install>/app/window/vista-app`, `Icon=vista`, `StartupWMClass=vista`). It installs
 `icon.png` as `~/.local/share/icons/hicolor/512x512/apps/vista.png`. Electron's
 `package.json` gains `"desktopName": "vista.desktop"`, so Wayland compositors match the running
-window to the entry by app id.
+window to the entry by app id. Under X11 the window's WM_CLASS is `vista` (measured under Xvfb,
+2026-10-06), not the product name, so that is the `StartupWMClass`.
 
 ### D10. Windows: a supervised `vista.ps1` and a console-free entry
 

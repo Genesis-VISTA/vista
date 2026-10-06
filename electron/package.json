@@ -6,6 +6,7 @@
   "description": "The native VISTA desktop application and startup experience.",
   "type": "module",
   "main": "src/main.js",
+  "desktopName": "vista.desktop",
   "scripts": {
     "start": "electron . --dev --url=http://localhost:3000",
     "typecheck": "tsc --noEmit",

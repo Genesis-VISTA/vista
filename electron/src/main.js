@@ -62,6 +62,10 @@ if (args.userDataDir) app.setPath('userData', path.resolve(args.userDataDir));
 // from the field says which mode the window was in.
 const rendererSandboxed = !app.commandLine.hasSwitch('no-sandbox');
 console.log(`vista-window: renderer sandbox: ${rendererSandboxed ? 'on' : 'off (--no-sandbox)'}`);
+// Why, when linux/vista-app started it that way: window-sandbox's reason, with
+// the one-time step that turns the sandbox back on where there is one. Shown in
+// the startup window, which a researcher sees, rather than only in window.log.
+const sandboxNotice = rendererSandboxed ? '' : (process.env.VISTA_SANDBOX_NOTICE ?? '').trim().slice(0, 2000);
 
 // W4: every window, the main one and any child, gets the same renderer: no
 // Node, no preload, isolated and sandboxed, i.e. exactly what a browser tab has.
@@ -101,7 +105,7 @@ let latestStartupState = null;
 
 function sendStartupState() {
   if (!latestStartupState || !startupWindow || startupWindow.isDestroyed()) return;
-  startupWindow.webContents.send('startup:state', latestStartupState);
+  startupWindow.webContents.send('startup:state', { ...latestStartupState, notice: sandboxNotice });
 }
 
 /** @param {BrowserWindow} window */

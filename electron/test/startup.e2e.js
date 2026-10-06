@@ -26,8 +26,11 @@ test.beforeAll(async () => {
 
 test.afterAll(() => server.close());
 
-/** @param {string} scenario */
-async function launchStartup(scenario) {
+/**
+ * @param {string} scenario
+ * @param {{ extraArgs?: string[], env?: Record<string, string> }} [options]
+ */
+async function launchStartup(scenario, { extraArgs = [], env = {} } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'vista-startup-'));
   const profile = path.join(directory, 'profile');
   const marker = path.join(directory, 'stopped');
@@ -39,6 +42,7 @@ async function launchStartup(scenario) {
     `--launcher=${FAKE_LAUNCHER}`,
     `--user-data-dir=${profile}`,
     ...ROOT_ARGS,
+    ...extraArgs,
   ];
   const application = await electron.launch({
     args,
@@ -50,6 +54,7 @@ async function launchStartup(scenario) {
       VISTA_FAKE_START_COUNT: count,
       VISTA_FAKE_ATTEMPT_FILE: attempt,
       VISTA_HOME: path.join(directory, 'state'),
+      ...env,
     },
   });
   const startup = await application.firstWindow();
@@ -164,4 +169,21 @@ test('a supervisor failure after transition returns to the startup error window'
   await recovery.close();
   await exited;
   rmSync(fixture.directory, { recursive: true, force: true });
+});
+
+// linux/vista-app passes window-sandbox's reason when it starts the window
+// without the sandbox (task 4.11); a sandboxed window ignores it.
+test('an unsandboxed window shows why in the startup window, and a sandboxed one does not', async () => {
+  const notice = 'The VISTA window is running without Chromium\'s sandbox: a test says so.\nTo turn it on, run:\n  sudo true';
+  let fixture = await launchStartup('hold', { extraArgs: ['--no-sandbox'], env: { VISTA_SANDBOX_NOTICE: notice } });
+  await expect(fixture.startup.locator('#sandbox-notice')).toBeVisible();
+  expect(await fixture.startup.locator('#sandbox-notice').evaluate((element) => element.textContent)).toBe(notice);
+  await fixture.application.close();
+  // As root every window here runs without the sandbox, so there is no
+  // sandboxed one to check.
+  if (AS_ROOT) return;
+  fixture = await launchStartup('hold', { env: { VISTA_SANDBOX_NOTICE: notice } });
+  await expect(fixture.startup.locator('[data-phase="preflight"]')).not.toHaveAttribute('data-state', 'pending');
+  await expect(fixture.startup.locator('#sandbox-notice')).toBeHidden();
+  await fixture.application.close();
 });

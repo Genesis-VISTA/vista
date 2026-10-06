@@ -176,6 +176,22 @@ button:active { transform: translateY(1px); }
 button.primary { border-color: transparent; color: var(--on-brand); background: var(--brand-fill); }
 button:disabled { cursor: default; opacity: 0.55; }
 
+/* Linux only: the window runs without Chromium's sandbox, and why. pre-line
+   keeps window-sandbox's own line breaks around the commands it names. */
+.notice {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .footnote {
   margin: 16px 2px 0;
   color: var(--muted);

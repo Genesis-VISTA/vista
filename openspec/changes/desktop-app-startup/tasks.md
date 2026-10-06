@@ -82,20 +82,21 @@ dropped by design D7; `signing-spike.md` keeps their record.
   palette, use platform-neutral copy, and keep the native frame on every platform.
   *The page declares the UI's own tokens; `appearance.test.js` checks each against
   `ui/app/globals.css` in both themes. It follows the OS appearance, like the window frame.*
-- [ ] 4.11 Show the Linux sandbox notice from the pre-window launcher (5.1) in the startup window
+- [x] 4.11 Show the Linux sandbox notice from the pre-window launcher (5.1) in the startup window
   when the window runs without the renderer sandbox.
 
 ## 5. Linux desktop integration
 
-- [ ] 5.1 Add `electron/linux/vista-app`, the pre-window launcher (design D9). It checks the
+- [x] 5.1 Add `electron/linux/vista-app`, the pre-window launcher (design D9). It checks the
   display and refuses as root, runs the `ldd` library check and `window-sandbox`, starts the
   window with `--startup`, and keeps the one early-crash retry without the sandbox. It reports
   failures that leave no window through `notify-send` when available, and always in
   `~/.vista/logs/window.log`. Ship it beside the window in `build_local_package.sh`.
-- [ ] 5.2 Add a hermetic test for `vista-app`, like `electron/test/window-sandbox.test.js`,
+- [x] 5.2 Add a hermetic test for `vista-app`, like `electron/test/window-sandbox.test.js`,
   covering the root refusal, missing libraries, the sandbox flag, and the retry.
-- [ ] 5.3 Add `"desktopName": "vista.desktop"` to `electron/package.json`, and confirm the window's
-  WM_CLASS is `VISTA`.
+- [x] 5.3 Add `"desktopName": "vista.desktop"` to `electron/package.json`, and confirm the window's
+  WM_CLASS. *It is `vista`, not `VISTA` (xprop under Xvfb in the Playwright Linux image), so the
+  desktop entry's `StartupWMClass` is `vista` (design D9).*
 
 ## 6. Packaging and release checks
 

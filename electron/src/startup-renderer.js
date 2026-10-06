@@ -7,6 +7,7 @@ const failure = /** @type {HTMLElement | null} */ (document.querySelector('#fail
 const failureMessage = document.querySelector('#failure-message');
 const firstRunNote = /** @type {HTMLElement | null} */ (document.querySelector('#first-run-note'));
 const retry = /** @type {HTMLButtonElement | null} */ (document.querySelector('#retry'));
+const sandboxNotice = /** @type {HTMLElement | null} */ (document.querySelector('#sandbox-notice'));
 
 /** @param {unknown} value */
 function text(value) {
@@ -34,6 +35,10 @@ function render(snapshot) {
   if (failure) failure.hidden = snapshot.status !== 'failed';
   if (failureMessage) failureMessage.textContent = text(snapshot.failureMessage);
   if (retry) retry.disabled = snapshot.canRetry !== true;
+  if (sandboxNotice) {
+    sandboxNotice.textContent = text(snapshot.notice);
+    sandboxNotice.hidden = !sandboxNotice.textContent;
+  }
 }
 
 bridge?.onState(render);
