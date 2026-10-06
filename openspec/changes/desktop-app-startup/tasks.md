@@ -159,18 +159,18 @@ dropped by design D7; `signing-spike.md` keeps their record.
 
 ## 8. Release notes and documentation
 
-- [ ] 8.1 `.github/release-notes.md`: manual macOS steps unpack into `/Applications/VISTA` (or
+- [x] 8.1 `.github/release-notes.md`: manual macOS steps unpack into `/Applications/VISTA` (or
   `~/Applications/VISTA` without administrator rights) and open `VISTA.app`; keep the curl-not-browser note and the `xattr`/System Settings fallback.
   Manual Linux and Windows steps end at the app-menu or Start-menu entry, with the diagnostic
   launcher as the alternative.
-- [ ] 8.2 `README.md`: each platform starts from the application; `vista`/`vista.cmd` are for
+- [x] 8.2 `README.md`: each platform starts from the application; `vista`/`vista.cmd` are for
   diagnostics; the whole folder must stay together.
-- [ ] 8.3 `docs/validation-lane.md`: a manual macOS checklist (Dock icon and its size against
+- [x] 8.3 `docs/validation-lane.md`: a manual macOS checklist (Dock icon and its size against
   neighbours, listed in the Apps view and in Finder's Applications, Finder and Spotlight launch,
   curl install into `/Applications/VISTA`, first and later run, error and Retry,
   second launch, quit cleanup, immediate restart). **Manual; keep out of PR CI.** It replaces the
   signed/quarantined walk-through.
-- [ ] 8.4 Replace `AGENTS.md`'s "the launchers own its lifetime" description of `electron/` with
+- [x] 8.4 Replace `AGENTS.md`'s "the launchers own its lifetime" description of `electron/` with
   the app-first model and the diagnostic launchers.
 
 ## 9. Acceptance

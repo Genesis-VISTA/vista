@@ -47,27 +47,40 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vist
 ```
 
 It downloads the package for your machine, checks it against its `.sha256`, installs it and
-starts VISTA. Run it again to start VISTA, or to upgrade; your state is kept. After the first
-install, `vista` in a terminal (macOS, Linux) or VISTA in the Start menu (Windows) starts it too.
-Pipe it to `bash -s -- --no-launch` instead of `bash` to install only, or add `--version 0.2.0-rc1`
-the same way for another release.
-Packages go in `~/.local/share/vista` (macOS, Linux) or `%LOCALAPPDATA%\VISTA\app` (Windows);
-set `VISTA_INSTALL_DIR` to put them elsewhere.
+opens VISTA. Run it again to upgrade, with VISTA closed (it refuses while VISTA is running); your
+state is kept. Pipe it to `bash -s -- --no-launch` instead of `bash` to install only, or add
+`--version 0.2.0-rc1` the same way for another release.
 
-Keep the entire unpacked folder together. On macOS, open the top-level **VISTA.app** from
-Finder, Spotlight, or the Dock. It shows preparation and service-startup activity in its own
-window, then opens the main VISTA interface. Do not move `VISTA.app` out of its folder: `app/`,
-`bin/`, `node/`, `payload/`, `manifest.json`, and `vista` are its runtime. The `vista` command
-remains available on macOS for diagnostics.
+**VISTA is an application on every platform.** Open it the way you open any other:
 
-To install by hand instead, download the archive for your platform and its `.sha256` from the
-[release](https://github.com/Genesis-VISTA/vista/releases), then:
+| | Where it is installed | Open it from |
+|---|---|---|
+| macOS | `/Applications/VISTA`, or `~/Applications/VISTA` when your account cannot write to `/Applications` | Spotlight, Launchpad, Finder's Applications or the Dock: `VISTA.app` |
+| Linux | `~/.local/share/vista/app` | the app menu, which runs `app/window/vista-app` |
+| Windows | `%LOCALAPPDATA%\VISTA\app` | the Start menu, which runs `app\window\VISTA.exe --startup` |
+
+It shows its own startup in a window straight away, then the VISTA interface; closing it stops
+VISTA. Set `VISTA_INSTALL_DIR` to install somewhere else.
+
+The installed folder is the application: keep it together. On macOS, `VISTA.app` must stay
+beside `app/`, `bin/`, `node/`, `payload/`, `manifest.json` and `vista`, which are its runtime,
+and says so if it is moved out.
+
+**The terminal launchers are for diagnostics.** `vista` (macOS, Linux; also linked as
+`~/.local/bin/vista`) and `vista.cmd` (Windows) start the same VISTA from a terminal, printing
+each step, and are what to run when something needs looking into, or over a connection with no
+window.
+
+To install by hand instead, follow the steps in the release's notes. On macOS or Linux, in
+short: download the archive for your platform and its `.sha256` from the
+[release](https://github.com/Genesis-VISTA/vista/releases) with `curl` (a browser download is
+blocked by macOS), check it, unpack it, and put the folder where the table above says:
 
 ```bash
 shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
-mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
-cd ~/vista/vista-<version>-<platform>
-./vista  # Linux, or macOS diagnostics
+tar -xf vista-<version>-<platform>.tar.gz
+mv vista-<version>-mac-arm64 /Applications/VISTA && open /Applications/VISTA/VISTA.app   # macOS
+mv vista-<version>-linux-x86 ~/.local/share/vista/app && ~/.local/share/vista/app/app/window/vista-app   # Linux
 ```
 
 Extract with the platform's own `tar`. macOS `bsdtar` stores extended
@@ -78,18 +91,19 @@ sandbox cannot create microVMs.
 First run extracts the corpus, vector store, and embedding weights from the
 package's `payload/payload.tar` into the state directory (~1 GB), imports the
 sandbox image, and seeds the database.
-That takes a few minutes. The macOS startup window shows each real activity;
+That takes a few minutes. The startup window shows each real activity;
 later runs mark already-prepared work and start in seconds. Startup failures
 offer Retry, Open Logs, Copy Diagnostics, and Quit without exposing a terminal.
 
 VISTA then opens in its own window.
-Closing the window or pressing Cmd-Q stops VISTA on macOS. When using a package
-launcher, Ctrl-C and closing its terminal stop it too. VISTA is a desktop
+Closing the window, or Cmd-Q on macOS, stops VISTA. With a terminal launcher,
+Ctrl-C and closing its terminal stop it too. VISTA is a desktop
 application and has no browser mode. In a session that can't show the window,
-the launcher says why and stops before starting
+it says why and stops before starting
 anything: an SSH session, no display, or, on Linux, running as root or missing
-system libraries (see below). If the window crashes, the launcher reports its exit
-status and stops the services. If another VISTA window is already open, a
+system libraries (see below). On Linux, where there is no window to say it in,
+that is a desktop notification and a line in `logs/window.log`. If the window
+crashes, the services are stopped. If another VISTA window is already open, a
 second launch brings the existing startup or main window forward rather than
 starting another stack.
 
@@ -103,11 +117,11 @@ On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
 virtual machine needs nested virtualisation enabled by its host; and access is
 usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
-login is the common fix.
+login is the common fix. Without it, the startup window says so and stops.
 
 **The window on Linux** needs a desktop session (X11 or Wayland) and four
 system libraries that every desktop install already has. A minimal server or a
-container may not have them, and then the launcher names what is missing and
+container may not have them, and then VISTA names what is missing and
 stops:
 
 | | Debian / Ubuntu | Fedora / RHEL |
@@ -125,16 +139,16 @@ sudo dnf install gtk3 nss alsa-lib mesa-libgbm                  # Fedora, RHEL
 **Chromium's sandbox on Ubuntu.** The window's pages run inside Chromium's
 sandbox, which needs unprivileged user namespaces. Ubuntu 23.10 and later
 allow those only to programs an AppArmor profile names. So on stock Ubuntu the window
-starts without the sandbox, and the launcher says so on every start, with the
+starts without the sandbox, and the startup window says so on every start, with the
 two commands that turn it on. The package ships the profile. Installing it is
-a one-time step that covers every later unpack and version:
+a one-time step that covers every later version:
 
 ```bash
-sudo install -m 644 ~/vista/vista-<version>-<platform>/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
+sudo install -m 644 ~/.local/share/vista/app/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
 sudo apparmor_parser -r /etc/apparmor.d/vista-window
 ```
 
-The launcher prints these with your package's own path. Debian and Fedora need
+VISTA shows these with your package's own path. Debian and Fedora need
 no step. Where the host blocks user namespaces some other way, such as inside
 a container, the window also runs without the sandbox and says so, with
 nothing to install. While the sandbox is off, PDFs open in your default
@@ -147,8 +161,8 @@ sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
 `window.log`, `setup.log`). The window's own browser cache is kept apart, in
 `~/Library/Application Support/VISTA` on macOS, `~/.config/VISTA` on Linux, and
 `%APPDATA%\VISTA` on Windows.
-The unpacked package tree is disposable. Upgrading is replacing
-that directory, and starting over is deleting the state directory.
+The installed package folder is disposable. Upgrading is replacing
+that folder, which the installer does, and starting over is deleting the state directory.
 
 | Variable             | Description                                                                                                                                             | Default    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
@@ -287,10 +301,11 @@ correct build.
 ### Building on Windows
 
 Run the same script from Git Bash (it comes with Git for Windows). It builds a
-`win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
-they run `vista.cmd`, from cmd, PowerShell, or by double-clicking. That is the
-entry point; `vista.ps1` does the work behind it but is not meant to be run
-directly, since only `vista.cmd` gets it past a Group Policy execution policy.
+`win-x86` package whose launcher is PowerShell, so a researcher needs no bash.
+They open `app\window\VISTA.exe` from the Start menu, and it runs `vista.ps1`
+itself, hidden, after the same unblock and execution-policy check `vista.cmd`
+makes. `vista.cmd` is the diagnostic launcher, from cmd, PowerShell, or by
+double-clicking; `vista.ps1` is not meant to be run directly.
 
 ```bash
 ./scripts/build_local_package.sh --check
