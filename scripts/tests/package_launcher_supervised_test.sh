@@ -398,21 +398,21 @@ if [[ ! -e /dev/kvm ]]; then
   grep -qx '{"protocol":1,"phase":"preflight","state":"failed","code":"virtualisation-unavailable"}' \
     "$TMP/kvm-stdout"
   grep -q 'VISTA needs hardware virtualisation on Linux' "$TMP/kvm-stderr"
-fi
 
-# The ordinary Linux launcher keeps its platform preflight and never enters
-# the protocol.
-printf '%s\n' '{"os": "linux", "arch": "arm64", "exe": "missing-window"}' \
-  > "$PACKAGE/manifest.json"
-linux_status=0
-env TEST_UNAME_S=Linux PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
-  VISTA_NO_WINDOW=1 "$PACKAGE/vista" \
-  > "$TMP/linux-stdout" 2> "$TMP/linux-stderr" || linux_status=$?
-[[ "$linux_status" != 0 ]]
-grep -q 'VISTA needs hardware virtualisation on Linux' "$TMP/linux-stderr"
-if grep -q '^{"protocol":' "$TMP/linux-stdout"; then
-  printf 'ordinary Linux launcher emitted supervised protocol output\n' >&2
-  exit 1
+  # The ordinary Linux launcher keeps its platform preflight and never enters
+  # the protocol.
+  linux_status=0
+  env TEST_UNAME_S=Linux PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_NO_WINDOW=1 "$PACKAGE/vista" \
+    > "$TMP/linux-stdout" 2> "$TMP/linux-stderr" || linux_status=$?
+  [[ "$linux_status" != 0 ]]
+  grep -q 'VISTA needs hardware virtualisation on Linux' "$TMP/linux-stderr"
+  if grep -q '^{"protocol":' "$TMP/linux-stdout"; then
+    printf 'ordinary Linux launcher emitted supervised protocol output\n' >&2
+    exit 1
+  fi
+else
+  printf 'skipping the KVM refusal checks: this host has /dev/kvm\n'
 fi
 
 printf '%s\n' "package launcher supervised-mode tests passed"
