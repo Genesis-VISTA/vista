@@ -108,12 +108,15 @@ dropped by design D7; `signing-spike.md` keeps their record.
   (`app/window/vista-app` and `vista`; `app/window/VISTA.exe` and `vista.cmd`).
   *Done with 4.8, which reads them. The build checks that the Linux entrypoint exists from 5.1,
   which adds it.*
-- [ ] 6.4 In `scripts/smoke_test_package.sh`, replace the macOS-only Finder launch with one
+- [x] 6.4 In `scripts/smoke_test_package.sh`, replace the macOS-only Finder launch with one
   supervised check on every platform (design D12): events in order to `ui`/`ready` with the
   right URL; a forced port conflict giving `preflight`/`failed`/`port-conflict`; a stop leaving
   no process or port. Keep every existing check.
-- [ ] 6.5 Keep the window as the only signed path on macOS (ad hoc), and keep the preflight that
+- [x] 6.5 Keep the window as the only signed path on macOS (ad hoc), and keep the preflight that
   refuses any other `codesign` in the build.
+  *6.4 passed against a copy of the 0.1.1-rc2 macOS package with this branch's launcher, every
+  existing check included; Linux and Windows run it in 9.1's release build. 6.5 was already in
+  place: one ad-hoc `codesign --sign`, and a preflight that refuses any other.*
 
 ## 7. Installers
 

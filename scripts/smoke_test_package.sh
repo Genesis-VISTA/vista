@@ -46,10 +46,8 @@ skip() {
 }
 
 IS_WINDOWS=false
-IS_MACOS=false
 case "$(uname -s)" in
   MINGW*|MSYS*) IS_WINDOWS=true ;;
-  Darwin) IS_MACOS=true ;;
 esac
 
 # The package's own interpreter, for the checks below that parse JSON.
@@ -86,37 +84,24 @@ wait_for() {
 # The package's own launcher is what gets exercised, rather than a second copy
 # of its logic: first-run setup, the path pinning, the sandbox image import and
 # the service ordering all live there, and a smoke test that reimplemented them
-# would be testing itself.
-# A macOS build running in a logged-in graphical session starts its top-level
-# application exactly as the user does. Headless builders and the other
-# platforms retain the diagnostic-launcher path.
+# would be testing itself. The diagnostic launcher starts the services for the
+# checks below; the application's own supervised mode is checked after them, the
+# same way on every platform (desktop-app-startup D12).
 WINDOW_EXE="$(
   "$PACKAGE_PYTHON" -c \
     'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
     "$PACKAGE/manifest.json"
 )"
-ENTRYPOINT="$(
-  "$PACKAGE_PYTHON" -c \
-    'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("entrypoint") or "")' \
-    "$PACKAGE/manifest.json"
-)"
-USE_MAC_APP=false
-if [[ "$IS_MACOS" == true && "$ENTRYPOINT" == VISTA.app \
-      && "$(launchctl managername 2>/dev/null)" == Aqua ]]; then
-  USE_MAC_APP=true
-fi
-
 LAUNCHER=("$PACKAGE/vista")
+SUPERVISED_ARGS=(--supervised --progress=jsonl)
 if [[ "$IS_WINDOWS" == true ]]; then
   [[ -f "$PACKAGE/vista.ps1" ]] || die "no launcher at $PACKAGE/vista.ps1"
   LAUNCHER=(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PACKAGE/vista.ps1")
-elif [[ "$USE_MAC_APP" == true ]]; then
-  [[ -x "$PACKAGE/$WINDOW_EXE" ]] || die "no macOS application executable at $WINDOW_EXE"
-  LAUNCHER=("$PACKAGE/$WINDOW_EXE" "--user-data-dir=$STATE/window-profile")
+  SUPERVISED_ARGS=(-Supervised -Progress jsonl)
 else
   [[ -x "$PACKAGE/vista" ]] || die "no launcher at $PACKAGE/vista"
-  export VISTA_NO_WINDOW=1
 fi
+export VISTA_NO_WINDOW=1
 
 export VISTA_HOME="$STATE"
 
@@ -141,11 +126,7 @@ BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 
 mkdir -p "$STATE" "$LOGS"
 
-if [[ "$USE_MAC_APP" == true ]]; then
-  log "starting the top-level VISTA.app"
-else
-  log "starting the package launcher"
-fi
+log "starting the package launcher"
 "${LAUNCHER[@]}" > "$LOGS/launcher.log" 2>&1 &
 PIDS+=($!)
 
@@ -161,11 +142,8 @@ show_launcher_logs() {
   done
 }
 
-# The diagnostic launcher prints an address when its services are up. The
-# macOS application reports that its hidden main renderer became visible, so
-# the app-first lane observes the complete startup-to-main transition.
+# The diagnostic launcher prints an address when its services are up.
 READY_PATTERN='VISTA is running at'
-[[ "$USE_MAC_APP" == true ]] && READY_PATTERN='vista-window: main window ready'
 for (( i = 0; i < 600; i++ )); do
   grep -q "$READY_PATTERN" "$LOGS/launcher.log" 2>/dev/null && break
   if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
@@ -288,9 +266,6 @@ version_is_consistent() {
       | "$PACKAGE_PYTHON" -c \
         'import json,sys; print(json.load(sys.stdin.buffer)["info"]["version"])'
   )"
-  # In app-first mode the supervised launcher's stderr is owned by Electron
-  # and appended to window.log; launcher.log contains Electron's own stdout.
-  [[ "$USE_MAC_APP" == true ]] && version_log="$LOGS/window.log"
   [[ -n "$declared" && "$declared" == "$reported" ]] \
     && grep -q "VISTA $declared" "$version_log"
 }
@@ -315,10 +290,7 @@ window_loads_the_ui() {
   ${WINDOW_RUNNER[@]+"${WINDOW_RUNNER[@]}"} "$PACKAGE/$WINDOW_EXE" $sandbox \
     --smoke-test --url="http://127.0.0.1:$UI_PORT/" >> "$LOGS/window-smoke.log" 2>&1
 }
-if [[ "$USE_MAC_APP" == true ]]; then
-  check "VISTA.app transitions to the main window" \
-    grep -q 'vista-window: main window ready' "$LOGS/launcher.log"
-elif [[ -z "$WINDOW_EXE" ]]; then
+if [[ -z "$WINDOW_EXE" ]]; then
   skip "the window loads the UI" "this package has no window"
 elif [[ "$(uname -s)" == Darwin && "$(launchctl managername 2>/dev/null)" != Aqua ]]; then
   skip "the window loads the UI" "no GUI session here (SSH?); rerun from a logged-in desktop"
@@ -334,6 +306,9 @@ fi
 
 log "shutting down"
 cleanup
+# cleanup disarms the trap; the supervised check below starts processes again.
+PIDS=()
+trap cleanup INT TERM EXIT
 
 ports_are_free() {
   "$PACKAGE_PYTHON" - "$MCP_PORT" "$BACKEND_PORT" "$UI_PORT" <<'PYCHECK'
@@ -347,18 +322,120 @@ for raw_port in sys.argv[1:]:
             raise SystemExit(f"port {raw_port} remains occupied")
 PYCHECK
 }
+# Windows processes are not visible to Git Bash's own process table, so there
+# the question goes to Windows, by executable path.
 package_processes_are_gone() {
   local pid
+  if [[ "$IS_WINDOWS" == true ]]; then
+    local count
+    count="$(powershell.exe -NoProfile -Command \
+      "@(Get-Process | Where-Object { \$_.Path -and \$_.Path.StartsWith('$(cygpath -w "$PACKAGE")', 'OrdinalIgnoreCase') }).Count" \
+      | tr -d '\r')"
+    [[ "$count" == 0 ]] || { echo "$count package processes remain" >&2; return 1; }
+    return 0
+  fi
   while IFS= read -r pid; do
     [[ -z "$pid" || "$pid" == "$$" ]] && continue
     echo "package process $pid remains" >&2
     return 1
   done < <(pgrep -f "$PACKAGE" 2>/dev/null || true)
 }
-if [[ "$USE_MAC_APP" == true ]]; then
-  check "quitting VISTA.app releases all service ports" ports_are_free
-  check "quitting VISTA.app leaves no package process" package_processes_are_gone
-fi
+
+# ─── the application's supervised protocol ──────────────────────────────────
+
+# What the application depends on, checked on every platform (D12): the
+# launcher's supervised mode, which VISTA.exe, VISTA.app and vista-app all
+# start. Its stdin comes from a loop that ends when $STOP_FILE appears, which
+# closes the pipe: the end of stdin is the stop request on every platform, and
+# a pipe, unlike a FIFO, reaches a native Windows process from Git Bash.
+STOP_FILE="$STATE/supervised.stop"
+supervised_input() {
+  while [[ ! -e "$STOP_FILE" ]]; do perl -e 'select(undef, undef, undef, 0.2)'; done
+}
+
+# The events, in order, from a protocol-v1 stream: every phase starts and then
+# completes or becomes ready, through ui/ready at the given URL.
+events_run_in_order() {
+  "$PACKAGE_PYTHON" - "$1" "$2" <<'PYCHECK'
+import json
+import sys
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+if any(event.get("protocol") != 1 for event in events):
+    sys.exit("an event is not protocol 1")
+seen = [(event["phase"], event["state"]) for event in events]
+expected = [
+    ("preflight", "running"), ("preflight", "complete"),
+    ("resources", "running"), ("resources", "complete"),
+    ("sandbox", "running"), ("sandbox", "complete"),
+    ("mcp", "running"), ("mcp", "ready"),
+    ("backend", "running"), ("backend", "ready"),
+    ("ui", "running"), ("ui", "ready"),
+]
+if seen[: len(expected)] != expected:
+    sys.exit(f"events out of order: {seen}")
+if events[len(expected) - 1].get("url") != sys.argv[2]:
+    sys.exit(f"ui is ready at {events[len(expected) - 1].get('url')!r}, not {sys.argv[2]!r}")
+PYCHECK
+}
+
+log "checking the supervised protocol"
+rm -f "$STOP_FILE"
+
+# A port in use fails preflight with its code, before anything starts. The
+# package's own interpreter holds the UI port meanwhile.
+"$PACKAGE_PYTHON" -c '
+import socket, sys, time
+sock = socket.socket()
+sock.bind(("127.0.0.1", int(sys.argv[1])))
+sock.listen()
+time.sleep(120)
+' "$UI_PORT" &
+PORT_HOLDER=$!
+PIDS+=("$PORT_HOLDER")
+for (( i = 0; i < 50; i++ )); do
+  (exec 3<>"/dev/tcp/127.0.0.1/$UI_PORT") 2>/dev/null && break
+  perl -e 'select(undef, undef, undef, 0.1)'
+done
+"${LAUNCHER[@]}" "${SUPERVISED_ARGS[@]}" < /dev/null \
+  > "$LOGS/supervised-conflict.jsonl" 2> "$LOGS/supervised-conflict.log" || true
+kill "$PORT_HOLDER" 2>/dev/null || true
+wait "$PORT_HOLDER" 2>/dev/null || true
+PIDS=()
+conflict_is_reported() {
+  [[ "$(tr -d '\r' < "$LOGS/supervised-conflict.jsonl" | tail -1)" \
+    == '{"protocol":1,"phase":"preflight","state":"failed","code":"port-conflict"}' ]]
+}
+check "a port in use fails preflight with port-conflict" conflict_is_reported
+
+supervised_input | "${LAUNCHER[@]}" "${SUPERVISED_ARGS[@]}" \
+  > "$LOGS/supervised.jsonl" 2> "$LOGS/supervised.log" &
+SUPERVISED_PID=$!
+PIDS+=("$SUPERVISED_PID")
+for (( i = 0; i < 600; i++ )); do
+  grep -q '"phase":"ui","state":"ready"' "$LOGS/supervised.jsonl" 2>/dev/null && break
+  kill -0 "$SUPERVISED_PID" 2>/dev/null || break
+  perl -e 'select(undef, undef, undef, 1)'
+done
+check "supervised events run in order to ui/ready" \
+  events_run_in_order "$LOGS/supervised.jsonl" "http://127.0.0.1:$UI_PORT"
+
+# The stop request: stdin closes, and the launcher's own stop runs.
+touch "$STOP_FILE"
+for (( i = 0; i < 60; i++ )); do
+  kill -0 "$SUPERVISED_PID" 2>/dev/null || break
+  perl -e 'select(undef, undef, undef, 1)'
+done
+stopped_on_request() {
+  ! kill -0 "$SUPERVISED_PID" 2>/dev/null \
+    && grep -q '"phase":"stopping","state":"running"' "$LOGS/supervised.jsonl"
+}
+check "closing stdin stops the supervised launcher" stopped_on_request
+# If closing stdin did not stop it, that check has failed; stop it anyway so
+# nothing is left running.
+kill -0 "$SUPERVISED_PID" 2>/dev/null && cleanup
+check "the stop releases every service port" ports_are_free
+check "the stop leaves no package process" package_processes_are_gone
 
 if (( FAILED )); then
   echo >&2
