@@ -11,12 +11,12 @@
 
 ## 2. UI: agent settings store and model picker
 
-- [ ] 2.1 Add `lib/agent-settings.ts`, a module-level store over `/users/me/inference` with `useAgentSettings()` and `refreshAgentSettings()`, and verify a unit test that a refresh updates every subscriber
-- [ ] 2.2 Make `qualifyModelInput` always add `openai:` (colons included), and verify a unit test with `anthropic.claude-sonnet-v1:0`
-- [ ] 2.3 Rework `ModelPicker` to read the label from the store ("Default (<model>)", or a chosen model marked "not listed by <provider>"), refetch the list on open and when provider/endpoint/key change, and refresh the store after a selection, and verify `ModelPicker.test.tsx` covers each label and the refetch after a provider change without a remount
-- [ ] 2.4 Add the always-present "Use another model…" entry with a text input, and verify a test that a typed name is saved as `openai:<name>`
-- [ ] 2.5 Replace the stale "click your name in the bottom-left corner" hint with text pointing to the picker's typed entry, and verify by test that the unavailable/error states show it
-- [ ] 2.6 Hold a send when the store says there is no effective model: keep the composer text and open the picker with a "choose a model first" hint, and verify by a test of the chat page (or its composer hook) that no run starts
+- [x] 2.1 Add `lib/agent-settings.ts`, a module-level store over `/users/me/inference` with `useAgentSettings()` and `refreshAgentSettings()`, and verify a unit test that a refresh updates every subscriber
+- [x] 2.2 Make `qualifyModelInput` always add `openai:` (colons included), and verify a unit test with `anthropic.claude-sonnet-v1:0`
+- [x] 2.3 Rework `ModelPicker` to read the label from the store ("Default (<model>)", or a chosen model marked "not listed by <provider>"), refetch the list on open and when provider/endpoint/key change, and refresh the store after a selection, and verify `ModelPicker.test.tsx` covers each label and the refetch after a provider change without a remount
+- [x] 2.4 Add the always-present "Use another model…" entry with a text input, and verify a test that a typed name is saved as `openai:<name>`
+- [x] 2.5 Replace the stale "click your name in the bottom-left corner" hint with text pointing to the picker's typed entry, and verify by test that the unavailable/error states show it
+- [x] 2.6 Hold a send when the store says there is no effective model: keep the composer text and open the picker with a "choose a model first" hint, and verify by a test of the chat page (or its composer hook) that no run starts
 
 ## 3. UI: settings modal structure
 

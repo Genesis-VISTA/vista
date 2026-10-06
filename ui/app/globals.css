@@ -634,7 +634,8 @@ main {
 }
 
 .model-picker-label {
-  max-width: 18ch;
+  /* Room for "Default (claude-sonnet)". */
+  max-width: 26ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -721,6 +722,79 @@ main {
 
 .model-picker-hint a {
   color: var(--brand);
+}
+
+.model-picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-picker-options:empty {
+  display: none;
+}
+
+/* "Choose a model first": the picker opened because a send was held. */
+.model-picker-hint[data-tone="ask"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The label's "not listed by <provider>" marker. */
+.model-picker-unlisted {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.model-picker-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.model-picker-other-form {
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+
+.model-picker-other-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.model-picker-other-form input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.model-picker-other-form button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-picker-other-form button:hover:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.model-picker-other-form button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ---------- "Pick a project" panel ----------------------------------- */

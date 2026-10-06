@@ -10,6 +10,7 @@ import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolAppro
 import CampaignPanel from "@/components/CampaignPanel";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ModelPicker } from "@/components/ModelPicker";
+import { holdSendWithoutModel } from "@/lib/agent-settings";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
@@ -982,6 +983,8 @@ export default function HomePage() {
   async function sendUserMessage() {
     const text = input.trim();
     if (!text || isRunActive) return;
+    // No model and no default (MAG, Custom): keep the text and open the picker.
+    if (holdSendWithoutModel()) return;
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",

@@ -30,8 +30,14 @@ export type UserPublic = {
 /** Backend `UserPublicWithConfig` — returned by `GET /users/me?config=true` and `PUT /users/me`. */
 export type UserPublicWithConfig = UserPublic & {
   inference_model: string | null;
+  /** Custom's endpoint; the other providers' come from the backend's presets. */
   inference_base_url: string | null;
+  /** AmSC i2's key (the one key there was before provider choice). */
   inference_api_key: string | null;
+  /** `i2`, `mag` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
+  inference_provider?: string | null;
+  inference_mag_api_key?: string | null;
+  inference_custom_api_key?: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   /**
@@ -80,6 +86,10 @@ export type UserSelfUpdate = {
   inference_model?: string | null;
   inference_base_url?: string | null;
   inference_api_key?: string | null;
+  /** Changing it clears `inference_model` on the backend, unless this update sets one. */
+  inference_provider?: string | null;
+  inference_mag_api_key?: string | null;
+  inference_custom_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
   odo_remote_dir?: string | null;
