@@ -25,6 +25,50 @@ export const HPC_CLUSTER_TITLES: Record<HpcCluster, string> = {
   lux: "Lux",
 };
 
+export type ResourceFacility = {
+  id: "olcf" | "nersc";
+  name: string;
+  clusters: readonly HpcCluster[];
+};
+
+export type ResourceInstitution = {
+  id: "ornl" | "lbnl";
+  name: string;
+  facilities: readonly ResourceFacility[];
+};
+
+/**
+ * Where each cluster lives: institution, then facility, in display order.
+ * The settings navigation and the rail's facility headers are both built from
+ * it, so their order cannot drift. It lists only `HPC_CLUSTERS`, so no
+ * facility or institution is ever empty.
+ */
+export const RESOURCE_TREE: readonly ResourceInstitution[] = [
+  {
+    id: "ornl",
+    name: "ORNL",
+    facilities: [{ id: "olcf", name: "OLCF", clusters: ["odo", "frontier", "lux"] }],
+  },
+  {
+    id: "lbnl",
+    name: "LBNL",
+    facilities: [{ id: "nersc", name: "NERSC", clusters: ["perlmutter"] }],
+  },
+];
+
+/** A cluster's institution and facility, from `RESOURCE_TREE`. */
+export function resourcePlace(cluster: HpcCluster): {
+  institution: ResourceInstitution;
+  facility: ResourceFacility;
+} {
+  for (const institution of RESOURCE_TREE) {
+    for (const facility of institution.facilities) {
+      if (facility.clusters.includes(cluster)) return { institution, facility };
+    }
+  }
+  throw new Error(`${cluster} is missing from RESOURCE_TREE`);
+}
+
 /** The backend's per-cluster state. */
 export type HpcState =
   | "degraded"

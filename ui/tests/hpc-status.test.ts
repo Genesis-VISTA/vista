@@ -1,9 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  HPC_CLUSTERS,
   POLL_MS,
+  RESOURCE_TREE,
   STALE_MS,
   recheckHpcStatus,
+  resourcePlace,
   resetHpcStatusForTests,
   useHpcStatus,
   type HpcClusterStatus,
@@ -76,6 +79,27 @@ async function advance(ms: number) {
 function urls(): string[] {
   return fetchMock.mock.calls.map((c) => String(c[0]));
 }
+
+describe("RESOURCE_TREE", () => {
+  const listed = RESOURCE_TREE.flatMap((i) => i.facilities.flatMap((f) => f.clusters));
+
+  it("lists every cluster exactly once", () => {
+    expect([...listed].sort()).toEqual([...HPC_CLUSTERS].sort());
+  });
+
+  it("has no empty facility or institution", () => {
+    for (const institution of RESOURCE_TREE) {
+      expect(institution.facilities.length).toBeGreaterThan(0);
+      for (const facility of institution.facilities) expect(facility.clusters.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("orders ORNL › OLCF › Odo, Frontier, Lux, then LBNL › NERSC › Perlmutter", () => {
+    expect(listed).toEqual(["odo", "frontier", "lux", "perlmutter"]);
+    expect(resourcePlace("perlmutter").institution.name).toBe("LBNL");
+    expect(resourcePlace("frontier").facility.name).toBe("OLCF");
+  });
+});
 
 describe("useHpcStatus", () => {
   it("fetches once on mount, shared between subscribers", async () => {

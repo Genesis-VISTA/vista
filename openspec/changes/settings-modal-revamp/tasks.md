@@ -22,12 +22,12 @@
 
 ## 3. UI: settings modal structure
 
-- [ ] 3.1 Add `RESOURCE_TREE` (ORNL › OLCF › odo, frontier, lux; LBNL › NERSC › perlmutter) to `lib/hpc-status.ts`, and verify `hpc-status.test.ts` asserts every `HPC_CLUSTERS` entry appears exactly once and no facility is empty
-- [ ] 3.2 Split `UserSettingsModal` into a navigation (Appearance, Agent, the resource tree with status dots and hidden markers) and one section at a time, opening on Agent, or on `initialCluster`'s section; remove the "Signed in as" block. Verify `UserSettingsModal.test.tsx` covers default and deep-link opening and the hidden marker
-- [ ] 3.3 Build the Appearance section from the existing `AppearanceSetting`, and verify the existing theme tests still pass
-- [ ] 3.4 Build the Agent section: the provider choice from the store's options, a key field per provider, an endpoint field only for Custom, the "from configuration" label when the source is config, and no Model field. Verify by test that switching provider shows that provider's key field and that only Custom shows a URL
-- [ ] 3.5 Build each cluster's section from the existing fields (institution › facility line, status, "Show in sidebar", credentials, remote directory, and Odo's and Frontier's own Globus connect), and verify the existing per-cluster field tests pass against the new layout
-- [ ] 3.6 Add the narrow layout (container query at about 720 px: list, then full-width section with a back control), and verify with a Playwright screenshot at a narrow width in the hermetic shots suite
+- [x] 3.1 Add `RESOURCE_TREE` (ORNL › OLCF › odo, frontier, lux; LBNL › NERSC › perlmutter) to `lib/hpc-status.ts`, and verify `hpc-status.test.ts` asserts every `HPC_CLUSTERS` entry appears exactly once and no facility is empty
+- [x] 3.2 Split `UserSettingsModal` into a navigation (Appearance, Agent, the resource tree with status dots and hidden markers) and one section at a time, opening on Agent, or on `initialCluster`'s section; remove the "Signed in as" block. Verify `UserSettingsModal.test.tsx` covers default and deep-link opening and the hidden marker
+- [x] 3.3 Build the Appearance section from the existing `AppearanceSetting`, and verify the existing theme tests still pass
+- [x] 3.4 Build the Agent section: the provider choice from the store's options, a key field per provider, an endpoint field only for Custom, the "from configuration" label when the source is config, and no Model field. Verify by test that switching provider shows that provider's key field and that only Custom shows a URL
+- [x] 3.5 Build each cluster's section from the existing fields (institution › facility line, status, "Show in sidebar", credentials, remote directory, and Odo's and Frontier's own Globus connect), and verify the existing per-cluster field tests pass against the new layout
+- [x] 3.6 Add the narrow layout (container query at about 720 px: list, then full-width section with a back control), and verify with a Playwright screenshot at a narrow width in the hermetic shots suite
 
 ## 4. UI: autosave
 

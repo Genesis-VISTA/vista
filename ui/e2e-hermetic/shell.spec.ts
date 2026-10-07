@@ -305,8 +305,8 @@ test.describe("HPC availability cards", () => {
       .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=lux");
 
     await details.getByRole("button", { name: "Settings" }).click();
-    const settings = page.getByRole("dialog", { name: "User settings" });
-    await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-expanded", "true");
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-current", "page");
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     await expect(lux.getByRole("textbox")).toHaveCount(2);
@@ -324,16 +324,53 @@ test.describe("HPC availability cards", () => {
       .getByRole("button", { name: "Settings" })
       .click();
 
-    const settings = page.getByRole("dialog", { name: "User settings" });
-    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-expanded", "true");
-    await expect(settings.getByRole("button", { name: /^Odo,/ })).toHaveAttribute("aria-expanded", "false");
-    await expect(settings.getByRole("button", { name: /^Perlmutter,/ })).toHaveAttribute("aria-expanded", "false");
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-current", "page");
+    await expect(settings.getByRole("region", { name: "Frontier" })).toContainText("ORNL › OLCF");
     await expect(settings.getByLabel("Frontier S3M token")).toBeVisible();
+    await expect(settings.getByRole("region", { name: "Odo" })).toHaveCount(0);
 
-    // From the rail's own settings button, every cluster starts collapsed.
+    // From the rail's own settings button, it opens on Agent with every
+    // cluster listed and none of their sections shown.
     await settings.getByRole("button", { name: "Close" }).click();
     await rail.getByRole("button", { name: "Open settings" }).click();
-    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-expanded", "false");
+    await expect(settings.getByRole("region", { name: "Agent" })).toBeVisible();
+    await expect(settings.getByRole("button", { name: /^Frontier,/ })).not.toHaveAttribute("aria-current");
+    await expect(settings.getByRole("region", { name: "Frontier" })).toHaveCount(0);
+  });
+
+  test("in a narrow window, the list and a section take turns", async ({ page }) => {
+    await installStub(page);
+    await page.setViewportSize({ width: 600, height: 800 });
+    await page.goto("/skills");
+    await page.getByRole("button", { name: "Open settings" }).click();
+
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const nav = settings.getByRole("navigation", { name: "Settings sections" });
+    await expect(nav).toBeVisible();
+    await expect(settings.getByRole("region", { name: "Agent" })).toBeHidden();
+
+    await nav.getByRole("button", { name: /^Frontier,/ }).click();
+    const frontier = settings.getByRole("region", { name: "Frontier" });
+    await expect(frontier).toBeVisible();
+    await expect(nav).toBeHidden();
+    // The section takes the dialog's full width.
+    const [dialogBox, sectionBox] = await Promise.all([settings.boundingBox(), frontier.boundingBox()]);
+    expect(sectionBox!.width).toBeGreaterThan(dialogBox!.width - 4);
+
+    await settings.getByRole("button", { name: "All settings" }).click();
+    await expect(nav).toBeVisible();
+    await expect(frontier).toBeHidden();
+  });
+
+  test("in a wide window, the list sits beside the section with no back control", async ({ page }) => {
+    await installStub(page);
+    await page.goto("/skills");
+    await page.getByRole("button", { name: "Open settings" }).click();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect(settings.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    await expect(settings.getByRole("region", { name: "Agent" })).toBeVisible();
+    await expect(settings.getByRole("button", { name: "All settings" })).toBeHidden();
   });
 
   test("hiding a cluster in settings removes its card", async ({ page }) => {
@@ -349,7 +386,7 @@ test.describe("HPC availability cards", () => {
       .getByRole("button", { name: "Settings" })
       .click();
 
-    const settings = page.getByRole("dialog", { name: "User settings" });
+    const settings = page.getByRole("dialog", { name: "Settings" });
     await settings.getByRole("switch", { name: "Show Perlmutter in sidebar" }).click();
     await settings.getByRole("button", { name: "Save" }).click();
 

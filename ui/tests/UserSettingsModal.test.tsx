@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
 import { setThemeChoice } from "@/lib/theme";
+import type { AgentSettings } from "@/lib/agent-settings";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { UserPublicWithConfig } from "@/lib/user";
 
@@ -27,6 +28,15 @@ vi.mock("@/lib/hpc-status", async (importOriginal) => ({
   recheckHpcStatus: recheckMock,
   refreshHpcStatus: refreshMock,
   useHpcStatus: useHpcStatusMock,
+}));
+
+const { useAgentSettingsMock, refreshAgentSettingsMock } = vi.hoisted(() => ({
+  useAgentSettingsMock: vi.fn(),
+  refreshAgentSettingsMock: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/agent-settings", () => ({
+  useAgentSettings: useAgentSettingsMock,
+  refreshAgentSettings: refreshAgentSettingsMock,
 }));
 
 function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConfig {
@@ -74,13 +84,12 @@ function statusView(): HpcStatusView {
       checks: { facility: ok, credential: ok, globus: null, settings: ok, ...checks },
     },
   });
-  const luxEntry = entry("lux", "ready");
   return {
     clusters: [
       entry("frontier", "ready"),
       entry("odo", "ready"),
       entry("perlmutter", "not_connected"),
-      luxEntry,
+      entry("lux", "ready"),
     ],
     lastSuccessAt: 0,
     failing: false,
@@ -90,45 +99,136 @@ function statusView(): HpcStatusView {
   };
 }
 
+function agentSettings(overrides: Partial<AgentSettings> = {}): AgentSettings {
+  return {
+    providers: [
+      { id: "i2", name: "AmSC i2", takesUrl: false, defaultModel: "claude-sonnet" },
+      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: null },
+      { id: "olcf", name: "OLCF Inference", takesUrl: false, defaultModel: "gpt-oss-120b" },
+      { id: "custom", name: "Custom", takesUrl: true, defaultModel: null },
+    ],
+    provider: "i2",
+    source: "default",
+    baseUrl: "https://api.i2-core.american-science-cloud.org",
+    model: "openai:claude-sonnet",
+    modelIsDefault: true,
+    hasCredential: true,
+    keysSet: { i2: true, mag: false, olcf: false, custom: false },
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   fetchCurrentUserWithConfigMock.mockReset();
   updateCurrentUserMock.mockReset();
   updateCurrentUserMock.mockResolvedValue(user());
   recheckMock.mockClear();
   refreshMock.mockClear();
+  refreshAgentSettingsMock.mockClear();
   useHpcStatusMock.mockReturnValue(statusView());
+  useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null, modelChoiceRequest: 0 });
 });
 
-async function section(name: string) {
+const nav = () => screen.getByRole("navigation", { name: "Settings sections" });
+
+/** A navigation entry, by the start of its accessible name. */
+function entry(name: string) {
+  return within(nav()).getByRole("button", { name: new RegExp(`^${name}\\b`) });
+}
+
+async function region(name: string) {
   return screen.findByRole("region", { name });
 }
 
-function header(name: string) {
-  return screen.getByRole("button", { name: new RegExp(`^${name}\\b`) });
+async function openOn(name: string) {
+  await userEvent.click(entry(name));
+  return region(name);
 }
 
-describe("UserSettingsModal cluster sections", () => {
-  it("starts with every cluster collapsed, each showing its status", async () => {
+describe("UserSettingsModal navigation", () => {
+  it("lists Appearance, Agent and the resource tree, and opens on Agent", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
-    await section("Frontier");
-    for (const name of ["Frontier", "Odo", "Perlmutter"]) {
-      expect(header(name)).toHaveAttribute("aria-expanded", "false");
+    await region("Agent");
+
+    const names = within(nav())
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label")?.split(",")[0]);
+    expect(names).toEqual(["Appearance", "Agent", "Odo", "Frontier", "Lux", "Perlmutter"]);
+
+    const ornl = within(nav()).getByRole("group", { name: "ORNL" });
+    const olcf = within(ornl).getByRole("group", { name: "OLCF" });
+    expect(within(olcf).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      expect.stringContaining("Odo"),
+      expect.stringContaining("Frontier"),
+      expect.stringContaining("Lux"),
+    ]);
+    const nersc = within(within(nav()).getByRole("group", { name: "LBNL" })).getByRole("group", { name: "NERSC" });
+    expect(within(nersc).getByRole("button", { name: /^Perlmutter/ })).toBeInTheDocument();
+
+    expect(entry("Agent")).toHaveAttribute("aria-current", "page");
+    for (const cluster of ["Odo", "Frontier", "Lux", "Perlmutter"]) {
+      expect(screen.queryByRole("region", { name: cluster })).toBeNull();
     }
-    expect(header("Frontier")).toHaveTextContent("Ready");
-    expect(header("Perlmutter")).toHaveTextContent("Not connected");
-    expect(screen.queryByLabelText(/S3M token/)).toBeNull();
   });
 
-  it("opened for one cluster, expands only that one", async () => {
+  it("shows each resource's status in the tree, as the rail does", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Agent");
+    expect(entry("Frontier")).toHaveTextContent("Ready");
+    expect(entry("Frontier")).toHaveAccessibleName("Frontier, Ready");
+    expect(entry("Perlmutter")).toHaveTextContent("Not connected");
+  });
+
+  it("does not show the signed-in account", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ is_admin: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Agent");
+    expect(screen.queryByText(/Signed in as/)).toBeNull();
+    expect(screen.queryByText("researcher@ornl.gov")).toBeNull();
+  });
+
+  it("opened for one cluster, shows that cluster's section only", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
-    await section("Frontier");
-    expect(header("Frontier")).toHaveAttribute("aria-expanded", "true");
-    expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
-    expect(header("Perlmutter")).toHaveAttribute("aria-expanded", "false");
+    const frontier = await region("Frontier");
+    expect(entry("Frontier")).toHaveAttribute("aria-current", "page");
+    expect(entry("Agent")).not.toHaveAttribute("aria-current");
+    expect(frontier).toHaveTextContent("ORNL › OLCF");
+    expect(screen.queryByRole("region", { name: "Agent" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Odo" })).toBeNull();
   });
 
+  it("marks a hidden resource and still lists it under its facility", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ hpc_hidden_clusters: ["perlmutter"] }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Agent");
+    const nersc = within(nav()).getByRole("group", { name: "NERSC" });
+    const perlmutter = within(nersc).getByRole("button", { name: /^Perlmutter/ });
+    expect(perlmutter).toHaveTextContent("Hidden from sidebar");
+    expect(perlmutter).toHaveAccessibleName(/hidden from sidebar/);
+    expect(entry("Frontier")).not.toHaveTextContent("Hidden");
+  });
+
+  it("keeps edits made in one section while another is shown", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    await userEvent.type(await screen.findByLabelText(/Odo remote directory/), "/odo/vista");
+    await openOn("Frontier");
+    await userEvent.type(screen.getByLabelText(/Frontier remote directory/), "/frontier/vista");
+    await openOn("Odo");
+    expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue("/odo/vista");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      odo_remote_dir: "/odo/vista",
+      frontier_remote_dir: "/frontier/vista",
+    });
+  });
+});
+
+describe("UserSettingsModal cluster sections", () => {
   it("keeps each field in its own cluster's section", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(
       user({
@@ -140,10 +240,9 @@ describe("UserSettingsModal cluster sections", () => {
       }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
-    await section("Odo");
-    for (const name of ["Frontier", "Odo", "Perlmutter"]) await userEvent.click(header(name));
+    await region("Agent");
 
-    const odo = await section("Odo");
+    const odo = await openOn("Odo");
     expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveValue("odo-tok");
     expect(within(odo).getByText("Odo", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
@@ -151,24 +250,23 @@ describe("UserSettingsModal cluster sections", () => {
     const hint = within(odo).getByText(/writable by the project's group/);
     expect(hint).toHaveTextContent("<dir>.<user>.jobs");
     expect(hint).toHaveTextContent("<dir>.out");
+    expect(within(odo).getByRole("switch", { name: "Show Odo in sidebar" })).toBeChecked();
 
-    const frontier = await section("Frontier");
+    const frontier = await openOn("Frontier");
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
-    expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue(
-      "/frontier/proj/vista",
-    );
+    expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue("/frontier/proj/vista");
     expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
+    expect(within(frontier).getByText("Frontier", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
+    expect(frontier).toHaveTextContent("Ready");
 
-    const perlmutter = await section("Perlmutter");
+    const perlmutter = await openOn("Perlmutter");
+    expect(perlmutter).toHaveTextContent("LBNL › NERSC");
     expect(within(perlmutter).getByLabelText(/NERSC account/)).toHaveValue("m1234");
     expect(within(perlmutter).getByLabelText(/NERSC IRI token/)).toBeInTheDocument();
     // No Globus for Perlmutter, and no expiry claims for its token.
     expect(within(perlmutter).queryByText(/Globus/, { selector: ".user-settings-globus-cluster" })).toBeNull();
     expect(perlmutter).not.toHaveTextContent(/expire/i);
-
-    for (const name of ["Frontier", "Odo", "Perlmutter"]) {
-      expect(within(await section(name)).getByRole("switch", { name: `Show ${name} in sidebar` })).toBeChecked();
-    }
+    expect(within(perlmutter).getByRole("switch", { name: "Show Perlmutter in sidebar" })).toBeChecked();
   });
 });
 
@@ -184,6 +282,7 @@ describe("UserSettingsModal saving", () => {
     expect(updateCurrentUserMock).toHaveBeenCalledWith({ odo_s3m_token: "new-odo" });
     expect(recheckMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).toHaveBeenCalledWith("odo");
+    expect(refreshAgentSettingsMock).not.toHaveBeenCalled();
   });
 
   it("clearing one token sends null for it alone", async () => {
@@ -223,7 +322,7 @@ describe("UserSettingsModal saving", () => {
     const toggle = await screen.findByRole("switch", { name: "Show Perlmutter in sidebar" });
     await userEvent.click(toggle);
     expect(toggle).not.toBeChecked();
-    expect(header("Perlmutter")).toHaveTextContent("Hidden from sidebar");
+    expect(entry("Perlmutter")).toHaveTextContent("Hidden from sidebar");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["perlmutter"] });
@@ -242,11 +341,107 @@ describe("UserSettingsModal saving", () => {
   it("changing nothing about clusters triggers no recheck", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
-    await userEvent.type(await screen.findByLabelText(/^Model/), "claude-opus");
+    await userEvent.type(await screen.findByLabelText(/^AmSC i2 API key/), "i2-key");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("UserSettingsModal: Agent", () => {
+  it("offers the backend's providers in order, with i2's key and no Model or endpoint field", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ inference_api_key: "i2-key" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await region("Agent");
+
+    const select = within(agent).getByLabelText(/^Inference provider/);
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "AmSC i2",
+      "AmSC MAG",
+      "OLCF Inference",
+      "Custom",
+    ]);
+    expect(select).toHaveValue("i2");
+    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    expect(agent).toHaveTextContent("Uses claude-sonnet");
+    expect(within(agent).queryByLabelText(/^Model/)).toBeNull();
+    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+  });
+
+  it("switching provider shows that provider's own key field", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(
+      user({ inference_api_key: "i2-key", inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
+    );
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await region("Agent");
+    const select = within(agent).getByLabelText(/^Inference provider/);
+
+    await userEvent.selectOptions(select, "mag");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
+    expect(within(agent).queryByLabelText(/^AmSC i2 API key/)).toBeNull();
+    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+    expect(agent).toHaveTextContent("no default model");
+
+    await userEvent.selectOptions(select, "olcf");
+    const olcf = within(agent).getByLabelText(/^OLCF Inference S3M token/);
+    expect(olcf).toHaveValue("s3m");
+    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
+    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+
+    await userEvent.selectOptions(select, "i2");
+    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+  });
+
+  it("only Custom shows an endpoint field, and saving sends the choice, endpoint and key", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await region("Agent");
+
+    await userEvent.selectOptions(within(agent).getByLabelText(/^Inference provider/), "custom");
+    await userEvent.type(within(agent).getByLabelText(/^Inference endpoint/), "https://gw.example/v1");
+    await userEvent.type(within(agent).getByLabelText(/^Custom endpoint API key/), "c-key");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      inference_provider: "custom",
+      inference_base_url: "https://gw.example/v1",
+      inference_custom_api_key: "c-key",
+    });
+    expect(refreshAgentSettingsMock).toHaveBeenCalledTimes(1);
+    expect(recheckMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a provider from the installation's configuration as such, until one is chosen", async () => {
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({ provider: "custom", source: "config", baseUrl: "https://dev.example/v1" }),
+      error: null,
+      modelChoiceRequest: 0,
+    });
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ inference_api_key: "row-key" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await region("Agent");
+
+    const select = within(agent).getByLabelText(/^Inference provider/);
+    expect(within(select).getByRole("option", { selected: true })).toHaveTextContent("Custom, from configuration");
+    expect(agent).toHaveTextContent("https://dev.example/v1");
+    // The configured endpoint uses the saved key.
+    expect(within(agent).getByLabelText(/^API key/)).toHaveValue("row-key");
+
+    await userEvent.selectOptions(select, "mag");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toBeInTheDocument();
+  });
+
+  it("names a missing key in the navigation", async () => {
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({ hasCredential: false, keysSet: { i2: false, mag: false, olcf: false, custom: false } }),
+      error: null,
+      modelChoiceRequest: 0,
+    });
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Agent");
+    expect(entry("Agent")).toHaveTextContent("No key");
   });
 });
 
@@ -256,10 +451,9 @@ describe("UserSettingsModal: Lux", () => {
       user({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
     );
     render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
-    const lux = await section("Lux");
-    expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
-    expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
-    expect(header("Lux")).toHaveTextContent("Ready");
+    const lux = await region("Lux");
+    expect(entry("Lux")).toHaveAttribute("aria-current", "page");
+    expect(lux).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     // The account and the folder are its only fields: no credential is stored for Lux.
     const fields = lux.querySelectorAll("input:not([role=switch]), textarea, a");
@@ -308,9 +502,14 @@ describe("UserSettingsModal appearance", () => {
     return within(screen.getByRole("radiogroup", { name: "Appearance" })).getByRole("radio", { name });
   }
 
+  async function openAppearance() {
+    await userEvent.click(entry("Appearance"));
+  }
+
   it("starts on System, and says what System means", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
+    await openAppearance();
     expect(radio("System")).toBeChecked();
     expect(radio("Light")).not.toBeChecked();
     expect(radio("Dark")).not.toBeChecked();
@@ -323,6 +522,7 @@ describe("UserSettingsModal appearance", () => {
   ])("selecting %s applies and stores it at once, without Save", async (name, value) => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
+    await openAppearance();
     await userEvent.click(radio(name));
     expect(radio(name)).toBeChecked();
     expect(document.documentElement.getAttribute("data-theme")).toBe(value);
@@ -334,6 +534,7 @@ describe("UserSettingsModal appearance", () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     setThemeChoice("dark");
     render(<UserSettingsModal onClose={() => {}} />);
+    await openAppearance();
     expect(radio("Dark")).toBeChecked();
     await userEvent.click(radio("System"));
     expect(radio("System")).toBeChecked();
@@ -344,6 +545,7 @@ describe("UserSettingsModal appearance", () => {
   it("arrow keys move and select together, with one tab stop", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
+    await openAppearance();
     expect(radio("System")).toHaveAttribute("tabindex", "0");
     expect(radio("Dark")).toHaveAttribute("tabindex", "-1");
 
@@ -357,10 +559,11 @@ describe("UserSettingsModal appearance", () => {
     expect(radio("Dark")).toHaveFocus();
   });
 
-  it("is available before the user record loads", () => {
+  it("is available before the user record loads", async () => {
     fetchCurrentUserWithConfigMock.mockReturnValue(new Promise(() => {}));
     render(<UserSettingsModal onClose={() => {}} />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
+    await openAppearance();
     expect(radio("System")).toBeChecked();
   });
 });
