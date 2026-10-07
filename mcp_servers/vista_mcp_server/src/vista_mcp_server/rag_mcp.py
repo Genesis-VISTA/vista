@@ -120,6 +120,91 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
     return [(slug, path) for slug, path in discovered.items()]
 
 
+def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
+    """Open one KB's ChromaDB collections and BM25 corpus; None if unopenable."""
+    try:
+        # Match build_rag.TextRAG's settings
+        client = chromadb.PersistentClient(
+            path=str(db_path),
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+    except Exception as exc:
+        logger.error("RAG: could not open ChromaDB for %s: %s", slug, exc)
+        return None
+
+    # Use get_or_create for the same reason the single-KB version did:
+    # a fresh deployment with no PDFs indexed yet shouldn't log a
+    # scary ERROR on every boot. Matching `hnsw:space=cosine` to what
+    # build_rag.py uses so a later indexing run finds compatible
+    # collections rather than re-creating them.
+    # No `embedding_function` is passed, so Chroma attaches its default
+    # (`ONNXMiniLM_L6_V2`), which downloads an ONNX archive from a public
+    # S3 bucket. It never fires: `__call__` is the only thing that
+    # downloads, and every read below passes `query_embeddings=` from
+    # `_embed`. Do not add a call that omits them -- it would reach the
+    # network on an offline machine and encode with the wrong model.
+    try:
+        text_collection = client.get_or_create_collection(
+            name="text_chunks",
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.info(
+            "RAG: %s text_chunks has %d items", slug, text_collection.count()
+        )
+    except Exception as exc:
+        logger.error(
+            "RAG: could not open text_chunks for %s: %s", slug, exc
+        )
+        text_collection = None
+
+    try:
+        citation_collection = client.get_or_create_collection(
+            name="citations",
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.info(
+            "RAG: %s citations has %d items",
+            slug, citation_collection.count(),
+        )
+    except Exception as exc:
+        logger.warning(
+            "RAG: could not open citations for %s: %s", slug, exc
+        )
+        citation_collection = None
+
+    # PALISADE G3 hybrid-retrieval defense (Semantic Chameleon
+    # arXiv 2603.18034). 
+    bm25 = _load_bm25_corpus(slug, db_path)
+
+    return _KbHandle(
+        slug=slug,
+        db_path=db_path,
+        text_collection=text_collection,
+        citation_collection=citation_collection,
+        bm25=bm25,
+    )
+
+
+def _register_new_kbs() -> list[str]:
+    """
+    Open every discovered KB that isn't registered yet; return their slugs.
+
+    Runs at startup and again whenever `rag_search` names a KB it doesn't
+    know, so a KB created in the UI is searchable as soon as it is indexed,
+    without restarting the server.
+    """
+    added = []
+    for slug, db_path in _discover_kb_paths():
+        if slug in _kbs:
+            continue
+        logger.info("RAG: opening ChromaDB for %s at %s", slug, db_path)
+        handle = _open_kb(slug, db_path)
+        if handle is not None:
+            _kbs[slug] = handle
+            added.append(slug)
+    return added
+
+
 @lifespan
 async def app_lifespan(server):
     """Load the embedding model and open ChromaDB collections at startup."""
@@ -137,76 +222,11 @@ async def app_lifespan(server):
         device=settings.embed_device,
     )
 
-    discovered = _discover_kb_paths()
-    if not discovered:
+    if not _register_new_kbs():
         logger.warning(
             "RAG: no Knowledge Bases discovered under %s; rag_search will "
             "return an error until at least one KB is indexed.",
             settings.knowledge_bases_dir,
-        )
-
-    for slug, db_path in discovered:
-        logger.info("RAG: opening ChromaDB for %s at %s", slug, db_path)
-        try:
-            # Match build_rag.TextRAG's settings
-            client = chromadb.PersistentClient(
-                path=str(db_path),
-                settings=ChromaSettings(anonymized_telemetry=False),
-            )
-        except Exception as exc:
-            logger.error("RAG: could not open ChromaDB for %s: %s", slug, exc)
-            continue
-
-        # Use get_or_create for the same reason the single-KB version did:
-        # a fresh deployment with no PDFs indexed yet shouldn't log a
-        # scary ERROR on every boot. Matching `hnsw:space=cosine` to what
-        # build_rag.py uses so a later indexing run finds compatible
-        # collections rather than re-creating them.
-        # No `embedding_function` is passed, so Chroma attaches its default
-        # (`ONNXMiniLM_L6_V2`), which downloads an ONNX archive from a public
-        # S3 bucket. It never fires: `__call__` is the only thing that
-        # downloads, and every read below passes `query_embeddings=` from
-        # `_embed`. Do not add a call that omits them -- it would reach the
-        # network on an offline machine and encode with the wrong model.
-        try:
-            text_collection = client.get_or_create_collection(
-                name="text_chunks",
-                metadata={"hnsw:space": "cosine"},
-            )
-            logger.info(
-                "RAG: %s text_chunks has %d items", slug, text_collection.count()
-            )
-        except Exception as exc:
-            logger.error(
-                "RAG: could not open text_chunks for %s: %s", slug, exc
-            )
-            text_collection = None
-
-        try:
-            citation_collection = client.get_or_create_collection(
-                name="citations",
-                metadata={"hnsw:space": "cosine"},
-            )
-            logger.info(
-                "RAG: %s citations has %d items",
-                slug, citation_collection.count(),
-            )
-        except Exception as exc:
-            logger.warning(
-                "RAG: could not open citations for %s: %s", slug, exc
-            )
-            citation_collection = None
-
-        # PALISADE G3 hybrid-retrieval defense (Semantic Chameleon
-        # arXiv 2603.18034). 
-        bm25 = _load_bm25_corpus(slug, db_path)
-
-        _kbs[slug] = _KbHandle(
-            slug=slug,
-            db_path=db_path,
-            text_collection=text_collection,
-            citation_collection=citation_collection,
-            bm25=bm25,
         )
 
     yield  # server runs
@@ -285,7 +305,12 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
     """
     Look up the KB handle for `kb_slug`. Returns (handle, error_message).
 
+    A slug that isn't registered triggers one rescan first: the KB may have
+    been created and indexed in the UI since the server started.
     """
+    if not _kbs or (kb_slug and kb_slug not in _kbs):
+        _register_new_kbs()
+
     if not _kbs:
         return None, (
             "ERROR: no Knowledge Bases are available on this MCP server. "
