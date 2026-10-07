@@ -276,7 +276,7 @@ describe("UserSettingsModal autosave", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("saves a typed remote directory after a pause, once, trimmed, and rechecks nothing", async () => {
+  it("saves a typed remote directory after a pause, once, trimmed, and refreshes the cards", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
 
@@ -291,7 +291,9 @@ describe("UserSettingsModal autosave", () => {
       }),
     );
     expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
-    // The cards check credentials and the facility, not the folder.
+    // The folder is part of the card's settings check, which the backend
+    // recomputes on any request: a refresh, not a fresh probe of the facility.
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
     expect(recheckMock).not.toHaveBeenCalled();
   });
 
@@ -657,6 +659,8 @@ describe("UserSettingsModal: Lux", () => {
     await userEvent.tab();
     await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_account: "abc123" }));
     expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    // The Lux card's settings check reads the account.
+    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
   it("clearing the Lux remote directory sends null", async () => {

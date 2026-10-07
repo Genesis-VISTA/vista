@@ -88,13 +88,28 @@ const AGENT_FIELDS: Array<keyof UserSelfUpdate> = [
   "inference_base_url",
 ];
 
-/** The fields a cluster's checks read, so saving one rechecks that cluster. */
+/** The credential each cluster's checks read, so saving one rechecks that cluster. */
 const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
   odo_s3m_token: "odo",
   frontier_s3m_token: "frontier",
   nersc_iri_token: "perlmutter",
   // Lux has none: a researcher signs in from a chat.
 };
+
+/**
+ * The settings each cluster's settings check reads (remote directory,
+ * account). The backend recomputes that check from the user row on every
+ * request, even from cache, so a plain refresh shows the change without
+ * probing the facility again.
+ */
+const SETTING_FIELDS = new Set([
+  "odo_remote_dir",
+  "frontier_remote_dir",
+  "nersc_account",
+  "nersc_remote_dir",
+  "lux_account",
+  "lux_remote_dir",
+]);
 
 /** The section each field lives in, for going to a field whose save failed. */
 function sectionOf(field: string): Section {
@@ -189,7 +204,8 @@ export function UserSettingsModal({
     // rather than wait for the next poll.
     const cluster = CREDENTIAL_CLUSTER[field];
     if (cluster && !draftRef.current?.hidden.has(cluster)) void recheckHpcStatus(cluster);
-    if (field === HIDDEN_FIELD) void refreshHpcStatus();
+    // A new folder or account, or a changed sidebar list: the cards follow.
+    if (field === HIDDEN_FIELD || SETTING_FIELDS.has(field)) void refreshHpcStatus();
     // The picker's label and list follow the provider, endpoint and key.
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
   }
