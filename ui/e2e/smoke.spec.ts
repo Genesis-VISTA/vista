@@ -12,21 +12,26 @@ test.describe("validation-lane smoke", () => {
     page,
   }) => {
     await page.goto("/projects");
-    const card = page.locator(".project-card").filter({ hasText: "molten-salt" });
+    const card = page
+      .locator(".project-card")
+      .filter({ hasText: "ai-safety-autonomous-labs" });
     // Previously this skipped itself when the project was missing, so the job
     // could report success without asserting anything. A missing fixture is a
     // broken environment, and the run should say which fixture and where.
     await expect(
       card,
-      `no "molten-salt" project card at ${page.url()} — seed the deployment before running the validation lane`,
+      `no "ai-safety-autonomous-labs" project card at ${page.url()} — seed the deployment before running the validation lane`,
     ).toBeVisible({ timeout: 30_000 });
     await card.getByRole("button", { name: /^(Open|Reopen)$/ }).click();
 
-    await expect(page.getByPlaceholder(/Ask about molten salts/i)).toBeVisible({
+    // Matched loosely; the composer placeholder is the same for every project.
+    await expect(page.getByPlaceholder(/^Ask a question/i)).toBeVisible({
       timeout: 30_000,
     });
-    const input = page.getByPlaceholder(/Ask about molten salts/i);
-    await input.fill("Search the literature for FLiBe. Use rag_search.");
+    const input = page.getByPlaceholder(/^Ask a question/i);
+    await input.fill(
+      "Search the literature for memory poisoning in LLM agents. Use rag_search.",
+    );
     await page.getByRole("button", { name: /Start chat|Send/ }).click();
 
     const toolBubble = page.getByText(/Calling `/);

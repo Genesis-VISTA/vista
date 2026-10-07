@@ -107,9 +107,10 @@ Per-cluster defaults (nodes, duration, image, queue, etc.) live in
 `hpc_jobs/forge-tune/cluster_defaults.json`. Override at the call site with
 `node_count=` and `duration=`; deeper overrides (env, image, queue) go in the JSON.
 
-After submitting, use `get_hpc_job_status(job_id)` to watch progress and
-`get_hpc_job_outputs(job_id, files=[...])` to pull artifacts back into the
-sandbox at `/mnt/data/output/<job_id>/`.
+After submitting, use `get_hpc_job_status(job_id, cluster=...)` to watch progress
+and `get_hpc_job_outputs(job_id, files=[...], cluster=...)` to pull artifacts back
+into the sandbox at `/mnt/data/output/<job_id>/`. Pass the cluster that
+`submit_hpc_job` reported: nothing else remembers which cluster a job went to.
 
 ## Source-of-Truth Note
 

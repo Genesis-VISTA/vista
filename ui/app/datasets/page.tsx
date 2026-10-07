@@ -35,10 +35,17 @@ const PLACEHOLDER_DATASETS = [
   "bigbio/pubmed_qa",
 ];
 
-function formatTimestampUtc(value: string): string {
+function formatTimestamp(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toISOString().replace("T", " ").replace(".000Z", " UTC");
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(d);
 }
 
 export default function DatasetsPage() {
@@ -61,7 +68,7 @@ export default function DatasetsPage() {
     () => uploads.filter((file) => file.source !== "generated"),
     [uploads]
   );
-  const tritiumResultFiles = useMemo(
+  const generatedResultFiles = useMemo(
     () => uploads.filter((file) => file.source === "generated"),
     [uploads]
   );
@@ -267,7 +274,7 @@ export default function DatasetsPage() {
             {uploads.length > 0 && (
               <>
                 <div className="upload-section">
-                  <div className="upload-section-title">Uploads</div>
+                  <h2 className="upload-section-title">Uploads</h2>
                   {uploadedFiles.length === 0 && (
                     <div className="chat-bubble">No uploaded files yet.</div>
                   )}
@@ -275,7 +282,7 @@ export default function DatasetsPage() {
                     <div key={file.name} className="upload-item">
                       <div className="upload-name">{file.name}</div>
                       <div className="upload-meta">
-                        {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                        {(file.size / 1024).toFixed(1)} KB · Modified {formatTimestamp(file.modifiedAt)}
                       </div>
                       <div className="upload-actions">
                         <a
@@ -298,15 +305,15 @@ export default function DatasetsPage() {
                 </div>
 
                 <div className="upload-section">
-                  <div className="upload-section-title">Tritium Breeding Results</div>
-                  {tritiumResultFiles.length === 0 && (
-                    <div className="chat-bubble">No tritium breeding results yet.</div>
+                  <h2 className="upload-section-title">Generated Results &amp; Logs</h2>
+                  {generatedResultFiles.length === 0 && (
+                    <div className="chat-bubble">No generated results or logs yet.</div>
                   )}
-                  {tritiumResultFiles.map((file) => (
+                  {generatedResultFiles.map((file) => (
                     <div key={file.name} className="upload-item">
                       <div className="upload-name">{file.name}</div>
                       <div className="upload-meta">
-                        {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                        {(file.size / 1024).toFixed(1)} KB · Modified {formatTimestamp(file.modifiedAt)}
                       </div>
                       <div className="upload-actions">
                         <a

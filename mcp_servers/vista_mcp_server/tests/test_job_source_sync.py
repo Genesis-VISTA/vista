@@ -54,7 +54,7 @@ def _entry(name, size):
 
 async def _sync(g):
     await m._sync_job_sources(
-        g, "myjob", "/base/myjob/src", base="/base", remote_endpoint="ep"
+        g, "myjob", "/p/base.jobs/myjob/src", parents_below="/p", remote_endpoint="ep"
     )
 
 

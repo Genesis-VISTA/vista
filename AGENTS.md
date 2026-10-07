@@ -42,12 +42,13 @@ Testing roadmap requirements are OpenSpec-first — canonical specs are in
 ## Common Commands
 
 ### Full Development Setup
-Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively.
+Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, logs/backend.log, and logs/ui.log respectively, and opens the UI in the VISTA window.
 ```bash
-./launch.sh logs
+./launch.sh logs                # services + the VISTA window
+./launch.sh logs --no-electron  # services only; use a browser (e.g. over SSH)
 ```
 
-Note that the `./launch.sh` script will not terminate until cancelled, and then on cancel will automatically clean up all 3 processes.
+Note that the `./launch.sh` script will not terminate until the window is closed or the script is cancelled, and then will automatically clean up all 3 processes. With no display it fails and asks for `--no-electron` rather than falling back to a browser.
 
 On Windows, run `launch.sh` and `build.sh` from Git Bash (installed with Git for Windows).
 
@@ -56,30 +57,63 @@ To build everything without launching, run
 ./scripts/build.sh
 ```
 
+Release packages: `scripts/build_local_package.sh` builds and smoke-tests one for the host it
+runs on. Tagged releases are built by `.github/workflows/release.yml` on the GitHub mirror
+(`Genesis-VISTA/vista`), whose job steps live in `.github/scripts/` so they run the same
+locally. See [`docs/releasing.md`](docs/releasing.md). The mirror overwrites GitHub-only
+commits, so workflow changes land on GitLab like everything else.
+
 ### VISTA window (Electron)
-`electron/` is a window onto the UI and nothing else: it loads the `--url` it is given and never
-starts services. The launchers own its lifetime, and closing it stops VISTA.
+`electron/` is VISTA's application, and in a package it is the entry point on every platform
+(`VISTA.app`; `app/window/vista-app` from the Linux app menu; `app\window\VISTA.exe --startup`
+from the Start menu). In startup mode it opens a startup window, runs the package launcher as
+its child in supervised mode (`vista --supervised --progress=jsonl`, or `vista.ps1 -Supervised
+-Progress jsonl` on Windows), shows the launcher's protocol-v1 progress
+(`electron/src/startup-protocol.js`), hands over to the main window on `ui`/`ready`, and owns
+the session: closing it stops the launcher, which stops every service. The terminal launchers
+(`vista`, `vista.cmd`) are diagnostic commands that start the services and then the window.
+Given `--url`, as `./launch.sh` does, it is only a window onto that UI and starts nothing.
 ```bash
-./launch.sh logs --electron   # dev stack in the window (installs it via build.sh --electron)
-cd electron && npm test       # routing rules (hermetic, in PR CI)
-cd electron && npm run test:e2e  # window behaviour via Playwright; needs a display
+./launch.sh logs              # dev stack in the window (installs it via build.sh --electron)
+cd electron && npm test       # routing, startup protocol, launchers (hermetic, in PR CI)
+cd electron && npm run test:e2e  # window and startup behaviour via Playwright; needs a display
+./scripts/ci-local.sh launcher   # the launchers' supervised mode, bash and PowerShell
 ```
+Every failure code a launcher emits needs a message in `startup-protocol.js`; a unit test
+reads both launchers to check.
 Where a link goes is decided by origin alone in `electron/src/routing.js`: VISTA's own origin
 stays in the app, other http(s) goes to the system browser, and everything else is refused. So
-UI links need no Electron-specific code. The prebuilt macOS package ships it as
-`app/window/VISTA.app` and the Linux package as `app/window/VISTA`, both found through the
-manifest's `window.exe`. There is no browser mode: the launcher refuses a session that cannot show
-the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
+UI links need no Electron-specific code. The prebuilt macOS package ships it as `VISTA.app` at
+the package root, the Linux package as `app/window/VISTA`, and the Windows package as
+`app/window/VISTA.exe`, found through the manifest's `window.exe`; the manifest's `entrypoint`
+and `diagnostic_launcher` name what a researcher opens and the terminal launcher, and the app
+refuses to start if they do not describe the package around it (`electron/src/package-root.js`).
+There is no browser mode: a session that cannot show the window is refused.
+`VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
+
+VISTA's icon is `electron/assets/icon.svg`. Every other icon file is made from it by
+`cd electron && npm run icons` (`scripts/make-icons.js`, which renders with Electron itself):
+`icon.icns`, `icon.ico`, `icon.png` and `icon-mac.png` beside it, and the UI's `ui/app/favicon.ico` and
+`ui/app/icon.svg`. They are committed, so a build never regenerates them; rerun it after
+editing the SVG.
 
 On Linux, whether the window gets `--no-sandbox` is decided in one place,
-`electron/linux/window-sandbox`. The package launcher, `./launch.sh --electron` and the
-build's smoke test all call it, so don't hardcode the flag anywhere else. It prints the flag
+`electron/linux/window-sandbox`. `electron/linux/vista-app` (the package's entry point, which
+also refuses root, no display and missing libraries before Electron starts), the terminal
+launcher, `./launch.sh` and the build's smoke test all call it, so don't hardcode the flag
+anywhere else. It prints the flag
 only when the host blocks Chromium's sandbox: as root, or where unprivileged user namespaces
 are blocked and VISTA's AppArmor profile (`electron/linux/vista-window.apparmor`, shipped next
 to the window) isn't installed, as on stock Ubuntu 24.04. Each time, it says why on stderr.
-While the window is unsandboxed, `main.js` sends PDFs to the system browser. Test with
-`cd electron && npm test`, which runs `window-sandbox.test.js` hermetically, and the Linux e2e
-container command in `docs/validation-lane.md`.
+While the window is unsandboxed, `main.js` sends PDFs to the system browser, and the startup
+window shows why (`VISTA_SANDBOX_NOTICE`, from `vista-app`). Test with
+`cd electron && npm test`, which runs `window-sandbox.test.js` and `vista-app.test.js`
+hermetically, and the Linux e2e container command in `docs/validation-lane.md`.
+
+The one-line installers put each package in one fixed folder: macOS `/Applications/VISTA`
+(`~/Applications/VISTA` where that cannot be written), Linux `~/.local/share/vista/app` with an
+app-menu entry, Windows `%LOCALAPPDATA%\VISTA\app` with a Start-menu entry. They refuse while
+any process runs from a folder they would replace. Test with `./scripts/ci-local.sh install`.
 
 ### MCP Server (vista_mcp_server)
 Launches vista_mcp_server on :8000/mcp (HPC, RAG, display_file tools)
@@ -116,7 +150,7 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
@@ -166,10 +200,10 @@ reason; branch on them rather than on a message.
 
 The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
-falling back to one shared pair connected for both, and only then to the deployment-wide
-`VISTA_MCP_{ODO,FRONTIER}_GLOBUS_REFRESH_TOKEN` / `..._GLOBUS_HTTPS_REFRESH_TOKEN` env vars —
-what keeps a hosted, multi-user deployment working for everyone who has not connected their own.
-Each source counts only when it has both halves: one alone lists a directory it cannot read.
+falling back to one pair they connected for both. There is no deployment-wide Globus login: every
+file operation acts as the researcher's own identity, so the facility decides what they may read
+and write. Each source counts only when it has both halves: one alone lists a directory it
+cannot read.
 Absent Globus is never fatal; it costs only Odo and Frontier's file operations, nothing else.
 
 ## Hypothesis Lab forum

@@ -3,38 +3,109 @@
 Instructions below cover running or building a prebuilt package. For a
 **development checkout** instead, skip to [Prerequisites](#prerequisites).
 
+## Thin macOS developer app
+
+On a Mac, build a local application backed by the current checkout:
+
+```bash
+./scripts/build_mac_dev_app.sh
+open "dist/mac-dev/VISTA Dev.app"
+```
+
+The first build installs only missing checkout dependencies; later builds
+normally package and ad-hoc-sign the Electron application in seconds. Pass
+`--refresh-dependencies` after lockfile changes. No Apple account, corpus,
+vector store, exported sandbox image, bundled runtime, or access to the private
+`amscrot-py` repository is required.
+
+`VISTA Dev.app` shows the same preparation window as the distributable, then
+starts the MCP server, backend, and Next.js UI directly from this checkout. It
+uses `~/.vista-dev`, the bundle identifier `gov.ornl.vista.dev`, and disables
+live HPC job submission by default. Other local features remain available;
+code-execution still needs the normal local container/sandbox setup when used.
+Closing the app stops all three source services. Logs are in
+`~/.vista-dev/logs/dev-stack.log` and the checkout's `logs/` directory.
+
+The generated app records the checkout's absolute path in
+`dist/mac-dev/dev-root`, so it is a local developer artifact, not something to
+send to another machine. Each developer builds their own copy. Use
+`build_local_package.sh` only for a complete, relocatable release package.
+
 ## Running a prebuilt package
+
+Install and start the newest release with one command. On macOS (Apple Silicon) or Linux
+(x86-64), in a terminal:
+
+```bash
+curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
+```
+
+On Windows (x64), in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
+```
+
+It downloads the package for your machine, checks it against its `.sha256`, installs it and
+opens VISTA. Run it again to upgrade, with VISTA closed (it refuses while VISTA is running); your
+state is kept. Pipe it to `bash -s -- --no-launch` instead of `bash` to install only, or add
+`--version 0.2.0-rc1` the same way for another release.
+
+**VISTA is an application on every platform.** Open it the way you open any other:
+
+| | Where it is installed | Open it from |
+|---|---|---|
+| macOS | `/Applications/VISTA`, or `~/Applications/VISTA` when your account cannot write to `/Applications` | Spotlight, Launchpad, Finder's Applications or the Dock: `VISTA.app` |
+| Linux | `~/.local/share/vista/app` | the app menu, which runs `app/window/vista-app` |
+| Windows | `%LOCALAPPDATA%\VISTA\app` | the Start menu, which runs `app\window\VISTA.exe --startup` |
+
+It shows its own startup in a window straight away, then the VISTA interface; closing it stops
+VISTA. Set `VISTA_INSTALL_DIR` to install somewhere else.
+
+The installed folder is the application: keep it together. On macOS, `VISTA.app` must stay
+beside `app/`, `bin/`, `node/`, `payload/`, `manifest.json` and `vista`, which are its runtime,
+and says so if it is moved out.
+
+**The terminal launchers are for diagnostics.** `vista` (macOS, Linux; also linked as
+`~/.local/bin/vista`) and `vista.cmd` (Windows) start the same VISTA from a terminal, printing
+each step, and are what to run when something needs looking into, or over a connection with no
+window.
+
+To install by hand instead, follow the steps in the release's notes. On macOS or Linux, in
+short: download the archive for your platform and its `.sha256` from the
+[release](https://github.com/Genesis-VISTA/vista/releases) with `curl` (a browser download is
+blocked by macOS), check it, unpack it, and put the folder where the table above says:
 
 ```bash
 shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
-mkdir -p ~/vista && tar -xf vista-<version>-<platform>.tar.gz -C ~/vista
-cd ~/vista/vista-<version>-<platform> && ./vista
+tar -xf vista-<version>-<platform>.tar.gz
+mv vista-<version>-mac-arm64 /Applications/VISTA && open /Applications/VISTA/VISTA.app   # macOS
+mv vista-<version>-linux-x86 ~/.local/share/vista/app && ~/.local/share/vista/app/app/window/vista-app   # Linux
 ```
 
 Extract with the platform's own `tar`. macOS `bsdtar` stores extended
 attributes by default; GNU `tar` needs `--xattrs`. Those attributes carry the
-bundled `msb` binary's adhoc code signature, without which the code-execution
+bundled `msb` binary's code signature, without which the code-execution
 sandbox cannot create microVMs.
-
-Start it from a terminal, as above. Don't double-click `vista` or anything
-inside the package: a downloaded file carries macOS's quarantine flag, which
-`./vista` removes before running anything else, and a double-click is blocked
-before it gets the chance.
 
 First run extracts the corpus, vector store, and embedding weights from the
 package's `payload/payload.tar` into the state directory (~1 GB), imports the
 sandbox image, and seeds the database.
-That takes a few minutes, with each step logged as it happens. Later runs skip
-every setup step and start in seconds.
+That takes a few minutes. The startup window shows each real activity;
+later runs mark already-prepared work and start in seconds. Startup failures
+offer Retry, Open Logs, Copy Diagnostics, and Quit without exposing a terminal.
 
-VISTA then opens in its own window, on macOS and on a Linux desktop. Closing
-the window stops VISTA, and so do Ctrl-C in the terminal and closing the
-terminal. VISTA is a desktop application and has no browser mode. In a session
-that can't show the window, the launcher says why and stops before starting
+VISTA then opens in its own window.
+Closing the window, or Cmd-Q on macOS, stops VISTA. With a terminal launcher,
+Ctrl-C and closing its terminal stop it too. VISTA is a desktop
+application and has no browser mode. In a session that can't show the window,
+it says why and stops before starting
 anything: an SSH session, no display, or, on Linux, running as root or missing
-system libraries (see below). If the window crashes, the launcher reports its exit
-status and stops the services. If another VISTA window is already open, the new
-one refuses to start rather than run a second stack.
+system libraries (see below). On Linux, where there is no window to say it in,
+that is a desktop notification and a line in `logs/window.log`. If the window
+crashes, the services are stopped. If another VISTA window is already open, a
+second launch brings the existing startup or main window forward rather than
+starting another stack.
 
 Paste your inference API key into the settings modal. It takes effect
 immediately; no restart. Links to other sites, including the Globus login,
@@ -46,11 +117,11 @@ On **Linux**, VISTA requires hardware virtualisation through `/dev/kvm`, and
 the launcher refuses to start without it. A bare-metal workstation has it; a
 virtual machine needs nested virtualisation enabled by its host; and access is
 usually gated on the `kvm` group, so `sudo usermod -aG kvm $USER` and a fresh
-login is the common fix.
+login is the common fix. Without it, the startup window says so and stops.
 
 **The window on Linux** needs a desktop session (X11 or Wayland) and four
 system libraries that every desktop install already has. A minimal server or a
-container may not have them, and then the launcher names what is missing and
+container may not have them, and then VISTA names what is missing and
 stops:
 
 | | Debian / Ubuntu | Fedora / RHEL |
@@ -68,16 +139,16 @@ sudo dnf install gtk3 nss alsa-lib mesa-libgbm                  # Fedora, RHEL
 **Chromium's sandbox on Ubuntu.** The window's pages run inside Chromium's
 sandbox, which needs unprivileged user namespaces. Ubuntu 23.10 and later
 allow those only to programs an AppArmor profile names. So on stock Ubuntu the window
-starts without the sandbox, and the launcher says so on every start, with the
+starts without the sandbox, and the startup window says so on every start, with the
 two commands that turn it on. The package ships the profile. Installing it is
-a one-time step that covers every later unpack and version:
+a one-time step that covers every later version:
 
 ```bash
-sudo install -m 644 ~/vista/vista-<version>-<platform>/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
+sudo install -m 644 ~/.local/share/vista/app/app/window/vista-window.apparmor /etc/apparmor.d/vista-window
 sudo apparmor_parser -r /etc/apparmor.d/vista-window
 ```
 
-The launcher prints these with your package's own path. Debian and Fedora need
+VISTA shows these with your package's own path. Debian and Fedora need
 no step. Where the host blocks user namespaces some other way, such as inside
 a container, the window also runs without the sandbox and says so, with
 nothing to install. While the sandbox is off, PDFs open in your default
@@ -88,9 +159,10 @@ Each start writes `renderer sandbox: on` or `off (--no-sandbox)` to
 All state lives in the state directory: `vista.db`, uploads, the corpus, the
 sandbox image store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`,
 `window.log`, `setup.log`). The window's own browser cache is kept apart, in
-`~/Library/Application Support/VISTA` on macOS and `~/.config/VISTA` on Linux.
-The unpacked package tree is disposable. Upgrading is replacing
-that directory, and starting over is deleting the state directory.
+`~/Library/Application Support/VISTA` on macOS, `~/.config/VISTA` on Linux, and
+`%APPDATA%\VISTA` on Windows.
+The installed package folder is disposable. Upgrading is replacing
+that folder, which the installer does, and starting over is deleting the state directory.
 
 | Variable             | Description                                                                                                                                             | Default    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
@@ -106,6 +178,10 @@ that directory, and starting over is deleting the state directory.
 
 The build host needs the credentials and tooling so the recipient does not.
 
+Releases are built for all three platforms by GitHub Actions from a version
+tag, and published by hand from a draft: see [docs/releasing.md](docs/releasing.md).
+This section is for building a package on your own machine.
+
 **Each release, review the bundled Electron.** Its version is pinned in
 `electron/package.json`, and each package's manifest records it as
 `window.electron`. Bump it if it has fallen out of Electron's supported
@@ -119,8 +195,6 @@ All verified by `--check`:
 
 - `uv`, `npm`, `git`
 - Docker or Podman
-- The same platform as the package, on a machine that can run the code-execution
-  sandbox (KVM on Linux; `msb doctor` reports ready on Windows).
 - Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
   `amscrot-py` that HPC job submission needs; see
   [Prerequisites](#prerequisites) for the `url.insteadOf` rewrite. Nothing is
@@ -132,6 +206,10 @@ All verified by `--check`:
   HuggingFace is a real configuration worth finding out about in seconds
   rather than an hour in.
 
+Not checked by `--check`, but needed: the same platform as the package, on a
+machine that can run the code-execution sandbox (KVM on Linux; `msb doctor`
+reports ready on Windows). Without it the build's smoke test fails at the end.
+
 ### Build-host env vars
 
 Read from the repo-root `.env`, the same way the backend reads it. A value
@@ -139,8 +217,8 @@ already exported in your environment wins over the file.
 
 | Variable                                                                          | Needed for                                                                                                    | Skip it with                                                     |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `VISTA_DATA_TOKEN`                                                                | Fetching the molten-salt corpus from `v28/vista-data` on code.ornl.gov                                        | `--payload DIR`, an already-unpacked `vista-data` tree           |
-| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` to reuse a built store, or `--without-citations` |
+| `VISTA_DATA_TOKEN`                                                                | Fetching the AI-safety corpus (and with `--science-projects`, the molten-salt corpus and MSTDB) from `v28/vista-data` on code.ornl.gov | `--payload DIR`, an already-unpacked `vista-data` tree           |
+| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` (and `--science-projects-vector-store DIR`) to reuse built stores, or `--without-citations` |
 | `VISTA_VERSION`                                                                   | Overriding the commit-derived version stamp                                                                   | Optional; omit it                                                |
 
 The preflight treats a missing citation credential as an error, not a
@@ -162,8 +240,11 @@ Then build. The archive lands in `dist/` with a `.sha256` and a
 ./scripts/build_local_package.sh
 ```
 
-Build from a clean, committed tree. The version is stamped from the commit as
-`0.1.0+<short-sha>` (plus `-dirty` when the tree is not clean) and recorded in
+Build from a clean, committed tree. Unless `VISTA_VERSION` is set, the version
+is the last release tag plus the commits since it, e.g. `0.2.0+3.g<short-sha>`
+(`0.0.0+g<short-sha>` before any release tag, plus `-dirty` when the tree is
+not clean), and the archive is named after the tag's part,
+`vista-0.2.0-<os>-<arch>`. It is recorded in
 the manifest along with the runtime versions and payload inventory. Budget
 about 7 GB in the output directory, the staging tree plus the archive, for a
 ~2 GB result. The build finishes by unpacking the archive somewhere else and
@@ -180,34 +261,55 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | Flag                             | Effect                                                                                                                    |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `--check`                        | Run the preflight and exit; builds nothing                                                                                |
-| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`                                          |
+| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`. It must hold `ai-safety/`, and with `--science-projects` also `molten-salt-papers/` and `mstdb/` |
 | `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
 | `--archive-format gz\|zstd\|zip\|none` | Defaults to `gz` on unix, `zip` on Windows                                                                          |
-| `--vector-store DIR`             | Reuse an already-built Chroma store instead of indexing the corpus again. It's the biggest time saver, and it makes no model calls |
+| `--vector-store DIR`             | Optional. Reuse an already-built **AI-safety** Chroma store instead of indexing that corpus again. Only for skipping re-embedding, and it makes no model calls; omit it and the build indexes the corpus itself |
+| `--science-projects`             | Also pack the molten-salt corpus and its index, MSTDB and the `forge-tune` CSV, so the package seeds the `molten-salt` and `alloy-design` projects. Also enabled by `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` |
+| `--science-projects-vector-store DIR` | Optional, and only with `--science-projects`. Reuse an already-built **molten-salt** Chroma store instead of indexing that corpus again |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
+| `--verify-without-sandbox`       | For a build host that cannot run the sandbox, such as a hosted macOS CI runner. The smoke test still runs, but every check that needs the sandbox, retrieval included, is reported as skipped rather than passed, and the build says the package was verified without it. Run the full smoke test on a real machine before shipping such a package |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
+
+A default package carries only the AI-safety corpus and its index. The
+molten-salt corpus, MSTDB and the `forge-tune` CSV are packed only with
+`--science-projects`, and a default package contains none of them.
 
 A typical rebuild, once you have a corpus clone and a vector store worth reusing:
 
 ```bash
 ./scripts/build_local_package.sh \
   --payload ~/.vista-build/vista-data \
-  --vector-store ~/.vista-build/rag_db
+  --vector-store ~/.vista-build/ai-safety-rag_db
+```
+
+A package with the science projects, reusing both stores:
+
+```bash
+./scripts/build_local_package.sh --science-projects \
+  --payload ~/.vista-build/vista-data \
+  --vector-store ~/.vista-build/ai-safety-rag_db \
+  --science-projects-vector-store ~/.vista-build/rag_db
 ```
 
 That still downloads the embedding weights, runs `npm ci`, and builds the UI and
-the MCP app; it skips only the indexing pass and its per-paper model calls.
+the MCP app; it skips only the indexing pass and its per-paper model calls. Both
+store options exist only to skip re-embedding. Leaving them out always produces a
+correct build.
 
 ### Building on Windows
 
 Run the same script from Git Bash (it comes with Git for Windows). It builds a
-`win-x86` package whose launcher is PowerShell, so a researcher needs no bash:
-they run `vista.cmd`, or `vista.ps1` from PowerShell.
+`win-x86` package whose launcher is PowerShell, so a researcher needs no bash.
+They open `app\window\VISTA.exe` from the Start menu, and it runs `vista.ps1`
+itself, hidden, after the same unblock and execution-policy check `vista.cmd`
+makes. `vista.cmd` is the diagnostic launcher, from cmd, PowerShell, or by
+double-clicking; `vista.ps1` is not meant to be run directly.
 
 ```bash
 ./scripts/build_local_package.sh --check
-./scripts/build_local_package.sh --vector-store data/knowledge-bases/molten-salt-papers/rag_db
+./scripts/build_local_package.sh --vector-store data/knowledge-bases/ai-safety/rag_db
 ```
 
 The sandbox image is built with Docker Desktop or Podman Desktop; start its
@@ -285,21 +387,58 @@ Important env vars:
 | Variable                                | Description                                                                                               | Default |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
 | OPENAI_API_KEY                          | Your AmSC inference API key (get from https://api.i2-core.american-science-cloud.org)                     | None    |
-| VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN      | Deployment-wide Globus Transfer fallback for Odo — directory listings and `mkdir`. Used only when a researcher has not connected their own in the UI. Mint with `uv run scripts/get_globus_token.py --cluster odo --save-env`, which writes this and the next one together | None |
-| VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN | The other half: Odo's collection over the Globus HTTPS interface, which is what reads and writes the files. Both or neither — one alone finds an output directory it cannot open | None |
-| VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN | Same pair, for Frontier. Mint with `uv run scripts/get_globus_token.py --cluster frontier --save-env` | None |
-| VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN | " | None |
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
 Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
 env vars — each user connects them in the UI under User settings. Globus is a one-time
-authorization per cluster. An S3M token is scoped to one OLCF project, so Odo and Frontier
-each need their own; mint them per the
+authorization per cluster, and every Odo and Frontier file operation acts as that researcher's
+own identity: there is no deployment-wide Globus login to fall back on. An S3M token is scoped to one OLCF project, and
+that project is the Slurm account the cluster's jobs are charged to. A token from any project with S3M
+access works, and Odo and Frontier each need their own; mint them per the
 [s3m docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token)
 (expires in 24 hours).
 
+Each researcher also sets, per cluster, a **remote directory** that names where VISTA puts job
+sources and outputs. There is no default: where a project keeps its files is specific to the
+project and the filesystem. On the OLCF clusters (Odo, Frontier, Lux) VISTA uses folders beside
+it, and never creates the directory itself:
+
+```
+<remote dir>.<user>.jobs/<job>/src/  your sources, uploaded by VISTA; the job only reads them
+<remote dir>.out/log-<id>.out        Slurm stdout, with log-<id>.err beside it
+<remote dir>.out/<id>/               the job's outputs, exported to it as $VISTA_OUT
+<remote dir>.out/<job>/              state a job's runs share, exported as $VISTA_JOB_DIR
+```
+
+`<user>` is your account on that cluster: Globus reports it on Odo and Frontier, and Lux takes it
+from your SSH login. On Perlmutter the same folders live inside the remote directory instead, as
+`<remote dir>/jobs/...` and `<remote dir>/out/...`, because Perlmutter jobs run as you and VISTA
+manages the files through NERSC's IRI filesystem API. Every cluster's paths follow from the
+remote directory and the job id alone, so VISTA finds a job's files again from its id, after a
+restart or from another install sharing the directory.
+
+Why OLCF splits them: each folder is created by the only identity that writes to it. VISTA
+uploads your sources through your Globus identity (SFTP on Lux), so `.<user>.jobs` belongs to you,
+one per researcher. Odo and Frontier jobs run as the project's IRI automation user, and Slurm
+creates `.out` for their logs as that user. So the folder holding the remote directory must be
+writable by the project's group. OLCF's `proj-shared` already is, so a new remote directory directly
+under it needs no setup. Anywhere else, create the output folder once with
+`mkdir -p -m 2775 <remote dir>.out`. VISTA checks before submitting and gives that command if it is
+needed. Every job then keeps `.out` writable by the project's group (`umask 002`, plus `chgrp` and
+`chmod 2775` when it owns the folder), so colleagues who set the same remote directory, and your
+Lux and Frontier jobs if you give both the same one, can all write there. This is a temporary
+workaround: S3M tokens cannot use the IRI filesystem API yet, which would let VISTA create one
+folder as the automation user.
+
+Lux has no token to take a project from, so each researcher also sets a **Lux account**: the OLCF
+project Lux jobs are charged to (`#SBATCH -A`).
+
+VISTA keeps no record of submitted jobs. Status, outputs and cancel take the cluster that
+`submit_hpc_job` reported, and changing a remote directory loses sight of the jobs under the old
+one.
+
 ## Launch
-The launch script will build all dependencies and launch both the MCP server and the frontend in a tmux session.
+The launch script will build all dependencies, launch the MCP server, backend and frontend, and open the UI in the VISTA window. Closing the window stops everything.
 ```bash
 ./launch.sh
 ```
@@ -308,21 +447,22 @@ Wait for both to be ready (the MCP server can take a few minutes the first launc
 Globus for Odo and Frontier is untouched by this script: nothing to export first, and nothing
 gated on it starting. Connect it per cluster in the UI once VISTA is running, under User
 settings — there is no endpoint to bring up, only a credential to authorize.
-Then go to https://localhost:3000
 
 You can use
 ```bash
 ./launch.sh terminal
 ```
-to bring up the MCP server and frontend in terminal windows instead of a tmux session.
+to bring up the MCP server and frontend in terminal windows instead (`./launch.sh tmux` uses a
+tmux session); neither opens the VISTA window, so go to http://localhost:3000.
 
-To develop against the VISTA window rather than a browser tab:
+The window is installed by `./scripts/build.sh --electron` (a ~290 MB Electron download that a
+plain `./scripts/build.sh` skips), which `./launch.sh` runs for you, and it opens
+`http://localhost:3000` once the UI answers. Hot reload works as in a browser, DevTools are in
+the View menu, and closing the window stops the stack. To use a browser tab instead — over SSH,
+or anywhere without a display, where the window cannot open — start the services alone:
 ```bash
-./launch.sh logs --electron
+./launch.sh logs --no-electron
 ```
-This installs the window (`./scripts/build.sh --electron`, a ~290 MB Electron download the
-default build skips) and opens `http://localhost:3000` in it once the UI answers. Hot reload
-works as in a browser, DevTools are in the View menu, and closing the window stops the stack.
 It is `logs` mode only, since tmux and terminal modes don't own the services' lifetime.
 From the macOS Dock and app switcher the window reads "Electron" in development; only the
 packaged build is named VISTA. On Linux the development window makes the same sandbox check

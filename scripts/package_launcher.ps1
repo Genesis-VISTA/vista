@@ -1,9 +1,21 @@
 # Start VISTA from an unpacked Windows package. Installed at the package root
-# as `vista.ps1`, with `vista.cmd` beside it for cmd and double-clicking. The
+# as `vista.ps1`, behind `vista.cmd`, which is the entry point: run that, from
+# cmd, PowerShell, or by double-clicking. It clears the mark of the web from
+# this file and names an execution policy this script cannot run under, so run
+# directly this script can fail with only PowerShell's own message. The
 # Windows counterpart of package_launcher.sh, step for step.
 #
-#   .\vista.ps1            first-run setup if needed, then start
-#   .\vista.ps1 --help     show this
+#   .\vista.cmd            first-run setup if needed, then start and open the window
+#   .\vista.cmd --help     show this
+#
+# VISTA.exe runs this script itself, hidden, with -Supervised -Progress jsonl:
+# the same work with no window, reporting its progress on stdout as the startup
+# protocol (electron/src/startup-protocol.js), the same events as
+# package_launcher.sh's --supervised mode. It stops when its stdin closes.
+#
+# Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
+# console. VISTA is a desktop application: in a session that cannot show its
+# window, such as SSH, it says why and stops.
 #
 # Everything the running system needs is inside this directory. Nothing is
 # installed, downloaded, or configured on the machine: the only thing outside
@@ -15,16 +27,6 @@
 #   VISTA_UI_PORT       default 3000
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
-#
-#   VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN
-#   VISTA_MCP_FRONTIER_GLOBUS_HTTPS_REFRESH_TOKEN
-#                       Deployment-wide Globus credentials for file transfer to
-#                       Odo and Frontier, for a hosted install where one
-#                       identity serves everyone. On a desktop, connect Globus
-#                       in the VISTA user settings instead: nothing to export,
-#                       and nothing to set up in this terminal.
 
 $ErrorActionPreference = 'Stop'
 
@@ -40,20 +42,72 @@ if (Test-Path "$PACKAGE\VERSION") { $VERSION = (Get-Content "$PACKAGE\VERSION" -
 
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
-function Die([string]$Message) {
+$SUPERVISED = $false
+$PROGRESS_FORMAT = ''
+$PROGRESS_STARTED = $false
+$CURRENT_PHASE = 'preflight'
+$CURRENT_LOG = ''
+
+function ConvertTo-JsonString([string]$Value) {
+  '"' + $Value.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n').Replace("`r", '\r').Replace("`t", '\t') + '"'
+}
+
+# One protocol-v1 event on stdout, built by hand so that every PowerShell
+# writes it byte for byte as package_launcher.sh does, keys in the same order.
+function Send-StartupEvent([string]$Phase, [string]$State, [string]$Label = '', [switch]$Skipped,
+    [string]$Url = '', [string]$Code = '', [string]$LogFile = '') {
+  if (-not $SUPERVISED) { return }
+  $line = '{"protocol":1,"phase":' + (ConvertTo-JsonString $Phase) + ',"state":' + (ConvertTo-JsonString $State)
+  if ($Label) { $line += ',"label":' + (ConvertTo-JsonString $Label) }
+  if ($Skipped) { $line += ',"skipped":true' }
+  if ($Url) { $line += ',"url":' + (ConvertTo-JsonString $Url) }
+  if ($Code) { $line += ',"code":' + (ConvertTo-JsonString $Code) }
+  if ($LogFile) { $line += ',"log":' + (ConvertTo-JsonString $LogFile) }
+  [Console]::Out.WriteLine($line + '}')
+  [Console]::Out.Flush()
+}
+
+function Die-WithCode([string]$Code, [string]$Message) {
+  if ($PROGRESS_STARTED) { Send-StartupEvent $CURRENT_PHASE failed -Code $Code -LogFile $CURRENT_LOG }
   [Console]::Error.WriteLine("error: $Message")
   exit 1
 }
-function Log([string]$Message) { Write-Host $Message }
+function Die([string]$Message) { Die-WithCode 'startup-error' $Message }
 
-if ($args.Count -gt 0 -and ($args[0] -eq '--help' -or $args[0] -eq '-h')) {
-  foreach ($line in Get-Content $PSCommandPath) {
-    if ($line -notmatch '^#') { break }
-    Write-Host ($line -replace '^# ?', '')
-  }
-  exit 0
+# Supervised stdout is the protocol. Human output goes to stderr, which the
+# application records in window.log.
+function Log([string]$Message) {
+  if ($SUPERVISED) { [Console]::Error.WriteLine($Message) } else { Write-Host $Message }
 }
-if ($args.Count -gt 0) { Die "unexpected argument: $($args[0]) (try --help)" }
+
+$argv = @($args)
+for ($i = 0; $i -lt $argv.Count; $i++) {
+  $arg = $argv[$i]
+  if ($arg -eq '--help' -or $arg -eq '-h') {
+    foreach ($line in Get-Content $PSCommandPath) {
+      if ($line -notmatch '^#') { break }
+      Write-Host ($line -replace '^# ?', '')
+    }
+    exit 0
+  } elseif ($arg -eq '-Supervised') {
+    $SUPERVISED = $true
+  } elseif ($arg -eq '-Progress' -and $i + 1 -lt $argv.Count) {
+    $i++
+    $PROGRESS_FORMAT = $argv[$i]
+  } else {
+    Die "unexpected argument: $arg (try --help)"
+  }
+}
+
+# An internal contract between VISTA.exe and this script. Requiring the pair
+# keeps either from becoming an accidental user-facing mode.
+if ($SUPERVISED -and $PROGRESS_FORMAT -ne 'jsonl') { $SUPERVISED = $false; Die '-Supervised requires -Progress jsonl' }
+if (-not $SUPERVISED -and $PROGRESS_FORMAT) { Die '-Progress jsonl requires -Supervised' }
+
+if ($SUPERVISED) {
+  Send-StartupEvent preflight running -Label 'Checking this computer'
+  $PROGRESS_STARTED = $true
+}
 
 # --- platform guard ----------------------------------------------------------
 
@@ -83,12 +137,17 @@ if ($BUILT_OS -and ($HOST_OS -ne $BUILT_OS -or $HOST_ARCH -ne $BUILT_ARCH)) {
 # after startup said everything was fine, so it is caught here instead. The
 # build records the package's longest path relative to its root; this adds
 # where it was unpacked.
-$longPaths = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
-    -Name LongPathsEnabled -ErrorAction SilentlyContinue).LongPathsEnabled
+# Read with a try: the hermetic tests run this under pwsh on macOS and Linux,
+# which have no registry.
+$longPaths = $null
+try {
+  $longPaths = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+      -Name LongPathsEnabled -ErrorAction SilentlyContinue).LongPathsEnabled
+} catch {}
 $longest = [int]$manifest.target.longest_relative_path
 $deepest = $PACKAGE.Length + 1 + $longest
 if ($longPaths -ne 1 -and $deepest -ge 260) {
-  Die ("this package is unpacked too deep for Windows' path-length limit:`n" +
+  Die-WithCode package-path-too-long ("this package is unpacked too deep for Windows' path-length limit:`n" +
     "    $PACKAGE`n" +
     "  puts its deepest file at $deepest characters, and Windows allows 259 unless`n" +
     "  long paths are enabled. Move the folder somewhere shorter, such as C:\vista,`n" +
@@ -102,7 +161,7 @@ if ($longPaths -ne 1 -and $deepest -ge 260) {
 $longestState = [int]$manifest.target.longest_state_path
 $deepestState = $STATE.Length + 1 + $longestState
 if ($longPaths -ne 1 -and $deepestState -ge 260) {
-  Die ("the state directory is too deep for Windows' path-length limit:`n" +
+  Die-WithCode invalid-state-path ("the state directory is too deep for Windows' path-length limit:`n" +
     "    $STATE`n" +
     "  puts its deepest file at $deepestState characters, and Windows allows 259`n" +
     "  unless long paths are enabled. Set VISTA_HOME to a shorter folder, such as`n" +
@@ -126,14 +185,14 @@ if ($longPaths -ne 1 -and $deepestState -ge 260) {
 # host ready; its own output, which names the fix, is shown. There is no way
 # to start without it: VISTA always needs a microVM.
 $MSB = "$PACKAGE\app\mcp_servers\dev_mcp_server\.venv\Lib\site-packages\microsandbox\_bundled\bin\msb.exe"
-if (-not (Test-Path $MSB)) { Die "the package has no sandbox runtime at $MSB" }
+if (-not (Test-Path $MSB)) { Die-WithCode missing-component "the package has no sandbox runtime at $MSB" }
 & {
   $ErrorActionPreference = 'Continue'
   $doctor = (& $MSB doctor 2>&1 | ForEach-Object { "$_" }) -join "`n"
   $doctorExit = $LASTEXITCODE
   $ErrorActionPreference = 'Stop'
   if ($doctorExit -ne 0 -or $doctor -notmatch 'Host setup is ready') {
-    Die ("the code-execution sandbox cannot run on this machine. Its own check says:`n`n" +
+    Die-WithCode virtualisation-unavailable ("the code-execution sandbox cannot run on this machine. Its own check says:`n`n" +
       "$doctor`n`n" +
       "  On Windows this usually means Windows Hypervisor Platform is not available.`n" +
       "  Turning it on needs administrator rights and a restart; ``msb doctor --fix``,`n" +
@@ -167,6 +226,7 @@ foreach ($entry in @(@($UI_PORT, 'the web interface'), @($MCP_PORT, 'the MCP ser
   if (Test-PortInUse ([int]$entry[0])) { $conflicts += "port $($entry[0]) ($($entry[1])) is already in use" }
 }
 if ($conflicts.Count -gt 0) {
+  if ($PROGRESS_STARTED) { Send-StartupEvent preflight failed -Code port-conflict }
   [Console]::Error.WriteLine('error: VISTA cannot start:')
   foreach ($conflict in $conflicts) { [Console]::Error.WriteLine("  - $conflict") }
   [Console]::Error.WriteLine('Stop whatever is using it, or set VISTA_UI_PORT / VISTA_MCP_PORT /')
@@ -190,9 +250,10 @@ $MSB_STORE = Join-Path $STATE 'microsandbox'
 # and Linux; it is pointed at this copy of the interpreter here instead, which
 # is what lets the package be moved. Rewritten only when it differs.
 $pythonDir = Get-ChildItem -Directory "$PACKAGE\python" -Filter 'cpython-*' | Select-Object -First 1
-if (-not $pythonDir) { Die "no bundled interpreter under $PACKAGE\python" }
+if (-not $pythonDir) { Die-WithCode missing-component "no bundled interpreter under $PACKAGE\python" }
 foreach ($project in 'backend', 'mcp_servers\vista_mcp_server', 'mcp_servers\dev_mcp_server') {
   $cfg = "$PACKAGE\app\$project\.venv\pyvenv.cfg"
+  $cfg = Convert-Path $cfg
   $text = [System.IO.File]::ReadAllText($cfg)
   $wanted = "home = $($pythonDir.FullName)"
   $updated = [regex]::Replace($text, '(?m)^home = .*$', $wanted.Replace('$', '$$'))
@@ -235,7 +296,50 @@ $env:VISTA_DEV_MCP_DOCKERFILE = ' '
 $env:VISTA_DEV_MCP_IMAGE = 'vista-sandbox:latest'
 $LOGS = "$STATE\logs"
 
+# --- window ------------------------------------------------------------------
+
+# VISTA is a desktop application: there is no browser mode to fall back to, so a
+# session that cannot show the window is refused here, before anything is
+# started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
+# alone and is for the build's smoke test, which has no one to look at a window.
+# The manifest writes it with /, which cmd can misread as a switch.
+$WINDOW_EXE = if ($manifest.window) { $manifest.window.exe.Replace('/', '\') } else { '' }
+if (-not $SUPERVISED -and $env:VISTA_NO_WINDOW -ne '1') {
+  if (-not $WINDOW_EXE -or -not (Test-Path "$PACKAGE\$WINDOW_EXE")) {
+    Die 'this package has no VISTA window; rebuild it with build_local_package.sh.'
+  }
+  # A window started over SSH, or from a service, lands on a desktop no one
+  # is looking at, if on any.
+  if ($env:SSH_CONNECTION -or $env:SSH_CLIENT) {
+    Die 'cannot open the VISTA window: this is a remote shell session.'
+  }
+  if (-not [Environment]::UserInteractive) {
+    Die 'cannot open the VISTA window: this session has no desktop (is it running as a service?).'
+  }
+}
+
+# The application cannot see the package's insides, so supervised mode names a
+# missing part up front rather than failing somewhere later.
+if ($SUPERVISED) {
+  foreach ($entry in @(
+      @("$PACKAGE\payload\payload.tar", 'payload\payload.tar'),
+      @("$PACKAGE\payload\parts.txt", 'payload\parts.txt'),
+      @("$PACKAGE\payload\sandbox-image.tar", 'sandbox image'),
+      @("$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe", 'MCP server executable'),
+      @("$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe", 'backend executable'),
+      @("$PACKAGE\node\node.exe", 'web interface runtime'),
+      @("$PACKAGE\app\ui\server.js", 'web interface'))) {
+    if (-not (Test-Path $entry[0])) {
+      Die-WithCode missing-component "this package has no $($entry[1]); rebuild it with build_local_package.sh."
+    }
+  }
+}
+
 # --- first-run setup ---------------------------------------------------------
+
+Send-StartupEvent preflight complete
+$CURRENT_PHASE = 'resources'
+Send-StartupEvent resources running -Label 'Installing bundled resources'
 
 New-Item -ItemType Directory -Force -Path $STATE, $LOGS | Out-Null
 
@@ -250,30 +354,69 @@ $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 # under the package folder, they would pass the 260-character limit. Extracted
 # straight into the state directory they fit. The tar.exe Windows ships reads
 # it; named by path so no other tar on PATH is picked up.
-$missing = @('vista-data', 'knowledge-bases', 'huggingface') | Where-Object { -not (Test-Path "$STATE\$_") }
+# The parts are the members payload\parts.txt lists, one per corpus, rather than
+# the tar's top-level folders: an upgraded state directory already has
+# vista-data and knowledge-bases, and a corpus a newer package adds
+# (vista-data/ai-safety) must still be installed. An installed member is never
+# replaced or removed.
 $payloadTar = "$PACKAGE\payload\payload.tar"
-if ($missing.Count -gt 0 -and (Test-Path $payloadTar)) {
+$missing = @()
+if (Test-Path $payloadTar) {
+  $partsFile = "$PACKAGE\payload\parts.txt"
+  if (-not (Test-Path $partsFile)) {
+    Die "this package has no payload\parts.txt; rebuild it with build_local_package.sh."
+  }
+  $missing = @(Get-Content -Encoding UTF8 $partsFile |
+    Where-Object { $_.Trim() -and -not (Test-Path "$STATE\$($_.Trim())") } |
+    ForEach-Object { $_.Trim() })
+}
+if ($missing.Count -gt 0) {
   Log "First run: installing $($missing -join ' ')..."
-  & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf $payloadTar -C $STATE @missing
-  if ($LASTEXITCODE -ne 0) { Die "could not extract the payload into $STATE" }
+  & (Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe') -xf $payloadTar -C $STATE @missing
+  if ($LASTEXITCODE -ne 0) { Die-WithCode resource-extraction-failed "could not extract the payload into $STATE" }
+  Send-StartupEvent resources complete
+} else {
+  Send-StartupEvent resources complete -Skipped
 }
 
 
 # Imports the sandbox image from the payload -- the only one the package ships.
 # The `image inspect` guard is what makes a second run cheap.
+$CURRENT_PHASE = 'sandbox'
+$CURRENT_LOG = 'setup.log'
+Send-StartupEvent sandbox running -Label 'Preparing the code-execution sandbox'
 $imageTar = "$PACKAGE\payload\sandbox-image.tar"
+$present = $true
 if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
   $ErrorActionPreference = 'Continue'
   & $MSB image inspect --format=json $env:VISTA_DEV_MCP_IMAGE *> $null
   $present = ($LASTEXITCODE -eq 0)
   if (-not $present) {
     Log 'First run: importing the code-execution sandbox image...'
-    & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE *>> "$LOGS\setup.log"
-    $loaded = ($LASTEXITCODE -eq 0)
+    # msb reports progress on stderr, in UTF-8. Redirected with `*>>`,
+    # PowerShell 5.1 wraps every stderr line in a NativeCommandError record and
+    # decodes it with the OEM code page, so a successful import reads as a
+    # failure in setup.log. Stringified and decoded as UTF-8, the log holds
+    # msb's own words.
+    # Restored in finally: the code page belongs to the whole console, so a
+    # failure or Ctrl-C here would otherwise leave the parent cmd on UTF-8.
+    $consoleEncoding = [Console]::OutputEncoding
+    try {
+      [Console]::OutputEncoding = $Utf8NoBom
+      & $MSB load -i $imageTar -t $env:VISTA_DEV_MCP_IMAGE 2>&1 | ForEach-Object { "$_" } |
+        Out-File -Append -Encoding utf8 "$LOGS\setup.log"
+      $loaded = ($LASTEXITCODE -eq 0)
+    } finally {
+      [Console]::OutputEncoding = $consoleEncoding
+    }
   }
   $ErrorActionPreference = 'Stop'
-  if (-not $present -and -not $loaded) { Die "could not import the sandbox image; see $LOGS\setup.log" }
+  if (-not $present -and -not $loaded) {
+    Die-WithCode sandbox-image-import-failed "could not import the sandbox image; see $LOGS\setup.log"
+  }
 }
+Send-StartupEvent sandbox complete -Skipped:$present
+$CURRENT_LOG = ''
 
 # --- services ----------------------------------------------------------------
 
@@ -291,6 +434,15 @@ if ((Test-Path $MSB) -and (Test-Path $imageTar)) {
 #
 # If joining fails -- say this launcher runs inside a job that forbids it --
 # the cleanup below still stops the services on an ordinary Ctrl-C.
+#
+# Supervised, this is also what stops everything when VISTA.exe ends this
+# process outright: on Windows its kill() is a TerminateProcess, which runs no
+# cleanup of ours. Closing stdin is how the application asks for a normal stop.
+#
+# Only on Windows: the hermetic tests also run this under pwsh on macOS and
+# Linux, which have no job objects.
+$OnWindows = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+if ($OnWindows) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -354,6 +506,7 @@ public static class VistaJob {
 }
 '@
 [void][VistaJob]::JoinKillOnCloseJob()
+}
 
 $services = @()
 
@@ -367,17 +520,30 @@ $services = @()
 # loses its first and last quote characters -- which here are the ones around
 # the executable and the log file -- and cmd refuses the line, so no service
 # starts and no log is written.
+#
+# cmd's console is suppressed with CreateNoWindow rather than Start-Process
+# -WindowStyle Hidden. The latter hands cmd a SW_HIDE show state, cmd passes it
+# on to what it starts, and Windows applies it to that program's first
+# top-level window -- so the VISTA window could open hidden. CreateNoWindow
+# gives cmd a console with no window and sets no show state at all.
 function Start-VistaService([string]$Name, [string]$Command) {
-  $proc = Start-Process -FilePath 'cmd.exe' `
-    -ArgumentList '/d', '/s', '/c', "`"$Command > `"$LOGS\$Name.log`" 2>&1`"" `
-    -WorkingDirectory $PACKAGE -WindowStyle Hidden -PassThru
+  $info = New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe'
+  $info.Arguments = "/d /s /c `"$Command > `"$LOGS\$Name.log`" 2>&1`""
+  $info.WorkingDirectory = $PACKAGE
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  # Started directly, the process keeps its handle, so ExitCode can still be
+  # read after it has gone -- the window's exit code says why it closed.
+  $proc = [System.Diagnostics.Process]::Start($info)
   $script:services += $proc
+  return $proc
 }
 
 # taskkill /T takes each service's whole tree -- cmd, the service, and the
 # sandbox servers the backend spawned -- which is what `kill` on a process group
 # does in package_launcher.sh.
 function Stop-VistaServices {
+  Send-StartupEvent stopping running -Label 'Stopping VISTA'
   Log ''
   Log 'Stopping VISTA...'
   # 'Continue' because taskkill writes to stderr whenever part of a tree is
@@ -398,33 +564,103 @@ function Wait-For([string]$Url, [int]$Seconds, [string]$LogFile, [string]$What) 
   [Console]::Error.WriteLine('')
   [Console]::Error.WriteLine("error: $What did not start within ${Seconds}s. Last lines of ${LogFile}:")
   Get-Content $LogFile -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { [Console]::Error.WriteLine($_) }
+  Send-StartupEvent $CURRENT_PHASE failed -Code health-timeout -LogFile $CURRENT_LOG
   exit 1
+}
+
+# Supervised, VISTA runs until the application closes this script's stdin, its
+# stop request, or until every service has gone. Read asynchronously and
+# polled, so that a service ending is noticed too.
+function Wait-ForStopRequest {
+  $stdin = [Console]::OpenStandardInput()
+  $buffer = New-Object byte[] 256
+  $read = $stdin.ReadAsync($buffer, 0, $buffer.Length)
+  while ($true) {
+    try {
+      if ($read.Wait(500)) {
+        if ($read.Result -eq 0) { return }
+        $read = $stdin.ReadAsync($buffer, 0, $buffer.Length)
+        continue
+      }
+    } catch {
+      return
+    }
+    if (-not ($services | Where-Object { -not $_.HasExited })) { return }
+  }
 }
 
 Log "VISTA $VERSION"
 Log "Starting services (logs in $LOGS)..."
 
 try {
-  Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
+  $CURRENT_PHASE = 'mcp'
+  $CURRENT_LOG = 'mcp.log'
+  Send-StartupEvent mcp running -Label 'Starting scientific tools'
+  $null = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
     "--transport=http --port $MCP_PORT")
   Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server'
+  Send-StartupEvent mcp ready
 
   if ($FIRST_RUN) {
     Log 'First run: preparing the database and corpus (this takes a minute)...'
   }
-  Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
+  $CURRENT_PHASE = 'backend'
+  $CURRENT_LOG = 'backend.log'
+  Send-StartupEvent backend running -Label 'Preparing VISTA'
+  $null = Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
   Wait-For "$env:VISTA_BACKEND_URL/openapi.json" 600 "$LOGS\backend.log" 'the backend'
+  Send-StartupEvent backend ready
 
+  $CURRENT_PHASE = 'ui'
+  $CURRENT_LOG = 'ui.log'
+  Send-StartupEvent ui running -Label 'Starting the interface'
   $env:PORT = $UI_PORT
   $env:HOSTNAME = '127.0.0.1'
-  Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
+  $null = Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
   Wait-For "http://127.0.0.1:$UI_PORT/" 120 "$LOGS\ui.log" 'the web interface'
 
-  Log ''
-  Log "VISTA is running at http://localhost:$UI_PORT"
-  Log 'Press Ctrl-C to stop.'
+  # 127.0.0.1, not localhost: it is what the UI binds, and localhost can
+  # resolve to ::1 first. It is also the origin the window's storage is kept
+  # under, so it has to be the same on every run.
+  $UI_URL = "http://127.0.0.1:$UI_PORT"
+  Send-StartupEvent ui ready -Url $UI_URL
+  $CURRENT_LOG = ''
 
-  $services | Wait-Process
+  if ($SUPERVISED) {
+    Log ''
+    Log "VISTA is running at $UI_URL (supervised by the VISTA application)"
+    Wait-ForStopRequest
+    exit 0
+  }
+
+  if ($env:VISTA_NO_WINDOW -eq '1') {
+    Log ''
+    Log "VISTA is running at $UI_URL (no window: VISTA_NO_WINDOW is set)"
+    Log 'Press Ctrl-C to stop.'
+    $services | Wait-Process
+    exit 0
+  }
+
+  # Under cmd like the services, so its output lands in window.log; cmd waits
+  # for it and passes its exit code on.
+  $window = Start-VistaService 'window' "`"$PACKAGE\$WINDOW_EXE`" --url=$UI_URL"
+  Log ''
+  Log "VISTA is open in its own window ($UI_URL)."
+  Log 'Close the window, or press Ctrl-C here, to stop.'
+
+  # The window closing or quitting ends the session; the finally below stops
+  # the rest. 75 is what it exits with when another VISTA window already holds
+  # the single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
+  # Polled rather than a bare WaitForExit(): Ctrl-C cannot interrupt a blocking
+  # .NET call in PowerShell 5.1, only the gap between two statements.
+  while (-not $window.WaitForExit(500)) {}
+  $windowStatus = $window.ExitCode
+  if ($windowStatus -eq 75) {
+    Die 'VISTA is already open in another window, which is showing the stack it started. Close that window first, or use it.'
+  }
+  if ($windowStatus -ne 0) {
+    Die "the VISTA window stopped unexpectedly (exit $windowStatus); see $LOGS\window.log."
+  }
 } finally {
   Stop-VistaServices
 }

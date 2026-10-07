@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
+import { setThemeChoice } from "@/lib/theme";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { UserPublicWithConfig } from "@/lib/user";
 
@@ -38,6 +39,10 @@ function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConf
     inference_api_key: null,
     nersc_account: null,
     nersc_remote_dir: null,
+    odo_remote_dir: null,
+    frontier_remote_dir: null,
+    lux_remote_dir: null,
+    lux_account: null,
     odo_s3m_token: null,
     frontier_s3m_token: null,
     nersc_iri_token: null,
@@ -66,10 +71,10 @@ function statusView(): HpcStatusView {
       cluster,
       state,
       checked_at: "2026-09-25T15:00:00Z",
-      checks: { facility: ok, credential: ok, globus: null, ...checks },
+      checks: { facility: ok, credential: ok, globus: null, settings: ok, ...checks },
     },
   });
-  const luxEntry = entry("lux", "ready", { credential: { ...ok, project: "stf218" } });
+  const luxEntry = entry("lux", "ready");
   return {
     clusters: [
       entry("frontier", "ready"),
@@ -126,7 +131,13 @@ describe("UserSettingsModal cluster sections", () => {
 
   it("keeps each field in its own cluster's section", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok", nersc_account: "m1234" }),
+      user({
+        odo_s3m_token: "odo-tok",
+        frontier_s3m_token: "fr-tok",
+        nersc_account: "m1234",
+        odo_remote_dir: "/odo/proj/vista",
+        frontier_remote_dir: "/frontier/proj/vista",
+      }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     await section("Odo");
@@ -136,9 +147,17 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveValue("odo-tok");
     expect(within(odo).getByText("Odo", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
+    expect(within(odo).getByLabelText(/Odo remote directory/)).toHaveValue("/odo/proj/vista");
+    const hint = within(odo).getByText(/writable by the project's group/);
+    expect(hint).toHaveTextContent("<dir>.<user>.jobs");
+    expect(hint).toHaveTextContent("<dir>.out");
 
     const frontier = await section("Frontier");
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
+    expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue(
+      "/frontier/proj/vista",
+    );
+    expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
 
     const perlmutter = await section("Perlmutter");
     expect(within(perlmutter).getByLabelText(/NERSC account/)).toHaveValue("m1234");
@@ -180,6 +199,23 @@ describe("UserSettingsModal saving", () => {
     expect(recheckMock).toHaveBeenCalledWith("frontier");
   });
 
+  it("saving a remote directory sends only that field, trimmed, and rechecks nothing", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+
+    await userEvent.type(
+      await screen.findByLabelText(/Frontier remote directory/),
+      " /lustre/orion/abc123/proj-shared/vista ",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      frontier_remote_dir: "/lustre/orion/abc123/proj-shared/vista",
+    });
+    // The cards check credentials and the facility, not the folder.
+    expect(recheckMock).not.toHaveBeenCalled();
+  });
+
   it("hiding a cluster saves the list, leaves its token alone, and refreshes the rail", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user({ nersc_iri_token: "iri-tok" }));
     render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
@@ -215,16 +251,38 @@ describe("UserSettingsModal saving", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows only the sidebar switch", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+  it("opened from the Lux card, shows the sidebar switch, the account and the remote directory", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(
+      user({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
+    );
     render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
     const lux = await section("Lux");
     expect(header("Lux")).toHaveAttribute("aria-expanded", "true");
     expect(header("Odo")).toHaveAttribute("aria-expanded", "false");
     expect(header("Lux")).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    expect(lux.querySelectorAll("input:not([role=switch]), textarea, a")).toHaveLength(0);
+    // The account and the folder are its only fields: no credential is stored for Lux.
+    const fields = lux.querySelectorAll("input:not([role=switch]), textarea, a");
+    expect(fields).toHaveLength(2);
+    expect(within(lux).getByLabelText(/Lux account/)).toHaveValue("abc123");
+    expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
+  });
+
+  it("saving the Lux account sends only that field", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_account: "abc123" });
+  });
+
+  it("clearing the Lux remote directory sends null", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ lux_remote_dir: "/lux/vista" }));
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    await userEvent.clear(await screen.findByLabelText(/Lux remote directory/));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_remote_dir: null });
   });
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {
@@ -235,5 +293,74 @@ describe("UserSettingsModal: Lux", () => {
     expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] });
     expect(recheckMock).not.toHaveBeenCalled();
     expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("UserSettingsModal appearance", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  afterEach(() => setThemeChoice("system"));
+
+  function radio(name: string) {
+    return within(screen.getByRole("radiogroup", { name: "Appearance" })).getByRole("radio", { name });
+  }
+
+  it("starts on System, and says what System means", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("System")).toBeChecked();
+    expect(radio("Light")).not.toBeChecked();
+    expect(radio("Dark")).not.toBeChecked();
+    expect(screen.getByText(/System matches your computer's light or dark setting/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Dark", "dark"],
+    ["Light", "light"],
+  ])("selecting %s applies and stores it at once, without Save", async (name, value) => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await userEvent.click(radio(name));
+    expect(radio(name)).toBeChecked();
+    expect(document.documentElement.getAttribute("data-theme")).toBe(value);
+    expect(window.localStorage.getItem("vista.theme")).toBe(value);
+    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+  });
+
+  it("selecting System clears the override", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    setThemeChoice("dark");
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("Dark")).toBeChecked();
+    await userEvent.click(radio("System"));
+    expect(radio("System")).toBeChecked();
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(window.localStorage.getItem("vista.theme")).toBeNull();
+  });
+
+  it("arrow keys move and select together, with one tab stop", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(radio("System")).toHaveAttribute("tabindex", "0");
+    expect(radio("Dark")).toHaveAttribute("tabindex", "-1");
+
+    radio("System").focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(radio("Light")).toBeChecked();
+    expect(radio("Light")).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(radio("Dark")).toBeChecked();
+    expect(radio("Dark")).toHaveFocus();
+  });
+
+  it("is available before the user record loads", () => {
+    fetchCurrentUserWithConfigMock.mockReturnValue(new Promise(() => {}));
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(radio("System")).toBeChecked();
   });
 });

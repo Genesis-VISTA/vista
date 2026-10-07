@@ -6,8 +6,8 @@
 #
 # Env vars provided by vista's Frontier dispatcher (submit_job_mcp._submit_frontier_job):
 #   VISTA_OUT          per-job output dir, already created
-#   VISTA_JOB_DIR      <remote_dir>/forge-pretrain; holds the forge checkout
-#   RUN_DIR_Frontier   $VISTA_JOB_DIR/src (prepare_forge.sh, make_config.py, forge_common.sh)
+#   VISTA_JOB_DIR      <remote_dir>.out/forge-pretrain; holds the forge checkout
+#   RUN_DIR_Frontier   <remote_dir>.<user>.jobs/forge-pretrain/src (prepare_forge.sh, make_config.py, forge_common.sh)
 #   http(s)_proxy      OLCF proxy, for the checkout update below
 #   FORGE_*            from cluster_defaults.json -> frontier.iri.environment
 # Positional args ("$@", from script_args): KEY=VALUE pairs, see README.md.

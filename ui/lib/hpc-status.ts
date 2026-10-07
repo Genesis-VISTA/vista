@@ -31,7 +31,6 @@ export type HpcState =
   | "unverifiable"
   | "not_connected"
   | "rejected"
-  | "wrong_project"
   | "globus_not_connected"
   | "globus_session_expired"
   | "ready";
@@ -46,8 +45,8 @@ export type HpcCheckReason =
   | "not_connected"
   | "rejected"
   | "not_active"
-  | "wrong_project"
-  | "session_expired";
+  | "session_expired"
+  | "invalid";
 
 export type HpcCheck = {
   ok: boolean;
@@ -56,10 +55,8 @@ export type HpcCheck = {
   http_status?: number | null;
   incident?: { name: string; start: string | null; end: string | null } | null;
   project?: string | null;
-  expected_project?: string | null;
   expires_at?: string | null;
   active_from?: string | null;
-  identity?: "own" | "deployment" | null;
 };
 
 export type HpcClusterStatus = {
@@ -70,6 +67,12 @@ export type HpcClusterStatus = {
     facility: HpcCheck;
     credential: HpcCheck;
     globus: HpcCheck | null;
+    /**
+     * The researcher's own settings a submission needs: the remote directory,
+     * and the account on Perlmutter and Lux. Missing or unusable ones make the
+     * cluster Not connected.
+     */
+    settings: HpcCheck;
   };
 };
 

@@ -137,8 +137,8 @@ target; the job is CPU-only, so it uses a Frontier node's CPU cores and leaves i
 GPUs idle — prefer Odo unless Frontier is what you have.
 
 `ALLOYMC_SCRATCH_DIR` overrides the shared scratch location on either cluster; leave it
-unset to use the `$VISTA_OUT` sibling, which is writable on both (Odo's output dir is
-pre-created group-writable; Frontier's is granted to the IRI automation user by setfacl).
+unset to use the `$VISTA_OUT` sibling, which is writable on both (`<remote dir>.out` is created
+by Slurm as the user the job runs as).
 
 A `setup_<cluster>.sh` pre-launch validation gate is not shipped yet; the clone, build,
 and cross-node visibility checks fail loudly inside the job instead.

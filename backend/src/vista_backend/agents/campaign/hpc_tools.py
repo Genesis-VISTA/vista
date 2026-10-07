@@ -67,11 +67,11 @@ class McpHpcTools:
             args["script_args"] = script_args
         text = await self._invoke("submit_hpc_job", args)
         summary = parse_submit_summary(text)
-        # The paths are recorded here as well as in the MCP server's registry, and
-        # the duplication earns its keep: the registry makes *its own* later status
-        # calls restart-safe, while this copy is what lets anything outside that
-        # process — a job row, a report attached to a forum post, a human reading
-        # the thread — say where the job's log and outputs actually are.
+        # The MCP server keeps no record of the job: its later status calls work
+        # the paths out again from the job id and the researcher's remote folder.
+        # This copy is what lets anything else -- a job row, a report attached to
+        # a forum post, a human reading the thread -- say where the job's log and
+        # outputs actually are, and the cluster is what status calls must pass.
         return SubmittedJobInfo(
             job_id=summary["job_id"],
             cluster=summary["cluster"] or (cluster or ""),

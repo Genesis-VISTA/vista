@@ -8,14 +8,15 @@ rather than inferred from which credentials happen to be saved.
 ## Requirements
 
 ### Requirement: Per-cluster S3M credentials
-The system SHALL store a separate S3M token for Odo and for Frontier. Job
-submission and file operations for each cluster SHALL use only that cluster's
-token. The legacy single S3M token SHALL NOT be read, shown, or sent anywhere,
-and SHALL NOT be migrated into either cluster's field.
+The system SHALL store a separate S3M token for Odo and for Frontier. Each
+field SHALL accept a token from any OLCF project, including two different
+projects for the two clusters. Job submission and file operations for each cluster SHALL use only
+that cluster's token. The legacy single S3M token SHALL NOT be read, shown, or
+sent anywhere, and SHALL NOT be migrated into either cluster's field.
 
 #### Scenario: Both clusters connected
-- **WHEN** a researcher saves an Odo token for Odo's project and a Frontier token for Frontier's project
-- **THEN** jobs can be submitted to both clusters, each using its own token
+- **WHEN** a researcher saves an Odo token minted in one project and a Frontier token minted in another
+- **THEN** jobs can be submitted to both clusters, each using its own token and charged to its own token's project
 
 #### Scenario: Legacy token ignored
 - **WHEN** a researcher has only the legacy single S3M token saved
@@ -106,18 +107,22 @@ For each cluster with a saved credential, the system SHALL verify it with an
 authenticated, read-only call to the cluster's IRI service that the facility
 refuses for an invalid token. Merely having a credential saved SHALL NOT count
 as passing. For Odo and Frontier the system SHALL also introspect the S3M
-token: it SHALL confirm the token's project matches the cluster's configured
-account, and SHALL report the token's planned expiration. An answer that is
-neither success nor 401 SHALL be reported as unverifiable, not as rejected.
+token, and SHALL report the token's project and planned expiration. It SHALL
+NOT compare the token's project with any configured account. An answer that
+is neither success nor 401 SHALL be reported as unverifiable, not as rejected.
 
 For Lux, the credential check SHALL always pass without any call. It SHALL say
 that the researcher signs in with a PIN and RSA passcode when a chat first uses
-Lux, and SHALL name the configured project Lux jobs run under. No outcome of a
-chat's sign-in SHALL change it.
+Lux, and SHALL name the researcher's Lux account when one is set. No outcome
+of a chat's sign-in SHALL change it.
 
 #### Scenario: Token accepted
-- **WHEN** the IRI service answers the authenticated call successfully and, for Odo/Frontier, the token's project matches
-- **THEN** the credential check passes and, for Odo/Frontier, reports the token's planned expiration
+- **WHEN** the IRI service answers the authenticated call successfully
+- **THEN** the credential check passes and, for Odo/Frontier, reports the token's project and planned expiration
+
+#### Scenario: Token for another project
+- **WHEN** an Odo S3M token is valid and belongs to a project VISTA has no configuration for
+- **THEN** the credential check passes, reporting that project, and there is no Wrong project outcome
 
 #### Scenario: No credential saved
 - **WHEN** the researcher has no token for the cluster
@@ -131,17 +136,13 @@ chat's sign-in SHALL change it.
 - **WHEN** introspection reports a delayed start whose time is still in the future
 - **THEN** the credential check fails as rejected, with the reason "not active until" that time
 
-#### Scenario: Token for another project
-- **WHEN** the S3M token is valid but its project is not the cluster's account
-- **THEN** the credential check fails as Wrong project, naming the expected project
-
 #### Scenario: Unexpected answer
 - **WHEN** the IRI service answers with a status other than success or 401
 - **THEN** the credential check is unverifiable, and reports that HTTP status
 
 #### Scenario: Lux sign-in is described, not checked
 - **WHEN** any researcher's Lux status is checked
-- **THEN** Lux's credential check passes, names the configured project, says sign-in happens in a chat with a PIN and RSA passcode, and makes no outbound call
+- **THEN** Lux's credential check passes, says sign-in happens in a chat with a PIN and RSA passcode, names the researcher's Lux account if set, and makes no outbound call
 
 #### Scenario: A failed chat sign-in does not reject Lux
 - **WHEN** a researcher's Lux sign-in failed in a chat and the hub still answers
@@ -150,19 +151,23 @@ chat's sign-in SHALL change it.
 ### Requirement: Globus check for OLCF clusters
 For Odo and Frontier the system SHALL verify the Globus connection the
 cluster's file operations would use. It SHALL choose the same credential
-source, in the same order, that those operations choose, and a deployment-wide
-credential counts. It SHALL verify the connection with a live call to the
-cluster's collection, so that an expired High Assurance session is detected
-rather than reported as connected. It SHALL NOT estimate when a session will
-lapse.
+source, in the same order, that those operations choose. Only credentials the
+researcher connected count; there is no deployment-wide credential. It SHALL
+verify the connection with a live call to the cluster's collection, so that an
+expired High Assurance session is detected rather than reported as connected.
+It SHALL NOT estimate when a session will lapse.
 
 #### Scenario: Globus verified
-- **WHEN** a complete Globus credential exists for the cluster and a read-only call to its collection succeeds
-- **THEN** the Globus check passes and reports whether it used the researcher's own identity or the deployment's
+- **WHEN** the researcher has a complete Globus credential for the cluster and a read-only call to its collection succeeds
+- **THEN** the Globus check passes
 
 #### Scenario: Globus missing or incomplete
-- **WHEN** no source holds both the Transfer and the collection token for the cluster
+- **WHEN** none of the researcher's sources holds both the Transfer and the collection token for the cluster
 - **THEN** the Globus check fails as Not connected
+
+#### Scenario: Deployment credential does not count
+- **WHEN** the researcher has connected no Globus account and `VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` and `VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN` are set in the environment
+- **THEN** Odo's Globus check fails as Not connected
 
 #### Scenario: Globus session expired
 - **WHEN** the collection answers 401
@@ -171,22 +176,27 @@ lapse.
 ### Requirement: Cluster state
 The system SHALL resolve each cluster to exactly one state, by taking the first
 that applies in this order: Checking, Degraded, Couldn't verify, Not connected,
-Token rejected, Wrong project, Globus not connected, Globus session expired,
-Ready. A cluster SHALL be Ready only when every check that applies to it
-passes. For Odo and Frontier that includes the Globus check. Lux SHALL have no
-state of its own; it uses the same order.
+Token rejected, Globus not connected, Globus session expired, Ready. A cluster
+SHALL be Ready only when every check that applies to it passes. For Odo and
+Frontier that includes the Globus check, and for every cluster the settings
+check. A failed settings check SHALL make the cluster Not connected. Lux SHALL
+have no state of its own; it uses the same order.
 
 #### Scenario: Odo without Globus
-- **WHEN** Odo's facility and credential checks pass but the Globus check fails
+- **WHEN** Odo's facility, credential and settings checks pass but the Globus check fails
 - **THEN** Odo's state is Globus not connected (or Globus session expired), not Ready
 
 #### Scenario: Perlmutter ready
-- **WHEN** Perlmutter's facility and credential checks pass
+- **WHEN** Perlmutter's facility, credential and settings checks pass
 - **THEN** Perlmutter's state is Ready, with no Globus check applied
 
 #### Scenario: Lux ready
-- **WHEN** the Lux hub answers the probe
+- **WHEN** the Lux hub answers the probe and the researcher has set a Lux account and remote directory
 - **THEN** Lux's state is Ready, with no Globus check applied
+
+#### Scenario: Token but no remote directory
+- **WHEN** Frontier's facility, credential and Globus checks pass but no Frontier remote directory is set
+- **THEN** Frontier's state is Not connected, not Ready
 
 #### Scenario: Facility down outranks credentials
 - **WHEN** a cluster's facility check fails and its credential check also fails
@@ -255,10 +265,15 @@ The settings modal SHALL keep account and model settings at the top, always
 visible, followed by one collapsible section per supported cluster. Each
 cluster's section SHALL contain:
 - its "Show in sidebar" switch;
-- all of its credentials: for Odo and Frontier, the S3M token and Globus
-  connection; for Perlmutter, the NERSC account, remote directory, and IRI
-  token; Lux has none, so its section SHALL contain only its switch;
+- all of its settings: for Odo and Frontier, the S3M token, the remote
+  directory, and the Globus connection; for Perlmutter, the NERSC account,
+  remote directory, and IRI token; for Lux, the Lux account and remote directory;
 - in its header, the same status dot and word the rail shows.
+
+The S3M token fields SHALL say that a token from any OLCF project with S3M
+access works. The Odo and Frontier remote directory fields SHALL say that VISTA
+keeps `<dir>.<user>.jobs` and `<dir>.out` beside the directory, and that the
+folder containing them must be writable by the project's group.
 
 Opened from the rail's settings button, every cluster section SHALL start
 collapsed. Opened from a cluster's details, only that cluster's section SHALL
@@ -279,7 +294,11 @@ SHALL trigger a fresh check of that cluster.
 
 #### Scenario: Lux section
 - **WHEN** a researcher expands the Lux section
-- **THEN** it shows only the "Show in sidebar" switch, with no credential fields
+- **THEN** it shows the "Show in sidebar" switch, the Lux account and the Lux remote directory, and no credential fields
+
+#### Scenario: Remote directory saved
+- **WHEN** a researcher enters a Frontier remote directory and saves
+- **THEN** it is stored for that researcher, and a cleared field is stored as not set
 
 ### Requirement: NavRail presentation
 The expanded rail SHALL show an HPC section with one card per visible cluster.
@@ -287,12 +306,15 @@ Each card SHALL show a status dot, whose shape differs between states as well
 as its color, and a status word. Clicking any card, in any state, SHALL open a
 details view containing:
 - each check with its reason;
-- for Odo and Frontier, the S3M token's planned expiration;
+- for Odo and Frontier, the S3M token's project and planned expiration;
+- the settings check, with the remote directory once it is set;
 - when the checks ran;
 - a Recheck control;
 - a link to that cluster's settings.
 
-No other credential expiry SHALL be shown. The collapsed rail SHALL show each
+No other credential expiry SHALL be shown. Hovering a card that is not Ready
+SHALL show why, from the message of each check that failed, in both the
+expanded and the collapsed rail. The collapsed rail SHALL show each
 visible cluster's dot with a short label, and an accessible name that includes
 the state. The rail SHALL run checks on load, on Recheck, and every 5 minutes
 while the page is visible. While a check runs it SHALL keep showing the last
@@ -314,9 +336,13 @@ states, noting how long ago they were checked. Once that result is more than
 - **WHEN** a researcher opens a Not connected card
 - **THEN** the same details view opens, showing the facility's status and the Settings link
 
+#### Scenario: Hover names a missing setting
+- **WHEN** a researcher hovers the Odo card and no Odo remote directory is set
+- **THEN** the card says "No Odo remote directory is set." without being opened
+
 #### Scenario: Lux details
 - **WHEN** a researcher opens the Lux card
-- **THEN** the details show the hub's reachability and the sign-in note with the project, with no Globus row and no expiry
+- **THEN** the details show the hub's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
 
 #### Scenario: Collapsed rail is labelled
 - **WHEN** the rail is collapsed
@@ -337,3 +363,27 @@ states, noting how long ago they were checked. Once that result is more than
 #### Scenario: Hermetic coverage
 - **WHEN** PR CI runs
 - **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M, Globus, and Lux hub responses with no network access, and any live check is marked `live` and excluded from PR CI
+
+### Requirement: Settings check
+The system SHALL check, for every visible cluster, that the researcher has set
+what a submission to it needs: a remote directory on every cluster, plus the
+NERSC account on Perlmutter and the Lux account on Lux. The check SHALL fail as
+not connected, naming each missing setting, when one is unset. It SHALL fail as
+invalid when a value would be refused at submission: a remote directory that is
+not absolute, is `/`, or holds characters other than letters, digits and
+`. _ + , : = @ - /` (such as a `<project>` placeholder left in), or a Lux
+account that is not a plain project name. The check SHALL read only the user's
+settings, make no outbound call, and reflect a saved change on the next status
+request even while the facility checks are cached.
+
+#### Scenario: Remote directory missing
+- **WHEN** a researcher has an Odo S3M token and Globus but no Odo remote directory
+- **THEN** the settings check fails as not connected with "No Odo remote directory is set."
+
+#### Scenario: Placeholder left in
+- **WHEN** the Frontier remote directory is `/lustre/orion/<project>/proj-shared/vista`
+- **THEN** the settings check fails as invalid, saying to replace `<project>` with the project's name
+
+#### Scenario: Saved setting shows at once
+- **WHEN** a researcher saves the missing remote directory and the status is requested within the facility cache's lifetime
+- **THEN** the cluster's settings check passes without the facility, S3M or Globus checks running again

@@ -35,6 +35,15 @@ export type UserPublicWithConfig = UserPublic & {
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   /**
+   * Where VISTA puts job sources and outputs on each cluster. Per researcher,
+   * with no default: where a project keeps its files is theirs to say.
+   */
+  odo_remote_dir: string | null;
+  frontier_remote_dir: string | null;
+  lux_remote_dir: string | null;
+  /** The OLCF project Lux jobs are charged to; Lux has no token to take one from. */
+  lux_account: string | null;
+  /**
    * One S3M token per OLCF cluster: a token is scoped to a single project,
    * so one field could only ever authorize one of Odo and Frontier.
    */
@@ -73,6 +82,10 @@ export type UserSelfUpdate = {
   inference_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
+  odo_remote_dir?: string | null;
+  frontier_remote_dir?: string | null;
+  lux_remote_dir?: string | null;
+  lux_account?: string | null;
   odo_s3m_token?: string | null;
   frontier_s3m_token?: string | null;
   nersc_iri_token?: string | null;
@@ -90,7 +103,7 @@ function notifyUser(): void {
   userListeners.forEach((cb) => cb());
 }
 
-async function extractError(res: Response): Promise<string> {
+export async function extractError(res: Response): Promise<string> {
   try {
     const data = await res.json();
     const detail = (data as { detail?: unknown; error?: unknown }).detail ??

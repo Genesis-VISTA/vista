@@ -10,6 +10,8 @@
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
+#   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
+#   ./scripts/ci-local.sh launcher         # the package launchers' supervised mode
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -253,6 +255,39 @@ electron_test() {
   )
 }
 
+# The one-line installers (scripts/install.sh, install.ps1). Mirrors
+# install:lint and install:test. shellcheck and pwsh are optional here: each
+# part is skipped, and says so, where its tool is missing.
+install_lint() {
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    log "install:lint skipped (no shellcheck; brew install shellcheck)"
+    return 0
+  fi
+  run_job "install:lint (shellcheck)" 0 shellcheck \
+    "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/test_install.sh" "$REPO_ROOT"/.github/scripts/*.sh
+}
+
+install_test() {
+  run_job "install:test (install.sh)" 0 "$REPO_ROOT/scripts/test_install.sh"
+  if command -v pwsh >/dev/null 2>&1; then
+    run_job "install:test (install.ps1)" 0 pwsh -NoProfile -File "$REPO_ROOT/scripts/test_install.ps1"
+  else
+    log "install:test (install.ps1) skipped (no pwsh; brew install powershell)"
+  fi
+}
+
+# The package launchers' supervised mode, which the application drives (hermetic:
+# fake services, a faked `uname` for each platform). Mirrors launcher:test.
+launcher_test() {
+  run_job "launcher:test (package_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/package_launcher_supervised_test.sh"
+  run_job "launcher:test (mac_dev_launcher.sh)" 0 bash "$REPO_ROOT/scripts/tests/mac_dev_launcher_test.sh"
+  if command -v pwsh >/dev/null 2>&1; then
+    run_job "launcher:test (vista.ps1)" 0 pwsh -NoProfile -File "$REPO_ROOT/scripts/tests/package_launcher_supervised_test.ps1"
+  else
+    log "launcher:test (vista.ps1) skipped (no pwsh; brew install powershell)"
+  fi
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -277,7 +312,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|electron|all)
+    backend|ui|mcp|electron|install|launcher|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -378,6 +413,15 @@ if want_target electron && want_action lint; then
 fi
 if want_target electron && want_action test; then
   run_section "electron test" electron_test
+fi
+if want_target install && want_action lint; then
+  run_section "install lint" install_lint
+fi
+if want_target install && want_action test; then
+  run_section "install test" install_test
+fi
+if want_target launcher && want_action test; then
+  run_section "launcher test" launcher_test
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then

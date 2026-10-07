@@ -3,10 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 from pathlib import Path
 from typing import Annotated as A, Literal
-import getpass
-import uuid
-from datetime import datetime
-from .lib.types import ResolvedPath, CommaSeparatedList, GlobusTokens
+from .lib.types import ResolvedPath, CommaSeparatedList
 from .metrics import MetricsSettings
 
 
@@ -86,13 +83,6 @@ class AppSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the open enclave """
-    odo_account: str = "gen150-vista"
-    """
-    OLCF project name used as the Slurm account for Odo jobs. The user's S3M token must belong to
-    this project.
-    """
-    odo_remote_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
-    """ Base dir on Odo where job sources and outputs live """
     odo_machine: str = "odo"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
@@ -104,56 +94,23 @@ class AppSettings(BaseSettings):
     """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """
-    S3M token introspection endpoint used to verify that a user's token belongs
-    to `odo_account` before Vista moves files for them with Globus
+    S3M token introspection endpoint. Tells VISTA which OLCF project an Odo
+    token belongs to, which is the Slurm account its jobs are charged to.
     """
     odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
     """
     UUID of the Globus Collection that exposes Odo's filesystem (open enclave)
     """
-    odo_globus_refresh_token: str | None = None
-    """
-    Globus Transfer refresh token for Odo (open enclave) directory listings and
-    `mkdir`, to work around the lack of IRI File API support.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster odo --save-env
-    """
-    odo_globus_https_refresh_token: str | None = None
-    """
-    Refresh token for Odo's collection over the Globus HTTPS interface -- the
-    one that moves bytes. A second token because Globus issues one per resource
-    server and this one's is the collection UUID, not `transfer.api.globus.org`.
-    Written by the same `--save-env` run as the Transfer token above.
-    """
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
-    frontier_account: str = "chm243"
-    """
-    OLCF project name used as the Slurm account for Frontier jobs. The user's S3M token must
-    belong to this project.
-    """
-    frontier_remote_dir: str = "/lustre/orion/chm243/proj-shared/vista"
-    """ Base dir on Frontier where job sources and outputs live """
     frontier_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
-    """ Same as `odo_introspect_url`, for Frontier tokens (`frontier_account`). """
+    """ Same as `odo_introspect_url`, for Frontier tokens. """
     frontier_machine: str = "frontier"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
     """
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
-    """
-    frontier_globus_refresh_token: str | None = None
-    """
-    Deployment-wide Globus Transfer refresh token for Frontier (moderate
-    enclave) directory listings and `mkdir`.
-    Generate with:
-        ./scripts/get_globus_token.py --cluster frontier --save-env
-    """
-    frontier_globus_https_refresh_token: str | None = None
-    """
-    Frontier's counterpart to `odo_globus_https_refresh_token`: the collection's
-    own refresh token, which is what reads and writes file contents.
     """
 
     lux_ssh_hosts: CommaSeparatedList[str] = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
@@ -162,14 +119,6 @@ class AppSettings(BaseSettings):
     service, so its jobs are submitted with `sbatch` over SSH. Its login node is
     not public yet, hence the hub hop; each hop asks the researcher for their own
     PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
-    """
-    lux_account: str = "stf218"
-    """ OLCF project name used as the Slurm account for Lux jobs. """
-    lux_remote_dir: str = "/lustre/orion/stf218/proj-shared/vista"
-    """
-    Base dir on Lux (Orion Lustre, also mounted on Frontier) where job sources
-    and outputs live. Jobs run as the researcher, so it only needs to be writable
-    by `lux_account` members.
     """
     lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
     """
@@ -184,8 +133,8 @@ class AppSettings(BaseSettings):
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """
-    Globus Native App client UUID used to mint refresh-token authorizers from
-    the deployment's Globus refresh token.
+    Globus Native App client UUID the researchers' Globus refresh tokens were
+    minted for, used to build the authorizers that refresh their access tokens.
     """
 
     hpc_ssh_host: CommaSeparatedList[str] = ["login1.odo.olcf.ornl.gov"]
@@ -197,9 +146,6 @@ class AppSettings(BaseSettings):
     """
     hpc_ssh_user: str | None = None
     """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
-
-    session_id: A[str, Field(default_factory=lambda: f"{getpass.getuser()}-{datetime.now().strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}")]
-    """ Unique id for the Vista session """
 
     omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
     omd_api_key: str | None = None
@@ -227,30 +173,6 @@ class AppSettings(BaseSettings):
         """
         return self.data_dir / "knowledge-bases"
 
-    def globus_tokens(self, cluster: Literal["odo", "frontier"]) -> GlobusTokens | None:
-        """The deployment's Globus credential for a cluster, or None.
-
-        The last of the three sources `UserConfig.require_globus_token` tries,
-        and the only one a hosted deployment has ever had. Returning None rather
-        than refusing, because this is a fallback: only the caller knows whether
-        the two sources ahead of it also came up empty, and so only the caller
-        can say to go and connect one.
-
-        Both halves or neither. A deployment that has the Transfer token but not
-        the collection's could list directories and read nothing, which looks
-        like an empty output dir -- the exact confusion the HTTPS move exists to
-        remove.
-        """
-        if cluster == "odo":
-            transfer = self.odo_globus_refresh_token
-            https = self.odo_globus_https_refresh_token
-        else:
-            transfer = self.frontier_globus_refresh_token
-            https = self.frontier_globus_https_refresh_token
-        if not (transfer and https):
-            return None
-        return GlobusTokens(transfer=transfer, https=https)
-
     embed_device: A[str | None, Field(validation_alias="VISTA_EMBED_DEVICE")] = None
     """
     Torch device for the query encoder, or `None` to let
@@ -273,6 +195,18 @@ class AppSettings(BaseSettings):
     `text_model` default, which is the *indexing* encoder: a Chroma
     collection locks to the dimension of its first insert, so the two names
     must never diverge. Change one, change the other.
+    """
+
+    rag_model_revision: str = "31de22b673913c7d658c0f03f792d77c2dcf8ebd"
+    """
+    The Hugging Face commit of `rag_model` to load: the snapshot the shipped
+    stores were embedded with.
+
+    Pinned so a new upload to the model's `main` cannot change the weights
+    under a store built with the old ones, and so the package build stages
+    exactly this snapshot. Kept byte-identical to
+    `build_rag.TextRAG.__init__`'s `text_model_revision` default, for the
+    same reason as the name. Change the model, change both revisions.
     """
 
     rag_query_instruction: str = (

@@ -33,6 +33,7 @@ function status(
       facility: OK,
       credential: OK,
       globus: cluster === "perlmutter" || cluster === "lux" ? null : OK,
+      settings: { ...OK, message: `/proj-shared/${cluster}` },
       ...checks,
     },
   };
@@ -89,7 +90,6 @@ describe("HpcStatusSection", () => {
     "unverifiable",
     "not_connected",
     "rejected",
-    "wrong_project",
     "globus_not_connected",
     "globus_session_expired",
   ];
@@ -138,8 +138,8 @@ describe("HpcStatusSection", () => {
       view([
         {
           status: status("frontier", "ready", {
-            credential: { ...OK, project: "chm243", expires_at: "2026-09-26T13:00:00Z" },
-            globus: { ...OK, identity: "own" },
+            credential: { ...OK, project: "abc123", expires_at: "2026-09-26T13:00:00Z" },
+            globus: OK,
           }),
         },
       ]),
@@ -150,7 +150,7 @@ describe("HpcStatusSection", () => {
     const dialog = screen.getByRole("dialog", { name: "Frontier connection details" });
     expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
     expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
-    expect(within(dialog).getByText("Project chm243 · expires in 22 h")).toBeInTheDocument();
+    expect(within(dialog).getByText("Project abc123 · expires in 22 h")).toBeInTheDocument();
     expect(within(dialog).getByText("Your own identity")).toBeInTheDocument();
     expect(within(dialog).getByText("Checked 2 min ago")).toBeInTheDocument();
 
@@ -162,23 +162,21 @@ describe("HpcStatusSection", () => {
     useHpcStatusMock.mockReturnValue(
       view([
         {
-          status: status("frontier", "wrong_project", {
+          status: status("frontier", "rejected", {
             credential: {
               ok: false,
-              reason: "wrong_project",
-              message: "This token is for project 'gen150-vista'; Frontier needs a token minted in 'chm243'.",
-              project: "gen150-vista",
-              expected_project: "chm243",
+              reason: "rejected",
+              message: "S3M rejected the Frontier token; it may have expired or been revoked.",
+              http_status: 401,
             },
           }),
         },
       ]),
     );
     renderSection({ visible: ["frontier"] });
-    await userEvent.click(screen.getByRole("button", { name: "Frontier: Wrong project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Frontier: Token rejected" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Token is for another project")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Frontier needs a token minted in 'chm243'/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/may have expired or been revoked/)).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Settings" }));
     expect(onOpenSettings).toHaveBeenCalledWith("frontier");
@@ -202,11 +200,60 @@ describe("HpcStatusSection", () => {
     expect(within(dialog).getByText("No NERSC IRI token saved")).toBeInTheDocument();
   });
 
+  it("a cluster with a token but no remote directory is Not connected, and says so on hover", async () => {
+    const missing = "No Odo remote directory is set.";
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("odo", "not_connected", {
+            settings: { ok: false, reason: "not_connected", message: missing },
+          }),
+        },
+      ]),
+    );
+    renderSection({ visible: ["odo"] });
+    const card = screen.getByRole("button", { name: "Odo: Not connected" });
+    expect(card).toHaveAttribute("title", missing);
+
+    await userEvent.click(card);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
+    expect(within(dialog).getByText("Settings incomplete")).toBeInTheDocument();
+    expect(within(dialog).getByText(missing)).toBeInTheDocument();
+  });
+
+  it("names an unusable setting and shows the folder once it is set", async () => {
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("frontier", "not_connected", {
+            settings: {
+              ok: false,
+              reason: "invalid",
+              message: "The Frontier remote directory /lustre/orion/<project>/vista can't be used.",
+            },
+          }),
+        },
+        { status: status("odo", "ready") },
+      ]),
+    );
+    renderSection({ visible: ["frontier", "odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Frontier: Not connected" }));
+    expect(screen.getByText("A setting can't be used")).toBeInTheDocument();
+
+    const odo = screen.getByRole("button", { name: "Odo: Ready" });
+    expect(odo).not.toHaveAttribute("title");
+    await userEvent.click(odo);
+    const dialog = screen.getByRole("dialog", { name: "Odo connection details" });
+    expect(within(dialog).getByText("Remote directory set")).toBeInTheDocument();
+    expect(within(dialog).getByText("/proj-shared/odo")).toBeInTheDocument();
+  });
+
   it("never mentions an expiry for Perlmutter or Globus", async () => {
     useHpcStatusMock.mockReturnValue(
       view([
         { status: status("perlmutter", "ready") },
-        { status: status("odo", "ready", { globus: { ...OK, identity: "deployment" } }) },
+        { status: status("odo", "ready", { globus: OK }) },
       ]),
     );
     renderSection({ visible: ["perlmutter", "odo"] });
@@ -214,7 +261,7 @@ describe("HpcStatusSection", () => {
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/expire/i);
     await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
     const odo = screen.getByRole("dialog", { name: "Odo connection details" });
-    expect(within(odo).getByText("The deployment's shared identity")).toBeInTheDocument();
+    expect(within(odo).getByText("Your own identity")).toBeInTheDocument();
     expect(odo).not.toHaveTextContent(/expire|lapse|3 days/i);
   });
 
@@ -244,7 +291,6 @@ describe("HpcStatusSection: Lux", () => {
     credential: {
       ...OK,
       message: "Sign in with PIN + RSA passcode when a chat first uses Lux.",
-      project: "stf218",
     },
   });
 
@@ -269,9 +315,11 @@ describe("HpcStatusSection: Lux", () => {
     expect(within(dialog).getByText("Hub is reachable")).toBeInTheDocument();
     expect(within(dialog).getByText(/hub\.ccs\.ornl\.gov answered/)).toBeInTheDocument();
     expect(within(dialog).getByText("Sign in from a chat")).toBeInTheDocument();
+    // No project: Lux jobs go to the researcher's default Slurm account.
     expect(
-      within(dialog).getByText("Project stf218 · Sign in with PIN + RSA passcode when a chat first uses Lux."),
+      within(dialog).getByText("Sign in with PIN + RSA passcode when a chat first uses Lux."),
     ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Project/)).toBeNull();
     expect(within(dialog).queryByText(/Globus/)).toBeNull();
     expect(within(dialog).queryByText(/expires/)).toBeNull();
     expect(within(dialog).queryByText("Facility is up")).toBeNull();

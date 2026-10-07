@@ -173,14 +173,12 @@ print(json.dumps({
     "odo": h.odo_iri_url,
     "frontier": h.frontier_iri_url,
     "nersc": h.nersc_iri_url,
-    "odo_globus": h.odo_globus_refresh_token,
 }))
 """,
     )
     assert result["odo"] == "https://amsc-open.s3m.olcf.ornl.gov"
     assert result["frontier"] == "https://amsc-moderate.s3m.olcf.ornl.gov"
     assert result["nersc"] == "https://api.iri.nersc.gov"
-    assert result["odo_globus"] is None
 
 
 def test_hpc_cluster_settings_read_the_mcp_servers_variables(tmp_path: Path) -> None:
@@ -197,16 +195,16 @@ from vista_backend.config import hpc_settings as h
 print(json.dumps({
     "odo": h.odo_iri_url,
     "frontier": h.frontier_iri_url,
-    "token": h.frontier_globus_refresh_token.get_secret_value(),
+    "machine": h.frontier_machine,
 }))
 """,
         extra={
             **_clean_env(),
             "VISTA_MCP_ODO_IRI_URL": "https://odo.example",
-            "VISTA_MCP_FRONTIER_GLOBUS_REFRESH_TOKEN": "deployment-tok",
+            "VISTA_MCP_FRONTIER_MACHINE": "frontier-test",
             "VISTA_BACKEND_FRONTIER_IRI_URL": "https://must-not-be-used.example",
         },
     )
     assert result["odo"] == "https://odo.example"
-    assert result["token"] == "deployment-tok"
+    assert result["machine"] == "frontier-test"
     assert result["frontier"] == "https://amsc-moderate.s3m.olcf.ornl.gov"

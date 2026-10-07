@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Form, UploadFile
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
@@ -106,6 +108,23 @@ async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDe
     Imported skills are private; the user can publish later via `PATCH /skills/{name}`.
     """
     skill = await skills_service.import_skill(session, body.url)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    return _detail(skill, body_text)
+
+
+@router.post("/skills/import/upload", status_code=201)
+async def import_skill_upload(
+    files: list[UploadFile],
+    paths: Annotated[list[str], Form()],
+    session: SessionDep,
+) -> SkillDetail:
+    """
+    Import a skill from a local folder the browser uploaded. Multipart body:
+    one `files` part per file and a matching `paths` field (in the same order)
+    giving each file's path relative to the picked folder. SKILL.md must be at
+    the folder's root. Imported skills are private, as with a GitHub import.
+    """
+    skill = await skills_service.import_skill_upload(session, files, paths)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
 

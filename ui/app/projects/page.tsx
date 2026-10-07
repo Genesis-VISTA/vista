@@ -502,7 +502,9 @@ function ProjectModal({
         skills: Array.from(skills),
         knowledgeBases: Array.from(kbs),
         forumRepoUrl: forumRepoUrl.trim(),
-        tools: splitTags(toolsRaw),
+        // New projects inherit every available MCP tool. Keep an existing
+        // project's saved patterns intact when editing it.
+        tools: mode === "create" ? [] : splitTags(toolsRaw),
         // PUT is a full overwrite on the backend — echo the existing usage
         // limits so they aren't reset on edit.
         usageLimits: initial?.usageLimits ?? {},
@@ -634,18 +636,20 @@ function ProjectModal({
             </span>
           </label>
 
-          <label className="project-modal-label">
-            Tools{" "}
-            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
-              (comma-separated fnmatch patterns; `!` prefix denies)
-            </span>
-            <input
-              className="input"
-              value={toolsRaw}
-              onChange={(e) => setToolsRaw(e.target.value)}
-              placeholder="e.g. *, !agenthpc_*"
-            />
-          </label>
+          {mode === "edit" && (
+            <label className="project-modal-label">
+              Tools{" "}
+              <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+                (comma-separated fnmatch patterns; `!` prefix denies)
+              </span>
+              <input
+                className="input"
+                value={toolsRaw}
+                onChange={(e) => setToolsRaw(e.target.value)}
+                placeholder="e.g. *, !agenthpc_*"
+              />
+            </label>
+          )}
 
           {error && (
             <div className="error" style={{ fontSize: 12 }}>

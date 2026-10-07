@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   completeGlobusLogin,
   fetchCurrentUserWithConfig,
@@ -19,6 +19,7 @@ import {
   useHpcStatus,
   type HpcCluster,
 } from "@/lib/hpc-status";
+import { useTheme, type ThemeChoice } from "@/lib/theme";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
 /**
@@ -84,6 +85,11 @@ export function UserSettingsModal({
           </button>
         </div>
         <div className="modal-body">
+          {/* Outside the form: the theme is this machine's, not the user
+              row's, so it shows before the user loads and applies at once
+              rather than on Save. */}
+          <AppearanceSetting />
+
           {loading && !user && (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading…</div>
           )}
@@ -143,6 +149,12 @@ function UserSettingsForm({
   );
   const [nerscAccount, setNerscAccount] = useState(user.nersc_account ?? "");
   const [nerscRemoteDir, setNerscRemoteDir] = useState(user.nersc_remote_dir ?? "");
+  const [odoRemoteDir, setOdoRemoteDir] = useState(user.odo_remote_dir ?? "");
+  const [frontierRemoteDir, setFrontierRemoteDir] = useState(
+    user.frontier_remote_dir ?? "",
+  );
+  const [luxRemoteDir, setLuxRemoteDir] = useState(user.lux_remote_dir ?? "");
+  const [luxAccount, setLuxAccount] = useState(user.lux_account ?? "");
   const [odoS3mToken, setOdoS3mToken] = useState(user.odo_s3m_token ?? "");
   const [frontierS3mToken, setFrontierS3mToken] = useState(
     user.frontier_s3m_token ?? "",
@@ -199,6 +211,14 @@ function UserSettingsForm({
       ],
       ["nersc_account", user.nersc_account ?? null, blankToNull(nerscAccount)],
       ["nersc_remote_dir", user.nersc_remote_dir ?? null, blankToNull(nerscRemoteDir)],
+      ["odo_remote_dir", user.odo_remote_dir ?? null, blankToNull(odoRemoteDir)],
+      [
+        "frontier_remote_dir",
+        user.frontier_remote_dir ?? null,
+        blankToNull(frontierRemoteDir),
+      ],
+      ["lux_remote_dir", user.lux_remote_dir ?? null, blankToNull(luxRemoteDir)],
+      ["lux_account", user.lux_account ?? null, blankToNull(luxAccount)],
       ["odo_s3m_token", user.odo_s3m_token ?? null, blankToNull(odoS3mToken)],
       [
         "frontier_s3m_token",
@@ -324,7 +344,14 @@ function UserSettingsForm({
                   label="Odo S3M token"
                   value={odoS3mToken}
                   onChange={setOdoS3mToken}
-                  hint="Minted in Odo's OLCF project."
+                  hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
+                />
+                <RemoteDirField
+                  label="Odo remote directory"
+                  value={odoRemoteDir}
+                  onChange={setOdoRemoteDir}
+                  placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Odo" />}
                 />
                 <GlobusConnect
                   cluster="odo"
@@ -340,7 +367,14 @@ function UserSettingsForm({
                   label="Frontier S3M token"
                   value={frontierS3mToken}
                   onChange={setFrontierS3mToken}
-                  hint="Minted in Frontier's OLCF project, a different project from Odo's, so it needs its own token."
+                  hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
+                />
+                <RemoteDirField
+                  label="Frontier remote directory"
+                  value={frontierRemoteDir}
+                  onChange={setFrontierRemoteDir}
+                  placeholder="/lustre/orion/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Frontier" />}
                 />
                 <GlobusConnect
                   cluster="frontier"
@@ -376,7 +410,9 @@ function UserSettingsForm({
                     spellCheck={false}
                   />
                   <span className="user-settings-hint">
-                    Absolute remote dir on the NERSC machine. Required for Perlmutter.
+                    Absolute remote dir on the NERSC machine. Required for Perlmutter. VISTA
+                    keeps <code>jobs/</code> (sources) and <code>out/</code> (logs and outputs)
+                    inside it.
                   </span>
                 </label>
 
@@ -395,6 +431,30 @@ function UserSettingsForm({
                     Globus access token for NERSC IRI. Stored encrypted at rest.
                   </span>
                 </label>
+              </>
+            )}
+            {cluster === "lux" && (
+              <>
+                <label className="project-modal-label">
+                  Lux account
+                  <input
+                    className="input"
+                    value={luxAccount}
+                    onChange={(e) => setLuxAccount(e.target.value)}
+                    placeholder="e.g. abc123"
+                    spellCheck={false}
+                  />
+                  <span className="user-settings-hint">
+                    Required for Lux. The OLCF project Lux jobs are charged to.
+                  </span>
+                </label>
+                <RemoteDirField
+                  label="Lux remote directory"
+                  value={luxRemoteDir}
+                  onChange={setLuxRemoteDir}
+                  placeholder="/lustre/orion/<project>/proj-shared/vista"
+                  hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
+                />
               </>
             )}
           </ClusterSection>
@@ -432,6 +492,63 @@ function UserSettingsForm({
           {saving ? "Saving…" : "Save"}
         </button>
       </div>
+    </>
+  );
+}
+
+/**
+ * The folder on a cluster where VISTA puts this researcher's job sources and
+ * outputs. No default: where a project keeps its files is specific to the
+ * project and the filesystem, so VISTA does not guess.
+ */
+function RemoteDirField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  hint: ReactNode;
+}) {
+  return (
+    <label className="project-modal-label">
+      {label}
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        spellCheck={false}
+      />
+      <span className="user-settings-hint">{hint}</span>
+    </label>
+  );
+}
+
+/**
+ * On the OLCF clusters VISTA keeps a researcher's sources in
+ * `<dir>.<user>.jobs` and everyone's logs and outputs in a shared `<dir>.out`
+ * beside it. Odo and Frontier jobs run as the project's IRI automation user,
+ * which creates `<dir>.out`, so the folder holding them must be writable by the
+ * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
+ */
+function GroupWritableHint({
+  cluster,
+  runsAs = "your project's IRI automation user",
+}: {
+  cluster: string;
+  runsAs?: string;
+}) {
+  return (
+    <>
+      Required for {cluster}. VISTA keeps <code>&lt;dir&gt;.&lt;user&gt;.jobs</code> (your
+      sources) and <code>&lt;dir&gt;.out</code> (logs and outputs, shared with your project)
+      beside this directory. Jobs run as {runsAs}, so the folder holding them must be writable
+      by the project&apos;s group, as <code>proj-shared</code> already is.
     </>
   );
 }
@@ -773,6 +890,61 @@ function GlobusConnect({
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+/**
+ * System / Light / Dark. A radio group rather than a select so all three are
+ * visible at once, with the WAI-ARIA keyboard model: one tab stop on the
+ * checked option, arrow keys move and select together.
+ */
+function AppearanceSetting() {
+  const { choice, setChoice } = useTheme();
+  const labelId = useId();
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const steps: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    const step = steps[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const current = THEME_OPTIONS.findIndex((o) => o.value === choice);
+    const next = (current + step + THEME_OPTIONS.length) % THEME_OPTIONS.length;
+    setChoice(THEME_OPTIONS[next].value);
+    refs.current[next]?.focus();
+  }
+
+  return (
+    <div className="user-settings-appearance">
+      <div id={labelId} className="user-settings-section-label">
+        Appearance
+      </div>
+      <div className="theme-choice" role="radiogroup" aria-labelledby={labelId} onKeyDown={onKeyDown}>
+        {THEME_OPTIONS.map((option, i) => (
+          <button
+            key={option.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={choice === option.value}
+            tabIndex={choice === option.value ? 0 : -1}
+            className="theme-choice-option"
+            onClick={() => setChoice(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <span className="user-settings-hint">System matches your computer&apos;s light or dark setting.</span>
     </div>
   );
 }

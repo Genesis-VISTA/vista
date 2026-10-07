@@ -27,7 +27,6 @@ export const STATE_LABELS: Record<HpcDisplayState, string> = {
   unverifiable: "Couldn't verify",
   not_connected: "Not connected",
   rejected: "Token rejected",
-  wrong_project: "Wrong project",
   globus_not_connected: "Globus not connected",
   globus_session_expired: "Globus session expired",
 };
@@ -36,7 +35,6 @@ export const STATE_LABELS: Record<HpcDisplayState, string> = {
 export const WORD_TONE: Partial<Record<HpcDisplayState, "warn" | "urgent">> = {
   degraded: "warn",
   rejected: "urgent",
-  wrong_project: "urgent",
   globus_not_connected: "urgent",
   globus_session_expired: "urgent",
 };
@@ -130,20 +128,43 @@ function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
       };
     case "rejected":
       return { ok: false, title: "Token rejected", detail: check.message };
-    case "wrong_project":
-      return { ok: false, title: "Token is for another project", detail: check.message };
     default:
       return { ok: null, title: "Couldn't verify the token", detail: check.message };
   }
 }
 
+function settingsRow(cluster: HpcCluster, check: HpcCheck): Row {
+  if (check.ok) {
+    // Lux's account is already on the sign-in row; Perlmutter's is shown here.
+    const parts = [
+      check.message,
+      cluster === "perlmutter" && check.project ? `Account ${check.project}` : null,
+    ].filter(Boolean);
+    return { ok: true, title: "Remote directory set", detail: parts.join(" · ") };
+  }
+  return {
+    ok: false,
+    title: check.reason === "invalid" ? "A setting can't be used" : "Settings incomplete",
+    detail: check.message,
+  };
+}
+
+/**
+ * Why a card isn't Ready, in one line: the message of each check that failed.
+ * Shown when the card is hovered, so the reason reads without opening it.
+ */
+export function failureSummary(status: HpcClusterStatus | null): string | null {
+  if (!status) return null;
+  const { facility, credential, settings, globus } = status.checks;
+  const failed = [facility, credential, settings, globus].filter(
+    (c): c is HpcCheck => c != null && !c.ok,
+  );
+  return failed.length ? failed.map((c) => c.message).join(" ") : null;
+}
+
 function globusRow(check: HpcCheck): Row {
   if (check.ok) {
-    return {
-      ok: true,
-      title: "Globus file transfer connected",
-      detail: check.identity === "deployment" ? "The deployment's shared identity" : "Your own identity",
-    };
+    return { ok: true, title: "Globus file transfer connected", detail: "Your own identity" };
   }
   switch (check.reason) {
     case "not_connected":
@@ -278,10 +299,14 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
         <div className="hpc-collapsed-divider" aria-hidden="true" />
       )}
 
-      {cards.map(({ cluster, state, rechecking }) => {
+      {cards.map(({ cluster, state, status, rechecking }) => {
         const title = HPC_CLUSTER_TITLES[cluster];
         const label = STATE_LABELS[state];
         const isOpen = open?.cluster === cluster;
+        // Hovering says why a card isn't Ready: the collapsed rail through its
+        // own tooltip, the expanded one through the browser's.
+        const why = state === "ready" ? null : failureSummary(status);
+        const hint = why ? `${title} · ${label}: ${why}` : `${title} · ${label}`;
         return (
           <button
             key={cluster}
@@ -292,7 +317,8 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
             aria-expanded={isOpen}
             aria-haspopup="dialog"
             onClick={(e) => toggle(cluster, e.currentTarget)}
-            {...tipProps(`${title} · ${label}`)}
+            title={collapsed ? undefined : (why ?? undefined)}
+            {...tipProps(hint)}
           >
             <HpcStatusDot state={state} />
             {collapsed ? (
@@ -369,6 +395,7 @@ function HpcDetails({
     ? [
         facilityRow(cluster, status.checks.facility),
         credentialRow(cluster, status.checks.credential, now),
+        settingsRow(cluster, status.checks.settings),
         ...(status.checks.globus ? [globusRow(status.checks.globus)] : []),
       ]
     : [];

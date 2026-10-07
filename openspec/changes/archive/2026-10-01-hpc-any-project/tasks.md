@@ -1,0 +1,92 @@
+# Tasks
+
+All tests below are hermetic (PR CI) unless marked otherwise. Run MCP tests with
+`cd mcp_servers/vista_mcp_server && uv run --extra dev pytest`, backend tests with
+`cd backend && uv run --extra dev pytest`, and UI tests with `cd ui && npx vitest run`.
+
+Each group is one commit and spans the MCP server, backend and UI together: the
+backend's HPC settings must match the MCP server's (`test_hpc_config_parity.py`),
+so a setting cannot leave one without the other. Globus goes first, because
+dropping the project check while a shared Globus login still exists would
+reopen the hole the check was closing.
+
+## 1. Only researcher-supplied Globus
+
+- [x] 1.1 MCP: reduce `UserConfig.require_globus_token` to the researcher's cluster pair and shared pair. Delete `AppSettings.{odo,frontier}_globus_refresh_token`, `..._globus_https_refresh_token` and `globus_tokens()`. Rewrite `tests/test_globus_token_resolution.py` and `tests/test_globus_token_resolution_via_tool.py`, including the case where the old env vars are set, the user has no tokens, and the call is refused.
+- [x] 1.2 Backend: delete the Globus refresh-token fields from `HpcClusterSettings`. `globus_source` drops the deployment source, and `Check.identity` is removed. Update `tests/test_hpc_status.py` (deployment env vars do not count) and `tests/test_settings_defaults.py`.
+- [x] 1.3 UI: remove `identity` from `lib/hpc-status.ts` and the "deployment's shared identity" text from `components/HpcStatusSection.tsx`. Update `tests/HpcStatusSection.test.tsx` and `e2e-hermetic/fixtures.ts`.
+- [x] 1.4 Remove `--save-env` from `scripts/get_globus_token.py`. Remove the four variables from `.env.sample`, `scripts/package_launcher.{sh,ps1}` and `scripts/smoke_test_package.sh`. Rewrite the Globus text in README.md and AGENTS.md. Verify with `grep -rn "GLOBUS_REFRESH_TOKEN\|GLOBUS_HTTPS_REFRESH_TOKEN"`, which should return only tests that prove the variables are ignored, and `openspec/`.
+
+## 2. Any OLCF project
+
+- [x] 2.1 MCP: in `lib/olcf_token.py`, delete `require_s3m_project` and keep `get_s3m_token_project`. In `submit_job_mcp.py`, replace `_require_olcf_access` with `_olcf_project(cfg, cluster) -> (token, project)`, called at submit time only, and use the project as the Odo and Frontier JobSpec `account`. Remove introspection from status, outputs and cancel, and remove `SubmittedJob.account`. Delete `odo_account`/`frontier_account`, and stop Frontier reading `IriDefaults.account`. Rewrite `tests/test_olcf_token.py` and `tests/test_job_account.py`: a token for project `abc123` is submitted with account `abc123`, introspection errors or a missing claim fail before any Globus call, and status/outputs make no introspection call.
+- [x] 2.2 Backend: delete `odo_account`/`frontier_account` from `HpcClusterSettings`. In `services/hpc_status.py`, remove the `wrong_project` reason and `expected_project`, and always report the token's project. Update `tests/test_hpc_status.py`, `tests/live/test_hpc_status_live.py`, and `test_debate_simulation.py`'s wrong-project case.
+- [x] 2.3 UI: remove the `wrong_project` label, tone and details from `components/HpcStatusSection.tsx` and `lib/hpc-status.ts`. Change the S3M hints in `components/UserSettingsModal.tsx` to "any OLCF project with S3M access". Update `tests/HpcStatusSection.test.tsx`, `tests/hpc-status.test.ts` and `e2e-hermetic/fixtures.ts` to use a project name no deployment is configured for.
+- [x] 2.4 Update the README's S3M paragraph (a token from any project; its project is the job's account). Verify `grep -rn "wrong_project\|expected_project\|require_s3m_project"` returns only `openspec/`.
+
+## 3. Remote folders as user settings
+
+- [x] 3.1 Backend: add nullable `odo_remote_dir` and `lux_remote_dir` to `UserTable` (reusing `frontier_remote_dir`). Add all three to `_USER_CONFIG_NULLABLE_FIELDS` and the create, update, self-update and public-with-config schemas. Remove `remote_hpc_jobs_dir` and `frontier_account` from every API schema, keeping the table columns. Update `tests/test_project_agent_tools.py` and `tests/harness/factories.py`, which set `frontier_account`. Verify `tests/test_user_tokens.py` round-trips the fields, stores `""` as null, and that an existing database gains the columns on startup.
+- [x] 3.2 MCP: add the three fields and `require_remote_dir(cluster)` (also covering `nersc_remote_dir`; it also refuses a relative path) to `UserConfig`. Delete `odo_remote_dir`, `frontier_remote_dir`, `lux_remote_dir` and `lux_account` from `AppSettings`, and `account`/`remote_dir` from `IriDefaults`. `_submit_lux_job` takes `cfg`, and `slurm_ssh.render_batch_script` loses its `account` parameter. Delete `lux_account` from `HpcClusterSettings`, and the Lux credential check names no project. Verify per-cluster tests that an unset folder fails naming the setting before anything is introspected or uploaded (`tests/test_remote_dir.py`), and that the Lux batch script has no `#SBATCH -A` (`tests/test_lux_submit.py`). Document the per-user remote directory in README.md.
+- [x] 3.3 UI: add Odo, Frontier and Lux remote directory fields to `components/UserSettingsModal.tsx` and `lib/user.ts`, with the group-writable hint on Odo/Frontier. Remove the project from the Lux details. Verify `tests/UserSettingsModal.test.tsx` covers saving, clearing and the Lux section, and `e2e-hermetic/shell.spec.ts` the Lux card and section.
+
+## 4. One folder layout, no session folder, no registry
+
+- [x] 4.1 MCP: add one path helper (design decision 4) and use it in all four submit functions. Delete `session_id`. The IRI `directory` / Lux `workdir` becomes `<remote_dir>`, and the prefix runs `mkdir -p -m 2775 "$VISTA_OUT"` on every cluster. Remove the Frontier `operation_mkdir_p(out_dir)` and the Perlmutter/Lux `out/` mkdirs. Verify `tests/test_submit_job_spec.py`, `tests/test_lux_submit.py` and `tests/test_forge_pretrain_job.py` assert the layout and that `out/` is never made through Globus.
+- [x] 4.2 MCP: replace `_require_odo_out_dir` with `_require_group_writable` for Odo and Frontier (design decision 6). Test a missing folder, `0755`, `2775`, a parent listing that fails with 403 (submission proceeds), and `GlobusSessionExpired` (raises) in `tests/test_remote_layout.py`, and that a plain listing of a missing path raises `GlobusFileNotFound` (`tests/test_globus_https.py`).
+- [x] 4.3 MCP: delete `SubmittedJob`, `_submitted_jobs`, the registry helpers and `list_hpc_jobs`. Status, outputs and cancel derive paths from the job id and `require_remote_dir`, `_resolve_cluster` drops `job_id`, and `dry_run.is_dry_job` is checked before resolving a cluster. Delete `tests/test_job_registry.py`. Update `tests/test_log_tail.py`, `tests/test_submit_job_spec.py`, `tests/test_lux_submit.py` and `tests/test_job_account.py`, including status for a job this process never submitted, and a dry-run status with no cluster or credentials (`tests/test_remote_layout.py`).
+- [x] 4.4 Remove `list_hpc_jobs` from `HPC_TOOLS` (`agents/agents.py`), `db/system_prompts/molten-salt.md`, `ui/lib/tool-labels.ts` and `docs/project-onboarding.md`. Update `tests/test_project_agent_tools.py`, and check in `tests/test_seed_projects.py` that a stored `!list_hpc_jobs` exclusion is harmless.
+- [x] 4.5 Update comments and docstrings that name `chm243_auser`/`gen150_auser`, the registry or the session folder, so they say "the project's IRI automation user". Document the layout and the group-writable requirement in README.md, and correct `hpc_jobs/alloy-thermo-mc`'s comments on who creates `out/` (behaviour unchanged). Verify `grep -n "session_id\|_submitted_jobs\|chm243_auser" mcp_servers/vista_mcp_server/src` matches only metrics code.
+
+## 5. Example job and remaining text
+
+- [x] 5.1 Change `hpc_jobs/example/job.odo.slurm` and `job.frontier.slurm` to create the venv at `"$VISTA_OUT/.venv"` and write nothing else outside `$VISTA_OUT`. Add a catalog test (`tests/test_job_catalog.py`) asserting that both scripts create and activate their venv under `$VISTA_OUT`.
+- [x] 5.2 Update `backend/src/vista_backend/db/skills/llm-pretraining/SKILL.md` so it points to the remote directory settings and the token's own project rather than requiring chm243 (it still says which projects the job was set up under). Verify by reading it and with `tests/test_llm_pretraining_skill.py`.
+
+## 6. Integration
+
+- [x] 6.1 Run `./scripts/ci-local.sh` and `openspec validate hpc-any-project --strict`; both pass, apart from failures already present on `main` that come from the sandbox. Result (2026-10-01): every lint, typecheck, security, UI, browser and electron job passed; backend 917 passed and vista-mcp 299 passed, each with one pre-existing sandbox failure (`test_forum_git::test_two_hosts_posting_at_once_both_land`, and `test_forge_pretrain_job::test_frontier_job_updates_checkout_then_trains_with_xforge`, whose `ulimit` the sandbox refuses). Follow-up: `submit_hpc_job`'s description and the fine-tuning skill now tell the agent to pass the cluster back, since nothing else remembers it.
+- [x] 6.2 **Manual, `hpc` — not in PR CI. Run after group 7.** With the researcher's own S3M tokens and Globus connections (ideally from projects other than gen150-vista and chm243; at least a fresh setup), set the Odo and Frontier remote directories to a folder that does not exist yet, directly under the project's `proj-shared`, and do no `mkdir` first. Submit `example` to Frontier and to Odo; check that `<dir>.jobs` and `<dir>.out` appear and the job writes `chart.png`. Restart the MCP server, then fetch status and `chart.png` by job id and cluster. Record the result here.
+  Result (2026-10-01, after group 7): from a fresh setup with a new remote directory under `proj-shared` and no `mkdir`, submitting `example` worked, `chart.png` was fetched and displayed, and status and outputs still worked after a full restart of VISTA. Tested with the gen150 project only; no token from another project was available.
+  Finding before group 7: a fresh `proj-shared/foo` was refused, because the single-folder layout needed `foo` group-writable and Globus creates it 755. Confirmed at OLCF that Slurm creates missing folders in the `--output` path; S3M still has no IRI filesystem access. Hence group 7.
+
+## 7. Sibling folders (temporary, until S3M supports IRI filesystem operations)
+
+- [x] 7.1 MCP: `RemoteLayout` gets `jobs = <base>.jobs` (sources in `<jobs>/<job>/src`) and `out = <base>.out`, on every cluster, with a comment that this is a temporary workaround until S3M supports IRI filesystem operations. The IRI `directory` / Lux `workdir` becomes `<base>.jobs`, and the Globus source `mkdir` walks down from the parent of `<base>`. Perlmutter creates `<base>.out` through IRI before submitting. `VISTA_JOB_DIR` and the `FORGE_MODEL_*` defaults move to `<base>.out/<job>`, which the job's user can write. A job with no sources still gets its `.jobs` folder, since it is the working directory. Update `tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`, `tests/test_log_tail.py`, `tests/test_forge_pretrain_job.py` and `tests/test_job_account.py` to the new paths.
+- [x] 7.2 MCP: replace `_require_group_writable` with `_require_writable_out` (design decision 6). Test: a fresh folder under a `0770` parent proceeds; an existing `.out` proceeds whatever its mode; a `0755` parent, a missing parent and a file named `<base>.out` are refused with `mkdir -p -m 2775 <base>.out`; an unlistable parent or grandparent proceeds; `GlobusSessionExpired` raises.
+- [x] 7.3 UI and docs: the Odo/Frontier remote directory hint in `components/UserSettingsModal.tsx` says VISTA keeps `<dir>.jobs` and `<dir>.out` beside the folder, which must sit in a group-writable folder (`proj-shared` already is); update `tests/UserSettingsModal.test.tsx`. Update the layout and permission text in README.md, the `RemoteLayout`-related comments, and `hpc_jobs/alloy-thermo-mc`'s notes on who creates the output folder.
+- [x] 7.4 Run `./scripts/ci-local.sh` and `openspec validate hpc-any-project --strict`; both pass apart from the two known sandbox failures (6.1). Result (2026-10-01, after merging main): every lint, typecheck, security, UI (181), browser (35) and electron (35) job passed; backend 987 passed and vista-mcp 301 passed, each with only its known sandbox failure.
+
+## 8. Review fixes
+
+- [x] 8.1 Status, outputs and cancel require `cluster` (no inference), so a Lux job, or one whose cluster has no token, can never reach a same-id job on another cluster. Update the tool descriptions, the skills (`model-fine-tuning`, `salt-chemistry-md`, `salt-neutronics-tbr`, `alloy-thermo-mc`) and the molten-salt prompt; `tests/test_remote_layout.py` asserts `cluster` is required in each tool's schema.
+- [x] 8.2 `forge-tune` on Odo and Frontier runs from `$VISTA_OUT` and reaches its sources by absolute path, so its checkpoints and final model are written where the automation user can write (`tests/test_job_catalog.py`).
+- [x] 8.3 Lux creates `<dir>.out` over SSH before `sbatch`, as Perlmutter does through IRI; only Odo's and Frontier's Slurm were seen to create a missing log folder (`tests/test_lux_submit.py`).
+- [x] 8.4 `require_remote_dir` refuses characters a shell or Slurm would read specially (whitespace, quotes, `$`, backticks, `;`, `*`, `%`) and `/` itself; the bash prefixes also `shlex.quote` the paths (`tests/test_remote_dir.py`).
+- [x] 8.5 Correct the stale text (the `odo_remote_dir` docstring, the llm-pretraining skill, `forge-pretrain`'s and `lux-hello`'s script comments) and drop the unused `base` variables.
+
+## 9. Shared folders and the Lux account (review findings 3, 5, 8)
+
+- [x] 9.1 A required per-user Lux account: `UserTable.lux_account` (API, settings modal, `UserConfig.require_lux_account`, refusing non-plain names), `#SBATCH -A` back in `render_batch_script`, and the Lux card names it (`tests/test_home_owner.py`, `tests/test_lux_submit.py`, `backend/tests/test_user_tokens.py`, `backend/tests/test_hpc_status.py`, `ui/tests/UserSettingsModal.test.tsx`, `ui/e2e-hermetic/shell.spec.ts`).
+- [x] 9.2 OLCF sources in `<base>.<user>.jobs`: `GlobusClient.home_owner` (Transfer `stat` of `/~/`, cached; confirmed live on Odo and Frontier to return the researcher's POSIX account, which differs between enclaves) and `slurm_ssh.username` on Lux (`tests/test_home_owner.py`, `tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`).
+- [x] 9.3 Perlmutter keeps one folder: `<base>/jobs`, `<base>/out` (`tests/test_remote_layout.py`, `tests/test_submit_job_spec.py`).
+- [x] 9.4 Every job prefix runs `_shared_out_prefix` (`umask 002`, best-effort `chgrp <project>` and `chmod 2775 <base>.out`); Lux runs it when creating `.out`, and its setup script under `umask 002` (`tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`).
+- [x] 9.5 README, settings hints, job-script comments, the llm-pretraining skill and the schema docstrings describe the new layout and the Lux account.
+
+## 10. Second review fixes
+
+- [x] 10.1 Perlmutter jobs no longer run `_shared_out_prefix` or `mkdir -m 2775`: the folder is the researcher's own, so NERSC's default permissions stay (`tests/test_submit_job_spec.py`).
+- [x] 10.2 `VISTA_REMOTE_BASE` is no longer exported to Frontier and Lux jobs; `<base>` is never created and no job read it (`tests/test_submit_job_spec.py`, `tests/test_lux_submit.py`).
+- [x] 10.3 `_require_writable_out` reads `<base>.out` and the parent with one Transfer `stat` each (`GlobusClient.operation_stat`, 404 → `GlobusFileNotFound`) instead of listing `proj-shared` and its parent (`tests/test_remote_layout.py`, `tests/test_globus_https.py`).
+- [x] 10.4 `RemoteLayout.with_user`: submission reads the remote folder once up front and names the sources folder once the username is known, instead of building the layout twice (`tests/test_remote_layout.py`).
+- [x] 10.5 `lux-hello`'s comment says the header carries the Lux account.
+
+## 11. Settings on the HPC cards
+
+- [x] 11.1 Backend: `settings_check` and `ClusterChecks.settings` (design decision 11); a missing or unusable remote directory or account makes the cluster Not connected, and is recomputed past the result cache (`tests/test_hpc_status.py`).
+- [x] 11.2 UI: a settings row in the details, and the failed checks' messages on hover in both rail modes (`tests/HpcStatusSection.test.tsx`, fixtures in `tests/hpc-status.test.ts`, `tests/UserSettingsModal.test.tsx`, `e2e-hermetic/fixtures.ts`).
+
+## 12. Lux partition
+
+- [x] 12.1 MCP: `IriAttributes.partition` rendered as `#SBATCH -p` (`tests/test_lux_submit.py`).
+- [x] 12.2 `lux-hello` (one GPU) and `forge-pretrain` set `lux.iri.partition` to `batch`, Lux's only partition, and `lux.resources.gpus_per_node` (`tests/test_job_catalog.py`, `tests/test_lux_submit.py`). Checked on a Lux login node (2026-10-01): `sinfo` lists `batch` alone, 8 GPUs per node, and `stf218` has the default `normal` QOS, so no `-q` is needed.

@@ -50,7 +50,10 @@ export VISTA_LIVE_BASE_URL=http://127.0.0.1:8001
 The script runs:
 
 1. **Golden agent-mode prompts** — soft tool allowlists per seed project
-   (`molten-salt`, `alloy-design`) via `backend/tests/live/test_golden_prompts.py`
+   (`molten-salt`, `alloy-design`) via `backend/tests/live/test_golden_prompts.py`.
+   Those two are science projects, so the deployment under test must be seeded
+   with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` (a fresh default seed has only
+   `ai-safety-autonomous-labs`)
 2. **Dry-run HPC** — `loadgen.py --campaigns 2 --poll` (tools mode)
 3. **Fault checks** (optional) — `VISTA_RUN_FAULT_CHECKS=1` after starting MCP
    with `VISTA_MCP_FAULT__SUBMIT_FAIL_P=0.2` (see runbook fault-recovery note)
@@ -107,9 +110,10 @@ export PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000
 npx playwright test -c playwright.config.ts
 ```
 
-Flow: open app → open Projects → activate a project → send a chat message →
-observe a tool-call bubble and/or elicitation modal. Selectors prefer
-role/text. **Not** part of required MR CI.
+Flow: open app → open Projects → activate the default
+`ai-safety-autonomous-labs` project → send a chat message asking for a
+`rag_search` over the AI-safety papers → observe a tool-call bubble and/or
+elicitation modal. Selectors prefer role/text. **Not** part of required MR CI.
 
 ## VISTA window (manual)
 
@@ -119,7 +123,7 @@ real window needs a display, so it is checked here instead.
 **Window tests** (fixture server, no services, ~10 s):
 
 ```bash
-cd electron && npm ci && npm run test:e2e
+cd electron && npm ci && npx --no install-electron && npm run test:e2e
 ```
 
 The same tests on Linux, in a container on any machine with Docker. The image matches the
@@ -129,13 +133,101 @@ pinned `@playwright/test`. It runs as root, so the sandboxed PDF case is skipped
 
 ```bash
 cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
-  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && xvfb-run -a npm run test:e2e'
+  mcr.microsoft.com/playwright:v1.62.1-noble sh -c 'npm ci && npx --no install-electron && xvfb-run -a npm run test:e2e'
 ```
 
 This covers external links and `window.open` going to the system browser, off-origin
 navigation and redirects being refused, `file:` links, same-origin pop-ups and PDFs
 opening child windows, downloads, the page having no Node access, the single-instance
-lock, and `--smoke-test` exit codes.
+lock, startup progress and retry, startup-to-main handoff, shutdown cleanup, and
+`--smoke-test` exit codes.
+
+### Thin macOS developer app
+
+This validates the source-backed app separately from the complete release
+package:
+
+```bash
+./scripts/build_mac_dev_app.sh
+codesign --verify --deep --strict "dist/mac-dev/VISTA Dev.app"
+open "dist/mac-dev/VISTA Dev.app"
+```
+
+Confirm the preparation window appears without Terminal, transitions to the
+1280 × 860 main window at `http://localhost:3000`, and exposes DevTools in the
+View menu. Quit the app and confirm ports 3000, 8000, and 8001 are released.
+The app is intentionally tied to the checkout named by `dist/mac-dev/dev-root`;
+it does not exercise release payload assembly, relocation, or installation.
+
+The checkout launcher has a hermetic lifecycle test:
+
+```bash
+./scripts/tests/mac_dev_launcher_test.sh
+```
+
+### macOS release checklist
+
+**Manual; never in PR CI.** Run it on a Mac before publishing a release, against the release
+build's own archive (`desktop-app-startup` design D12). The package is ad-hoc signed and not
+notarized: the supported routes, the one-line installer and a `curl` download, never quarantine
+it. Use an administrator account that has no VISTA installed, or remove `/Applications/VISTA`,
+`~/Applications/VISTA` and `~/.local/share/vista` first. Keep `~/.vista` to test an upgrade, or
+move it aside to test a first run.
+
+1. **Install** with the release's one-line installer from a terminal:
+
+   ```bash
+   curl -fsSL https://github.com/Genesis-VISTA/vista/releases/download/<tag>/install.sh | bash
+   ```
+
+   It installs into `/Applications/VISTA` and opens VISTA, with no Gatekeeper prompt.
+   `xattr -l /Applications/VISTA/VISTA.app` shows no `com.apple.quarantine`. A
+   `com.apple.provenance` there is expected: macOS records it on files a process writes, and it
+   brings no Gatekeeper prompt.
+2. **First run.** The startup window appears at once, with the VISTA icon, in the system's light
+   or dark appearance. It shows real activity (resources, the sandbox image, the three
+   services), then hands over to the 1280 × 860 main window. Start one chat that runs code, so a
+   real sandbox is created.
+3. **The Dock.** VISTA's icon is in the Dock while it runs, the same size as its neighbours, not
+   smaller.
+4. **Where it is listed.** VISTA is in the Apps view (Launchpad), Spotlight finds "VISTA", and
+   Finder's Applications shows it inside a `VISTA` folder.
+5. **Quit and restart.** Quit with Cmd-Q. Then:
+
+   ```bash
+   pgrep -fl /Applications/VISTA ; lsof -nP -iTCP:3000 -iTCP:8000 -iTCP:8001 -sTCP:LISTEN
+   ```
+
+   Both print nothing. Open VISTA again at once, from Spotlight: the later run marks prepared
+   work as already done and reaches the main window in seconds. Repeat by closing the startup
+   window during one run and the main window during another.
+6. **Second launch.** While VISTA is starting, open it again from the Apps view; repeat once the
+   main window is up. Each time the existing window comes forward and only one set of services
+   runs.
+7. **An expected error.** Quit, hold port 3000 (`python3 -m http.server 3000`), open VISTA. The
+   startup window names the port conflict, Open Logs opens the logs folder, Copy Diagnostics
+   copies versions, phase and code with no environment values, and Retry stays disabled until
+   cleanup finishes. Free the port, select Retry: startup completes.
+8. **Upgrades.** The installer refuses only to replace a running VISTA, so ask for another
+   version: with VISTA open, add `--version` with any other value
+   (`curl -fsSL <installer URL> | bash -s -- --version 0.0.1`). It says to close VISTA, before
+   downloading anything, and changes nothing. Close VISTA and run the installer as in step 1: it
+   starts the installed copy without downloading.
+9. **A separated app.** Copy only `VISTA.app` out of `/Applications/VISTA` and open the copy. It
+   shows the package-layout error and starts no service. Delete the copy.
+10. **The sandbox entitlement.** The build re-signs only the window, so the bundled `msb` keeps
+    the entitlements the sandbox needs:
+
+    ```bash
+    msb="$(find /Applications/VISTA/app -path '*/_bundled/bin/msb' | head -1)"
+    codesign -d --entitlements - --xml "$msb"
+    ```
+
+    Both `com.apple.security.hypervisor` and
+    `com.apple.security.cs.disable-library-validation` are true.
+
+Linux's app-menu entry and its window icon, and the Windows Start-menu entry, have no manual
+check; the release build's smoke test covers their supervised startup on every platform.
 
 **Stopping and cleanup** (a built package, ideally with a chat started so a sandbox
 exists). Start `./vista`, then stop it each of these three ways:
@@ -162,11 +254,12 @@ Both commands should print nothing.
 - Cmd-V into a settings field pastes.
 - Dropping a file outside an upload area leaves the page alone.
 - A second `./vista` or `npm start` exits and brings the first window forward.
-- Over SSH, `./vista` says it has no display and prints the address instead.
+- Over SSH, `./vista` says it cannot open the window and why, and starts nothing.
 
 **On Linux** (`openspec/changes/linux-desktop-window`): a real Ubuntu 24.04 desktop,
-and one of Debian 13 or Fedora. A VM is fine. Without nested virtualisation,
-`VISTA_ALLOW_NO_KVM=1` is acceptable for these window-only checks. Run the stopping
+and one of Debian 13 or Fedora. A VM is fine, but it needs nested virtualisation:
+the launcher refuses a host without KVM. (Its one bypass, the build-only
+`VISTA_VERIFY_WITHOUT_SANDBOX=1`, skips the very checks this needs.) Run the stopping
 and walk-through checks above, then:
 
 - On stock Ubuntu the window opens without the sandbox, and the launcher prints why along
@@ -175,11 +268,11 @@ and walk-through checks above, then:
 - On Debian or Fedora it opens sandboxed with no step.
 - With the sandbox off, "Open PDF" opens the system browser, not a second window.
 - The window opens in both a Wayland session and an X11 session.
-- Over SSH, and as root, `./vista` gives its reason and the address.
+- Over SSH, and as root, `./vista` gives its reason and starts nothing.
 - With one of the README's window libraries removed, the launcher names what is missing.
 - `kill -SEGV` on the window process makes the launcher say the window stopped
-  unexpectedly, and the services keep answering. Ctrl-C then stops everything.
-- On Ubuntu, `./launch.sh logs --electron` prints the same sandbox message, and the
+  unexpectedly and name its log, and every service stops.
+- On Ubuntu, `./launch.sh logs` prints the same sandbox message, and the
   profile turns the sandbox on for it as well.
 
 ## Weekly / manual real HPC (`hpc_jobs/example`)
@@ -188,7 +281,7 @@ and walk-through checks above, then:
 # MCP must NOT have VISTA_MCP_HPC_DRY_RUN set
 export VISTA_RUN_HPC=1
 export VISTA_HPC_SMOKE_CLUSTER=odo          # or frontier
-export VISTA_HPC_SMOKE_PROJECT=molten-salt
+export VISTA_HPC_SMOKE_PROJECT=molten-salt   # a science project: seed with VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true
 # User needs S3M / IRI tokens configured (UI → User settings)
 cd backend && uv run pytest tests/live/test_hpc_example_smoke.py -v -m hpc
 ```

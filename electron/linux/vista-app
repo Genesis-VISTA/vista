@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# VISTA on Linux: what the app-menu entry runs (desktop-app-startup design D9).
+# Shipped as app/window/vista-app, next to the VISTA window, window-sandbox and
+# vista-window.apparmor; the manifest names it as the package's entrypoint.
+#
+# Chromium's renderer sandbox is fixed when the window's process starts, and the
+# window starts before anything else in VISTA, so this decides it first:
+#
+#   1. refuses where no window can be shown, as the terminal launcher does: no
+#      display, a remote shell, or root;
+#   2. names the window's missing system libraries rather than starting a
+#      window that cannot load;
+#   3. asks window-sandbox whether this host needs --no-sandbox, and starts the
+#      window with --startup, which then starts VISTA's services itself;
+#   4. if the window dies within its first seconds with anything but 75
+#      (another VISTA window is already open), starts it once more without the
+#      sandbox: window-sandbox cannot tell an AppArmor profile that is loaded
+#      from one that is only installed, and Chromium aborts at once when its
+#      sandbox cannot start.
+#
+# Only failures in 1 and 2 leave no window to explain them, so those are shown
+# as a desktop notification where notify-send exists, and are always written to
+# ~/.vista/logs/window.log. Why the window runs without the sandbox reaches the
+# startup window through VISTA_SANDBOX_NOTICE.
+#
+#   app/window/vista-app [window arguments...]
+
+set -u
+
+here="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+window="$here/VISTA"
+logs="${VISTA_HOME:-$HOME/.vista}/logs"
+mkdir -p "$logs" 2>/dev/null || true
+log_file="$logs/window.log"
+# The window exits with this when another VISTA window holds the single-instance
+# lock (EX_TEMPFAIL, electron/src/lifecycle.js); that one is focused instead.
+already_open=75
+early_seconds=5
+
+note() {
+  printf 'vista-app: %s\n' "$*" >> "$log_file" 2>/dev/null || true
+  printf 'vista-app: %s\n' "$*" >&2
+}
+
+# A failure with no window to show it in.
+refuse() {
+  note "VISTA cannot open: $1"
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send --app-name=VISTA --icon=vista "VISTA cannot open" "$1" 2>/dev/null || true
+  fi
+  exit 1
+}
+
+# --- 1. a session that can show a window ---------------------------------------
+
+if [[ "$(id -u)" == 0 ]]; then
+  refuse "VISTA does not run as root. Open it from your own account."
+fi
+if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]]; then
+  refuse "this is a remote shell session. Open VISTA on the computer's own desktop."
+fi
+if [[ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+  refuse "there is no graphical display (neither DISPLAY nor WAYLAND_DISPLAY is set)."
+fi
+[[ -x "$window" ]] || refuse "the VISTA window is missing from $here. Reinstall VISTA."
+
+# --- 2. the window's system libraries --------------------------------------------
+
+# A desktop has all of these; a minimal system may not. A bare one lacks all 26
+# at once, so only the first few are named.
+missing="$(ldd "$window" 2>/dev/null | awk '/not found/ { print $1 }' | sort -u \
+  | awk '{ n++; if (n <= 5) names = names (n > 1 ? " " : "") $1 }
+         END { if (n) printf "%s%s", names, (n > 5 ? " and " (n - 5) " more" : "") }')"
+if [[ -n "$missing" ]]; then
+  refuse "the window needs system libraries this computer lacks ($missing). On Ubuntu or Debian install libgtk-3-0t64 libnss3 libasound2t64 libgbm1; on Fedora or RHEL gtk3 nss alsa-lib mesa-libgbm."
+fi
+
+# --- 3. the sandbox, then the window ---------------------------------------------
+
+sandbox_args=()
+if [[ -x "$here/window-sandbox" ]]; then
+  sandbox_arg="$("$here/window-sandbox" 2> "$logs/window-sandbox.log" || true)"
+  if [[ "$sandbox_arg" == --no-sandbox ]]; then
+    sandbox_args=(--no-sandbox)
+    VISTA_SANDBOX_NOTICE="$(cat "$logs/window-sandbox.log" 2>/dev/null)"
+    export VISTA_SANDBOX_NOTICE
+    note "$VISTA_SANDBOX_NOTICE"
+  fi
+fi
+
+start_window() {
+  "$window" --startup "$@" >> "$log_file" 2>&1 &
+  window_pid=$!
+}
+
+start_window "${sandbox_args[@]+"${sandbox_args[@]}"}" "$@"
+
+# --- 4. one retry without the sandbox --------------------------------------------
+
+if (( ${#sandbox_args[@]} == 0 )); then
+  for (( i = 0; i < early_seconds * 4; i++ )); do
+    kill -0 "$window_pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if ! kill -0 "$window_pid" 2>/dev/null; then
+    status=0
+    wait "$window_pid" || status=$?
+    if [[ "$status" != 0 && "$status" != "$already_open" ]]; then
+      cp "$log_file" "$logs/window-first-attempt.log" 2>/dev/null || true
+      VISTA_SANDBOX_NOTICE="The VISTA window stopped as it started (exit $status), so it is running without Chromium's sandbox, which this computer appears to block. The first attempt is in $logs/window-first-attempt.log."
+      export VISTA_SANDBOX_NOTICE
+      note "$VISTA_SANDBOX_NOTICE"
+      start_window --no-sandbox "$@"
+    else
+      exit "$status"
+    fi
+  fi
+fi
+
+status=0
+wait "$window_pid" || status=$?
+exit "$status"

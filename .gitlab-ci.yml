@@ -288,6 +288,44 @@ electron:test:
     - npm ci --prefer-offline
     - npm test
 
+# ─── One-line installers ────────────────────────────────────────────────────
+#
+# scripts/install.sh and install.ps1, attached to every GitHub release. The
+# tests install fake packages from a local folder, so they need no network and
+# no real package; the release workflow's package jobs then run each installer
+# against the real archive.
+
+install:lint:
+  stage: lint
+  image:
+    name: koalaman/shellcheck-alpine:v0.11.0
+  script:
+    - shellcheck scripts/install.sh scripts/test_install.sh .github/scripts/*.sh
+
+install:test:
+  stage: test
+  image: mcr.microsoft.com/powershell:7.5-ubuntu-24.04
+  before_script:
+    # procps: pgrep, with which install.sh tells whether VISTA is running.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates procps >/dev/null
+  script:
+    - scripts/test_install.sh
+    - pwsh -NoProfile -File scripts/test_install.ps1
+
+# ─── Package launchers ──────────────────────────────────────────────────────
+#
+# The supervised mode the VISTA application starts: package_launcher.sh on macOS
+# and Linux (a faked `uname` runs both platforms' branches here), and vista.ps1
+# under pwsh with stand-ins for cmd, taskkill and tar. Hermetic: fake services.
+# The release workflow runs vista.ps1's test on Windows itself.
+launcher:test:
+  stage: test
+  image: mcr.microsoft.com/powershell:7.5-ubuntu-24.04
+  script:
+    - bash scripts/tests/package_launcher_supervised_test.sh
+    - bash scripts/tests/mac_dev_launcher_test.sh
+    - pwsh -NoProfile -File scripts/tests/package_launcher_supervised_test.ps1
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:

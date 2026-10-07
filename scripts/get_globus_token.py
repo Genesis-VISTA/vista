@@ -12,26 +12,27 @@
 This one script covers both facilities, picked by ``--cluster``:
 
 * **OLCF** (``--cluster odo`` / ``--cluster frontier``) — mints the **pair** of
-  refresh tokens a cluster's file operations need, and ``--save-env`` writes
-  both to ``.env`` (deployment-wide secrets the MCP server reads at startup):
+  refresh tokens a cluster's file operations need:
 
-  * ``VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN`` — Transfer, for listing
-    directories and making them.
-  * ``VISTA_MCP_<CLUSTER>_GLOBUS_HTTPS_REFRESH_TOKEN`` — the collection itself,
-    for reading and writing file contents over the Globus HTTPS interface.
+  * Transfer, for listing directories and making them.
+  * The collection itself, for reading and writing file contents over the
+    Globus HTTPS interface.
 
   Two because Globus issues one refresh token per resource server, and the
   collection is its own. Both are needed: one alone finds an output directory
-  it cannot open.
+  it cannot open. VISTA itself gets this pair when a researcher connects Globus
+  in the user settings (``backend/src/vista_backend/services/globus_auth.py`` runs this
+  flow); the script is for checking a login from a terminal, and
+  ``--print-token`` shows what it got:
 
-      ./scripts/get_globus_token.py --cluster odo --save-env
-      ./scripts/get_globus_token.py --cluster frontier --save-env
+      ./scripts/get_globus_token.py --cluster odo --print-token
+      ./scripts/get_globus_token.py --cluster frontier --print-token
 
 * **NERSC** (``--cluster perlmutter``) — mints a Globus **IRI access token**
   (scope ``…/ed3e577d-…/iri_api``). On NERSC a single IRI token authorizes both
   compute (submit/status) and file ops, and it is a **per-user** credential, so
   the script prints it for you to paste into the Vista UI (the Perlmutter / NERSC
-  IRI token field) rather than writing it to ``.env``:
+  IRI token field):
 
       ./scripts/get_globus_token.py --cluster perlmutter
 
@@ -55,7 +56,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import stat
 import sys
 import time
@@ -178,16 +178,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--save-env",
-        action="store_true",
-        help=(
-            "OLCF only: write both refresh tokens to .env at the repo root, as "
-            "VISTA_MCP_<CLUSTER>_GLOBUS_REFRESH_TOKEN and "
-            "VISTA_MCP_<CLUSTER>_GLOBUS_HTTPS_REFRESH_TOKEN (requires --cluster). "
-            "NERSC IRI tokens are per-user; paste the printed access token into the UI."
-        ),
-    )
-    parser.add_argument(
         "--token-file",
         type=Path,
         default=None,
@@ -274,21 +264,6 @@ def save_tokens(token_file: Path, tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
     os.replace(tmp, token_file)
     os.chmod(token_file, stat.S_IRUSR | stat.S_IWUSR)
-
-
-def update_env_file(env_file: Path, key: str, value: str) -> None:
-    """Set key=value in env_file, replacing an existing (possibly commented-out) line."""
-    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
-    pattern = re.compile(rf"^\s*#?\s*{re.escape(key)}=")
-    match_idx = next((i for i in range(len(lines) - 1, -1, -1) if pattern.match(lines[i])), None)
-    if match_idx is not None:
-        lines[match_idx] = f"{key}={value}"
-    else:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(f"{key}={value}")
-    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(env_file, stat.S_IRUSR | stat.S_IWUSR)
 
 
 def parse_scope_string(scope_string: str) -> set[str]:
@@ -485,15 +460,6 @@ def main() -> None:
     facility = facility_of(args.cluster)
     primary_resource = primary_resource_server(facility)
 
-    if args.save_env and not args.cluster:
-        raise RuntimeError("--save-env requires --cluster (it picks the .env variable name)")
-    if args.save_env and facility == "nersc":
-        raise RuntimeError(
-            "--save-env is OLCF-only. NERSC IRI tokens are per-user — paste the "
-            "access token this prints into the Vista UI (Perlmutter / NERSC IRI "
-            "token field), not .env."
-        )
-
     https_resource: str | None = None
     if args.cluster:
         settings = load_mcp_settings()
@@ -564,7 +530,7 @@ def main() -> None:
             print(primary["refresh_token"])
         return
 
-    # --- OLCF: the deliverable is the pair of refresh tokens for .env ---
+    # --- OLCF: the deliverable is the pair of refresh tokens ---
     print(f"OLCF collection ID: {args.olcf_collection_id}")
     if args.data_access:
         print("  data_access requested (not valid for Odo or Frontier).")
@@ -577,23 +543,6 @@ def main() -> None:
         else {}
     )
 
-    if args.save_env:
-        env_file = REPO_ROOT / ".env"
-        prefix = f"VISTA_MCP_{args.cluster.upper()}_GLOBUS"
-        for token, suffix, what in (
-            (primary, "REFRESH_TOKEN", "Transfer"),
-            (https_token, "HTTPS_REFRESH_TOKEN", "the collection's HTTPS interface"),
-        ):
-            refresh_token = token.get("refresh_token")
-            if not refresh_token:
-                raise RuntimeError(
-                    f"No refresh token for {what}, cannot --save-env. Re-run with "
-                    "--force-login (a --refresh-only flow reuses the existing "
-                    "access token and may not return a refresh token)."
-                )
-            env_var = f"{prefix}_{suffix}"
-            update_env_file(env_file, env_var, refresh_token)
-            print(f"Wrote {env_var} to {env_file}")
     if args.print_token:
         print("\nTransfer access token:")
         print(primary["access_token"])

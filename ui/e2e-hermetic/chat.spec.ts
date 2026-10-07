@@ -34,7 +34,7 @@ test.describe("chat flow", () => {
     await card.getByRole("button", { name: "Open" }).click();
 
     // Landing on the conversation list means the project is active.
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await expect(composer).toBeVisible();
     await expect(page.locator(".project-switcher-button")).toHaveText("molten-salt");
 
@@ -73,7 +73,7 @@ test.describe("chat flow", () => {
       .getByRole("button", { name: "Open" })
       .click();
 
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await composer.fill(QUESTION);
     await page.getByRole("button", { name: "Start chat" }).click();
 
@@ -101,7 +101,7 @@ test.describe("chat flow", () => {
       .getByRole("button", { name: "Open" })
       .click();
 
-    const composer = page.getByPlaceholder(/Ask about molten salts/);
+    const composer = page.getByPlaceholder(/Ask a question/);
     await composer.fill(QUESTION);
     await page.getByRole("button", { name: "Start chat" }).click();
 
@@ -114,6 +114,31 @@ test.describe("chat flow", () => {
     // And the saved thread carries it, so reopening shows the question too.
     const saved = await stub!.requests();
     expect(saved.filter((r) => r === "PUT /api/chat/session").length).toBeGreaterThan(0);
+  });
+
+  test("Enter sends while Shift+Enter adds a new line", async ({ page }) => {
+    await page.goto("/projects");
+    await page
+      .locator(".project-card")
+      .filter({ hasText: "molten-salt" })
+      .getByRole("button", { name: "Open" })
+      .click();
+
+    const composer = page.getByPlaceholder(/Ask a question/);
+    await composer.fill("First line");
+    await composer.press("Shift+Enter");
+    await composer.pressSequentially("Second line");
+
+    await expect(composer).toHaveValue("First line\nSecond line");
+    expect(await stub!.requests()).not.toContain("POST /api/chat");
+
+    await composer.press("Enter");
+    await stub!.waitForStream();
+    await streamOneTurn(stub!);
+
+    await expect(
+      page.locator(".chat-bubble.user").filter({ hasText: "First line\nSecond line" }),
+    ).toBeVisible();
   });
 
   test("keeps every request inside the stub", async ({ page }) => {

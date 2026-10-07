@@ -16,7 +16,6 @@ import httpx
 import pytest
 import requests
 from globus_sdk import GlobusAPIError, TransferAPIError
-from pydantic import SecretStr
 
 from vista_backend.config import HpcClusterSettings
 from vista_backend.db.schemas import UserPublicWithConfig
@@ -33,6 +32,9 @@ from vista_backend.services.hpc_status import (
 
 NOW = datetime(2026, 9, 25, 15, 0, tzinfo=timezone.utc)
 S = HpcClusterSettings.model_validate({})
+ODO_PROJECT = "abc123"
+FRONTIER_PROJECT = "xyz789"
+""" Projects no deployment is configured for: any project's token works. """
 ODO = "https://amsc-open.s3m.olcf.ornl.gov"
 FRONTIER = "https://amsc-moderate.s3m.olcf.ornl.gov"
 NERSC = "https://api.iri.nersc.gov"
@@ -198,8 +200,21 @@ def make_service(
     )
 
 
-def user(**tokens) -> UserPublicWithConfig:
-    return UserPublicWithConfig(id=uuid.uuid4(), email="r@ornl.gov", **tokens)
+SETTINGS = dict(
+    odo_remote_dir="/gpfs/wolf2/olcf/abc123/proj-shared/vista",
+    frontier_remote_dir="/lustre/orion/abc123/proj-shared/vista",
+    nersc_remote_dir="/pscratch/sd/r/r/.vista",
+    nersc_account="m1234",
+    lux_remote_dir="/lustre/orion/abc123/proj-shared/vista-lux",
+    lux_account="abc123",
+)
+""" Everything a submission needs besides credentials. `user` sets it unless a test overrides it. """
+
+
+def user(**fields) -> UserPublicWithConfig:
+    return UserPublicWithConfig(
+        id=uuid.uuid4(), email="r@ornl.gov", **{**SETTINGS, **fields}
+    )
 
 
 CONNECTED = dict(
@@ -216,8 +231,8 @@ CONNECTED = dict(
 def healthy() -> Facilities:
     fac = Facilities()
     fac.s3m = {
-        "odo-tok": (200, S.odo_account, {}),
-        "fr-tok": (200, S.frontier_account, {}),
+        "odo-tok": (200, ODO_PROJECT, {}),
+        "fr-tok": (200, FRONTIER_PROJECT, {}),
     }
     fac.iri = {(ODO, "odo-tok"): 200, (FRONTIER, "fr-tok"): 200, (NERSC, "pm-tok"): 200}
     return fac
@@ -252,14 +267,104 @@ def fail(reason) -> Check:
         (OK, fail("not_connected"), fail("not_connected"), "not_connected"),
         (OK, fail("rejected"), OK, "rejected"),
         (OK, fail("not_active"), OK, "rejected"),
-        (OK, fail("wrong_project"), fail("not_connected"), "wrong_project"),
         (OK, OK, fail("not_connected"), "globus_not_connected"),
         (OK, OK, fail("session_expired"), "globus_session_expired"),
     ],
 )
 def test_resolve_state(facility, credential, globus, state):
-    checks = ClusterChecks(facility=facility, credential=credential, globus=globus)
+    checks = ClusterChecks(
+        facility=facility, credential=credential, globus=globus, settings=OK
+    )
     assert resolve_state(checks) == state
+
+
+@pytest.mark.parametrize(
+    ("facility", "credential", "settings", "state"),
+    [
+        (OK, OK, fail("not_connected"), "not_connected"),
+        (OK, OK, fail("invalid"), "not_connected"),
+        (OK, fail("rejected"), fail("not_connected"), "not_connected"),
+        (fail("degraded"), OK, fail("not_connected"), "degraded"),
+    ],
+)
+def test_missing_settings_are_not_connected(facility, credential, settings, state):
+    checks = ClusterChecks(
+        facility=facility, credential=credential, globus=OK, settings=settings
+    )
+    assert resolve_state(checks) == state
+
+
+@pytest.mark.parametrize(
+    ("cluster", "fields", "reason", "says"),
+    [
+        (
+            "odo",
+            {"odo_remote_dir": None},
+            "not_connected",
+            "No Odo remote directory is set.",
+        ),
+        (
+            "frontier",
+            {"frontier_remote_dir": ""},
+            "not_connected",
+            "No Frontier remote directory",
+        ),
+        (
+            "perlmutter",
+            {"nersc_account": None, "nersc_remote_dir": None},
+            "not_connected",
+            "No NERSC account or Perlmutter remote directory is set.",
+        ),
+        ("lux", {"lux_account": None}, "not_connected", "No Lux account is set."),
+        (
+            "odo",
+            {"odo_remote_dir": "/gpfs/wolf2/olcf/<project>/proj-shared/vista"},
+            "invalid",
+            "Replace any <project>",
+        ),
+        ("frontier", {"frontier_remote_dir": "vista"}, "invalid", "absolute path"),
+        ("odo", {"odo_remote_dir": "/"}, "invalid", "other than /"),
+        ("lux", {"lux_account": "stf 218"}, "invalid", "isn't a project name"),
+    ],
+)
+def test_settings_check_names_what_is_missing(cluster, fields, reason, says):
+    check = hs.settings_check(cluster, user(**fields))
+    assert not check.ok
+    assert check.reason == reason
+    assert says in check.message
+
+
+def test_settings_check_passes_with_everything_set():
+    u = user()
+    assert hs.settings_check("odo", u) == Check(
+        ok=True, message=SETTINGS["odo_remote_dir"]
+    )
+    lux = hs.settings_check("lux", u)
+    assert lux.ok and lux.project == SETTINGS["lux_account"]
+
+
+@pytest.mark.anyio
+async def test_card_is_not_connected_without_a_remote_directory_even_when_cached():
+    """
+    A token and Globus alone are not enough: every job would be refused. And
+    setting the folder updates the card at once, though the facility checks
+    are cached.
+    """
+    fac = healthy()
+    service = make_service(fac)
+    u = user(**CONNECTED, frontier_remote_dir=None)
+    first = (await statuses(service, u))["frontier"]
+    assert first.state == "not_connected"
+    assert first.checks.credential.ok and first.checks.globus.ok
+    assert first.checks.settings.message == "No Frontier remote directory is set."
+
+    calls = len(fac.calls)
+    fixed = u.model_copy(
+        update={"frontier_remote_dir": SETTINGS["frontier_remote_dir"]}
+    )
+    second = (await statuses(service, fixed))["frontier"]
+    assert second.state == "ready"
+    assert len(fac.calls) == calls  # served from the cache, with the new settings
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +502,25 @@ async def test_rejected_token():
 
 
 @pytest.mark.anyio
-async def test_token_for_another_project():
-    """An Odo token pasted into Frontier: introspect names the wrong project."""
+async def test_token_for_any_project_is_reported_not_judged():
+    """No project is configured: whatever the token belongs to is its jobs'
+    account, and the card says which."""
     fac = healthy()
-    fac.s3m["fr-tok"] = (200, S.odo_account, {})
+    fac.s3m["odo-tok"] = (200, "zzz999", {})
+    odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
+    assert odo.state == "ready"
+    assert odo.checks.credential.project == "zzz999"
+
+
+@pytest.mark.anyio
+async def test_token_for_the_other_enclave_is_rejected_by_iri():
+    """An Odo token pasted into Frontier: Frontier's IRI refuses it, and that
+    is the answer -- there is no project comparison to make."""
+    fac = healthy()
+    fac.s3m["fr-tok"] = (200, ODO_PROJECT, {})
     fac.iri[(FRONTIER, "fr-tok")] = 401  # what Frontier's IRI really answers
     frontier = (await statuses(make_service(fac), user(**CONNECTED)))["frontier"]
-    assert frontier.state == "wrong_project"
-    assert frontier.checks.credential.expected_project == S.frontier_account
+    assert frontier.state == "rejected"
 
 
 @pytest.mark.anyio
@@ -413,7 +529,7 @@ async def test_token_not_active_yet():
     start = NOW + timedelta(hours=2)
     fac.s3m["odo-tok"] = (
         200,
-        S.odo_account,
+        ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(start)},
     )
     odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
@@ -427,7 +543,7 @@ async def test_delayed_start_in_the_past_is_fine():
     fac = healthy()
     fac.s3m["odo-tok"] = (
         200,
-        S.odo_account,
+        ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(NOW - timedelta(hours=2))},
     )
     assert (await statuses(make_service(fac), user(**CONNECTED)))[
@@ -451,44 +567,37 @@ async def test_unexpected_iri_answer_is_unverifiable(status):
 
 
 def test_globus_source_order():
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "odo_globus_refresh_token": SecretStr("dep-gt"),
-            "odo_globus_https_refresh_token": SecretStr("dep-gh"),
-        }
-    )
     own = user(
         odo_globus_token="o-gt",
         odo_globus_https_token="o-gh",
         globus_token="s-gt",
         globus_https_token="s-gh",
     )
-    assert globus_source("odo", own, deployment).transfer == "o-gt"
+    assert globus_source("odo", own).transfer == "o-gt"
     shared = user(globus_token="s-gt", globus_https_token="s-gh")
-    assert globus_source("odo", shared, deployment).identity == "own"
-    assert globus_source("odo", shared, deployment).transfer == "s-gt"
-    # Half a pair does not count; the deployment's whole pair takes over.
+    assert globus_source("odo", shared).transfer == "s-gt"
+    # Half a pair does not count, and there is nothing after the shared pair.
     half = user(odo_globus_token="o-gt")
-    picked = globus_source("odo", half, deployment)
-    assert (picked.transfer, picked.identity) == ("dep-gt", "deployment")
-    assert globus_source("odo", half, S) is None
-    assert globus_source("frontier", half, deployment) is None
+    assert globus_source("odo", half) is None
+    half_and_shared = user(
+        odo_globus_token="o-gt", globus_token="s-gt", globus_https_token="s-gh"
+    )
+    assert globus_source("odo", half_and_shared).transfer == "s-gt"
+    assert globus_source("frontier", half) is None
 
 
 @pytest.mark.anyio
-async def test_deployment_globus_counts_as_ready():
+async def test_deployment_globus_variables_do_not_count(monkeypatch):
+    """The variables that used to be a deployment-wide Globus login are
+    ignored: a researcher who connected nothing is not connected."""
+    monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN", "dep-gt")
+    monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN", "dep-gh")
     fac, globus = healthy(), FakeGlobus()
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "odo_globus_refresh_token": SecretStr("dep-gt"),
-            "odo_globus_https_refresh_token": SecretStr("dep-gh"),
-        }
-    )
+    settings = HpcClusterSettings()
     u = user(odo_s3m_token="odo-tok")
-    odo = (await statuses(make_service(fac, globus, settings=deployment), u))["odo"]
-    assert odo.state == "ready"
-    assert odo.checks.globus.identity == "deployment"
-    assert globus.calls[0]["collection_id"] == S.odo_globus_collection_id
+    odo = (await statuses(make_service(fac, globus, settings=settings), u))["odo"]
+    assert odo.state == "globus_not_connected"
+    assert globus.calls == []
 
 
 @pytest.mark.anyio
@@ -661,17 +770,9 @@ async def test_no_secret_ever_appears_in_the_response():
     fac.iri[(NERSC, "pm-tok")] = 500
     globus = FakeGlobus()
     globus.result = GlobusSessionExpired("token odo-gt refused")
-    deployment = HpcClusterSettings.model_validate(
-        {
-            "frontier_globus_refresh_token": SecretStr("dep-secret-gt"),
-            "frontier_globus_https_refresh_token": SecretStr("dep-secret-gh"),
-        }
-    )
-    u = user(**{**CONNECTED, "frontier_globus_token": None})
-    body = (
-        await make_service(fac, globus, settings=deployment).status(u)
-    ).model_dump_json()
-    for secret in [*CONNECTED.values(), "dep-secret-gt", "dep-secret-gh", "Bearer"]:
+    u = user(**CONNECTED)
+    body = (await make_service(fac, globus).status(u)).model_dump_json()
+    for secret in [*CONNECTED.values(), "Bearer"]:
         assert secret not in body, secret
 
 
@@ -704,6 +805,14 @@ ONLY_LUX = dict(hpc_hidden_clusters=["frontier", "odo", "perlmutter"])
 
 
 @pytest.mark.anyio
+async def test_lux_names_the_researchers_account():
+    fac, lux = healthy(), FakeLux()
+    u = user(**ONLY_LUX, lux_account="abc123")
+    lx = (await statuses(make_service(fac, lux=lux), u))["lux"]
+    assert lx.checks.credential.project == "abc123"
+
+
+@pytest.mark.anyio
 async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     fac, lux = healthy(), FakeLux()
     result = await statuses(make_service(fac, lux=lux), user(**ONLY_LUX))
@@ -712,7 +821,7 @@ async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     assert "hub.ccs.ornl.gov" in lx.checks.facility.message
     assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
     assert lx.checks.credential.ok
-    assert lx.checks.credential.project == "stf218"
+    assert lx.checks.credential.project == SETTINGS["lux_account"]
     assert lx.checks.credential.message == hs.LUX_SIGN_IN
     assert lx.checks.globus is None
     assert lux.calls == ["hub.ccs.ornl.gov"]  # the hub only, never the login node
