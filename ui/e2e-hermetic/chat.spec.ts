@@ -116,6 +116,31 @@ test.describe("chat flow", () => {
     expect(saved.filter((r) => r === "PUT /api/chat/session").length).toBeGreaterThan(0);
   });
 
+  test("Enter sends while Shift+Enter adds a new line", async ({ page }) => {
+    await page.goto("/projects");
+    await page
+      .locator(".project-card")
+      .filter({ hasText: "molten-salt" })
+      .getByRole("button", { name: "Open" })
+      .click();
+
+    const composer = page.getByPlaceholder(/Ask a question/);
+    await composer.fill("First line");
+    await composer.press("Shift+Enter");
+    await composer.pressSequentially("Second line");
+
+    await expect(composer).toHaveValue("First line\nSecond line");
+    expect(await stub!.requests()).not.toContain("POST /api/chat");
+
+    await composer.press("Enter");
+    await stub!.waitForStream();
+    await streamOneTurn(stub!);
+
+    await expect(
+      page.locator(".chat-bubble.user").filter({ hasText: "First line\nSecond line" }),
+    ).toBeVisible();
+  });
+
   test("keeps every request inside the stub", async ({ page }) => {
     await page.goto("/projects");
     await expect(page.locator(".project-card")).toHaveCount(2);

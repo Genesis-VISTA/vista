@@ -4425,8 +4425,12 @@ textarea.input:focus {
 .chat-input-row .input,
 .chat-input-row .input:focus {
   padding: 0;
-  border-bottom: 0;
+  border: 0;
   box-shadow: none;
+}
+
+.chat-input-row textarea.input {
+  resize: vertical;
 }
 
 /* ---------- Workspace pane fills ------------------------------------

@@ -1501,14 +1501,16 @@ export default function HomePage() {
         </div>
         {(isConversationOpen || isConversationListView) && (
           <div className="chat-input-row">
-            <input
+            <textarea
               className="input"
+              rows={2}
               placeholder="Ask a question… (e.g., 'What can you help me with?')"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               disabled={isRunActive}
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
                   void sendUserMessage();
                 }
               }}
