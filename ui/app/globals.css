@@ -634,7 +634,8 @@ main {
 }
 
 .model-picker-label {
-  max-width: 18ch;
+  /* Room for "Default (claude-sonnet)". */
+  max-width: 26ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -721,6 +722,79 @@ main {
 
 .model-picker-hint a {
   color: var(--brand);
+}
+
+.model-picker-options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-picker-options:empty {
+  display: none;
+}
+
+/* "Choose a model first": the picker opened because a send was held. */
+.model-picker-hint[data-tone="ask"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The label's "not listed by <provider>" marker. */
+.model-picker-unlisted {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.model-picker-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.model-picker-other-form {
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+
+.model-picker-other-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.model-picker-other-form input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.model-picker-other-form button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-picker-other-form button:hover:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.model-picker-other-form button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* ---------- "Pick a project" panel ----------------------------------- */
@@ -3068,37 +3142,325 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 /* ------------------------------------------------------------------ */
-/*  User settings modal                                                */
+/*  Settings modal                                                     */
 /* ------------------------------------------------------------------ */
 
-.user-settings-modal {
-  width: min(560px, 96vw);
-  max-height: 92vh;
+/* A navigation column beside one section, as on the canvas's "A, revised"
+   artboards. A fixed height, so moving between sections does not resize the
+   dialog under the pointer. The modal is its own container: the narrow layout
+   below follows the dialog's width, so the Electron window and a browser
+   window behave the same. */
+.settings-modal {
+  width: min(880px, 96vw);
+  height: min(660px, 92vh);
+  max-height: none;
+  container: settings / inline-size;
 }
 
-.user-settings-identity {
+.settings-layout {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-nav {
+  flex: 0 0 244px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 12px;
+  overflow: auto;
+  background: var(--panel-2);
+  border-right: 1px solid var(--line);
+}
+
+.settings-nav-entry {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-2);
-}
-
-.user-settings-identity-label {
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.user-settings-identity-email {
+  gap: 9px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
   font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav-entry:hover {
+  background: var(--wash);
+}
+
+.settings-nav-entry[aria-current="page"] {
+  background: var(--brand-wash-strong);
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.settings-nav-entry:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.settings-nav-resource {
+  padding-left: 30px;
+}
+
+/* A long name gives way to its note rather than running into it. */
+.settings-nav-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-note {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Keeps the names aligned whether or not a cluster has a dot yet. */
+.settings-nav-dot {
+  display: inline-flex;
+  flex: 0 0 10px;
+  justify-content: center;
+}
+
+.settings-nav-group {
+  padding: 14px 10px 4px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-nav-institution {
+  padding: 6px 10px 2px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink);
+}
+
+.settings-nav-facility {
+  padding: 2px 10px 2px 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 16px 24px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-section-place {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.settings-section-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.settings-section-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+.settings-section-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px;
+  overflow: auto;
+  min-height: 0;
   overflow-wrap: anywhere;
+}
+
+/* Each field's save mark, at the field: a check that fades, a cross while the
+   save has failed, a turning arc when a save is slow, and nothing for a save
+   in flight. Shape carries the meaning as well as colour. */
+.settings-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.settings-mark[data-mark="saved"] {
+  color: var(--success);
+  animation: settings-mark-fade 2s ease-in forwards;
+}
+
+.settings-mark[data-mark="failed"] {
+  color: var(--danger-ink);
+}
+
+.settings-mark[data-mark="slow"] {
+  color: var(--muted);
+}
+
+.settings-mark[data-mark="slow"] svg {
+  animation: hpc-spin 0.9s linear infinite;
+}
+
+@keyframes settings-mark-fade {
+  0%,
+  65% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* A text field's mark sits inside its right edge. */
+.settings-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.settings-input-wrap > .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-input-wrap[data-marked] > .input {
+  padding-right: 32px;
+}
+
+.settings-input-wrap > .settings-mark {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.settings-input-wrap > .input[aria-invalid="true"] {
+  border-color: var(--danger-line);
+}
+
+/* A choice's mark sits beside it. */
+.settings-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-control-row > .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-nav-failed {
+  display: inline-flex;
+  flex: none;
+}
+
+.settings-nav-entry[data-failed] .settings-nav-note {
+  margin-right: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.settings-field-error {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+/* Only in the narrow layout. */
+.settings-back {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 10px 16px 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-back:focus-visible {
+  outline: 2px solid var(--brand);
+}
+
+/* Too narrow for both columns: the list and a section take turns, each at
+   full width, and the back control returns to the list. */
+@container settings (max-width: 720px) {
+  .settings-nav {
+    flex-basis: 100%;
+    border-right: 0;
+  }
+
+  .settings-layout[data-pane="nav"] .settings-main,
+  .settings-layout[data-pane="section"] .settings-nav {
+    display: none;
+  }
+
+  .settings-back {
+    display: inline-flex;
+  }
+
+  .settings-section-header,
+  .settings-section-body {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
 }
 
 .user-settings-hint {
@@ -3108,13 +3470,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.4;
 }
 
-.user-settings-section-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-  margin-top: 4px;
-}
-
 /* Appearance: three choices always visible, the checked one raised like a
    tab — the same form the OS uses for the same setting. */
 .user-settings-appearance {
@@ -3122,9 +3477,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding-bottom: 14px;
-  margin-bottom: 2px;
-  border-bottom: 1px solid var(--line-soft);
 }
 
 .theme-choice {
@@ -3205,7 +3557,68 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 /* The authorization address. Long, and the researcher may need to select it by
    hand on a machine where the browser cannot be opened for them. */
+/* The Globus address: one line that scrolls sideways, with Copy beside it. */
+.user-settings-globus-url-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Only the address gives way: an address this long would otherwise squeeze
+   Copy to one letter per line. */
+.user-settings-globus-url-row > .button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.user-settings-globus-url-wrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.user-settings-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+}
+
+/* "Copied" flashes over the address, then fades. */
+.user-settings-globus-copied {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.user-settings-globus-copied-flash {
+  padding: 2px 10px;
+  border-radius: var(--r-pill);
+  background: var(--success-tint);
+  border: 1px solid var(--success-line);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+  animation: settings-copied-flash 1.6s ease-in forwards;
+}
+
+@keyframes settings-copied-flash {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .user-settings-globus-url {
+  flex: 1 1 0;
+  min-width: 0;
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 11px;
   line-height: 1.4;
@@ -3214,10 +3627,18 @@ button.chat-bubble.intermediate.collapsed:hover {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
-  max-height: 96px;
-  overflow-y: auto;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overflow-wrap: normal;
+  word-break: normal;
+  scrollbar-width: thin;
   user-select: all;
+}
+
+.user-settings-globus-url:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
 }
 
 .user-settings-globus-actions {
@@ -4507,6 +4928,41 @@ textarea.input:focus {
   outline-offset: 1px;
 }
 
+/* One facility's cards, under its name: OLCF, then NERSC, as in the settings
+   navigation. */
+.hpc-facility {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-rail.collapsed .hpc-facility {
+  align-items: center;
+}
+
+.hpc-facility-head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.hpc-facility-institution {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.hpc-facility-short {
+  margin: 4px 0 2px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
 .hpc-collapsed-divider {
   width: 24px;
   height: 1px;
@@ -4818,95 +5274,6 @@ textarea.input:focus {
   background: var(--surface);
   border-color: var(--brand-line-strong);
   color: var(--brand);
-}
-
-/* Settings modal: one collapsible section per HPC cluster, as on the canvas's
-   Settings artboard. */
-/* Never shrink: `overflow: hidden` (for the rounded corners) drops a flex
-   item's minimum height to zero, so the modal body would squeeze the list and
-   clip an expanded cluster instead of scrolling to it. */
-.user-settings-clusters {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--line);
-  border-radius: var(--r-card);
-  overflow: hidden;
-}
-
-.user-settings-cluster + .user-settings-cluster {
-  border-top: 1px solid var(--line);
-}
-
-.user-settings-cluster-heading {
-  margin: 0;
-  font: inherit;
-}
-
-.user-settings-cluster-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 48px;
-  padding: 12px 14px;
-  border: 0;
-  background: var(--surface);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.user-settings-cluster.expanded .user-settings-cluster-head {
-  background: var(--brand-tint);
-  border-bottom: 1px solid var(--brand-line);
-}
-
-.user-settings-cluster-head:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: -2px;
-}
-
-.user-settings-cluster-chevron {
-  flex: 0 0 auto;
-  color: var(--ink-2);
-  transition: transform 120ms ease;
-}
-
-.user-settings-cluster.expanded .user-settings-cluster-chevron {
-  transform: rotate(90deg);
-}
-
-.user-settings-cluster-name {
-  flex: 1 1 auto;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.user-settings-cluster-tag {
-  padding: 1px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  font-size: 11px;
-  color: var(--muted-2);
-  white-space: nowrap;
-}
-
-.user-settings-cluster-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  color: var(--muted-2);
-  white-space: nowrap;
-}
-
-.user-settings-cluster-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 14px 14px 16px 38px;
 }
 
 .user-settings-switch-row {

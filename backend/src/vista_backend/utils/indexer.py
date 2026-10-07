@@ -315,8 +315,11 @@ def has_llm_credentials(credentials: Any | None = None) -> bool:
 
     An explicitly supplied `build_rag.LLMCredentials` answers this on its own:
     it is how a key from the user's settings row reaches this path, and that
-    key is invisible to the environment checks below.
+    key is invisible to the environment checks below. One that is `disabled`
+    answers no, so the environment cannot override the caller's decision.
     """
+    if getattr(credentials, "disabled", False):
+        return False
     if credentials is not None and getattr(credentials, "is_usable", False):
         return True
     azure_ok = bool(

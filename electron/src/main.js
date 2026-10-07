@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { parseArgs } from './args.js';
+import { allowPermission } from './permissions.js';
 import { classify, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
@@ -266,9 +267,14 @@ function configureSession() {
   const ses = session.defaultSession;
 
   // The page gets no camera, microphone, notifications, location, and so on.
-  // The UI asks for none of them.
-  ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  ses.setPermissionCheckHandler(() => false);
+  // The UI asks for none of them. The one exception is writing to the
+  // clipboard from VISTA's own origin, for its Copy buttons (permissions.js).
+  ses.setPermissionRequestHandler((_contents, permission, callback, details) =>
+    callback(allowPermission(origin, permission, details.requestingUrl)),
+  );
+  ses.setPermissionCheckHandler((_contents, permission, requestingOrigin) =>
+    allowPermission(origin, permission, requestingOrigin),
+  );
 
   // Electron's default already asks where to save. This only starts that
   // dialog in Downloads, as a browser would.

@@ -1,8 +1,10 @@
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..agents.inference import PROVIDER_PRESETS, resolve_inference_target
 from ..db.db import SessionDep
 from ..db.schemas import (
     HpcCluster,
@@ -38,8 +40,74 @@ async def get_me(
 async def update_me(
     updates: UserSelfUpdate, session: SessionDep, user: UserDep
 ) -> UserPublicWithConfig:
+    # A model chosen from one provider means nothing to another, and sending
+    # it there fails confusingly. Cleared here rather than by the client so
+    # every client agrees, and no second request can race the first. Compared
+    # with the provider in effect, so choosing the one already in use keeps it.
+    if (
+        "inference_provider" in updates.model_fields_set
+        and "inference_model" not in updates.model_fields_set
+    ):
+        current = resolve_inference_target(UserPublicWithConfig.model_validate(user))
+        if updates.inference_provider != current.provider:
+            updates.inference_model = None
     row = await user_service.update_user(session, user.id, updates, user)
     return UserPublicWithConfig.model_validate(row)
+
+
+class InferenceProviderOption(BaseModel):
+    id: str
+    name: str
+    takes_url: bool
+    """ Only Custom asks for an endpoint; the others use their preset's. """
+    default_model: str | None
+    """ Bare model name used when none is chosen; `None` means one must be. """
+
+
+class InferenceView(BaseModel):
+    """
+    What the interface needs to show the researcher's inference provider and
+    model, without any secret: the picker reads this, not the full user.
+    """
+
+    providers: list[InferenceProviderOption]
+    provider: str
+    source: Literal["user", "config", "default"]
+    """ The researcher's choice, the installation's configuration, or i2. """
+    base_url: str
+    model: str | None
+    """ The model in effect, as `provider:name`; `None` when none is. """
+    model_is_default: bool
+    has_credential: bool
+    """ Whether the provider in effect has a key, from any source. """
+    keys_set: dict[str, bool]
+    """ Whether the researcher saved a key for each provider. """
+
+
+@router.get("/me/inference")
+async def get_inference(user: UserDep) -> InferenceView:
+    config = UserPublicWithConfig.model_validate(user)
+    target = resolve_inference_target(config)
+    return InferenceView(
+        providers=[
+            InferenceProviderOption(
+                id=p.id,
+                name=p.name,
+                takes_url=p.takes_url,
+                default_model=p.default_model,
+            )
+            for p in PROVIDER_PRESETS.values()
+        ],
+        provider=target.provider,
+        source=target.source,
+        base_url=target.base_url,
+        model=target.model,
+        model_is_default=target.model_is_default,
+        has_credential=target.has_credential,
+        keys_set={
+            p.id: bool(getattr(config, p.key_field)) for p in PROVIDER_PRESETS.values()
+        },
+    )
 
 
 @router.get("/me/hpc-status")

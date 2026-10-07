@@ -127,6 +127,45 @@ describe("HpcStatusSection", () => {
     expect(screen.getByRole("button", { name: "Perlmutter: Not connected" })).toHaveTextContent("Pm");
   });
 
+  const ALL: HpcCluster[] = ["frontier", "odo", "perlmutter", "lux"];
+  const allReady = () =>
+    view(ALL.map((c) => ({ status: status(c, "ready") })));
+
+  it("is headed Resources, and groups the cards under OLCF then NERSC", () => {
+    useHpcStatusMock.mockReturnValue(allReady());
+    renderSection({ visible: ALL });
+    expect(screen.getByText("Resources")).toBeInTheDocument();
+    expect(screen.queryByText("HPC")).toBeNull();
+
+    const groups = screen.getAllByRole("group");
+    expect(groups.map((g) => g.getAttribute("aria-label"))).toEqual(["OLCF", "NERSC"]);
+    const names = (g: HTMLElement) =>
+      within(g).getAllByRole("button").map((b) => b.getAttribute("aria-label")?.split(":")[0]);
+    expect(names(groups[0])).toEqual(["Odo", "Frontier", "Lux"]);
+    expect(names(groups[1])).toEqual(["Perlmutter"]);
+    expect(groups[0]).toHaveTextContent(/^OLCFORNL/);
+    expect(groups[1]).toHaveTextContent(/^NERSCLBNL/);
+  });
+
+  it("has no NERSC header when Perlmutter is hidden", () => {
+    useHpcStatusMock.mockReturnValue(allReady());
+    renderSection({ visible: ["frontier", "odo", "lux"] });
+    expect(screen.getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["OLCF"]);
+    expect(screen.queryByText("NERSC")).toBeNull();
+  });
+
+  it("groups the collapsed rail's short labels under short facility labels", () => {
+    useHpcStatusMock.mockReturnValue(allReady());
+    renderSection({ collapsed: true, visible: ALL });
+    const olcf = screen.getByRole("group", { name: "OLCF" });
+    const nersc = screen.getByRole("group", { name: "NERSC" });
+    expect(olcf.querySelector(".hpc-facility-short")).toHaveTextContent(/^OLCF$/);
+    expect(nersc.querySelector(".hpc-facility-short")).toHaveTextContent(/^NERSC$/);
+    expect(within(olcf).getByRole("button", { name: "Frontier: Ready" })).toHaveTextContent("Fr");
+    expect(within(olcf).getAllByRole("button").map((b) => b.textContent)).toEqual(["Od", "Fr", "Lx"]);
+    expect(within(nersc).getByRole("button", { name: "Perlmutter: Ready" })).toHaveTextContent("Pm");
+  });
+
   it("renders nothing when every cluster is hidden", () => {
     useHpcStatusMock.mockReturnValue(view([]));
     const { container } = renderSection({ visible: [] });

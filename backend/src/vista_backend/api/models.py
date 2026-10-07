@@ -33,6 +33,19 @@ class ModelsListResponse(BaseModel):
     models: list[ModelInfo] = []
 
 
+def _models_urls(base_url: str) -> tuple[str, str]:
+    """
+    Where to list models: `<base>/models`, as the OpenAI client asks
+    `<base>/chat/completions` for chat, then `<base>/v1/models` if that is 404.
+
+    No rule about a trailing `/v1` fits every preset: i2's base has none,
+    MAG's ends in it, and OLCF's carries it mid-path (`.../v1/inference`).
+    The fallback keeps a base with no `/v1` (i2's LiteLLM) working.
+    """
+    stripped = base_url.rstrip("/")
+    return f"{stripped}/models", f"{stripped}/v1/models"
+
+
 @router.get("/projects/{project_name}/models", response_model=ModelsListResponse)
 async def list_models(
     project_name: str, session: SessionDep, user: UserDep
@@ -56,12 +69,13 @@ async def list_models(
     if not target.has_credential:
         raise MissingInferenceCredential(target.model, target.base_url)
 
-    async with httpx.AsyncClient(base_url=target.base_url, timeout=10) as client:
+    headers = {"Authorization": f"Bearer {target.api_key}"}
+    async with httpx.AsyncClient(timeout=10) as client:
         try:
-            response = await client.get(
-                "/v1/models",
-                headers={"Authorization": f"Bearer {target.api_key}"},
-            )
+            for url in _models_urls(target.base_url):
+                response = await client.get(url, headers=headers)
+                if response.status_code != 404:
+                    break
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (401, 403):

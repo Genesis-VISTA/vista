@@ -202,12 +202,15 @@ class LLMCredentials:
     instead of silently getting none.
 
     `api_key` is what makes an instance usable; with it unset the env chain
-    runs as before.
+    runs as before. `disabled` says the caller decided there is nothing to
+    extract with -- its provider has no model -- so the env chain must not
+    run either.
     """
 
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
+    disabled: bool = False
 
     @property
     def is_usable(self) -> bool:

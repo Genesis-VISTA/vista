@@ -282,7 +282,7 @@ and walk-through checks above, then:
 export VISTA_RUN_HPC=1
 export VISTA_HPC_SMOKE_CLUSTER=odo          # or frontier
 export VISTA_HPC_SMOKE_PROJECT=molten-salt   # a science project: seed with VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true
-# User needs S3M / IRI tokens configured (UI → User settings)
+# User needs S3M / IRI tokens configured (UI → Settings → the cluster's section)
 cd backend && uv run pytest tests/live/test_hpc_example_smoke.py -v -m hpc
 ```
 

@@ -178,8 +178,30 @@ export const MODELS = {
   ],
 };
 
+/**
+ * `GET /users/me/inference`: a fresh install, on AmSC i2 with its default
+ * model and a key, so the picker reads "Default (claude-sonnet)" and a send
+ * is never held for want of a model.
+ */
+export const INFERENCE = {
+  providers: [
+    { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
+    { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+    { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
+    { id: "custom", name: "Custom", takes_url: true, default_model: null },
+  ],
+  provider: "i2",
+  source: "default",
+  base_url: "https://api.i2-core.american-science-cloud.org",
+  model: "openai:claude-sonnet",
+  model_is_default: true,
+  has_credential: true,
+  keys_set: { i2: true, mag: false, olcf: false, custom: false },
+};
+
 export const ROUTES: Record<string, unknown> = {
   "GET /api/users/me": USER,
+  "GET /api/users/me/inference": INFERENCE,
   "GET /api/users/me/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
   "GET /api/projects/molten-salt/models": MODELS,

@@ -20,9 +20,12 @@ from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.agents.inference import (
+    PROVIDER_PRESETS,
     MissingInferenceCredential,
+    MissingInferenceModel,
     SETTINGS_LOCATION,
     build_inference_model,
+    build_model_for,
     require_inference_credential,
     resolve_inference_target,
 )
@@ -91,6 +94,7 @@ def test_model_and_endpoint_precedence(monkeypatch):
 
     overridden = resolve_inference_target(
         _user(
+            inference_provider="custom",
             inference_model="openai:user-choice",
             inference_base_url="https://user.example/v1",
         )
@@ -109,9 +113,10 @@ def test_resolved_target_reaches_the_built_client(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     target = resolve_inference_target(
         _user(
+            inference_provider="custom",
             inference_model="openai:claude-sonnet",
             inference_base_url="https://user.example/v1",
-            inference_api_key="row-key",
+            inference_custom_api_key="row-key",
         )
     )
     model = build_inference_model(
@@ -119,6 +124,193 @@ def test_resolved_target_reaches_the_built_client(monkeypatch):
     )
     assert str(model.client.base_url).rstrip("/") == "https://user.example/v1"
     assert model.client.api_key == "row-key"
+
+
+# ---------------------------------------------------------------------------
+# Provider presets and the provider-aware resolution order
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def i2_settings(monkeypatch):
+    """An installation whose own configuration is the i2 preset's, keyless."""
+    monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(
+        settings, "openai_base_url", "https://api.i2-core.american-science-cloud.org"
+    )
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+
+def test_presets():
+    i2, mag, olcf, custom = (
+        PROVIDER_PRESETS[p] for p in ("i2", "mag", "olcf", "custom")
+    )
+    assert list(PROVIDER_PRESETS) == ["i2", "mag", "olcf", "custom"]
+    assert i2.base_url == "https://api.i2-core.american-science-cloud.org"
+    assert i2.default_model == "claude-sonnet"
+    assert mag.base_url == "https://i2-api.staging.american-science-cloud.org/v1"
+    assert mag.default_model is None
+    assert olcf.name == "OLCF Inference"
+    assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
+    assert olcf.default_model == "gpt-oss-120b"
+    assert custom.takes_url and custom.default_model is None
+    assert not i2.takes_url and not mag.takes_url and not olcf.takes_url
+
+
+_ALL_KEYS = dict(
+    inference_api_key="i2-key",
+    inference_mag_api_key="mag-key",
+    inference_olcf_api_key="olcf-key",
+    inference_custom_api_key="custom-key",
+    inference_base_url="https://custom.example/v1",
+)
+
+
+@pytest.mark.parametrize(
+    "provider,base_url,key,model",
+    [
+        ("i2", PROVIDER_PRESETS["i2"].base_url, "i2-key", "openai:claude-sonnet"),
+        ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", None),
+        ("olcf", PROVIDER_PRESETS["olcf"].base_url, "olcf-key", "openai:gpt-oss-120b"),
+        ("custom", "https://custom.example/v1", "custom-key", None),
+    ],
+)
+def test_row_provider_picks_its_url_key_and_default(
+    i2_settings, provider, base_url, key, model
+):
+    """Each provider uses its own key, so switching never loses another's."""
+    target = resolve_inference_target(_user(inference_provider=provider, **_ALL_KEYS))
+    assert target.provider == provider
+    assert target.source == "user"
+    assert target.base_url == base_url
+    assert target.api_key == key
+    assert target.model == model
+    assert target.model_is_default is (model is not None)
+
+
+def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
+    """A compute token is not known to be accepted for inference."""
+    cluster_tokens = dict(odo_s3m_token="odo-s3m", frontier_s3m_token="frontier-s3m")
+    target = resolve_inference_target(
+        _user(inference_provider="olcf", **cluster_tokens)
+    )
+    assert target.api_key is None
+    target = resolve_inference_target(
+        _user(
+            inference_provider="olcf",
+            inference_olcf_api_key="olcf-key",
+            **cluster_tokens,
+        )
+    )
+    assert target.api_key == "olcf-key"
+
+
+def test_row_provider_uses_the_chosen_model(i2_settings):
+    target = resolve_inference_target(
+        _user(inference_provider="mag", inference_model="openai:gpt-oss", **_ALL_KEYS)
+    )
+    assert target.model == "openai:gpt-oss"
+    assert target.model_is_default is False
+
+
+def test_i2_key_falls_back_to_the_environment(i2_settings, monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", SecretStr("from-env"))
+    assert (
+        resolve_inference_target(_user(inference_provider="i2")).api_key == "from-env"
+    )
+    # Not to another provider: the environment's key is i2's.
+    assert resolve_inference_target(_user(inference_provider="mag")).api_key is None
+
+
+def test_nothing_set_is_i2_with_its_default(i2_settings):
+    target = resolve_inference_target(_user())
+    assert target.provider == "i2"
+    assert target.source == "default"
+    assert target.model == "openai:claude-sonnet"
+    assert target.model_is_default is True
+    assert target.base_url == PROVIDER_PRESETS["i2"].base_url
+
+
+def test_existing_key_is_the_i2_key(i2_settings):
+    """A key saved before providers existed keeps working, as i2's."""
+    target = resolve_inference_target(
+        _user(inference_api_key="saved-before", inference_base_url="https://old/v1")
+    )
+    assert target.provider == "i2"
+    assert target.api_key == "saved-before"
+    # The old endpoint column is Custom's now, and unused for i2.
+    assert target.base_url == PROVIDER_PRESETS["i2"].base_url
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("openai_base_url", "https://dev.example/v1"), ("model", "openai:other")],
+)
+def test_configuration_differing_from_i2_is_custom_from_config(
+    i2_settings, monkeypatch, field, value
+):
+    monkeypatch.setattr(settings, field, value)
+    target = resolve_inference_target(_user(inference_api_key="row-key"))
+    assert target.provider == "custom"
+    assert target.source == "config"
+    assert target.base_url == settings.openai_base_url
+    assert target.model == settings.model
+    assert target.api_key == "row-key"
+
+
+def test_a_chosen_provider_beats_the_configuration(i2_settings, monkeypatch):
+    monkeypatch.setattr(settings, "openai_base_url", "https://dev.example/v1")
+    target = resolve_inference_target(_user(inference_provider="mag", **_ALL_KEYS))
+    assert target.provider == "mag"
+    assert target.base_url == PROVIDER_PRESETS["mag"].base_url
+
+
+def test_no_model_is_a_named_condition(i2_settings):
+    with pytest.raises(MissingInferenceModel) as excinfo:
+        require_inference_credential(
+            _user(inference_provider="mag", inference_mag_api_key="t")
+        )
+    assert "AmSC MAG" in excinfo.value.detail
+    assert "model picker" in excinfo.value.detail
+
+
+def test_no_model_still_builds_an_agent_model(i2_settings):
+    """
+    Agents are built before anything reaches the model, so building must not
+    fail; using the built model raises the named condition.
+    """
+    from pydantic_ai import Agent
+
+    model = build_model_for(_user(inference_provider="mag", inference_mag_api_key="t"))
+    with pytest.raises(MissingInferenceModel):
+        Agent(model).run_sync("hi")
+
+
+@pytest.mark.anyio
+async def test_new_keys_are_not_plaintext_in_the_database_file(tmp_path, monkeypatch):
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(settings, "encryption_key", SecretStr(key))
+    get_fernet.cache_clear()
+    secrets = {
+        "inference_mag_api_key": "mag-do-not-store-in-the-clear",
+        "inference_olcf_api_key": "olcf-do-not-store-in-the-clear",
+        "inference_custom_api_key": "custom-do-not-store-in-the-clear",
+    }
+    try:
+        db_file = tmp_path / "vista.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with AsyncSession(engine) as s:
+            s.add(UserTable(email="r@example.org", is_admin=True, **secrets))
+            await s.commit()
+        await engine.dispose()
+
+        raw = db_file.read_bytes()
+        for secret in secrets.values():
+            assert secret.encode() not in raw
+    finally:
+        get_fernet.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +545,35 @@ class TestHttpSurface:
 
     @pytest.mark.anyio
     @pytest.mark.integration
+    @pytest.mark.parametrize("stream", [False, True], ids=["json", "sse"])
+    async def test_chat_on_mag_with_no_model_is_reported_not_crashed(
+        self, session, monkeypatch, stream
+    ):
+        from harness import api_client, seed_project, seed_user
+
+        self._no_credential(monkeypatch)
+        alice = await seed_user(session)
+        row = await session.get(UserTable, alice.id)
+        assert row is not None
+        row.inference_provider = "mag"
+        row.inference_mag_api_key = "mag-token"
+        session.add(row)
+        await session.flush()
+        project = await seed_project(session, alice, name="alices-project")
+
+        with api_client(session) as (client, _):
+            response = await client.post(
+                self.RUN.format(name=project.name),
+                json={"user_prompt": "hi", "stream": stream},
+                headers={"X-Vista-User-Email": alice.email},
+            )
+
+        assert response.status_code == 409, response.text
+        assert "AmSC MAG" in response.json()["detail"]
+        assert "model picker" in response.json()["detail"]
+
+    @pytest.mark.anyio
+    @pytest.mark.integration
     async def test_chat_succeeds_once_the_key_is_on_the_row(self, session, monkeypatch):
         """
         The other half of 2.3: with a key present the guard is transparent and
@@ -547,7 +768,8 @@ class TestCitationCredentials:
             id=uuid.uuid4(),
             email="researcher@example.org",
             is_admin=False,
-            inference_api_key="sk-from-the-settings-modal",
+            inference_provider="custom",
+            inference_custom_api_key="sk-from-the-settings-modal",
             inference_base_url="https://endpoint.example/v1",
             inference_model="openai:my-model",
         )
@@ -556,6 +778,27 @@ class TestCitationCredentials:
         assert has_llm_credentials(credentials) is True
         assert credentials.api_key == "sk-from-the-settings-modal"
         assert credentials.base_url == "https://endpoint.example/v1"
+
+    def test_no_model_disables_extraction_despite_the_environment(self, monkeypatch):
+        """
+        On MAG with no model there is nothing to extract with. An environment
+        key must not turn extraction back on against some other model.
+        """
+        from vista_backend.agents.inference import citation_credentials
+        from vista_backend.utils.indexer import has_llm_credentials
+
+        self._scrubbed(monkeypatch)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
+        user = UserPublicWithConfig(
+            id=uuid.uuid4(),
+            email="researcher@example.org",
+            is_admin=False,
+            inference_provider="mag",
+            inference_mag_api_key="mag-token",
+        )
+        credentials = citation_credentials(user)
+        assert credentials.disabled is True
+        assert has_llm_credentials(credentials) is False
 
     def test_model_id_loses_its_provider_prefix(self, monkeypatch):
         """
@@ -589,7 +832,8 @@ class TestCitationCredentials:
             id=uuid.uuid4(),
             email="researcher@example.org",
             is_admin=False,
-            inference_api_key="sk-from-the-row",
+            inference_provider="custom",
+            inference_custom_api_key="sk-from-the-row",
             inference_base_url="https://row.example/v1",
             inference_model="openai:row-model",
         )

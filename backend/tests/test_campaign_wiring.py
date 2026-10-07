@@ -181,8 +181,9 @@ async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
 
     user_row = await session.get(UserTable, alice.id)
     user_row.inference_model = "openai-chat:row-model"
+    user_row.inference_provider = "custom"
     user_row.inference_base_url = "https://user.example/v1"
-    user_row.inference_api_key = "row-key"
+    user_row.inference_custom_api_key = "row-key"
     await session.flush()
 
     skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])

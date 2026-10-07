@@ -71,7 +71,8 @@ def test_the_orchestrator_uses_the_openers_settings(no_env_credential):
         id=uuid.uuid4(),
         email="researcher@example.org",
         is_admin=False,
-        inference_api_key="sk-from-the-settings-modal",
+        inference_provider="custom",
+        inference_custom_api_key="sk-from-the-settings-modal",
         inference_base_url="https://user.example/v1",
         inference_model="openai:user-model",
     )

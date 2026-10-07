@@ -49,7 +49,7 @@ def _mock_client(handler):
     than hand-rolling a fake response object.
     """
 
-    def factory(*, base_url: str, timeout: float | None = None):
+    def factory(*, base_url: str = "", timeout: float | None = None):
         return _RealAsyncClient(
             base_url=base_url, transport=httpx.MockTransport(handler)
         )
@@ -110,8 +110,130 @@ async def test_lists_models_from_the_configured_endpoint(session, monkeypatch):
         ],
     }
     assert len(seen_requests) == 1
-    assert seen_requests[0].url.path == "/v1/models"
+    assert seen_requests[0].url.path == "/models"
     assert seen_requests[0].headers["authorization"] == "Bearer row-secret-key"
+
+
+def _serving_only(path: str, seen: list[httpx.Request]):
+    """A gateway that lists models at `path` and answers 404 everywhere else."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path != path:
+            return httpx.Response(404, json={"detail": "Not Found"})
+        return httpx.Response(200, json={"data": [{"id": "m"}]})
+
+    return handler
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("base_url", "asked"),
+    [
+        # Ends in /v1, as MAG's does: `<base>/models` answers first time.
+        ("https://gateway.example/v1", ["/v1/models"]),
+        ("https://gateway.example/v1/", ["/v1/models"]),
+        # No /v1, serving only under /v1/models: one 404, then the fallback.
+        ("https://gateway.example", ["/models", "/v1/models"]),
+        ("https://gateway.example/", ["/models", "/v1/models"]),
+    ],
+)
+async def test_lists_models_with_or_without_v1(session, monkeypatch, base_url, asked):
+    """The MAG preset ends in `/v1`; i2's does not. Both must list."""
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice)
+    await user_service.update_user(
+        session,
+        alice.id,
+        UserSelfUpdate(
+            inference_provider="custom",
+            inference_base_url=base_url,
+            inference_custom_api_key="custom-key",
+        ),
+        alice,
+    )
+
+    seen: list[httpx.Request] = []
+    handler = _serving_only("/v1/models", seen)
+    monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
+
+    with api_client(session) as (client, _):
+        response = await client.get(
+            MODELS.format(name=project.name), headers=_headers(alice)
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == [{"id": "m", "owned_by": None}]
+    assert [r.url.path for r in seen] == asked
+    assert all(r.url.host == "gateway.example" for r in seen)
+    assert all(r.headers["authorization"] == "Bearer custom-key" for r in seen)
+
+
+@pytest.mark.unit
+async def test_lists_olcf_models_under_its_mid_path_v1(session, monkeypatch):
+    """OLCF's base carries `/v1` mid-path, so its models are at `<base>/models`."""
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice)
+    await user_service.update_user(
+        session,
+        alice.id,
+        UserSelfUpdate(inference_provider="olcf", inference_olcf_api_key="s3m-token"),
+        alice,
+    )
+
+    seen: list[httpx.Request] = []
+    handler = _serving_only("/olcf/open/v1/inference/models", seen)
+    monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
+
+    with api_client(session) as (client, _):
+        response = await client.get(
+            MODELS.format(name=project.name), headers=_headers(alice)
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == [{"id": "m", "owned_by": None}]
+    assert [str(r.url) for r in seen] == [
+        "https://s3m.olcf.ornl.gov/olcf/open/v1/inference/models"
+    ]
+    assert seen[0].headers["authorization"] == "Bearer s3m-token"
+
+
+@pytest.mark.unit
+async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
+    """Listing is how a model gets chosen on MAG, which has no default."""
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice)
+    await user_service.update_user(
+        session,
+        alice.id,
+        UserSelfUpdate(inference_provider="mag", inference_mag_api_key="mag-token"),
+        alice,
+    )
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-oss"}]})
+
+    monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
+
+    with api_client(session) as (client, _):
+        response = await client.get(
+            MODELS.format(name=project.name), headers=_headers(alice)
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["supported"] is True
+    assert seen[0].url.host == "i2-api.staging.american-science-cloud.org"
+    assert seen[0].url.path == "/v1/models"
+    assert seen[0].headers["authorization"] == "Bearer mag-token"
 
 
 # ---------------------------------------------------------------------------

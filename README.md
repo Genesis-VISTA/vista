@@ -107,8 +107,11 @@ crashes, the services are stopped. If another VISTA window is already open, a
 second launch brings the existing startup or main window forward rather than
 starting another stack.
 
-Paste your inference API key into the settings modal. It takes effect
-immediately; no restart. Links to other sites, including the Globus login,
+Paste your inference API key into Settings › Agent (Settings is at the bottom of
+the sidebar). AmSC i2 is the provider out of the box; AmSC MAG, OLCF Inference and
+a custom endpoint are the other choices there, each with its own key. Settings
+saves as you go, and a change takes effect on your next message; no restart.
+Choose a model from the picker at the top of the chat. Links to other sites, including the Globus login,
 open in your default browser; VISTA's own PDFs open in a second VISTA window
 (or in your browser, on Linux without the sandbox; see below), and downloads
 ask where to save.
@@ -390,7 +393,7 @@ Important env vars:
 | VISTA_MCP_OMD_API_KEY                   | Key for the OpenMetaData catalog. Also uses the AmSC inference API key                                    | None    |
 
 Per-user HPC credentials (an S3M token each for Odo and Frontier, NERSC IRI token, and Globus for Odo/Frontier) are **not**
-env vars — each user connects them in the UI under User settings. Globus is a one-time
+env vars — each user connects them in the UI, in each cluster's section of Settings. Globus is a one-time
 authorization per cluster, and every Odo and Frontier file operation acts as that researcher's
 own identity: there is no deployment-wide Globus login to fall back on. An S3M token is scoped to one OLCF project, and
 that project is the Slurm account the cluster's jobs are charged to. A token from any project with S3M

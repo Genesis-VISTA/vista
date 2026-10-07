@@ -92,7 +92,7 @@ async function waitingOn(page: Page, stub: Stub, event: string, data: Record<str
   await stub.send(event, { event_kind: event, ...data });
 }
 
-const settings = (page: Page) => page.getByRole("dialog", { name: "User settings" });
+const settings = (page: Page) => page.getByRole("dialog", { name: "Settings" });
 
 const SCREENS: { name: string; go: (page: Page, stub: Stub) => Promise<void> }[] = [
   { name: "chat-start", go: async (page) => openProject(page) },
@@ -195,7 +195,45 @@ const SCREENS: { name: string; go: (page: Page, stub: Stub) => Promise<void> }[]
     go: async (page) => {
       await page.goto("/projects");
       await page.getByRole("button", { name: "Open settings" }).click();
+      await expect(settings(page).getByRole("region", { name: "Agent" })).toBeVisible();
+    },
+  },
+  {
+    name: "settings-appearance",
+    go: async (page) => {
+      await page.goto("/projects");
+      await page.getByRole("button", { name: "Open settings" }).click();
+      await settings(page).getByRole("button", { name: "Appearance" }).click();
       await expect(settings(page).getByRole("radio", { name: "System" })).toBeVisible();
+    },
+  },
+  {
+    // The collapsed rail's resources: short labels under short facility labels.
+    name: "rail-collapsed",
+    go: async (page) => {
+      await page.goto("/projects");
+      await page.getByRole("button", { name: "Collapse navigation" }).click();
+      await expect(page.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+    },
+  },
+  {
+    // Too narrow for both columns: the list on its own.
+    name: "settings-narrow",
+    go: async (page) => {
+      await page.setViewportSize({ width: 600, height: 800 });
+      await page.goto("/projects");
+      await page.getByRole("button", { name: "Open settings" }).click();
+      await expect(settings(page).getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    },
+  },
+  {
+    name: "settings-narrow-cluster",
+    go: async (page) => {
+      await page.setViewportSize({ width: 600, height: 800 });
+      await page.goto("/projects");
+      await page.getByRole("button", { name: "Open settings" }).click();
+      await settings(page).getByRole("button", { name: /^Frontier\b/ }).click();
+      await expect(settings(page).getByRole("button", { name: "All settings" })).toBeVisible();
     },
   },
   {

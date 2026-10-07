@@ -11,7 +11,8 @@
  *   - `unavailable`         — the configured provider doesn't support
  *                             listing (`{"supported": false}`); the caller
  *                             should fall back to letting the researcher
- *                             name a model directly (see `UserSettingsModal`).
+ *                             name a model directly (the picker's
+ *                             "Use another model…" entry).
  *   - `missing-credential`  — the backend's 409 for no/rejected credential,
  *                             same condition `ui/lib/user.ts` already knows
  *                             how to surface elsewhere in the app.
@@ -24,27 +25,26 @@ import { useEffect, useState } from "react";
  * to `_CONFIGURED_ENDPOINT_PROVIDERS` on the backend) -- so it's an internal
  * routing detail, not something a researcher should have to type or read.
  * `qualifyModelInput` and `displayModelName` are the single place that
- * convention lives; `ModelPicker` and `UserSettingsModal` both use them
- * rather than hardcoding the prefix.
+ * convention lives; `ModelPicker` uses them rather than hardcoding the prefix.
  */
 const OPENAI_PREFIX = "openai:";
 
-/** A bare id from `/v1/models` (or the picker) as the qualified id `inference_model` stores. */
+/** A bare id from the provider's model list (or the picker) as the qualified id `inference_model` stores. */
 export function qualifyModelId(id: string): string {
   return `${OPENAI_PREFIX}${id}`;
 }
 
 /**
- * A free-typed Settings value as the qualified id `inference_model` stores.
+ * A typed model name as the qualified id `inference_model` stores.
  *
- * A bare name (no `:`) is assumed to mean the configured endpoint. A value
- * that already contains a `:` is passed through untouched -- the advanced
- * escape hatch for another provider (`azure:gpt-5`, per `.env.sample`) stays
- * available, just not surfaced as the common case.
+ * Always means the chosen provider, even when the name has a colon in it
+ * (`anthropic.claude-sonnet-v1:0`): PydanticAI splits on the first colon
+ * only, so the provider receives the name exactly as typed. Another provider,
+ * such as `azure:`, is reachable only through `VISTA_BACKEND_MODEL`.
  */
 export function qualifyModelInput(value: string): string {
   const trimmed = value.trim();
-  if (trimmed === "" || trimmed.includes(":")) return trimmed;
+  if (trimmed === "") return trimmed;
   return qualifyModelId(trimmed);
 }
 
@@ -116,10 +116,16 @@ export type UseAvailableModelsResult = ModelsState & { refresh: () => Promise<vo
 
 /**
  * Subscribe to `projectName`'s available models. Fetches on mount and
- * whenever `projectName` changes; `null` (no active project yet) stays
- * `loading` rather than firing a request that would 404.
+ * whenever `projectName` or `sourceKey` changes; `null` (no active project
+ * yet) stays `loading` rather than firing a request that would 404.
+ *
+ * `sourceKey` names where the list comes from -- the provider, endpoint and
+ * whether it has a key -- so a change in Settings refetches without a reload.
  */
-export function useAvailableModels(projectName: string | null): UseAvailableModelsResult {
+export function useAvailableModels(
+  projectName: string | null,
+  sourceKey = "",
+): UseAvailableModelsResult {
   const [state, setState] = useState<ModelsState>({ status: "loading" });
 
   async function refresh(): Promise<void> {
@@ -135,7 +141,7 @@ export function useAvailableModels(projectName: string | null): UseAvailableMode
     void refresh();
     // `refresh` closes over `projectName`, which is already the dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectName]);
+  }, [projectName, sourceKey]);
 
   return { ...state, refresh };
 }

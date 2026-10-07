@@ -33,7 +33,9 @@ async function storeChoice(page: Page, choice: "light" | "dark") {
 
 async function openAppearance(page: Page) {
   await page.getByRole("button", { name: "Open settings" }).click();
-  return page.getByRole("dialog", { name: "User settings" }).getByRole("radiogroup", { name: "Appearance" });
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Appearance" }).click();
+  return settings.getByRole("radiogroup", { name: "Appearance" });
 }
 
 test.beforeEach(async ({ page }) => {

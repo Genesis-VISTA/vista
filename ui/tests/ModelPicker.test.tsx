@@ -1,28 +1,25 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelPicker } from "@/components/ModelPicker";
-import type { UseAvailableModelsResult } from "@/lib/models";
+import {
+  holdSendWithoutModel,
+  refreshAgentSettings,
+  resetAgentSettingsForTests,
+} from "@/lib/agent-settings";
 import type { Project } from "@/lib/projects";
-import type { UserPublicWithConfig } from "@/lib/user";
+
+/*
+ * The agent-settings store and the model list are the real ones; only the
+ * network is faked, routed by URL, so these tests cover the picker and the
+ * store together the way Settings and the picker share them.
+ */
 
 const { useActiveProjectMock } = vi.hoisted(() => ({ useActiveProjectMock: vi.fn() }));
 vi.mock("@/lib/projects", () => ({ useActiveProject: useActiveProjectMock }));
 
-const { useAvailableModelsMock } = vi.hoisted(() => ({ useAvailableModelsMock: vi.fn() }));
-vi.mock("@/lib/models", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/models")>()),
-  useAvailableModels: useAvailableModelsMock,
-}));
-
-const { fetchCurrentUserWithConfigMock, updateCurrentUserMock } = vi.hoisted(() => ({
-  fetchCurrentUserWithConfigMock: vi.fn(),
-  updateCurrentUserMock: vi.fn(),
-}));
-vi.mock("@/lib/user", () => ({
-  fetchCurrentUserWithConfig: fetchCurrentUserWithConfigMock,
-  updateCurrentUser: updateCurrentUserMock,
-}));
+const { updateCurrentUserMock } = vi.hoisted(() => ({ updateCurrentUserMock: vi.fn() }));
+vi.mock("@/lib/user", () => ({ updateCurrentUser: updateCurrentUserMock }));
 
 const PROJECT: Project = {
   id: "p1",
@@ -36,111 +33,215 @@ const PROJECT: Project = {
   usageLimits: {},
 };
 
-function userWithModel(model: string | null): UserPublicWithConfig {
+const PROVIDERS = [
+  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
+  { id: "custom", name: "Custom", takes_url: true, default_model: null },
+];
+
+function view(overrides: Record<string, unknown> = {}) {
   return {
-    id: "u1",
-    email: "researcher@ornl.gov",
-    is_admin: false,
-    inference_model: model,
-    inference_base_url: null,
-    inference_api_key: null,
-    nersc_account: null,
-    nersc_remote_dir: null,
-    odo_remote_dir: null,
-    frontier_remote_dir: null,
-    lux_remote_dir: null,
-    lux_account: null,
-    odo_s3m_token: null,
-    frontier_s3m_token: null,
-    nersc_iri_token: null,
-    globus_token: null,
-    odo_globus_token: null,
-    frontier_globus_token: null,
-    globus_https_token: null,
-    odo_globus_https_token: null,
-    frontier_globus_https_token: null,
+    providers: PROVIDERS,
+    provider: "i2",
+    source: "default",
+    base_url: "https://api.i2-core.american-science-cloud.org",
+    model: "openai:claude-sonnet",
+    model_is_default: true,
+    has_credential: true,
+    keys_set: { i2: true, mag: false, olcf: false, custom: false },
+    ...overrides,
   };
 }
 
-function mockModels(state: UseAvailableModelsResult) {
-  useAvailableModelsMock.mockReturnValue(state);
-}
-
-const READY_TWO_MODELS: UseAvailableModelsResult = {
-  status: "ready",
-  models: [
-    { id: "claude-sonnet", ownedBy: "openai" },
-    { id: "claude-opus", ownedBy: "openai" },
-  ],
-  refresh: vi.fn(),
+const CHOSEN_OPUS = { model: "openai:claude-opus", model_is_default: false };
+const MAG_NO_MODEL = {
+  provider: "mag",
+  source: "user",
+  base_url: "https://i2-api.staging.american-science-cloud.org/v1",
+  model: null,
+  model_is_default: false,
+  keys_set: { i2: true, mag: true, olcf: false, custom: false },
 };
 
+let inference: Record<string, unknown>;
+let models: { status: number; body: unknown };
+let modelFetches = 0;
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 beforeEach(() => {
+  resetAgentSettingsForTests();
   useActiveProjectMock.mockReturnValue(PROJECT);
-  fetchCurrentUserWithConfigMock.mockResolvedValue(userWithModel("claude-sonnet"));
-  updateCurrentUserMock.mockResolvedValue(userWithModel("claude-opus"));
-  mockModels(READY_TWO_MODELS);
+  inference = view();
+  models = {
+    status: 200,
+    body: {
+      supported: true,
+      models: [
+        { id: "claude-sonnet", owned_by: "openai" },
+        { id: "claude-opus", owned_by: "openai" },
+      ],
+    },
+  };
+  modelFetches = 0;
+  updateCurrentUserMock.mockReset();
+  updateCurrentUserMock.mockImplementation(async (update: { inference_model: string }) => {
+    inference = { ...inference, model: update.inference_model, model_is_default: false };
+    return {};
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/users/me/inference") return json(200, inference);
+      if (url === "/api/projects/molten-salt/models") {
+        modelFetches++;
+        return json(models.status, models.body);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }),
+  );
 });
 
-describe("ModelPicker", () => {
-  it("shows the researcher's current model once loaded", async () => {
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+async function openPicker() {
+  await userEvent.click(await screen.findByRole("button", { name: /Model: (?!Model\.)/ }));
+}
+
+describe("ModelPicker label", () => {
+  it("names the provider's default", async () => {
     render(<ModelPicker />);
     expect(
-      await screen.findByRole("button", { name: /Model: claude-sonnet/ }),
+      await screen.findByRole("button", { name: /Model: Default \(claude-sonnet\)/ }),
     ).toBeInTheDocument();
   });
 
-  it("lists the fetched models when opened", async () => {
+  it("shows a chosen model without its prefix", async () => {
+    inference = view(CHOSEN_OPUS);
     render(<ModelPicker />);
-    await userEvent.click(await screen.findByRole("button", { name: /Model:/ }));
-    expect(screen.getByRole("option", { name: /claude-sonnet/ })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /claude-opus/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Model: claude-opus\. / })).toBeInTheDocument();
   });
 
-  it("selecting an option updates the button and writes inference_model", async () => {
+  it("says there is no model on a provider without a default", async () => {
+    inference = view(MAG_NO_MODEL);
     render(<ModelPicker />);
-    await userEvent.click(await screen.findByRole("button", { name: /Model: claude-sonnet/ }));
-    await userEvent.click(screen.getByRole("option", { name: /claude-opus/ }));
+    expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
+  });
 
-    await waitFor(() =>
-      expect(updateCurrentUserMock).toHaveBeenCalledWith({
-        inference_model: "openai:claude-opus",
+  it("marks a chosen model the provider does not list", async () => {
+    inference = view({ model: "openai:retired-model", model_is_default: false });
+    render(<ModelPicker />);
+    expect(
+      await screen.findByRole("button", {
+        name: /Model: retired-model, not listed by AmSC i2/,
       }),
-    );
-    expect(
-      await screen.findByRole("button", { name: /Model: claude-opus/ }),
     ).toBeInTheDocument();
-    // The dropdown closes and returns focus to the trigger, same as ProjectSwitcher.
+    expect(screen.getByText("not listed by AmSC i2")).toBeInTheDocument();
+  });
+
+  it("follows a provider change without a remount, and refetches the list", async () => {
+    inference = view(CHOSEN_OPUS);
+    render(<ModelPicker />);
+    await screen.findByRole("button", { name: /^Model: claude-opus\. / });
+    const before = modelFetches;
+
+    // What Settings does after saving a provider: the backend has cleared
+    // the model, and Settings refreshes the shared store.
+    inference = view(MAG_NO_MODEL);
+    await act(() => refreshAgentSettings());
+
+    expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
+    await waitFor(() => expect(modelFetches).toBe(before + 1));
+  });
+});
+
+describe("ModelPicker menu", () => {
+  it("lists the fetched models, sorted, and marks the current one", async () => {
+    render(<ModelPicker />);
+    await openPicker();
+    const options = await screen.findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["claude-opus", "claude-sonnet"]);
+    expect(screen.getByRole("option", { name: "claude-sonnet" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("refetches the list each time it opens", async () => {
+    render(<ModelPicker />);
+    await screen.findByRole("button", { name: /Default/ });
+    await waitFor(() => expect(modelFetches).toBe(1));
+    await openPicker();
+    await waitFor(() => expect(modelFetches).toBe(2));
+  });
+
+  it("selecting a model saves it and the label follows from the store", async () => {
+    render(<ModelPicker />);
+    await openPicker();
+    await userEvent.click(await screen.findByRole("option", { name: "claude-opus" }));
+
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(await screen.findByRole("button", { name: /^Model: claude-opus\. / })).toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("shows missing-credential guidance instead of a list", async () => {
-    mockModels({
-      status: "missing-credential",
-      detail: "No inference API key is configured. Add one in Settings.",
-      refresh: vi.fn(),
-    });
+  it("a typed name is saved as openai:<name>, colons included", async () => {
     render(<ModelPicker />);
-    await userEvent.click(await screen.findByRole("button", { name: /Model:/ }));
+    await openPicker();
+    await userEvent.click(screen.getByRole("button", { name: "Use another model…" }));
+    await userEvent.type(screen.getByLabelText("Model name"), "anthropic.claude-sonnet-v1:0");
+    await userEvent.click(screen.getByRole("button", { name: "Use" }));
 
-    expect(screen.getByText(/No inference API key is configured/)).toBeInTheDocument();
-    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      inference_model: "openai:anthropic.claude-sonnet-v1:0",
+    });
+    expect(
+      await screen.findByRole("button", { name: /Model: anthropic\.claude-sonnet-v1:0, not listed/ }),
+    ).toBeInTheDocument();
   });
 
-  it("does not present a live-looking list when discovery is unavailable", async () => {
-    mockModels({ status: "unavailable", refresh: vi.fn() });
+  it("offers a typed name when listing is unavailable, pointing to it", async () => {
+    models = { status: 200, body: { supported: false, models: [] } };
     render(<ModelPicker />);
-    await userEvent.click(await screen.findByRole("button", { name: /Model:/ }));
-
+    await openPicker();
+    expect(await screen.findByText(/doesn't report which models/)).toHaveTextContent(
+      "Use another model…",
+    );
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    expect(screen.getByText(/doesn't report which models/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use another model…" })).toBeInTheDocument();
+    expect(screen.queryByText(/bottom-left corner/)).not.toBeInTheDocument();
+  });
+
+  it("offers a typed name when listing fails, pointing to it", async () => {
+    models = { status: 502, body: { detail: "Gateway unreachable" } };
+    render(<ModelPicker />);
+    await openPicker();
+    expect(await screen.findByText(/Gateway unreachable/)).toHaveTextContent(
+      "Use another model…",
+    );
+    expect(screen.getByRole("button", { name: "Use another model…" })).toBeInTheDocument();
+  });
+
+  it("shows missing-credential guidance instead of a list", async () => {
+    models = { status: 409, body: { detail: "No inference API key is configured." } };
+    render(<ModelPicker />);
+    await openPicker();
+    expect(await screen.findByText(/No inference API key is configured/)).toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
   });
 
   it("closes on Escape", async () => {
     render(<ModelPicker />);
-    await userEvent.click(await screen.findByRole("button", { name: /Model:/ }));
+    await openPicker();
     expect(screen.getByRole("listbox")).toBeInTheDocument();
-
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -152,10 +253,35 @@ describe("ModelPicker", () => {
         <button type="button">Outside</button>
       </div>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /Model:/ }));
+    await openPicker();
     expect(screen.getByRole("listbox")).toBeInTheDocument();
-
     await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("sending without a model", () => {
+  it("holds the send and opens the picker asking for a model", async () => {
+    inference = view(MAG_NO_MODEL);
+    render(<ModelPicker />);
+    await screen.findByRole("button", { name: /Model: No model/ });
+
+    let held = false;
+    act(() => {
+      held = holdSendWithoutModel();
+    });
+
+    expect(held).toBe(true);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Choose a model first. AmSC MAG has no default model.",
+    );
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("does not hold a send on a provider with a default", async () => {
+    render(<ModelPicker />);
+    await screen.findByRole("button", { name: /Default/ });
+    expect(holdSendWithoutModel()).toBe(false);
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });

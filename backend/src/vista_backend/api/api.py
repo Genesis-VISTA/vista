@@ -11,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import get_vista_mcp_server
 from ..agents.campaign.wiring import build_default_monitor
-from ..agents.inference import MissingInferenceCredential
+from ..agents.inference import MissingInferenceCredential, MissingInferenceModel
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..services.auth import get_user
@@ -97,11 +97,13 @@ app = FastAPI(
 
 
 @app.exception_handler(MissingInferenceCredential)
+@app.exception_handler(MissingInferenceModel)
 async def _missing_inference_credential(
-    request: Request, exc: MissingInferenceCredential
+    request: Request, exc: MissingInferenceCredential | MissingInferenceModel
 ) -> JSONResponse:
     """
-    Report a missing inference credential as a named condition.
+    Report a missing inference credential, or a provider with no model chosen
+    and no default, as a named condition.
 
     409 rather than a 5xx: nothing has failed. On a fresh install this is the
     expected state, and the request cannot be satisfied until the researcher
