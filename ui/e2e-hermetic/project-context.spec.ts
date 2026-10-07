@@ -69,6 +69,34 @@ test.describe("project context", () => {
     await expect(menu).toBeHidden();
   });
 
+  test("datasets clearly separates uploads from generated results", async ({ page }) => {
+    await openMoltenSalt(page);
+
+    await stub!.setRoute("GET /api/files/uploads", [
+      {
+        name: "input.csv",
+        size: 1024,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        source: "upload",
+      },
+    ]);
+    await stub!.setRoute("GET /api/files/outputs", [
+      {
+        name: "analysis/figure.png",
+        size: 2048,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        source: "generated",
+      },
+    ]);
+
+    await page.getByRole("link", { name: "Datasets", exact: true }).click();
+
+    await expect(page.getByRole("heading", { level: 2, name: "Uploads" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Generated Results & Logs" }),
+    ).toBeVisible();
+  });
+
   // Chat is the only route with nothing to show without a project.
   test("chat sends you to pick a project, then back to chat", async ({ page }) => {
     await page.goto("/");

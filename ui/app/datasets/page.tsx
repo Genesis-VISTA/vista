@@ -61,7 +61,7 @@ export default function DatasetsPage() {
     () => uploads.filter((file) => file.source !== "generated"),
     [uploads]
   );
-  const tritiumResultFiles = useMemo(
+  const generatedResultFiles = useMemo(
     () => uploads.filter((file) => file.source === "generated"),
     [uploads]
   );
@@ -267,7 +267,7 @@ export default function DatasetsPage() {
             {uploads.length > 0 && (
               <>
                 <div className="upload-section">
-                  <div className="upload-section-title">Uploads</div>
+                  <h2 className="upload-section-title">Uploads</h2>
                   {uploadedFiles.length === 0 && (
                     <div className="chat-bubble">No uploaded files yet.</div>
                   )}
@@ -298,11 +298,11 @@ export default function DatasetsPage() {
                 </div>
 
                 <div className="upload-section">
-                  <div className="upload-section-title">Tritium Breeding Results</div>
-                  {tritiumResultFiles.length === 0 && (
-                    <div className="chat-bubble">No tritium breeding results yet.</div>
+                  <h2 className="upload-section-title">Generated Results &amp; Logs</h2>
+                  {generatedResultFiles.length === 0 && (
+                    <div className="chat-bubble">No generated results or logs yet.</div>
                   )}
-                  {tritiumResultFiles.map((file) => (
+                  {generatedResultFiles.map((file) => (
                     <div key={file.name} className="upload-item">
                       <div className="upload-name">{file.name}</div>
                       <div className="upload-meta">
