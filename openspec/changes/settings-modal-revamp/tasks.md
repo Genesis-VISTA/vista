@@ -44,6 +44,6 @@
 
 ## 6. Wrap-up
 
-- [ ] 6.1 Update the comments and docs that describe the old form, the Model field, or the endpoint text field (`UserSettingsModal`, `ModelPicker`, `lib/models.ts`, `.env.sample`, `docs/` where they mention it), and verify a grep for "Model field in Settings" and "Signed in as" finds nothing stale
-- [ ] 6.2 Run `./scripts/ci-local.sh` (backend, ui, mcp lint and test) and verify it passes
+- [x] 6.1 Update the comments and docs that describe the old form, the Model field, or the endpoint text field (`UserSettingsModal`, `ModelPicker`, `lib/models.ts`, `.env.sample`, `docs/` where they mention it), and verify a grep for "Model field in Settings" and "Signed in as" finds nothing stale
+- [x] 6.2 Run `./scripts/ci-local.sh` (backend, ui, mcp lint and test) and verify it passes
 - [ ] 6.3 Launch the app (`./launch.sh logs`), walk through: fresh i2 default, switching to MAG and back, OLCF Inference with an S3M token (its default and its model list), a Custom endpoint ending in `/v1`, autosave of a token with its check mark, the narrow layout and the grouped rail. Capture screenshots

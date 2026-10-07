@@ -196,7 +196,11 @@ def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
     )
     assert target.api_key is None
     target = resolve_inference_target(
-        _user(inference_provider="olcf", inference_olcf_api_key="olcf-key", **cluster_tokens)
+        _user(
+            inference_provider="olcf",
+            inference_olcf_api_key="olcf-key",
+            **cluster_tokens,
+        )
     )
     assert target.api_key == "olcf-key"
 

@@ -206,7 +206,7 @@ describe("UserSettingsModal navigation", () => {
     await region("Agent");
     const nersc = within(nav()).getByRole("group", { name: "NERSC" });
     const perlmutter = within(nersc).getByRole("button", { name: /^Perlmutter/ });
-    expect(perlmutter).toHaveTextContent("Hidden from sidebar");
+    expect(perlmutter).toHaveTextContent("Hidden");
     expect(perlmutter).toHaveAccessibleName(/hidden from sidebar/);
     expect(entry("Frontier")).not.toHaveTextContent("Hidden");
   });
@@ -351,7 +351,7 @@ describe("UserSettingsModal autosave", () => {
     const toggle = await screen.findByRole("switch", { name: "Show Perlmutter in sidebar" });
     await userEvent.click(toggle);
     expect(toggle).not.toBeChecked();
-    expect(entry("Perlmutter")).toHaveTextContent("Hidden from sidebar");
+    expect(entry("Perlmutter")).toHaveTextContent("Hidden");
 
     await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["perlmutter"] }));
     expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);

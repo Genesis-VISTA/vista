@@ -551,7 +551,9 @@ function ClusterNavEntry({
   failed: boolean;
   onClick: () => void;
 }) {
-  const state = useClusterState(cluster);
+  // A hidden cluster is never checked, so it has no state to show.
+  const checked = useClusterState(cluster);
+  const state = hidden ? null : checked;
   const title = HPC_CLUSTER_TITLES[cluster];
   return (
     <NavEntry
@@ -566,7 +568,7 @@ function ClusterNavEntry({
       <span className="settings-nav-dot">{state && <HpcStatusDot state={state} />}</span>
       <span className="settings-nav-name">{title}</span>
       {hidden ? (
-        <span className="settings-nav-note">Hidden from sidebar</span>
+        <span className="settings-nav-note" title="Hidden from sidebar">Hidden</span>
       ) : (
         state && (
           <span className={`settings-nav-note${WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}>

@@ -123,10 +123,10 @@ def _display_model_name(model: str) -> str:
     """
     Strip the `openai:` prefix for a message a researcher reads.
 
-    `openai:` is an internal routing detail -- the Settings Model field and
-    the model picker both write and show bare names, since it's the only
-    provider surfaced through the UI today -- so echoing it back in an error
-    banner would name something nobody typed.
+    `openai:` is an internal routing detail -- the model picker writes and
+    shows bare names, since every provider Settings offers is reached that
+    way -- so echoing it back in an error banner would name something nobody
+    typed.
     """
     return model.removeprefix("openai:")
 
@@ -223,7 +223,7 @@ def _no_model(target: "InferenceTarget") -> Model:
 # guidance the API returns and the message a background caller logs cannot
 # drift apart.
 SETTINGS_LOCATION = (
-    "Settings (click your name in the bottom-left corner) → “Inference API key”"
+    "Settings (at the bottom of the sidebar) › Agent → your provider's API key"
 )
 
 

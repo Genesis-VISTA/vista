@@ -3141,7 +3141,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 /* ------------------------------------------------------------------ */
-/*  User settings modal                                                */
+/*  Settings modal                                                     */
 /* ------------------------------------------------------------------ */
 
 /* A navigation column beside one section, as on the canvas's "A, revised"
@@ -3210,9 +3210,13 @@ button.chat-bubble.intermediate.collapsed:hover {
   padding-left: 30px;
 }
 
+/* A long name gives way to its note rather than running into it. */
 .settings-nav-name {
   flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-nav-note {
