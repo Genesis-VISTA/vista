@@ -706,52 +706,58 @@ def test_a_figure_failure_never_discards_a_successful_run(demo, monkeypatch):
 # wrong before a real Frontier submission, and the cheapest place to catch it.
 
 
+FRONTIER_REMOTE_DIR = "/fake/frontier/vista"
+
+
 @pytest.fixture
 def _frontier_submit(monkeypatch):
-    """Patch IRI/Globus/settings the way test_submit_job_spec.py does."""
+    """
+    Patch IRI/Globus the way tests/test_submit_job_spec.py does.
+
+    Neither half of "where and as whom" is a deployment constant any more: the
+    OLCF project comes from the researcher's S3M token, and the folder from
+    their own `frontier_remote_dir` setting. So both are faked on the call
+    rather than monkeypatched onto `settings`.
+    """
     import vista_mcp_server.submit_job_mcp as submit_job_mcp
     from fakes import FakeGlobusClient, FakeIriClient
     from vista_mcp_server.config import settings
     from vista_mcp_server.lib.user_config import UserConfig
-    from vista_mcp_server.submit_job_mcp import _submit_frontier_job, _submitted_jobs
+    from vista_mcp_server.submit_job_mcp import _submit_frontier_job
 
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", REPO_ROOT / "hpc_jobs")
     monkeypatch.setattr(
         settings, "frontier_globus_collection_id", "frontier-collection"
     )
-    monkeypatch.setattr(settings, "frontier_remote_dir", "/fake/frontier/vista")
-    monkeypatch.setattr(settings, "frontier_account", "chm243")
-    monkeypatch.setattr(settings, "session_id", "test-session")
-    monkeypatch.setattr(settings, "frontier_globus_refresh_token", "fake-refresh")
-    monkeypatch.setattr(
-        settings, "frontier_globus_https_refresh_token", "fake-frontier-https"
-    )
-
     iri = FakeIriClient(job_id="fr-refine-1")
     globus = FakeGlobusClient()
+    globus.seed_remote_dir(FRONTIER_REMOTE_DIR)
 
     async def _olcf(*, iri_token: str):
         return iri
 
-    async def _noop_access(cfg, cluster, account=None):
-        return None
+    async def _introspect(token, *, introspect_url):
+        return "abc123"
 
     monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kw: globus)
-    monkeypatch.setattr(submit_job_mcp, "_require_olcf_access", _noop_access)
-    _submitted_jobs.clear()
+    monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
 
     async def submit(script_args=None):
         return await _submit_frontier_job(
-            UserConfig(frontier_s3m_token="frontier-token"),
+            UserConfig(
+                frontier_s3m_token="frontier-token",
+                frontier_remote_dir=FRONTIER_REMOTE_DIR,
+                globus_token="fake-transfer",
+                globus_https_token="fake-https",
+            ),
             "refine-downscaling",
             node_count=None,
             duration_int=None,
             script_args=script_args,
         )
 
-    yield submit, iri, globus
-    _submitted_jobs.clear()
+    return submit, iri, globus
 
 
 @pytest.mark.anyio
@@ -769,8 +775,9 @@ async def test_the_jobspec_asks_for_one_exclusive_gpu_node_on_the_shared_account
     assert spec["resources"]["exclusive_node_use"] is True
     attributes = spec["attributes"]
     assert attributes["queue_name"] == "batch"
-    # vista submits under its own shared project, never the demo's cli138.
-    assert attributes["account"] == "chm243"
+    # Charged to the project the researcher's own token names, never the demo's
+    # cli138 — and no longer a deployment-wide account.
+    assert attributes["account"] == "abc123"
 
 
 @pytest.mark.anyio

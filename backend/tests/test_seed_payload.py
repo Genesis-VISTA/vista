@@ -423,7 +423,7 @@ async def test_science_is_seeded_from_a_payload_without_the_flag(
         await run_seed(engine)
         async with AsyncSession(engine) as session:
             names = {p.name for p in (await session.exec(select(ProjectTable))).all()}
-        assert names == {"molten-salt", "alloy-design"}
+        assert names == {"molten-salt", "alloy-design", "water4energy"}
     finally:
         await engine.dispose()
 

@@ -191,9 +191,27 @@ def test_skill_default_duration_matches_the_job_default():
 
 @pytest.fixture
 async def seeded(tmp_path, monkeypatch):
-    """Offline seed into a throwaway data dir + in-memory SQLite."""
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    """
+    Offline seed into a throwaway data dir + in-memory SQLite.
+
+    Seeds from a local vista-data *payload* rather than a token, which is what
+    turns the science projects on (`_science_enabled`) without any network. The
+    project under test lives in that gated set, so without this the seed makes
+    no projects at all. Mirrors `payload_env` in test_seed_payload.py, whose
+    helpers are reused rather than duplicated — building the stand-in Chroma
+    store is fiddly enough to be worth sharing.
+    """
+    import vista_backend.db.seed as seed_module
+    from test_seed_payload import make_payload, make_vector_store
+
+    data_dir = tmp_path / "data"
+    make_vector_store(data_dir / "knowledge-bases" / "molten-salt-papers" / "rag_db")
+    monkeypatch.setattr(settings, "data_dir", data_dir)
     monkeypatch.setattr(settings, "vista_data_token", None)
+    monkeypatch.setattr(
+        settings, "vista_data_payload_dir", make_payload(tmp_path / "payload")
+    )
+    monkeypatch.setattr(seed_module, "REPO_ROOT", tmp_path / "repo")
 
     engine = create_async_engine(
         "sqlite+aiosqlite://",
