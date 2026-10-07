@@ -109,14 +109,16 @@ async function ask(page: Page, text: string) {
 
 const rail = (page: Page) => page.getByRole("complementary", { name: "Primary navigation" });
 
-/** Leave the chat page for Skills, and come back to the conversation list. */
-async function goToSkillsAndBack(page: Page) {
+async function goToSkills(page: Page) {
   await rail(page).getByRole("link", { name: "Skills" }).click();
   await expect(page.locator(".page-topbar").getByRole("heading", { level: 1 })).toHaveText(
     "Skills",
   );
+}
+
+async function returnToActiveConversation(page: Page, title: string) {
   await rail(page).getByRole("button", { name: "Chat" }).click();
-  await expect(page.locator(".conversation-list-open").first()).toBeVisible();
+  await expect(page.locator(".chat-session-banner")).toHaveText(title);
 }
 
 const bubbles = (page: Page, role: "user" | "assistant" | "system") =>
@@ -180,7 +182,7 @@ test.describe("chat runs", () => {
     await toolCall(stub);
     await expect(page.getByRole("status")).toHaveText("Searching the literature…");
 
-    await goToSkillsAndBack(page);
+    await goToSkills(page);
 
     // While away the run carried on. The conversation holds what the page saved
     // of it, and reports the run as still going.
@@ -189,7 +191,7 @@ test.describe("chat runs", () => {
       sessionRoute({ run_status: "working", run_state: "running", messages: PARTLY_SAVED }),
     );
     await stub.armAttach();
-    await openConversation(page, "Density of FLiBe");
+    await returnToActiveConversation(page, "Density of FLiBe");
 
     await stub.waitForStream("attach");
     await expect(page.locator(".composer-status")).toHaveText("Agent working…");
@@ -361,14 +363,14 @@ test.describe("chat runs", () => {
     await startRun(stub, QUESTION);
     await toolCall(stub);
 
-    await goToSkillsAndBack(page);
+    await goToSkills(page);
 
     await stub.setRoute(
       "GET /api/chat/session",
       sessionRoute({ run_status: "needs_you", run_state: "running", messages: PARTLY_SAVED }),
     );
     await stub.armAttach();
-    await openConversation(page, "Density of FLiBe");
+    await returnToActiveConversation(page, "Density of FLiBe");
     await stub.waitForStream("attach");
     await startRun(stub, QUESTION, "attach");
     await toolCall(stub, "attach");

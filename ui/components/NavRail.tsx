@@ -265,16 +265,19 @@ export function NavRail() {
   }
 
   /**
-   * Opens the conversation list, or the one conversation waiting on the
-   * researcher when there is exactly one, so its prompt is a click away. This
-   * only ever happens on a click: a status change never navigates.
+   * Returns to the active conversation, or opens the one conversation waiting
+   * on the researcher when there is exactly one. With no active conversation,
+   * chat opens the conversation list. This only ever happens on a click: a
+   * status change never navigates.
    */
   function handleOpenChat() {
     const projectName = activeProject?.name ?? null;
     if (projectName) {
       const waiting = runSummary.needsYou.length === 1 ? runSummary.needsYou[0] : null;
-      writeActiveChatSessionId(projectName, waiting);
-      notifyActiveChatSessionChanged();
+      if (waiting) {
+        writeActiveChatSessionId(projectName, waiting);
+        notifyActiveChatSessionChanged();
+      }
     }
     // With no project, chat redirects to the picker and comes back here.
     router.push("/");
@@ -372,10 +375,10 @@ export function NavRail() {
             </div>
           </div>
         )}
-        {/* Chat is a button rather than a link because opening it means
-            leaving the current conversation and landing on the list, or on
-            the conversation that needs the researcher. Its dot is the most
-            urgent status across the project's conversations. */}
+        {/* Chat is a button rather than a link because it may redirect to the
+            one conversation that needs the researcher. Otherwise it preserves
+            the active conversation, or opens the list when there is none. Its
+            dot is the most urgent status across the project's conversations. */}
         <button
           type="button"
           className={`nav-rail-entry${isEntryActive("/") ? " active" : ""} project-child`}
