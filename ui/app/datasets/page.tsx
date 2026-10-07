@@ -35,10 +35,17 @@ const PLACEHOLDER_DATASETS = [
   "bigbio/pubmed_qa",
 ];
 
-function formatTimestampUtc(value: string): string {
+function formatTimestamp(value: string): string {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toISOString().replace("T", " ").replace(".000Z", " UTC");
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(d);
 }
 
 export default function DatasetsPage() {
@@ -275,7 +282,7 @@ export default function DatasetsPage() {
                     <div key={file.name} className="upload-item">
                       <div className="upload-name">{file.name}</div>
                       <div className="upload-meta">
-                        {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                        {(file.size / 1024).toFixed(1)} KB · Modified {formatTimestamp(file.modifiedAt)}
                       </div>
                       <div className="upload-actions">
                         <a
@@ -306,7 +313,7 @@ export default function DatasetsPage() {
                     <div key={file.name} className="upload-item">
                       <div className="upload-name">{file.name}</div>
                       <div className="upload-meta">
-                        {(file.size / 1024).toFixed(1)} KB - {formatTimestampUtc(file.modifiedAt)}
+                        {(file.size / 1024).toFixed(1)} KB · Modified {formatTimestamp(file.modifiedAt)}
                       </div>
                       <div className="upload-actions">
                         <a

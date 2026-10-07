@@ -95,6 +95,8 @@ test.describe("project context", () => {
     await expect(
       page.getByRole("heading", { level: 2, name: "Generated Results & Logs" }),
     ).toBeVisible();
+    await expect(page.locator(".upload-item").filter({ hasText: "analysis/figure.png" }))
+      .toContainText("2.0 KB · Modified");
   });
 
   // Chat is the only route with nothing to show without a project.
