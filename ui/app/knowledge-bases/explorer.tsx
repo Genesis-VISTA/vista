@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useActiveProject } from "@/lib/projects";
+import { toCreate, updateProject, useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
 import type {
   IndexProgress,
@@ -248,6 +248,27 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
 
   async function handleCreated(kb: KnowledgeBase) {
     setCreateOpen(false);
+    // Created from a project's page, it belongs to that project. Without
+    // this it lands outside the project's set and drops out of the tabs.
+    if (scopedToProject && activeProject && !activeProject.knowledgeBases.includes(kb.slug)) {
+      try {
+        await updateProject(
+          activeProject.name,
+          toCreate({
+            ...activeProject,
+            knowledgeBases: [...activeProject.knowledgeBases, kb.slug],
+          })
+        );
+      } catch (e) {
+        await loadList();
+        flashError(
+          `Created "${kb.name}", but couldn't add it to ${activeProject.name}: ` +
+            (e instanceof Error ? e.message : "unknown error") +
+            ". Add it from the Projects page."
+        );
+        return;
+      }
+    }
     await loadList();
     setSelectedSlug(kb.slug);
     flashMessage(`Created "${kb.name}".`);
