@@ -31,10 +31,10 @@
 
 ## 4. UI: autosave
 
-- [ ] 4.1 Add a field save hook (about 800 ms debounce for text; blur/paste for secrets; immediate for switches/choices; serialised per field; flush on close), and verify unit tests with fake timers for each trigger and for flush on close
-- [ ] 4.2 Add the modal-level save tracker and the indicator by the title (saving, saved fading, failed), with error lines under failed fields and jump-to-field on the failed indicator, and verify by test a failure, then a successful retry clearing it
-- [ ] 4.3 Wire each field to the hook; trigger the per-cluster recheck after a credential field saves, `refreshHpcStatus()` after a visibility change, and `refreshAgentSettings()` after provider/key/endpoint saves; remove Save/Cancel. Verify by test that pasting an Odo token rechecks only Odo
-- [ ] 4.4 Verify the provider-change flow end to end in a UI test: choosing MAG clears the picker label to "no model", and switching back to i2 shows "Default (claude-sonnet)" with the original key intact
+- [x] 4.1 Add a field save hook (about 800 ms debounce for text; blur/paste for secrets; immediate for switches/choices; serialised per field; flush on close), and verify unit tests with fake timers for each trigger and for flush on close
+- [x] 4.2 Add the modal-level save tracker and the indicator by the title (saving, saved fading, failed), with error lines under failed fields and jump-to-field on the failed indicator, and verify by test a failure, then a successful retry clearing it
+- [x] 4.3 Wire each field to the hook; trigger the per-cluster recheck after a credential field saves, `refreshHpcStatus()` after a visibility change, and `refreshAgentSettings()` after provider/key/endpoint saves; remove Save/Cancel. Verify by test that pasting an Odo token rechecks only Odo
+- [x] 4.4 Verify the provider-change flow end to end in a UI test: choosing MAG clears the picker label to "no model", and switching back to i2 shows "Default (claude-sonnet)" with the original key intact
 
 ## 5. UI: rail
 

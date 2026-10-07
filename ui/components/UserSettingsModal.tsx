@@ -1,6 +1,15 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from "react";
+import { useSettingsAutosave, type SaveStatus } from "@/lib/settings-autosave";
 import {
   completeGlobusLogin,
   fetchCurrentUserWithConfig,
@@ -69,14 +78,6 @@ function draftFrom(user: UserPublicWithConfig): Draft {
   };
 }
 
-/** The fields each cluster's checks read, so a save rechecks only what changed. */
-const CREDENTIAL_FIELDS: Record<HpcCluster, Array<keyof UserSelfUpdate>> = {
-  odo: ["odo_s3m_token"],
-  frontier: ["frontier_s3m_token"],
-  perlmutter: ["nersc_iri_token"],
-  lux: [], // nothing stored: a researcher signs in from a chat
-};
-
 /** The fields the agent settings view reads, so a save refreshes the picker. */
 const AGENT_FIELDS: Array<keyof UserSelfUpdate> = [
   "inference_provider",
@@ -87,16 +88,54 @@ const AGENT_FIELDS: Array<keyof UserSelfUpdate> = [
   "inference_base_url",
 ];
 
+/** The fields a cluster's checks read, so saving one rechecks that cluster. */
+const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
+  odo_s3m_token: "odo",
+  frontier_s3m_token: "frontier",
+  nersc_iri_token: "perlmutter",
+  // Lux has none: a researcher signs in from a chat.
+};
+
+/** The section each field lives in, for going to a field whose save failed. */
+function sectionOf(field: string): Section {
+  if (field.startsWith("inference_")) return "agent";
+  if (field.startsWith("odo_")) return "odo";
+  if (field.startsWith("frontier_")) return "frontier";
+  if (field.startsWith("nersc_")) return "perlmutter";
+  if (field.startsWith("lux_")) return "lux";
+  return "agent";
+}
+
+const HIDDEN_FIELD = "hpc_hidden_clusters";
+
+/** The element a field's label, error and jump-to-field all refer to. */
+function fieldId(field: string, cluster?: HpcCluster): string {
+  return `settings-field-${field}${cluster ? `-${cluster}` : ""}`;
+}
+
+/** What a field component spreads onto its input, and why its save failed. */
+type FieldBinding = {
+  inputProps: InputHTMLAttributes<HTMLInputElement>;
+  error?: string;
+};
+
+type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
+
+const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
+
 /**
  * The settings modal: a navigation list (Appearance, Agent, and the resource
  * tree of institution › facility › cluster) beside one section at a time.
  *
  * Fetches the full `UserPublicWithConfig` view (with decrypted tokens) on
  * open — the nav-rail's cached user is the light view, which intentionally
- * omits secrets — and writes back through `PUT /users/me`. Opened from a
- * cluster's card (`initialCluster`) it shows that cluster's section, and
- * otherwise Agent. Below about 720 px of modal width the navigation and the
- * section take turns (see `.settings-layout` in globals.css).
+ * omits secrets. There is no Save: each field saves itself through a
+ * single-field `PUT /users/me` (see `lib/settings-autosave.ts`), text after a
+ * pause, a secret on blur or paste, a switch or choice at once, and closing
+ * sends whatever is still pending. One indicator by the title shows how that
+ * is going. Opened from a cluster's card (`initialCluster`) it shows that
+ * cluster's section, and otherwise Agent. Below about 720 px of modal width the
+ * navigation and the section take turns (see `.settings-layout`).
  */
 export function UserSettingsModal({
   onClose,
@@ -113,16 +152,40 @@ export function UserSettingsModal({
   // Only read in a narrow modal, where the list and a section take turns. A
   // deep link from a card goes straight to its section there too.
   const [pane, setPane] = useState<"nav" | "section">(initialCluster ? "section" : "nav");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [focusTarget, setFocusTarget] = useState<string | null>(null);
+  // The latest draft, for the save callbacks, which outlive a render.
+  const draftRef = useRef<Draft | null>(null);
+  draftRef.current = draft;
+  /** The cluster whose sidebar switch was toggled last: where a failed visibility save is shown. */
+  const lastToggled = useRef<HpcCluster | null>(null);
+  /** Secret fields a paste just went into, so the change that follows saves at once. */
+  const pasted = useRef(new Set<string>());
+
+  async function saveField(field: string, value: unknown) {
+    await updateCurrentUser({ [field]: value } as UserSelfUpdate);
+    // Fix a credential and see it straight away: recheck just that cluster
+    // rather than wait for the next poll.
+    const cluster = CREDENTIAL_CLUSTER[field];
+    if (cluster && !draftRef.current?.hidden.has(cluster)) void recheckHpcStatus(cluster);
+    if (field === HIDDEN_FIELD) void refreshHpcStatus();
+    // The picker's label and list follow the provider, endpoint and key.
+    if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
+  }
+
+  const autosave = useSettingsAutosave({ save: saveField });
 
   async function load() {
     setLoading(true);
     setLoadError(null);
     try {
       const loaded = await fetchCurrentUserWithConfig();
+      const next = draftFrom(loaded);
+      const seeded: Record<string, unknown> = { inference_provider: next.provider };
+      for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
+      seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
+      autosave.seed(seeded);
       setUser(loaded);
-      setDraft(draftFrom(loaded));
+      setDraft(next);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load user.");
     } finally {
@@ -132,78 +195,91 @@ export function UserSettingsModal({
 
   useEffect(() => {
     void load();
+    // Once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Closing, however it happens, still sends what is pending: the requests
+  // outlive the modal.
+  const flushRef = useRef(autosave.flush);
+  flushRef.current = autosave.flush;
+  useEffect(() => () => void flushRef.current(), []);
+
+  function close() {
+    void autosave.flush();
+    onClose();
+  }
+
   // Close on Escape so the modal behaves like every other dialog in the app.
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeRef.current();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
+
+  // After going to a failed field, focus it once its section has rendered.
+  useEffect(() => {
+    if (!focusTarget) return;
+    document.getElementById(focusTarget)?.focus();
+    setFocusTarget(null);
+  }, [focusTarget, section]);
 
   function choose(next: Section) {
     setSection(next);
     setPane("section");
   }
 
-  function setText(field: TextField) {
-    return (value: string) =>
-      setDraft((d) => (d ? { ...d, text: { ...d.text, [field]: value } } : d));
+  function jumpToFailure() {
+    const field = Object.keys(autosave.errors)[0];
+    if (!field) return;
+    if (field === HIDDEN_FIELD && lastToggled.current) {
+      choose(lastToggled.current);
+      setFocusTarget(fieldId(HIDDEN_FIELD, lastToggled.current));
+    } else {
+      choose(sectionOf(field));
+      setFocusTarget(fieldId(field));
+    }
   }
+
+  const bind: Bind = (field, kind) => {
+    const error = autosave.errors[field];
+    return {
+      error,
+      inputProps: {
+        id: fieldId(field),
+        value: draft?.text[field] ?? "",
+        onChange: (e) => {
+          const value = e.target.value;
+          setDraft((d) => (d ? { ...d, text: { ...d.text, [field]: value } } : d));
+          const how = kind === "text" ? "debounce" : pasted.current.delete(field) ? "now" : "hold";
+          autosave.edit(field, blankToNull(value), how);
+        },
+        onPaste: kind === "secret" ? () => void pasted.current.add(field) : undefined,
+        onBlur: () => autosave.commit(field),
+        "aria-invalid": error ? true : undefined,
+        "aria-describedby": error ? `${fieldId(field)}-error` : undefined,
+      },
+    };
+  };
 
   function setShown(cluster: HpcCluster, shown: boolean) {
-    setDraft((d) => {
-      if (!d) return d;
-      const hidden = new Set(d.hidden);
-      if (shown) hidden.delete(cluster);
-      else hidden.add(cluster);
-      return { ...d, hidden };
-    });
+    if (!draft) return;
+    const hidden = new Set(draft.hidden);
+    if (shown) hidden.delete(cluster);
+    else hidden.add(cluster);
+    setDraft({ ...draft, hidden });
+    lastToggled.current = cluster;
+    // In rail order, so the stored list does not churn with click order.
+    autosave.edit(HIDDEN_FIELD, HPC_CLUSTERS.filter((c) => hidden.has(c)), "now");
   }
 
-  async function save() {
-    if (!user || !draft) return;
-    // Build a minimal diff against the loaded user so we only send fields
-    // that actually changed. Empty strings become null to clear the field.
-    const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
-    const diff: UserSelfUpdate = {};
-    for (const field of TEXT_FIELDS) {
-      const next = blankToNull(draft.text[field]);
-      if ((user[field] ?? null) !== next) (diff as Record<string, string | null>)[field] = next;
-    }
-    if (draft.provider !== (user.inference_provider ?? null)) diff.inference_provider = draft.provider;
-    // In rail order, so the stored list does not churn with click order.
-    const initiallyHidden = user.hpc_hidden_clusters ?? [];
-    const nextHidden = HPC_CLUSTERS.filter((c) => draft.hidden.has(c));
-    const hiddenChanged =
-      nextHidden.join() !== HPC_CLUSTERS.filter((c) => initiallyHidden.includes(c)).join();
-    if (hiddenChanged) diff.hpc_hidden_clusters = nextHidden;
-
-    if (Object.keys(diff).length === 0) {
-      onClose();
-      return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await updateCurrentUser(diff);
-      // Fix a credential and see it straight away: recheck just the clusters
-      // whose credentials changed rather than wait for the next poll.
-      const changed = HPC_CLUSTERS.filter(
-        (c) => !draft.hidden.has(c) && CREDENTIAL_FIELDS[c].some((field) => field in diff),
-      );
-      if (changed.length === 1) void recheckHpcStatus(changed[0]);
-      else if (changed.length > 1) void recheckHpcStatus();
-      else if (hiddenChanged) void refreshHpcStatus();
-      // The picker's label and list follow the provider, endpoint and key.
-      if (AGENT_FIELDS.some((field) => field in diff)) void refreshAgentSettings();
-      onClose();
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "Failed to save settings.");
-      setSaving(false);
-    }
+  function setProvider(provider: string) {
+    setDraft((d) => (d ? { ...d, provider } : d));
+    autosave.edit("inference_provider", provider, "now");
   }
 
   // Before the user loads, every cluster reads as shown: the list is the
@@ -213,7 +289,7 @@ export function UserSettingsModal({
   let content: ReactNode;
   if (section === "appearance") {
     // The theme is this machine's, not the user row's, so it needs nothing
-    // loaded and applies at once rather than on Save.
+    // loaded and applies at once.
     content = <AppearanceSection />;
   } else if (!user || !draft) {
     content = (
@@ -233,8 +309,9 @@ export function UserSettingsModal({
     content = (
       <AgentSection
         draft={draft}
-        setText={setText}
-        setProvider={(provider) => setDraft((d) => (d ? { ...d, provider } : d))}
+        bind={bind}
+        setProvider={setProvider}
+        providerError={autosave.errors.inference_provider}
       />
     );
   } else {
@@ -244,14 +321,15 @@ export function UserSettingsModal({
         cluster={section}
         shown={!draft.hidden.has(section)}
         onShownChange={(shown) => setShown(section, shown)}
+        switchError={lastToggled.current === section ? autosave.errors[HIDDEN_FIELD] : undefined}
       >
-        <ClusterFields cluster={section} user={user} draft={draft} setText={setText} />
+        <ClusterFields cluster={section} user={user} bind={bind} />
       </ClusterSection>
     );
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={close}>
       <div
         className="modal settings-modal"
         onClick={(e) => e.stopPropagation()}
@@ -259,8 +337,11 @@ export function UserSettingsModal({
         aria-label="Settings"
       >
         <div className="panel-header">
-          <div className="panel-title">Settings</div>
-          <button type="button" className="button ghost" onClick={onClose}>
+          <div className="settings-title">
+            <div className="panel-title">Settings</div>
+            <SaveIndicator status={autosave.status} onJump={jumpToFailure} />
+          </div>
+          <button type="button" className="button ghost" onClick={close}>
             Close
           </button>
         </div>
@@ -276,21 +357,48 @@ export function UserSettingsModal({
             {content}
           </div>
         </div>
-        <div className="settings-footer">
-          {saveError && (
-            <div className="error" style={{ fontSize: 12 }}>
-              {saveError}
-            </div>
-          )}
-          <button type="button" className="button ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button type="button" className="button" onClick={() => void save()} disabled={saving || !draft}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The modal's one save indicator, the same on every section: a dot and a
+ * word for saving, saved (fading) and failed. Failed is a button that goes to
+ * the field that failed.
+ */
+function SaveIndicator({ status, onJump }: { status: SaveStatus; onJump: () => void }) {
+  return (
+    <div className="settings-save" role="status" aria-live="polite" data-state={status}>
+      {status === "saving" && (
+        <>
+          <span className="settings-save-dot" aria-hidden="true" />
+          Saving…
+        </>
+      )}
+      {status === "saved" && (
+        <>
+          <span className="settings-save-dot" aria-hidden="true" />
+          Saved
+        </>
+      )}
+      {status === "failed" && (
+        <button type="button" className="settings-save-failed" onClick={onJump}>
+          <span className="settings-save-dot" aria-hidden="true" />
+          Couldn&apos;t save
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Why a field's last save failed, under the field. */
+function FieldError({ field, error }: { field: string; error?: string }) {
+  if (!error) return null;
+  return (
+    <span id={`${fieldId(field)}-error`} className="error settings-field-error">
+      {error}
+    </span>
   );
 }
 
@@ -533,12 +641,14 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
  */
 function AgentSection({
   draft,
-  setText,
+  bind,
   setProvider,
+  providerError,
 }: {
   draft: Draft;
-  setText: (field: TextField) => (value: string) => void;
+  bind: Bind;
   setProvider: (provider: string) => void;
+  providerError?: string;
 }) {
   const { settings, error } = useAgentSettings();
   // The installation's configuration is in effect only until the researcher
@@ -561,10 +671,13 @@ function AgentSection({
         <label className="project-modal-label">
           Inference provider
           <select
+            id={fieldId("inference_provider")}
             className="input"
             value={selected}
             onChange={(e) => setProvider(e.target.value)}
             disabled={!settings}
+            aria-invalid={providerError ? true : undefined}
+            aria-describedby={providerError ? `${fieldId("inference_provider")}-error` : undefined}
           >
             {configured && <option value="">Custom, from configuration</option>}
             {settings?.providers.map((p) => (
@@ -573,6 +686,7 @@ function AgentSection({
               </option>
             ))}
           </select>
+          <FieldError field="inference_provider" error={providerError} />
           <span className="user-settings-hint">
             {configured ? (
               <>
@@ -588,34 +702,25 @@ function AgentSection({
         </label>
 
         {option?.takesUrl && (
-          <label className="project-modal-label">
-            Inference endpoint
-            <input
-              className="input"
-              value={draft.text.inference_base_url}
-              onChange={(e) => setText("inference_base_url")(e.target.value)}
-              placeholder="https://gateway.example/v1"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">Any OpenAI-compatible endpoint.</span>
-          </label>
+          <SavedField
+            label="Inference endpoint"
+            field="inference_base_url"
+            binding={bind("inference_base_url", "text")}
+            placeholder="https://gateway.example/v1"
+            hint="Any OpenAI-compatible endpoint."
+          />
         )}
 
         {keyField && copy && (
-          <label className="project-modal-label">
-            {copy.label}
-            <input
-              key={keyField}
-              className="input"
-              type="password"
-              value={draft.text[keyField]}
-              onChange={(e) => setText(keyField)(e.target.value)}
-              placeholder="API key"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">{copy.hint}</span>
-          </label>
+          <SavedField
+            key={keyField}
+            label={copy.label}
+            field={keyField}
+            binding={bind(keyField, "secret")}
+            secret
+            placeholder="API key"
+            hint={copy.hint}
+          />
         )}
       </div>
     </section>
@@ -626,29 +731,26 @@ function AgentSection({
 function ClusterFields({
   cluster,
   user,
-  draft,
-  setText,
+  bind,
 }: {
   cluster: HpcCluster;
   user: UserPublicWithConfig;
-  draft: Draft;
-  setText: (field: TextField) => (value: string) => void;
+  bind: Bind;
 }) {
-  const t = draft.text;
   switch (cluster) {
     case "odo":
       return (
         <>
           <S3mTokenField
             label="Odo S3M token"
-            value={t.odo_s3m_token}
-            onChange={setText("odo_s3m_token")}
+            field="odo_s3m_token"
+            binding={bind("odo_s3m_token", "secret")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
-          <RemoteDirField
+          <SavedField
             label="Odo remote directory"
-            value={t.odo_remote_dir}
-            onChange={setText("odo_remote_dir")}
+            field="odo_remote_dir"
+            binding={bind("odo_remote_dir", "text")}
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Odo" />}
           />
@@ -665,14 +767,14 @@ function ClusterFields({
         <>
           <S3mTokenField
             label="Frontier S3M token"
-            value={t.frontier_s3m_token}
-            onChange={setText("frontier_s3m_token")}
+            field="frontier_s3m_token"
+            binding={bind("frontier_s3m_token", "secret")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
-          <RemoteDirField
+          <SavedField
             label="Frontier remote directory"
-            value={t.frontier_remote_dir}
-            onChange={setText("frontier_remote_dir")}
+            field="frontier_remote_dir"
+            binding={bind("frontier_remote_dir", "text")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Frontier" />}
           />
@@ -687,66 +789,49 @@ function ClusterFields({
     case "perlmutter":
       return (
         <>
-          <label className="project-modal-label">
-            NERSC account
-            <input
-              className="input"
-              value={t.nersc_account}
-              onChange={(e) => setText("nersc_account")(e.target.value)}
-              placeholder="e.g. m1234"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">NERSC project account for Slurm submission.</span>
-          </label>
-
-          <label className="project-modal-label">
-            NERSC remote directory
-            <input
-              className="input"
-              value={t.nersc_remote_dir}
-              onChange={(e) => setText("nersc_remote_dir")(e.target.value)}
-              placeholder="/pscratch/sd/<u>/<user>/.vista"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">
-              Absolute remote dir on the NERSC machine. Required for Perlmutter. VISTA keeps <code>jobs/</code>{" "}
-              (sources) and <code>out/</code> (logs and outputs) inside it.
-            </span>
-          </label>
-
-          <label className="project-modal-label">
-            NERSC IRI token
-            <input
-              className="input"
-              type="password"
-              value={t.nersc_iri_token}
-              onChange={(e) => setText("nersc_iri_token")(e.target.value)}
-              placeholder="Globus access token"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">Globus access token for NERSC IRI. Stored encrypted at rest.</span>
-          </label>
+          <SavedField
+            label="NERSC account"
+            field="nersc_account"
+            binding={bind("nersc_account", "text")}
+            placeholder="e.g. m1234"
+            hint="NERSC project account for Slurm submission."
+          />
+          <SavedField
+            label="NERSC remote directory"
+            field="nersc_remote_dir"
+            binding={bind("nersc_remote_dir", "text")}
+            placeholder="/pscratch/sd/<u>/<user>/.vista"
+            hint={
+              <>
+                Absolute remote dir on the NERSC machine. Required for Perlmutter. VISTA keeps <code>jobs/</code>{" "}
+                (sources) and <code>out/</code> (logs and outputs) inside it.
+              </>
+            }
+          />
+          <SavedField
+            label="NERSC IRI token"
+            field="nersc_iri_token"
+            binding={bind("nersc_iri_token", "secret")}
+            secret
+            placeholder="Globus access token"
+            hint="Globus access token for NERSC IRI. Stored encrypted at rest."
+          />
         </>
       );
     case "lux":
       return (
         <>
-          <label className="project-modal-label">
-            Lux account
-            <input
-              className="input"
-              value={t.lux_account}
-              onChange={(e) => setText("lux_account")(e.target.value)}
-              placeholder="e.g. abc123"
-              spellCheck={false}
-            />
-            <span className="user-settings-hint">Required for Lux. The OLCF project Lux jobs are charged to.</span>
-          </label>
-          <RemoteDirField
+          <SavedField
+            label="Lux account"
+            field="lux_account"
+            binding={bind("lux_account", "text")}
+            placeholder="e.g. abc123"
+            hint="Required for Lux. The OLCF project Lux jobs are charged to."
+          />
+          <SavedField
             label="Lux remote directory"
-            value={t.lux_remote_dir}
-            onChange={setText("lux_remote_dir")}
+            field="lux_remote_dir"
+            binding={bind("lux_remote_dir", "text")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
           />
@@ -756,20 +841,24 @@ function ClusterFields({
 }
 
 /**
- * The folder on a cluster where VISTA puts this researcher's job sources and
- * outputs. No default: where a project keeps its files is specific to the
- * project and the filesystem, so VISTA does not guess.
+ * One saved text field: its label, input, why its last save failed (keeping
+ * what was entered), and its hint. A secret is a password input with nothing
+ * remembered by the browser. A remote directory has no default: where a
+ * project keeps its files is specific to the project and the filesystem, so
+ * VISTA does not guess.
  */
-function RemoteDirField({
+function SavedField({
   label,
-  value,
-  onChange,
+  field,
+  binding,
+  secret = false,
   placeholder,
   hint,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
+  field: TextField;
+  binding: FieldBinding;
+  secret?: boolean;
   placeholder: string;
   hint: ReactNode;
 }) {
@@ -778,11 +867,13 @@ function RemoteDirField({
       {label}
       <input
         className="input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        type={secret ? "password" : undefined}
         placeholder={placeholder}
+        autoComplete={secret ? "off" : undefined}
         spellCheck={false}
+        {...binding.inputProps}
       />
+      <FieldError field={field} error={binding.error} />
       <span className="user-settings-hint">{hint}</span>
     </label>
   );
@@ -814,39 +905,36 @@ function GroupWritableHint({
 
 function S3mTokenField({
   label,
-  value,
-  onChange,
+  field,
+  binding,
   hint,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
+  field: TextField;
+  binding: FieldBinding;
   hint: string;
 }) {
   return (
-    <label className="project-modal-label">
-      {label}
-      <input
-        className="input"
-        type="password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Bearer token"
-        autoComplete="off"
-        spellCheck={false}
-      />
-      <span className="user-settings-hint">
-        {hint} Stored encrypted at rest.{" "}
-        <a
-          href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Get a token
-        </a>
-        .
-      </span>
-    </label>
+    <SavedField
+      label={label}
+      field={field}
+      binding={binding}
+      secret
+      placeholder="Bearer token"
+      hint={
+        <>
+          {hint} Stored encrypted at rest.{" "}
+          <a
+            href="https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Get a token
+          </a>
+          .
+        </>
+      }
+    />
   );
 }
 
@@ -860,16 +948,20 @@ function ClusterSection({
   cluster,
   shown,
   onShownChange,
+  switchError,
   children,
 }: {
   cluster: HpcCluster;
   shown: boolean;
   onShownChange: (shown: boolean) => void;
+  /** Why the last save of the sidebar switch failed, if this was the one toggled. */
+  switchError?: string;
   children: ReactNode;
 }) {
   const state = useClusterState(cluster);
   const title = HPC_CLUSTER_TITLES[cluster];
   const { institution, facility } = resourcePlace(cluster);
+  const switchId = fieldId(HIDDEN_FIELD, cluster);
 
   return (
     <section className="settings-section" aria-label={title}>
@@ -889,14 +981,21 @@ function ClusterSection({
             <span className="user-settings-switch-label">Show in sidebar</span>
             <span className="user-settings-hint">
               Hiding it also stops VISTA checking {title}.
-              {CREDENTIAL_FIELDS[cluster].length > 0 && " Its credentials are kept."}
+              {CREDENTIAL_CLUSTER_FIELDS.has(cluster) && " Its credentials are kept."}
             </span>
+            {switchError && (
+              <span id={`${switchId}-error`} className="error settings-field-error">
+                {switchError}
+              </span>
+            )}
           </span>
           <button
+            id={switchId}
             type="button"
             role="switch"
             aria-checked={shown}
             aria-label={`Show ${title} in sidebar`}
+            aria-describedby={switchError ? `${switchId}-error` : undefined}
             className="user-settings-switch"
             onClick={() => onShownChange(!shown)}
           >
@@ -908,6 +1007,9 @@ function ClusterSection({
     </section>
   );
 }
+
+/** The clusters that store a credential of their own. */
+const CREDENTIAL_CLUSTER_FIELDS = new Set(Object.values(CREDENTIAL_CLUSTER));
 
 /**
  * Whether a cluster has a *whole* Globus credential.
@@ -936,14 +1038,14 @@ function globusConnected(
 /**
  * Connect one cluster's Globus account.
  *
- * Deliberately outside the form's save diff: this is an exchange, not a value.
- * The credential never reaches the browser, what the researcher pastes is
- * single-use, and the backend stores the result itself — so Save has nothing to
- * carry, and a connection in progress survives saving the rest of the form.
+ * Deliberately outside autosave: this is an exchange, not a value. The
+ * credential never reaches the browser, what the researcher pastes is
+ * single-use, and the backend stores the result itself, so there is nothing
+ * for a field save to carry, and it takes effect at once.
  *
  * `initiallyConnected` seeds the display from the loaded user and is not read
- * again. Re-fetching after a connection would rebuild the form and discard any
- * unsaved edits in the fields above.
+ * again. Re-fetching after a connection would rebuild the modal's draft under
+ * fields still being edited.
  */
 function GlobusConnect({
   cluster,

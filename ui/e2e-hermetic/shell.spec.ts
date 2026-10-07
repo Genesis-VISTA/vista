@@ -387,13 +387,40 @@ test.describe("HPC availability cards", () => {
       .click();
 
     const settings = page.getByRole("dialog", { name: "Settings" });
+    // Saved as soon as it is switched: no Save to press.
     await settings.getByRole("switch", { name: "Show Perlmutter in sidebar" }).click();
-    await settings.getByRole("button", { name: "Save" }).click();
-
-    await expect(settings).toHaveCount(0);
+    await expect(settings.getByRole("status")).toContainText("Saved");
     await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
     expect(await stub.requests()).toContain("PUT /api/users/me");
+    await expect(settings.getByRole("button", { name: "Save" })).toHaveCount(0);
+  });
+
+  test("pasting a token saves it and rechecks only that cluster", async ({ page }) => {
+    const stub = await installStub(page, { "PUT /api/users/me": USER });
+    await page.goto("/skills");
+    const rail = page.getByRole("complementary", { name: "Primary navigation" });
+    await rail.getByRole("button", { name: /^Odo:/ }).click();
+    await page.getByRole("dialog", { name: "Odo connection details" })
+      .getByRole("button", { name: "Settings" })
+      .click();
+
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const token = settings.getByLabel("Odo S3M token");
+    await token.focus();
+    await page.evaluate(() => {
+      // A real paste: the clipboard event, then the input it causes.
+      const input = document.activeElement as HTMLInputElement;
+      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true }));
+    });
+    await page.keyboard.insertText("pasted-odo-token");
+    await expect(settings.getByRole("status")).toContainText("Saved");
+    await expect
+      .poll(() => stub.requests())
+      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=odo");
+    const requests = await stub.requests();
+    expect(requests.filter((r) => r === "PUT /api/users/me")).toHaveLength(1);
+    expect(requests.filter((r) => r.includes("fresh=true") && !r.endsWith("cluster=odo"))).toEqual([]);
   });
 
   test("a hidden cluster has no card", async ({ page }) => {
