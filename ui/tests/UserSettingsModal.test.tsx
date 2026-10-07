@@ -7,14 +7,15 @@ import type { AgentSettings } from "@/lib/agent-settings";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { UserPublicWithConfig } from "@/lib/user";
 
-const { fetchCurrentUserWithConfigMock, updateCurrentUserMock } = vi.hoisted(() => ({
+const { fetchCurrentUserWithConfigMock, updateCurrentUserMock, startGlobusLoginMock } = vi.hoisted(() => ({
   fetchCurrentUserWithConfigMock: vi.fn(),
   updateCurrentUserMock: vi.fn(),
+  startGlobusLoginMock: vi.fn(),
 }));
 vi.mock("@/lib/user", () => ({
   fetchCurrentUserWithConfig: fetchCurrentUserWithConfigMock,
   updateCurrentUser: updateCurrentUserMock,
-  startGlobusLogin: vi.fn(),
+  startGlobusLogin: startGlobusLoginMock,
   completeGlobusLogin: vi.fn(),
 }));
 
@@ -582,6 +583,52 @@ describe("UserSettingsModal: Agent", () => {
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Agent");
     expect(entry("Agent")).toHaveTextContent("No key");
+  });
+});
+
+describe("UserSettingsModal: Globus address", () => {
+  const URL = "https://auth.globus.org/v2/oauth2/authorize?client_id=abc&scope=" + "x".repeat(300);
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    startGlobusLoginMock.mockReset();
+    startGlobusLoginMock.mockResolvedValue({ authorize_url: URL });
+  });
+
+  async function startOdo() {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    const odo = await region("Odo");
+    await userEvent.click(within(odo).getByRole("button", { name: "Connect" }));
+    return within(odo).findByRole("textbox", { name: "Odo Globus login address" });
+  }
+
+  it("shows the address on one line with a Copy button, beside Open in browser", async () => {
+    const writeText = vi.fn(async () => {});
+    const ue = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    const line = await startOdo();
+    expect(line).toHaveTextContent(URL);
+    expect(line).toHaveClass("user-settings-globus-url");
+    expect(screen.getByRole("link", { name: "Open in browser" })).toHaveAttribute("href", URL);
+
+    await ue.click(screen.getByRole("button", { name: "Copy address" }));
+    expect(writeText).toHaveBeenCalledWith(URL);
+    expect(await screen.findByText("Copied")).toHaveClass("user-settings-globus-copied-flash");
+  });
+
+  it("selects the address when the clipboard refuses", async () => {
+    const ue = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(async () => Promise.reject(new Error("denied"))) },
+      configurable: true,
+    });
+
+    const line = await startOdo();
+    await ue.click(screen.getByRole("button", { name: "Copy address" }));
+    expect(await screen.findByText(/Couldn't copy here/)).toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe(line.textContent);
   });
 });
 
