@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { useSettingsAutosave, type SaveStatus } from "@/lib/settings-autosave";
+import { useSettingsAutosave, type FieldMark, type SaveOutcome } from "@/lib/settings-autosave";
 import {
   completeGlobusLogin,
   fetchCurrentUserWithConfig,
@@ -113,10 +113,30 @@ function fieldId(field: string, cluster?: HpcCluster): string {
   return `settings-field-${field}${cluster ? `-${cluster}` : ""}`;
 }
 
-/** What a field component spreads onto its input, and why its save failed. */
+/** What a field component spreads onto its input, its save mark, and why its save failed. */
 type FieldBinding = {
   inputProps: InputHTMLAttributes<HTMLInputElement>;
+  mark?: FieldMark;
   error?: string;
+};
+
+/** How each field is named when its save is announced. */
+const FIELD_LABELS: Record<string, string> = {
+  inference_provider: "Inference provider",
+  inference_api_key: "AmSC i2 API key",
+  inference_mag_api_key: "AmSC MAG project access token",
+  inference_olcf_api_key: "OLCF Inference S3M token",
+  inference_custom_api_key: "Custom endpoint API key",
+  inference_base_url: "Inference endpoint",
+  nersc_account: "NERSC account",
+  nersc_remote_dir: "NERSC remote directory",
+  nersc_iri_token: "NERSC IRI token",
+  odo_remote_dir: "Odo remote directory",
+  odo_s3m_token: "Odo S3M token",
+  frontier_remote_dir: "Frontier remote directory",
+  frontier_s3m_token: "Frontier S3M token",
+  lux_account: "Lux account",
+  lux_remote_dir: "Lux remote directory",
 };
 
 type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
@@ -132,8 +152,10 @@ const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
  * omits secrets. There is no Save: each field saves itself through a
  * single-field `PUT /users/me` (see `lib/settings-autosave.ts`), text after a
  * pause, a secret on blur or paste, a switch or choice at once, and closing
- * sends whatever is still pending. One indicator by the title shows how that
- * is going. Opened from a cluster's card (`initialCluster`) it shows that
+ * sends whatever is still pending. Each field marks its own save (a check, a
+ * cross with the reason, or a spinner when slow), a section holding a failed
+ * field is marked in the navigation, and a hidden live region announces each
+ * outcome. Opened from a cluster's card (`initialCluster`) it shows that
  * cluster's section, and otherwise Agent. Below about 720 px of modal width the
  * navigation and the section take turns (see `.settings-layout`).
  */
@@ -172,7 +194,17 @@ export function UserSettingsModal({
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
   }
 
-  const autosave = useSettingsAutosave({ save: saveField });
+  const [announcement, setAnnouncement] = useState("");
+
+  function announce(field: string, outcome: SaveOutcome) {
+    const label =
+      field === HIDDEN_FIELD
+        ? `Show ${lastToggled.current ? HPC_CLUSTER_TITLES[lastToggled.current] : "cluster"} in sidebar`
+        : (FIELD_LABELS[field] ?? field);
+    setAnnouncement(outcome.ok ? `${label} saved.` : `Couldn't save ${label}: ${outcome.message}`);
+  }
+
+  const autosave = useSettingsAutosave({ save: saveField, onSettled: announce });
 
   async function load() {
     setLoading(true);
@@ -228,27 +260,27 @@ export function UserSettingsModal({
     setFocusTarget(null);
   }, [focusTarget, section]);
 
+  /** Each failed field's section and the element to focus there. */
+  const failures = Object.keys(autosave.errors).flatMap((field) => {
+    if (field !== HIDDEN_FIELD) return [{ section: sectionOf(field), id: fieldId(field) }];
+    const cluster = lastToggled.current;
+    return cluster ? [{ section: cluster as Section, id: fieldId(HIDDEN_FIELD, cluster) }] : [];
+  });
+  const failedSections = new Set(failures.map((f) => f.section));
+
   function choose(next: Section) {
     setSection(next);
     setPane("section");
-  }
-
-  function jumpToFailure() {
-    const field = Object.keys(autosave.errors)[0];
-    if (!field) return;
-    if (field === HIDDEN_FIELD && lastToggled.current) {
-      choose(lastToggled.current);
-      setFocusTarget(fieldId(HIDDEN_FIELD, lastToggled.current));
-    } else {
-      choose(sectionOf(field));
-      setFocusTarget(fieldId(field));
-    }
+    // A section marked as holding a failed field opens on that field.
+    const failure = failures.find((f) => f.section === next);
+    if (failure) setFocusTarget(failure.id);
   }
 
   const bind: Bind = (field, kind) => {
     const error = autosave.errors[field];
     return {
       error,
+      mark: autosave.marks[field],
       inputProps: {
         id: fieldId(field),
         value: draft?.text[field] ?? "",
@@ -311,6 +343,7 @@ export function UserSettingsModal({
         draft={draft}
         bind={bind}
         setProvider={setProvider}
+        providerMark={autosave.marks.inference_provider}
         providerError={autosave.errors.inference_provider}
       />
     );
@@ -321,6 +354,7 @@ export function UserSettingsModal({
         cluster={section}
         shown={!draft.hidden.has(section)}
         onShownChange={(shown) => setShown(section, shown)}
+        switchMark={lastToggled.current === section ? autosave.marks[HIDDEN_FIELD] : undefined}
         switchError={lastToggled.current === section ? autosave.errors[HIDDEN_FIELD] : undefined}
       >
         <ClusterFields cluster={section} user={user} bind={bind} />
@@ -337,16 +371,17 @@ export function UserSettingsModal({
         aria-label="Settings"
       >
         <div className="panel-header">
-          <div className="settings-title">
-            <div className="panel-title">Settings</div>
-            <SaveIndicator status={autosave.status} onJump={jumpToFailure} />
-          </div>
+          <div className="panel-title">Settings</div>
           <button type="button" className="button ghost" onClick={close}>
             Close
           </button>
         </div>
+        {/* Each field's mark is visual; this says the same in words. */}
+        <div className="visually-hidden" role="status" aria-live="polite">
+          {announcement}
+        </div>
         <div className="settings-layout" data-pane={pane}>
-          <SettingsNav section={section} hidden={hidden} onChoose={choose} />
+          <SettingsNav section={section} hidden={hidden} failed={failedSections} onChoose={choose} />
           <div className="settings-main">
             <button type="button" className="settings-back" onClick={() => setPane("nav")}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -363,32 +398,20 @@ export function UserSettingsModal({
 }
 
 /**
- * The modal's one save indicator, the same on every section: a dot and a
- * word for saving, saved (fading) and failed. Failed is a button that goes to
- * the field that failed.
+ * A field's save mark: a spinner for a slow save, a check that fades once
+ * saved, a cross while failed, and nothing at all for a save in flight. Visual
+ * only: the modal's live region says the same in words.
  */
-function SaveIndicator({ status, onJump }: { status: SaveStatus; onJump: () => void }) {
+function SaveMark({ mark }: { mark?: FieldMark }) {
+  if (!mark) return null;
   return (
-    <div className="settings-save" role="status" aria-live="polite" data-state={status}>
-      {status === "saving" && (
-        <>
-          <span className="settings-save-dot" aria-hidden="true" />
-          Saving…
-        </>
-      )}
-      {status === "saved" && (
-        <>
-          <span className="settings-save-dot" aria-hidden="true" />
-          Saved
-        </>
-      )}
-      {status === "failed" && (
-        <button type="button" className="settings-save-failed" onClick={onJump}>
-          <span className="settings-save-dot" aria-hidden="true" />
-          Couldn&apos;t save
-        </button>
-      )}
-    </div>
+    <span className="settings-mark" data-mark={mark} aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        {mark === "saved" && <path d="M5 12.5l4.5 4.5L19 7.5" />}
+        {mark === "failed" && <path d="M6 6l12 12M18 6L6 18" />}
+        {mark === "slow" && <path d="M12 3a9 9 0 1 0 9 9" />}
+      </svg>
+    </span>
   );
 }
 
@@ -416,10 +439,13 @@ function useClusterState(cluster: HpcCluster): HpcDisplayState | null {
 function SettingsNav({
   section,
   hidden,
+  failed,
   onChoose,
 }: {
   section: Section;
   hidden: Set<HpcCluster>;
+  /** Sections holding a field whose save failed. */
+  failed: Set<Section>;
   onChoose: (section: Section) => void;
 }) {
   const { settings } = useAgentSettings();
@@ -437,6 +463,7 @@ function SettingsNav({
       <NavEntry
         label={["Agent", agentNote?.toLowerCase()].filter(Boolean).join(", ")}
         current={section === "agent"}
+        failed={failed.has("agent")}
         onClick={() => onChoose("agent")}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -462,6 +489,7 @@ function SettingsNav({
                   cluster={cluster}
                   hidden={hidden.has(cluster)}
                   current={section === cluster}
+                  failed={failed.has(cluster)}
                   onClick={() => onChoose(cluster)}
                 />
               ))}
@@ -476,6 +504,7 @@ function SettingsNav({
 function NavEntry({
   label,
   current,
+  failed = false,
   onClick,
   className,
   children,
@@ -483,6 +512,8 @@ function NavEntry({
   /** Spelled out: the visible parts would otherwise run together as one word. */
   label: string;
   current: boolean;
+  /** The section holds a field whose save failed: a cross replaces its note. */
+  failed?: boolean;
   onClick: () => void;
   className?: string;
   children: ReactNode;
@@ -492,10 +523,16 @@ function NavEntry({
       type="button"
       className={`settings-nav-entry${className ? ` ${className}` : ""}`}
       aria-current={current ? "page" : undefined}
-      aria-label={label}
+      aria-label={failed ? `${label}, couldn't save` : label}
+      data-failed={failed || undefined}
       onClick={onClick}
     >
       {children}
+      {failed && (
+        <span className="settings-nav-failed">
+          <SaveMark mark="failed" />
+        </span>
+      )}
     </button>
   );
 }
@@ -505,11 +542,13 @@ function ClusterNavEntry({
   cluster,
   hidden,
   current,
+  failed,
   onClick,
 }: {
   cluster: HpcCluster;
   hidden: boolean;
   current: boolean;
+  failed: boolean;
   onClick: () => void;
 }) {
   const state = useClusterState(cluster);
@@ -521,6 +560,7 @@ function ClusterNavEntry({
         .filter(Boolean)
         .join(", ")}
       current={current}
+      failed={failed}
       onClick={onClick}
     >
       <span className="settings-nav-dot">{state && <HpcStatusDot state={state} />}</span>
@@ -643,11 +683,13 @@ function AgentSection({
   draft,
   bind,
   setProvider,
+  providerMark,
   providerError,
 }: {
   draft: Draft;
   bind: Bind;
   setProvider: (provider: string) => void;
+  providerMark?: FieldMark;
   providerError?: string;
 }) {
   const { settings, error } = useAgentSettings();
@@ -670,22 +712,25 @@ function AgentSection({
         {error && !settings && <div className="error" style={{ fontSize: 13 }}>{error}</div>}
         <label className="project-modal-label">
           Inference provider
-          <select
-            id={fieldId("inference_provider")}
-            className="input"
-            value={selected}
-            onChange={(e) => setProvider(e.target.value)}
-            disabled={!settings}
-            aria-invalid={providerError ? true : undefined}
-            aria-describedby={providerError ? `${fieldId("inference_provider")}-error` : undefined}
-          >
-            {configured && <option value="">Custom, from configuration</option>}
-            {settings?.providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <span className="settings-control-row">
+            <select
+              id={fieldId("inference_provider")}
+              className="input"
+              value={selected}
+              onChange={(e) => setProvider(e.target.value)}
+              disabled={!settings}
+              aria-invalid={providerError ? true : undefined}
+              aria-describedby={providerError ? `${fieldId("inference_provider")}-error` : undefined}
+            >
+              {configured && <option value="">Custom, from configuration</option>}
+              {settings?.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <SaveMark mark={providerMark} />
+          </span>
           <FieldError field="inference_provider" error={providerError} />
           <span className="user-settings-hint">
             {configured ? (
@@ -865,14 +910,17 @@ function SavedField({
   return (
     <label className="project-modal-label">
       {label}
-      <input
-        className="input"
-        type={secret ? "password" : undefined}
-        placeholder={placeholder}
-        autoComplete={secret ? "off" : undefined}
-        spellCheck={false}
-        {...binding.inputProps}
-      />
+      <span className="settings-input-wrap" data-marked={binding.mark ? true : undefined}>
+        <input
+          className="input"
+          type={secret ? "password" : undefined}
+          placeholder={placeholder}
+          autoComplete={secret ? "off" : undefined}
+          spellCheck={false}
+          {...binding.inputProps}
+        />
+        <SaveMark mark={binding.mark} />
+      </span>
       <FieldError field={field} error={binding.error} />
       <span className="user-settings-hint">{hint}</span>
     </label>
@@ -948,12 +996,15 @@ function ClusterSection({
   cluster,
   shown,
   onShownChange,
+  switchMark,
   switchError,
   children,
 }: {
   cluster: HpcCluster;
   shown: boolean;
   onShownChange: (shown: boolean) => void;
+  /** The sidebar switch's save mark, if this was the one toggled. */
+  switchMark?: FieldMark;
   /** Why the last save of the sidebar switch failed, if this was the one toggled. */
   switchError?: string;
   children: ReactNode;
@@ -989,6 +1040,7 @@ function ClusterSection({
               </span>
             )}
           </span>
+          <SaveMark mark={switchMark} />
           <button
             id={switchId}
             type="button"

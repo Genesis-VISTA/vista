@@ -72,33 +72,49 @@ before.
 - **WHEN** a researcher closes the modal straight after changing a field
 - **THEN** the change is saved
 
-### Requirement: One save indicator for the modal
+### Requirement: Each field shows its own save
 
-The modal SHALL show a single save indicator beside its title, the same on every
-section, with three states, each shown by both a colored dot and a word:
-- saving, while any save is in flight;
-- saved, after every pending save has succeeded, fading after a few seconds;
-- failed, while any save has failed and not since succeeded.
+Each field SHALL show the outcome of its own save at the field itself, and the modal
+SHALL have no save indicator of its own:
+- while a save is in flight, the field SHALL show nothing, unless the save has taken
+  longer than about a second, when it SHALL show that it is still saving;
+- a saved field SHALL show a check mark, which SHALL fade after about two seconds and
+  SHALL go at once when the field is edited again;
+- a failed field SHALL show a cross until a later save of that field succeeds.
 
-A failed save SHALL also show, beneath the field that failed, why it failed, and SHALL
-keep the value the researcher entered. Selecting the indicator while it shows failed
-SHALL go to the section and field that failed.
+A switch or a choice SHALL show its mark beside the control. A failed save SHALL also
+show, beneath the field, why it failed, and SHALL keep the value the researcher entered.
+A section holding a failed field SHALL be marked with a cross in the navigation, and
+selecting it SHALL show that section with the failed field focused. Each outcome SHALL
+also be announced to assistive technology, naming the field.
 
 #### Scenario: A save succeeds
 
 - **WHEN** a field is saved successfully
-- **THEN** the indicator shows saving, then saved, then fades
+- **THEN** that field shows a check mark, which fades, and no other field changes
+
+#### Scenario: A slow save
+
+- **WHEN** a field's save is still in flight after about a second
+- **THEN** that field shows that it is still saving, until the save completes
 
 #### Scenario: A save fails
 
 - **WHEN** saving the Perlmutter remote directory fails
-- **THEN** the indicator shows failed, the directory field says why and still holds what was
-  typed, and selecting the indicator from another section shows the Perlmutter section
+- **THEN** the directory field shows a cross, says why, and still holds what was typed
+
+#### Scenario: A save fails after leaving the section
+
+- **WHEN** the Perlmutter remote directory's save fails after the researcher has moved to
+  the Agent section
+- **THEN** Perlmutter is marked with a cross in the navigation, and selecting it shows the
+  Perlmutter section with the directory field focused
 
 #### Scenario: Fixed after failing
 
 - **WHEN** a field whose save failed is saved successfully
-- **THEN** the indicator stops showing failed and the message beneath the field goes away
+- **THEN** its cross, its message and the navigation's cross go away, and it shows a check
+  mark
 
 ### Requirement: Narrow windows
 

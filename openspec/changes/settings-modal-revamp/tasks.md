@@ -33,6 +33,7 @@
 
 - [x] 4.1 Add a field save hook (about 800 ms debounce for text; blur/paste for secrets; immediate for switches/choices; serialised per field; flush on close), and verify unit tests with fake timers for each trigger and for flush on close
 - [x] 4.2 Add the modal-level save tracker and the indicator by the title (saving, saved fading, failed), with error lines under failed fields and jump-to-field on the failed indicator, and verify by test a failure, then a successful retry clearing it
+- [x] 4.5 Replace the title indicator with a mark on each field (nothing while saving, a spinner past about a second, a check that fades after about two seconds or on the next edit, a cross while failed), a cross on the navigation entry of a section holding a failed field that focuses it when chosen, and one hidden live region naming each outcome. Verify by test: a check on the saved field only, the spinner on a slow save, a cross and reason on failure, the navigation cross after leaving the section and the focus on return, and everything cleared by a successful retry
 - [x] 4.3 Wire each field to the hook; trigger the per-cluster recheck after a credential field saves, `refreshHpcStatus()` after a visibility change, and `refreshAgentSettings()` after provider/key/endpoint saves; remove Save/Cancel. Verify by test that pasting an Odo token rechecks only Odo
 - [x] 4.4 Verify the provider-change flow end to end in a UI test: choosing MAG clears the picker label to "no model", and switching back to i2 shows "Default (claude-sonnet)" with the original key intact
 
@@ -45,4 +46,4 @@
 
 - [ ] 6.1 Update the comments and docs that describe the old form, the Model field, or the endpoint text field (`UserSettingsModal`, `ModelPicker`, `lib/models.ts`, `.env.sample`, `docs/` where they mention it), and verify a grep for "Model field in Settings" and "Signed in as" finds nothing stale
 - [ ] 6.2 Run `./scripts/ci-local.sh` (backend, ui, mcp lint and test) and verify it passes
-- [ ] 6.3 Launch the app (`./launch.sh logs`), walk through: fresh i2 default, switching to MAG and back, OLCF Inference with an S3M token (its default and its model list), a Custom endpoint ending in `/v1`, autosave of a token with the indicator, the narrow layout and the grouped rail. Capture screenshots
+- [ ] 6.3 Launch the app (`./launch.sh logs`), walk through: fresh i2 default, switching to MAG and back, OLCF Inference with an S3M token (its default and its model list), a Custom endpoint ending in `/v1`, autosave of a token with its check mark, the narrow layout and the grouped rail. Capture screenshots

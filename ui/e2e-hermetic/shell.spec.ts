@@ -389,7 +389,7 @@ test.describe("HPC availability cards", () => {
     const settings = page.getByRole("dialog", { name: "Settings" });
     // Saved as soon as it is switched: no Save to press.
     await settings.getByRole("switch", { name: "Show Perlmutter in sidebar" }).click();
-    await expect(settings.getByRole("status")).toContainText("Saved");
+    await expect(settings.getByRole("status")).toHaveText("Show Perlmutter in sidebar saved.");
     await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
     expect(await stub.requests()).toContain("PUT /api/users/me");
@@ -414,7 +414,7 @@ test.describe("HPC availability cards", () => {
       input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true }));
     });
     await page.keyboard.insertText("pasted-odo-token");
-    await expect(settings.getByRole("status")).toContainText("Saved");
+    await expect(settings.getByRole("status")).toHaveText("Odo S3M token saved.");
     await expect
       .poll(() => stub.requests())
       .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=odo");

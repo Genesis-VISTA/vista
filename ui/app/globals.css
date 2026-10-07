@@ -3308,49 +3308,39 @@ button.chat-bubble.intermediate.collapsed:hover {
   overflow-wrap: anywhere;
 }
 
-.settings-title {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
-/* The one save indicator: a dot and a word, the same on every section.
-   Saving is a hollow brand ring, saved a filled green dot that fades, failed
-   a red square (shape as well as colour, as the rail's dots do). */
-.settings-save {
+/* Each field's save mark, at the field: a check that fades, a cross while the
+   save has failed, a turning arc when a save is slow, and nothing for a save
+   in flight. Shape carries the meaning as well as colour. */
+.settings-mark {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted-2);
-  white-space: nowrap;
-}
-
-.settings-save-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
 }
 
-.settings-save[data-state="saving"] .settings-save-dot {
-  border: 1.5px solid var(--brand);
-  box-sizing: border-box;
-}
-
-.settings-save[data-state="saved"] {
+.settings-mark[data-mark="saved"] {
   color: var(--success);
-  animation: settings-saved-fade 3s ease-in forwards;
+  animation: settings-mark-fade 2s ease-in forwards;
 }
 
-.settings-save[data-state="saved"] .settings-save-dot {
-  background: var(--ok);
+.settings-mark[data-mark="failed"] {
+  color: var(--danger-ink);
 }
 
-@keyframes settings-saved-fade {
+.settings-mark[data-mark="slow"] {
+  color: var(--muted);
+}
+
+.settings-mark[data-mark="slow"] svg {
+  animation: hpc-spin 0.9s linear infinite;
+}
+
+@keyframes settings-mark-fade {
   0%,
-  70% {
+  65% {
     opacity: 1;
   }
   100% {
@@ -3358,28 +3348,63 @@ button.chat-bubble.intermediate.collapsed:hover {
   }
 }
 
-.settings-save-failed {
-  display: inline-flex;
+/* A text field's mark sits inside its right edge. */
+.settings-input-wrap {
+  position: relative;
+  display: flex;
+}
+
+.settings-input-wrap > .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-input-wrap[data-marked] > .input {
+  padding-right: 32px;
+}
+
+.settings-input-wrap > .settings-mark {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+}
+
+.settings-input-wrap > .input[aria-invalid="true"] {
+  border-color: var(--danger-line);
+}
+
+/* A choice's mark sits beside it. */
+.settings-control-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border: 1px solid var(--danger-line);
-  border-radius: var(--r-pill);
-  background: var(--danger-tint);
-  color: var(--danger-ink);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  gap: 8px;
 }
 
-.settings-save-failed .settings-save-dot {
-  border-radius: 1px;
-  background: var(--danger);
+.settings-control-row > .input {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.settings-save-failed:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
+.settings-nav-failed {
+  display: inline-flex;
+  flex: none;
+}
+
+.settings-nav-entry[data-failed] .settings-nav-note {
+  margin-right: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .settings-field-error {

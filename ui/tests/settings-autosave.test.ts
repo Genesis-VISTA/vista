@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEBOUNCE_MS, SAVED_MS, useSettingsAutosave } from "@/lib/settings-autosave";
+import { DEBOUNCE_MS, SAVED_MS, SLOW_MS, useSettingsAutosave } from "@/lib/settings-autosave";
 
 type Call = { field: string; value: unknown };
 
@@ -104,14 +104,13 @@ describe("useSettingsAutosave ordering", () => {
     act(() => result.current.edit("dir", "/two", "now"));
     act(() => result.current.edit("dir", "/three", "now"));
     expect(calls).toEqual([{ field: "dir", value: "/one" }]);
-    expect(result.current.status).toBe("saving");
 
     await act(async () => release());
     await settle();
     expect(calls.map((c) => c.value)).toEqual(["/one", "/three"]);
     await act(async () => release());
     await settle();
-    expect(result.current.status).toBe("saved");
+    expect(result.current.marks).toEqual({ dir: "saved" });
   });
 
   it("saves different fields in parallel", async () => {
@@ -126,40 +125,80 @@ describe("useSettingsAutosave ordering", () => {
   });
 });
 
-describe("useSettingsAutosave status", () => {
-  it("shows saving, then saved, then fades", async () => {
+describe("useSettingsAutosave marks", () => {
+  it("shows nothing while a save is in flight, then a check that fades", async () => {
     let release: () => void = () => {};
     save = () => new Promise<void>((resolve) => (release = resolve));
     const { result } = setup();
     act(() => result.current.edit("dir", "/a", "now"));
-    expect(result.current.status).toBe("saving");
+    expect(result.current.marks).toEqual({});
     await act(async () => release());
     await settle();
-    expect(result.current.status).toBe("saved");
+    expect(result.current.marks).toEqual({ dir: "saved" });
     act(() => vi.advanceTimersByTime(SAVED_MS + 10));
-    expect(result.current.status).toBe("idle");
+    expect(result.current.marks).toEqual({});
   });
 
-  it("reports a failure with its reason, and clears it on a successful retry", async () => {
+  it("marks only the field that saved", async () => {
+    const { result } = setup();
+    await act(async () => result.current.edit("dir", "/a", "now"));
+    await settle();
+    expect(result.current.marks).toEqual({ dir: "saved" });
+  });
+
+  it("shows a slow save as still saving, until it completes", async () => {
+    let release: () => void = () => {};
+    save = () => new Promise<void>((resolve) => (release = resolve));
+    const { result } = setup();
+    act(() => result.current.edit("dir", "/a", "now"));
+    act(() => vi.advanceTimersByTime(SLOW_MS - 10));
+    expect(result.current.marks).toEqual({});
+    act(() => vi.advanceTimersByTime(20));
+    expect(result.current.marks).toEqual({ dir: "slow" });
+    await act(async () => release());
+    await settle();
+    expect(result.current.marks).toEqual({ dir: "saved" });
+  });
+
+  it("drops the check as soon as the field is edited again", async () => {
+    const { result } = setup();
+    await act(async () => result.current.edit("dir", "/a", "now"));
+    await settle();
+    expect(result.current.marks.dir).toBe("saved");
+    act(() => result.current.edit("dir", "/ab", "debounce"));
+    expect(result.current.marks).toEqual({});
+  });
+
+  it("marks a failure with its reason, and a successful retry replaces it with a check", async () => {
+    const settled: Array<[string, unknown]> = [];
     save = async () => {
       throw new Error("Remote directory must be absolute.");
     };
-    const { result } = setup();
+    const { result } = renderHook(() =>
+      useSettingsAutosave({ save: (f, v) => save(f, v), onSettled: (f, o) => settled.push([f, o]) }),
+    );
     await act(async () => result.current.edit("dir", "relative", "now"));
     await settle();
-    expect(result.current.status).toBe("failed");
+    expect(result.current.marks).toEqual({ dir: "failed" });
     expect(result.current.errors).toEqual({ dir: "Remote directory must be absolute." });
+    // Editing keeps the cross: it goes only when a save succeeds.
+    act(() => result.current.edit("dir", "/abs", "hold"));
+    expect(result.current.marks).toEqual({ dir: "failed" });
 
     save = async (field, value) => {
       calls.push({ field, value });
     };
-    await act(async () => result.current.edit("dir", "/absolute", "now"));
+    await act(async () => result.current.commit("dir"));
     await settle();
     expect(result.current.errors).toEqual({});
-    expect(result.current.status).toBe("saved");
+    expect(result.current.marks).toEqual({ dir: "saved" });
+    expect(settled).toEqual([
+      ["dir", { ok: false, message: "Remote directory must be absolute." }],
+      ["dir", { ok: true }],
+    ]);
   });
 
-  it("stays failed while another field saves fine", async () => {
+  it("keeps one field's failure while another saves fine", async () => {
     save = async (field) => {
       if (field === "dir") throw new Error("nope");
     };
@@ -167,7 +206,7 @@ describe("useSettingsAutosave status", () => {
     await act(async () => result.current.edit("dir", "x", "now"));
     await act(async () => result.current.edit("token", "t", "now"));
     await settle();
-    expect(result.current.status).toBe("failed");
+    expect(result.current.marks).toEqual({ dir: "failed", token: "saved" });
     expect(Object.keys(result.current.errors)).toEqual(["dir"]);
   });
 });

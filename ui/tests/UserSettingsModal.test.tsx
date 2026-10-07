@@ -378,22 +378,63 @@ describe("UserSettingsModal autosave", () => {
   });
 });
 
-describe("UserSettingsModal save indicator", () => {
-  const indicator = () => screen.getByRole("status");
+describe("UserSettingsModal save marks", () => {
+  /** The save mark drawn on a field, read from the field's own label. */
+  const markOf = (el: HTMLElement) =>
+    el.closest("label, .user-settings-switch-row")?.querySelector(".settings-mark")?.getAttribute("data-mark") ??
+    null;
+  const announced = () => document.querySelector(".visually-hidden[role=status]")?.textContent ?? "";
 
-  it("shows saving, then saved", async () => {
+  it("has no save indicator by the title", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
+    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalled());
+    expect(screen.queryByText("Saving…")).toBeNull();
+    expect(screen.queryByText("Saved")).toBeNull();
+  });
+
+  it("checks the saved field only, shows nothing while it saves, and announces it", async () => {
     let release: (value: UserPublicWithConfig) => void = () => {};
     updateCurrentUserMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
 
-    await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
-    expect(indicator()).toHaveTextContent("Saving…");
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    const token = screen.getByLabelText(/Odo S3M token/);
+    await userEvent.type(dir, "/odo/vista");
+    await userEvent.tab();
+    expect(markOf(dir)).toBeNull(); // in flight: nothing to see
     await act(async () => release(user()));
-    await waitFor(() => expect(indicator()).toHaveTextContent("Saved"));
+    await waitFor(() => expect(markOf(dir)).toBe("saved"));
+    expect(markOf(token)).toBeNull();
+    expect(announced()).toBe("Odo remote directory saved.");
   });
 
-  it("reports a failure under the field, keeps what was typed, and goes to it from another section", async () => {
+  it("marks a switch beside it", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    const toggle = await screen.findByRole("switch", { name: "Show Odo in sidebar" });
+    await userEvent.click(toggle);
+    await waitFor(() => expect(markOf(toggle)).toBe("saved"));
+    expect(announced()).toBe("Show Odo in sidebar saved.");
+  });
+
+  it("shows a slow save as still saving", async () => {
+    let release: (value: UserPublicWithConfig) => void = () => {};
+    updateCurrentUserMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+
+    const account = await screen.findByLabelText(/Lux account/);
+    await userEvent.type(account, "abc123");
+    await userEvent.tab();
+    await waitFor(() => expect(markOf(account)).toBe("slow"), { timeout: 2000 });
+    await act(async () => release(user()));
+    await waitFor(() => expect(markOf(account)).toBe("saved"));
+  });
+
+  it("marks a failure with a cross and the reason, keeping what was typed", async () => {
     updateCurrentUserMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
@@ -401,20 +442,32 @@ describe("UserSettingsModal save indicator", () => {
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative/dir");
     await userEvent.tab();
-    const failed = await screen.findByRole("button", { name: "Couldn't save" });
+    await waitFor(() => expect(markOf(dir)).toBe("failed"));
     expect(screen.getByText("The remote directory must be absolute.")).toBeInTheDocument();
     expect(dir).toHaveValue("relative/dir");
     expect(dir).toHaveAttribute("aria-invalid", "true");
+    expect(announced()).toBe("Couldn't save NERSC remote directory: The remote directory must be absolute.");
+  });
 
-    await openOn("Agent");
-    await userEvent.click(failed);
-    const perlmutter = await region("Perlmutter");
-    const again = within(perlmutter).getByLabelText(/NERSC remote directory/);
+  it("marks the section in the navigation when its save fails after leaving it, and focuses the field on return", async () => {
+    let reject: (e: Error) => void = () => {};
+    updateCurrentUserMock.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+
+    await userEvent.type(await screen.findByLabelText(/NERSC remote directory/), "relative/dir");
+    await openOn("Agent"); // leaving the field sends it
+    await act(async () => reject(new Error("The remote directory must be absolute.")));
+
+    await waitFor(() => expect(entry("Perlmutter")).toHaveAccessibleName(/couldn't save$/));
+    expect(entry("Agent")).not.toHaveAccessibleName(/couldn't save/);
+    await userEvent.click(entry("Perlmutter"));
+    const again = within(await region("Perlmutter")).getByLabelText(/NERSC remote directory/);
     expect(again).toHaveValue("relative/dir");
     await waitFor(() => expect(again).toHaveFocus());
   });
 
-  it("clears the failure once the field saves", async () => {
+  it("clears the cross, the reason and the navigation mark once the field saves", async () => {
     updateCurrentUserMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
@@ -422,14 +475,14 @@ describe("UserSettingsModal save indicator", () => {
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative");
     await userEvent.tab();
-    await screen.findByRole("button", { name: "Couldn't save" });
+    await waitFor(() => expect(markOf(dir)).toBe("failed"));
 
     await userEvent.clear(dir);
     await userEvent.type(dir, "/pscratch/vista");
     await userEvent.tab();
-    await waitFor(() => expect(indicator()).toHaveTextContent("Saved"));
-    expect(screen.queryByRole("button", { name: "Couldn't save" })).toBeNull();
+    await waitFor(() => expect(markOf(dir)).toBe("saved"));
     expect(screen.queryByText("The remote directory must be absolute.")).toBeNull();
+    expect(entry("Perlmutter")).not.toHaveAccessibleName(/couldn't save/);
     expect(updateCurrentUserMock).toHaveBeenLastCalledWith({ nersc_remote_dir: "/pscratch/vista" });
   });
 });

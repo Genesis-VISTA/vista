@@ -153,14 +153,23 @@ fields save on blur and on paste; switches and choices save at once. Each save s
 single-field `PUT /users/me`. Saves of the same field are serialised, so a slow response
 cannot overwrite a newer value. Saves of different fields may run in parallel.
 
-A modal-level tracker counts saves in flight and keeps a map of failed fields. It drives the
-one indicator by the title and the per-field error lines. A save of a field in
+The save state is kept per field: in flight, slow (in flight past about a second), saved
+(for about two seconds) or failed, with the failure's reason. Each field draws its own mark
+from it: nothing while in flight, a spinner once slow, a check when saved, a cross when
+failed, with the reason beneath. The navigation marks a section holding a failed field, and
+choosing it focuses that field. One visually hidden live region announces each outcome by
+field name. A save of a field in
 `CREDENTIAL_FIELDS` triggers that cluster's recheck, as Save does today; a change to
 `hpc_hidden_clusters` triggers `refreshHpcStatus()`. On close, pending debounced saves are
 flushed rather than dropped.
 
 Alternative: keep one Save. Rejected by the researcher; the targeted recheck is preserved
 per field instead.
+
+Alternative: one indicator by the title (saving, saved, failed). Tried and rejected: a
+one-field save to a local backend completes within a frame, so "saving" only flickered, and
+the indicator never said which field it meant. A save that fails after the modal closes has
+nowhere to show; that needs the backend to fail at the moment of closing, and is accepted.
 
 ### Navigation tree and rail grouping from one lookup
 

@@ -19,8 +19,9 @@ OLCF's own Inference Service, or, rarely, something custom.
   page holding its credentials, remote directory, its own Globus connection (Odo and
   Frontier) and its "Show in sidebar" switch. The "Signed in as" block is removed.
 - **Settings autosaves.** Text fields save after a short pause, secrets on blur or paste.
-  One save indicator beside the Settings title shows saving, saved or failed; a failure
-  also shows under the field that failed. **BREAKING (UI):** Save and Cancel are removed.
+  Each field shows its own outcome: a check mark that fades once saved, a cross and the
+  reason when a save fails (also marked on its section in the nav), and nothing while
+  saving unless it is slow. **BREAKING (UI):** Save and Cancel are removed.
 - **Narrow windows** show the nav as a list; a section opens full-width with a back
   button.
 - **Inference provider dropdown** replaces the endpoint text field: AmSC i2, AmSC MAG,
@@ -42,8 +43,8 @@ OLCF's own Inference Service, or, rarely, something custom.
 ## Capabilities
 
 ### New Capabilities
-- `settings-modal`: the settings modal's sections and navigation, autosave and its save
-  indicator, and its layout in narrow windows.
+- `settings-modal`: the settings modal's sections and navigation, autosave and the save
+  marks on each field, and its layout in narrow windows.
 - `inference-providers`: the provider presets, per-provider credentials, how the backend
   resolves the provider, endpoint, key and default model, and how the UI learns them.
 
