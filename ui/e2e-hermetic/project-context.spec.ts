@@ -213,6 +213,15 @@ test.describe("projects page", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  test("new projects inherit all MCP tools without asking the user", async ({ page }) => {
+    await installStub(page);
+    await page.goto("/projects?new=1");
+
+    const dialog = page.getByRole("dialog", { name: "Create project" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("textbox", { name: /^Tools/ })).toHaveCount(0);
+  });
+
   // One request per count per card. Fine at this many projects, bad at fifty —
   // see the comment on useProjectStats.
   test("each card carries its own counts", async ({ page }) => {
