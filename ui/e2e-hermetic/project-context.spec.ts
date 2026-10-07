@@ -69,6 +69,36 @@ test.describe("project context", () => {
     await expect(menu).toBeHidden();
   });
 
+  test("datasets clearly separates uploads from generated results", async ({ page }) => {
+    await openMoltenSalt(page);
+
+    await stub!.setRoute("GET /api/files/uploads", [
+      {
+        name: "input.csv",
+        size: 1024,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        source: "upload",
+      },
+    ]);
+    await stub!.setRoute("GET /api/files/outputs", [
+      {
+        name: "analysis/figure.png",
+        size: 2048,
+        modifiedAt: "2026-01-01T00:00:00Z",
+        source: "generated",
+      },
+    ]);
+
+    await page.getByRole("link", { name: "Datasets", exact: true }).click();
+
+    await expect(page.getByRole("heading", { level: 2, name: "Uploads" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Generated Results & Logs" }),
+    ).toBeVisible();
+    await expect(page.locator(".upload-item").filter({ hasText: "analysis/figure.png" }))
+      .toContainText("2.0 KB · Modified");
+  });
+
   // Chat is the only route with nothing to show without a project.
   test("chat sends you to pick a project, then back to chat", async ({ page }) => {
     await page.goto("/");
@@ -181,6 +211,15 @@ test.describe("projects page", () => {
 
     await empty.getByRole("button", { name: "Create a project" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("new projects inherit all MCP tools without asking the user", async ({ page }) => {
+    await installStub(page);
+    await page.goto("/projects?new=1");
+
+    const dialog = page.getByRole("dialog", { name: "Create project" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("textbox", { name: /^Tools/ })).toHaveCount(0);
   });
 
   // One request per count per card. Fine at this many projects, bad at fifty —
