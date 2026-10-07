@@ -96,7 +96,7 @@ rm -f "$build_log"
 # The one-line installer, run against this archive the way a user's machine
 # runs it against the release, so a change to the packages that the installer
 # no longer matches fails here rather than for a user. It installs only, into a
-# scratch folder, with no Start menu entry and no link on PATH.
+# scratch folder, with no Start menu entry, app-menu entry or link on PATH.
 log "installing the archive with the one-line installer"
 archive_name="$(basename "$archive")"
 version="${archive_name#vista-}"
@@ -110,11 +110,16 @@ if [[ "$host" == windows ]]; then
       -Version "$version" -NoLaunch
   installed="$install_root/app"
 else
+  # VISTA_INSTALL_DIR is the package folder itself. The app-menu entry, icon
+  # and LaunchServices registration land in the scratch folder or are skipped,
+  # not in the runner's own home.
   VISTA_INSTALL_BASE_URL="file://$(dirname "$archive")" \
-  VISTA_INSTALL_DIR="$install_root" \
+  VISTA_INSTALL_DIR="$install_root/app" \
   VISTA_BIN_DIR="$install_root/bin" \
+  XDG_DATA_HOME="$install_root/data" \
+  VISTA_INSTALL_NO_REGISTER=1 \
     bash "$repo/scripts/install.sh" --version "$version" --no-launch
-  installed="$install_root/${archive_name%%.tar.gz}"
+  installed="$install_root/app"
 fi
 installed_version="$(head -1 "$installed/VERSION" | tr -d '\r')"
 [[ "${installed_version%%+*}" == "$version" ]] \

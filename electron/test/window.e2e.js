@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import electronBinary from 'electron';
 
+import { EXIT_ALREADY_OPEN } from '../src/lifecycle.js';
 import { startFixtureServer } from './fixture-server.js';
 
 const APP_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -198,7 +199,7 @@ test('a second instance exits and leaves the first window in place', async () =>
     ...ROOT_ARGS,
   ]);
   const code = await new Promise((resolve) => second.on('exit', resolve));
-  expect(code).toBe(0);
+  expect(code).toBe(EXIT_ALREADY_OPEN);
   expect(app.windows()).toHaveLength(1);
 });
 

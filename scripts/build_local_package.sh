@@ -1064,7 +1064,8 @@ stage_window_windows() {
 # linux-desktop-window D7. Nothing is signed on Linux. Next to the window go
 # the two files that decide its sandbox: window-sandbox, which the launcher
 # and the smoke test run for its arguments (D1), and the AppArmor profile it
-# tells an Ubuntu researcher how to install (D2).
+# tells an Ubuntu researcher how to install (D2). And vista-app, the package's
+# entrypoint, which the app-menu entry runs (desktop-app-startup D9).
 stage_window_linux() {
   log "building the VISTA window (Electron $ELECTRON_VERSION)"
   local arch
@@ -1099,6 +1100,10 @@ stage_window_linux() {
   chmod 755 "$window"
   install -m 755 "$REPO_ROOT/electron/linux/window-sandbox" "$window/window-sandbox"
   install -m 644 "$REPO_ROOT/electron/linux/vista-window.apparmor" "$window/vista-window.apparmor"
+  install -m 755 "$REPO_ROOT/electron/linux/vista-app" "$window/vista-app"
+  # The icon the installer puts in the app menu's theme: the window's own copy
+  # is inside app.asar, out of the installer's reach.
+  install -m 644 "$REPO_ROOT/electron/assets/icon.png" "$window/vista.png"
 
   WINDOW_EXE="app/window/VISTA"
   [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
@@ -1125,10 +1130,9 @@ stage_window_macos() {
     --platform darwin --arch "$arch" --out "$out" | tail -1)"
   [[ -d "$built" ]] || die "the window packager produced nothing at $built"
 
-  # Kept as a `.app`, one level down (task 1.1): without the suffix macOS shows
-  # the folder's icon and name in the Dock and the app switcher.
-  local app="$STAGING_APP/window/VISTA.app"
-  mkdir -p "$STAGING_APP/window"
+  # macOS is app-first: this bundle is the package's Finder/Dock entrypoint.
+  # The diagnostic `vista` launcher and the large runtime remain its siblings.
+  local app="$STAGING/VISTA.app"
   mv "$built" "$app"
   rm -rf "$out"
 
@@ -1141,7 +1145,7 @@ stage_window_macos() {
   codesign --verify --deep --strict "$app" \
     || die "the VISTA window's signature does not verify after signing"
 
-  WINDOW_EXE="app/window/VISTA.app/Contents/MacOS/VISTA"
+  WINDOW_EXE="VISTA.app/Contents/MacOS/VISTA"
   [[ -x "$STAGING/$WINDOW_EXE" ]] || die "no window executable at $WINDOW_EXE"
   echo "window      : $(du -sh "$app" | cut -f1) (Electron $ELECTRON_VERSION)"
 }
@@ -1612,11 +1616,30 @@ write_manifest() {
 
   # Where the launcher finds the window, relative to the package root, or null
   # on a target that has none. Kept on one line: the launcher reads `exe` with
-  # the same `sed` field reader as the platform guard. Its bytes are part of
-  # `components.app` already, so they are not counted there twice.
-  local window_json=null
+  # the same `sed` field reader as the platform guard. The window has its own
+  # byte count; on macOS it is a top-level sibling rather than part of app/.
+  local window_json=null entrypoint_json=null diagnostic_launcher_json=null
   if [[ -n "$WINDOW_EXE" ]]; then
-    window_json="{ \"exe\": \"$WINDOW_EXE\", \"electron\": \"$ELECTRON_VERSION\", \"bytes\": $(size_of "$STAGING_APP/window") }"
+    # What a researcher opens (the application; design D1), and the terminal
+    # launcher kept for diagnostics. The application reads both to find its
+    # package and refuses to start if they do not describe it.
+    local window_path="$STAGING_APP/window"
+    case "$TARGET_OS" in
+      macos)
+        window_path="$STAGING/VISTA.app"
+        entrypoint_json='"VISTA.app"'
+        diagnostic_launcher_json='"vista"'
+        ;;
+      linux)
+        entrypoint_json='"app/window/vista-app"'
+        diagnostic_launcher_json='"vista"'
+        ;;
+      windows)
+        entrypoint_json='"app/window/VISTA.exe"'
+        diagnostic_launcher_json='"vista.cmd"'
+        ;;
+    esac
+    window_json="{ \"exe\": \"$WINDOW_EXE\", \"electron\": \"$ELECTRON_VERSION\", \"bytes\": $(size_of "$window_path") }"
   fi
 
   cat > "$STAGING/manifest.json" <<EOF
@@ -1625,6 +1648,8 @@ write_manifest() {
   "version": "$VERSION",
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "commit": "$COMMIT",
+  "entrypoint": $entrypoint_json,
+  "diagnostic_launcher": $diagnostic_launcher_json,
   "target": { "os": "$TARGET_OS", "arch": "$TARGET_ARCH"$(target_floor) },
   "runtimes": {
     "python": "$(basename "$BUNDLED_PYTHON_DIR")",
@@ -1679,6 +1704,24 @@ if window:
         sandbox = exe.parent / "window-sandbox"
         if not (sandbox.is_file() and os.access(sandbox, os.X_OK)):
             sys.exit("the Linux window has no executable window-sandbox next to it")
+# The application's own check of its package (electron/src/package-root.js)
+# expects exactly these.
+expected = {
+    "macos": ("VISTA.app", "vista"),
+    "linux": ("app/window/vista-app", "vista"),
+    "windows": ("app/window/VISTA.exe", "vista.cmd"),
+}.get(target_os)
+if expected:
+    if manifest.get("entrypoint") != expected[0]:
+        sys.exit(f"the {target_os} manifest does not name {expected[0]} as its entrypoint")
+    if manifest.get("diagnostic_launcher") != expected[1]:
+        sys.exit(f"the {target_os} manifest does not name {expected[1]} as its diagnostic launcher")
+    launcher = Path(sys.argv[1]).parent / manifest["diagnostic_launcher"]
+    if not (launcher.is_file() and (target_os == "windows" or os.access(launcher, os.X_OK))):
+        sys.exit(f"the {target_os} diagnostic launcher is missing or not executable")
+    entrypoint = Path(sys.argv[1]).parent / manifest["entrypoint"]
+    if not entrypoint.exists() or (target_os == "linux" and not os.access(entrypoint, os.X_OK)):
+        sys.exit(f"the {target_os} entrypoint {manifest['entrypoint']} is missing or not executable")
 for section, keys in (
     ("components", ("python", "node", "bin", "app", "payload")),
     ("payload", ("sandbox_image", "corpus", "vector_store", "embedding_weights")),
@@ -1910,4 +1953,3 @@ if [[ -n "$ARCHIVE_PATH" ]]; then
 else
   echo "$STAGING"
 fi
-

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <title>Starting VISTA</title>
+    <link rel="stylesheet" href="./startup.css" />
+    <script type="module" src="./startup-renderer.js"></script>
+  </head>
+  <body>
+    <main class="startup-shell" aria-labelledby="startup-title">
+      <header class="hero">
+        <img class="app-mark" src="../assets/icon.png" alt="" />
+        <div>
+          <p class="eyebrow">VISTA</p>
+          <h1 id="startup-title">Preparing your workspace</h1>
+          <p id="startup-message" class="message" aria-live="polite">
+            Checking this computer before VISTA starts.
+          </p>
+        </div>
+      </header>
+
+      <ol id="activities" class="activities" aria-label="Startup activities">
+        <li data-phase="preflight"><span class="indicator"></span><span>Checking this computer</span></li>
+        <li data-phase="resources"><span class="indicator"></span><span>Installing bundled resources</span></li>
+        <li data-phase="sandbox"><span class="indicator"></span><span>Preparing the code-execution sandbox</span></li>
+        <li data-phase="mcp"><span class="indicator"></span><span>Starting scientific tools</span></li>
+        <li data-phase="backend"><span class="indicator"></span><span>Preparing VISTA</span></li>
+        <li data-phase="ui"><span class="indicator"></span><span>Starting the interface</span></li>
+      </ol>
+
+      <section id="failure" class="failure" hidden aria-live="assertive">
+        <p id="failure-message"></p>
+        <div class="actions">
+          <button id="retry" class="primary" type="button">Try Again</button>
+          <button id="open-logs" type="button">Open Logs</button>
+          <button id="copy-diagnostics" type="button">Copy Diagnostics</button>
+          <button id="quit" type="button">Quit</button>
+        </div>
+      </section>
+
+      <p id="sandbox-notice" class="notice" hidden></p>
+
+      <p id="first-run-note" class="footnote">
+        The first start may take several minutes. VISTA will open when everything is ready.
+      </p>
+    </main>
+  </body>
+</html>

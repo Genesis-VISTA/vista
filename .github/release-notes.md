@@ -14,10 +14,15 @@ curl -fsSL ${DOWNLOAD_URL}/install.sh | bash
 powershell -ExecutionPolicy Bypass -c "irm ${DOWNLOAD_URL}/install.ps1 | iex"
 ```
 
-This downloads the package for your computer, checks it, installs it and starts VISTA. Run
-the same command again to start VISTA later, or to upgrade from an older version; your chats
-and settings are kept. After the first install you can also start it with `vista` in a
-terminal (macOS and Linux) or from the Start menu (Windows).
+This downloads the package for your computer, checks it, installs it and opens VISTA. After
+that, open VISTA like any other application: from Spotlight, Launchpad or Finder's
+Applications on macOS, from the app menu on Linux, or from the Start menu on Windows. Run the
+same command again to upgrade from an older version, with VISTA closed; your chats and settings
+are kept.
+
+VISTA installs into `/Applications/VISTA` on a Mac where your account can write there
+(administrators can), and into `~/Applications/VISTA` otherwise; into `~/.local/share/vista/app`
+on Linux; and into `%LOCALAPPDATA%\VISTA\app` on Windows.
 
 On Linux, VISTA needs a desktop session and access to `/dev/kvm`. The installer checks both
 before downloading and says what to do if either is missing.
@@ -35,7 +40,9 @@ ${ARCHIVE_TABLE}
 <details>
 <summary>Installing by hand, without the script</summary>
 
-Pick your platform. Each one is four steps: download, check, unpack, start.
+Pick your platform. Each one is four steps: download, check, unpack, open. Keep the unpacked
+folder together: the application and everything it runs are in it. To upgrade by hand, close VISTA and
+delete the old folder before unpacking the new one; your chats and settings are kept elsewhere.
 
 <details>
 <summary>macOS (Apple Silicon)</summary>
@@ -54,21 +61,26 @@ Pick your platform. Each one is four steps: download, check, unpack, start.
    shasum -a 256 -c vista-${VERSION}-mac-arm64.tar.gz.sha256
    ```
 
-3. **Unpack** it into a `vista` folder in your home folder.
+3. **Unpack** it into `/Applications/VISTA`. Without administrator rights, use
+   `~/Applications/VISTA` instead, in both lines.
 
    ```bash
-   mkdir -p ~/vista && tar -xf vista-${VERSION}-mac-arm64.tar.gz -C ~/vista
+   tar -xf vista-${VERSION}-mac-arm64.tar.gz
+   mv vista-${VERSION}-mac-arm64 /Applications/VISTA
    ```
 
-4. **Start** VISTA. The VISTA window opens, and closing it stops VISTA.
+4. **Open** `VISTA.app` in that folder, from Finder, Spotlight or Launchpad. It shows its startup
+   in its own window, then VISTA; quitting it stops VISTA.
 
    ```bash
-   ~/vista/vista-${VERSION}-mac-arm64/vista
+   open /Applications/VISTA/VISTA.app
    ```
 
-**If macOS says the app can't be opened**, run
-`xattr -dr com.apple.quarantine ~/vista/vista-${VERSION}-mac-arm64` and start it again, or
-allow it in System Settings → Privacy & Security.
+**If macOS says the app can't be opened**, the package was downloaded with a browser. Run
+`xattr -dr com.apple.quarantine /Applications/VISTA` and open it again, or allow it in System
+Settings → Privacy & Security.
+
+For diagnostics, `/Applications/VISTA/vista` starts the same VISTA from a terminal.
 
 </details>
 
@@ -88,21 +100,25 @@ allow it in System Settings → Privacy & Security.
    sha256sum -c vista-${VERSION}-linux-x86.tar.gz.sha256
    ```
 
-3. **Unpack** it into a `vista` folder in your home folder.
+3. **Unpack** it into `~/.local/share/vista/app`.
 
    ```bash
-   mkdir -p ~/vista && tar -xf vista-${VERSION}-linux-x86.tar.gz -C ~/vista
+   tar -xf vista-${VERSION}-linux-x86.tar.gz
+   mkdir -p ~/.local/share/vista && mv vista-${VERSION}-linux-x86 ~/.local/share/vista/app
    ```
 
-4. **Start** VISTA from a desktop session. The VISTA window opens, and closing it stops VISTA.
+4. **Open** VISTA from a desktop session. It shows its startup in its own window, then VISTA;
+   closing it stops VISTA. The one-line installer also adds it to your app menu.
 
    ```bash
-   ~/vista/vista-${VERSION}-linux-x86/vista
+   ~/.local/share/vista/app/app/window/vista-app
    ```
 
 **If it says it can't use `/dev/kvm`**, run `sudo usermod -aG kvm $USER`, log out and back
-in, and start it again. On stock Ubuntu it may also print two commands that turn on the
-window's sandbox; run them once.
+in, and open it again. On stock Ubuntu its startup window may also show two commands that turn
+on the window's sandbox; run them once.
+
+For diagnostics, `~/.local/share/vista/app/vista` starts the same VISTA from a terminal.
 
 </details>
 
@@ -126,12 +142,15 @@ window's sandbox; run them once.
    mkdir C:\vista -Force; tar -xf vista-${VERSION}-win-x86.zip -C C:\vista
    ```
 
-4. **Start** VISTA by double-clicking `vista.cmd` in `C:\vista\vista-${VERSION}-win-x86`, or
-   from PowerShell:
+4. **Open** VISTA by double-clicking `VISTA.exe` in `C:\vista\vista-${VERSION}-win-x86\app\window`,
+   or from PowerShell. It shows its startup in its own window, then VISTA; closing it stops
+   VISTA. The one-line installer also adds it to the Start menu.
 
    ```powershell
-   C:\vista\vista-${VERSION}-win-x86\vista.cmd
+   & C:\vista\vista-${VERSION}-win-x86\app\window\VISTA.exe --startup
    ```
+
+   For diagnostics, `vista.cmd` in the same folder starts VISTA from a console.
 
 </details>
 

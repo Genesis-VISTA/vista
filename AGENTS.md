@@ -64,19 +64,32 @@ locally. See [`docs/releasing.md`](docs/releasing.md). The mirror overwrites Git
 commits, so workflow changes land on GitLab like everything else.
 
 ### VISTA window (Electron)
-`electron/` is a window onto the UI and nothing else: it loads the `--url` it is given and never
-starts services. The launchers own its lifetime, and closing it stops VISTA.
+`electron/` is VISTA's application, and in a package it is the entry point on every platform
+(`VISTA.app`; `app/window/vista-app` from the Linux app menu; `app\window\VISTA.exe --startup`
+from the Start menu). In startup mode it opens a startup window, runs the package launcher as
+its child in supervised mode (`vista --supervised --progress=jsonl`, or `vista.ps1 -Supervised
+-Progress jsonl` on Windows), shows the launcher's protocol-v1 progress
+(`electron/src/startup-protocol.js`), hands over to the main window on `ui`/`ready`, and owns
+the session: closing it stops the launcher, which stops every service. The terminal launchers
+(`vista`, `vista.cmd`) are diagnostic commands that start the services and then the window.
+Given `--url`, as `./launch.sh` does, it is only a window onto that UI and starts nothing.
 ```bash
 ./launch.sh logs              # dev stack in the window (installs it via build.sh --electron)
-cd electron && npm test       # routing rules (hermetic, in PR CI)
-cd electron && npm run test:e2e  # window behaviour via Playwright; needs a display
+cd electron && npm test       # routing, startup protocol, launchers (hermetic, in PR CI)
+cd electron && npm run test:e2e  # window and startup behaviour via Playwright; needs a display
+./scripts/ci-local.sh launcher   # the launchers' supervised mode, bash and PowerShell
 ```
+Every failure code a launcher emits needs a message in `startup-protocol.js`; a unit test
+reads both launchers to check.
 Where a link goes is decided by origin alone in `electron/src/routing.js`: VISTA's own origin
 stays in the app, other http(s) goes to the system browser, and everything else is refused. So
-UI links need no Electron-specific code. The prebuilt macOS package ships it as
-`app/window/VISTA.app`, the Linux package as `app/window/VISTA`, and the Windows package as
-`app/window/VISTA.exe`, all found through the manifest's `window.exe`. There is no browser mode: the launcher refuses a session that cannot show
-the window. `VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
+UI links need no Electron-specific code. The prebuilt macOS package ships it as `VISTA.app` at
+the package root, the Linux package as `app/window/VISTA`, and the Windows package as
+`app/window/VISTA.exe`, found through the manifest's `window.exe`; the manifest's `entrypoint`
+and `diagnostic_launcher` name what a researcher opens and the terminal launcher, and the app
+refuses to start if they do not describe the package around it (`electron/src/package-root.js`).
+There is no browser mode: a session that cannot show the window is refused.
+`VISTA_NO_WINDOW=1` starts the services alone, for the build's smoke test only.
 
 VISTA's icon is `electron/assets/icon.svg`. Every other icon file is made from it by
 `cd electron && npm run icons` (`scripts/make-icons.js`, which renders with Electron itself):
@@ -85,14 +98,22 @@ VISTA's icon is `electron/assets/icon.svg`. Every other icon file is made from i
 editing the SVG.
 
 On Linux, whether the window gets `--no-sandbox` is decided in one place,
-`electron/linux/window-sandbox`. The package launcher, `./launch.sh` and the
-build's smoke test all call it, so don't hardcode the flag anywhere else. It prints the flag
+`electron/linux/window-sandbox`. `electron/linux/vista-app` (the package's entry point, which
+also refuses root, no display and missing libraries before Electron starts), the terminal
+launcher, `./launch.sh` and the build's smoke test all call it, so don't hardcode the flag
+anywhere else. It prints the flag
 only when the host blocks Chromium's sandbox: as root, or where unprivileged user namespaces
 are blocked and VISTA's AppArmor profile (`electron/linux/vista-window.apparmor`, shipped next
 to the window) isn't installed, as on stock Ubuntu 24.04. Each time, it says why on stderr.
-While the window is unsandboxed, `main.js` sends PDFs to the system browser. Test with
-`cd electron && npm test`, which runs `window-sandbox.test.js` hermetically, and the Linux e2e
-container command in `docs/validation-lane.md`.
+While the window is unsandboxed, `main.js` sends PDFs to the system browser, and the startup
+window shows why (`VISTA_SANDBOX_NOTICE`, from `vista-app`). Test with
+`cd electron && npm test`, which runs `window-sandbox.test.js` and `vista-app.test.js`
+hermetically, and the Linux e2e container command in `docs/validation-lane.md`.
+
+The one-line installers put each package in one fixed folder: macOS `/Applications/VISTA`
+(`~/Applications/VISTA` where that cannot be written), Linux `~/.local/share/vista/app` with an
+app-menu entry, Windows `%LOCALAPPDATA%\VISTA\app` with a Start-menu entry. They refuse while
+any process runs from a folder they would replace. Test with `./scripts/ci-local.sh install`.
 
 ### MCP Server (vista_mcp_server)
 Launches vista_mcp_server on :8000/mcp (HPC, RAG, display_file tools)
@@ -129,7 +150,7 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only

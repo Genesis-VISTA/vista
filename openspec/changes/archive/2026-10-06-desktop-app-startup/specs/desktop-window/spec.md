@@ -1,10 +1,4 @@
-# desktop-window Specification
-
-## Purpose
-Lets a researcher use VISTA in a dedicated application window whose lifetime is VISTA's
-lifetime, instead of a browser tab that can be lost or outlive the services behind it.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: The window is VISTA's lifetime
 
@@ -72,102 +66,6 @@ launcher or service.
 - **WHEN** VISTA is launched again while the main window is open
 - **THEN** the main window is brought to the front and the second launch exits without starting a
   second service stack
-
-### Requirement: External content opens in the system browser
-
-Links and pop-ups that lead outside VISTA's own origin SHALL open in the system's default
-browser. They SHALL NOT open inside the VISTA window or in a VISTA-owned window. The VISTA
-window itself SHALL NOT navigate away from VISTA's origin.
-
-#### Scenario: External link
-
-- **WHEN** the researcher follows a link to another site, such as a DOI, a token-source
-  page, or a skill repository
-- **THEN** it opens in the system browser and the VISTA window stays where it was
-
-#### Scenario: Globus authorization
-
-- **WHEN** the researcher starts connecting Globus from user settings and opens the
-  authorization link
-- **THEN** the Globus login opens in the system browser, and the code it produces can be
-  pasted back into the VISTA window to complete the connection
-
-#### Scenario: Agent-supplied URL
-
-- **WHEN** the researcher confirms opening a URL an agent asked them to visit
-- **THEN** it opens in the system browser
-
-#### Scenario: Off-origin navigation is refused
-
-- **WHEN** anything attempts to navigate the VISTA window to another origin, including a
-  file dropped outside an upload area
-- **THEN** the window stays on its current page
-
-### Requirement: VISTA's own documents and files are usable without tabs
-
-Content that VISTA serves and that a browser would show in a new tab SHALL open in a VISTA
-window. The exception is PDFs while the window runs without the renderer sandbox: those
-SHALL open in the system browser instead. Files that VISTA offers for download SHALL be
-saved to a location the researcher chooses.
-
-#### Scenario: Opening a cited paper
-
-- **WHEN** the researcher opens a PDF from a knowledge base in a window that runs with the
-  renderer sandbox
-- **THEN** it opens in a separate VISTA window that can be closed without affecting the
-  main window
-
-#### Scenario: Opening a cited paper without the sandbox
-
-- **WHEN** the researcher opens a PDF from a knowledge base in a window that runs without
-  the renderer sandbox
-- **THEN** it opens in the system browser and the VISTA window stays where it was
-
-#### Scenario: Downloading a file
-
-- **WHEN** the researcher downloads a dataset file or an agent-produced file
-- **THEN** a save dialog appears and the file is written where they choose
-
-### Requirement: Standard desktop editing behaviour
-
-The window SHALL support the platform's standard editing and window shortcuts, including
-copy, paste, cut, select-all, undo, and quit.
-
-#### Scenario: Copying and pasting a token
-
-- **WHEN** the researcher copies an API key in another application and pastes it into a
-  VISTA settings field with the platform paste shortcut
-- **THEN** the key is pasted
-
-### Requirement: The page has no elevated privileges
-
-Content loaded in any VISTA window SHALL have no more capability than it has in a browser
-tab: no access to the local filesystem, processes, or application internals beyond what
-the web platform grants. Permission requests from the page (camera, microphone,
-notifications, geolocation and similar) SHALL be denied.
-
-#### Scenario: Page cannot reach the host
-
-- **WHEN** script in a VISTA page attempts to use host-level APIs
-- **THEN** none are available, exactly as in a browser tab
-
-### Requirement: The window in development
-
-The development launcher SHALL open the development stack in the same window by default
-in its logs mode, with the interface's live reloading intact, and SHALL offer one option
-that starts the services alone, for use in a browser.
-
-#### Scenario: Development window
-
-- **WHEN** a developer starts the development stack in logs mode
-- **THEN** the interface opens in the VISTA window once the development server answers,
-  edits to the interface reload in that window, and closing it stops the stack
-
-#### Scenario: Services only
-
-- **WHEN** a developer starts the development stack with the services-only option
-- **THEN** the services start without a window and the interface is reachable in a
-  browser
 
 ### Requirement: Window mode where it cannot run
 
@@ -273,6 +171,8 @@ attempt's log is.
 - **WHEN** a developer opens the development stack in the window on any of these hosts
 - **THEN** the sandbox is decided by the same check, and its reason appears in the window's
   output and log
+
+## ADDED Requirements
 
 ### Requirement: Startup reports real activity
 

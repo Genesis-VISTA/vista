@@ -3,13 +3,14 @@
   "productName": "VISTA",
   "version": "0.1.0",
   "private": true,
-  "description": "The window VISTA's launchers open onto the running UI. It never starts services.",
+  "description": "The native VISTA desktop application and startup experience.",
   "type": "module",
   "main": "src/main.js",
+  "desktopName": "vista.desktop",
   "scripts": {
     "start": "electron . --dev --url=http://localhost:3000",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/routing.test.js test/permissions.test.js test/window-sandbox.test.js test/appearance.test.js",
+    "test": "node --test test/*.test.js",
     "test:e2e": "playwright test -c playwright.config.js",
     "icons": "electron scripts/make-icons.js"
   },

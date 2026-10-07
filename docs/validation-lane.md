@@ -139,7 +139,95 @@ cd electron && docker run --rm -v "$PWD:/w" -v /w/node_modules -w /w \
 This covers external links and `window.open` going to the system browser, off-origin
 navigation and redirects being refused, `file:` links, same-origin pop-ups and PDFs
 opening child windows, downloads, the page having no Node access, the single-instance
-lock, and `--smoke-test` exit codes.
+lock, startup progress and retry, startup-to-main handoff, shutdown cleanup, and
+`--smoke-test` exit codes.
+
+### Thin macOS developer app
+
+This validates the source-backed app separately from the complete release
+package:
+
+```bash
+./scripts/build_mac_dev_app.sh
+codesign --verify --deep --strict "dist/mac-dev/VISTA Dev.app"
+open "dist/mac-dev/VISTA Dev.app"
+```
+
+Confirm the preparation window appears without Terminal, transitions to the
+1280 × 860 main window at `http://localhost:3000`, and exposes DevTools in the
+View menu. Quit the app and confirm ports 3000, 8000, and 8001 are released.
+The app is intentionally tied to the checkout named by `dist/mac-dev/dev-root`;
+it does not exercise release payload assembly, relocation, or installation.
+
+The checkout launcher has a hermetic lifecycle test:
+
+```bash
+./scripts/tests/mac_dev_launcher_test.sh
+```
+
+### macOS release checklist
+
+**Manual; never in PR CI.** Run it on a Mac before publishing a release, against the release
+build's own archive (`desktop-app-startup` design D12). The package is ad-hoc signed and not
+notarized: the supported routes, the one-line installer and a `curl` download, never quarantine
+it. Use an administrator account that has no VISTA installed, or remove `/Applications/VISTA`,
+`~/Applications/VISTA` and `~/.local/share/vista` first. Keep `~/.vista` to test an upgrade, or
+move it aside to test a first run.
+
+1. **Install** with the release's one-line installer from a terminal:
+
+   ```bash
+   curl -fsSL https://github.com/Genesis-VISTA/vista/releases/download/<tag>/install.sh | bash
+   ```
+
+   It installs into `/Applications/VISTA` and opens VISTA, with no Gatekeeper prompt.
+   `xattr -l /Applications/VISTA/VISTA.app` shows no `com.apple.quarantine`. A
+   `com.apple.provenance` there is expected: macOS records it on files a process writes, and it
+   brings no Gatekeeper prompt.
+2. **First run.** The startup window appears at once, with the VISTA icon, in the system's light
+   or dark appearance. It shows real activity (resources, the sandbox image, the three
+   services), then hands over to the 1280 × 860 main window. Start one chat that runs code, so a
+   real sandbox is created.
+3. **The Dock.** VISTA's icon is in the Dock while it runs, the same size as its neighbours, not
+   smaller.
+4. **Where it is listed.** VISTA is in the Apps view (Launchpad), Spotlight finds "VISTA", and
+   Finder's Applications shows it inside a `VISTA` folder.
+5. **Quit and restart.** Quit with Cmd-Q. Then:
+
+   ```bash
+   pgrep -fl /Applications/VISTA ; lsof -nP -iTCP:3000 -iTCP:8000 -iTCP:8001 -sTCP:LISTEN
+   ```
+
+   Both print nothing. Open VISTA again at once, from Spotlight: the later run marks prepared
+   work as already done and reaches the main window in seconds. Repeat by closing the startup
+   window during one run and the main window during another.
+6. **Second launch.** While VISTA is starting, open it again from the Apps view; repeat once the
+   main window is up. Each time the existing window comes forward and only one set of services
+   runs.
+7. **An expected error.** Quit, hold port 3000 (`python3 -m http.server 3000`), open VISTA. The
+   startup window names the port conflict, Open Logs opens the logs folder, Copy Diagnostics
+   copies versions, phase and code with no environment values, and Retry stays disabled until
+   cleanup finishes. Free the port, select Retry: startup completes.
+8. **Upgrades.** The installer refuses only to replace a running VISTA, so ask for another
+   version: with VISTA open, add `--version` with any other value
+   (`curl -fsSL <installer URL> | bash -s -- --version 0.0.1`). It says to close VISTA, before
+   downloading anything, and changes nothing. Close VISTA and run the installer as in step 1: it
+   starts the installed copy without downloading.
+9. **A separated app.** Copy only `VISTA.app` out of `/Applications/VISTA` and open the copy. It
+   shows the package-layout error and starts no service. Delete the copy.
+10. **The sandbox entitlement.** The build re-signs only the window, so the bundled `msb` keeps
+    the entitlements the sandbox needs:
+
+    ```bash
+    msb="$(find /Applications/VISTA/app -path '*/_bundled/bin/msb' | head -1)"
+    codesign -d --entitlements - --xml "$msb"
+    ```
+
+    Both `com.apple.security.hypervisor` and
+    `com.apple.security.cs.disable-library-validation` are true.
+
+Linux's app-menu entry and its window icon, and the Windows Start-menu entry, have no manual
+check; the release build's smoke test covers their supervised startup on every platform.
 
 **Stopping and cleanup** (a built package, ideally with a chat started so a sandbox
 exists). Start `./vista`, then stop it each of these three ways:

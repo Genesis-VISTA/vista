@@ -37,3 +37,30 @@ test('follows the OS appearance', () => {
   assert.equal(windowBackground(true), WINDOW_BACKGROUND.dark);
   assert.equal(windowBackground(false), WINDOW_BACKGROUND.light);
 });
+
+// The startup page declares a subset of the UI's tokens; each has to carry the
+// UI's own value in both themes.
+test('the startup page uses the UI palette, token for token, in both themes', () => {
+  const startup = readFileSync(
+    fileURLToPath(new URL('../src/startup.css', import.meta.url)),
+    'utf-8',
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  /** @param {string} block */
+  const tokens = (block) => Object.fromEntries(
+    [...block.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim().toLowerCase()]),
+  );
+  /** @param {string} source @param {RegExp} selector */
+  const block = (source, selector) => {
+    const hit = source.match(selector);
+    assert.ok(hit, `no block matching ${selector}`);
+    return tokens(hit[1]);
+  };
+  const pageLight = block(startup, /(?:^|\n):root \{([^}]*)\}/);
+  const pageDark = block(startup, /@media \(prefers-color-scheme: dark\) \{\s*:root \{([^}]*)\}/);
+  const uiLight = block(css, /(?:^|\n):root \{([^}]*)\}/);
+  const uiDark = block(css, /:root:not\(\[data-theme="light"\]\) \{([^}]*)\}/);
+  assert.ok(Object.keys(pageLight).length >= 8);
+  assert.deepEqual(Object.keys(pageDark).sort(), Object.keys(pageLight).sort());
+  for (const [name, value] of Object.entries(pageLight)) assert.equal(value, uiLight[name], `light ${name}`);
+  for (const [name, value] of Object.entries(pageDark)) assert.equal(value, uiDark[name], `dark ${name}`);
+});
