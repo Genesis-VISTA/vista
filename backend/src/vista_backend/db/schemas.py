@@ -401,7 +401,7 @@ class SkillUpdate(BaseModel):
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
-InferenceProvider = Literal["i2", "mag", "custom"]
+InferenceProvider = Literal["i2", "mag", "olcf", "custom"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
 
@@ -421,6 +421,7 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "inference_api_key",
     "inference_provider",
     "inference_mag_api_key",
+    "inference_olcf_api_key",
     "inference_custom_api_key",
     "nersc_account",
     "nersc_remote_dir",
@@ -452,6 +453,7 @@ class UserCreate(UserBase):
     inference_api_key: str | None = None
     inference_provider: InferenceProvider | None = None
     inference_mag_api_key: str | None = None
+    inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
@@ -482,6 +484,7 @@ class UserUpdate(UserBase):
     inference_api_key: str | None = None
     inference_provider: InferenceProvider | None = None
     inference_mag_api_key: str | None = None
+    inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
@@ -518,6 +521,7 @@ class UserSelfUpdate(UserBase):
     inference_api_key: str | None = None
     inference_provider: InferenceProvider | None = None
     inference_mag_api_key: str | None = None
+    inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
@@ -578,6 +582,7 @@ class UserPublicWithConfig(UserBase):
     inference_provider: str | None = None
     """ Plain on the way out, like `hpc_hidden_clusters`: only writes are checked. """
     inference_mag_api_key: str | None = None
+    inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
@@ -627,7 +632,7 @@ class UserTable(SQLModel, table=True):
     """
     inference_provider: str | None = None
     """
-    `i2`, `mag` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
+    `i2`, `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
     until the researcher chooses: i2, or `Settings` where they differ from it.
     """
     inference_base_url: str | None = None
@@ -652,6 +657,14 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ The AmSC MAG provider's project access token. Encrypted at rest. """
+    inference_olcf_api_key: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    The OLCF Inference provider's S3M project access token. Encrypted at rest.
+    Kept apart from the Odo and Frontier S3M tokens: S3M tokens carry their own
+    permissions, and a compute token is not known to be accepted for inference.
+    """
     inference_custom_api_key: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )

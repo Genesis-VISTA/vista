@@ -29,7 +29,7 @@ import { useEffect, useState } from "react";
  */
 const OPENAI_PREFIX = "openai:";
 
-/** A bare id from `/v1/models` (or the picker) as the qualified id `inference_model` stores. */
+/** A bare id from the provider's model list (or the picker) as the qualified id `inference_model` stores. */
 export function qualifyModelId(id: string): string {
   return `${OPENAI_PREFIX}${id}`;
 }

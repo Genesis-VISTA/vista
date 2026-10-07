@@ -36,6 +36,7 @@ const PROJECT: Project = {
 const PROVIDERS = [
   { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
   { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
 
@@ -48,7 +49,7 @@ function view(overrides: Record<string, unknown> = {}) {
     model: "openai:claude-sonnet",
     model_is_default: true,
     has_credential: true,
-    keys_set: { i2: true, mag: false, custom: false },
+    keys_set: { i2: true, mag: false, olcf: false, custom: false },
     ...overrides,
   };
 }
@@ -60,7 +61,7 @@ const MAG_NO_MODEL = {
   base_url: "https://i2-api.staging.american-science-cloud.org/v1",
   model: null,
   model_is_default: false,
-  keys_set: { i2: true, mag: true, custom: false },
+  keys_set: { i2: true, mag: true, olcf: false, custom: false },
 };
 
 let inference: Record<string, unknown>;

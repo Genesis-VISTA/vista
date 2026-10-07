@@ -142,18 +142,25 @@ def i2_settings(monkeypatch):
 
 
 def test_presets():
-    i2, mag, custom = (PROVIDER_PRESETS[p] for p in ("i2", "mag", "custom"))
+    i2, mag, olcf, custom = (
+        PROVIDER_PRESETS[p] for p in ("i2", "mag", "olcf", "custom")
+    )
+    assert list(PROVIDER_PRESETS) == ["i2", "mag", "olcf", "custom"]
     assert i2.base_url == "https://api.i2-core.american-science-cloud.org"
     assert i2.default_model == "claude-sonnet"
     assert mag.base_url == "https://i2-api.staging.american-science-cloud.org/v1"
     assert mag.default_model is None
+    assert olcf.name == "OLCF Inference"
+    assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
+    assert olcf.default_model == "gpt-oss-120b"
     assert custom.takes_url and custom.default_model is None
-    assert not i2.takes_url and not mag.takes_url
+    assert not i2.takes_url and not mag.takes_url and not olcf.takes_url
 
 
 _ALL_KEYS = dict(
     inference_api_key="i2-key",
     inference_mag_api_key="mag-key",
+    inference_olcf_api_key="olcf-key",
     inference_custom_api_key="custom-key",
     inference_base_url="https://custom.example/v1",
 )
@@ -164,6 +171,7 @@ _ALL_KEYS = dict(
     [
         ("i2", PROVIDER_PRESETS["i2"].base_url, "i2-key", "openai:claude-sonnet"),
         ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", None),
+        ("olcf", PROVIDER_PRESETS["olcf"].base_url, "olcf-key", "openai:gpt-oss-120b"),
         ("custom", "https://custom.example/v1", "custom-key", None),
     ],
 )
@@ -178,6 +186,19 @@ def test_row_provider_picks_its_url_key_and_default(
     assert target.api_key == key
     assert target.model == model
     assert target.model_is_default is (model is not None)
+
+
+def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
+    """A compute token is not known to be accepted for inference."""
+    cluster_tokens = dict(odo_s3m_token="odo-s3m", frontier_s3m_token="frontier-s3m")
+    target = resolve_inference_target(
+        _user(inference_provider="olcf", **cluster_tokens)
+    )
+    assert target.api_key is None
+    target = resolve_inference_target(
+        _user(inference_provider="olcf", inference_olcf_api_key="olcf-key", **cluster_tokens)
+    )
+    assert target.api_key == "olcf-key"
 
 
 def test_row_provider_uses_the_chosen_model(i2_settings):
@@ -268,6 +289,7 @@ async def test_new_keys_are_not_plaintext_in_the_database_file(tmp_path, monkeyp
     get_fernet.cache_clear()
     secrets = {
         "inference_mag_api_key": "mag-do-not-store-in-the-clear",
+        "inference_olcf_api_key": "olcf-do-not-store-in-the-clear",
         "inference_custom_api_key": "custom-do-not-store-in-the-clear",
     }
     try:

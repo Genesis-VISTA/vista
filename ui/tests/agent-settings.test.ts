@@ -11,6 +11,7 @@ import { qualifyModelInput } from "@/lib/models";
 const PROVIDERS = [
   { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
   { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
 
@@ -23,7 +24,7 @@ function inferenceView(overrides: Record<string, unknown> = {}) {
     model: "openai:claude-sonnet",
     model_is_default: true,
     has_credential: true,
-    keys_set: { i2: true, mag: false, custom: false },
+    keys_set: { i2: true, mag: false, olcf: false, custom: false },
     ...overrides,
   };
 }
@@ -58,7 +59,7 @@ describe("agent settings store", () => {
       provider: "i2",
       model: "openai:claude-sonnet",
       modelIsDefault: true,
-      keysSet: { i2: true, mag: false, custom: false },
+      keysSet: { i2: true, mag: false, olcf: false, custom: false },
     });
     expect(result.current.settings?.providers[0]).toEqual({
       id: "i2",

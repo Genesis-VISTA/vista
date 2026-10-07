@@ -48,7 +48,7 @@ _CONFIGURED_ENDPOINT_PROVIDERS = frozenset(
     {"openai", "openai-chat", "openai-responses"}
 )
 
-ProviderId = Literal["i2", "mag", "custom"]
+ProviderId = Literal["i2", "mag", "olcf", "custom"]
 TargetSource = Literal["user", "config", "default"]
 
 
@@ -93,6 +93,16 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
         base_url="https://i2-api.staging.american-science-cloud.org/v1",
         default_model=None,
         key_field="inference_mag_api_key",
+    ),
+    "olcf": ProviderPreset(
+        id="olcf",
+        name="OLCF Inference",
+        base_url="https://s3m.olcf.ornl.gov/olcf/open/v1/inference",
+        # OLCF's documented example model; not yet tried with VISTA's tools.
+        default_model="gpt-oss-120b",
+        # An S3M token with Inference Service access, apart from the Odo and
+        # Frontier S3M tokens, which are not known to be accepted here.
+        key_field="inference_olcf_api_key",
     ),
     "custom": ProviderPreset(
         id="custom",

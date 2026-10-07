@@ -34,9 +34,11 @@ export type UserPublicWithConfig = UserPublic & {
   inference_base_url: string | null;
   /** AmSC i2's key (the one key there was before provider choice). */
   inference_api_key: string | null;
-  /** `i2`, `mag` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
+  /** `i2`, `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
   inference_provider?: string | null;
   inference_mag_api_key?: string | null;
+  /** OLCF Inference's S3M token, kept apart from the Odo and Frontier ones. */
+  inference_olcf_api_key?: string | null;
   inference_custom_api_key?: string | null;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
@@ -89,6 +91,7 @@ export type UserSelfUpdate = {
   /** Changing it clears `inference_model` on the backend, unless this update sets one. */
   inference_provider?: string | null;
   inference_mag_api_key?: string | null;
+  inference_olcf_api_key?: string | null;
   inference_custom_api_key?: string | null;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;

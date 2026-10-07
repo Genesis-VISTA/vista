@@ -261,6 +261,7 @@ def test_existing_database_gains_the_inference_provider_columns(tmp_path):
     assert {
         "inference_provider",
         "inference_mag_api_key",
+        "inference_olcf_api_key",
         "inference_custom_api_key",
     } <= columns
 
@@ -335,20 +336,31 @@ async def test_inference_view_has_no_secrets(session, alice, i2_settings):
     view = (await get_inference(row)).model_dump(mode="json")
 
     assert "secret-value" not in str(view)
-    assert [p["id"] for p in view["providers"]] == ["i2", "mag", "custom"]
+    assert [p["id"] for p in view["providers"]] == ["i2", "mag", "olcf", "custom"]
     assert view["providers"][0] == {
         "id": "i2",
         "name": "AmSC i2",
         "takes_url": False,
         "default_model": "claude-sonnet",
     }
-    assert view["providers"][2]["takes_url"] is True
+    assert view["providers"][2] == {
+        "id": "olcf",
+        "name": "OLCF Inference",
+        "takes_url": False,
+        "default_model": "gpt-oss-120b",
+    }
+    assert view["providers"][3]["takes_url"] is True
     assert view["provider"] == "i2"
     assert view["source"] == "default"
     assert view["model"] == "openai:claude-sonnet"
     assert view["model_is_default"] is True
     assert view["has_credential"] is True
-    assert view["keys_set"] == {"i2": True, "mag": True, "custom": False}
+    assert view["keys_set"] == {
+        "i2": True,
+        "mag": True,
+        "olcf": False,
+        "custom": False,
+    }
 
 
 @pytest.mark.anyio
