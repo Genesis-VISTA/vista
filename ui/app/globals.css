@@ -4850,6 +4850,41 @@ textarea.input:focus {
   outline-offset: 1px;
 }
 
+/* One facility's cards, under its name: OLCF, then NERSC, as in the settings
+   navigation. */
+.hpc-facility {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-rail.collapsed .hpc-facility {
+  align-items: center;
+}
+
+.hpc-facility-head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.hpc-facility-institution {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.hpc-facility-short {
+  margin: 4px 0 2px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
 .hpc-collapsed-divider {
   width: 24px;
   height: 1px;

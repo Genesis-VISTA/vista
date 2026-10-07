@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type HTMLAttributes } from "react";
 import {
   HPC_CLUSTER_TITLES,
+  RESOURCE_TREE,
   useHpcStatus,
   type HpcCheck,
   type HpcCluster,
@@ -11,9 +12,12 @@ import {
 } from "@/lib/hpc-status";
 
 /**
- * The NavRail's HPC section: one card per visible cluster, saying whether
- * VISTA could use it for this researcher right now, and a details popover per
- * card listing each live check. Built to the "HPC Availability Cards" canvas.
+ * The NavRail's Resources section: one card per visible cluster, saying
+ * whether VISTA could use it for this researcher right now, and a details
+ * popover per card listing each live check. Built to the "HPC Availability
+ * Cards" canvas. Cards are grouped under their facility (OLCF, NERSC) in
+ * `RESOURCE_TREE` order, the same order as the settings navigation, and a
+ * facility with no visible cluster has no header.
  *
  * Every state has its own dot shape as well as its own color, so the cards
  * read without color; every card also carries its status word, and red words
@@ -242,7 +246,15 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
   // Before the first answer the visible clusters are known from settings but
   // their state is not: Checking, or Couldn't verify if the request failed.
   const byCluster = new Map(view.clusters?.map((c) => [c.cluster, c]) ?? []);
-  const cards = visibleClusters.map((cluster) => {
+  const visible = new Set(visibleClusters);
+  const groups = RESOURCE_TREE.flatMap((institution) =>
+    institution.facilities.map((facility) => ({
+      facility,
+      institution,
+      clusters: facility.clusters.filter((c) => visible.has(c)),
+    })),
+  ).filter((g) => g.clusters.length > 0);
+  const cards = groups.flatMap((g) => g.clusters).map((cluster) => {
     const entry = byCluster.get(cluster);
     const state: HpcDisplayState = entry
       ? entry.state
@@ -275,7 +287,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
     <>
       {!collapsed ? (
         <div className="hpc-section-head">
-          <span className="nav-rail-section-label hpc-section-label">HPC</span>
+          <span className="nav-rail-section-label hpc-section-label">Resources</span>
           {stale && view.lastSuccessAt !== null && (
             <span className="hpc-stale" title="VISTA couldn't recheck; showing the last result">
               checked {minutesAgo(view.lastSuccessAt, view.now)}
@@ -299,44 +311,52 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
         <div className="hpc-collapsed-divider" aria-hidden="true" />
       )}
 
-      {cards.map(({ cluster, state, status, rechecking }) => {
-        const title = HPC_CLUSTER_TITLES[cluster];
-        const label = STATE_LABELS[state];
-        const isOpen = open?.cluster === cluster;
-        // Hovering says why a card isn't Ready: the collapsed rail through its
-        // own tooltip, the expanded one through the browser's.
-        const why = state === "ready" ? null : failureSummary(status);
-        const hint = why ? `${title} · ${label}: ${why}` : `${title} · ${label}`;
-        return (
-          <button
-            key={cluster}
-            type="button"
-            data-hpc-card={cluster}
-            className={`hpc-card${collapsed ? " hpc-card--collapsed" : ""}${isOpen ? " open" : ""}`}
-            aria-label={`${title}: ${label}`}
-            aria-expanded={isOpen}
-            aria-haspopup="dialog"
-            onClick={(e) => toggle(cluster, e.currentTarget)}
-            title={collapsed ? undefined : (why ?? undefined)}
-            {...tipProps(hint)}
-          >
-            <HpcStatusDot state={state} />
-            {collapsed ? (
-              <span className="hpc-card-short" aria-hidden="true">{SHORT[cluster]}</span>
-            ) : (
-              <>
-                <span className="hpc-card-text">
-                  <span className="hpc-card-name">{title}</span>
-                  <span className={`hpc-card-word${WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}>
-                    {label}
-                  </span>
-                </span>
-                {rechecking && <HpcStatusDot state="checking" />}
-              </>
-            )}
-          </button>
-        );
-      })}
+      {groups.map(({ facility, institution, clusters }) => (
+        <div key={facility.id} role="group" aria-label={facility.name} className="hpc-facility">
+          <div className={collapsed ? "hpc-facility-short" : "hpc-facility-head"} aria-hidden="true">
+            {facility.name}
+            {!collapsed && <span className="hpc-facility-institution">{institution.name}</span>}
+          </div>
+          {cards.filter((c) => clusters.includes(c.cluster)).map(({ cluster, state, status, rechecking }) => {
+            const title = HPC_CLUSTER_TITLES[cluster];
+            const label = STATE_LABELS[state];
+            const isOpen = open?.cluster === cluster;
+            // Hovering says why a card isn't Ready: the collapsed rail through its
+            // own tooltip, the expanded one through the browser's.
+            const why = state === "ready" ? null : failureSummary(status);
+            const hint = why ? `${title} · ${label}: ${why}` : `${title} · ${label}`;
+            return (
+              <button
+                key={cluster}
+                type="button"
+                data-hpc-card={cluster}
+                className={`hpc-card${collapsed ? " hpc-card--collapsed" : ""}${isOpen ? " open" : ""}`}
+                aria-label={`${title}: ${label}`}
+                aria-expanded={isOpen}
+                aria-haspopup="dialog"
+                onClick={(e) => toggle(cluster, e.currentTarget)}
+                title={collapsed ? undefined : (why ?? undefined)}
+                {...tipProps(hint)}
+              >
+                <HpcStatusDot state={state} />
+                {collapsed ? (
+                  <span className="hpc-card-short" aria-hidden="true">{SHORT[cluster]}</span>
+                ) : (
+                  <>
+                    <span className="hpc-card-text">
+                      <span className="hpc-card-name">{title}</span>
+                      <span className={`hpc-card-word${WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}>
+                        {label}
+                      </span>
+                    </span>
+                    {rechecking && <HpcStatusDot state="checking" />}
+                  </>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ))}
 
       {open && openCard && (
         <HpcDetails

@@ -39,8 +39,8 @@
 
 ## 5. UI: rail
 
-- [ ] 5.1 Rename the rail's HPC section to Resources and group its cards under facility headers from `RESOURCE_TREE`, omitting a facility with no visible cluster, and verify `HpcStatusSection.test.tsx` covers the grouping and Perlmutter hidden → no NERSC header
-- [ ] 5.2 Group the collapsed rail's short labels under short facility labels, keeping accessible names like "Frontier: Ready", and verify by test
+- [x] 5.1 Rename the rail's HPC section to Resources and group its cards under facility headers from `RESOURCE_TREE`, omitting a facility with no visible cluster, and verify `HpcStatusSection.test.tsx` covers the grouping and Perlmutter hidden → no NERSC header
+- [x] 5.2 Group the collapsed rail's short labels under short facility labels, keeping accessible names like "Frontier: Ready", and verify by test
 
 ## 6. Wrap-up
 

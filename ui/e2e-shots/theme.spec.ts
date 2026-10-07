@@ -208,6 +208,15 @@ const SCREENS: { name: string; go: (page: Page, stub: Stub) => Promise<void> }[]
     },
   },
   {
+    // The collapsed rail's resources: short labels under short facility labels.
+    name: "rail-collapsed",
+    go: async (page) => {
+      await page.goto("/projects");
+      await page.getByRole("button", { name: "Collapse navigation" }).click();
+      await expect(page.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
+    },
+  },
+  {
     // Too narrow for both columns: the list on its own.
     name: "settings-narrow",
     go: async (page) => {
