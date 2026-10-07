@@ -804,9 +804,17 @@ async def add_publications(
     await session.flush()
     await session.refresh(kb)
 
-    # Spawn the indexer in the background. We commit the current
-    # session first (so the queued statuses are persisted) — the
-    # background task will open its own session to update results.
+    # Commit before spawning the indexer. FastAPI runs background tasks
+    # before the session dependency exits, so the request's own commit
+    # would come only after the indexer had finished: its fresh session
+    # would not see these publications, record nothing, and leave the KB
+    # "pending" — while our open transaction held the write lock it needed.
+    if not await commit_with_retry(session, context="add_publications"):
+        raise HTTPException(
+            status_code=503, detail="Database is busy; try the upload again."
+        )
+    await session.refresh(kb)
+
     rag_db_path = kb.rag_db_path
     pdfs_dir_str = str(pdfs_dir)
     kb_id = kb.id
