@@ -465,7 +465,9 @@ async def seed_db(engine: AsyncEngine) -> None:
                     "from 1/4 degree to 1/24 degree (~25 km to ~4 km) on GPUs, with "
                     "evaluation against held-out 1990 truth and a bilinear baseline."
                 ),
-                system_prompt=(SYSTEM_PROMPTS / "water4energy.md").read_text(),
+                system_prompt=(SYSTEM_PROMPTS / "water4energy.md").read_text(
+                    encoding="utf-8"
+                ),
                 skills=sorted(
                     {"water4energy-diagnostic", "refine-downscaling"} - skipped_skills
                 ),

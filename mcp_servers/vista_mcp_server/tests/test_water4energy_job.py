@@ -52,7 +52,7 @@ def _load_wrapper():
 
 def test_cluster_defaults_are_frontier_only_and_short():
     defaults = ClusterDefaults.model_validate_json(
-        (JOB_DIR / "cluster_defaults.json").read_text()
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
     )
     assert defaults.odo is None and defaults.perlmutter is None
     frontier = defaults.frontier
@@ -70,7 +70,7 @@ def test_cluster_defaults_are_frontier_only_and_short():
 
 def test_cluster_defaults_declare_the_job_environment():
     defaults = ClusterDefaults.model_validate_json(
-        (JOB_DIR / "cluster_defaults.json").read_text()
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
     )
     env = defaults.frontier.iri.environment
     assert set(env) == {
@@ -91,7 +91,7 @@ def test_frontier_script_declares_no_sbatch_directives():
     lines would be inert comments. Keeping them out stops anyone from believing
     the queue or walltime is configured here.
     """
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     directives = [
         line for line in script.splitlines() if line.lstrip().startswith("#SBATCH")
     ]
@@ -177,7 +177,7 @@ def test_bare_input_names_resolve_to_absolute_paths(tmp_path):
     data.mkdir()
     clone.mkdir()
     (data / "era5.nc").write_bytes(b"x")
-    (clone / "tva.geojson").write_text("{}")
+    (clone / "tva.geojson").write_text("{}", encoding="utf-8")
 
     staged = w4e.resolve_input("era5.nc", data, clone)
     in_clone = w4e.resolve_input("tva.geojson", data, clone)

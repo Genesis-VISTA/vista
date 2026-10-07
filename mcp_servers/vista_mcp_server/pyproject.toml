@@ -65,7 +65,8 @@ markers = [
 filterwarnings = [
     # With PYTHONWARNDEFAULTENCODING=1 (CI sets it), text I/O that relies on the locale's
     # encoding fails: Windows would read and write it as cp1252. `regex` probes the locale
-    # when imported, which is not ours to fix.
+    # when imported, which is not ours to fix; nor is matplotlib writing its font cache.
     "error::EncodingWarning",
     "ignore::EncodingWarning:regex._main",
+    "ignore::EncodingWarning:matplotlib.font_manager",
 ]

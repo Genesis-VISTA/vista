@@ -311,6 +311,7 @@ def repo_revision(skill_root: Path) -> str:
             ["git", "-C", str(skill_root), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
         return out.stdout.strip() or "unknown"
@@ -466,7 +467,7 @@ def main(argv=None) -> int:
     print(f"[water4energy] running: {' '.join(cmd)}", flush=True)
 
     started = time.monotonic()
-    proc = subprocess.run(cmd, cwd=str(skill_root), env=env, text=True, capture_output=True)
+    proc = subprocess.run(cmd, cwd=str(skill_root), env=env, text=True, encoding="utf-8", capture_output=True)
     wall_seconds = time.monotonic() - started
 
     # Echo both streams into the job log, and keep stdout as an artifact next to
@@ -475,7 +476,7 @@ def main(argv=None) -> int:
         print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
-    (output_dir / STDOUT_ARTIFACT).write_text(proc.stdout or "")
+    (output_dir / STDOUT_ARTIFACT).write_text(proc.stdout or "", encoding="utf-8")
 
     if proc.returncode != 0:
         print(
@@ -500,7 +501,7 @@ def main(argv=None) -> int:
         checksum_inputs=args.checksum_inputs,
     )
     results_path = output_dir / RESULTS_ARTIFACT
-    results_path.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n")
+    results_path.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     summarize(results)
     print(f"[water4energy] metrics ({results['metrics_source']}) -> {results_path}")

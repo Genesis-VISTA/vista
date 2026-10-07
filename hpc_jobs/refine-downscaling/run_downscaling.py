@@ -182,7 +182,7 @@ def require(path: Path, what: str) -> Path:
 def load_manifest(data_dir: Path) -> dict:
     manifest_path = require(data_dir / "manifest.json", "prepared manifest")
     try:
-        return json.loads(manifest_path.read_text())
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise JobError(f"prepared manifest is not valid JSON: {manifest_path}: {exc}") from exc
 
@@ -202,7 +202,7 @@ def verify_checkpoint(base_dir: Path, checkpoint: Path, warnings: list[str]) -> 
         )
         return digest
     try:
-        registry = json.loads(registry_path.read_text())
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
         expected = registry["models"]["stage2"]["checkpoint_sha256"]
     except (json.JSONDecodeError, KeyError) as exc:
         warnings.append(f"model registry at {registry_path} is unreadable ({exc}); hash not verified.")
@@ -318,6 +318,7 @@ def run_pipeline(argv: list[str], cwd: Path, log_handle) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
         bufsize=1,
     )
     assert process.stdout is not None
@@ -344,7 +345,7 @@ def read_upstream_json(path: Path, produced_by: str) -> dict:
             f"log line; see {STDOUT_ARTIFACT}."
         )
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise JobError(f"output of {produced_by} at {path} is not valid JSON: {exc}") from exc
 
@@ -636,7 +637,7 @@ def main() -> int:
         validate_args(args, argv)
         checks = preflight(args, warnings)
 
-        with log_path.open("w") as log_handle:
+        with log_path.open("w", encoding="utf-8") as log_handle:
             if args.mode == "infer":
                 outcome = do_infer(args, checks, log_handle)
             else:
@@ -718,7 +719,7 @@ def main() -> int:
         if warnings:
             results["warnings"] = warnings
 
-        (args.output_dir / RESULTS_ARTIFACT).write_text(json.dumps(results, indent=2) + "\n")
+        (args.output_dir / RESULTS_ARTIFACT).write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
         print(f"[refine] wrote {RESULTS_ARTIFACT} ({args.mode}, {len(results['figures'])} figure(s))")
         for warning in warnings:
             print(f"[refine] WARNING: {warning}", file=sys.stderr)

@@ -45,7 +45,7 @@ p.add_argument("--input", action="append")
 p.add_argument("--amp", action="store_true")
 p.add_argument("--enforce-temperature-order", action="store_true")
 a = p.parse_args()
-Path(a.output).parent.joinpath("argv_infer.json").write_text(json.dumps(sys.argv[1:]))
+Path(a.output).parent.joinpath("argv_infer.json").write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
 Path(a.output).write_bytes(b"\\0" * 4096)
 Path(str(a.output) + ".json").write_text(json.dumps({
     "variables": ["tmin", "tmax", "prcp"],
@@ -56,7 +56,7 @@ Path(str(a.output) + ".json").write_text(json.dumps({
     "temperature_order_enforced": True,
     "variable_metadata": {"tmin": {"units": "degC"}, "tmax": {"units": "degC"},
                           "prcp": {"units": "mm/day"}},
-}))
+}), encoding="utf-8")
 """
 
 EVALUATE_STUB = """\
@@ -70,7 +70,7 @@ p.add_argument("--enforce-temperature-order", action="store_true")
 p.add_argument("--no-save-predictions", action="store_true")
 a = p.parse_args()
 d = Path(a.output_dir); d.mkdir(parents=True, exist_ok=True)
-d.parent.joinpath("argv_evaluate.json").write_text(json.dumps(sys.argv[1:]))
+d.parent.joinpath("argv_evaluate.json").write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
 if not a.no_save_predictions:
     (d / "predictions.npy").write_bytes(b"\\0" * 8192)
 def m(bias, mae, rmse): return {"bias": bias, "mae": mae, "rmse": rmse}
@@ -91,7 +91,7 @@ def m(bias, mae, rmse): return {"bias": bias, "mae": mae, "rmse": rmse}
                  "bilinear_baseline": m(0.0, 0.13467, 0.58905),
                  "mae_improvement_percent": 63.22, "count": 1545894720},
     },
-}))
+}), encoding="utf-8")
 """
 
 SPATIAL_STUB = """\
@@ -102,7 +102,7 @@ for f in ("--data-dir","--evaluation-dir","--split","--tile-rows"):
     p.add_argument(f)
 a = p.parse_args()
 d = Path(a.evaluation_dir)
-d.parent.joinpath("argv_spatial.json").write_text(json.dumps([a.split, a.tile_rows]))
+d.parent.joinpath("argv_spatial.json").write_text(json.dumps([a.split, a.tile_rows]), encoding="utf-8")
 (d / "spatial_statistics_1990.npz").write_bytes(b"\\0" * 2048)
 plots = [str(d / f"{s}_comparison.png") for s in ("mean_tmin", "p95_prcp")]
 for q in plots:
@@ -110,7 +110,7 @@ for q in plots:
 (d / "spatial_statistics_index.json").write_text(json.dumps({
     "split": a.split, "days": 1, "variables": ["tmin", "tmax", "prcp"],
     "statistics": ["mean_tmin", "p95_prcp"], "plots": plots,
-}))
+}), encoding="utf-8")
 """
 
 
@@ -127,9 +127,11 @@ def demo(tmp_path):
     """A stand-in for the read-only Lustre demo package."""
     base = tmp_path / "demo"
     (base / "skill-authoring-kit").mkdir(parents=True)
-    (base / "pipeline_04_infer.py").write_text(INFER_STUB)
-    (base / "pipeline_03_evaluate.py").write_text(EVALUATE_STUB)
-    (base / "utility_plot_spatial_statistics.py").write_text(SPATIAL_STUB)
+    (base / "pipeline_04_infer.py").write_text(INFER_STUB, encoding="utf-8")
+    (base / "pipeline_03_evaluate.py").write_text(EVALUATE_STUB, encoding="utf-8")
+    (base / "utility_plot_spatial_statistics.py").write_text(
+        SPATIAL_STUB, encoding="utf-8"
+    )
 
     checkpoint = tmp_path / "best.pt"
     checkpoint.write_bytes(b"weights" * 100)
@@ -144,7 +146,8 @@ def demo(tmp_path):
                     }
                 }
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     data = tmp_path / "prepared"
@@ -156,7 +159,8 @@ def demo(tmp_path):
                 "splits": {"train": {}, "val": {}, "test": {}},
                 "year_lengths": {"1989": 365, "1990": 365},
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
     inputs = tmp_path / "data"
@@ -200,11 +204,11 @@ def run(demo, monkeypatch, *script_args, capture=None):
 
 
 def results_of(demo):
-    return json.loads((demo["out"] / "results.json").read_text())
+    return json.loads((demo["out"] / "results.json").read_text(encoding="utf-8"))
 
 
 def recorded(demo, name):
-    return json.loads((demo["out"] / f"argv_{name}.json").read_text())
+    return json.loads((demo["out"] / f"argv_{name}.json").read_text(encoding="utf-8"))
 
 
 # --- cluster_defaults ------------------------------------------------------
@@ -212,7 +216,7 @@ def recorded(demo, name):
 
 def test_cluster_defaults_are_frontier_only_and_gpu_shaped():
     defaults = ClusterDefaults.model_validate_json(
-        (JOB_DIR / "cluster_defaults.json").read_text()
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
     )
     assert defaults.odo is None and defaults.perlmutter is None
     frontier = defaults.frontier
@@ -233,7 +237,7 @@ def test_cluster_defaults_declare_every_staged_asset():
     environment dependency).
     """
     defaults = ClusterDefaults.model_validate_json(
-        (JOB_DIR / "cluster_defaults.json").read_text()
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
     )
     environment = defaults.frontier.iri.environment
     assert set(environment) >= {
@@ -253,7 +257,7 @@ def test_cluster_defaults_declare_every_staged_asset():
 
 
 def test_frontier_script_declares_no_sbatch_directives():
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     assert not [
         line for line in script.splitlines() if line.strip().startswith("#SBATCH")
     ]
@@ -266,13 +270,13 @@ def test_frontier_script_drops_inherited_pythonpath_before_module_load():
     arrives with the job. A foreign PYTHONPATH ahead of a ROCm torch segfaults at
     import rather than raising, so it must go before any module is loaded.
     """
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     assert "unset PYTHONPATH" in script
     assert script.index("unset PYTHONPATH") < script.index("module load")
 
 
 def test_frontier_script_activates_the_env_and_refuses_to_build_one():
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     assert 'conda activate "${REFINE_ENV}"' in script
     assert "ERROR: conda env not found" in script
     for forbidden in ("pip install", "conda create", "python3 -m venv"):
@@ -282,7 +286,7 @@ def test_frontier_script_activates_the_env_and_refuses_to_build_one():
 def test_frontier_script_binds_one_gpu_through_an_inner_srun():
     """Frontier's IRI service runs the script once on the head node; without an
     inner srun nothing binds a GCD."""
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     assert "srun" in script
     assert "--gpus-per-task=1" in script
     assert "--gpu-bind=closest" in script
@@ -290,7 +294,7 @@ def test_frontier_script_binds_one_gpu_through_an_inner_srun():
 
 def test_miopen_caches_go_to_node_local_tmp_not_lustre():
     """MIOpen keeps a SQLite perf DB, and SQLite over Lustre locks badly."""
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     cache_line = next(line for line in script.splitlines() if "_cache_root=" in line)
     assert "/tmp/" in cache_line
     assert "VISTA_OUT" not in cache_line
@@ -298,7 +302,7 @@ def test_miopen_caches_go_to_node_local_tmp_not_lustre():
 
 
 def test_frontier_script_never_works_inside_the_readonly_demo_root():
-    script = (JOB_DIR / "job.frontier.slurm").read_text()
+    script = (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8")
     assert 'cd "${VISTA_OUT}"' in script
     assert 'cd "${REFINE_BASE_DIR}"' not in script
 
@@ -433,9 +437,9 @@ def test_an_absent_registry_warns_but_still_records_the_hash(demo, monkeypatch):
 def test_an_unknown_split_is_refused(demo, monkeypatch):
     """argparse bounds --split, so this guards the manifest check behind it."""
     module = _load_wrapper()
-    manifest = json.loads((demo["data"] / "manifest.json").read_text())
+    manifest = json.loads((demo["data"] / "manifest.json").read_text(encoding="utf-8"))
     del manifest["splits"]["val"]
-    (demo["data"] / "manifest.json").write_text(json.dumps(manifest))
+    (demo["data"] / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     args = module.build_parser().parse_args(
         [
             "--base-dir",
@@ -553,7 +557,9 @@ def test_a_pipeline_that_writes_no_json_fails_instead_of_emitting_nulls(
     demo, monkeypatch, capsys
 ):
     """The whole point of composing from upstream JSON: absence is a failure."""
-    (demo["base"] / "pipeline_04_infer.py").write_text("print('ran, wrote nothing')\n")
+    (demo["base"] / "pipeline_04_infer.py").write_text(
+        "print('ran, wrote nothing')\n", encoding="utf-8"
+    )
     assert run(demo, monkeypatch) == 1
     assert not (demo["out"] / "results.json").exists()
     assert "did not write its expected output" in capsys.readouterr().err
@@ -565,7 +571,8 @@ def test_unparseable_upstream_json_fails_loudly(demo, monkeypatch, capsys):
         "from pathlib import Path\n"
         "out = sys.argv[sys.argv.index('--output') + 1]\n"
         "Path(out).write_bytes(b'')\n"
-        "Path(out + '.json').write_text('{not json')\n"
+        "Path(out + '.json').write_text('{not json')\n",
+        encoding="utf-8",
     )
     assert run(demo, monkeypatch) == 1
     assert "not valid JSON" in capsys.readouterr().err
@@ -575,7 +582,9 @@ def test_unparseable_upstream_json_fails_loudly(demo, monkeypatch, capsys):
 def test_a_nonzero_pipeline_exit_is_reported_with_its_command(
     demo, monkeypatch, capsys
 ):
-    (demo["base"] / "pipeline_04_infer.py").write_text("import sys; sys.exit(3)\n")
+    (demo["base"] / "pipeline_04_infer.py").write_text(
+        "import sys; sys.exit(3)\n", encoding="utf-8"
+    )
     assert run(demo, monkeypatch) == 1
     error = capsys.readouterr().err
     assert "pipeline exited 3" in error
@@ -584,7 +593,7 @@ def test_a_nonzero_pipeline_exit_is_reported_with_its_command(
 
 def test_the_run_log_is_always_written(demo, monkeypatch):
     assert run(demo, monkeypatch) == 0
-    log = (demo["out"] / "refine_stdout.txt").read_text()
+    log = (demo["out"] / "refine_stdout.txt").read_text(encoding="utf-8")
     assert "pipeline_04_infer.py" in log
 
 
@@ -807,7 +816,7 @@ async def test_the_job_script_is_inlined_verbatim_after_the_vista_preamble(
     await submit()
     job_cmd = iri.submitted[0][0]["arguments"][2]
 
-    assert (JOB_DIR / "job.frontier.slurm").read_text() in job_cmd
+    assert (JOB_DIR / "job.frontier.slurm").read_text(encoding="utf-8") in job_cmd
     # The dispatcher's preamble has to land before our script, since the script
     # reads VISTA_OUT and relies on the purge.
     assert job_cmd.index("VISTA_OUT=") < job_cmd.index("#!/bin/bash -l")

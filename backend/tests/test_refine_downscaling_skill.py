@@ -201,13 +201,13 @@ def test_body_states_that_training_is_out_of_scope():
 
 
 def test_skill_and_job_readme_agree_on_the_job_name():
-    assert (JOB_DIR / "README.md").read_text().startswith(f"# {SKILL}")
+    assert (JOB_DIR / "README.md").read_text(encoding="utf-8").startswith(f"# {SKILL}")
     assert f'job="{SKILL}"' in flat(read_skill(SKILL_DIR).body)
 
 
 def test_skill_documents_only_flags_the_wrapper_accepts():
     """A documented flag the wrapper would reject is a broken submission."""
-    wrapper = (JOB_DIR / "run_downscaling.py").read_text()
+    wrapper = (JOB_DIR / "run_downscaling.py").read_text(encoding="utf-8")
     body = flat(read_skill(SKILL_DIR).body)
     for flag in (
         "--mode",
@@ -226,7 +226,7 @@ def test_skill_documents_only_flags_the_wrapper_accepts():
 
 
 def test_skill_and_wrapper_agree_on_the_day_guardrail():
-    wrapper = (JOB_DIR / "run_downscaling.py").read_text()
+    wrapper = (JOB_DIR / "run_downscaling.py").read_text(encoding="utf-8")
     assert "MAX_DAYS_WITHOUT_OVERRIDE = 31" in wrapper
     assert "31 days" in flat(read_skill(SKILL_DIR).body)
 
@@ -242,7 +242,9 @@ def test_skill_does_not_promise_a_measured_walltime():
     `duration` is inherited from the demo's own launcher ceiling and has never been
     timed. The skill must say so rather than let the agent quote it as a fact.
     """
-    defaults = json.loads((JOB_DIR / "cluster_defaults.json").read_text())
+    defaults = json.loads(
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
+    )
     assert defaults["frontier"]["duration"] == 1800
     body = flat(read_skill(SKILL_DIR).body)
     assert "placeholder" in body
@@ -390,7 +392,7 @@ def staged_project(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project(
         name=PROJECT,
-        system_prompt=SYSTEM_PROMPT.read_text(),
+        system_prompt=SYSTEM_PROMPT.read_text(encoding="utf-8"),
         skills=[SKILL, SIBLING],
         knowledge_bases=[],
         tools=["*", "!agenthpc_*"],

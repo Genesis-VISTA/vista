@@ -166,20 +166,22 @@ def test_skill_md_does_not_promise_the_figure_only_metrics():
 
 
 def test_skill_and_job_readme_agree_on_the_job_name():
-    assert (JOB_DIR / "README.md").read_text().startswith(f"# {SKILL}")
+    assert (JOB_DIR / "README.md").read_text(encoding="utf-8").startswith(f"# {SKILL}")
     assert f'job="{SKILL}"' in read_skill(SKILL_DIR).body
 
 
 def test_skill_documents_only_flags_the_wrapper_accepts():
     """A documented flag the wrapper would reject is a broken submission."""
-    wrapper = (JOB_DIR / "run_diagnostic.py").read_text()
+    wrapper = (JOB_DIR / "run_diagnostic.py").read_text(encoding="utf-8")
     for flag in ("--resolution", "--dpi", "--checksum-inputs"):
         assert flag in read_skill(SKILL_DIR).body
         assert f'"{flag}"' in wrapper
 
 
 def test_skill_default_duration_matches_the_job_default():
-    defaults = json.loads((JOB_DIR / "cluster_defaults.json").read_text())
+    defaults = json.loads(
+        (JOB_DIR / "cluster_defaults.json").read_text(encoding="utf-8")
+    )
     assert defaults["frontier"]["duration"] == 600
     assert 'duration="00:10:00"' in read_skill(SKILL_DIR).body
 
@@ -253,7 +255,7 @@ async def test_seed_snapshot_for_the_water4energy_project(seeded):
     assert row.knowledge_bases == []
     assert row.tools == ["*", "!agenthpc_*"]
     assert row.usage_limits == {"request_limit": 100}
-    assert row.system_prompt == SYSTEM_PROMPT.read_text()
+    assert row.system_prompt == SYSTEM_PROMPT.read_text(encoding="utf-8")
 
 
 async def test_seed_leaves_the_existing_projects_alone(seeded):
@@ -329,7 +331,7 @@ def staged_project(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project(
         name=PROJECT,
-        system_prompt=SYSTEM_PROMPT.read_text(),
+        system_prompt=SYSTEM_PROMPT.read_text(encoding="utf-8"),
         skills=[SKILL],
         knowledge_bases=[],
         tools=["*", "!agenthpc_*"],
