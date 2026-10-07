@@ -1,0 +1,211 @@
+/* The VISTA UI's own tokens and values (ui/app/globals.css), so the startup
+   window and the page it hands over to are one design in either theme.
+   test/appearance.test.js holds the two together. Like the window frame, this
+   follows the OS appearance: a researcher's in-app Light/Dark choice belongs to
+   the UI's origin, which this page cannot read. */
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --line: #e2e2de;
+  --ink: #1c1c1a;
+  --muted: #767671;
+  --brand: #004573;
+  --brand-fill: #004573;
+  --on-brand: #ffffff;
+  --success: #0b730b;
+  --danger-ink: #b01000;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1524;
+    --surface: #112235;
+    --line: #213852;
+    --ink: #e8eef5;
+    --muted: #97aabf;
+    --brand: #92c6f2;
+    --brand-fill: #3577b0;
+    --on-brand: #ffffff;
+    --success: #78cc8f;
+    --danger-ink: #ff8a7a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 460px;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.startup-shell {
+  width: min(100%, 640px);
+  margin: 0 auto;
+  padding: 42px 48px 34px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+
+/* VISTA's icon itself (assets/icon.png), so the window shows what the Dock,
+   the app menu and the Start menu show. */
+.app-mark {
+  display: block;
+  width: 52px;
+  height: 52px;
+  box-shadow: 0 8px 24px rgb(17 42 77 / 28%);
+  border-radius: 22.5%;
+}
+
+.eyebrow {
+  margin: 1px 0 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+}
+
+h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+}
+
+.message {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.activities {
+  margin: 0;
+  padding: 8px 0;
+  overflow: hidden;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 14px 42px rgb(0 0 0 / 8%);
+}
+
+.activities li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activities li:last-child { border-bottom: 0; }
+.activities li[data-state="running"] { color: inherit; font-weight: 550; }
+.activities li[data-state="complete"],
+.activities li[data-state="ready"] { color: var(--success); }
+.activities li[data-state="failed"] { color: var(--danger-ink); }
+
+.indicator {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.48;
+}
+
+[data-state="running"] .indicator {
+  border-color: transparent;
+  border-top-color: var(--brand);
+  border-right-color: var(--brand);
+  opacity: 1;
+  animation: spin 0.85s linear infinite;
+}
+
+[data-state="complete"] .indicator,
+[data-state="ready"] .indicator {
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: inset 0 0 0 2px var(--surface);
+  opacity: 1;
+}
+
+[data-state="failed"] .indicator {
+  border-color: var(--danger-ink);
+  background: var(--danger-ink);
+  opacity: 1;
+}
+
+.failure {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger-ink) 35%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger-ink) 8%, transparent);
+}
+
+.failure p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+button {
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: inherit;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+}
+
+button:hover { filter: brightness(1.08); }
+button:active { transform: translateY(1px); }
+button.primary { border-color: transparent; color: var(--on-brand); background: var(--brand-fill); }
+button:disabled { cursor: default; opacity: 0.55; }
+
+/* Linux only: the window runs without Chromium's sandbox, and why. pre-line
+   keeps window-sandbox's own line breaks around the commands it names. */
+.notice {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.footnote {
+  margin: 16px 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

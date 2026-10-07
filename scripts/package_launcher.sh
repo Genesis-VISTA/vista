@@ -36,8 +36,55 @@ BACKEND_PORT="${VISTA_BACKEND_PORT:-8001}"
 
 VERSION="$(cat "$PACKAGE/VERSION" 2>/dev/null || echo unknown)"
 
-die() { echo "error: $*" >&2; exit 1; }
-log() { printf '%s\n' "$*"; }
+SUPERVISED=false
+PROGRESS_FORMAT=''
+PROGRESS_STARTED=false
+CURRENT_PHASE=preflight
+CURRENT_LOG=''
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+progress_event() {
+  [[ "$SUPERVISED" == true ]] || return 0
+  local phase="$1" state="$2" label="${3:-}" skipped="${4:-}"
+  local url="${5:-}" code="${6:-}" logfile="${7:-}" line
+  line="{\"protocol\":1,\"phase\":\"$(json_escape "$phase")\",\"state\":\"$(json_escape "$state")\""
+  [[ -z "$label" ]] || line+=",\"label\":\"$(json_escape "$label")\""
+  [[ -z "$skipped" ]] || line+=",\"skipped\":$skipped"
+  [[ -z "$url" ]] || line+=",\"url\":\"$(json_escape "$url")\""
+  [[ -z "$code" ]] || line+=",\"code\":\"$(json_escape "$code")\""
+  [[ -z "$logfile" ]] || line+=",\"log\":\"$(json_escape "$logfile")\""
+  printf '%s}\n' "$line" || true
+}
+
+die_with_code() {
+  local code="$1"
+  shift
+  if [[ "$PROGRESS_STARTED" == true ]]; then
+    progress_event "$CURRENT_PHASE" failed '' '' '' "$code" "$CURRENT_LOG"
+  fi
+  echo "error: $*" >&2
+  exit 1
+}
+die() { die_with_code startup-error "$@"; }
+
+# Supervised stdout is a machine-readable protocol. Human diagnostics still go
+# to stderr, which the application records in window.log.
+log() {
+  if [[ "$SUPERVISED" == true ]]; then
+    printf '%s\n' "$*" >&2
+  else
+    printf '%s\n' "$*"
+  fi
+}
 
 for arg in "$@"; do
   case "$arg" in
@@ -45,9 +92,21 @@ for arg in "$@"; do
       awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
       exit 0
       ;;
+    --supervised) SUPERVISED=true ;;
+    --progress=jsonl) PROGRESS_FORMAT=jsonl ;;
     *) die "unexpected argument: $arg (try --help)" ;;
   esac
 done
+
+# This is an internal contract between the VISTA application and its service
+# supervisor. Requiring the pair keeps either flag from becoming an accidental
+# user-facing mode before the structured progress protocol is active.
+if [[ "$SUPERVISED" == true && "$PROGRESS_FORMAT" != jsonl ]]; then
+  die "--supervised requires --progress=jsonl"
+fi
+if [[ "$SUPERVISED" != true && -n "$PROGRESS_FORMAT" ]]; then
+  die "--progress=jsonl requires --supervised"
+fi
 
 # ─── platform guard ─────────────────────────────────────────────────────────
 
@@ -67,6 +126,13 @@ case "$(uname -s)" in
   *)      HOST_OS="$(uname -s)" ;;
 esac
 HOST_ARCH="$(uname -m)"
+
+# Supervised mode is the application's on macOS and Linux. Windows has its own
+# launcher, vista.ps1, with the same protocol.
+if [[ "$SUPERVISED" == true ]]; then
+  progress_event preflight running "Checking this computer"
+  PROGRESS_STARTED=true
+fi
 
 if [[ -n "$BUILT_OS" && ( "$HOST_OS" != "$BUILT_OS" || "$HOST_ARCH" != "$BUILT_ARCH" ) ]]; then
   die "this package was built for ${BUILT_OS}-${BUILT_ARCH}, but this machine is \
@@ -130,7 +196,7 @@ new group takes effect."
   if [[ -n "$kvm_problem" && "${VISTA_VERIFY_WITHOUT_SANDBOX:-}" == 1 ]]; then
     echo "notice: starting without the sandbox (VISTA_VERIFY_WITHOUT_SANDBOX=1, a build-only setting): ${kvm_problem%%$'\n'*}" >&2
   elif [[ -n "$kvm_problem" ]]; then
-    die "VISTA needs hardware virtualisation on Linux, and $kvm_problem
+    die_with_code virtualisation-unavailable "VISTA needs hardware virtualisation on Linux, and $kvm_problem
 
   Every agent tool call depends on it, not just running code: the sandbox
   server is started as part of the agent's toolset, so without it retrieval
@@ -159,6 +225,9 @@ for entry in "$UI_PORT|the web interface" "$MCP_PORT|the MCP server" \
   port_in_use "$port" && conflicts+=("port $port ($role) is already in use")
 done
 if (( ${#conflicts[@]} > 0 )); then
+  if [[ "$PROGRESS_STARTED" == true ]]; then
+    progress_event preflight failed '' '' '' port-conflict
+  fi
   echo "error: VISTA cannot start:" >&2
   for conflict in "${conflicts[@]}"; do
     echo "  - $conflict" >&2
@@ -183,7 +252,7 @@ fi
 MSB_STORE="$STATE/microsandbox"
 SOCKET_BUDGET=51
 if (( ${#MSB_STORE} > SOCKET_BUDGET )); then
-  die "the state directory path is too long for the code-execution sandbox:
+  die_with_code invalid-state-path "the state directory path is too long for the code-execution sandbox:
     $MSB_STORE
   is ${#MSB_STORE} characters and has to be at most $SOCKET_BUDGET. The sandbox \
 runtime appends about 50 bytes to it to build a Unix socket path, which the \
@@ -305,7 +374,7 @@ window_sandbox_args() {
 # started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
 # alone and is for the build's smoke test, which has no one to look at a window.
 WINDOW_EXE="$(manifest_field exe)"
-if [[ "${VISTA_NO_WINDOW:-}" != 1 ]]; then
+if [[ "$SUPERVISED" != true && "${VISTA_NO_WINDOW:-}" != 1 ]]; then
   [[ -n "$WINDOW_EXE" && -x "$PACKAGE/$WINDOW_EXE" ]] \
     || die "this package has no VISTA window; rebuild it with build_local_package.sh."
   reason="$(can_show_window)" \
@@ -314,7 +383,26 @@ fi
 
 # ─── first-run setup ────────────────────────────────────────────────────────
 
-mkdir -p "$STATE" "$LOGS"
+if [[ "$SUPERVISED" == true ]]; then
+  [[ -f "$PACKAGE/payload/payload.tar" ]] \
+    || die_with_code missing-component "this package has no payload/payload.tar; rebuild it with build_local_package.sh."
+  [[ -f "$PACKAGE/payload/parts.txt" ]] \
+    || die_with_code missing-component "this package has no payload/parts.txt; rebuild it with build_local_package.sh."
+  [[ -f "$PACKAGE/payload/sandbox-image.tar" ]] \
+    || die_with_code missing-component "this package has no sandbox image; rebuild it with build_local_package.sh."
+  [[ -x "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" ]] \
+    || die_with_code missing-component "this package has no MCP server executable; rebuild it with build_local_package.sh."
+  [[ -x "$PACKAGE/app/backend/.venv/bin/vista-backend" ]] \
+    || die_with_code missing-component "this package has no backend executable; rebuild it with build_local_package.sh."
+  [[ -x "$PACKAGE/node/bin/node" && -f "$PACKAGE/app/ui/server.js" ]] \
+    || die_with_code missing-component "this package has no web interface runtime; rebuild it with build_local_package.sh."
+fi
+
+progress_event preflight complete
+CURRENT_PHASE=resources
+progress_event resources running "Installing bundled resources"
+
+mkdir -p "$STATE" "$LOGS" || die "could not create the VISTA state directory"
 
 FIRST_RUN=false
 [[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
@@ -345,11 +433,19 @@ if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
 fi
 if (( ${#missing[@]} > 0 )); then
   log "First run: installing ${missing[*]}..."
-  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"
+  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}" \
+    || die_with_code resource-extraction-failed "could not install the bundled resources"
+  progress_event resources complete
+else
+  progress_event resources complete '' true
 fi
 
 MSB="$(find "$PACKAGE/app/mcp_servers/dev_mcp_server/.venv" \
-  -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)"
+  -path '*/microsandbox/_bundled/bin/msb' -print -quit 2>/dev/null)" \
+  || die_with_code missing-component "could not inspect the bundled sandbox runtime"
+if [[ "$SUPERVISED" == true && ! -x "$MSB" ]]; then
+  die_with_code missing-component "this package has no sandbox runtime; rebuild it with build_local_package.sh."
+fi
 
 # Imports the sandbox image from the payload -- the only one the package ships.
 # The `image inspect` guard is what makes a second run cheap: the load costs a
@@ -364,9 +460,24 @@ load_image() {
   "$MSB" load -i "$tar" -t "$tag" >> "$LOGS/setup.log" 2>&1
 }
 
+CURRENT_PHASE=sandbox
+CURRENT_LOG=setup.log
+progress_event sandbox running "Preparing the code-execution sandbox"
+IMAGE_SKIPPED=true
+if [[ -x "$MSB" && -f "$PACKAGE/payload/sandbox-image.tar" ]] \
+    && ! "$MSB" image inspect --format=json "$VISTA_DEV_MCP_IMAGE" >/dev/null 2>&1; then
+  IMAGE_SKIPPED=false
+fi
 load_image "$PACKAGE/payload/sandbox-image.tar" "$VISTA_DEV_MCP_IMAGE" \
   "the code-execution sandbox image" \
-  || die "could not import the sandbox image; see $LOGS/setup.log"
+  || die_with_code sandbox-image-import-failed \
+    "could not import the sandbox image; see $LOGS/setup.log"
+if [[ "$IMAGE_SKIPPED" == true ]]; then
+  progress_event sandbox complete '' true
+else
+  progress_event sandbox complete
+fi
+CURRENT_LOG=''
 
 # ─── services ───────────────────────────────────────────────────────────────
 
@@ -379,6 +490,7 @@ set -m
 
 PIDS=()
 STOP_GRACE_SECONDS=10
+PARENT_WATCHER_PID=''
 
 # Signals every group, waits for them to go, then kills what is left. The
 # signals go out in reverse start order but without waiting between them, so
@@ -397,9 +509,10 @@ STOP_GRACE_SECONDS=10
 # collected first, while the process tree still links them, and anything left
 # in any of them after the grace period is killed.
 descendant_groups() {
-  local child
-  for child in $(pgrep -P "$1" 2>/dev/null); do
-    ps -o pgid= -p "$child" 2>/dev/null | tr -d ' '
+  local child group
+  for child in $(pgrep -P "$1" 2>/dev/null || true); do
+    group="$(ps -o pgid= -p "$child" 2>/dev/null | tr -d ' ' || true)"
+    [[ -n "$group" ]] && printf '%s\n' "$group"
     descendant_groups "$child"
   done
 }
@@ -408,23 +521,39 @@ STOPPING=false
 stop() {
   trap - INT TERM HUP EXIT
   STOPPING=true
+  progress_event stopping running "Stopping VISTA"
   { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
+  if [[ -n "$PARENT_WATCHER_PID" ]]; then
+    kill -TERM -- "-$PARENT_WATCHER_PID" 2>/dev/null \
+      || kill -TERM "$PARENT_WATCHER_PID" 2>/dev/null \
+      || true
+  fi
   # Job control reports each service it sees die ("line 301: 78461
   # Terminated: 15 ..."), which reads like a failure. Nothing after this point
   # has anything to say on stderr, and this is the script's last act.
   exec 2>/dev/null
   local i pid group groups=() own_group
   # Never our own group: that one holds the shell this was started from.
-  own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
+  own_group="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)"
+  # A signal can land between a service starting and its PID being recorded.
+  # Under `set -m` it is still a job of this shell, in a group of its own.
+  for pid in $(jobs -p); do
+    [[ "$pid" == "$PARENT_WATCHER_PID" || " ${PIDS[*]-} " == *" $pid "* ]] || PIDS+=("$pid")
+  done
   for pid in ${PIDS[@]+"${PIDS[@]}"}; do
     groups+=("$pid")
     for group in $(descendant_groups "$pid"); do
       [[ "$group" == "$own_group" || " ${groups[*]} " == *" $group "* ]] || groups+=("$group")
     done
   done
-  for (( i = ${#PIDS[@]} - 1; i >= 0; i-- )); do
-    pid="${PIDS[i]}"
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  for (( i = ${#groups[@]} - 1; i >= 0; i-- )); do
+    kill -TERM -- "-${groups[i]}" 2>/dev/null || true
+  done
+  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+    # Also signal the recorded leaders directly on hosts where a process-group
+    # signal is restricted. Descendant groups were collected above while the
+    # tree was still intact, so wrappers cannot hide their actual service.
+    kill -TERM "$pid" 2>/dev/null || true
   done
   local waited=0 alive
   while (( waited < STOP_GRACE_SECONDS * 4 )); do
@@ -432,6 +561,14 @@ stop() {
     for group in ${groups[@]+"${groups[@]}"}; do
       kill -0 -- "-$group" 2>/dev/null && alive=true && break
     done
+    if [[ "$alive" != true ]]; then
+      # Some restricted hosts reject process-group probes even though the
+      # leader is still alive. Do not jump straight to KILL in that case:
+      # give each service the same grace period to run its TERM handler.
+      for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+        kill -0 "$pid" 2>/dev/null && alive=true && break
+      done
+    fi
     [[ "$alive" == true ]] || break
     perl -e 'select(undef, undef, undef, 0.25)' 2>/dev/null || sleep 1
     waited=$(( waited + 1 ))
@@ -439,9 +576,38 @@ stop() {
   for group in ${groups[@]+"${groups[@]}"}; do
     kill -KILL -- "-$group" 2>/dev/null || true
   done
-  wait ${PIDS[@]+"${PIDS[@]}"} 2>/dev/null || true
+  # A restricted host can deny process-group probes even though signaling the
+  # child itself is allowed. Always apply the forced fallback to the service
+  # leaders we own so none can survive on that account.
+  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  # Named, never bare: a bare `wait` also waits for anything not stopped above.
+  (( ${#PIDS[@]} == 0 )) || wait "${PIDS[@]}" 2>/dev/null || true
+  if [[ -n "$PARENT_WATCHER_PID" ]]; then
+    wait "$PARENT_WATCHER_PID" 2>/dev/null || true
+  fi
 }
-trap stop INT TERM HUP EXIT
+# A signal handler that returns resumes the script, which would go on starting
+# services nothing will stop. After a signal, stopping is the launcher's last act.
+trap 'stop; exit 130' INT
+trap 'stop; exit 143' TERM
+trap 'stop; exit 129' HUP
+trap stop EXIT
+
+# Electron owns the write end of stdin in supervised mode. EOF means that the
+# application disappeared without sending TERM, so request the same cleanup
+# path rather than leaving services and microVMs behind.
+watch_parent_stdin() {
+  trap 'exit 0' INT TERM HUP
+  while IFS= read -r _; do :; done
+  kill -HUP "$$" 2>/dev/null || true
+}
+
+if [[ "$SUPERVISED" == true ]]; then
+  watch_parent_stdin &
+  PARENT_WATCHER_PID=$!
+fi
 
 # Under `set -m` a foreground command is a process group of its own, and the
 # terminal delivers Ctrl-C to that group alone: the shell never sees it, the INT
@@ -462,6 +628,7 @@ wait_for() {
   echo >&2
   echo "error: $what did not start within ${seconds}s. Last lines of $logfile:" >&2
   tail -15 "$logfile" >&2
+  progress_event "$CURRENT_PHASE" failed '' '' '' health-timeout "${logfile##*/}"
   exit 1
 }
 
@@ -471,18 +638,29 @@ wait_for() {
 log "VISTA $VERSION"
 log "Starting services (logs in $LOGS)..."
 
+CURRENT_PHASE=mcp
+CURRENT_LOG=mcp.log
+progress_event mcp running "Starting scientific tools"
 "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
   --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
 PIDS+=($!)
 wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server"
+progress_event mcp ready
 
 if [[ "$FIRST_RUN" == true ]]; then
   log "First run: preparing the database and corpus (this takes a minute)..."
 fi
+CURRENT_PHASE=backend
+CURRENT_LOG=backend.log
+progress_event backend running "Preparing VISTA"
 "$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
 PIDS+=($!)
 wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend"
+progress_event backend ready
 
+CURRENT_PHASE=ui
+CURRENT_LOG=ui.log
+progress_event ui running "Starting the interface"
 PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
   "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
 PIDS+=($!)
@@ -494,6 +672,8 @@ wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
 # to ::1 first. It is also the origin the window's storage is kept under, so it
 # has to be the same on every run.
 UI_URL="http://127.0.0.1:$UI_PORT"
+progress_event ui ready '' '' "$UI_URL"
+CURRENT_LOG=''
 
 # The window exits with this when another VISTA window already holds the
 # single-instance lock (EX_TEMPFAIL, set in electron/src/main.js).
@@ -505,6 +685,13 @@ start_window() {
   WINDOW_PID=$!
   PIDS+=("$WINDOW_PID")
 }
+
+if [[ "$SUPERVISED" == true ]]; then
+  log ""
+  log "VISTA is running at $UI_URL (supervised by the VISTA application)"
+  wait
+  exit 0
+fi
 
 if [[ "${VISTA_NO_WINDOW:-}" == 1 ]]; then
   log ""
