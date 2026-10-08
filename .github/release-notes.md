@@ -150,7 +150,7 @@ For diagnostics, `~/.local/share/vista/app/vista` starts the same VISTA from a t
    & C:\vista\vista-${VERSION}-win-x86\app\window\VISTA.exe --startup
    ```
 
-   For diagnostics, `vista.cmd` in the same folder starts VISTA from a console.
+   For diagnostics, `vista.cmd` at the top of the package folder, `C:\vista\vista-${VERSION}-win-x86`, starts VISTA from a console.
 
 </details>
 
