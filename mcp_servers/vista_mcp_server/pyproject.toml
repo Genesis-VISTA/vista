@@ -54,6 +54,14 @@ override-dependencies = [
     "fabrictestbed-extensions; sys_platform == 'never'",
 ]
 
+[tool.ruff.lint]
+# PLW1514 (open/read_text/write_text without encoding=) is a preview rule. Preview
+# also widens the default rule set, so the stable defaults are pinned here and
+# only explicitly selected preview rules turn on.
+preview = true
+explicit-preview-rules = true
+select = ["E4", "E7", "E9", "F", "PLW1514"]
+
 [tool.pytest.ini_options]
 markers = [
     "unit: pure / hermetic unit tests",

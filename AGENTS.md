@@ -160,13 +160,17 @@ Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
 
+Lint, format and type-check Python through `ci-local.sh`, not bare `ruff` or `pyright`:
+it runs the versions CI pins, and ruff is not in any project's dev extra.
+
 Or run pieces directly:
 ```bash
 cd mcp_servers/vista_mcp_server && uv run --extra dev pytest  # HPC/RAG MCP tests
 cd mcp_servers/dev_mcp_server && uv run pytest  # Sandbox/view tests
 cd ui && npm run lint                           # Frontend ESLint
 cd backend && uv run --extra dev pytest -vv     # Backend tests
-curl http://localhost:3000/api/mcp/health       # Smoke test
+curl http://localhost:3000/api/projects         # Smoke test: UI and backend up
+curl "http://localhost:3000/api/mcp/health?project_name=<name>"  # MCP reachable
 ```
 
 Use Playwright (install globally if not present) to interact with the browser, take screenshots, and manually test the frontend.
@@ -232,8 +236,10 @@ is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
 Always pass an explicit `encoding="utf-8"` to anything that reads or writes text in
 Python: `open()`, `Path.read_text()` / `write_text()`, `os.fdopen(..., "w")`, and
 `subprocess` calls with `text=True`. The default encoding is the locale's, which is not
-UTF-8 on Windows, so leaving it out breaks there. The backend and both MCP servers set
-`error::EncodingWarning` in their pytest config, so any call that omits it fails CI.
+UTF-8 on Windows, so leaving it out breaks there. Ruff's `PLW1514` catches `open()`,
+`Path.open()`, `read_text()` and `write_text()` at lint time; the backend and both MCP
+servers also set `error::EncodingWarning` in their pytest config, which is what catches
+`os.fdopen` and `subprocess`.
 
 ## NextJS
 ALWAYS read docs before coding
