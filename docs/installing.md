@@ -41,23 +41,67 @@ The installed folder is the application: keep it together. On macOS, `VISTA.app`
 beside `app/`, `bin/`, `node/`, `payload/`, `manifest.json` and `vista`, which are its runtime,
 and says so if it is moved out.
 
-### Installing by hand
+### Running a package without the installer
 
-Follow the steps in the release's notes. On macOS or Linux, in short: download the archive for
-your platform and its `.sha256` from the [release](https://github.com/Genesis-VISTA/vista/releases)
-with `curl` (a browser download is blocked by macOS), check it, unpack it, and put the folder
-where the table above says:
+A package runs from whatever folder it is unpacked into: the installer's fixed folders exist only
+so that it can find and replace an older version. Download the archive for your platform and its
+`.sha256` from the [release](https://github.com/Genesis-VISTA/vista/releases), check it, unpack it
+anywhere, and open VISTA from that folder. The release's notes give the same steps with that
+release's file names filled in.
+
+Wherever the package is, it uses the same state directory (`~/.vista`, or `VISTA_HOME`), so an
+unpacked copy and an installed one share your projects and settings. Only one runs at a time.
+There is no app-menu or Start-menu entry and no `~/.local/bin/vista` link; to upgrade, unpack the
+new version and delete the old folder. Unpack it into the installer's folder (see the table
+above) if you want the installer to upgrade it later.
+
+**macOS.** Download with `curl` rather than a browser:
 
 ```bash
-shasum -a 256 -c vista-<version>-<platform>.tar.gz.sha256
-tar -xf vista-<version>-<platform>.tar.gz
-mv vista-<version>-mac-arm64 /Applications/VISTA && open /Applications/VISTA/VISTA.app   # macOS
-mv vista-<version>-linux-x86 ~/.local/share/vista/app && ~/.local/share/vista/app/app/window/vista-app   # Linux
+curl -fLO https://github.com/Genesis-VISTA/vista/releases/download/v<version>/vista-<version>-mac-arm64.tar.gz
+curl -fLO https://github.com/Genesis-VISTA/vista/releases/download/v<version>/vista-<version>-mac-arm64.tar.gz.sha256
+shasum -a 256 -c vista-<version>-mac-arm64.tar.gz.sha256
+tar -xf vista-<version>-mac-arm64.tar.gz
+open vista-<version>-mac-arm64/VISTA.app
 ```
 
-Extract with the platform's own `tar`. macOS `bsdtar` stores extended attributes by default;
-GNU `tar` needs `--xattrs`. Those attributes carry the bundled `msb` binary's code signature,
-without which the code-execution sandbox cannot create microVMs.
+A browser download, and every file unpacked from it, carries macOS's quarantine mark, and then
+`VISTA.app` will not open. Remove the mark from the unpacked folder and open it again:
+
+```bash
+xattr -dr com.apple.quarantine vista-<version>-mac-arm64
+```
+
+Remove only `com.apple.quarantine`, never every attribute with `xattr -c`: the bundled `msb`
+binary's code signature is also an extended attribute, and without it the code-execution sandbox
+cannot start. The terminal launcher, `vista-<version>-mac-arm64/vista`, removes the quarantine
+mark itself before it starts anything.
+
+**Linux**, from a desktop session:
+
+```bash
+curl -fLO https://github.com/Genesis-VISTA/vista/releases/download/v<version>/vista-<version>-linux-x86.tar.gz
+curl -fLO https://github.com/Genesis-VISTA/vista/releases/download/v<version>/vista-<version>-linux-x86.tar.gz.sha256
+sha256sum -c vista-<version>-linux-x86.tar.gz.sha256
+tar -xf vista-<version>-linux-x86.tar.gz
+vista-<version>-linux-x86/app/window/vista-app
+```
+
+**Windows**, in PowerShell. Unpack into a short folder such as `C:\vista`: Windows limits how long
+a path can be, and VISTA refuses to start from a folder that is too deep.
+
+```powershell
+cd ~\Downloads   # where you saved vista-<version>-win-x86.zip and its .sha256
+(Get-FileHash vista-<version>-win-x86.zip -Algorithm SHA256).Hash.ToLower() -eq (Get-Content vista-<version>-win-x86.zip.sha256).Split(' ')[0]   # should print True
+mkdir C:\vista -Force; tar -xf vista-<version>-win-x86.zip -C C:\vista
+& C:\vista\vista-<version>-win-x86\app\window\VISTA.exe --startup
+```
+
+You can also open `VISTA.exe` from that `app\window` folder in Explorer. `vista.cmd` at the top of
+the package folder is the diagnostic launcher.
+
+Extract with the platform's own `tar`. macOS `bsdtar` stores extended attributes by default; GNU
+`tar` needs `--xattrs`. Those attributes carry the `msb` binary's code signature.
 
 ## First launch
 
