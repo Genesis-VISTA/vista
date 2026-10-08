@@ -18,7 +18,23 @@ On **Windows** (x64), in PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
 ```
 
-Then see [after installing](#after-installing), or [run from source](#run-from-source).
+To build and run from a checkout instead, see [run from source](#run-from-source).
+
+## After installing
+
+The installer checks the package against its checksum, installs it and opens VISTA. Then:
+
+1. Paste your inference API key into **Settings › Agent** (Settings is at the bottom of the
+   sidebar), and pick a model at the top of the chat.
+2. To submit HPC jobs, connect each cluster in Settings; see [HPC clusters](docs/hpc.md).
+3. Next time, open VISTA like any other application: `VISTA.app` on macOS, the app menu on
+   Linux, the Start menu on Windows.
+4. To upgrade, run the installer again with VISTA closed; your state is kept.
+
+VISTA is a desktop application with no browser mode, so it needs a graphical session and
+refuses to start over SSH or without a display. On Linux it also needs `/dev/kvm`. Where VISTA
+is installed, where it keeps its state, first-launch behaviour and Linux troubleshooting are in
+[installing VISTA](docs/installing.md).
 
 ## What it does
 
@@ -49,22 +65,6 @@ VISTA is under active development and pre-1.0: interfaces and settings change be
 releases. Release packages are published on the
 [GitHub mirror](https://github.com/Genesis-VISTA/vista/releases); the canonical repository is on
 GitLab.
-
-## After installing
-
-The installer checks the package against its checksum, installs it and opens VISTA. Then:
-
-1. Paste your inference API key into **Settings › Agent** (Settings is at the bottom of the
-   sidebar), and pick a model at the top of the chat.
-2. To submit HPC jobs, connect each cluster in Settings; see [HPC clusters](docs/hpc.md).
-3. Next time, open VISTA like any other application: `VISTA.app` on macOS, the app menu on
-   Linux, the Start menu on Windows.
-4. To upgrade, run the installer again with VISTA closed; your state is kept.
-
-VISTA is a desktop application with no browser mode, so it needs a graphical session and
-refuses to start over SSH or without a display. On Linux it also needs `/dev/kvm`. Where VISTA
-is installed, where it keeps its state, first-launch behaviour and Linux troubleshooting are in
-[installing VISTA](docs/installing.md).
 
 ## Run from source
 
