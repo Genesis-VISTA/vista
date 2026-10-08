@@ -17,11 +17,19 @@ and the agent runs exactly as it would without PALISADE.
 
 ## Getting the package
 
-The repository is private until its licence clears review, so syncing the backend needs read
-access to it: on a developer machine, a credential helper that already signs you in to GitHub.
-GitLab CI uses `PALISADE_GITHUB_TOKEN`, a read-only token scoped to that repository (see
+`uv sync` in `backend/` fetches PALISADE from GitHub at its pinned tag. The repository is
+public, so no credentials are needed. GitLab CI still passes `PALISADE_GITHUB_TOKEN`, a
+read-only token scoped to that repository, from when it was private (see
 [`.gitlab-ci.yml`](../.gitlab-ci.yml)). Upgrading PALISADE is a change to the pinned tag, on
 purpose: a gate stack that drifts underneath a deployment is a security change nobody reviewed.
+
+## Licence
+
+PALISADE is not licensed yet. As of v1.0.0 its `LICENSE` file is a placeholder: the licence is
+still to be chosen and cleared through ORNL / UT-Battelle software-release review, and until
+then it grants no permission to use, copy, modify or distribute the software. Its `NOTICE`
+carries the UT-Battelle copyright and the DOE government-rights statement. Both ship in the
+installed package's `palisade-1.0.0.dist-info/licenses/`.
 
 ## Turning it on
 

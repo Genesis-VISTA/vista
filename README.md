@@ -69,7 +69,7 @@ GitLab.
 ## Run from source
 
 You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
-two private dependencies: PALISADE on GitHub and `amscrot-py` on the amsc2 GitLab. Details are in
+the private `amscrot-py` on the amsc2 GitLab, which HPC job submission needs. Details are in
 [developing VISTA](docs/development.md#prerequisites).
 
 ```bash
@@ -141,5 +141,6 @@ Requirements live in [`openspec/specs/`](openspec/specs/).
 ## Licence
 
 This repository does not yet carry a licence file. PALISADE, which the backend depends on, is
-private while its licence is under review. Ask the maintainers about terms of use and
-redistribution.
+publicly visible on GitHub, but its own licence is still a placeholder pending ORNL software-release
+review: as of v1.0.0 it grants no rights to use, copy, modify or distribute it. Ask the
+maintainers about terms of use and redistribution.

@@ -23,10 +23,9 @@ backend launches one per agent over STDIO.
 - git 2.34 or later, for the Hypothesis Lab (the rest of VISTA works without it)
 - Docker or Podman, for the agent's code-execution sandbox image, which a checkout builds on
   first launch. A prebuilt package ships the image already built and needs neither.
-- Read access to the private [PALISADE](palisade.md) repository on GitHub
-  (`github.com/herronej/palisade_siege_agentic_security`). The backend depends on it at a pinned
-  tag, and `uv sync` in `backend/` fails without it. A credential helper that already signs you
-  in to GitHub is enough.
+- Network access to GitHub, where `uv sync` in `backend/` fetches [PALISADE](palisade.md) at a
+  pinned tag. The repository is public, so no GitHub credentials are needed; its licence is
+  still a placeholder (see [PALISADE](palisade.md#licence)).
 - Read access to the amsc2 GitLab group, for the private `amscrot-py` that HPC job submission
   needs (see [below](#hpc-dependencies)).
 

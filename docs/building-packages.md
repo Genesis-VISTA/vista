@@ -31,8 +31,8 @@ All verified by `--check`:
   HuggingFace is a real configuration worth finding out about in seconds
   rather than an hour in.
 
-Not checked by `--check`, but needed: read access to the private [PALISADE](palisade.md)
-repository the backend depends on, and the same platform as the package, on a
+Not checked by `--check`, but needed: network access to `github.com`, where the backend's
+[PALISADE](palisade.md) dependency is fetched, and the same platform as the package, on a
 machine that can run the code-execution sandbox (KVM on Linux; `msb doctor`
 reports ready on Windows). Without the sandbox the build's smoke test fails at the end.
 

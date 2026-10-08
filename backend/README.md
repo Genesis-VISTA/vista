@@ -18,8 +18,8 @@ It listens on `127.0.0.1:8001` and reads the repo-root `.env`; settings use the
 [`config.py`](src/vista_backend/config.py) and [`.env.sample`](../.env.sample)).
 To run it with the other services, see [docs/development.md](../docs/development.md).
 
-Syncing needs read access to the private PALISADE repository on GitHub; see
-[docs/palisade.md](../docs/palisade.md), which also covers the
+Syncing fetches PALISADE, the security sidecar, from its public GitHub repository at a pinned
+tag; see [docs/palisade.md](../docs/palisade.md) for its licence status and the
 `VISTA_BACKEND_PALISADE__*` settings.
 
 ## Test
