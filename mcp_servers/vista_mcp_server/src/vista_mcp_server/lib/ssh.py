@@ -67,7 +67,7 @@ class TTYSSHClient(asyncssh.SSHClient):
         self, name: str, instructions: str, lang: str, prompts: list[tuple[str, bool]],
     ) -> list[str] | None:
         try:
-            tty = open("/dev/tty", "r")
+            tty = open("/dev/tty", "r", encoding="utf-8")
         except OSError:
             return None
         try:
