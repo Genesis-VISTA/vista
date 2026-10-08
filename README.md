@@ -140,7 +140,5 @@ Requirements live in [`openspec/specs/`](openspec/specs/).
 
 ## Licence
 
-This repository does not yet carry a licence file. PALISADE, which the backend depends on, is
-publicly visible on GitHub, but its own licence is still a placeholder pending ORNL software-release
-review: as of v1.0.0 it grants no rights to use, copy, modify or distribute it. Ask the
-maintainers about terms of use and redistribution.
+This repository does not yet carry a licence file. Ask the maintainers about terms of use and
+redistribution.
