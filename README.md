@@ -6,8 +6,6 @@ submits simulations to configured HPC clusters (currently supports OLCF and NERS
 
 ## Getting started
 
-### Install a release
-
 On **macOS** (Apple Silicon) or **Linux** (x86-64), in a terminal:
 
 ```bash
@@ -20,35 +18,7 @@ On **Windows** (x64), in PowerShell:
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
 ```
 
-The installer checks the package against its checksum, installs it and opens VISTA. Then:
-
-1. Paste your inference API key into **Settings › Agent** (Settings is at the bottom of the
-   sidebar), and pick a model at the top of the chat.
-2. To submit HPC jobs, connect each cluster in Settings; see [HPC clusters](docs/hpc.md).
-3. Next time, open VISTA like any other application: `VISTA.app` on macOS, the app menu on
-   Linux, the Start menu on Windows.
-4. To upgrade, run the installer again with VISTA closed; your state is kept.
-
-VISTA is a desktop application with no browser mode, so it needs a graphical session and
-refuses to start over SSH or without a display. On Linux it also needs `/dev/kvm`. Where VISTA
-is installed, where it keeps its state, first-launch behaviour and Linux troubleshooting are in
-[installing VISTA](docs/installing.md).
-
-### Run from source
-
-You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
-two private dependencies: PALISADE on GitHub and `amscrot-py` on the amsc2 GitLab. Details are in
-[developing VISTA](docs/development.md#prerequisites).
-
-```bash
-cp .env.sample .env              # then fill in your keys
-./launch.sh logs                 # build, start every service, open the VISTA window
-./launch.sh logs --no-electron   # services only, headless, for a browser at http://localhost:3000
-```
-
-`./launch.sh` logs to `logs/mcp.log`, `logs/backend.log` and `logs/ui.log`, and stops
-everything when the window closes or on Ctrl-C. Other ways to start the services, and the thin
-macOS developer app, are in [developing VISTA](docs/development.md).
+Then see [after installing](#after-installing), or [run from source](#run-from-source).
 
 ## What it does
 
@@ -79,6 +49,38 @@ VISTA is under active development and pre-1.0: interfaces and settings change be
 releases. Release packages are published on the
 [GitHub mirror](https://github.com/Genesis-VISTA/vista/releases); the canonical repository is on
 GitLab.
+
+## After installing
+
+The installer checks the package against its checksum, installs it and opens VISTA. Then:
+
+1. Paste your inference API key into **Settings › Agent** (Settings is at the bottom of the
+   sidebar), and pick a model at the top of the chat.
+2. To submit HPC jobs, connect each cluster in Settings; see [HPC clusters](docs/hpc.md).
+3. Next time, open VISTA like any other application: `VISTA.app` on macOS, the app menu on
+   Linux, the Start menu on Windows.
+4. To upgrade, run the installer again with VISTA closed; your state is kept.
+
+VISTA is a desktop application with no browser mode, so it needs a graphical session and
+refuses to start over SSH or without a display. On Linux it also needs `/dev/kvm`. Where VISTA
+is installed, where it keeps its state, first-launch behaviour and Linux troubleshooting are in
+[installing VISTA](docs/installing.md).
+
+## Run from source
+
+You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
+two private dependencies: PALISADE on GitHub and `amscrot-py` on the amsc2 GitLab. Details are in
+[developing VISTA](docs/development.md#prerequisites).
+
+```bash
+cp .env.sample .env              # then fill in your keys
+./launch.sh logs                 # build, start every service, open the VISTA window
+./launch.sh logs --no-electron   # services only, headless, for a browser at http://localhost:3000
+```
+
+`./launch.sh` logs to `logs/mcp.log`, `logs/backend.log` and `logs/ui.log`, and stops
+everything when the window closes or on Ctrl-C. Other ways to start the services, and the thin
+macOS developer app, are in [developing VISTA](docs/development.md).
 
 ## Architecture
 
