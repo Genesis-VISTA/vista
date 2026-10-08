@@ -1,22 +1,59 @@
 # VISTA
 
-**Visual Intelligence for Scientific & Tooling Assistant.** VISTA is a scientific assistant
-for molten salt thermophysical properties and related materials science. It is a desktop
+**Visual Intelligence for Scientific & Tooling Assistant.** VISTA is an agentic scientific assistant. It is a desktop
 application in which an AI agent searches the literature, runs analysis code in a sandbox, and
-submits simulations to DOE supercomputers, and an "Agent as a Service" API that drives the same
-agent from code.
+submits simulations to configured HPC clusters (currently supports OLCF and NERSC).
 
-## Status
+## Getting started
 
-VISTA is under active development and pre-1.0: interfaces and settings change between
-releases. Release packages are published on the
-[GitHub mirror](https://github.com/Genesis-VISTA/vista/releases); the canonical repository is on
-GitLab.
+### Install a release
+
+On **macOS** (Apple Silicon) or **Linux** (x86-64), in a terminal:
+
+```bash
+curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
+```
+
+On **Windows** (x64), in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
+```
+
+The installer checks the package against its checksum, installs it and opens VISTA. Then:
+
+1. Paste your inference API key into **Settings › Agent** (Settings is at the bottom of the
+   sidebar), and pick a model at the top of the chat.
+2. To submit HPC jobs, connect each cluster in Settings; see [HPC clusters](docs/hpc.md).
+3. Next time, open VISTA like any other application: `VISTA.app` on macOS, the app menu on
+   Linux, the Start menu on Windows.
+4. To upgrade, run the installer again with VISTA closed; your state is kept.
+
+VISTA is a desktop application with no browser mode, so it needs a graphical session and
+refuses to start over SSH or without a display. On Linux it also needs `/dev/kvm`. Where VISTA
+is installed, where it keeps its state, first-launch behaviour and Linux troubleshooting are in
+[installing VISTA](docs/installing.md).
+
+### Run from source
+
+You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
+two private dependencies: PALISADE on GitHub and `amscrot-py` on the amsc2 GitLab. Details are in
+[developing VISTA](docs/development.md#prerequisites).
+
+```bash
+cp .env.sample .env              # then fill in your keys
+./launch.sh logs                 # build, start every service, open the VISTA window
+./launch.sh logs --no-electron   # services only, headless, for a browser at http://localhost:3000
+```
+
+`./launch.sh` logs to `logs/mcp.log`, `logs/backend.log` and `logs/ui.log`, and stops
+everything when the window closes or on Ctrl-C. Other ways to start the services, and the thin
+macOS developer app, are in [developing VISTA](docs/development.md).
 
 ## What it does
 
 - **Chat with a scientific agent** backed by the inference endpoint you choose (AmSC i2, AmSC
-  MAG, OLCF Inference or your own), with the model picked per chat.
+  MAG, OLCF Inference or your own).
 - **Projects** scope what the agent knows and can do: its system prompt, skills, tools and
   usage limits. See [project onboarding](docs/project-onboarding.md).
 - **Knowledge bases**: retrieval over indexed paper collections, with citations bound to the
@@ -36,55 +73,12 @@ GitLab.
 - **PALISADE**: an optional security sidecar that gates prompts, tool calls, retrievals, code,
   jobs and citations. See [PALISADE](docs/palisade.md).
 
-## Platforms
+## Status
 
-| Platform | Package | Notes |
-|---|---|---|
-| macOS | Apple Silicon (`mac-arm64`) | |
-| Linux | x86-64 (`linux-x86`) | Needs `/dev/kvm` and a desktop session |
-| Windows | x64 (`win-x86`) | |
-
-VISTA is a desktop application on every platform and has no browser mode: a packaged VISTA
-needs a graphical session, and refuses to start over SSH or without a display. A source checkout
-can run its services headless; see [development](docs/development.md#without-the-window).
-
-## Install a release
-
-On macOS or Linux, in a terminal:
-
-```bash
-curl -fsSL https://github.com/Genesis-VISTA/vista/releases/latest/download/install.sh | bash
-```
-
-On Windows, in PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vista/releases/latest/download/install.ps1 | iex"
-```
-
-The installer checks the package against its checksum, installs it and opens VISTA. Afterwards,
-open VISTA like any other application: `VISTA.app` on macOS, the app menu on Linux, the Start
-menu on Windows. Paste your inference API key into Settings › Agent. Run the installer again,
-with VISTA closed, to upgrade; your state is kept.
-
-Where VISTA is installed, where it keeps its state, first-launch behaviour and Linux
-troubleshooting are in [installing VISTA](docs/installing.md).
-
-## Run from source
-
-You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
-two private dependencies: PALISADE on GitHub and `amscrot-py` on the amsc2 GitLab. Details are in
-[developing VISTA](docs/development.md#prerequisites).
-
-```bash
-cp .env.sample .env          # then fill in your keys
-./launch.sh logs             # build, start every service, open the VISTA window
-./launch.sh logs --no-electron   # services only, for a browser at http://localhost:3000
-```
-
-`./launch.sh` logs to `logs/mcp.log`, `logs/backend.log` and `logs/ui.log`, and stops
-everything when the window closes or on Ctrl-C. Other ways to start the services, and the thin
-macOS developer app, are in [developing VISTA](docs/development.md).
+VISTA is under active development and pre-1.0: interfaces and settings change between
+releases. Release packages are published on the
+[GitHub mirror](https://github.com/Genesis-VISTA/vista/releases); the canonical repository is on
+GitLab.
 
 ## Architecture
 
