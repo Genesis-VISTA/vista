@@ -30,7 +30,7 @@ npm run build
 cd "$REPO_ROOT/mcp_servers/vista_mcp_server"
 # amscrot-py (the AmSC IRI SDK) lives in the optional `hpc` extra — both NERSC
 # (Perlmutter) and OLCF (Frontier/Odo) routing rely on it. The git+https URL needs
-# GitLab credentials configured for the user running this build — see README.md.
+# GitLab credentials configured for the user running this build — see docs/development.md.
 uv sync --frozen --extra hpc
 
 cd "$REPO_ROOT/mcp_servers/dev_mcp_server"

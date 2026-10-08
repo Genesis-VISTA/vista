@@ -205,7 +205,7 @@ outsider with a good objection is not dismissed for being outside.
 
 Verified attribution — signed post commits checked against the keys a forge
 publishes for an account — is a possible later addition
-([design D8](../openspec/changes/forum-git-backend/design.md)).
+([design D8](../openspec/changes/archive/2026-10-01-forum-git-backend/design.md)).
 
 ## Verified
 

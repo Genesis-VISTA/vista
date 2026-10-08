@@ -4,7 +4,9 @@ Release packages are built by GitHub Actions on the public mirror,
 `github.com/Genesis-VISTA/vista`, by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 The canonical repository is still GitLab. The mirror copies every branch and tag to GitHub and
 overwrites anything committed only there, so every change, including to the workflow, lands on
-GitLab. The design is in the OpenSpec change `github-release-builds`.
+GitLab. The design is in the OpenSpec change `github-release-builds`. Building a package on
+your own machine, and the build's inputs and flags, are in
+[building-packages.md](building-packages.md).
 
 A `v*` tag builds three packages:
 
@@ -94,7 +96,7 @@ Actions settings without a commit.
 
 Each release carries `install.sh` (macOS and Linux) and `install.ps1` (Windows), with that
 release's version written in by `.github/scripts/render-installers.sh`. The notes lead with
-them, pinned to the release's own tag. The README uses `releases/latest/download/`, which
+them, pinned to the release's own tag. The README and [installing.md](installing.md) use `releases/latest/download/`, which
 GitHub points at the newest published release, skipping drafts and prereleases, so it works
 from the first published non-prerelease on.
 
@@ -106,10 +108,14 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vist
 ```
 
 They do what the notes' manual steps do: download the platform's archive, check it against
-its `.sha256`, unpack it beside the install and rename it into place, then start the launcher.
-macOS and Linux install into `~/.local/share/vista/vista-<version>-<platform>` with a
-`~/.local/bin/vista` link; Windows into `%LOCALAPPDATA%\VISTA\app`, without the version in the
-name because of Windows' path limit, with a Start menu entry. A re-run of the installed version
+its `.sha256`, unpack it beside the install and rename it into place, then open VISTA. Each
+platform installs into one fixed folder, so an upgrade replaces it: macOS into
+`/Applications/VISTA` (`~/Applications/VISTA` where that cannot be written), Linux into
+`~/.local/share/vista/app` with an app-menu entry, and Windows into `%LOCALAPPDATA%\VISTA\app`
+with a Start menu entry; on macOS and Linux `~/.local/bin/vista` links to the terminal
+launcher. They refuse while VISTA is running from
+a folder they would replace. What a researcher sees is in [installing.md](installing.md). A
+re-run of the installed version
 downloads nothing. An upgrade removes the old package only once the new one is in place, and
 state in `VISTA_HOME` is never touched.
 

@@ -12,6 +12,7 @@
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
 #   ./scripts/ci-local.sh launcher         # the package launchers' supervised mode
+#   ./scripts/ci-local.sh docs             # relative links in the Markdown docs
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -32,7 +33,7 @@ TARGETS=()
 ACTIONS=()
 
 usage() {
-  sed -n '2,18p' "$0" | sed -E 's/^# ?//'
+  sed -n '2,21p' "$0" | sed -E 's/^# ?//'
 }
 
 die() {
@@ -288,6 +289,11 @@ launcher_test() {
   fi
 }
 
+# Relative links and anchors in the tracked Markdown files. Mirrors docs:links.
+docs_lint() {
+  run_job "docs:links" 0 python3 -I "$REPO_ROOT/scripts/check_md_links.py"
+}
+
 install_hooks() {
   git -C "$REPO_ROOT" config core.hooksPath .githooks
   chmod +x "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/scripts/ci-local.sh"
@@ -312,7 +318,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|electron|install|launcher|all)
+    backend|ui|mcp|electron|install|launcher|docs|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -419,6 +425,9 @@ if want_target install && want_action lint; then
 fi
 if want_target install && want_action test; then
   run_section "install test" install_test
+fi
+if want_target docs && want_action lint; then
+  run_section "docs lint" docs_lint
 fi
 if want_target launcher && want_action test; then
   run_section "launcher test" launcher_test

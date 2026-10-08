@@ -4,7 +4,7 @@ How the Hypothesis Lab keeps its debates in a git repository: the refs, the
 files, what each field means, and how a reader turns a branch into a thread.
 The implementation is `backend/src/vista_backend/services/forum_git.py`; the
 reasons behind each choice are in
-[`openspec/changes/forum-git-backend/design.md`](../openspec/changes/forum-git-backend/design.md)
+[`openspec/changes/forum-git-backend/design.md`](../openspec/changes/archive/2026-10-01-forum-git-backend/design.md)
 (D1–D7). This replaces `h5i-forum-contract.md`, which described the h5i CLI the
 lab used before h5i removed its forum.
 

@@ -54,7 +54,7 @@ main() {
       --version) [[ $# -ge 2 ]] || die "--version needs a value"; version="${2#v}"; shift ;;
       --version=*) version="${1#--version=}"; version="${version#v}" ;;
       -h|--help) sed -n '2,/^$/s/^# \{0,1\}//p' "${BASH_SOURCE[0]}" 2>/dev/null \
-                   || echo "see https://github.com/Genesis-VISTA/vista#running-a-prebuilt-package"
+                   || echo "see https://github.com/Genesis-VISTA/vista/blob/main/docs/installing.md"
                  return 0 ;;
       *) die "unknown option: $1 (try --help)" ;;
     esac
