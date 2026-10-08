@@ -20,8 +20,11 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/Genesis-VISTA/vist
 ```
 
 It downloads the package for your machine, checks it against its `.sha256`, installs it and
-opens VISTA. Pipe it to `bash -s -- --no-launch` instead of `bash` to install only, or add
-`--version 0.2.0-rc1` the same way for another release.
+opens VISTA. On macOS and Linux, pipe it to `bash -s -- --no-launch` instead of `bash` to install
+only, or add `--version 0.2.0-rc1` the same way for another release. On Windows, options can't
+be passed through `irm | iex`, so set them first: `$env:VISTA_INSTALL_NO_LAUNCH=1` to install
+only, or `$env:VISTA_INSTALL_VERSION="0.2.0-rc1"` for another release. A downloaded
+`install.ps1` run as a file takes `-NoLaunch` and `-Version <ver>` instead.
 
 **VISTA is an application on every platform.** Open it the way you open any other:
 
@@ -108,7 +111,7 @@ installer does, and starting over is deleting the state directory.
 
 | Variable             | Description | Default    |
 | -------------------- | ----------- | ---------- |
-| `VISTA_HOME`         | State directory. Keep the path under 60 characters. The sandbox derives a Unix socket path from it and the kernel caps that at 104 bytes. Checked at startup. | `~/.vista` |
+| `VISTA_HOME`         | State directory. On macOS and Linux keep the path to 38 characters or fewer: the sandbox derives a Unix socket path from `$VISTA_HOME/microsandbox`, which may be at most 51, and the kernel caps the socket path at 104 bytes. On Windows the limit is the 260-character path length. Checked at startup. | `~/.vista` |
 | `VISTA_UI_PORT`      | Web interface | `3000`     |
 | `VISTA_MCP_PORT`     | MCP server | `8000`     |
 | `VISTA_BACKEND_PORT` | Backend | `8001`     |

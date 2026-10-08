@@ -19,7 +19,7 @@ stands between a page and the researcher's account.
 All verified by `--check`:
 
 - `uv`, `npm`, `git`
-- Docker or Podman
+- Docker or Podman, unless you pass `--sandbox-image` (below)
 - Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
   `amscrot-py` that HPC job submission needs; see
   [HPC dependencies](development.md#hpc-dependencies) for the `url.insteadOf` rewrite. Nothing is
@@ -95,6 +95,7 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--science-projects`             | Also pack the molten-salt corpus and its index, MSTDB and the `forge-tune` CSV, so the package seeds the `molten-salt` and `alloy-design` projects. Also enabled by `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` |
 | `--science-projects-vector-store DIR` | Optional, and only with `--science-projects`. Reuse an already-built **molten-salt** Chroma store instead of indexing that corpus again |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
+| `--sandbox-image TAR`            | Use an already-exported sandbox image archive instead of building one, so no container runtime is needed. Its architecture must match the target |
 | `--skip-smoke-test`              | Skip the post-build unpack-and-run verification                                                                           |
 | `--verify-without-sandbox`       | For a build host that cannot run the sandbox, such as a hosted macOS CI runner. The smoke test still runs, but every check that needs the sandbox, retrieval included, is reported as skipped rather than passed, and the build says the package was verified without it. Run the full smoke test on a real machine before shipping such a package |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |

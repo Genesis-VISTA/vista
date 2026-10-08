@@ -65,8 +65,10 @@ cp .env.sample .env
 ```
 
 `.env.sample` documents each setting. The backend, the MCP server, `./launch.sh` and
-`./scripts/build.sh` all read the repo-root `.env`; a value already exported in your
-environment wins over the file.
+`./scripts/build.sh` all read the repo-root `.env`, but they disagree about a value that is also
+exported in your environment: the backend and the MCP server keep the exported value, while
+`./launch.sh` and `./scripts/build.sh` load the file over it. So to override a setting for one
+run of `./launch.sh`, change `.env` rather than exporting it.
 
 | Variable | Description | Default |
 | --- | --- | --- |
@@ -87,8 +89,9 @@ Per-user HPC credentials are not env vars: each researcher connects them in Sett
 
 This builds what is missing, starts the MCP server, backend and UI, logging to `logs/mcp.log`,
 `logs/backend.log` and `logs/ui.log`, and opens the UI in the VISTA window. Closing the window,
-or Ctrl-C, stops everything. The first launch can take a few minutes while the MCP server builds
-the sandbox image. `logs` is the default mode, so plain `./launch.sh` does the same.
+or Ctrl-C, stops everything. Each start deletes `logs/` first, so copy anything you want to keep
+out of it. The first launch can take a few minutes while the MCP server builds the sandbox image.
+`logs` is the default mode, so plain `./launch.sh` does the same.
 
 The window is installed by `./scripts/build.sh --electron` (a ~290 MB Electron download that a
 plain `./scripts/build.sh` skips), which `./launch.sh` runs for you, and it opens
