@@ -155,7 +155,7 @@ For diagnostics, `~/.local/share/vista/app/vista` starts the same VISTA from a t
 </details>
 
 Where VISTA keeps your data, and how to upgrade, are in the
-[README](${REPO_URL}/blob/${TAG}/README.md#running-a-prebuilt-package).
+[installation guide](${REPO_URL}/blob/${TAG}/docs/installing.md).
 
 </details>
 

@@ -32,5 +32,5 @@ uv run vista-mcp-server --transport=http
 
 | Env variable             | Description                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------ |
-| `VISTA_MCP_ALLOWED_URIS` | JSON array of regex parters for permitted URIS in the display_file tool        |
+| `VISTA_MCP_ALLOWED_URIS` | JSON array of regex patterns for permitted URIs in the display_file tool        |
 | `VISTA_MCP_URI_MAP`      | JSON object mapping URI prefixes to replacement URLs for the display_file tool |

@@ -12,7 +12,7 @@ lane never blocks merges.
 | Playwright smoke | schedule / manual | none beyond running UI | **no** |
 | VISTA window | manual: macOS or a Linux desktop; tests also in Docker | none | **no** |
 
-OpenSpec: [`openspec/changes/milestone-d-validation-lane/`](../openspec/changes/milestone-d-validation-lane/).
+OpenSpec: [`openspec/changes/milestone-d-validation-lane/`](../openspec/changes/archive/2026-10-01-milestone-d-validation-lane/).
 
 ## Marker and env-flag gates
 

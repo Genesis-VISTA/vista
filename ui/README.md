@@ -1,161 +1,47 @@
 # Vista UI
 
-Next.js App Router tool console and orchestrator for the VISTA MCP backend.
+Next.js App Router frontend for VISTA. It holds no agent loop of its own: the
+chat, projects, skills, knowledge bases and Hypothesis Lab pages call
+`app/api/*` route handlers, which proxy to the backend (FastAPI + PydanticAI,
+see [`backend/`](../backend/)). The browser never calls the backend or an MCP
+server directly.
 
-The browser never calls MCP directly. All calls flow through `ui/app/api/*` route handlers.
+Before changing anything here, read the relevant guide in
+`node_modules/next/dist/docs/`: this is Next.js 16, and the docs that ship with
+it are the source of truth.
 
-## What This UI Supports
+## Run
 
-- Browse local skills from `project-root/skills/**/SKILL.md`
-- Run MCP tools through `/api/mcp/call`
-- Check MCP connectivity and discover tools
-- Optional advisory LLM chat (`/api/chat`) with manual tool execution only
-- Salt analysis quick action (`bash`) showing the generated command string
-
-## Prerequisites
-
-- Python 3.12+
-- Node.js 18+ (or 20+ recommended)
-- `uv` installed
-
-## First-Time Setup (After Clone)
-
-1. Install Python dependencies (repo root):
-
-```bash
-uv venv --python=3.12 .venv
-source .venv/bin/activate
-uv pip install -e .[dev]
-```
-
-2. Install UI dependencies:
+The UI needs the backend, and the backend needs the MCP server. Start all three,
+and the VISTA window, from the repo root with `./launch.sh logs`; see
+[docs/development.md](../docs/development.md). To run only the UI against
+services that are already up:
 
 ```bash
 cd ui
 npm install
-```
-
-3. Create local UI env file:
-
-```bash
-cp .env.example .env.local
-```
-
-4. Edit `ui/.env.local` as needed. Minimum:
-
-```bash
-MCP_BASE_URL=http://127.0.0.1:8000/mcp
-```
-
-Optional LLM settings:
-
-```bash
-OPENAI_API_KEY=changeme
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_STYLE=responses
-OPENAI_CHAT_URL=
-OPENAI_AUTH_MODE=bearer
-OPENAI_TIMEOUT_MS=30000
-```
-
-Azure example:
-
-```bash
-OPENAI_API_KEY=<azure_key>
-OPENAI_API_STYLE=chat_completions
-OPENAI_AUTH_MODE=api_key
-OPENAI_CHAT_URL=https://<resource>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2025-01-01-preview
-OPENAI_TIMEOUT_MS=30000
-```
-
-## Run Locally
-
-Terminal 1 (repo root): start MCP server over HTTP
-
-```bash
-python3 -m vista.app --transport http --host 127.0.0.1 --port 8000
-# or:
-# uv run vista --transport http --host 127.0.0.1 --port 8000
-```
-
-Terminal 2:
-
-```bash
-cd ui
 npm run dev
 ```
 
-Open:
-
-```text
-http://localhost:3000
-```
-
-## Quick Test Plan
-
-1. MCP health:
+It reads the repo-root `.env`. `VISTA_BACKEND_URL` (default
+`http://127.0.0.1:8001`) is where it finds the backend, and `VISTA_MCP_URL`
+(default `http://127.0.0.1:8000/mcp`) the MCP server for the `/api/mcp/*`
+diagnostics routes. Inference keys are not
+UI settings: researchers enter them in Settings › Agent, and the backend holds
+them.
 
 ```bash
-curl http://localhost:3000/api/mcp/health
+curl http://localhost:3000/api/mcp/health   # smoke test
 ```
 
-Expected:
-- `ok: true`
-
-2. MCP tools:
+## Test
 
 ```bash
-curl http://localhost:3000/api/mcp/tools
+npm run lint        # ESLint and the colour-token check
+npm run typecheck
+npm test            # Vitest component tests
+npm run test:e2e:hermetic   # Playwright with every /api call stubbed in the page
 ```
 
-Expected:
-- tool list including `display_file`, `bash`
-
-3. Salt analysis command pass-through:
-
-```bash
-curl -X POST http://localhost:3000/api/mcp/call \
-  -H "content-type: application/json" \
-  -d '{"tool":"bash","args":{"command":"skills/salt-analysis/scripts/analyze_salt.py --salt AlCl3-KCl"}}'
-```
-
-Expected:
-- response echoes the command string passed to `bash`
-
-4. LLM chat (if API key configured):
-
-```bash
-curl -X POST http://localhost:3000/api/chat \
-  -H "content-type: application/json" \
-  -d '{"message":"What MCP tools are available?"}'
-```
-
-## Troubleshooting
-
-- `Address already in use` on port 8000:
-```bash
-lsof -nP -iTCP:8000 -sTCP:LISTEN
-kill <PID>
-```
-
-- MCP returns `Missing session ID` or `Not Acceptable`:
-  - use UI routes (`/api/mcp/*`) instead of calling raw MCP endpoint from browser
-  - UI orchestrator handles session + accept headers
-
-- `/api/chat` timeout:
-  - increase `OPENAI_TIMEOUT_MS` in `ui/.env.local` (for example `30000`)
-
-## Repo Structure
-
-```text
-project-root/
-├─ clients/
-├─ skills/
-├─ src/
-└─ ui/
-   ├─ app/
-   ├─ components/
-   ├─ lib/
-   └─ README.md
-```
+`./scripts/ci-local.sh ui` runs the same set as CI. It builds into `ui/.next`,
+so it stops a `./launch.sh` stack running from the same checkout.

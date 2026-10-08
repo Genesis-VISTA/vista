@@ -428,7 +428,7 @@ for v28/vista-data) or pass --payload with an already-unpacked copy")
 
   # amsc2 access, for the private amscrot-py that HPC submission needs. Asked
   # of git, using whatever credentials this host already has: an SSH key via
-  # the url.insteadOf rewrite in README.md, or a stored HTTPS credential.
+  # the url.insteadOf rewrite in docs/development.md, or a stored HTTPS credential.
   # Nothing is read out of the credential store and nothing is written to .env
   # -- the answer needed here is only whether the fetch will work.
   # GCM_INTERACTIVE covers Git Credential Manager, the Windows default, which
@@ -442,7 +442,7 @@ mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
     $AMSC_GIT_URL
   The package bundles this dependency so researchers never need amsc2
   credentials, which means this build host does. Configure git access to
-  gitlab.com/amsc2 (see README.md).")
+  gitlab.com/amsc2 (see docs/development.md).")
   fi
 
   # An inference credential, for the citation metadata the vector store

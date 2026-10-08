@@ -11,7 +11,7 @@ Arbitrary arguments allowed and are printed
 ## Real-cluster smoke (validation lane)
 
 Opt-in only — never part of hermetic PR CI. Full procedure:
-[`docs/validation-lane.md`](../docs/validation-lane.md).
+[`docs/validation-lane.md`](../../docs/validation-lane.md).
 
 ```bash
 # MCP: leave VISTA_MCP_HPC_DRY_RUN unset

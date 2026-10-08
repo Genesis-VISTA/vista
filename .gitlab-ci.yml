@@ -326,6 +326,19 @@ launcher:test:
     - bash scripts/tests/mac_dev_launcher_test.sh
     - pwsh -NoProfile -File scripts/tests/package_launcher_supervised_test.ps1
 
+# ─── Docs ───────────────────────────────────────────────────────────────────
+#
+# Relative links and #anchors in every tracked Markdown file. Offline: external
+# URLs are not fetched, since what drifts is our own files moving.
+docs:links:
+  stage: lint
+  <<: *python-image
+  before_script:
+    # git: the check lists tracked files with `git ls-files`.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+  script:
+    - python3 -I scripts/check_md_links.py
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:
