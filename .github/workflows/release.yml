@@ -76,6 +76,17 @@ jobs:
       run:
         shell: bash
     steps:
+      # Real-time scanning inspects every file the build, the archive, both
+      # unpacks and the first start touch, on a runner thrown away afterwards.
+      # Logged before and after, so a run shows whether it was on to begin with.
+      - name: Turn off Defender real-time scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          "before: real-time protection $((Get-MpComputerStatus).RealTimeProtectionEnabled)"
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          "after:  real-time protection $((Get-MpComputerStatus).RealTimeProtectionEnabled)"
       # The Linux image leaves about 13 GB of its 72 GB disk free, and the build
       # plus the smoke test's unpacked copy and sandbox image need more: the
       # rehearsal's msb load ran out of space. These toolchains are never used
