@@ -5,6 +5,8 @@ import type { SkillSummary } from "@/lib/types";
 
 type Props = {
   open: boolean;
+  /** Project the imported skill is loaded into. */
+  project: string | null;
   onCancel: () => void;
   onImported: (skill: SkillSummary) => void;
 };
@@ -27,7 +29,7 @@ function isIgnored(path: string): boolean {
   return IGNORED_FILES.has(name) || parts.slice(0, -1).some((part) => IGNORED_DIRS.has(part));
 }
 
-export function SkillImportModal({ open, onCancel, onImported }: Props) {
+export function SkillImportModal({ open, project, onCancel, onImported }: Props) {
   const [source, setSource] = useState<Source>("github");
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -50,7 +52,7 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
       return fetch("/api/skills/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), project }),
       });
     }
     const form = new FormData();
@@ -58,6 +60,7 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
       form.append("files", file, file.name);
       form.append("paths", relativePath(file));
     }
+    if (project) form.append("project", project);
     return fetch("/api/skills/import/upload", { method: "POST", body: form });
   }
 

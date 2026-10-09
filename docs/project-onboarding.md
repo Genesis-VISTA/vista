@@ -33,7 +33,7 @@ Markdown file under [system_prompts/](../backend/src/vista_backend/db/system_pro
 | `name`          | string, 2–80 chars            | yes      | Unique. Pattern `[A-Za-z0-9_ .-]+`. Used as the URL slug on every project API route. |
 | `description`   | string                        | no       | One-liner shown on the project card.                                                 |
 | `system_prompt` | string                        | no       | Appended after the base prompt (see "How a project drives the agent" below).         |
-| `skills`        | list of skill slugs           | no       | The project's **mandated** skills — always loaded, always in the system prompt.      |
+| `skills`        | list of skill slugs           | no       | The project's loaded skills — the agent has exactly these, in its sandbox and prompt.|
 | `tools`         | list of fnmatch patterns      | no       | MCP tool allow/deny list. `!`-prefixed entries deny; no allow means `*`.             |
 | `usage_limits`  | mapping (PydanticAI shape)    | no       | Per-turn limits enforced by the agent loop. Empty = engine defaults.                 |
 
@@ -156,9 +156,8 @@ is the CRUD surface.
    rest are optional.
 2. **Skills picker.** Fed by `GET /api/skills` — the list includes every
    skill on disk (including private ones), so you can attach a freshly
-   generated or imported skill without publishing it first. Mandated skills
-   live forever in `project.skills`; users can still **add** extra skills per
-   project via the hub's Load button (see the [skill onboarding doc](skill-onboarding.md#how-a-skill-becomes-loaded-for-a-project)).
+   generated or imported skill without publishing it first. The hub's Load
+   button and `/skills`' Unload edit the same list (see the [skill onboarding doc](skill-onboarding.md#how-a-skill-becomes-loaded-for-a-project)).
 3. **Tools field.** Comma-separated fnmatch patterns. Same syntax as the
    default projects' lists, e.g. `*, !agenthpc_*`.
 4. **System prompt.** Free-form Markdown appended after the base prompt.
@@ -178,8 +177,7 @@ Clicking **Open** writes the project's `name` to localStorage under the
 [lib/projects.ts:30](../ui/lib/projects.ts)) and navigates to `/`. The chat
 page reads that key, and on activation it resets `messages` and
 `messageHistory` so context doesn't leak across projects. The active project
-also seeds the per-project loaded-skills additions set on `/skills` and the
-hub.
+is also the one `/skills` and the hub load skills into.
 
 ### Renaming and deleting
 

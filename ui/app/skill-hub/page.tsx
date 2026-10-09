@@ -4,12 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useActiveProject } from "@/lib/projects";
-import {
-  computeLoaded,
-  isMandated,
-  readAdditions,
-  writeAdditions,
-} from "@/lib/loaded-skills";
+import { setSkillLoaded } from "@/lib/loaded-skills";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 import { AppTopBar } from "@/components/AppTopBar";
 
@@ -30,22 +25,15 @@ type HubSkill = SkillSummary & { addedAt?: number | null };
 
 export default function SkillHubPage() {
   const activeProject = useActiveProject();
-  const projectName = activeProject?.name ?? null;
   const [skills, setSkills] = useState<HubSkill[]>([]);
-  const [additions, setAdditions] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<TagFilter>("All");
   const [sort, setSort] = useState<SortKey>("name");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
 
-  // Rehydrate the additions set whenever the active project changes.
-  useEffect(() => {
-    setAdditions(readAdditions(projectName));
-  }, [projectName]);
-
   const loadedSlugs = useMemo(
-    () => computeLoaded(activeProject, additions),
-    [activeProject, additions]
+    () => new Set(activeProject?.skills ?? []),
+    [activeProject]
   );
 
   // Fetch the hub catalog.
@@ -56,18 +44,13 @@ export default function SkillHubPage() {
       .catch(() => setSkills([]));
   }, []);
 
-  function toggleLoaded(slug: string) {
-    // Project-mandated skills are always loaded — the Load button on them is
-    // a no-op (we don't store a mandated slug in the additions set since it'd
-    // be redundant and confusing if the project's skill list later changes).
-    if (isMandated(activeProject, slug)) return;
-    setAdditions((prev) => {
-      const next = new Set(prev);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
-      writeAdditions(projectName, next);
-      return next;
-    });
+  async function toggleLoaded(slug: string) {
+    if (!activeProject) return;
+    try {
+      await setSkillLoaded(activeProject, slug, !loadedSlugs.has(slug));
+    } catch (err) {
+      window.alert(`Failed to update the project: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   async function openDetail(slug: string) {
@@ -167,7 +150,6 @@ export default function SkillHubPage() {
         ) : (
           visible.map((skill) => {
             const isLoaded = loadedSlugs.has(skill.slug);
-            const mandated = isMandated(activeProject, skill.slug);
             return (
               <div
                 key={skill.slug}
@@ -187,19 +169,15 @@ export default function SkillHubPage() {
                   <button
                     type="button"
                     className={`hub-card-action${isLoaded ? " loaded" : ""}`}
-                    disabled={mandated}
-                    title={
-                      mandated
-                        ? `Required by the ${activeProject?.name} project`
-                        : undefined
-                    }
+                    disabled={!activeProject}
+                    title={activeProject ? undefined : "Open a project to load skills into it"}
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleLoaded(skill.slug);
+                      void toggleLoaded(skill.slug);
                     }}
                     aria-pressed={isLoaded}
                   >
-                    {mandated ? "Required" : isLoaded ? "Loaded ✓" : "Load"}
+                    {isLoaded ? "Loaded ✓" : "Load"}
                   </button>
                 </div>
                 <div className="hub-card-desc">

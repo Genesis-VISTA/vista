@@ -4,14 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useActiveProject } from "@/lib/projects";
-import {
-  LOADED_SKILLS_STORAGE_KEY,
-  computeLoaded,
-  isMandated,
-  readAdditions,
-  writeAdditions,
-} from "@/lib/loaded-skills";
+import { refreshProjects, useActiveProject } from "@/lib/projects";
+import { setSkillLoaded } from "@/lib/loaded-skills";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import { SkillImportModal } from "@/components/SkillImportModal";
@@ -22,7 +16,6 @@ export default function SkillsPage() {
   const activeProject = useActiveProject();
   const projectName = activeProject?.name ?? null;
   const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [additions, setAdditions] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
@@ -37,38 +30,18 @@ export default function SkillsPage() {
       .catch(() => setSkills([]));
   }, []);
 
-  // Rehydrate the additions set when the active project changes.
-  useEffect(() => {
-    setAdditions(readAdditions(projectName));
-  }, [projectName]);
-
-  // Cross-tab sync: rewrite from another tab (e.g. the hub toggling Load).
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key === LOADED_SKILLS_STORAGE_KEY) {
-        setAdditions(readAdditions(projectName));
-      }
-    }
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [projectName]);
-
   const loadedSlugs = useMemo(
-    () => computeLoaded(activeProject, additions),
-    [activeProject, additions]
+    () => new Set(activeProject?.skills ?? []),
+    [activeProject]
   );
 
-  function unload(slug: string) {
-    // Project-mandated skills cannot be unloaded from the UI; their inclusion
-    // is controlled by the project's `skills` list in the backend.
-    if (isMandated(activeProject, slug)) return;
-    setAdditions((prev) => {
-      if (!prev.has(slug)) return prev;
-      const next = new Set(prev);
-      next.delete(slug);
-      writeAdditions(projectName, next);
-      return next;
-    });
+  async function unload(slug: string) {
+    if (!activeProject) return;
+    try {
+      await setSkillLoaded(activeProject, slug, false);
+    } catch (err) {
+      window.alert(`Failed to unload: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   async function publish(slug: string) {
@@ -101,7 +74,7 @@ export default function SkillsPage() {
         window.alert("Failed to delete unpublished skill. See server logs for details.");
         return;
       }
-      unload(slug);
+      await unload(slug);
       setSkills((prev) => prev.filter((s) => s.slug !== slug));
     } finally {
       setBusySlug(null);
@@ -188,9 +161,7 @@ export default function SkillsPage() {
                 </div>
               </div>
             ) : (
-              loadedSkills.map((skill) => {
-                const mandated = isMandated(activeProject, skill.slug);
-                return (
+              loadedSkills.map((skill) => (
                 <div
                   key={skill.slug}
                   className="skill-item"
@@ -204,14 +175,7 @@ export default function SkillsPage() {
                     }
                   }}
                 >
-                  <div className="skill-name">
-                    {skill.name}
-                    {mandated && (
-                      <span className="skill-required" title={`Required by the ${activeProject?.name} project`}>
-                        required
-                      </span>
-                    )}
-                  </div>
+                  <div className="skill-name">{skill.name}</div>
                   <div className="skill-desc">{skill.description || "No description"}</div>
                   {(skill.author || skill.repoUrl) && (
                     <div className="skill-meta">
@@ -253,27 +217,24 @@ export default function SkillsPage() {
                         Publish
                       </button>
                     )}
-                    {!mandated && (
-                      <button
-                        type="button"
-                        className="button ghost button-sm"
-                        disabled={busySlug === skill.slug}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (skill.isPublic) {
-                            unload(skill.slug);
-                            return;
-                          }
-                          setPendingUnloadSkill(skill);
-                        }}
-                      >
-                        Unload
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="button ghost button-sm"
+                      disabled={busySlug === skill.slug}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (skill.isPublic) {
+                          void unload(skill.slug);
+                          return;
+                        }
+                        setPendingUnloadSkill(skill);
+                      }}
+                    >
+                      Unload
+                    </button>
                   </div>
                 </div>
-              );
-            })
+              ))
             )}
           </div>
         </div>
@@ -343,22 +304,17 @@ export default function SkillsPage() {
 
       <SkillImportModal
         open={showImport}
+        project={projectName}
         onCancel={() => setShowImport(false)}
         onImported={(skill) => {
-          // Append the new private skill to the local catalog (de-dupe in
-          // case a refetch crossed paths with the import) and auto-load it
-          // into the active project's additions so the user sees it on this
-          // page immediately.
+          // The backend loaded the new private skill into the active project;
+          // append it to the local catalog (de-dupe in case a refetch crossed
+          // paths with the import) and refetch the project to show it loaded.
           setSkills((prev) => {
             const without = prev.filter((s) => s.slug !== skill.slug);
             return [skill, ...without];
           });
-          if (projectName) {
-            const adds = readAdditions(projectName);
-            adds.add(skill.slug);
-            writeAdditions(projectName, adds);
-            setAdditions(adds);
-          }
+          void refreshProjects();
           setShowImport(false);
         }}
       />
