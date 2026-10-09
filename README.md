@@ -140,5 +140,4 @@ Requirements live in [`openspec/specs/`](openspec/specs/).
 
 ## Licence
 
-This repository does not yet carry a licence file. Ask the maintainers about terms of use and
-redistribution.
+VISTA is licensed under the [Apache License, Version 2.0](LICENSE).
