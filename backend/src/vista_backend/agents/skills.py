@@ -175,6 +175,26 @@ def write_skill(skill_dir: Path | str, skill: Skill) -> Skill:
     return read_skill(skill_dir)
 
 
+SKILL_HPC_JOBS_DIR = "hpc_jobs"
+""" Where a skill ships HPC jobs; the MCP server submits them as `<skill>/<job>`. """
+
+
+def skill_hpc_jobs(skill_dir: Path | str) -> list[str]:
+    """
+    The HPC jobs a skill ships: the folder names under `<skill_dir>/hpc_jobs/`.
+
+    Read from disk, not from SKILL.md, so a skill cannot hide that loading it
+    lets the agent run its scripts on a cluster as the researcher. Every folder
+    counts, valid job or not, since the point is what the skill could run.
+    """
+    jobs = Path(skill_dir) / SKILL_HPC_JOBS_DIR
+    if not jobs.is_dir():
+        return []
+    return sorted(
+        j.name for j in jobs.iterdir() if j.is_dir() and not j.name.startswith(".")
+    )
+
+
 def _in_sandbox(mount: PurePosixPath, relative: PurePath) -> PurePosixPath:
     """
     Join a host-relative path onto a sandbox mount point component by component, so a

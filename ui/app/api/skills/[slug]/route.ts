@@ -13,6 +13,7 @@ type BackendSkillDetail = {
   author?: string | null;
   repo_url?: string | null;
   is_public?: boolean;
+  hpc_jobs?: string[];
   created_at?: string;
   updated_at?: string;
   body: string;
@@ -148,5 +149,6 @@ function reshape(slug: string, detail: BackendSkillDetail) {
     author: detail.author ?? null,
     repoUrl: detail.repo_url ?? null,
     isPublic: detail.is_public ?? false,
+    hpcJobs: detail.hpc_jobs ?? [],
   };
 }

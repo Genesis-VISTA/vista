@@ -43,7 +43,11 @@ def job_dir(monkeypatch, tmp_path) -> Path:
 
 async def sync(globus: FakeGlobusClient) -> None:
     await _sync_job_sources(
-        globus, "demo", SRC, parents_below=PARENT, remote_endpoint=COLLECTION
+        globus,
+        settings.local_hpc_jobs_dir / "demo",
+        SRC,
+        parents_below=PARENT,
+        remote_endpoint=COLLECTION,
     )
 
 

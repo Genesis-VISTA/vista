@@ -15,6 +15,8 @@ type BackendSkill = {
   author?: string | null;
   repo_url?: string | null;
   is_public?: boolean;
+  // HPC jobs the skill's folder ships under `hpc_jobs/` (read from disk).
+  hpc_jobs?: string[];
   created_at?: string;
   updated_at?: string;
   body?: string;
@@ -45,6 +47,7 @@ function toSummary(skill: BackendSkill) {
     author: skill.author ?? null,
     repoUrl: skill.repo_url ?? null,
     isPublic: skill.is_public ?? false,
+    hpcJobs: skill.hpc_jobs ?? [],
     addedAt: toEpoch(skill.created_at),
   };
 }

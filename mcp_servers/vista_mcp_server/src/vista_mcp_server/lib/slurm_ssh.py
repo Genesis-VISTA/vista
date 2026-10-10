@@ -234,25 +234,49 @@ async def makedirs(conn: asyncssh.SSHClientConnection, path: str) -> None:
     await run_checked(conn, f"mkdir -p {shlex.quote(path)}", what=f"mkdir -p {path}")
 
 
-async def list_file_sizes(conn: asyncssh.SSHClientConnection, path: str) -> dict[str, int]:
-    """ `{name: size}` for the regular files directly in `path`; empty if it doesn't exist. """
+async def list_file_sizes(
+    conn: asyncssh.SSHClientConnection, path: str, *, recursive: bool = False,
+) -> dict[str, int]:
+    """
+    `{name: size}` for the regular files directly in `path`; empty if it doesn't
+    exist. With `recursive`, every regular file below it, keyed by its path
+    relative to `path` (`configs/a.yaml`).
+    """
+    out: dict[str, int] = {}
     async with await _sftp(conn) as sftp:
-        try:
-            entries = await sftp.readdir(path)
-        except asyncssh.SFTPNoSuchFile:
-            return {}
-    return {
-        e.filename: e.attrs.size or 0
-        for e in entries
-        if e.attrs.type == asyncssh.FILEXFER_TYPE_REGULAR
-        or (e.attrs.permissions is not None and stat_mod.S_ISREG(e.attrs.permissions))
-    }
+        queue = [""]
+        while queue:
+            rel = queue.pop(0)
+            try:
+                entries = await sftp.readdir(f"{path}/{rel}" if rel else path)
+            except asyncssh.SFTPNoSuchFile:
+                continue
+            for e in entries:
+                if e.filename in (".", ".."):
+                    continue
+                name = f"{rel}/{e.filename}" if rel else e.filename
+                perms = e.attrs.permissions
+                if e.attrs.type == asyncssh.FILEXFER_TYPE_REGULAR or (perms is not None and stat_mod.S_ISREG(perms)):
+                    out[name] = e.attrs.size or 0
+                elif recursive and (
+                    e.attrs.type == asyncssh.FILEXFER_TYPE_DIRECTORY
+                    or (perms is not None and stat_mod.S_ISDIR(perms))
+                ):
+                    queue.append(name)
+    return out
 
 
-async def upload_files(conn: asyncssh.SSHClientConnection, files: list[Path], remote_dir: str) -> None:
+async def upload_files(
+    conn: asyncssh.SSHClientConnection, files: list[Path], remote_dir: str,
+    *, names: list[str] | None = None,
+) -> None:
+    """
+    Put each file in `remote_dir`, under its own name or the matching entry of
+    `names` (a relative path, whose folders must exist already).
+    """
     async with await _sftp(conn) as sftp:
-        for f in files:
-            await sftp.put(str(f), f"{remote_dir}/{f.name}")
+        for f, name in zip(files, names or [f.name for f in files], strict=True):
+            await sftp.put(str(f), f"{remote_dir}/{name}")
 
 
 async def download_file(conn: asyncssh.SSHClientConnection, remote_path: str, local_path: Path) -> None:

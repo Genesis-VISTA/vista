@@ -198,6 +198,35 @@ class TestUploadRoute:
             )
         assert "demo-skill" in [s["name"] for s in listed.json()]
         assert list(tmp_path.rglob("scripts/run.py"))
+        assert [s["hpc_jobs"] for s in listed.json() if s["name"] == "demo-skill"] == [
+            []
+        ]
+
+    async def test_reports_the_hpc_jobs_a_skill_ships(self, session):
+        """Loading such a skill lets the agent run its scripts on a cluster as
+        the researcher, so the API says so, from the folder rather than from
+        anything the skill declares about itself."""
+        alice = await seed_user(session)
+        headers = {"X-Vista-User-Email": alice.email}
+        files, data = _multipart(
+            {
+                "demo-skill/SKILL.md": SKILL_MD,
+                "demo-skill/hpc_jobs/primus-smoke/README.md": "# primus-smoke\n",
+                "demo-skill/hpc_jobs/primus-smoke/job.lux.slurm": "echo hi\n",
+            }
+        )
+        with api_client(session) as (client, _):
+            response = await client.post(
+                UPLOAD, files=files, data=data, headers=headers
+            )
+            assert response.status_code == 201, response.text
+            assert response.json()["hpc_jobs"] == ["primus-smoke"]
+            listed = await client.get("/skills", headers=headers)
+            detail = await client.get("/skills/demo-skill", headers=headers)
+        assert [s["hpc_jobs"] for s in listed.json() if s["name"] == "demo-skill"] == [
+            ["primus-smoke"]
+        ]
+        assert detail.json()["hpc_jobs"] == ["primus-smoke"]
 
     async def test_name_clash_is_409_and_leaves_no_copy(self, session, tmp_path):
         alice = await seed_user(session)

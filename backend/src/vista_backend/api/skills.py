@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
 from ..agents.skill_authoring import SkillDraft
-from ..agents.skills import Skill
+from ..agents.skills import Skill, skill_hpc_jobs
+from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import SkillPublic, SkillUpdate
 from ..services import skills as skills_service
@@ -23,7 +24,18 @@ class SkillCreate(Skill):
     is_public: bool = False
 
 
-class SkillDetail(SkillPublic):
+class SkillListItem(SkillPublic):
+    """A skill's stored metadata plus what its folder ships (read from disk)."""
+
+    hpc_jobs: list[str] = Field(default_factory=list)
+    """
+    HPC jobs under the skill's `hpc_jobs/`. A project that loads the skill lets
+    the agent submit them (as `<skill>/<job>`) under the researcher's cluster
+    credentials, so the UI marks such a skill.
+    """
+
+
+class SkillDetail(SkillListItem):
     """A skill's stored metadata plus its SKILL.md body (read from disk)."""
 
     body: str
@@ -58,17 +70,26 @@ class SkillPatch(SkillUpdate):
     body: str | None = None
 
 
+def _hpc_jobs(skill) -> list[str]:
+    return skill_hpc_jobs(settings.data_dir / skill.path)
+
+
 def _detail(skill, body: str) -> SkillDetail:
     return SkillDetail.model_validate(
-        skill, from_attributes=True, update={"body": body}
+        skill, from_attributes=True, update={"body": body, "hpc_jobs": _hpc_jobs(skill)}
     )
 
 
 @router.get("/skills")
-async def list_skills(session: SessionDep) -> list[SkillPublic]:
-    """List skill metadata from the DB (no SKILL.md reads)."""
+async def list_skills(session: SessionDep) -> list[SkillListItem]:
+    """List skill metadata from the DB (no SKILL.md reads), plus each skill's HPC jobs."""
     rows = await skills_service.list_skills(session)
-    return [SkillPublic.model_validate(row) for row in rows]
+    return [
+        SkillListItem.model_validate(
+            row, from_attributes=True, update={"hpc_jobs": _hpc_jobs(row)}
+        )
+        for row in rows
+    ]
 
 
 @router.get("/skills/{name}")

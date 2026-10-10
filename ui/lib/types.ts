@@ -29,6 +29,11 @@ export type SkillSummary = {
   author?: string | null;
   repoUrl?: string | null;
   isPublic?: boolean;
+  /**
+   * HPC jobs the skill ships (`hpc_jobs/<job>/`). Loading it lets the agent
+   * submit them, as `<skill>/<job>`, under the researcher's cluster credentials.
+   */
+  hpcJobs?: string[];
 };
 
 export type SkillDetail = {
@@ -38,6 +43,7 @@ export type SkillDetail = {
   author?: string | null;
   repoUrl?: string | null;
   isPublic?: boolean;
+  hpcJobs?: string[];
 };
 
 export type ChatMessage = {

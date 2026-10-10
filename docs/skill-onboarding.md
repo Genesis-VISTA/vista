@@ -175,8 +175,10 @@ runs across **two execution contexts**, each of which bootstraps the code itself
 | **HPC (GPU)** | OLCF Frontier | the GPU simulation | a thin `hpc_jobs/<job>/` clones the repo on the compute node |
 
 The GPU path is the only part that **can't** be pure clone-at-runtime: VISTA's
-`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (Globus-staged and
-launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)).
+`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (staged and
+launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)),
+either VISTA's own or one inside the skill (see
+[HPC jobs inside a skill](#hpc-jobs-inside-a-skill)).
 So an HPC-backed skill pairs a `SKILL.md`
 with a **thin bootstrap job** — no simulation code vendored, just:
 
@@ -203,6 +205,29 @@ use `encoding: flags` with a `map` of variable → CLI flag, since job wrappers 
 flags with argparse) and `collect_files` (the output files the result parser needs, e.g.
 `[results.json]`). Both are opt-in: a role declaring neither keeps the older behavior of
 a JSON-serialized candidate and no fetched outputs.
+
+## HPC jobs inside a skill
+
+A skill can carry its jobs itself, at `<skill>/hpc_jobs/<job>/`, so adding an HPC skill needs no
+change to VISTA. A project that loads the skill can submit them as `<skill>/<job>`. The layout,
+the job contract and what to watch for (nested files, `setup_lux.sh`, a `KEY=VALUE` allow-list
+for `script_args`) are in
+[hpc-jobs.md](hpc-jobs.md#self-contained-hpc-skills). The SKILL.md should say which jobs the skill
+ships, which arguments they take and how to read their outputs, since the `submit_hpc_job` tool
+description lists only VISTA's own jobs.
+
+**Trust.** A skill job runs the skill's scripts on a cluster as the researcher: under their
+S3M, NERSC or Globus credentials, or their own SSH login on Lux. VISTA's own `hpc_jobs/` is
+reviewed with the code; a skill imported from GitHub is not. So:
+
+- The `/skills` page marks every skill that ships jobs with a **Runs HPC jobs** badge naming
+  them. The list comes from the skill's folder on disk, not from anything SKILL.md declares, so
+  a skill cannot hide it. Read an imported skill's `hpc_jobs/` before loading it.
+- A skill's jobs are available only in projects that load the skill, and only through the agent
+  calling `submit_hpc_job`. The researcher must have connected that cluster, and Lux also asks
+  for a login once per session.
+- Not done yet: a per-project "allow this skill to run cluster jobs" approval, which would leave
+  the skill's `hpc_jobs/` out of the project's skills volume until a researcher allows it.
 
 ## Troubleshooting
 
