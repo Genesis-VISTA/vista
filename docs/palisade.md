@@ -57,7 +57,7 @@ Each gate can be turned on alone. G7 is deprecated: PALISADE merged it into G4, 
 
 - **The slow tiers use the researcher's own model.** With `QUARANTINE_ENABLED`, VISTA builds
   the Q-LLM agents from the same model and credential as the chat agent, the one chosen in
-  Settings › Agent, so PALISADE's `QUARANTINE_MODEL` has no effect in VISTA. For CUI or
+  Settings › Models & providers, so PALISADE's `QUARANTINE_MODEL` has no effect in VISTA. For CUI or
   export-controlled work, choose an in-deployment endpoint there.
 - **Paths.** PALISADE's `CONTRACTS_DIR` and `KNOWLEDGE_BASES_DIR` default to paths relative to
   the backend's working directory (`backend/` in a checkout), where neither exists, and VISTA

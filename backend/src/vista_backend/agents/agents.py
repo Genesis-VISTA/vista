@@ -87,6 +87,56 @@ BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text
 )
 
 
+def research_profile_prompt(user: UserPublicWithConfig) -> str:
+    """Render the researcher's explicit, global personalization for the agent."""
+    if not user.personalize_responses:
+        return ""
+
+    labels: dict[str, str] = {
+        "si": "SI units",
+        "source": "preserve source units",
+        "expert": "expert",
+        "balanced": "balanced",
+        "introductory": "introductory",
+        "cite_when_available": "cite sources when available",
+        "always_cite": "always cite scientific claims",
+        "concise": "keep evidence discussion concise",
+    }
+
+    def label(value: str | None) -> str | None:
+        return labels.get(value, value) if value else None
+
+    facts: list[tuple[str, str | None]] = [
+        ("Role", user.research_role),
+        ("Institution or laboratory", user.research_institution),
+        (
+            "Research interests",
+            ", ".join(user.research_interests) if user.research_interests else None,
+        ),
+        ("Preferred units", label(user.preferred_units)),
+        ("Technical depth", label(user.technical_depth)),
+        (
+            "Evidence preference",
+            label(user.evidence_preference),
+        ),
+    ]
+    lines = [f"- {name}: {value}" for name, value in facts if value]
+    if not lines:
+        return ""
+    return "\n".join(
+        [
+            "## Researcher Profile",
+            "The researcher explicitly supplied these global preferences:",
+            *lines,
+            (
+                "Use them as defaults for terminology, examples, units, and response "
+                "depth. The current request and Project Information take precedence. "
+                "Do not mention or expose this profile unless it is relevant."
+            ),
+        ]
+    )
+
+
 class LogEntry(BaseModel):
     """
     A log line emitted during an agent run.
@@ -472,6 +522,9 @@ class ProjectAgent:
         @agent.system_prompt
         def system_prompt(ctx: RunContext[None]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
+            profile = research_profile_prompt(self.user)
+            if profile:
+                parts.append(profile)
             if self.project.system_prompt:
                 parts.append("## Project Information")
                 parts.append(self.project.system_prompt)

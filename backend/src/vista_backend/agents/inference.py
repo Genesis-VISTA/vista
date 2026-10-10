@@ -223,7 +223,7 @@ def _no_model(target: "InferenceTarget") -> Model:
 # guidance the API returns and the message a background caller logs cannot
 # drift apart.
 SETTINGS_LOCATION = (
-    "Settings (at the bottom of the sidebar) › Agent → your provider's API key"
+    "Settings (at the bottom of the sidebar) › Models & providers → your provider's API key"
 )
 
 

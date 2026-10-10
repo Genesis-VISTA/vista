@@ -5,7 +5,7 @@ Data models / schemas
 import re
 import uuid
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Boolean, Column, String, false
+from sqlalchemy import JSON, Boolean, Column, String, false, true
 from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
@@ -404,9 +404,24 @@ HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 InferenceProvider = Literal["i2", "mag", "olcf", "custom"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
+PreferredUnits = Literal["si", "source"]
+TechnicalDepth = Literal["expert", "balanced", "introductory"]
+EvidencePreference = Literal["cite_when_available", "always_cite", "concise"]
+
 
 def _dedupe_clusters(v: list[HpcCluster] | None) -> list[HpcCluster] | None:
     return None if v is None else list(dict.fromkeys(v))
+
+
+def _normalize_research_interests(v: list[str] | None) -> list[str] | None:
+    if v is None:
+        return None
+    cleaned = list(dict.fromkeys(item.strip() for item in v if item.strip()))
+    if len(cleaned) > 12:
+        raise ValueError("research_interests accepts at most 12 interests")
+    if any(len(item) > 80 for item in cleaned):
+        raise ValueError("each research interest must be 80 characters or fewer")
+    return cleaned
 
 
 class UserBase(SQLModel):
@@ -423,6 +438,11 @@ _USER_CONFIG_NULLABLE_FIELDS = (
     "inference_mag_api_key",
     "inference_olcf_api_key",
     "inference_custom_api_key",
+    "research_role",
+    "research_institution",
+    "preferred_units",
+    "technical_depth",
+    "evidence_preference",
     "nersc_account",
     "nersc_remote_dir",
     "odo_remote_dir",
@@ -455,6 +475,13 @@ class UserCreate(UserBase):
     inference_mag_api_key: str | None = None
     inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
+    research_role: str | None = None
+    research_institution: str | None = None
+    research_interests: list[str] | None = None
+    preferred_units: PreferredUnits | None = None
+    technical_depth: TechnicalDepth | None = None
+    evidence_preference: EvidencePreference | None = None
+    personalize_responses: bool = True
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -475,6 +502,11 @@ class UserCreate(UserBase):
     @classmethod
     def _empty_to_none(cls, v):
         return _empty_str_to_none(v)
+
+    @field_validator("research_interests")
+    @classmethod
+    def _normalize_interests(cls, v):
+        return _normalize_research_interests(v)
 
 
 class UserUpdate(UserBase):
@@ -486,6 +518,13 @@ class UserUpdate(UserBase):
     inference_mag_api_key: str | None = None
     inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
+    research_role: str | None = None
+    research_institution: str | None = None
+    research_interests: list[str] | None = None
+    preferred_units: PreferredUnits | None = None
+    technical_depth: TechnicalDepth | None = None
+    evidence_preference: EvidencePreference | None = None
+    personalize_responses: bool = True
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -513,6 +552,11 @@ class UserUpdate(UserBase):
     @classmethod
     def _dedupe_hidden(cls, v):
         return _dedupe_clusters(v)
+
+    @field_validator("research_interests")
+    @classmethod
+    def _normalize_interests(cls, v):
+        return _normalize_research_interests(v)
 
 
 class UserSelfUpdate(UserBase):
@@ -523,6 +567,13 @@ class UserSelfUpdate(UserBase):
     inference_mag_api_key: str | None = None
     inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
+    research_role: str | None = None
+    research_institution: str | None = None
+    research_interests: list[str] | None = None
+    preferred_units: PreferredUnits | None = None
+    technical_depth: TechnicalDepth | None = None
+    evidence_preference: EvidencePreference | None = None
+    personalize_responses: bool = True
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -550,6 +601,11 @@ class UserSelfUpdate(UserBase):
     @classmethod
     def _dedupe_hidden(cls, v):
         return _dedupe_clusters(v)
+
+    @field_validator("research_interests")
+    @classmethod
+    def _normalize_interests(cls, v):
+        return _normalize_research_interests(v)
 
 
 class UserPublic(UserBase):
@@ -584,6 +640,13 @@ class UserPublicWithConfig(UserBase):
     inference_mag_api_key: str | None = None
     inference_olcf_api_key: str | None = None
     inference_custom_api_key: str | None = None
+    research_role: str | None = None
+    research_institution: str | None = None
+    research_interests: list[str] = []
+    preferred_units: str | None = None
+    technical_depth: str | None = None
+    evidence_preference: str | None = None
+    personalize_responses: bool = True
     nersc_account: str | None = None
     nersc_remote_dir: str | None = None
     odo_remote_dir: str | None = None
@@ -610,6 +673,11 @@ class UserPublicWithConfig(UserBase):
     @field_validator("hpc_hidden_clusters", mode="before")
     @classmethod
     def _null_is_none_hidden(cls, v):
+        return [] if v is None else v
+
+    @field_validator("research_interests", mode="before")
+    @classmethod
+    def _null_is_no_interests(cls, v):
         return [] if v is None else v
 
 
@@ -669,6 +737,22 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ The Custom provider's access key. Encrypted at rest. """
+    research_role: str | None = None
+    """The researcher's role, used only when response personalization is enabled."""
+    research_institution: str | None = None
+    """The researcher's institution or laboratory."""
+    research_interests: list[str] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    """Explicit, durable scientific interests shared across projects."""
+    preferred_units: str | None = None
+    technical_depth: str | None = None
+    evidence_preference: str | None = None
+    personalize_responses: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=true()),
+    )
+    """Whether the main project assistant receives the research profile."""
     nersc_account: str | None = None
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None

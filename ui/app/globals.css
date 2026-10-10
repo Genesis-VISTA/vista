@@ -3157,6 +3157,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   container: settings / inline-size;
 }
 
+.settings-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+
 .settings-layout {
   flex: 1 1 auto;
   display: flex;
@@ -3313,6 +3322,306 @@ button.chat-bubble.intermediate.collapsed:hover {
   overflow-wrap: anywhere;
 }
 
+.settings-provider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.settings-provider-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.settings-provider-card {
+  min-width: 0;
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-provider-card:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+
+.settings-provider-card[aria-checked="true"] {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+  box-shadow: inset 0 0 0 1px var(--brand);
+}
+
+.settings-provider-card:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.settings-provider-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-provider-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.settings-provider-state .hpc-dot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.settings-provider-state.is-ready {
+  color: var(--success);
+}
+
+.settings-provider-state.is-ready .hpc-dot {
+  background: currentColor;
+}
+
+.settings-provider-model {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-2);
+  font-size: 10.5px;
+}
+
+.settings-profile-body {
+  gap: 0;
+}
+
+.settings-profile-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: var(--brand-wash);
+}
+
+.settings-profile-switch-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--brand);
+}
+
+.settings-profile-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.settings-profile-heading {
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-profile-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-interest-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-interest {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 6px 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font-size: 11px;
+}
+
+.settings-interest > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.settings-interest > button:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
+.settings-interest-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.settings-interest-add > .input {
+  min-width: 0;
+}
+
+.settings-interest-add > .button {
+  min-width: 48px;
+  justify-content: center;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.settings-profile-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding-top: 14px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.settings-profile-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.settings-compute-body {
+  gap: 10px;
+}
+
+.settings-compute-summary {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-compute-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.settings-compute-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 9px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-compute-row:hover {
+  background: var(--panel-2);
+}
+
+.settings-compute-row:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.settings-compute-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-compute-name strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-compute-name > span {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.settings-compute-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.settings-local-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 10px 18px -5px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-local-back:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+
 /* Each field's save mark, at the field: a check that fades, a cross while the
    save has failed, a turning arc when a save is slow, and nothing for a save
    in flight. Shape carries the meaning as well as colour. */
@@ -3460,6 +3769,19 @@ button.chat-bubble.intermediate.collapsed:hover {
   .settings-section-body {
     padding-left: 16px;
     padding-right: 16px;
+  }
+
+  .settings-profile-grid,
+  .settings-profile-grid--three {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-provider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-local-back {
+    margin-left: 10px;
   }
 }
 

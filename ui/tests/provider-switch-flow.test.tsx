@@ -120,13 +120,13 @@ describe("switching provider in Settings", () => {
     );
     expect(await screen.findByRole("button", { name: /^Model: claude-opus\b/ })).toBeInTheDocument();
 
-    const agent = await screen.findByRole("region", { name: "Agent" });
-    const select = within(agent).getByLabelText(/^Inference provider/);
-    await userEvent.selectOptions(select, "mag");
+    await userEvent.click(screen.getByRole("button", { name: /^Models and providers\b/ }));
+    const agent = await screen.findByRole("region", { name: "Models & providers" });
+    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
     expect(await screen.findByRole("button", { name: /^Model: No model/ })).toBeInTheDocument();
     expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
 
-    await userEvent.selectOptions(select, "i2");
+    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC i2/ }));
     expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
     expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
 

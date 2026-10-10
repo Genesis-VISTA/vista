@@ -101,6 +101,81 @@ def test_existing_database_gains_the_new_columns(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Research profile used by the main assistant
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_research_profile_round_trip(session, alice):
+    row = await session.get(UserTable, alice.id)
+    saved = await update_me(
+        UserSelfUpdate(
+            research_role="Computational materials scientist",
+            research_institution="Oak Ridge National Laboratory",
+            research_interests=[" Molten salts ", "Corrosion", "Molten salts"],
+            preferred_units="si",
+            technical_depth="expert",
+            evidence_preference="always_cite",
+            personalize_responses=False,
+        ),
+        session,
+        row,
+    )
+
+    assert saved.research_role == "Computational materials scientist"
+    assert saved.research_institution == "Oak Ridge National Laboratory"
+    assert saved.research_interests == ["Molten salts", "Corrosion"]
+    assert saved.preferred_units == "si"
+    assert saved.technical_depth == "expert"
+    assert saved.evidence_preference == "always_cite"
+    assert saved.personalize_responses is False
+
+    shown = await get_me(row, config=True)
+    assert shown.research_interests == ["Molten salts", "Corrosion"]
+    # The lightweight view used by the navigation does not expose the profile.
+    assert "research_role" not in (await get_me(row)).model_dump()
+
+
+def test_research_profile_rejects_invalid_preferences_and_long_interest_lists():
+    with pytest.raises(ValueError, match="preferred_units"):
+        UserSelfUpdate(preferred_units="imperial")
+    with pytest.raises(ValueError, match="at most 12"):
+        UserSelfUpdate(research_interests=[f"interest-{i}" for i in range(13)])
+    with pytest.raises(ValueError, match="80 characters"):
+        UserSelfUpdate(research_interests=["x" * 81])
+
+
+def test_existing_database_gains_research_profile_columns(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    existing_id = uuid.uuid4().hex
+    with engine.begin() as conn:
+        conn.execute(
+            text("CREATE TABLE app_user (id CHAR(32) PRIMARY KEY, email VARCHAR)")
+        )
+        conn.execute(
+            text("INSERT INTO app_user (id, email) VALUES (:id, 'a@x')"),
+            {"id": existing_id},
+        )
+        _add_missing_columns(conn)
+        columns = {c["name"] for c in inspect(conn).get_columns("app_user")}
+        personalized = conn.execute(
+            text("SELECT personalize_responses FROM app_user WHERE id = :id"),
+            {"id": existing_id},
+        ).scalar_one()
+
+    assert {
+        "research_role",
+        "research_institution",
+        "research_interests",
+        "preferred_units",
+        "technical_depth",
+        "evidence_preference",
+        "personalize_responses",
+    } <= columns
+    assert personalized == 1
+
+
+# ---------------------------------------------------------------------------
 # Which clusters the NavRail shows
 # ---------------------------------------------------------------------------
 

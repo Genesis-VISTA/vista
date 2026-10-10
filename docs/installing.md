@@ -115,7 +115,7 @@ VISTA then opens in its own window. Closing the window, or Cmd-Q on macOS, stops
 window crashes, the services are stopped. If another VISTA window is already open, a second
 launch brings the existing startup or main window forward rather than starting another stack.
 
-Paste your inference API key into Settings › Agent (Settings is at the bottom of the sidebar).
+Paste your inference API key into Settings › Models & providers (Settings is at the bottom of the sidebar).
 AmSC i2 is the provider out of the box; AmSC MAG, OLCF Inference and a custom endpoint are the
 other choices there, each with its own key. Settings saves as you go, and a change takes effect
 on your next message; no restart. Choose a model from the picker at the top of the chat.
