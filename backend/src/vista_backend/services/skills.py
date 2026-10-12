@@ -4,11 +4,12 @@ Skills service.
 
 # TODO: scope skills to a project; they are global entities for now.
 import logging
+import re
 import shutil
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from pydantic_ai.messages import ModelMessage
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -17,22 +18,25 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..agents.skill_authoring import SkillDraft, generate_skill_draft
 from ..agents.skill_import import (
     SkillImportError,
+    import_skill_from_dir,
     import_skill_from_files,
     import_skill_from_github,
 )
 from ..agents.skills import (
     ParseError,
     Skill,
+    SkillError,
     find_skill_md,
     parse_skill,
     read_skill,
+    skill_hpc_jobs,
     skill_to_markdown,
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import SkillTable, SkillUpdate, UserPublicWithConfig
-from ..utils.misc import now_iso
-from ._helpers import new_storage_path
+from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
+from ..utils.misc import now_iso, path_is_under
+from ._helpers import ServiceUser, new_storage_path
 
 
 logger = logging.getLogger(__name__)
@@ -187,6 +191,164 @@ async def _register_imported(
         skill, path=path, author=None, repo_url=repo_url, is_public=False, now=now_iso()
     )
     await _insert_skill_row(session, row)
+    return row
+
+
+class OutputSkill(BaseModel):
+    """A folder in the researcher's output folder that holds a SKILL.md."""
+
+    folder: str
+    """ The folder's name under `/mnt/data/output`. """
+    name: str | None
+    """ The SKILL.md `name`; None when the SKILL.md does not parse (see `error`). """
+    error: str | None = None
+    hpc_jobs: list[str] = []
+    exists: bool = False
+    """ A skill with this name is already in the library. """
+    replaceable: bool = False
+    """ It exists and is private, so importing with `replace` swaps its files. """
+
+
+_OUTPUT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+async def _project_output_dir(
+    session: AsyncSession, project_name: str, user: ServiceUser
+) -> tuple[ProjectTable, Path]:
+    """The project, and the caller's own output folder in it (the sandbox's `/mnt/data/output`)."""
+    # Imported here: the agent modules import the seed, which imports this module.
+    from ..agents.agents import agent_volume_root
+    from . import project as project_service
+
+    if user == "system":
+        raise HTTPException(
+            status_code=403, detail="Importing from output requires an authenticated user"
+        )
+    project = await project_service.get_project_by_name(session, project_name, user)
+    return project, agent_volume_root(project.id, user.id) / "data" / "output"
+
+
+async def list_output_skills(
+    session: AsyncSession, project_name: str, user: ServiceUser
+) -> list[OutputSkill]:
+    """
+    The top-level folders of the caller's output folder in `project_name` that
+    hold a SKILL.md, i.e. the skills the agent wrote to `/mnt/data/output/<skill>/`.
+    """
+    _, output = await _project_output_dir(session, project_name, user)
+    if not output.is_dir():
+        return []
+    library = {row.name: row for row in await list_skills(session)}
+    found: list[OutputSkill] = []
+    for folder in sorted(output.iterdir()):
+        if (
+            folder.is_symlink()
+            or not folder.is_dir()
+            or not _OUTPUT_FOLDER.fullmatch(folder.name)
+            or find_skill_md(folder) is None
+        ):
+            continue
+        name, error = None, None
+        try:
+            name = read_skill(folder).name
+        except (SkillError, ValidationError) as e:
+            error = f"SKILL.md is invalid: {e}"
+        existing = library.get(name) if name else None
+        found.append(
+            OutputSkill(
+                folder=folder.name,
+                name=name,
+                error=error,
+                hpc_jobs=skill_hpc_jobs(folder),
+                exists=existing is not None,
+                replaceable=existing is not None and not existing.is_public,
+            )
+        )
+    return found
+
+
+async def import_skill_from_output(
+    session: AsyncSession,
+    project_name: str,
+    folder: str,
+    user: ServiceUser,
+    *,
+    replace: bool = False,
+) -> SkillTable:
+    """
+    Import `/mnt/data/output/<folder>/` from the caller's sandbox in
+    `project_name` as a private skill, and load it into that project.
+
+    Same validation and limits as a folder upload, plus no symlinks. Loading
+    means adding it to `Project.skills`, the list the agent's skills volume is
+    built from, and evicting the project's agents so the next message stages
+    it. A name already in use is refused unless `replace` is set and that skill
+    is private; then the row is kept and its files are swapped.
+    """
+    from .project_agent import invalidate_agents
+
+    project, output = await _project_output_dir(session, project_name, user)
+    source = output / folder
+    if (
+        not _OUTPUT_FOLDER.fullmatch(folder)
+        or not path_is_under(output, source)
+        or not source.is_dir()
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"No folder {folder!r} in this project's output."
+        )
+
+    path = new_storage_path()
+    try:
+        skill = import_skill_from_dir(source, settings.data_dir / path)
+    except SkillImportError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    old_path: str | None = None
+    existing = await get_skill_optional(session, skill.name)
+    if existing is None:
+        row = build_skill_row(
+            skill, path=path, author=None, repo_url=None, is_public=False, now=now_iso()
+        )
+    elif replace and not existing.is_public:
+        row, old_path = existing, existing.path
+        row.path = path
+        row.description = skill.description
+        row.license = skill.license
+        row.compatibility = skill.compatibility
+        row.allowed_tools = skill.allowed_tools
+        row.skill_metadata = skill.metadata
+        row.updated_at = now_iso()
+    else:
+        shutil.rmtree(settings.data_dir / path, ignore_errors=True)
+        if existing.is_public:
+            detail = f"Name already in use by a published skill: {skill.name}"
+        else:
+            detail = (
+                f"Name already in use: {skill.name}. Import it with Replace to "
+                "swap the existing private skill's files for these."
+            )
+        raise HTTPException(status_code=409, detail=detail)
+
+    session.add(row)
+    if skill.name not in project.skills:
+        # A new list: SQLAlchemy does not see an in-place append to a JSON column.
+        project.skills = [*project.skills, skill.name]
+        session.add(project)
+    invalidate_agents(session, project_id=project.id)
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        shutil.rmtree(settings.data_dir / path, ignore_errors=True)
+        if isinstance(e, IntegrityError):
+            raise HTTPException(
+                status_code=409, detail=f"Name already in use: {skill.name}"
+            )
+        raise
+    if old_path is not None:
+        shutil.rmtree(settings.data_dir / old_path, ignore_errors=True)
+    await session.refresh(row)
     return row
 
 

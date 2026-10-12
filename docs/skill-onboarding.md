@@ -59,7 +59,7 @@ is_public: true
 ...
 ```
 
-## Authoring a skill — three paths
+## Authoring a skill — four paths
 
 ### 1. Hand-write a SKILL.md
 
@@ -83,8 +83,7 @@ EOF
 ```
 
 To attach the skill to a project so the agent actually sees it, add the slug
-to the project's `skills` list. (Project skill editing from the UI is on the
-roadmap — until then, edit the project's row in `vista.db` or `defaults.py`.)
+to the project's `skills` list (Projects → edit → Skills).
 
 ### 2. Generate from a chat conversation
 
@@ -127,6 +126,33 @@ personal access token. Without a token, public repos work but the API rate
 limit is 60 requests/hour per IP. Public repos look like 404s when you're
 unauthenticated and the repo is actually private.
 
+### 4. Have the agent write it (HPC skills)
+
+"Save as skill" drafts a SKILL.md body only. For a skill that ships its own cluster job, ask the
+agent to write the whole folder:
+
+1. Load the bundled **hpc-skill-author** skill into the project (Projects → edit → Skills).
+2. In chat, ask for it: *"make an HPC skill that runs X on Lux"*. The skill gives the agent the
+   job contract, templates for a skill and a Lux job, and a validator. The agent writes the new
+   skill to `/mnt/data/output/<skill>/` and runs
+   `python3 /mnt/skills/hpc-skill-author/scripts/validate.py /mnt/data/output/<skill>` until
+   it prints `OK`.
+3. Open `/skills` → **Import…** → **From project output**, pick the folder, and click
+   **Import**. The list shows each folder's skill name and the HPC jobs it ships.
+
+The import applies the same checks and limits as a local-folder import and refuses a folder
+holding a symlink (the sandbox can create links to files outside it). The skill lands private,
+is added to the project's `skills` list, and shows the **Runs HPC jobs** badge; from the next
+message on, the agent can submit its jobs as `<skill>/<job>`. To change it, ask the agent to edit
+the folder and import it again: a folder whose name matches one of your private skills shows
+**Replace**, which swaps that skill's files and keeps it in the project. A published skill's name
+cannot be reused.
+
+The agent cannot import or load a skill itself; loading a skill lets it run the skill's scripts
+on a cluster under your credentials, so that step stays a click. The routes behind the tab are
+`GET` and `POST /projects/{project}/skills/from-output`; they read only the caller's own output
+folder in that project.
+
 ## Publishing to the Skill Hub
 
 Every skill starts out **private** (`is_public:false`). It's visible on
@@ -158,6 +184,11 @@ switching projects swaps the additions in and out.
 The `/skills` page shows `loadedSlugs = project.skills ∪ additions[project]`.
 Project-mandated skills carry a `required` chip and cannot be unloaded from
 the UI; user additions show a normal `Unload` button.
+
+Only the project's `skills` list reaches the agent: its sandbox's `/mnt/skills` and the skills in
+its system prompt are built from that list when the agent starts, and the browser's additions
+never leave the browser. A skill whose jobs the agent should submit must therefore be in the
+project's list, which is why **From project output** adds it there.
 
 ## Lightweight & HPC-backed skills (clone at runtime)
 
@@ -215,6 +246,18 @@ for `script_args`) are in
 [hpc-jobs.md](hpc-jobs.md#self-contained-hpc-skills). The SKILL.md should say which jobs the skill
 ships, which arguments they take and how to read their outputs, since the `submit_hpc_job` tool
 description lists only VISTA's own jobs.
+
+**Writing one.** The bundled `hpc-skill-author` skill has the agent write such a skill for you,
+check it with `scripts/validate.py`, and leave it in the project output for one-click import
+(see [Have the agent write it](#4-have-the-agent-write-it-hpc-skills)). The validator applies
+everything `submit_hpc_job` checks (job script, `# <job>` README heading, a parsing
+`cluster_defaults.json` with a section per job script, Lux partition and GPUs) and everything
+the import checks (SKILL.md, no symlinks, size limits), and requires the skill's folder to match
+its `name` and its SKILL.md to name each job as `<skill>/<job>`. It also warns about what VISTA
+cannot check: a job that never uses `$VISTA_OUT`, takes `script_args` without a `KEY=VALUE`
+allow-list, or writes into `$RUN_DIR_<Cluster>`. It runs on any skill folder, so use it on a
+hand-written one too. `test_skill_author_validator.py` in the MCP server's tests keeps it in step
+with the server.
 
 **Trust.** A skill job runs the skill's scripts on a cluster as the researcher: under their
 S3M, NERSC or Globus credentials, or their own SSH login on Lux. VISTA's own `hpc_jobs/` is

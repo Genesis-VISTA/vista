@@ -156,6 +156,9 @@ What to keep in mind when writing one:
 - **Write only under `$VISTA_OUT` and `$VISTA_JOB_DIR`.** The sources folder is read-only to the
   job on Odo and Frontier, where it runs as the project's automation user.
 
+To have the chat agent write one, load the bundled `hpc-skill-author` skill: it has templates
+and a validator for exactly this contract, and the result is imported from the project output in
+one click ([skill-onboarding.md](skill-onboarding.md#4-have-the-agent-write-it-hpc-skills)).
 The `lux-primus-skill` repository (`primus-on-lux/primus-smoke`, AMD Primus training on Lux)
 is the worked example. Who can see that a skill runs cluster jobs is in
 [skill-onboarding.md](skill-onboarding.md#hpc-jobs-inside-a-skill).

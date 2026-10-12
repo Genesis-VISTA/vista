@@ -1,15 +1,28 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { refreshProjects } from "@/lib/projects";
 import type { SkillSummary } from "@/lib/types";
 
 type Props = {
   open: boolean;
+  /** The active project; its output folder is the "From project output" source. */
+  projectName: string | null;
   onCancel: () => void;
   onImported: (skill: SkillSummary) => void;
 };
 
-type Source = "github" | "local";
+type Source = "github" | "local" | "output";
+
+/** A folder in the researcher's project output that holds a SKILL.md (backend `OutputSkill`). */
+type OutputSkill = {
+  folder: string;
+  name: string | null;
+  error: string | null;
+  hpc_jobs: string[];
+  exists: boolean;
+  replaceable: boolean;
+};
 
 // Clutter a folder picker drags along. Skipped here so it is never uploaded;
 // the backend drops the same names if they arrive anyway.
@@ -27,10 +40,12 @@ function isIgnored(path: string): boolean {
   return IGNORED_FILES.has(name) || parts.slice(0, -1).some((part) => IGNORED_DIRS.has(part));
 }
 
-export function SkillImportModal({ open, onCancel, onImported }: Props) {
+export function SkillImportModal({ open, projectName, onCancel, onImported }: Props) {
   const [source, setSource] = useState<Source>("github");
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [outputSkills, setOutputSkills] = useState<OutputSkill[] | null>(null);
+  const [outputFolder, setOutputFolder] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const folderInput = useRef<HTMLInputElement | null>(null);
@@ -38,7 +53,33 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
   if (!open) return null;
 
   const folderName = files.length > 0 ? relativePath(files[0]).split("/")[0] : null;
-  const canSubmit = source === "github" ? url.trim().length > 0 : files.length > 0;
+  const picked = outputSkills?.find((s) => s.folder === outputFolder) ?? null;
+  const canSubmit =
+    source === "github"
+      ? url.trim().length > 0
+      : source === "local"
+        ? files.length > 0
+        : picked !== null && !picked.error && (!picked.exists || picked.replaceable);
+
+  async function loadOutputSkills() {
+    if (!projectName) return;
+    setOutputSkills(null);
+    setOutputFolder(null);
+    try {
+      const resp = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/skills/from-output`
+      );
+      const data = resp.ok ? await resp.json() : [];
+      const list = Array.isArray(data) ? (data as OutputSkill[]) : [];
+      setOutputSkills(list);
+      const first = list.find((s) => !s.error && (!s.exists || s.replaceable));
+      setOutputFolder(first?.folder ?? null);
+      if (!resp.ok) setError(`Could not list the project's output (${resp.status}).`);
+    } catch {
+      setOutputSkills([]);
+      setError("Could not list the project's output.");
+    }
+  }
 
   function pickFolder(list: FileList | null) {
     setError(null);
@@ -46,6 +87,13 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
   }
 
   function request(): Promise<Response> {
+    if (source === "output") {
+      return fetch(`/api/projects/${encodeURIComponent(projectName ?? "")}/skills/from-output`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ folder: outputFolder, replace: picked?.exists ?? false }),
+      });
+    }
     if (source === "github") {
       return fetch("/api/skills/import", {
         method: "POST",
@@ -83,6 +131,13 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
         setError(detail);
         return;
       }
+      if (source === "output") {
+        // The backend added the skill to the project's own skills list, which
+        // is what the agent's sandbox loads; pick that up.
+        void refreshProjects();
+        setOutputSkills(null);
+        setOutputFolder(null);
+      }
       onImported(payload as SkillSummary);
       setUrl("");
       setFiles([]);
@@ -105,6 +160,7 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
         onClick={() => {
           setSource(value);
           setError(null);
+          if (value === "output") void loadOutputSkills();
         }}
         disabled={busy}
       >
@@ -131,11 +187,66 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
           <div className="kb-tabs" role="tablist" aria-label="Import source">
             {tab("github", "GitHub URL")}
             {tab("local", "Local folder")}
+            {projectName && tab("output", "From project output")}
           </div>
         </div>
         <div className="modal-body">
           {error && <div className="error">{error}</div>}
-          {source === "github" ? (
+          {source === "output" ? (
+            <>
+              <div className="skill-editor-label">
+                <span>Skill folder in this project&apos;s output</span>
+                {outputSkills === null ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Looking…</div>
+                ) : outputSkills.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    No skills in this project&apos;s output yet. Ask the agent to make
+                    one (the <code>hpc-skill-author</code> skill writes it to{" "}
+                    <code>/mnt/data/output/&lt;skill&gt;/</code>).
+                  </div>
+                ) : (
+                  <div role="radiogroup" className="skill-output-list">
+                    {outputSkills.map((s) => {
+                      const blocked = Boolean(s.error) || (s.exists && !s.replaceable);
+                      return (
+                        <label key={s.folder} className="skill-output-row">
+                          <input
+                            type="radio"
+                            name="output-skill"
+                            checked={outputFolder === s.folder}
+                            disabled={busy || blocked}
+                            onChange={() => setOutputFolder(s.folder)}
+                          />
+                          <span>
+                            <strong>{s.folder}</strong>
+                            {s.hpc_jobs.length > 0 && (
+                              <span className="skill-hpc" style={{ marginLeft: 8 }}>
+                                Runs HPC jobs: {s.hpc_jobs.join(", ")}
+                              </span>
+                            )}
+                            <span style={{ display: "block", fontSize: 12, color: "var(--muted)" }}>
+                              {s.error
+                                ? s.error
+                                : s.exists && !s.replaceable
+                                  ? `A published skill is named ${s.name}; rename this one.`
+                                  : s.exists
+                                    ? `Replaces your private skill ${s.name}.`
+                                    : `New skill ${s.name}.`}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+                Imports the folder the agent wrote, checked like a local folder, and
+                loads it into this project, so the agent can use it (and submit its
+                HPC jobs) from your next message. Imported skills land private.
+              </p>
+            </>
+          ) : source === "github" ? (
             <>
               <label className="skill-editor-label">
                 <span>Repository URL</span>
@@ -208,7 +319,7 @@ export function SkillImportModal({ open, onCancel, onImported }: Props) {
               disabled={busy || !canSubmit}
               onClick={() => void submit()}
             >
-              {busy ? "Importing…" : "Import"}
+              {busy ? "Importing…" : source === "output" && picked?.exists ? "Replace" : "Import"}
             </button>
           </div>
         </div>

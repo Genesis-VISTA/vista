@@ -27,6 +27,7 @@ forced to `false` so imports land private (the user can publish them via the
 """
 
 import io
+import os
 import re
 import shutil
 import tarfile
@@ -278,3 +279,51 @@ def import_skill_from_files(
                         )
                     out.write(chunk)
         return _install_skill(root, dest_dir, "the root of the uploaded folder")
+
+
+class _LazyFile:
+    """A file opened on first read and closed at its end, so a folder with more
+    files than `MAX_UPLOAD_FILES` is refused before any descriptor is opened."""
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._stream: BinaryIO | None = None
+
+    def read(self, size: int = -1) -> bytes:
+        if self._stream is None:
+            self._stream = open(self._path, "rb")
+        chunk = self._stream.read(size)
+        if not chunk:
+            self._stream.close()
+        return chunk
+
+
+def import_skill_from_dir(source_dir: Path | str, dest_dir: Path | str) -> Skill:
+    """
+    Import the skill in a folder on the backend's own disk, such as one the
+    agent wrote to its output folder, into `dest_dir` (which must not exist).
+
+    The folder goes through `import_skill_from_files`, so it meets exactly the
+    rules and limits of a folder upload. The agent's sandbox can create
+    symlinks, and copying one would copy whatever it points at on the host, so
+    a folder holding any symlink is refused.
+    """
+    source_dir = Path(source_dir)
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise SkillImportError(f"{source_dir.name} is not a folder.")
+    files: list[tuple[str, BinaryIO]] = []
+    for dirpath, dirnames, filenames in os.walk(source_dir, followlinks=False):
+        here = Path(dirpath)
+        for name in [*dirnames, *filenames]:
+            if (here / name).is_symlink():
+                rel = (here / name).relative_to(source_dir).as_posix()
+                raise SkillImportError(
+                    f"{rel} is a symlink; a skill imported from the output folder "
+                    "may not contain symlinks."
+                )
+        for name in filenames:
+            rel = (here / name).relative_to(source_dir).as_posix()
+            # Prefixed with the folder's name, as a folder picker would, so
+            # import_skill_from_files strips exactly that one level.
+            files.append((f"{source_dir.name}/{rel}", _LazyFile(here / name)))  # type: ignore[arg-type]
+    return import_skill_from_files(files, dest_dir)

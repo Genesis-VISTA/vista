@@ -62,6 +62,17 @@ class SkillImportRequest(BaseModel):
     url: str
 
 
+class SkillFromOutputRequest(BaseModel):
+    """
+    Body for `POST /projects/{project_name}/skills/from-output`: a folder under
+    the caller's `/mnt/data/output` in that project, as listed by the GET.
+    """
+
+    folder: str
+    replace: bool = False
+    """ Swap the files of an existing private skill of the same name. """
+
+
 class SkillPatch(SkillUpdate):
     """
     PATCH body
@@ -146,6 +157,36 @@ async def import_skill_upload(
     the folder's root. Imported skills are private, as with a GitHub import.
     """
     skill = await skills_service.import_skill_upload(session, files, paths)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    return _detail(skill, body_text)
+
+
+@router.get("/projects/{project_name}/skills/from-output")
+async def list_output_skills(
+    project_name: str, session: SessionDep, user: UserDep
+) -> list[skills_service.OutputSkill]:
+    """
+    The skills the agent wrote to the caller's output folder in this project:
+    top-level folders of `/mnt/data/output` that hold a SKILL.md.
+    """
+    return await skills_service.list_output_skills(session, project_name, user)
+
+
+@router.post("/projects/{project_name}/skills/from-output", status_code=201)
+async def import_output_skill(
+    project_name: str,
+    body: SkillFromOutputRequest,
+    session: SessionDep,
+    user: UserDep,
+) -> SkillDetail:
+    """
+    Import a skill from the caller's output folder in this project, with the
+    same checks as a folder upload, and load it into the project. Private, as
+    with any import.
+    """
+    skill = await skills_service.import_skill_from_output(
+        session, project_name, body.folder, user, replace=body.replace
+    )
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
 

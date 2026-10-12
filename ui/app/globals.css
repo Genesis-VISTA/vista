@@ -1331,6 +1331,22 @@ textarea.input {
   border: 1px solid var(--warning-line);
 }
 
+.skill-output-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.skill-output-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .skill-desc {
   color: var(--muted);
   font-size: 12px;

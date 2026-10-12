@@ -345,6 +345,7 @@ export default function SkillsPage() {
 
       <SkillImportModal
         open={showImport}
+        projectName={projectName}
         onCancel={() => setShowImport(false)}
         onImported={(skill) => {
           // Append the new private skill to the local catalog (de-dupe in
