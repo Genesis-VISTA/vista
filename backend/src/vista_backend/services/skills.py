@@ -30,7 +30,7 @@ from ..agents.skills import (
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import SkillTable, SkillUpdate, UserPublicWithConfig
+from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
 from ..utils.misc import now_iso
 from ._helpers import new_storage_path
 
@@ -87,13 +87,36 @@ async def get_skill_detail(session: AsyncSession, name: str) -> tuple[SkillTable
     return skill, read_skill(settings.data_dir / skill.path).body
 
 
-async def _insert_skill_row(session: AsyncSession, row: SkillTable) -> None:
+def _load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
     """
-    Insert and commit a freshly built skill row, removing its just-written
-    folder if the commit fails. The uuid folder belongs solely to this row, so
-    cleanup can never clobber another skill's files.
+    Add skill `name` to `project.skills` in the pending transaction, and rebuild
+    the project's agents once it commits, so their next turn sees the skill.
+    """
+    # Imported here: `project_agent` reaches `db.seed`, which imports this module.
+    from .project_agent import invalidate_agents
+
+    if name in project.skills:
+        return
+    project.skills = [
+        *project.skills,
+        name,
+    ]  # a new list, so the JSON column is marked dirty
+    session.add(project)
+    invalidate_agents(session, project_id=project.id)
+
+
+async def _insert_skill_row(
+    session: AsyncSession, row: SkillTable, project: ProjectTable | None = None
+) -> None:
+    """
+    Insert and commit a freshly built skill row, loading it into `project` in
+    the same commit, and remove its just-written folder if the commit fails.
+    The uuid folder belongs solely to this row, so cleanup can never clobber
+    another skill's files.
     """
     session.add(row)
+    if project is not None:
+        _load_into(session, project, row.name)
     try:
         await session.commit()
     except Exception as e:
@@ -114,10 +137,12 @@ async def create_skill(
     author: str | None = None,
     repo_url: str | None = None,
     is_public: bool = False,
+    project: ProjectTable | None = None,
 ) -> SkillTable:
     """
     Create a skill from a structured `spec` (the server generates the SKILL.md
-    frontmatter from its fields). `spec.body` is markdown only.
+    frontmatter from its fields). `spec.body` is markdown only. Given a
+    `project`, the skill is loaded into it.
     """
     if await get_skill_optional(session, spec.name) is not None:
         raise HTTPException(status_code=409, detail=f"Name already in use: {spec.name}")
@@ -132,30 +157,36 @@ async def create_skill(
         is_public=is_public,
         now=now_iso(),
     )
-    await _insert_skill_row(session, row)
+    await _insert_skill_row(session, row, project)
     return row
 
 
-async def import_skill(session: AsyncSession, url: str) -> SkillTable:
+async def import_skill(
+    session: AsyncSession, url: str, project: ProjectTable | None = None
+) -> SkillTable:
     """
     Import a skill from GitHub. Imported skills are private (`is_public=False`)
     and record the source `url` as their `repo_url`; the user can publish later.
+    Given a `project`, the skill is loaded into it.
     """
     path = new_storage_path()
     try:
         skill = import_skill_from_github(url, settings.data_dir / path)
     except SkillImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return await _register_imported(session, skill, path, repo_url=url)
+    return await _register_imported(session, skill, path, repo_url=url, project=project)
 
 
 async def import_skill_upload(
-    session: AsyncSession, files: list[UploadFile], paths: list[str]
+    session: AsyncSession,
+    files: list[UploadFile],
+    paths: list[str],
+    project: ProjectTable | None = None,
 ) -> SkillTable:
     """
     Import a skill from a folder uploaded by the browser. `paths[i]` is
     `files[i]`'s path relative to the picked folder. Private, like a GitHub
-    import, but with no `repo_url`.
+    import, but with no `repo_url`. Given a `project`, the skill is loaded into it.
     """
     if len(paths) != len(files):
         raise HTTPException(
@@ -170,11 +201,18 @@ async def import_skill_upload(
         )
     except SkillImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return await _register_imported(session, skill, path, repo_url=None)
+    return await _register_imported(
+        session, skill, path, repo_url=None, project=project
+    )
 
 
 async def _register_imported(
-    session: AsyncSession, skill: Skill, path: str, *, repo_url: str | None
+    session: AsyncSession,
+    skill: Skill,
+    path: str,
+    *,
+    repo_url: str | None,
+    project: ProjectTable | None,
 ) -> SkillTable:
     """Record a skill already copied to `path`; remove the copy on a name clash."""
     if await get_skill_optional(session, skill.name) is not None:
@@ -186,7 +224,7 @@ async def _register_imported(
     row = build_skill_row(
         skill, path=path, author=None, repo_url=repo_url, is_public=False, now=now_iso()
     )
-    await _insert_skill_row(session, row)
+    await _insert_skill_row(session, row, project)
     return row
 
 

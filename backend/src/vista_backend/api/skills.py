@@ -7,7 +7,8 @@ from pydantic_ai.messages import ModelMessage
 from ..agents.skill_authoring import SkillDraft
 from ..agents.skills import Skill
 from ..db.db import SessionDep
-from ..db.schemas import SkillPublic, SkillUpdate
+from ..db.schemas import ProjectTable, SkillPublic, SkillUpdate
+from ..services import project as project_service
 from ..services import skills as skills_service
 from ..services.auth import UserDep
 
@@ -21,6 +22,8 @@ class SkillCreate(Skill):
     author: str | None = None
     repo_url: str | None = None
     is_public: bool = False
+    project: str | None = None
+    """ Name of a project to load the new skill into. """
 
 
 class SkillDetail(SkillPublic):
@@ -48,6 +51,8 @@ class SkillImportRequest(BaseModel):
     """
 
     url: str
+    project: str | None = None
+    """ Name of a project to load the imported skill into. """
 
 
 class SkillPatch(SkillUpdate):
@@ -56,6 +61,18 @@ class SkillPatch(SkillUpdate):
     """
 
     body: str | None = None
+
+
+async def _target_project(
+    session: SessionDep, user: UserDep, name: str | None
+) -> ProjectTable | None:
+    """
+    The project a new skill is loaded into, checked before anything is written so
+    a missing or forbidden project leaves no skill behind.
+    """
+    if name is None:
+        return None
+    return await project_service.get_project_by_name(session, name, user)
 
 
 def _detail(skill, body: str) -> SkillDetail:
@@ -78,14 +95,18 @@ async def get_skill(name: str, session: SessionDep) -> SkillDetail:
 
 
 @router.post("/skills", status_code=201)
-async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail:
-    """Create a new skill (private by default)."""
+async def create_skill(
+    payload: SkillCreate, session: SessionDep, user: UserDep
+) -> SkillDetail:
+    """Create a new skill (private by default), loaded into `payload.project` if given."""
+    project = await _target_project(session, user, payload.project)
     skill = await skills_service.create_skill(
         session,
         spec=payload,
         author=payload.author,
         repo_url=payload.repo_url,
         is_public=payload.is_public,
+        project=project,
     )
     # Read the body back from the written SKILL.md rather than echoing the raw request
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
@@ -102,12 +123,16 @@ async def generate_skill(body: SkillGenerateRequest, user: UserDep) -> SkillDraf
 
 
 @router.post("/skills/import", status_code=201)
-async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDetail:
+async def import_skill(
+    body: SkillImportRequest, session: SessionDep, user: UserDep
+) -> SkillDetail:
     """
-    Import a skill from a public (or token-accessible) GitHub repository.
-    Imported skills are private; the user can publish later via `PATCH /skills/{name}`.
+    Import a skill from a public (or token-accessible) GitHub repository, loaded
+    into `body.project` if given. Imported skills are private; the user can
+    publish later via `PATCH /skills/{name}`.
     """
-    skill = await skills_service.import_skill(session, body.url)
+    project = await _target_project(session, user, body.project)
+    skill = await skills_service.import_skill(session, body.url, project)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
 
@@ -117,14 +142,18 @@ async def import_skill_upload(
     files: list[UploadFile],
     paths: Annotated[list[str], Form()],
     session: SessionDep,
+    user: UserDep,
+    project: Annotated[str | None, Form()] = None,
 ) -> SkillDetail:
     """
     Import a skill from a local folder the browser uploaded. Multipart body:
     one `files` part per file and a matching `paths` field (in the same order)
     giving each file's path relative to the picked folder. SKILL.md must be at
-    the folder's root. Imported skills are private, as with a GitHub import.
+    the folder's root. Imported skills are private, as with a GitHub import. An
+    optional `project` field names a project to load the skill into.
     """
-    skill = await skills_service.import_skill_upload(session, files, paths)
+    target = await _target_project(session, user, project)
+    skill = await skills_service.import_skill_upload(session, files, paths, target)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
 

@@ -100,8 +100,8 @@ reusable skill:
 4. Edit any field, then click **Save (private)** or **Save & publish**.
 
 Under the hood this calls `POST /skills/generate` (which does **not** write
-anything) followed by `POST /skills`. The generated skill is auto-loaded into
-the active project's loaded-skills set so it appears on `/skills` immediately.
+anything) followed by `POST /skills` with the active project's name, so the
+new skill is loaded into that project.
 
 ### 3. Import from GitHub
 
@@ -146,18 +146,21 @@ is no Unpublish UI. If you really need to take a skill down, delete the
 
 ## How a skill becomes "loaded" for a project
 
-A project's `skills` list (in the project record) defines the **mandated**
-skills — these are always loaded and the agent always sees their SKILL.md in
-the system prompt.
+A project's loaded skills are its `skills` list in the project record — the
+agent copies exactly those into its sandbox and lists them in its system
+prompt. There is nothing else: what `/skills` shows as loaded is what the
+agent has.
 
-On top of that, users can **add** skills to a project via the **Load** button
-on the hub or by generating/importing new ones. These additions live in
-browser localStorage under `vista.loadedSkills.v2`, keyed by project name, so
-switching projects swaps the additions in and out.
+The list changes in four places, all for every member of the project:
 
-The `/skills` page shows `loadedSlugs = project.skills ∪ additions[project]`.
-Project-mandated skills carry a `required` chip and cannot be unloaded from
-the UI; user additions show a normal `Unload` button.
+- **Load / Loaded ✓** on the hub, and **Unload** on `/skills`, rewrite the
+  project with `PUT /projects/<name>`.
+- **Import** and **Save** (from a chat) pass the active project to
+  `POST /skills/import`, `POST /skills/import/upload` or `POST /skills`, which
+  load the new skill into it in the same commit.
+- The project modal's skills picker.
+
+Every change rebuilds the project's agents, so the next turn sees it.
 
 ## Lightweight & HPC-backed skills (clone at runtime)
 

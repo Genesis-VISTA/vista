@@ -1,13 +1,13 @@
 """
 Skill import: the GitHub URL parser, importing an uploaded local folder, and
 the `POST /skills/import/upload` route that serves the Import modal's
-"Local folder" tab.
+"Local folder" tab, and loading a new skill into the project it was made in.
 """
 
 import io
 
 import pytest
-from harness import api_client, seed_user
+from harness import api_client, seed_project, seed_user
 
 from vista_backend.agents import skill_import
 from vista_backend.agents.skill_import import (
@@ -198,6 +198,61 @@ class TestUploadRoute:
             )
         assert "demo-skill" in [s["name"] for s in listed.json()]
         assert list(tmp_path.rglob("scripts/run.py"))
+
+    async def test_loads_into_named_project(self, session):
+        alice = await seed_user(session)
+        project = await seed_project(session, alice, skills=["salt-analysis"])
+        headers = {"X-Vista-User-Email": alice.email}
+        files, data = _multipart({"demo-skill/SKILL.md": SKILL_MD})
+        with api_client(session) as (client, _):
+            response = await client.post(
+                UPLOAD,
+                files=files,
+                data={**data, "project": project.name},
+                headers=headers,
+            )
+            assert response.status_code == 201, response.text
+            fetched = await client.get(f"/projects/{project.name}", headers=headers)
+        assert fetched.json()["skills"] == ["salt-analysis", "demo-skill"]
+
+    async def test_project_outside_access_is_refused_and_leaves_no_skill(
+        self, session, tmp_path
+    ):
+        alice = await seed_user(session)
+        bob = await seed_user(session)
+        project = await seed_project(session, bob)
+        headers = {"X-Vista-User-Email": alice.email}
+        files, data = _multipart({"demo-skill/SKILL.md": SKILL_MD})
+        with api_client(session) as (client, _):
+            response = await client.post(
+                UPLOAD,
+                files=files,
+                data={**data, "project": project.name},
+                headers=headers,
+            )
+            listed = await client.get("/skills", headers=headers)
+        assert response.status_code == 403, response.text
+        assert "demo-skill" not in [s["name"] for s in listed.json()]
+        assert not list(tmp_path.rglob("SKILL.md"))
+
+    async def test_created_skill_loads_into_named_project(self, session):
+        alice = await seed_user(session)
+        project = await seed_project(session, alice)
+        headers = {"X-Vista-User-Email": alice.email}
+        with api_client(session) as (client, _):
+            response = await client.post(
+                "/skills",
+                json={
+                    "name": "chat-skill",
+                    "description": "Made from a chat.",
+                    "body": "# Chat skill",
+                    "project": project.name,
+                },
+                headers=headers,
+            )
+            assert response.status_code == 201, response.text
+            fetched = await client.get(f"/projects/{project.name}", headers=headers)
+        assert fetched.json()["skills"] == ["chat-skill"]
 
     async def test_name_clash_is_409_and_leaves_no_copy(self, session, tmp_path):
         alice = await seed_user(session)
