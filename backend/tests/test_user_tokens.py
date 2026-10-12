@@ -452,7 +452,7 @@ async def test_inference_view_over_http(session, i2_settings):
 
 
 @pytest.mark.anyio
-async def test_inference_view_on_mag_has_no_model(session, alice, i2_settings):
+async def test_inference_view_on_mag_uses_its_default(session, alice, i2_settings):
     from vista_backend.api.users import get_inference
 
     row = await session.get(UserTable, alice.id)
@@ -460,6 +460,6 @@ async def test_inference_view_on_mag_has_no_model(session, alice, i2_settings):
     view = await get_inference(row)
     assert view.provider == "mag"
     assert view.source == "user"
-    assert view.model is None
-    assert view.model_is_default is False
+    assert view.model == "openai:claude-sonnet"
+    assert view.model_is_default is True
     assert view.has_credential is False

@@ -91,7 +91,7 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
         id="mag",
         name="AmSC MAG",
         base_url="https://i2-api.staging.american-science-cloud.org/v1",
-        default_model=None,
+        default_model="claude-sonnet",
         key_field="inference_mag_api_key",
     ),
     "olcf": ProviderPreset(
