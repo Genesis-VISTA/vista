@@ -1030,7 +1030,19 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
     case "mag":
       return {
         label: "AmSC MAG project access token",
-        hint: <>A project access token for the AmSC Model Access Gateway. {KEY_SUFFIX}</>,
+        hint: (
+          <>
+            A project access token for the AmSC Model Access Gateway. {KEY_SUFFIX}{" "}
+            <a href="https://my.amsc.energy.gov/" target="_blank" rel="noopener noreferrer">
+              Get a token
+            </a>
+            {" · "}
+            <a href="https://amsc-docs-d762d2.gitlab.io/mag-get-started" target="_blank" rel="noopener noreferrer">
+              About MAG
+            </a>
+            .
+          </>
+        ),
       };
     case "olcf":
       return {
