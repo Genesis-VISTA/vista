@@ -175,7 +175,7 @@ async def test_llm_credentials_reach_the_rag_instance(fake_rag, tmp_path):
 
 async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monkeypatch):
     """
-    On a provider with no model chosen (AmSC MAG), the paper is still indexed,
+    On a provider with no model chosen (Custom), the paper is still indexed,
     and extraction is off even though the environment has a key: the env
     chain would otherwise extract with a model the researcher never chose.
     """
@@ -188,8 +188,9 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     user = UserPublicWithConfig(
         id=uuid.uuid4(),
         email="researcher@example.org",
-        inference_provider="mag",
-        inference_mag_api_key="mag-token",
+        inference_provider="custom",
+        inference_custom_api_key="custom-token",
+        inference_base_url="https://custom.example/v1",
     )
     _pdf(tmp_path / "pdfs" / "paper.pdf")
 

@@ -54,6 +54,49 @@ async def test_system_prompt_includes_project_system_prompt():
     assert "Prefer FLiBe over FLiNaK." in prompt
 
 
+async def test_system_prompt_includes_the_enabled_research_profile():
+    user = make_user().model_copy(
+        update={
+            "research_role": "Computational materials scientist",
+            "research_institution": "Oak Ridge National Laboratory",
+            "research_interests": ["molten salts", "phase equilibria"],
+            "preferred_units": "si",
+            "technical_depth": "expert",
+            "evidence_preference": "always_cite",
+        }
+    )
+    prompt = await _system_prompt_for(
+        make_project(system_prompt="Use the project's reporting convention."), user
+    )
+
+    assert "## Researcher Profile" in prompt
+    assert "- Role: Computational materials scientist" in prompt
+    assert "- Institution or laboratory: Oak Ridge National Laboratory" in prompt
+    assert "- Research interests: molten salts, phase equilibria" in prompt
+    assert "- Preferred units: SI units" in prompt
+    assert "- Technical depth: expert" in prompt
+    assert "- Evidence preference: always cite scientific claims" in prompt
+    assert prompt.index("## Researcher Profile") < prompt.index(
+        "## Project Information"
+    )
+    assert "current request and Project Information take precedence" in prompt
+
+
+async def test_system_prompt_omits_a_disabled_research_profile():
+    user = make_user().model_copy(
+        update={
+            "research_role": "Nuclear engineer",
+            "research_interests": ["corrosion"],
+            "personalize_responses": False,
+        }
+    )
+    prompt = await _system_prompt_for(make_project(), user)
+
+    assert "## Researcher Profile" not in prompt
+    assert "Nuclear engineer" not in prompt
+    assert "corrosion" not in prompt
+
+
 async def test_system_prompt_omits_project_section_when_unset():
     prompt = await _system_prompt_for(make_project(system_prompt=None), make_user())
     assert "## Project Information" not in prompt

@@ -306,7 +306,7 @@ test.describe("HPC availability cards", () => {
 
     await details.getByRole("button", { name: "Settings" }).click();
     const settings = page.getByRole("dialog", { name: "Settings" });
-    await expect(settings.getByRole("button", { name: /^Lux,/ })).toHaveAttribute("aria-current", "page");
+    await expect(settings.getByRole("button", { name: /^Compute,/ })).toHaveAttribute("aria-current", "page");
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     await expect(lux.getByRole("textbox")).toHaveCount(2);
@@ -325,17 +325,17 @@ test.describe("HPC availability cards", () => {
       .click();
 
     const settings = page.getByRole("dialog", { name: "Settings" });
-    await expect(settings.getByRole("button", { name: /^Frontier,/ })).toHaveAttribute("aria-current", "page");
+    await expect(settings.getByRole("button", { name: /^Compute,/ })).toHaveAttribute("aria-current", "page");
     await expect(settings.getByRole("region", { name: "Frontier" })).toContainText("ORNL › OLCF");
     await expect(settings.getByLabel("Frontier S3M token")).toBeVisible();
     await expect(settings.getByRole("region", { name: "Odo" })).toHaveCount(0);
 
-    // From the rail's own settings button, it opens on Agent with every
-    // cluster listed and none of their sections shown.
+    // From the rail's own settings button, it opens on Research profile with
+    // no cluster's section shown.
     await settings.getByRole("button", { name: "Close" }).click();
     await rail.getByRole("button", { name: "Open settings" }).click();
-    await expect(settings.getByRole("region", { name: "Agent" })).toBeVisible();
-    await expect(settings.getByRole("button", { name: /^Frontier,/ })).not.toHaveAttribute("aria-current");
+    await expect(settings.getByRole("region", { name: "Research profile" })).toBeVisible();
+    await expect(settings.getByRole("button", { name: /^Compute,/ })).not.toHaveAttribute("aria-current");
     await expect(settings.getByRole("region", { name: "Frontier" })).toHaveCount(0);
   });
 
@@ -348,9 +348,13 @@ test.describe("HPC availability cards", () => {
     const settings = page.getByRole("dialog", { name: "Settings" });
     const nav = settings.getByRole("navigation", { name: "Settings sections" });
     await expect(nav).toBeVisible();
-    await expect(settings.getByRole("region", { name: "Agent" })).toBeHidden();
+    await expect(settings.getByRole("region", { name: "Research profile" })).toBeHidden();
 
-    await nav.getByRole("button", { name: /^Frontier,/ }).click();
+    await nav.getByRole("button", { name: /^Compute,/ }).click();
+    const compute = settings.getByRole("region", { name: "Compute" });
+    await expect(compute).toBeVisible();
+    await expect(nav).toBeHidden();
+    await compute.getByRole("button", { name: /^Frontier,/ }).click();
     const frontier = settings.getByRole("region", { name: "Frontier" });
     await expect(frontier).toBeVisible();
     await expect(nav).toBeHidden();
@@ -369,7 +373,7 @@ test.describe("HPC availability cards", () => {
     await page.getByRole("button", { name: "Open settings" }).click();
     const settings = page.getByRole("dialog", { name: "Settings" });
     await expect(settings.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
-    await expect(settings.getByRole("region", { name: "Agent" })).toBeVisible();
+    await expect(settings.getByRole("region", { name: "Research profile" })).toBeVisible();
     await expect(settings.getByRole("button", { name: "All settings" })).toBeHidden();
   });
 

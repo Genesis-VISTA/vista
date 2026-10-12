@@ -149,7 +149,7 @@ def test_presets():
     assert i2.base_url == "https://api.i2-core.american-science-cloud.org"
     assert i2.default_model == "claude-sonnet"
     assert mag.base_url == "https://i2-api.staging.american-science-cloud.org/v1"
-    assert mag.default_model is None
+    assert mag.default_model == "claude-sonnet"
     assert olcf.name == "OLCF Inference"
     assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
     assert olcf.default_model == "gpt-oss-120b"
@@ -170,7 +170,7 @@ _ALL_KEYS = dict(
     "provider,base_url,key,model",
     [
         ("i2", PROVIDER_PRESETS["i2"].base_url, "i2-key", "openai:claude-sonnet"),
-        ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", None),
+        ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", "openai:claude-sonnet"),
         ("olcf", PROVIDER_PRESETS["olcf"].base_url, "olcf-key", "openai:gpt-oss-120b"),
         ("custom", "https://custom.example/v1", "custom-key", None),
     ],
@@ -268,9 +268,13 @@ def test_a_chosen_provider_beats_the_configuration(i2_settings, monkeypatch):
 def test_no_model_is_a_named_condition(i2_settings):
     with pytest.raises(MissingInferenceModel) as excinfo:
         require_inference_credential(
-            _user(inference_provider="mag", inference_mag_api_key="t")
+            _user(
+                inference_provider="custom",
+                inference_custom_api_key="t",
+                inference_base_url="https://custom.example/v1",
+            )
         )
-    assert "AmSC MAG" in excinfo.value.detail
+    assert "Custom" in excinfo.value.detail
     assert "model picker" in excinfo.value.detail
 
 
@@ -281,7 +285,13 @@ def test_no_model_still_builds_an_agent_model(i2_settings):
     """
     from pydantic_ai import Agent
 
-    model = build_model_for(_user(inference_provider="mag", inference_mag_api_key="t"))
+    model = build_model_for(
+        _user(
+            inference_provider="custom",
+            inference_custom_api_key="t",
+            inference_base_url="https://custom.example/v1",
+        )
+    )
     with pytest.raises(MissingInferenceModel):
         Agent(model).run_sync("hi")
 
@@ -546,7 +556,7 @@ class TestHttpSurface:
     @pytest.mark.anyio
     @pytest.mark.integration
     @pytest.mark.parametrize("stream", [False, True], ids=["json", "sse"])
-    async def test_chat_on_mag_with_no_model_is_reported_not_crashed(
+    async def test_chat_with_no_model_is_reported_not_crashed(
         self, session, monkeypatch, stream
     ):
         from harness import api_client, seed_project, seed_user
@@ -555,8 +565,9 @@ class TestHttpSurface:
         alice = await seed_user(session)
         row = await session.get(UserTable, alice.id)
         assert row is not None
-        row.inference_provider = "mag"
-        row.inference_mag_api_key = "mag-token"
+        row.inference_provider = "custom"
+        row.inference_custom_api_key = "custom-token"
+        row.inference_base_url = "https://custom.example/v1"
         session.add(row)
         await session.flush()
         project = await seed_project(session, alice, name="alices-project")
@@ -569,7 +580,7 @@ class TestHttpSurface:
             )
 
         assert response.status_code == 409, response.text
-        assert "AmSC MAG" in response.json()["detail"]
+        assert "Custom" in response.json()["detail"]
         assert "model picker" in response.json()["detail"]
 
     @pytest.mark.anyio
@@ -781,7 +792,7 @@ class TestCitationCredentials:
 
     def test_no_model_disables_extraction_despite_the_environment(self, monkeypatch):
         """
-        On MAG with no model there is nothing to extract with. An environment
+        On Custom with no model there is nothing to extract with. An environment
         key must not turn extraction back on against some other model.
         """
         from vista_backend.agents.inference import citation_credentials
@@ -793,8 +804,9 @@ class TestCitationCredentials:
             id=uuid.uuid4(),
             email="researcher@example.org",
             is_admin=False,
-            inference_provider="mag",
-            inference_mag_api_key="mag-token",
+            inference_provider="custom",
+            inference_custom_api_key="custom-token",
+            inference_base_url="https://custom.example/v1",
         )
         credentials = citation_credentials(user)
         assert credentials.disabled is True

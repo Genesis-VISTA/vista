@@ -34,8 +34,8 @@ import {
 import { useTheme, type ThemeChoice } from "@/lib/theme";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
-/** What the modal can show: Appearance, Agent, or one cluster's section. */
-type Section = "appearance" | "agent" | HpcCluster;
+/** What the modal can show: the four top-level areas, or one cluster's section. */
+type Section = "appearance" | "profile" | "agent" | "compute" | HpcCluster;
 
 /** Every free-text field the modal edits, as named in `UserSelfUpdate`. */
 const TEXT_FIELDS = [
@@ -44,6 +44,8 @@ const TEXT_FIELDS = [
   "inference_olcf_api_key",
   "inference_custom_api_key",
   "inference_base_url",
+  "research_role",
+  "research_institution",
   "nersc_account",
   "nersc_remote_dir",
   "odo_remote_dir",
@@ -65,6 +67,11 @@ type Draft = {
   text: Record<TextField, string>;
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
+  interests: string[];
+  preferredUnits: NonNullable<UserSelfUpdate["preferred_units"]>;
+  technicalDepth: NonNullable<UserSelfUpdate["technical_depth"]>;
+  evidencePreference: NonNullable<UserSelfUpdate["evidence_preference"]>;
+  personalizeResponses: boolean;
   hidden: Set<HpcCluster>;
 };
 
@@ -74,6 +81,11 @@ function draftFrom(user: UserPublicWithConfig): Draft {
   return {
     text,
     provider: user.inference_provider ?? null,
+    interests: user.research_interests ?? [],
+    preferredUnits: user.preferred_units ?? "si",
+    technicalDepth: user.technical_depth ?? "balanced",
+    evidencePreference: user.evidence_preference ?? "cite_when_available",
+    personalizeResponses: user.personalize_responses ?? true,
     hidden: new Set((user.hpc_hidden_clusters ?? []).filter((c): c is HpcCluster => HPC_CLUSTERS.includes(c as HpcCluster))),
   };
 }
@@ -114,6 +126,13 @@ const SETTING_FIELDS = new Set([
 /** The section each field lives in, for going to a field whose save failed. */
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
+  if (
+    field.startsWith("research_") ||
+    field === "preferred_units" ||
+    field === "technical_depth" ||
+    field === "evidence_preference" ||
+    field === "personalize_responses"
+  ) return "profile";
   if (field.startsWith("odo_")) return "odo";
   if (field.startsWith("frontier_")) return "frontier";
   if (field.startsWith("nersc_")) return "perlmutter";
@@ -143,6 +162,13 @@ const FIELD_LABELS: Record<string, string> = {
   inference_olcf_api_key: "OLCF Inference S3M token",
   inference_custom_api_key: "Custom endpoint API key",
   inference_base_url: "Inference endpoint",
+  research_role: "Research role",
+  research_institution: "Institution or laboratory",
+  research_interests: "Research interests",
+  preferred_units: "Preferred units",
+  technical_depth: "Technical depth",
+  evidence_preference: "Evidence preference",
+  personalize_responses: "Response personalization",
   nersc_account: "NERSC account",
   nersc_remote_dir: "NERSC remote directory",
   nersc_iri_token: "NERSC IRI token",
@@ -155,12 +181,19 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
+type ProfileChoiceField = "preferred_units" | "technical_depth" | "evidence_preference";
+
+const PROFILE_DRAFT_KEYS = {
+  preferred_units: "preferredUnits",
+  technical_depth: "technicalDepth",
+  evidence_preference: "evidencePreference",
+} as const;
 
 const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
 
 /**
- * The settings modal: a navigation list (Appearance, Agent, and the resource
- * tree of institution › facility › cluster) beside one section at a time.
+ * The settings modal: four top-level areas (Appearance, Research profile,
+ * Models & providers, and Compute) beside one section at a time.
  *
  * Fetches the full `UserPublicWithConfig` view (with decrypted tokens) on
  * open — the nav-rail's cached user is the light view, which intentionally
@@ -171,7 +204,7 @@ const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
  * cross with the reason, or a spinner when slow), a section holding a failed
  * field is marked in the navigation, and a hidden live region announces each
  * outcome. Opened from a cluster's card (`initialCluster`) it shows that
- * cluster's section, and otherwise Agent. Below about 720 px of modal width the
+ * cluster's section, and otherwise Research profile. Below about 720 px of modal width the
  * navigation and the section take turns (see `.settings-layout`).
  */
 export function UserSettingsModal({
@@ -185,7 +218,7 @@ export function UserSettingsModal({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [section, setSection] = useState<Section>(initialCluster ?? "agent");
+  const [section, setSection] = useState<Section>(initialCluster ?? "profile");
   // Only read in a narrow modal, where the list and a section take turns. A
   // deep link from a card goes straight to its section there too.
   const [pane, setPane] = useState<"nav" | "section">(initialCluster ? "section" : "nav");
@@ -230,6 +263,11 @@ export function UserSettingsModal({
       const next = draftFrom(loaded);
       const seeded: Record<string, unknown> = { inference_provider: next.provider };
       for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
+      seeded.research_interests = next.interests;
+      seeded.preferred_units = next.preferredUnits;
+      seeded.technical_depth = next.technicalDepth;
+      seeded.evidence_preference = next.evidencePreference;
+      seeded.personalize_responses = next.personalizeResponses;
       seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
       autosave.seed(seeded);
       setUser(loaded);
@@ -330,6 +368,22 @@ export function UserSettingsModal({
     autosave.edit("inference_provider", provider, "now");
   }
 
+  function setProfileChoice(field: ProfileChoiceField, value: string) {
+    const key = PROFILE_DRAFT_KEYS[field];
+    setDraft((d) => (d ? ({ ...d, [key]: value } as Draft) : d));
+    autosave.edit(field, value, "now");
+  }
+
+  function setInterests(interests: string[]) {
+    setDraft((d) => (d ? { ...d, interests } : d));
+    autosave.edit("research_interests", interests, "now");
+  }
+
+  function setPersonalizeResponses(personalizeResponses: boolean) {
+    setDraft((d) => (d ? { ...d, personalizeResponses } : d));
+    autosave.edit("personalize_responses", personalizeResponses, "now");
+  }
+
   // Before the user loads, every cluster reads as shown: the list is the
   // same either way, and only the "hidden" markers wait for it.
   const hidden = draft?.hidden ?? new Set<HpcCluster>();
@@ -353,6 +407,18 @@ export function UserSettingsModal({
         )}
       </div>
     );
+  } else if (section === "profile") {
+    content = (
+      <ResearchProfileSection
+        draft={draft}
+        bind={bind}
+        setInterests={setInterests}
+        setChoice={setProfileChoice}
+        setPersonalizeResponses={setPersonalizeResponses}
+        marks={autosave.marks}
+        errors={autosave.errors}
+      />
+    );
   } else if (section === "agent") {
     content = (
       <AgentSection
@@ -361,6 +427,14 @@ export function UserSettingsModal({
         setProvider={setProvider}
         providerMark={autosave.marks.inference_provider}
         providerError={autosave.errors.inference_provider}
+      />
+    );
+  } else if (section === "compute") {
+    content = (
+      <ComputeSection
+        hidden={draft.hidden}
+        failed={failedSections}
+        onChoose={choose}
       />
     );
   } else {
@@ -372,6 +446,7 @@ export function UserSettingsModal({
         onShownChange={(shown) => setShown(section, shown)}
         switchMark={lastToggled.current === section ? autosave.marks[HIDDEN_FIELD] : undefined}
         switchError={lastToggled.current === section ? autosave.errors[HIDDEN_FIELD] : undefined}
+        onBack={() => choose("compute")}
       >
         <ClusterFields cluster={section} user={user} bind={bind} />
       </ClusterSection>
@@ -388,8 +463,10 @@ export function UserSettingsModal({
       >
         <div className="panel-header">
           <div className="panel-title">Settings</div>
-          <button type="button" className="button ghost" onClick={close}>
-            Close
+          <button type="button" className="button ghost settings-modal-close" aria-label="Close settings" onClick={close}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
         </div>
         {/* Each field's mark is visual; this says the same in words. */}
@@ -397,7 +474,13 @@ export function UserSettingsModal({
           {announcement}
         </div>
         <div className="settings-layout" data-pane={pane}>
-          <SettingsNav section={section} hidden={hidden} failed={failedSections} onChoose={choose} />
+          <SettingsNav
+            section={section}
+            hidden={hidden}
+            personalize={draft?.personalizeResponses ?? true}
+            failed={failedSections}
+            onChoose={choose}
+          />
           <div className="settings-main">
             <button type="button" className="settings-back" onClick={() => setPane("nav")}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -455,17 +538,36 @@ function useClusterState(cluster: HpcCluster): HpcDisplayState | null {
 function SettingsNav({
   section,
   hidden,
+  personalize,
   failed,
   onChoose,
 }: {
   section: Section;
   hidden: Set<HpcCluster>;
+  personalize: boolean;
   /** Sections holding a field whose save failed. */
   failed: Set<Section>;
   onChoose: (section: Section) => void;
 }) {
   const { settings } = useAgentSettings();
-  const agentNote = settings ? (settings.hasCredential ? "Key set" : "No key") : null;
+  const view = useHpcStatus();
+  // The Settings badge describes this researcher's setup, not a credential
+  // inherited invisibly from the installation environment. A configured
+  // installation uses the legacy i2 key field until the researcher makes an
+  // explicit provider choice; every other provider has its own saved-key flag.
+  const savedCredential = settings
+    ? settings.keysSet[settings.source === "config" ? "i2" : settings.provider]
+    : false;
+  // A saved credential alone is not enough for providers without a default
+  // model, and Custom also needs an endpoint.
+  const providerReady = Boolean(savedCredential && settings?.model && settings.baseUrl.trim());
+  const providerNote = settings ? (providerReady ? "Ready" : "Not ready") : null;
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster));
+  const ready = visible.filter(
+    (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
+  ).length;
+  const clusterFailed = HPC_CLUSTERS.some((cluster) => failed.has(cluster));
+  const computeCurrent = section === "compute" || HPC_CLUSTERS.includes(section as HpcCluster);
 
   return (
     <nav className="settings-nav" aria-label="Settings sections">
@@ -475,9 +577,23 @@ function SettingsNav({
           <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2" />
         </svg>
         <span className="settings-nav-name">Appearance</span>
+        <span className="settings-nav-note">System</span>
       </NavEntry>
       <NavEntry
-        label={["Agent", agentNote?.toLowerCase()].filter(Boolean).join(", ")}
+        label={["Research profile", personalize ? "on" : "off"].join(", ")}
+        current={section === "profile"}
+        failed={failed.has("profile")}
+        onClick={() => onChoose("profile")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21a8 8 0 0 1 16 0" />
+        </svg>
+        <span className="settings-nav-name">Research profile</span>
+        <span className="settings-nav-note">{personalize ? "On" : "Off"}</span>
+      </NavEntry>
+      <NavEntry
+        label={["Models and providers", providerNote?.toLowerCase()].filter(Boolean).join(", ")}
         current={section === "agent"}
         failed={failed.has("agent")}
         onClick={() => onChoose("agent")}
@@ -486,33 +602,25 @@ function SettingsNav({
           <rect x="4" y="6" width="16" height="13" rx="3" />
           <path d="M12 2v4M9 12v1M15 12v1" />
         </svg>
-        <span className="settings-nav-name">Agent</span>
-        {agentNote && (
-          <span className={`settings-nav-note${settings?.hasCredential ? "" : " hpc-word--warn"}`}>{agentNote}</span>
+        <span className="settings-nav-name">Models &amp; providers</span>
+        {providerNote && (
+          <span className={`settings-nav-note${providerReady ? "" : " hpc-word--warn"}`}>{providerNote}</span>
         )}
       </NavEntry>
-
-      <div className="settings-nav-group">Resources</div>
-      {RESOURCE_TREE.map((institution) => (
-        <div key={institution.id} role="group" aria-label={institution.name}>
-          <div className="settings-nav-institution">{institution.name}</div>
-          {institution.facilities.map((facility) => (
-            <div key={facility.id} role="group" aria-label={facility.name}>
-              <div className="settings-nav-facility">{facility.name}</div>
-              {facility.clusters.map((cluster) => (
-                <ClusterNavEntry
-                  key={cluster}
-                  cluster={cluster}
-                  hidden={hidden.has(cluster)}
-                  current={section === cluster}
-                  failed={failed.has(cluster)}
-                  onClick={() => onChoose(cluster)}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      ))}
+      <NavEntry
+        label={`Compute, ${ready} of ${visible.length} ready`}
+        current={computeCurrent}
+        failed={failed.has("compute") || clusterFailed}
+        onClick={() => onChoose("compute")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="6" rx="2" />
+          <rect x="3" y="14" width="18" height="6" rx="2" />
+          <path d="M7 7h.01M7 17h.01" />
+        </svg>
+        <span className="settings-nav-name">Compute</span>
+        <span className="settings-nav-note">{ready} of {visible.length}</span>
+      </NavEntry>
     </nav>
   );
 }
@@ -553,49 +661,6 @@ function NavEntry({
   );
 }
 
-/** One cluster in the tree, with the rail's dot and word for it. */
-function ClusterNavEntry({
-  cluster,
-  hidden,
-  current,
-  failed,
-  onClick,
-}: {
-  cluster: HpcCluster;
-  hidden: boolean;
-  current: boolean;
-  failed: boolean;
-  onClick: () => void;
-}) {
-  // A hidden cluster is never checked, so it has no state to show.
-  const checked = useClusterState(cluster);
-  const state = hidden ? null : checked;
-  const title = HPC_CLUSTER_TITLES[cluster];
-  return (
-    <NavEntry
-      className="settings-nav-resource"
-      label={[title, hidden ? "hidden from sidebar" : null, state ? STATE_LABELS[state] : null]
-        .filter(Boolean)
-        .join(", ")}
-      current={current}
-      failed={failed}
-      onClick={onClick}
-    >
-      <span className="settings-nav-dot">{state && <HpcStatusDot state={state} />}</span>
-      <span className="settings-nav-name">{title}</span>
-      {hidden ? (
-        <span className="settings-nav-note" title="Hidden from sidebar">Hidden</span>
-      ) : (
-        state && (
-          <span className={`settings-nav-note${WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}>
-            {STATE_LABELS[state]}
-          </span>
-        )
-      )}
-    </NavEntry>
-  );
-}
-
 function SectionHeader({
   titleId,
   title,
@@ -631,6 +696,305 @@ function AppearanceSection() {
         <AppearanceSetting labelledBy={titleId} />
       </div>
     </section>
+  );
+}
+
+function ResearchProfileSection({
+  draft,
+  bind,
+  setInterests,
+  setChoice,
+  setPersonalizeResponses,
+  marks,
+  errors,
+}: {
+  draft: Draft;
+  bind: Bind;
+  setInterests: (interests: string[]) => void;
+  setChoice: (field: ProfileChoiceField, value: string) => void;
+  setPersonalizeResponses: (enabled: boolean) => void;
+  marks: Record<string, FieldMark>;
+  errors: Record<string, string>;
+}) {
+  const [interest, setInterest] = useState("");
+
+  function addInterest() {
+    const value = interest.trim();
+    if (!value || draft.interests.includes(value) || draft.interests.length >= 12) return;
+    setInterests([...draft.interests, value]);
+    setInterest("");
+  }
+
+  return (
+    <section className="settings-section" aria-label="Research profile">
+      <SectionHeader title="Research profile">
+        <span className="user-settings-hint">
+          Durable scientific context for new chats. A project&apos;s instructions and your current request take precedence.
+        </span>
+      </SectionHeader>
+      <div className="settings-section-body settings-profile-body">
+        <div className="settings-profile-switch">
+          <span className="settings-profile-switch-icon" aria-hidden="true">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m12 3 1.3 3.7L17 8l-3.7 1.3L12 13l-1.3-3.7L7 8l3.7-1.3L12 3Z" />
+              <path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
+            </svg>
+          </span>
+          <span className="user-settings-switch-text">
+            <span className="user-settings-switch-label">Personalize responses</span>
+            <span className="user-settings-hint">
+              VISTA uses only the profile below; it does not change project data or compute permissions.
+            </span>
+            <FieldError field="personalize_responses" error={errors.personalize_responses} />
+          </span>
+          <SaveMark mark={marks.personalize_responses} />
+          <button
+            id={fieldId("personalize_responses")}
+            type="button"
+            role="switch"
+            aria-checked={draft.personalizeResponses}
+            aria-label="Personalize responses with research profile"
+            className="user-settings-switch"
+            onClick={() => setPersonalizeResponses(!draft.personalizeResponses)}
+          >
+            <span className="user-settings-switch-thumb" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">About your work</h3>
+            <p className="user-settings-hint">Only add details that should carry across all projects.</p>
+          </div>
+          <div className="settings-profile-grid">
+            <SavedField
+              label="Role"
+              field="research_role"
+              binding={bind("research_role", "text")}
+              placeholder="e.g. Computational materials scientist"
+              hint="Your scientific or technical role."
+            />
+            <SavedField
+              label="Institution or laboratory"
+              field="research_institution"
+              binding={bind("research_institution", "text")}
+              placeholder="e.g. Oak Ridge National Laboratory"
+              hint="Optional organizational context."
+            />
+          </div>
+        </div>
+
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">Research interests</h3>
+            <p className="user-settings-hint">Used for relevant terminology, examples, and scientific context.</p>
+          </div>
+          <div className="settings-interest-list" aria-label="Research interests">
+            {draft.interests.map((item) => (
+              <span className="settings-interest" key={item}>
+                {item}
+                <button
+                  type="button"
+                  aria-label={`Remove ${item}`}
+                  onClick={() => setInterests(draft.interests.filter((candidate) => candidate !== item))}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </button>
+              </span>
+            ))}
+          </div>
+          <form
+            className="settings-interest-add"
+            onSubmit={(event) => {
+              event.preventDefault();
+              addInterest();
+            }}
+          >
+            <input
+              id={fieldId("research_interests")}
+              className="input"
+              aria-label="Add research interest"
+              value={interest}
+              onChange={(event) => setInterest(event.target.value)}
+              placeholder="Add an interest"
+              maxLength={80}
+              disabled={draft.interests.length >= 12}
+            />
+            <button type="submit" className="button ghost button-xs" disabled={!interest.trim() || draft.interests.length >= 12}>
+              Add
+            </button>
+            <SaveMark mark={marks.research_interests} />
+          </form>
+          <FieldError field="research_interests" error={errors.research_interests} />
+        </div>
+
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">Scientific preferences</h3>
+            <p className="user-settings-hint">Defaults for new chats; project instructions can override them.</p>
+          </div>
+          <div className="settings-profile-grid settings-profile-grid--three">
+            <ProfileSelect
+              label="Units"
+              field="preferred_units"
+              value={draft.preferredUnits}
+              options={[{ value: "si", label: "SI units" }, { value: "source", label: "Use source units" }]}
+              onChange={setChoice}
+              mark={marks.preferred_units}
+              error={errors.preferred_units}
+            />
+            <ProfileSelect
+              label="Technical depth"
+              field="technical_depth"
+              value={draft.technicalDepth}
+              options={[{ value: "expert", label: "Expert" }, { value: "balanced", label: "Balanced" }, { value: "introductory", label: "Introductory" }]}
+              onChange={setChoice}
+              mark={marks.technical_depth}
+              error={errors.technical_depth}
+            />
+            <ProfileSelect
+              label="Evidence"
+              field="evidence_preference"
+              value={draft.evidencePreference}
+              options={[{ value: "cite_when_available", label: "Cite when available" }, { value: "always_cite", label: "Always cite" }, { value: "concise", label: "Concise" }]}
+              onChange={setChoice}
+              mark={marks.evidence_preference}
+              error={errors.evidence_preference}
+            />
+          </div>
+        </div>
+
+        <div className="settings-profile-note">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m12 2 7 4v6c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6l7-4Z" />
+            <path d="M9 12l2 2 4-4" />
+          </svg>
+          Profile fields are private to this VISTA installation and are sent only as context to the selected model provider.
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProfileSelect({
+  label,
+  field,
+  value,
+  options,
+  onChange,
+  mark,
+  error,
+}: {
+  label: string;
+  field: ProfileChoiceField;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (field: ProfileChoiceField, value: string) => void;
+  mark?: FieldMark;
+  error?: string;
+}) {
+  return (
+    <label className="project-modal-label">
+      {label}
+      <span className="settings-control-row">
+        <select
+          id={fieldId(field)}
+          className="input"
+          value={value}
+          onChange={(event) => onChange(field, event.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${fieldId(field)}-error` : undefined}
+        >
+          {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <SaveMark mark={mark} />
+      </span>
+      <FieldError field={field} error={error} />
+    </label>
+  );
+}
+
+function ComputeSection({
+  hidden,
+  failed,
+  onChoose,
+}: {
+  hidden: Set<HpcCluster>;
+  failed: Set<Section>;
+  onChoose: (section: Section) => void;
+}) {
+  const view = useHpcStatus();
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster));
+  const ready = visible.filter(
+    (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
+  ).length;
+  return (
+    <section className="settings-section" aria-label="Compute">
+      <SectionHeader title="Compute">
+        <span className="user-settings-hint">
+          Choose a cluster to configure credentials, directories, file access, and sidebar visibility.
+        </span>
+      </SectionHeader>
+      <div className="settings-section-body settings-compute-body">
+        <div className="settings-compute-summary">{ready} of {visible.length} visible resources ready</div>
+        <div className="settings-compute-list">
+          {RESOURCE_TREE.flatMap((institution) =>
+            institution.facilities.flatMap((facility) =>
+              facility.clusters.map((cluster) => (
+                <ComputeResourceRow
+                  key={cluster}
+                  cluster={cluster}
+                  place={`${institution.name} · ${facility.name}`}
+                  hidden={hidden.has(cluster)}
+                  failed={failed.has(cluster)}
+                  onClick={() => onChoose(cluster)}
+                />
+              )),
+            ),
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ComputeResourceRow({
+  cluster,
+  place,
+  hidden,
+  failed,
+  onClick,
+}: {
+  cluster: HpcCluster;
+  place: string;
+  hidden: boolean;
+  failed: boolean;
+  onClick: () => void;
+}) {
+  const checked = useClusterState(cluster);
+  const state = hidden ? null : checked;
+  const title = HPC_CLUSTER_TITLES[cluster];
+  const status = hidden ? "Hidden" : state ? STATE_LABELS[state] : "Not checked";
+  return (
+    <button
+      type="button"
+      className="settings-compute-row"
+      aria-label={`${title}, ${place}, ${status}${failed ? ", couldn't save" : ""}`}
+      onClick={onClick}
+    >
+      <span className="settings-compute-name"><strong>{title}</strong><span>{place}</span></span>
+      <span className={`settings-compute-status${state && WORD_TONE[state] ? ` hpc-word--${WORD_TONE[state]}` : ""}`}>
+        {state && <HpcStatusDot state={state} />}
+        {status}
+      </span>
+      {failed ? <SaveMark mark="failed" /> : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      )}
+    </button>
   );
 }
 
@@ -719,36 +1083,86 @@ function AgentSection({
   const keyField = configured ? "inference_api_key" : PROVIDER_KEY_FIELDS[selected];
   const copy = keyField ? keyFieldCopy(selected, configured) : null;
 
+  function onProviderKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const choices = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]'));
+    const current = choices.indexOf(document.activeElement as HTMLElement);
+    if (current < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? choices.length - 1
+        : (current + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) + choices.length) % choices.length;
+    choices[next]?.focus();
+    choices[next]?.click();
+  }
+
   return (
-    <section className="settings-section" aria-label="Agent">
-      <SectionHeader title="Agent">
+    <section className="settings-section" aria-label="Models & providers">
+      <SectionHeader title="Model provider">
         <span className="user-settings-hint">
-          The model provider VISTA&apos;s assistant runs on. Changes apply from your next message.
+          Choose where VISTA runs its assistant. Changes apply from your next message.
         </span>
       </SectionHeader>
       <div className="settings-section-body">
         {error && !settings && <div className="error" style={{ fontSize: 13 }}>{error}</div>}
-        <label className="project-modal-label">
-          Inference provider
-          <span className="settings-control-row">
-            <select
-              id={fieldId("inference_provider")}
-              className="input"
-              value={selected}
-              onChange={(e) => setProvider(e.target.value)}
-              disabled={!settings}
-              aria-invalid={providerError ? true : undefined}
-              aria-describedby={providerError ? `${fieldId("inference_provider")}-error` : undefined}
-            >
-              {configured && <option value="">Custom, from configuration</option>}
-              {settings?.providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+        <div className="settings-provider-field">
+          <div className="settings-provider-label">
+            <span>Provider</span>
             <SaveMark mark={providerMark} />
-          </span>
+          </div>
+          <div
+            id={fieldId("inference_provider")}
+            className="settings-provider-grid"
+            role="radiogroup"
+            aria-label="Inference provider"
+            aria-invalid={providerError ? true : undefined}
+            aria-describedby={providerError ? `${fieldId("inference_provider")}-error` : undefined}
+            onKeyDown={onProviderKeyDown}
+          >
+            {configured && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selected === ""}
+                aria-label="Installation configuration"
+                tabIndex={selected === "" ? 0 : -1}
+                className="settings-provider-card"
+              >
+                <span className="settings-provider-name">Installation configuration</span>
+                <span className={`settings-provider-state${settings?.hasCredential ? " is-ready" : ""}`}>
+                  <span className="hpc-dot" aria-hidden="true" />
+                  {settings?.hasCredential ? "Key available" : "No key"}
+                </span>
+                <span className="settings-provider-model">{settings?.baseUrl}</span>
+              </button>
+            )}
+            {settings?.providers.map((provider) => {
+              const keySet = settings.keysSet[provider.id];
+              return (
+                <button
+                  key={provider.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected === provider.id}
+                  aria-label={provider.name}
+                  tabIndex={selected === provider.id ? 0 : -1}
+                  className="settings-provider-card"
+                  onClick={() => setProvider(provider.id)}
+                >
+                  <span className="settings-provider-name">{provider.name}</span>
+                  <span className={`settings-provider-state${keySet ? " is-ready" : ""}`}>
+                    <span className="hpc-dot" aria-hidden="true" />
+                    {keySet ? "Credential saved" : provider.id === "custom" ? "Not configured" : "No credential"}
+                  </span>
+                  <span className="settings-provider-model">
+                    {provider.defaultModel ? `Default · ${provider.defaultModel}` : "Choose a model"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <FieldError field="inference_provider" error={providerError} />
           <span className="user-settings-hint">
             {configured ? (
@@ -762,7 +1176,7 @@ function AgentSection({
               <>Has no default model: choose one from the model picker at the top of the chat.</>
             ) : null}
           </span>
-        </label>
+        </div>
 
         {option?.takesUrl && (
           <SavedField
@@ -1014,6 +1428,7 @@ function ClusterSection({
   cluster,
   shown,
   onShownChange,
+  onBack,
   switchMark,
   switchError,
   children,
@@ -1021,6 +1436,7 @@ function ClusterSection({
   cluster: HpcCluster;
   shown: boolean;
   onShownChange: (shown: boolean) => void;
+  onBack: () => void;
   /** The sidebar switch's save mark, if this was the one toggled. */
   switchMark?: FieldMark;
   /** Why the last save of the sidebar switch failed, if this was the one toggled. */
@@ -1034,6 +1450,12 @@ function ClusterSection({
 
   return (
     <section className="settings-section" aria-label={title}>
+      <button type="button" className="settings-local-back" onClick={onBack}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+        All compute resources
+      </button>
       <SectionHeader title={title} place={`${institution.name} › ${facility.name}`}>
         {state && (
           <span
