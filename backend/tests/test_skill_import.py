@@ -599,3 +599,25 @@ class TestImportFromOutput:
                 url, headers={"X-Vista-User-Email": mallory.email}
             )
         assert response.status_code == 403, response.text
+
+
+def test_the_sandbox_cannot_write_its_skills(tmp_path, monkeypatch):
+    """The MCP server submits `<skill>/<job>` from the staged skills, so they are
+    mounted read-only over the writable /mnt: otherwise the agent could add a
+    cluster job to a loaded skill without the researcher importing anything."""
+    import json
+
+    from harness import make_project, make_user
+
+    from vista_backend.agents.agents import ProjectAgent
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    agent = ProjectAgent(make_project(), make_user())
+    [sandbox] = [
+        s
+        for s in agent._mcp_servers  # noqa: SLF001
+        if "VISTA_DEV_MCP_VOLUMES" in (getattr(s, "env", None) or {})
+    ]
+    volumes = json.loads(sandbox.env["VISTA_DEV_MCP_VOLUMES"])
+    assert [str(agent.volume_root), "/mnt", "w"] in volumes
+    assert [str(agent.skills_volume_dir), "/mnt/skills", "r"] in volumes

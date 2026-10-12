@@ -487,6 +487,11 @@ class ProjectAgent:
             get_dev_mcp_server(
                 volumes=[
                     (str(self.volume_root), "/mnt", "w"),
+                    # Read-only over the writable /mnt: the MCP server submits
+                    # `<skill>/<job>` from these files, so an agent able to write
+                    # here could add a cluster job to a loaded skill with no
+                    # import by the researcher.
+                    (str(self.skills_volume_dir), "/mnt/skills", "r"),
                 ],
                 elicitation_callback=elicitation_callback,
                 process_tool_call=process_tool_call,

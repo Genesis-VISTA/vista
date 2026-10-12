@@ -118,7 +118,9 @@ submit_hpc_job(job="my-skill/my-job", cluster="lux", script_args="CONFIG_NAME=mo
 ```
 
 VISTA looks the name up on every call: its own catalog first, then the calling project's loaded
-skills. A skill the project has not loaded provides no jobs. A skill's jobs are checked with the
+skills. A skill the project has not loaded provides no jobs. The sandbox sees the loaded skills read-only at
+`/mnt/skills`, so the agent cannot add a job to one; a new or changed skill reaches the project
+only by an import. A skill's jobs are checked with the
 same rules as the catalog's (a job script, the README heading, a `cluster_defaults.json` that
 parses), when they are submitted; a broken job fails only its own submissions, with a message
 naming the rule. The `submit_hpc_job` description lists only the built-in jobs, so the skill's
