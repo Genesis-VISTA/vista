@@ -222,9 +222,7 @@ def _no_model(target: "InferenceTarget") -> Model:
 # Where a researcher goes to fix a missing credential. Named once so the
 # guidance the API returns and the message a background caller logs cannot
 # drift apart.
-SETTINGS_LOCATION = (
-    "Settings (at the bottom of the sidebar) › Models & providers → your provider's API key"
-)
+SETTINGS_LOCATION = "Settings (at the bottom of the sidebar) › Models & providers → your provider's API key"
 
 
 def rejected_credential_detail(model_name: str | None) -> str:
