@@ -1,0 +1,17 @@
+{
+  "lux": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 1,
+      "gpus_per_node": 1,
+      "exclusive_node_use": false
+    },
+    "iri": {
+      "partition": "batch",
+      "environment": {
+        "REPO_URL": "__REPO_URL__",
+        "REPO_COMMIT": "__REPO_COMMIT__"
+      }
+    }
+  }
+}

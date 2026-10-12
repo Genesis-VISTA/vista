@@ -63,6 +63,21 @@ additions in general.
   folder after commit. Published skills are never replaced, as they cannot be
   deleted.
 
+- **Wrap, don't rewrite; clone repositories on the cluster, pinned.** A
+  wrapped repository is cloned by the job's setup at the commit `get_source.py`
+  resolved, into `$VISTA_JOB_DIR/src/<commit>`, rather than copied into the
+  skill: the skill stays a few small files under the import limits, the
+  cluster gets the history and submodules as the code's own docs expect, and a
+  moving branch cannot change what an imported skill runs. On Lux that happens
+  in `setup_lux.sh` on the login node (compute nodes cannot clone); on Odo and
+  Frontier the job script clones, as `alloy-thermo-mc` does. Uploaded folders
+  and archives have no remote, so their files are shipped. The sandbox has no
+  `git` and no GitHub credentials, so `get_source.py` uses the GitHub API's
+  tarball for public repositories; a private one is uploaded as an archive.
+- **No backend change for wrapping.** Getting code in is the sandbox's job
+  (network and uploads already exist); getting the skill out is the
+  "From project output" import.
+
 ## Risks / Trade-offs
 
 - The validator duplicates rules. Mitigated by the parity test, which breaks
@@ -70,5 +85,8 @@ additions in general.
 - Replace is no more permissive than today's DELETE + import of a private skill,
   but it swaps files under a skill other projects may load. They pick it up when
   their agent next starts.
+- A wrapped private repository must be cloneable on the cluster (an SSH key
+  or token there); the skill cannot carry credentials, and SKILL.md tells the
+  agent never to copy them.
 - Evicting the project's agents drops idle sandboxes for every member of the
   project; chat history lives in the database, so the next message rebuilds.

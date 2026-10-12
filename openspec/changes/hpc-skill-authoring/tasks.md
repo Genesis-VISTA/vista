@@ -19,9 +19,15 @@
 
 - [x] 4.1 Proxy route `ui/app/api/projects/[name]/skills/from-output/route.ts` and a "From project output" tab in `SkillImportModal.tsx` (list, pick, import, replace on 409); refresh the active project after import; verify `npm run lint` and `tsc`
 
-## 5. Docs and CI
+## 5. Wrapping existing code
 
-- [x] 5.1 Update `docs/skill-onboarding.md` ("Authoring a skill", "HPC jobs inside a skill") and link from `docs/hpc-jobs.md`; verify the link check in `ci-local.sh`
-- [ ] 5.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
+- [x] 5.1 Add `scripts/get_source.py` (GitHub URL pinned to a commit, archive or folder; safe unpacking) and `scripts/inventory.py`; verify `tests/test_skill_author_wrap.py`
+- [x] 5.2 Add the `wrap-repo` template (setup clones the pinned commit once on the Lux login node) and the "Wrapping existing code" section of SKILL.md; verify the wrapped skill validates and resolves, setup checks out the pinned commit once, and the job script refuses unknown args
+- [x] 5.3 Document wrapping in `docs/skill-onboarding.md`
+
+## 6. Docs and CI
+
+- [x] 6.1 Update `docs/skill-onboarding.md` ("Authoring a skill", "HPC jobs inside a skill") and link from `docs/hpc-jobs.md`; verify the link check in `ci-local.sh`
+- [ ] 6.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
   (2026-10-11: all jobs pass except `ui:browser`, which needs `npx playwright install chromium` on this machine,
   and `test_environment_path_is_unchanged`, which fails only because a `.env` above the worktree sets a model)

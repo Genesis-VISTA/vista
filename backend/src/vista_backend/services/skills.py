@@ -222,7 +222,8 @@ async def _project_output_dir(
 
     if user == "system":
         raise HTTPException(
-            status_code=403, detail="Importing from output requires an authenticated user"
+            status_code=403,
+            detail="Importing from output requires an authenticated user",
         )
     project = await project_service.get_project_by_name(session, project_name, user)
     return project, agent_volume_root(project.id, user.id) / "data" / "output"

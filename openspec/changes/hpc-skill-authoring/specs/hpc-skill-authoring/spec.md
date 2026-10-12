@@ -23,6 +23,37 @@ new skill to `/mnt/data/output/<skill>/`, where `<skill>` is the new SKILL.md's
 - **WHEN** a project loads `hpc-skill-author` and the researcher asks the agent to make an HPC skill for a workflow
 - **THEN** the agent writes the skill to `/mnt/data/output/<skill>/`, runs the validator on it, and tells the researcher how to import it
 
+### Requirement: Wrapping existing code as an HPC skill
+
+`hpc-skill-author` SHALL tell the agent how to turn existing code into an HPC
+skill without rewriting it: a public GitHub repository, an archive the user
+uploaded (`.zip`, `.tar`, `.tar.gz`, `.tgz`), or a folder under
+`/mnt/data/uploads/`. It SHALL include `scripts/get_source.py`, runnable with
+only the Python standard library, that puts the code in a new folder, records
+where it came from in `SOURCE.json` and, for a GitHub repository, the commit
+the requested branch or tag points at, and prints an inventory of the code
+(READMEs, build files, existing batch scripts with their `#SBATCH` lines,
+entry points with their flags, environment variables read). Unpacking SHALL
+refuse members that would land outside the folder and SHALL NOT create links.
+Only github.com URLs SHALL be fetched.
+
+It SHALL include a `wrap-repo` job template whose Lux setup script checks the
+repository out at the recorded commit into `$VISTA_JOB_DIR/src/<commit>`, once,
+so the skill ships only the wrapper. For an uploaded folder or archive the
+agent ships the needed files in the job folder instead.
+
+#### Scenario: Wrapping a GitHub repository
+- **WHEN** the user asks to make an HPC skill from `https://github.com/<owner>/<repo>`
+- **THEN** the agent fetches it with `get_source.py`, writes a skill from the `wrap-repo` template pinned to the resolved commit, the validator passes, and the job resolves as `<skill>/<job>` with only the wrapper files in its folder
+
+#### Scenario: The pinned commit is checked out once
+- **WHEN** a wrapped job's `setup_lux.sh` runs for two submissions while the repository's branch has moved on
+- **THEN** both use the recorded commit's checkout, cloned by the first
+
+#### Scenario: A hostile archive
+- **WHEN** an uploaded archive has a member named `../x` or an absolute path
+- **THEN** `get_source.py` fails and writes nothing outside its destination
+
 ### Requirement: Sandbox validator for HPC skills
 
 `hpc-skill-author` SHALL include `scripts/validate.py`, runnable with only the

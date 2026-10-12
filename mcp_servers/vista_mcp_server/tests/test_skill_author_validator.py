@@ -20,7 +20,15 @@ import pytest
 from vista_mcp_server.submit_job_mcp import _load_job, resolve_job
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-AUTHOR_SKILL = REPO_ROOT / "backend" / "src" / "vista_backend" / "db" / "skills" / "hpc-skill-author"
+AUTHOR_SKILL = (
+    REPO_ROOT
+    / "backend"
+    / "src"
+    / "vista_backend"
+    / "db"
+    / "skills"
+    / "hpc-skill-author"
+)
 SHIPPED_SKILLS = AUTHOR_SKILL.parent
 
 pytestmark = pytest.mark.unit
@@ -48,13 +56,16 @@ def _make_skill(root: Path, skill: str = "demo-skill", job: str = "hello") -> Pa
     """A skill made from the templates, the way SKILL.md tells the agent to."""
     skill_dir = root / skill
     (skill_dir / "hpc_jobs").mkdir(parents=True)
-    shutil.copy(AUTHOR_SKILL / "templates" / "skill" / "SKILL.md", skill_dir / "SKILL.md")
+    shutil.copy(
+        AUTHOR_SKILL / "templates" / "skill" / "SKILL.md", skill_dir / "SKILL.md"
+    )
     shutil.copytree(AUTHOR_SKILL / "templates" / "job", skill_dir / "hpc_jobs" / job)
     for path in skill_dir.rglob("*"):
         if path.is_file():
             text = path.read_text(encoding="utf-8")
             path.write_text(
-                text.replace("__SKILL__", skill).replace("__JOB__", job), encoding="utf-8"
+                text.replace("__SKILL__", skill).replace("__JOB__", job),
+                encoding="utf-8",
             )
     return skill_dir
 
@@ -82,7 +93,10 @@ def test_template_skill_validates_and_resolves(tmp_path, capsys):
 def _shipped_jobs() -> list[Path]:
     return sorted(
         p
-        for p in [*(REPO_ROOT / "hpc_jobs").iterdir(), *SHIPPED_SKILLS.glob("*/hpc_jobs/*")]
+        for p in [
+            *(REPO_ROOT / "hpc_jobs").iterdir(),
+            *SHIPPED_SKILLS.glob("*/hpc_jobs/*"),
+        ]
         if p.is_dir() and not p.name.startswith(".")
     )
 
@@ -108,10 +122,18 @@ LUX_DEFAULTS = json.dumps(
 SCRIPT = '#!/bin/bash\n: "${VISTA_OUT:?}"\necho hi > "$VISTA_OUT/x"\n'
 
 BROKEN = {
-    "wrong-heading": {"README.md": "# other\n", "job.lux.slurm": SCRIPT, "cluster_defaults.json": LUX_DEFAULTS},
+    "wrong-heading": {
+        "README.md": "# other\n",
+        "job.lux.slurm": SCRIPT,
+        "cluster_defaults.json": LUX_DEFAULTS,
+    },
     "no-readme": {"job.lux.slurm": SCRIPT, "cluster_defaults.json": LUX_DEFAULTS},
     "no-script": {"README.md": "# no-script\n", "cluster_defaults.json": LUX_DEFAULTS},
-    "bad-json": {"README.md": "# bad-json\n", "job.lux.slurm": SCRIPT, "cluster_defaults.json": "{lux:"},
+    "bad-json": {
+        "README.md": "# bad-json\n",
+        "job.lux.slurm": SCRIPT,
+        "cluster_defaults.json": "{lux:",
+    },
     "bad-type": {
         "README.md": "# bad-type\n",
         "job.lux.slurm": SCRIPT,
@@ -120,7 +142,9 @@ BROKEN = {
     "bad-nested-type": {
         "README.md": "# bad-nested-type\n",
         "job.odo.slurm": SCRIPT,
-        "cluster_defaults.json": json.dumps({"odo": {"iri": {"environment": {"N": 3}}}}),
+        "cluster_defaults.json": json.dumps(
+            {"odo": {"iri": {"environment": {"N": 3}}}}
+        ),
     },
 }
 
@@ -141,11 +165,19 @@ def test_what_load_job_refuses_the_validator_refuses(tmp_path, name):
             "no cluster_defaults.json",
         ),
         (
-            {"README.md": "# j\n", "job.lux.slurm": SCRIPT, "cluster_defaults.json": '{"odo": {}}'},
+            {
+                "README.md": "# j\n",
+                "job.lux.slurm": SCRIPT,
+                "cluster_defaults.json": '{"odo": {}}',
+            },
             "no 'lux' section",
         ),
         (
-            {"README.md": "# j\n", "job.lux.slurm": SCRIPT, "cluster_defaults.json": '{"lux": {}}'},
+            {
+                "README.md": "# j\n",
+                "job.lux.slurm": SCRIPT,
+                "cluster_defaults.json": '{"lux": {}}',
+            },
             "lux.iri.partition is required",
         ),
     ],
@@ -181,8 +213,12 @@ def test_skill_level_rules(tmp_path, capsys):
     renamed = skill_dir.rename(tmp_path / "other-name")
     (renamed / "hpc_jobs" / "hello" / "link").symlink_to("/etc/hosts")
     (renamed / "hpc_jobs" / "second").mkdir()
-    shutil.copytree(renamed / "hpc_jobs" / "hello", renamed / "hpc_jobs" / "second", dirs_exist_ok=True,
-                    symlinks=True)
+    shutil.copytree(
+        renamed / "hpc_jobs" / "hello",
+        renamed / "hpc_jobs" / "second",
+        dirs_exist_ok=True,
+        symlinks=True,
+    )
     code, report = _run([str(renamed)], capsys)
     assert code == 1
     errors = "\n".join(report["errors"])
@@ -197,7 +233,9 @@ def test_metadata_must_be_strings(tmp_path, capsys):
     skill_dir = _make_skill(tmp_path)
     md = skill_dir / "SKILL.md"
     md.write_text(
-        md.read_text(encoding="utf-8").replace("metadata:\n", "metadata:\n  version: 0.1\n"),
+        md.read_text(encoding="utf-8").replace(
+            "metadata:\n", "metadata:\n  version: 0.1\n"
+        ),
         encoding="utf-8",
     )
     code, report = _run([str(skill_dir)], capsys)

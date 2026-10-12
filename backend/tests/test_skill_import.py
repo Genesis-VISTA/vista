@@ -289,7 +289,9 @@ AUTHOR_SKILL = (
 )
 
 
-def _agent_writes_skill(output: Path, skill: str = "demo-hpc", job: str = "hello") -> Path:
+def _agent_writes_skill(
+    output: Path, skill: str = "demo-hpc", job: str = "hello"
+) -> Path:
     """What the `hpc-skill-author` skill tells the agent to do in its sandbox:
     copy the templates to /mnt/data/output/<skill>/ and fill in the names."""
     folder = output / skill
@@ -300,7 +302,8 @@ def _agent_writes_skill(output: Path, skill: str = "demo-hpc", job: str = "hello
         if path.is_file():
             text = path.read_text(encoding="utf-8")
             path.write_text(
-                text.replace("__SKILL__", skill).replace("__JOB__", job), encoding="utf-8"
+                text.replace("__SKILL__", skill).replace("__JOB__", job),
+                encoding="utf-8",
             )
     return folder
 
@@ -324,7 +327,9 @@ class TestImportFromOutput:
 
     async def _project_skills(self, session, project) -> list[str]:
         row = (
-            await session.exec(select(ProjectTable).where(ProjectTable.id == project.id))
+            await session.exec(
+                select(ProjectTable).where(ProjectTable.id == project.id)
+            )
         ).one()
         await session.refresh(row)
         return row.skills
@@ -337,7 +342,11 @@ class TestImportFromOutput:
 
         # The agent's own check, as it runs it in the sandbox.
         checked = subprocess.run(
-            [sys.executable, str(AUTHOR_SKILL / "scripts" / "validate.py"), str(folder)],
+            [
+                sys.executable,
+                str(AUTHOR_SKILL / "scripts" / "validate.py"),
+                str(folder),
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -357,7 +366,9 @@ class TestImportFromOutput:
                     "replaceable": False,
                 }
             ]
-            response = await client.post(url, json={"folder": "demo-hpc"}, headers=headers)
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=headers
+            )
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["name"] == "demo-hpc"
@@ -386,10 +397,14 @@ class TestImportFromOutput:
         folder = _agent_writes_skill(output)
         (folder / "hpc_jobs" / "hello" / "data.txt").symlink_to(secret)
         with api_client(session) as (client, _):
-            response = await client.post(url, json={"folder": "demo-hpc"}, headers=headers)
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=headers
+            )
         assert response.status_code == 400, response.text
         assert "symlink" in response.json()["detail"]
-        assert not (settings.storage_dir.exists() and any(settings.storage_dir.iterdir()))
+        assert not (
+            settings.storage_dir.exists() and any(settings.storage_dir.iterdir())
+        )
 
     @pytest.mark.parametrize("folder", ["../output", ".hidden", "a/b", "missing"])
     async def test_only_top_level_output_folders(self, session, folder):
@@ -408,7 +423,9 @@ class TestImportFromOutput:
             assert first.status_code == 201, first.text
 
             # The agent fixes the skill: a second job, and a new description.
-            shutil.copytree(folder / "hpc_jobs" / "hello", folder / "hpc_jobs" / "second")
+            shutil.copytree(
+                folder / "hpc_jobs" / "hello", folder / "hpc_jobs" / "second"
+            )
             md = folder / "SKILL.md"
             md.write_text(
                 md.read_text(encoding="utf-8").replace("TODO: what", "Fixed: what"),
@@ -458,7 +475,9 @@ class TestImportFromOutput:
         bob_headers = {"X-Vista-User-Email": bob.email}
         with api_client(session) as (client, _):
             listed = await client.get(url, headers=bob_headers)
-            response = await client.post(url, json={"folder": "demo-hpc"}, headers=bob_headers)
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=bob_headers
+            )
         assert listed.json() == []
         assert response.status_code == 404, response.text
 
@@ -467,5 +486,7 @@ class TestImportFromOutput:
         _agent_writes_skill(output)
         mallory = await seed_user(session)
         with api_client(session) as (client, _):
-            response = await client.get(url, headers={"X-Vista-User-Email": mallory.email})
+            response = await client.get(
+                url, headers={"X-Vista-User-Email": mallory.email}
+            )
         assert response.status_code == 403, response.text

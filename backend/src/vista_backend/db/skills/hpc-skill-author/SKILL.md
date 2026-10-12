@@ -2,10 +2,12 @@
 name: hpc-skill-author
 description: >-
   Write a new VISTA skill that ships its own HPC job (Slurm script, cluster
-  defaults, setup script, configs) for Lux, Frontier, Odo or Perlmutter, check
-  it with the bundled validator, and hand it to the researcher to import. Use
-  when the user asks to make, create or package an HPC skill, a cluster job, or
-  a reusable workflow that runs on a cluster.
+  defaults, setup script, configs) for Lux, Frontier, Odo or Perlmutter, from
+  scratch or by wrapping existing code (a GitHub repository or an uploaded
+  folder or archive), check it with the bundled validator, and hand it to the
+  researcher to import. Use when the user asks to make, create or package an
+  HPC skill, a cluster job, or a reusable workflow that runs on a cluster, or
+  to turn a repo or folder into one.
 metadata:
   tags: ["HPC", "Skills", "Slurm", "Lux", "Frontier", "Odo", "Perlmutter"]
 ---
@@ -18,6 +20,10 @@ it; nothing is added to VISTA. You write the skill in the sandbox, validate it,
 and the researcher imports it with one click.
 
 ## Workflow
+
+If the user points at existing code (a GitHub URL, an uploaded folder or
+archive, or a skill without `hpc_jobs/`), first follow
+[Wrapping existing code](#wrapping-existing-code), then continue at step 3.
 
 Progress:
 - [ ] 1. Agree on the job: cluster(s), what it runs, inputs, outputs, run time.
@@ -152,3 +158,87 @@ and choose **Replace**.
 
 Do not submit the job before it is imported; do not copy it into any other
 folder.
+
+## Wrapping existing code
+
+The user has code that already runs (or nearly runs) on a cluster, in its own
+layout, and wants it as a VISTA HPC skill. Do not rewrite their code: write a
+thin job around it.
+
+### a. Get the code into the sandbox
+
+```bash
+python3 /mnt/skills/hpc-skill-author/scripts/get_source.py <source> --dest /mnt/data/work/<name>
+```
+
+`<source>` is one of:
+- a GitHub URL, `https://github.com/<owner>/<repo>` or `.../tree/<ref>/<subpath>`.
+  The script resolves the branch or tag to the commit it points at now and
+  records it in `SOURCE.json`. Public repositories only; the sandbox has no
+  GitHub credentials.
+- an uploaded archive, `/mnt/data/uploads/<file>.zip` (or `.tar`, `.tar.gz`, `.tgz`).
+  Ask the user to upload a zip of a local folder, or of a private repository.
+- an uploaded folder under `/mnt/data/uploads/`.
+
+It prints an inventory: READMEs, build files, existing batch scripts and their
+`#SBATCH` lines, entry points with their flags, and the environment variables
+the code reads. Rerun it alone with `inventory.py <dir>`. Read the README and
+the batch scripts it lists before asking the user anything.
+
+If the source is already a skill (the inventory says so) with `hpc_jobs/` in
+this format, it needs no wrapping: tell the user to import it with Skills →
+Import → GitHub URL or Local folder. If it is a skill without `hpc_jobs/`, copy
+it to `/mnt/data/output/<its name>/` and add the job to it.
+
+### b. Decide what the job runs
+
+From the inventory, propose: the one command the job runs (an existing batch
+script's body or an entry point), which of its flags become `script_args`
+keys, what it needs installed, how many nodes and GPUs and how long (from
+existing `#SBATCH` lines where there are any), and which files it writes.
+Confirm with the user; keep everything else at the code's defaults.
+
+Translate an existing batch script rather than calling it: VISTA writes the
+`#SBATCH` header itself, so move its resources into `cluster_defaults.json`
+(`-N` → `node_count`, `-t` → `duration` in seconds, `--gpus-per-node` →
+`gpus_per_node`, `-p` → `iri.partition`, `-q` → `iri.queue_name`), and drop
+its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
+`$VISTA_OUT`.
+
+### c. Ship it or clone it
+
+- **A GitHub repository: clone it on the cluster, pinned.** Use the
+  `wrap-repo` template. The job folder holds only the wrapper; the repository
+  is checked out at the recorded commit into `$VISTA_JOB_DIR/src/<commit>` by
+  `setup_lux.sh`, once, on the Lux login node.
+
+  ```bash
+  SKILL=<skill> JOB=<job> T=/mnt/skills/hpc-skill-author/templates
+  URL=$(python3 -c "import json;print(json.load(open('/mnt/data/work/<name>/SOURCE.json'))['clone_url'])")
+  COMMIT=$(python3 -c "import json;print(json.load(open('/mnt/data/work/<name>/SOURCE.json'))['commit'])")
+  mkdir -p /mnt/data/output/$SKILL/hpc_jobs
+  cp $T/skill/SKILL.md /mnt/data/output/$SKILL/SKILL.md
+  cp -r $T/wrap-repo /mnt/data/output/$SKILL/hpc_jobs/$JOB
+  grep -rl '__SKILL__\|__JOB__\|__REPO_URL__\|__REPO_COMMIT__' /mnt/data/output/$SKILL \
+    | xargs sed -i "s#__SKILL__#$SKILL#g; s#__JOB__#$JOB#g; s#__REPO_URL__#$URL#g; s#__REPO_COMMIT__#$COMMIT#g"
+  ```
+
+  Put one-time build steps (a `pip install`, a `make`) in `setup_lux.sh`, in
+  the marked place, so they run once per commit. To move to a newer commit
+  later, change `REPO_COMMIT` in `cluster_defaults.json`. On Odo and Frontier,
+  where setup runs on the compute node as part of the job, clone in the job
+  script instead, into `$VISTA_JOB_DIR` on Frontier or `$VISTA_OUT` on Odo, the
+  same way (`git clone`, then `git checkout --detach "$REPO_COMMIT"`).
+- **An uploaded folder or archive: ship the files.** Use the `job` template and
+  copy only what the job needs (sources, configs, small inputs) into
+  `hpc_jobs/<job>/`, keeping their relative paths; leave out data, build
+  outputs and anything large. The job reads them under `$RUN_DIR_<Cluster>`.
+  The import allows at most 2000 files and 50 MB per skill.
+
+Never copy credentials, `.env` files or SSH keys from the source into the skill.
+
+### d. Write the SKILL.md
+
+Say where the code comes from (the repository and commit, or "uploaded by
+<user> on <date>"), what the job runs, its `script_args`, and how to read the
+outputs. Then validate (step 3) and hand off (step 4) as usual.
