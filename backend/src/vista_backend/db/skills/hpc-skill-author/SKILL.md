@@ -3,7 +3,7 @@ name: hpc-skill-author
 description: >-
   Write a new VISTA skill that ships its own HPC job (Slurm script, cluster
   defaults, setup script, configs) for Lux, Frontier, Odo or Perlmutter, from
-  scratch or by wrapping existing code (a GitHub repository or an uploaded
+  scratch or by wrapping existing code (a GitHub or GitLab repository or an uploaded
   folder or archive), check it with the bundled validator, and hand it to the
   researcher to import. Use when the user asks to make, create or package an
   HPC skill, a cluster job, or a reusable workflow that runs on a cluster, or
@@ -21,7 +21,7 @@ and the researcher imports it with one click.
 
 ## Workflow
 
-If the user points at existing code (a GitHub URL, an uploaded folder or
+If the user points at existing code (a GitHub or GitLab URL, an uploaded folder or
 archive, or a skill without `hpc_jobs/`), first follow
 [Wrapping existing code](#wrapping-existing-code), then continue at step 3.
 
@@ -172,10 +172,14 @@ python3 /mnt/skills/hpc-skill-author/scripts/get_source.py <source> --dest /mnt/
 ```
 
 `<source>` is one of:
-- a GitHub URL, `https://github.com/<owner>/<repo>` or `.../tree/<ref>/<subpath>`.
+- a repository URL on github.com or gitlab.com:
+  `https://github.com/<owner>/<repo>` or `.../tree/<ref>/<subpath>`, and
+  `https://gitlab.com/<group>[/<subgroup>...]/<repo>` or `.../-/tree/<ref>/<subpath>`.
   The script resolves the branch or tag to the commit it points at now and
   records it in `SOURCE.json`. Public repositories only; the sandbox has no
-  GitHub credentials.
+  credentials for either host. Other hosts (a self-hosted GitLab, Bitbucket)
+  are not fetched: ask for an archive. On GitLab, a branch whose name contains
+  `/` cannot be given in a tree URL; ask for the commit or a tag instead.
 - an uploaded archive, `/mnt/data/uploads/<file>.zip` (or `.tar`, `.tar.gz`, `.tgz`).
   Ask the user to upload a zip of a local folder, or of a private repository.
 - an uploaded folder under `/mnt/data/uploads/`.
@@ -207,7 +211,7 @@ its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
 
 ### c. Ship it or clone it
 
-- **A GitHub repository: clone it on the cluster, pinned.** Use the
+- **A GitHub or GitLab repository: clone it on the cluster, pinned.** Use the
   `wrap-repo` template. The job folder holds only the wrapper; the repository
   is checked out at the recorded commit into `$VISTA_JOB_DIR/src/<commit>` by
   `setup_lux.sh`, once, on the Lux login node.

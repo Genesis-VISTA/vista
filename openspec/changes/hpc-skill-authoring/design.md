@@ -72,8 +72,12 @@ additions in general.
   in `setup_lux.sh` on the login node (compute nodes cannot clone); on Odo and
   Frontier the job script clones, as `alloy-thermo-mc` does. Uploaded folders
   and archives have no remote, so their files are shipped. The sandbox has no
-  `git` and no GitHub credentials, so `get_source.py` uses the GitHub API's
-  tarball for public repositories; a private one is uploaded as an archive.
+  `git` and no credentials, so `get_source.py` uses the GitHub and GitLab
+  APIs' commit lookup and archive download for public repositories on
+  github.com and gitlab.com, the only two URL prefixes it will fetch; a private
+  one, or one on another host, is uploaded as an archive. Self-hosted GitLab
+  instances are not included yet; each is one more API prefix (and host
+  pattern) when someone needs it.
 - **No backend change for wrapping.** Getting code in is the sandbox's job
   (network and uploads already exist); getting the skill out is the
   "From project output" import.

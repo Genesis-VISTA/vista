@@ -22,7 +22,7 @@ writes fail only at submission, one rule at a time.
   contract's advice as warnings. The agent writes the new skill to
   `/mnt/data/output/<skill>/`.
 - The same skill wraps existing code: `scripts/get_source.py` fetches a public
-  GitHub repository (pinned to the commit its branch or tag points at), an
+  GitHub or GitLab repository (pinned to the commit its branch or tag points at), an
   uploaded archive or an uploaded folder and inventories it, and a `wrap-repo`
   template clones the repository on the cluster at that commit, so a
   researcher can say "make an HPC skill from <repo>" without reformatting it.

@@ -21,7 +21,7 @@
 
 ## 5. Wrapping existing code
 
-- [x] 5.1 Add `scripts/get_source.py` (GitHub URL pinned to a commit, archive or folder; safe unpacking) and `scripts/inventory.py`; verify `tests/test_skill_author_wrap.py`
+- [x] 5.1 Add `scripts/get_source.py` (GitHub or GitLab URL pinned to a commit, archive or folder; safe unpacking) and `scripts/inventory.py`; verify `tests/test_skill_author_wrap.py`
 - [x] 5.2 Add the `wrap-repo` template (setup clones the pinned commit once on the Lux login node) and the "Wrapping existing code" section of SKILL.md; verify the wrapped skill validates and resolves, setup checks out the pinned commit once, and the job script refuses unknown args
 - [x] 5.3 Document wrapping in `docs/skill-onboarding.md`
 
