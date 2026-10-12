@@ -28,7 +28,7 @@
 
 ## 6. Software environments
 
-- [x] 6.1 Add "Software environment" to SKILL.md (prefer a pre-built env; proxy, OLCF docs, off-Lustre caches, stripe count 1) and `templates/env/build_conda_env.sh`; warn in the validator on a conda build without `CONDA_PKGS_DIRS`; verify the build-once and warning tests in `tests/test_skill_author_wrap.py`
+- [x] 6.1 Add "Software environment" to SKILL.md (prefer a pre-built env; proxy, OLCF docs, off-Lustre caches, stripe count 1) and `templates/conda-env/build_conda_env.sh`; warn in the validator on a conda build without `CONDA_PKGS_DIRS`; verify the build-once and warning tests in `tests/test_skill_author_wrap.py`
 
 ## 7. Docs and CI
 

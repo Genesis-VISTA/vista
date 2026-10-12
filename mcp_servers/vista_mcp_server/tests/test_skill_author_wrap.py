@@ -343,7 +343,7 @@ def test_conda_env_is_built_once_off_lustre(tmp_path, spec):
     pip builds under /tmp, stripe count 1 on the env's folder, and a second
     run reuses the env instead of rebuilding it."""
     bin_dir, log = _fake_bin(tmp_path)
-    script = AUTHOR_SKILL / "templates" / "env" / "build_conda_env.sh"
+    script = AUTHOR_SKILL / "templates" / "conda-env" / "build_conda_env.sh"
     env = {
         **{
             k: v

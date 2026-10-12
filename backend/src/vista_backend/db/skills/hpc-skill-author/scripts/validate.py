@@ -177,7 +177,7 @@ def check_script(path: Path, rep: Report) -> None:
                        "(a `case` that accepts KEY=* and refuses anything else)")
     if _CONDA_BUILD.search(code) and "CONDA_PKGS_DIRS" not in code:
         rep.warn(path, "builds a conda env without moving its package cache off Lustre "
-                       "(export CONDA_PKGS_DIRS and TMPDIR under /tmp first; see templates/env/"
+                       "(export CONDA_PKGS_DIRS and TMPDIR under /tmp first; see templates/conda-env/"
                        "build_conda_env.sh)")
     if _RUN_DIR_WRITE.search(code):
         rep.warn(path, "writes into $RUN_DIR_<Cluster>; it is read-only on Odo and Frontier, "

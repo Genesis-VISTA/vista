@@ -138,7 +138,7 @@ costs a whole allocation.
 **If the job must build a conda environment,** build it once into
 `$VISTA_JOB_DIR` (shared by every run; on Odo use a path the user gives you),
 under a lock, and mark it done so later runs skip straight to activating it.
-`templates/env/build_conda_env.sh` does exactly this. Copy it into the job
+`templates/conda-env/build_conda_env.sh` does exactly this. Copy it into the job
 folder (it is uploaded with the job's other files) and call it with
 `ENV_PARENT`, `ENV_NAME` and optionally `ENV_SPEC` set:
 `bash "$RUN_DIR_Lux/build_conda_env.sh"` from `setup_lux.sh` on Lux, or the
