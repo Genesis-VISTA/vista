@@ -64,23 +64,25 @@ additions in general.
   deleted.
 
 - **Wrap, don't rewrite; clone repositories on the cluster, pinned.** A
-  wrapped repository is cloned by the job's setup at the commit `get_source.py`
+  wrapped repository is cloned by the job's setup at the commit `fetch_repository`
   resolved, into `$VISTA_JOB_DIR/src/<commit>`, rather than copied into the
   skill: the skill stays a few small files under the import limits, the
   cluster gets the history and submodules as the code's own docs expect, and a
   moving branch cannot change what an imported skill runs. On Lux that happens
   in `setup_lux.sh` on the login node (compute nodes cannot clone); on Odo and
-  Frontier the job script clones, as `alloy-thermo-mc` does. Uploaded folders
-  and archives have no remote, so their files are shipped. The sandbox has no
-  `git` and no credentials, so `get_source.py` uses the GitHub and GitLab
-  APIs' commit lookup and archive download for public repositories on
-  github.com and gitlab.com, the only two URL prefixes it will fetch; a private
-  one, or one on another host, is uploaded as an archive. Self-hosted GitLab
-  instances are not included yet; each is one more API prefix (and host
-  pattern) when someone needs it.
-- **No backend change for wrapping.** Getting code in is the sandbox's job
-  (network and uploads already exist); getting the skill out is the
-  "From project output" import.
+  Frontier the job script clones, as `alloy-thermo-mc` does.
+- **The backend fetches repositories, the sandbox never does.** The sandbox
+  holds no credentials (the agent can read everything in it) and, on ORNL's
+  network, does not trust the Netskope proxy that re-signs HTTPS, which a first
+  test hit. The backend has both, as it does for **Import → GitHub URL**. So the
+  agent calls `fetch_repository(url, ref?)`, a backend tool that pins the ref
+  to a commit and unpacks the archive into the agent's `/mnt/data/work/`, and
+  the sandbox reads it offline. Tokens (`VISTA_BACKEND_GITHUB_TOKEN`,
+  `VISTA_BACKEND_GITLAB_TOKEN`) are deployment settings, sent only to their own
+  API; they make private repositories readable without entering the sandbox.
+  `get_source.py` keeps only the offline cases (uploaded archives and folders).
+  Self-hosted GitLab instances are not included yet; each is one more API
+  prefix and host pattern.
 
 ## Risks / Trade-offs
 
@@ -89,6 +91,11 @@ additions in general.
 - Replace is no more permissive than today's DELETE + import of a private skill,
   but it swaps files under a skill other projects may load. They pick it up when
   their agent next starts.
+- `fetch_repository` lets the agent read any repository a configured token
+  can, including when a prompt injection asks it to; the result lands only in
+  that user's own workspace, but a deployment token may reach repositories the
+  user cannot. Tokens are optional and should be read-only and scoped. Per-user
+  tokens in settings would close the gap and are left for later.
 - A wrapped private repository must be cloneable on the cluster (an SSH key
   or token there); the skill cannot carry credentials, and SKILL.md tells the
   agent never to copy them.

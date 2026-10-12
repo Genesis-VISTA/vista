@@ -21,10 +21,12 @@ writes fail only at submission, one rule at a time.
   that applies the checks `submit_hpc_job` applies (and the import's), plus the
   contract's advice as warnings. The agent writes the new skill to
   `/mnt/data/output/<skill>/`.
-- The same skill wraps existing code: `scripts/get_source.py` fetches a public
-  GitHub or GitLab repository (pinned to the commit its branch or tag points at), an
-  uploaded archive or an uploaded folder and inventories it, and a `wrap-repo`
-  template clones the repository on the cluster at that commit, so a
+- The same skill wraps existing code. A new backend agent tool,
+  `fetch_repository`, downloads a GitHub or GitLab repository (pinned to the
+  commit its branch or tag points at) into the agent's workspace, so the
+  sandbox needs no network access or credentials; `scripts/get_source.py`
+  unpacks an uploaded archive or folder; `scripts/inventory.py` summarizes the
+  code; and a `wrap-repo` template clones the repository on the cluster at that commit, so a
   researcher can say "make an HPC skill from <repo>" without reformatting it.
 - "From project output" in the Import skill modal: lists the folders in the
   researcher's output folder for the active project that hold a SKILL.md, and

@@ -24,7 +24,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     capture_run_messages,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.models import Model
 from pydantic_ai.mcp import (
     MCPServer,
@@ -74,6 +74,7 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
+from . import source_fetch
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
 from .campaign.hpc_tools import McpHpcTools
@@ -527,6 +528,33 @@ class ProjectAgent:
             return "\n\n".join([p for p in parts if p])
 
         register_campaign_tools(agent, self._campaign_driver_deps(model))
+
+        @agent.tool_plain
+        async def fetch_repository(url: str, ref: str | None = None) -> str:
+            """
+            Download a github.com or gitlab.com repository (or a folder in it) into
+            /mnt/data/work/<name>/ for you to read, pinned to the commit `ref` (or
+            the default branch, or the branch or tag in a `/tree/<ref>` URL) points
+            at now. Use this instead of fetching code from the sandbox, which has no
+            credentials and may not trust the network's proxy. Returns the folder
+            and its SOURCE.json record (clone URL, commit, whether it is private).
+            """
+            try:
+                record = await asyncio.to_thread(
+                    source_fetch.fetch_repository,
+                    url,
+                    self.output_dir.parent / "work",
+                    ref=ref,
+                )
+            except source_fetch.SourceFetchError as e:
+                raise ModelRetry(str(e)) from e
+            folder = self.output_dir.parent / "work" / record["folder"]
+            _make_readable_by_others(folder)
+            return (
+                f"Fetched into /mnt/data/work/{record['folder']}/ "
+                f"({record['files']} files).\n"
+                f"SOURCE.json: {json.dumps(record)}"
+            )
 
         return agent
 

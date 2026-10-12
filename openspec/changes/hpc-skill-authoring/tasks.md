@@ -24,6 +24,7 @@
 - [x] 5.1 Add `scripts/get_source.py` (GitHub or GitLab URL pinned to a commit, archive or folder; safe unpacking) and `scripts/inventory.py`; verify `tests/test_skill_author_wrap.py`
 - [x] 5.2 Add the `wrap-repo` template (setup clones the pinned commit once on the Lux login node) and the "Wrapping existing code" section of SKILL.md; verify the wrapped skill validates and resolves, setup checks out the pinned commit once, and the job script refuses unknown args
 - [x] 5.3 Document wrapping in `docs/skill-onboarding.md`
+- [x] 5.4 Move repository fetching to the backend: `agents/source_fetch.py` and the agent's `fetch_repository` tool (GitHub/GitLab APIs only, pinned commit, optional `VISTA_BACKEND_GITLAB_TOKEN`), `get_source.py` offline-only; verify `backend/tests/test_source_fetch.py`
 
 ## 6. Docs and CI
 

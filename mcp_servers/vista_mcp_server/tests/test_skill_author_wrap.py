@@ -1,5 +1,7 @@
-"""The `hpc-skill-author` skill's "wrap existing code" workflow: fetching the
-code (`scripts/get_source.py`), summarizing it (`scripts/inventory.py`), and the
+"""The `hpc-skill-author` skill's "wrap existing code" workflow: unpacking an
+upload (`scripts/get_source.py`; repositories are fetched by the backend's
+`fetch_repository` tool, tested in the backend), summarizing the code
+(`scripts/inventory.py`), and the
 `wrap-repo` job template, which clones the repository on the cluster at a pinned
 commit. A skill wrapped this way must validate and resolve as `<skill>/<job>`.
 """
@@ -74,119 +76,6 @@ SOURCE_TREE = {
 
 
 class TestGetSource:
-    def test_parses_github_urls(self):
-        assert get_source.parse_remote("https://github.com/o/r.git") == {
-            "host": "github",
-            "project": "o/r",
-            "ref": None,
-            "subpath": "",
-        }
-        tree = get_source.parse_remote("https://github.com/o/r/tree/v1.2/sub/dir/")
-        assert (tree["ref"], tree["subpath"]) == ("v1.2", "sub/dir")
-        assert get_source.parse_remote("/mnt/data/uploads/x.zip") is None
-        with pytest.raises(get_source.SourceError):
-            get_source.parse_remote("https://github.com/o/r/tree/main/../etc")
-
-    @pytest.mark.parametrize(
-        ("url", "project", "ref", "subpath"),
-        [
-            ("https://gitlab.com/g/r", "g/r", None, ""),
-            ("https://gitlab.com/g/r.git", "g/r", None, ""),
-            ("https://gitlab.com/g/sub/deeper/r/", "g/sub/deeper/r", None, ""),
-            ("https://gitlab.com/g/sub/r/-/tree/v2.0", "g/sub/r", "v2.0", ""),
-            (
-                "https://gitlab.com/g/r/-/tree/main/src/app?ref_type=heads",
-                "g/r",
-                "main",
-                "src/app",
-            ),
-        ],
-    )
-    def test_parses_gitlab_urls_with_subgroups(self, url, project, ref, subpath):
-        assert get_source.parse_remote(url) == {
-            "host": "gitlab",
-            "project": project,
-            "ref": ref,
-            "subpath": subpath,
-        }
-
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "https://gitlab.com/r",  # a user or group, not a project
-            "https://gitlab.com/g/r/-/blob/main/README.md",
-            "https://gitlab.com/g/../r",
-            "https://gitlab.com/g/r/-/tree/main/../../x",
-        ],
-    )
-    def test_refuses_what_is_not_a_gitlab_project(self, url):
-        with pytest.raises(get_source.SourceError):
-            get_source.parse_remote(url)
-
-    def test_gitlab_is_pinned_to_a_commit(self, tmp_path, monkeypatch):
-        sha = "fedcba9876543210fedcba9876543210fedcba98"
-        api = "https://gitlab.com/api/v4/projects/g%2Fsub%2Fmelt"
-        calls = []
-
-        def fake_get(url, accept="application/json"):
-            calls.append(url)
-            if url == api:
-                return json.dumps({"default_branch": "trunk"}).encode()
-            if url == f"{api}/repository/commits/trunk":
-                return json.dumps({"id": sha}).encode()
-            if url == f"{api}/repository/archive.tar.gz?sha={sha}":
-                return _tar_gz(SOURCE_TREE, top=f"melt-{sha}-{sha}")
-            raise AssertionError(url)
-
-        monkeypatch.setattr(get_source, "_get", fake_get)
-        record = get_source.fetch("https://gitlab.com/g/sub/melt", tmp_path / "src")
-        assert record == {
-            "kind": "gitlab",
-            "url": "https://gitlab.com/g/sub/melt",
-            "clone_url": "https://gitlab.com/g/sub/melt.git",
-            "ref": "trunk",
-            "commit": sha,
-            "subpath": "",
-        }
-        assert (tmp_path / "src" / "melt.py").is_file()
-        assert calls[-1].endswith(f"?sha={sha}")
-
-    def test_only_the_two_apis_are_fetched(self):
-        for url in (
-            "https://example.org/api/v4/projects/x",
-            "http://gitlab.com/api/v4/projects/x",
-            "https://gitlab.example.org/api/v4/projects/x",
-        ):
-            with pytest.raises(get_source.SourceError, match="refusing to fetch"):
-                get_source._get(url)
-
-    def test_github_is_pinned_to_a_commit(self, tmp_path, monkeypatch):
-        sha = "0123456789abcdef0123456789abcdef01234567"
-        calls = []
-
-        def fake_get(url, accept="application/json"):
-            calls.append(url)
-            if url.endswith("/repos/o/melt"):
-                return json.dumps({"default_branch": "dev"}).encode()
-            if url.endswith("/commits/dev"):
-                return json.dumps({"sha": sha}).encode()
-            if url.endswith(f"/tarball/{sha}"):
-                return _tar_gz(SOURCE_TREE, top="o-melt-0123456")
-            raise AssertionError(url)
-
-        monkeypatch.setattr(get_source, "_get", fake_get)
-        record = get_source.fetch("https://github.com/o/melt", tmp_path / "src")
-        assert record["commit"] == sha
-        assert record["ref"] == "dev"
-        assert record["clone_url"] == "https://github.com/o/melt.git"
-        assert (tmp_path / "src" / "melt.py").is_file()
-        assert (
-            json.loads((tmp_path / "src" / "SOURCE.json").read_text(encoding="utf-8"))
-            == record
-        )
-        # The tarball is fetched by commit, never by the moving branch name.
-        assert calls[-1].endswith(f"/tarball/{sha}")
-
     def test_archive_with_one_top_folder(self, tmp_path):
         archive = tmp_path / "code.zip"
         with zipfile.ZipFile(archive, "w") as zf:
@@ -236,11 +125,15 @@ class TestGetSource:
             "run.py",
         ]
 
-    def test_other_urls_and_non_empty_dest_are_refused(self, tmp_path):
-        with pytest.raises(
-            get_source.SourceError, match="only github.com and gitlab.com"
+    def test_urls_and_non_empty_dest_are_refused(self, tmp_path):
+        for url in (
+            "https://github.com/o/r",
+            "https://gitlab.com/g/r",
+            "https://example.org/x",
         ):
-            get_source.fetch("https://bitbucket.org/o/r", tmp_path / "a")
+            with pytest.raises(get_source.SourceError, match="fetch_repository tool"):
+                get_source.fetch(url, tmp_path / "a")
+        assert not (tmp_path / "a").exists()
         (tmp_path / "b").mkdir()
         (tmp_path / "b" / "x").write_text("x", encoding="utf-8")
         with pytest.raises(get_source.SourceError, match="not empty"):

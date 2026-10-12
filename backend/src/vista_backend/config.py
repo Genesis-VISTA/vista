@@ -332,8 +332,19 @@ class Settings(BaseSettings):
     github_token: str | None = None
     """
     Optional GitHub personal access token used when importing skills from
-    private repos via `POST /skills/import`. Sent as the `Authorization: Bearer`
-    header on requests to api.github.com. If unset, only public repos work.
+    private repos via `POST /skills/import`, and by the agent's
+    `fetch_repository` tool. Sent as the `Authorization: Bearer` header on
+    requests to api.github.com. If unset, only public repos work. The agent can
+    read whatever repository the token can, so give it read-only access to what
+    researchers here may wrap.
+    """
+
+    gitlab_token: str | None = None
+    """
+    Optional gitlab.com access token (`read_api` scope) for the agent's
+    `fetch_repository` tool, sent as a bearer token to gitlab.com/api/v4. If
+    unset, only public gitlab.com projects can be fetched. As with
+    `github_token`, the agent can read whatever the token can.
     """
 
     vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None

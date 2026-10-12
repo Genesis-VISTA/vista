@@ -143,17 +143,22 @@ agent to write the whole folder:
 **From existing code.** The agent can also wrap code you already have instead of writing a job
 from scratch: *"make an HPC skill from https://github.com/owner/repo"* (or a `gitlab.com` URL,
 subgroups included), or upload a `.zip` of a
-folder (or of a private repository) in chat and ask it to wrap that. The skill's
-`scripts/get_source.py` fetches the code into the sandbox (a repository URL is pinned to the commit
-its branch or tag points at now) and prints an inventory: READMEs, build files, existing batch
+folder (or of a private repository) in chat and ask it to wrap that. For a URL, the agent calls the
+`fetch_repository` tool: VISTA's backend, not the sandbox, downloads the repository, pinned to the
+commit its branch or tag points at now, into the agent's `/mnt/data/work/<name>/`. That is the
+same route as **Import → GitHub URL**, so it works on networks whose HTTPS proxy the sandbox does
+not trust, and with `VISTA_BACKEND_GITHUB_TOKEN` or `VISTA_BACKEND_GITLAB_TOKEN` set it reads
+private repositories without the token entering the sandbox (the agent can read whatever the
+token can, so scope it read-only). An upload is unpacked in the sandbox by
+`scripts/get_source.py`. Either way the skill's `inventory.py` lists READMEs, build files, existing batch
 scripts and their `#SBATCH` lines, entry points and their flags. The agent proposes what the job
 runs and which flags become `script_args`, and translates an existing batch script's resources
 into `cluster_defaults.json`. A repository is not copied into the skill: its job, from the
 `wrap-repo` template, clones the repository on the cluster at the pinned commit
 (`$VISTA_JOB_DIR/src/<commit>`, once, from `setup_lux.sh` on the Lux login node). An uploaded
-folder's needed files are shipped in the job folder. Only public repositories on github.com and
-gitlab.com can be fetched from the sandbox (for another host, upload an archive); a private one must also be cloneable on the cluster with your own
-credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
+folder's needed files are shipped in the job folder. Only github.com and gitlab.com are fetched (for another host, upload an archive). A private
+repository's needed files are shipped in the skill unless you confirm the cluster can clone it
+with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
 import it directly from GitHub or a local folder.
 
 The import applies the same checks and limits as a local-folder import and refuses a folder

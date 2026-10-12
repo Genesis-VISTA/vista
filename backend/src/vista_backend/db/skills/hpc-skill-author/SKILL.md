@@ -167,26 +167,31 @@ thin job around it.
 
 ### a. Get the code into the sandbox
 
-```bash
-python3 /mnt/skills/hpc-skill-author/scripts/get_source.py <source> --dest /mnt/data/work/<name>
-```
+Never download code from the sandbox (no `curl`, `pip download` or `git clone`
+of the user's repository): it has no credentials, and on some networks it does
+not trust the HTTPS proxy. Instead:
 
-`<source>` is one of:
-- a repository URL on github.com or gitlab.com:
-  `https://github.com/<owner>/<repo>` or `.../tree/<ref>/<subpath>`, and
-  `https://gitlab.com/<group>[/<subgroup>...]/<repo>` or `.../-/tree/<ref>/<subpath>`.
-  The script resolves the branch or tag to the commit it points at now and
-  records it in `SOURCE.json`. Public repositories only; the sandbox has no
-  credentials for either host. Other hosts (a self-hosted GitLab, Bitbucket)
-  are not fetched: ask for an archive. On GitLab, a branch whose name contains
-  `/` cannot be given in a tree URL; ask for the commit or a tag instead.
-- an uploaded archive, `/mnt/data/uploads/<file>.zip` (or `.tar`, `.tar.gz`, `.tgz`).
-  Ask the user to upload a zip of a local folder, or of a private repository.
-- an uploaded folder under `/mnt/data/uploads/`.
+- **A repository on github.com or gitlab.com: call the `fetch_repository`
+  tool** with its URL: `https://github.com/<owner>/<repo>` or
+  `.../tree/<ref>/<subpath>`, or `https://gitlab.com/<group>[/<subgroup>...]/<repo>`
+  or `.../-/tree/<ref>/<subpath>`. Pass `ref` for a GitLab branch whose name
+  contains `/`. VISTA's backend downloads it, pinned to the commit the branch
+  or tag points at now, into `/mnt/data/work/<name>/` with a `SOURCE.json`
+  (clone URL, commit, `private`). It can read private repositories when the
+  deployment has a token for that host; if it says the repository may be
+  private, ask the user to upload an archive instead. Then run
+  `python3 /mnt/skills/hpc-skill-author/scripts/inventory.py /mnt/data/work/<name>`.
+- **An uploaded archive or folder:** ask the user to upload a zip of a local
+  folder (or of a repository on another host), then
+  ```bash
+  python3 /mnt/skills/hpc-skill-author/scripts/get_source.py /mnt/data/uploads/<file>.zip --dest /mnt/data/work/<name>
+  ```
+  `.tar`, `.tar.gz`, `.tgz` and a folder under `/mnt/data/uploads/` work too.
+  It unpacks the code and prints the inventory.
 
-It prints an inventory: READMEs, build files, existing batch scripts and their
+The inventory lists READMEs, build files, existing batch scripts and their
 `#SBATCH` lines, entry points with their flags, and the environment variables
-the code reads. Rerun it alone with `inventory.py <dir>`. Read the README and
+the code reads. Read the README and
 the batch scripts it lists before asking the user anything.
 
 If the source is already a skill (the inventory says so) with `hpc_jobs/` in
@@ -211,7 +216,7 @@ its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
 
 ### c. Ship it or clone it
 
-- **A GitHub or GitLab repository: clone it on the cluster, pinned.** Use the
+- **A public GitHub or GitLab repository: clone it on the cluster, pinned.** Use the
   `wrap-repo` template. The job folder holds only the wrapper; the repository
   is checked out at the recorded commit into `$VISTA_JOB_DIR/src/<commit>` by
   `setup_lux.sh`, once, on the Lux login node.
@@ -233,6 +238,9 @@ its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
   where setup runs on the compute node as part of the job, clone in the job
   script instead, into `$VISTA_JOB_DIR` on Frontier or `$VISTA_OUT` on Odo, the
   same way (`git clone`, then `git checkout --detach "$REPO_COMMIT"`).
+- **A private repository** (`"private": true` in SOURCE.json): ship the files
+  as for an upload, below, unless the user confirms the cluster can clone it
+  with their own credentials there; the skill cannot carry any.
 - **An uploaded folder or archive: ship the files.** Use the `job` template and
   copy only what the job needs (sources, configs, small inputs) into
   `hpc_jobs/<job>/`, keeping their relative paths; leave out data, build
