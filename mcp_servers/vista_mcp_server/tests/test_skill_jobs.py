@@ -124,6 +124,21 @@ def test_a_skill_symlinked_out_of_the_volume_is_refused(skills, tmp_path):
         m.resolve_job("linked/primus-smoke", skills)
 
 
+@pytest.mark.parametrize(
+    "meta", ["job.lux.slurm", "setup_lux.sh", "README.md", "cluster_defaults.json"]
+)
+def test_a_symlinked_job_file_is_refused(skills, tmp_path, meta):
+    """VISTA reads these itself and sends the scripts to the cluster, so a
+    symlink to a file on this machine must never be followed."""
+    d = skills / "primus-on-lux" / "hpc_jobs" / "primus-smoke"
+    secret = tmp_path / "secret"
+    secret.write_bytes((d / meta).read_bytes())
+    (d / meta).unlink()
+    (d / meta).symlink_to(secret)
+    with pytest.raises(ToolError, match=f"{meta} must be a regular file"):
+        m.resolve_job("primus-on-lux/primus-smoke", skills)
+
+
 def test_a_broken_skill_job_names_itself_and_the_rule(skills):
     d = _write_skill_job(skills, skill="myskill", job="myjob")
     (d / "README.md").write_text("# other\n", encoding="utf-8")

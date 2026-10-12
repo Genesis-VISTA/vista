@@ -113,7 +113,16 @@ def _load_job(folder: Path, name: str, *, dir: Path | None = None, skill: str | 
     for a built-in job and a skill's: a script for at least one cluster, a
     README.md starting `# <folder name>`, and a `cluster_defaults.json` that
     parses when present. `name` is what the agent calls it.
+
+    The files VISTA reads itself (README, defaults, job and setup scripts) must
+    be regular files, not symlinks: a skill is copied with its symlinks, and
+    one could point at a file on this machine that would then be sent to the
+    cluster inside the job script.
     """
+    for meta in sorted(_HPC_JOB_METADATA_FILES):
+        path = folder / meta
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"Job {name}: {meta} must be a regular file, not a symlink")
     if not any((folder / s).exists() for s in _CLUSTER_JOB_SCRIPTS):
         raise ValueError(
             f"Job {name} ({folder}) has no job script; add at least one of: "
@@ -1260,7 +1269,9 @@ async def _sync_job_sources_ssh(conn, local_job_dir: Path, src_dir: str) -> None
         return
 
     nested = any("/" in rel for rel, _ in sources)
-    existing = await slurm_ssh.list_file_sizes(conn, src_dir, recursive=nested)
+    existing = await slurm_ssh.list_file_sizes(
+        conn, src_dir, recursive=nested, exclude_segments=(".git", ".venv", "__pycache__"),
+    )
     stale = [(rel, f) for rel, f in sources if existing.get(rel) != f.stat().st_size]
     if not stale:
         logging.debug(f"src dir {src_dir} already holds every source; skipping upload")

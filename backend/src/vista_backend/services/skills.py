@@ -21,6 +21,8 @@ from ..agents.skill_import import (
     import_skill_from_dir,
     import_skill_from_files,
     import_skill_from_github,
+    plain_files,
+    read_plain_file,
 )
 from ..agents.skills import (
     ParseError,
@@ -35,7 +37,7 @@ from ..agents.skills import (
 )
 from ..config import settings
 from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
-from ..utils.misc import now_iso, path_is_under
+from ..utils.misc import now_iso
 from ._helpers import ServiceUser, new_storage_path
 
 
@@ -264,7 +266,13 @@ async def _project_output_dir(
             detail="Importing from output requires an authenticated user",
         )
     project = await project_service.get_project_by_name(session, project_name, user)
-    return project, agent_volume_root(project.id, user.id) / "data" / "output"
+    output = agent_volume_root(project.id, user.id) / "data" / "output"
+    # The sandbox can replace either with a symlink to anywhere on this machine.
+    if output.parent.is_symlink() or output.is_symlink():
+        raise HTTPException(
+            status_code=400, detail="This project's output folder is a symlink."
+        )
+    return project, output
 
 
 async def list_output_skills(
@@ -284,14 +292,27 @@ async def list_output_skills(
             folder.is_symlink()
             or not folder.is_dir()
             or not _OUTPUT_FOLDER.fullmatch(folder.name)
-            or find_skill_md(folder) is None
         ):
+            continue
+        # Nothing in the folder is read until it has passed the import's own
+        # checks: a symlinked SKILL.md would show a host file in `error`.
+        try:
+            files = dict(plain_files(folder))
+        except SkillImportError as e:
+            if find_skill_md(folder) is not None:
+                found.append(OutputSkill(folder=folder.name, name=None, error=str(e)))
+            continue
+        skill_md = files.get("SKILL.md") or files.get("skill.md")
+        if skill_md is None:
             continue
         name, error = None, None
         try:
-            name = read_skill(folder).name
-        except (SkillError, ValidationError) as e:
+            text = read_plain_file(skill_md, skill_md.name).decode("utf-8")
+            name = parse_skill(text).name
+        except (SkillError, ValidationError, SkillImportError) as e:
             error = f"SKILL.md is invalid: {e}"
+        except UnicodeDecodeError:
+            error = "SKILL.md is not UTF-8 text."
         existing = library.get(name) if name else None
         found.append(
             OutputSkill(
@@ -329,9 +350,9 @@ async def import_skill_from_output(
     project, output = await _project_output_dir(session, project_name, user)
     source = output / folder
     if (
-        not _OUTPUT_FOLDER.fullmatch(folder)
-        or not path_is_under(output, source)
-        or not source.is_dir()
+        # The name is one plain path part, so `source` is lexically inside
+        # `output`; `plain_files` refuses it if it is a symlink.
+        not _OUTPUT_FOLDER.fullmatch(folder) or not source.is_dir()
     ):
         raise HTTPException(
             status_code=404, detail=f"No folder {folder!r} in this project's output."

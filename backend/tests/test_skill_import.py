@@ -6,6 +6,7 @@ importing from the project's output folder ("From project output").
 """
 
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -460,6 +461,59 @@ class TestImportFromOutput:
         assert not (
             settings.storage_dir.exists() and any(settings.storage_dir.iterdir())
         )
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs")
+    async def test_fifo_is_refused_without_blocking(self, session):
+        _, _, output, url, headers = await self._setup(session)
+        folder = _agent_writes_skill(output)
+        os.mkfifo(folder / "hpc_jobs" / "hello" / "pipe")
+        with api_client(session) as (client, _):
+            listed = await client.get(url, headers=headers)
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=headers
+            )
+        assert "not a regular file" in listed.json()[0]["error"]
+        assert response.status_code == 400, response.text
+        assert "not a regular file" in response.json()["detail"]
+
+    async def test_listing_never_reads_through_a_symlink(self, session, tmp_path):
+        _, _, output, url, headers = await self._setup(session)
+        secret = tmp_path / "secret.env"
+        secret.write_text("---\nname: [TOKEN=hunter2\n---\n", encoding="utf-8")
+        folder = _agent_writes_skill(output)
+        (folder / "SKILL.md").unlink()
+        (folder / "SKILL.md").symlink_to(secret)
+        with api_client(session) as (client, _):
+            listed = await client.get(url, headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert "hunter2" not in listed.text
+        assert "symlink" in listed.json()[0]["error"]
+
+    async def test_a_symlinked_output_folder_is_refused(self, session, tmp_path):
+        _, _, output, url, headers = await self._setup(session)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        _agent_writes_skill(elsewhere)
+        output.rmdir()
+        output.symlink_to(elsewhere)
+        with api_client(session) as (client, _):
+            listed = await client.get(url, headers=headers)
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=headers
+            )
+        assert listed.status_code == 400, listed.text
+        assert response.status_code == 400, response.text
+
+    async def test_symlinks_in_dropped_folders_are_ignored(self, session):
+        _, _, output, url, headers = await self._setup(session)
+        folder = _agent_writes_skill(output)
+        (folder / ".venv" / "bin").mkdir(parents=True)
+        (folder / ".venv" / "bin" / "python").symlink_to(sys.executable)
+        with api_client(session) as (client, _):
+            response = await client.post(
+                url, json={"folder": "demo-hpc"}, headers=headers
+            )
+        assert response.status_code == 201, response.text
 
     @pytest.mark.parametrize("folder", ["../output", ".hidden", "a/b", "missing"])
     async def test_only_top_level_output_folders(self, session, folder):

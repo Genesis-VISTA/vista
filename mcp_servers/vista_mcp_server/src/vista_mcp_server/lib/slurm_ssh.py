@@ -236,11 +236,13 @@ async def makedirs(conn: asyncssh.SSHClientConnection, path: str) -> None:
 
 async def list_file_sizes(
     conn: asyncssh.SSHClientConnection, path: str, *, recursive: bool = False,
+    exclude_segments: tuple[str, ...] = (),
 ) -> dict[str, int]:
     """
     `{name: size}` for the regular files directly in `path`; empty if it doesn't
     exist. With `recursive`, every regular file below it, keyed by its path
-    relative to `path` (`configs/a.yaml`).
+    relative to `path` (`configs/a.yaml`), not descending into folders named in
+    `exclude_segments` (a `.venv` built there can hold thousands).
     """
     out: dict[str, int] = {}
     async with await _sftp(conn) as sftp:
@@ -258,7 +260,7 @@ async def list_file_sizes(
                 perms = e.attrs.permissions
                 if e.attrs.type == asyncssh.FILEXFER_TYPE_REGULAR or (perms is not None and stat_mod.S_ISREG(perms)):
                     out[name] = e.attrs.size or 0
-                elif recursive and (
+                elif recursive and e.filename not in exclude_segments and (
                     e.attrs.type == asyncssh.FILEXFER_TYPE_DIRECTORY
                     or (perms is not None and stat_mod.S_ISDIR(perms))
                 ):

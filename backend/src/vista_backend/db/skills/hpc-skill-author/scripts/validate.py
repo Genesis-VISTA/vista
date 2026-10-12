@@ -198,8 +198,12 @@ def check_job(job_dir: Path, rep: Report, *, skill: str | None = None) -> None:
     if not readme.is_file():
         rep.error(job_dir, "no README.md")
     else:
-        first = readme.read_text(encoding="utf-8").strip().split("\n", 1)[0].strip()
-        if first != f"# {name}":
+        try:
+            first = readme.read_text(encoding="utf-8").strip().split("\n", 1)[0].strip()
+        except UnicodeDecodeError:
+            rep.error(readme, "is not UTF-8 text")
+            first = None
+        if first is not None and first != f"# {name}":
             rep.error(readme, f'must start with the line "# {name}" (the job folder\'s name'
                               + (f', not "{skill}/{name}"' if skill else "") + f"), found {first!r}")
     if scripts and not (job_dir / "cluster_defaults.json").is_file():
@@ -324,8 +328,12 @@ def check_skill(skill_dir: Path, rep: Report) -> list[str]:
     if skill_md is None:
         rep.error(None, "no SKILL.md at the top of the skill folder")
     else:
-        text = skill_md.read_text(encoding="utf-8")
-        data = _parse_frontmatter(text, skill_md, rep)
+        try:
+            text = skill_md.read_text(encoding="utf-8")
+            data = _parse_frontmatter(text, skill_md, rep)
+        except UnicodeDecodeError:
+            rep.error(skill_md, "is not UTF-8 text")
+            data = None
         if data is not None:
             declared = data.get("name")
             if not isinstance(declared, str) or not SKILL_NAME.match(declared):

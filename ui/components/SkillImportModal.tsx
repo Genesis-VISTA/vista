@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SkillSummary } from "@/lib/types";
 
 type Props = {
@@ -52,21 +52,10 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
   const [error, setError] = useState<string | null>(null);
   const folderInput = useRef<HTMLInputElement | null>(null);
 
-  if (!open) return null;
-
-  const folderName = files.length > 0 ? relativePath(files[0]).split("/")[0] : null;
-  const picked = outputSkills?.find((s) => s.folder === outputFolder) ?? null;
-  const canSubmit =
-    source === "github"
-      ? url.trim().length > 0
-      : source === "local"
-        ? files.length > 0
-        : picked !== null && !picked.error && (!picked.exists || picked.replaceable);
-
-  async function loadOutputSkills() {
+  // Fetched whenever the modal opens on this tab, not only on a tab click: it
+  // stays mounted while closed, and the agent may have written more since.
+  const loadOutputSkills = useCallback(async () => {
     if (!project) return;
-    setOutputSkills(null);
-    setOutputFolder(null);
     try {
       const resp = await fetch(
         `/api/projects/${encodeURIComponent(project)}/skills/from-output`
@@ -81,7 +70,22 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
       setOutputSkills([]);
       setError("Could not list the project's output.");
     }
-  }
+  }, [project]);
+
+  useEffect(() => {
+    if (open && source === "output") void loadOutputSkills();
+  }, [open, source, loadOutputSkills]);
+
+  if (!open) return null;
+
+  const folderName = files.length > 0 ? relativePath(files[0]).split("/")[0] : null;
+  const picked = outputSkills?.find((s) => s.folder === outputFolder) ?? null;
+  const canSubmit =
+    source === "github"
+      ? url.trim().length > 0
+      : source === "local"
+        ? files.length > 0
+        : picked !== null && !picked.error && (!picked.exists || picked.replaceable);
 
   function pickFolder(list: FileList | null) {
     setError(null);
@@ -160,7 +164,10 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
         onClick={() => {
           setSource(value);
           setError(null);
-          if (value === "output") void loadOutputSkills();
+          if (value === "output" && source !== "output") {
+            setOutputSkills(null);
+            setOutputFolder(null);
+          }
         }}
         disabled={busy}
       >
