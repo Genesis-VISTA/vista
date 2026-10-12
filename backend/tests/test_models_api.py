@@ -204,7 +204,7 @@ async def test_lists_olcf_models_under_its_mid_path_v1(session, monkeypatch):
 
 @pytest.mark.unit
 async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
-    """Listing is how a model gets chosen on MAG, which has no default."""
+    """Listing works on MAG before a model is chosen."""
     monkeypatch.setattr(settings, "openai_api_key", None)
 
     alice = await seed_user(session)

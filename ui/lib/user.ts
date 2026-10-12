@@ -40,6 +40,14 @@ export type UserPublicWithConfig = UserPublic & {
   /** OLCF Inference's S3M token, kept apart from the Odo and Frontier ones. */
   inference_olcf_api_key?: string | null;
   inference_custom_api_key?: string | null;
+  /** Optional, user-authored scientific context used to personalize the main assistant. */
+  research_role?: string | null;
+  research_institution?: string | null;
+  research_interests?: string[];
+  preferred_units?: "si" | "source" | null;
+  technical_depth?: "expert" | "balanced" | "introductory" | null;
+  evidence_preference?: "cite_when_available" | "always_cite" | "concise" | null;
+  personalize_responses?: boolean;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   /**
@@ -93,6 +101,13 @@ export type UserSelfUpdate = {
   inference_mag_api_key?: string | null;
   inference_olcf_api_key?: string | null;
   inference_custom_api_key?: string | null;
+  research_role?: string | null;
+  research_institution?: string | null;
+  research_interests?: string[] | null;
+  preferred_units?: "si" | "source" | null;
+  technical_depth?: "expert" | "balanced" | "introductory" | null;
+  evidence_preference?: "cite_when_available" | "always_cite" | "concise" | null;
+  personalize_responses?: boolean;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
   odo_remote_dir?: string | null;

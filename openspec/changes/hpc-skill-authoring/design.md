@@ -6,9 +6,9 @@
   `<data_dir>/volumes/<project-id>-<user-id>/data/output` on the host
   (`ProjectAgent.output_dir`). The backend can read it without starting an agent.
 - The agent's skills volume (`/mnt/skills`) is rebuilt from the project's
-  `skills` list when a `ProjectAgent` starts. The UI's per-browser "loaded"
-  additions (localStorage) never reach it, so a skill whose jobs the agent must
-  submit has to be in `Project.skills`.
+  `skills` list when a `ProjectAgent` starts, so a skill whose jobs the agent
+  must submit has to be in `Project.skills`. Every other import already loads
+  into the active project that way (`_load_into` in `services/skills.py`).
 - `submit_hpc_job` checks a skill job with `_load_job` when it is submitted, and
   refuses a cluster with no `cluster_defaults.json` section at dispatch. The
   sandbox has Python but not `vista_mcp_server` or, reliably, pydantic or PyYAML.
@@ -21,8 +21,7 @@ folder upload.
 
 **Non-Goals:** the agent importing or loading skills by itself; a per-project
 trust approval for skill jobs (still proposed in `skill-hpc-jobs`); editing a
-skill's files in place from the UI; fixing the localStorage-only "loaded"
-additions in general.
+skill's files in place from the UI.
 
 ## Decisions
 
@@ -52,9 +51,10 @@ additions in general.
   lazily so the file-count cap applies before descriptors run out. Paths are
   prefixed with the folder name so the upload's single-top-folder stripping
   behaves the same for every layout.
-- **Import attaches to the project and evicts its agents.** The endpoint adds the
-  name to `Project.skills` (new list, for the JSON column) and calls
-  `invalidate_agents`, so the next message's agent stages the skill. The
+- **Import attaches to the project and evicts its agents.** The endpoint loads
+  the skill with `_load_into`, as the other imports do, so the next message's
+  agent stages it; a Replace, which leaves the list unchanged, evicts the
+  agents itself. The
   volume staging loop moves to a function, `stage_skills`, so a test can check
   the staged layout without an agent.
 - **Replace is opt-in and private-only.** A 409 for a private skill offers

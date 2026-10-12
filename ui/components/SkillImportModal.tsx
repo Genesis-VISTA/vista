@@ -1,13 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { refreshProjects } from "@/lib/projects";
 import type { SkillSummary } from "@/lib/types";
 
 type Props = {
   open: boolean;
-  /** The active project; its output folder is the "From project output" source. */
-  projectName: string | null;
+  /**
+   * Project the imported skill is loaded into; its output folder is also the
+   * "From project output" source.
+   */
+  project: string | null;
   onCancel: () => void;
   onImported: (skill: SkillSummary) => void;
 };
@@ -40,7 +42,7 @@ function isIgnored(path: string): boolean {
   return IGNORED_FILES.has(name) || parts.slice(0, -1).some((part) => IGNORED_DIRS.has(part));
 }
 
-export function SkillImportModal({ open, projectName, onCancel, onImported }: Props) {
+export function SkillImportModal({ open, project, onCancel, onImported }: Props) {
   const [source, setSource] = useState<Source>("github");
   const [url, setUrl] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -62,12 +64,12 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
         : picked !== null && !picked.error && (!picked.exists || picked.replaceable);
 
   async function loadOutputSkills() {
-    if (!projectName) return;
+    if (!project) return;
     setOutputSkills(null);
     setOutputFolder(null);
     try {
       const resp = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/skills/from-output`
+        `/api/projects/${encodeURIComponent(project)}/skills/from-output`
       );
       const data = resp.ok ? await resp.json() : [];
       const list = Array.isArray(data) ? (data as OutputSkill[]) : [];
@@ -88,7 +90,7 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
 
   function request(): Promise<Response> {
     if (source === "output") {
-      return fetch(`/api/projects/${encodeURIComponent(projectName ?? "")}/skills/from-output`, {
+      return fetch(`/api/projects/${encodeURIComponent(project ?? "")}/skills/from-output`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ folder: outputFolder, replace: picked?.exists ?? false }),
@@ -98,7 +100,7 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
       return fetch("/api/skills/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), project }),
       });
     }
     const form = new FormData();
@@ -106,6 +108,7 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
       form.append("files", file, file.name);
       form.append("paths", relativePath(file));
     }
+    if (project) form.append("project", project);
     return fetch("/api/skills/import/upload", { method: "POST", body: form });
   }
 
@@ -132,9 +135,6 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
         return;
       }
       if (source === "output") {
-        // The backend added the skill to the project's own skills list, which
-        // is what the agent's sandbox loads; pick that up.
-        void refreshProjects();
         setOutputSkills(null);
         setOutputFolder(null);
       }
@@ -187,7 +187,7 @@ export function SkillImportModal({ open, projectName, onCancel, onImported }: Pr
           <div className="kb-tabs" role="tablist" aria-label="Import source">
             {tab("github", "GitHub URL")}
             {tab("local", "Local folder")}
-            {projectName && tab("output", "From project output")}
+            {project && tab("output", "From project output")}
           </div>
         </div>
         <div className="modal-body">

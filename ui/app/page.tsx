@@ -27,6 +27,7 @@ import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { fileLinkProps } from "@/lib/file-links";
 import {
   readActiveProjectName,
+  refreshProjects,
   useActiveProject,
   useActiveProjectName,
   useProjects,
@@ -34,7 +35,6 @@ import {
   notifyActiveProjectChanged,
 } from "@/lib/projects";
 import { writePendingDestination } from "@/lib/pending-destination";
-import { readAdditions, writeAdditions } from "@/lib/loaded-skills";
 import {
   extractPlotPath,
   extractPredictionSummary,
@@ -738,6 +738,8 @@ export default function HomePage() {
         repo_url: payload.repoUrl,
         tags: payload.tags,
         is_public: payload.isPublic,
+        // Load it into the active project, so the agent has it next turn.
+        project: activeProject?.name ?? null,
       }),
     });
     if (!resp.ok) {
@@ -756,14 +758,7 @@ export default function HomePage() {
       setSkillSaveError(detail || `Save failed (${resp.status}).`);
       return;
     }
-    // Auto-load the new skill into the active project's additions set so the
-    // user sees it on /skills immediately.
-    const projectName = activeProject?.name ?? null;
-    if (projectName) {
-      const additions = readAdditions(projectName);
-      additions.add(payload.name);
-      writeAdditions(projectName, additions);
-    }
+    void refreshProjects();
     setShowSkillEditor(false);
     setSkillDraft(null);
   }

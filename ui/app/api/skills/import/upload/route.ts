@@ -10,7 +10,8 @@ export const runtime = "nodejs";
  * Multipart body: one `files` part per file and a `paths` field per file, in
  * the same order, holding its path relative to the picked folder (the
  * browser's `webkitRelativePath`). The paths travel as their own fields
- * because a part's filename is not a reliable place to keep directories.
+ * because a part's filename is not a reliable place to keep directories. An
+ * optional `project` field names the project to load the skill into.
  */
 export async function POST(request: Request) {
   let formData: FormData;
@@ -39,6 +40,8 @@ export async function POST(request: Request) {
     outgoing.append("files", file, file.name);
     outgoing.append("paths", paths[i]);
   });
+  const project = formData.get("project");
+  if (typeof project === "string" && project) outgoing.append("project", project);
 
   let upstream: Response;
   try {

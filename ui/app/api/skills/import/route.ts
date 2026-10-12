@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 /**
  * Proxy for `POST /skills/import`.
  *
- * Body: `{ url: string }` pointing at either
+ * Body: `{ url: string, project?: string }`, loading the skill into `project`
+ * if given, with `url` pointing at either
  *   https://github.com/<owner>/<repo>                          (root SKILL.md)
  *   https://github.com/<owner>/<repo>/tree/<ref>/<subpath>     (monorepo entry)
  *
