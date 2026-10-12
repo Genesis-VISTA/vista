@@ -125,9 +125,14 @@ naming the rule. The `submit_hpc_job` description lists only the built-in jobs, 
 SKILL.md must name its jobs and their arguments; an unknown job name lists every job the
 project's skills ship.
 
-On the cluster a skill job is laid out like any other, with `<skill>/<job>` as its name:
-sources in `<remote_dir>.<user>.jobs/<skill>/<job>/src/` and `VISTA_JOB_DIR` in
-`<remote_dir>.out/<skill>/<job>` (see [hpc.md](hpc.md#remote-directories)).
+On the cluster a skill job is laid out like any other, with `<skill>/<job>` as its name,
+except that its sources folder is named for their contents:
+sources in `<remote_dir>.<user>.jobs/<skill>/<job>/src-<hash>/` and `VISTA_JOB_DIR` in
+`<remote_dir>.out/<skill>/<job>` (see [hpc.md](hpc.md#remote-directories)). An upload skips a
+file already there at the same size, and re-importing a skill with Replace makes in-place edits
+routine, so a same-length fix would otherwise never reach the cluster. Each version of the
+sources gets its own folder instead; old ones are left on the cluster. Read sources through
+`$RUN_DIR_<Cluster>`, never by that path.
 
 What to keep in mind when writing one:
 

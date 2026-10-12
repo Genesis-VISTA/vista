@@ -224,7 +224,8 @@ async def test_submit_hpc_job_runs_a_skill_job_on_lux(skills, lux):
         cluster="lux",
         script_args="TRAIN_ITERS=5",
     )
-    src = f"{BASE}.researcher.jobs/primus-on-lux/primus-smoke/src"
+    version = m._sources_version(m.resolve_job("primus-on-lux/primus-smoke", skills))
+    src = f"{BASE}.researcher.jobs/primus-on-lux/primus-smoke/src-{version}"
     assert "job_id: 4242" in summary
     assert sorted(lux.puts) == sorted(
         f"{src}/{rel}"
@@ -303,3 +304,34 @@ async def test_perlmutter_uploads_nested_files(skills):
         "/r/jobs/x/src/configs/model.yaml",
         "/r/jobs/x/src/configs/README.md",
     }
+
+
+async def test_an_edited_skill_job_gets_new_sources(skills, lux):
+    """A same-length edit (what Replace makes routine) would pass the size check
+    and never be uploaded; a new sources folder per version means it is."""
+    job = "primus-on-lux/primus-smoke"
+    await m.submit_hpc_job(_ctx(skills), job=job, cluster="lux", script_args="")
+    first = m._sources_version(m.resolve_job(job, skills))
+    model = (
+        skills
+        / "primus-on-lux"
+        / "hpc_jobs"
+        / "primus-smoke"
+        / "configs"
+        / "model.yaml"
+    )
+    model.write_text("layers: 3\n", encoding="utf-8")
+    second = m._sources_version(m.resolve_job(job, skills))
+    assert second != first
+    await m.submit_hpc_job(_ctx(skills), job=job, cluster="lux", script_args="")
+    src = f"{BASE}.researcher.jobs/{job}/src-{second}"
+    assert (
+        lux.local(f"{src}/configs/model.yaml").read_text(encoding="utf-8")
+        == "layers: 3\n"
+    )
+    [_, (_, script)] = lux.ran("sbatch --parsable")
+    assert f"export RUN_DIR_Lux={src}" in script
+
+
+def test_built_in_jobs_keep_their_src_folder():
+    assert m._sources_version(next(iter(m.AVAILABLE_JOBS.values()))) is None

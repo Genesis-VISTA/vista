@@ -13,7 +13,7 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import logging, os, posixpath, re, shlex, textwrap, dataclasses
+import logging, os, posixpath, re, shlex, textwrap, dataclasses, hashlib
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, NoReturn
 
@@ -269,6 +269,7 @@ class RemoteLayout:
     `<base>`, which itself is never created:
 
         <base>.<user>.jobs/<job>/src/  sources, uploaded by VISTA; the job only reads them
+                                       (`src-<hash>/` for a skill's job: `_sources_version`)
         <base>.out/log-<id>.out        Slurm stdout, and `.err` beside it
         <base>.out/<id>/               the job's outputs, exported to it as `VISTA_OUT`
         <base>.out/<job>/              state shared by a job's runs (a checkout, a
@@ -333,8 +334,12 @@ class RemoteLayout:
         """ The folder that must already exist: the one holding the sources and `out`. """
         return self.base if self.nested else (posixpath.dirname(self.base) or "/")
 
-    def src(self, job: str) -> str:
-        return f"{self.jobs}/{job}/src"
+    def src(self, job: str, version: str | None = None) -> str:
+        """
+        The job's sources folder: `src`, or `src-<version>` for a skill's job
+        (see `_sources_version`), so a changed skill never runs old sources.
+        """
+        return f"{self.jobs}/{job}/src-{version}" if version else f"{self.jobs}/{job}/src"
 
     def job_dir(self, job: str) -> str:
         """ Where a job's runs share state they write, so the job's user can. """
@@ -599,7 +604,7 @@ async def _submit_odo_job(
     layout = layout.with_user(
         await globus.home_owner(collection_id=settings.odo_globus_collection_id)
     )
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
 
     await _require_writable_out(
         globus, collection_id=settings.odo_globus_collection_id, layout=layout, cluster="odo",
@@ -788,7 +793,7 @@ async def _submit_perlmutter_job(
         )
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
     await _sync_perlmutter_sources(iri_client, local_job_dir, src_dir)
     # Perlmutter runs as the researcher, so VISTA can make the log folder
     # itself; NERSC's Slurm has not been confirmed to create a missing one, as
@@ -946,7 +951,7 @@ async def _submit_frontier_job(
     layout = layout.with_user(
         await globus.home_owner(collection_id=settings.frontier_globus_collection_id)
     )
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
 
     # File ops via Globus, which only ever creates the source tree the job
     # reads. Everything the job writes is created by Slurm and the job itself,
@@ -1141,7 +1146,7 @@ async def _submit_lux_job(
     )
 
     layout = layout.with_user(await slurm_ssh.username(conn))
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
     await _sync_job_sources_ssh(conn, local_job_dir, src_dir)
     # Lux runs as the researcher, so VISTA can make the log folder itself, as on
     # Perlmutter. Odo's and Frontier's Slurm were seen creating a missing one;
@@ -1244,6 +1249,28 @@ def _job_sources(local_job_dir: Path) -> list[tuple[str, Path]]:
 
     walk(local_job_dir, "")
     return sources
+
+
+def _sources_version(job_info: JobInfo) -> str | None:
+    """
+    For a skill's job, a short hash of its sources (`_job_sources`: paths and
+    contents), naming its sources folder on the cluster. Uploads are skipped
+    for files already there at the same size, the only check the HTTPS
+    interface allows, and re-importing a skill with Replace makes in-place
+    edits routine: a same-length fix to a config would otherwise never be
+    uploaded, and the job would run the old file, saying nothing. Each version
+    gets its own folder instead; old ones stay on the cluster.
+
+    None for a built-in job, whose `src/` keeps its name: forge-tune's
+    Perlmutter setup expects the researcher to have filled it.
+    """
+    if job_info.skill is None:
+        return None
+    h = hashlib.sha256()
+    for rel, f in _job_sources(job_info.job_dir):
+        data = f.read_bytes()
+        h.update(f"{rel}\0{len(data)}\0".encode("utf-8") + data)
+    return h.hexdigest()[:12]
 
 
 def _source_subdirs(sources: list[tuple[str, Path]]) -> list[str]:
