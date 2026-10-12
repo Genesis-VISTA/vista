@@ -19,6 +19,20 @@ include templates for a skill and a job, and SHALL tell the agent to write the
 new skill to `/mnt/data/output/<skill>/`, where `<skill>` is the new SKILL.md's
 `name`.
 
+It SHALL recommend that the job use an environment the user has already built,
+and, for a job that must build a conda environment, SHALL give these steps and
+a template script that follows them: export the OLCF proxy
+(`http://proxy.ccs.ornl.gov:3128`) before the build; check the cluster's
+documentation (for OLCF, https://docs.olcf.ornl.gov/); keep conda's package
+cache and pip's build directory off Lustre (`CONDA_PKGS_DIRS` and `TMPDIR`
+under `/tmp/$USER`); and set the environment's parent directory to a Lustre
+stripe count of 1 before creating it. The template SHALL build the environment
+once per name under a lock and reuse it on later runs.
+
+#### Scenario: A job that builds its own conda environment
+- **WHEN** the template build script runs twice for the same environment
+- **THEN** the first run builds it with the proxy set, the package cache and temporary files under `/tmp/$USER`, and the parent striped to 1, and the second run reuses it without building
+
 #### Scenario: A researcher asks for an HPC skill
 - **WHEN** a project loads `hpc-skill-author` and the researcher asks the agent to make an HPC skill for a workflow
 - **THEN** the agent writes the skill to `/mnt/data/output/<skill>/`, runs the validator on it, and tells the researcher how to import it
@@ -96,8 +110,9 @@ import refuses (no SKILL.md at the root, an invalid SKILL.md `name` or missing
 `description`, symlinks, too many or too large files). It SHALL also report as
 an error a skill folder whose name differs from its SKILL.md `name`, and a job
 the SKILL.md does not name as `<skill>/<job>`. It SHALL report as warnings a job
-script that never uses `VISTA_OUT`, and one that reads arguments without a
-`KEY=VALUE` allow-list.
+script that never uses `VISTA_OUT`, one that reads arguments without a
+`KEY=VALUE` allow-list, and one that creates a conda environment without
+moving the package cache off Lustre (`CONDA_PKGS_DIRS`).
 
 Any job folder the validator accepts SHALL load with the same rules
 `submit_hpc_job` uses.

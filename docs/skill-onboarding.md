@@ -161,6 +161,15 @@ repository's needed files are shipped in the skill unless you confirm the cluste
 with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
 import it directly from GitHub or a local folder.
 
+**Software environments.** The skill tells the agent to prefer an environment you have already
+built on the cluster (its path goes in `cluster_defaults.json`), and to recommend pre-building one
+when it is large. When the job must build a conda environment itself, the skill's
+`templates/env/build_conda_env.sh` builds it once into `$VISTA_JOB_DIR` and reuses it: it exports
+the OLCF proxy first, keeps conda's package cache and pip's build directory under `/tmp/$USER`
+rather than on Lustre (`CONDA_PKGS_DIRS`, `TMPDIR`), and sets the env's folder to a stripe count
+of 1. The validator warns about a job that creates a conda env without moving the package cache.
+See [OLCF's documentation](https://docs.olcf.ornl.gov/) for each cluster's recommended modules.
+
 The import applies the same checks and limits as a local-folder import and refuses a folder
 holding a symlink (the sandbox can create links to files outside it). The skill lands private,
 is added to the project's `skills` list, and shows the **Runs HPC jobs** badge; from the next

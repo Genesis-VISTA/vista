@@ -26,9 +26,13 @@
 - [x] 5.3 Document wrapping in `docs/skill-onboarding.md`
 - [x] 5.4 Move repository fetching to the backend: `agents/source_fetch.py` and the agent's `fetch_repository` tool (GitHub/GitLab APIs only, pinned commit, optional `VISTA_BACKEND_GITLAB_TOKEN`), `get_source.py` offline-only; verify `backend/tests/test_source_fetch.py`
 
-## 6. Docs and CI
+## 6. Software environments
 
-- [x] 6.1 Update `docs/skill-onboarding.md` ("Authoring a skill", "HPC jobs inside a skill") and link from `docs/hpc-jobs.md`; verify the link check in `ci-local.sh`
-- [ ] 6.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
+- [x] 6.1 Add "Software environment" to SKILL.md (prefer a pre-built env; proxy, OLCF docs, off-Lustre caches, stripe count 1) and `templates/env/build_conda_env.sh`; warn in the validator on a conda build without `CONDA_PKGS_DIRS`; verify the build-once and warning tests in `tests/test_skill_author_wrap.py`
+
+## 7. Docs and CI
+
+- [x] 7.1 Update `docs/skill-onboarding.md` ("Authoring a skill", "HPC jobs inside a skill") and link from `docs/hpc-jobs.md`; verify the link check in `ci-local.sh`
+- [ ] 7.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
   (2026-10-11: all jobs pass except `ui:browser`, which needs `npx playwright install chromium` on this machine,
   and `test_environment_path_is_unchanged`, which fails only because a `.env` above the worktree sets a model)

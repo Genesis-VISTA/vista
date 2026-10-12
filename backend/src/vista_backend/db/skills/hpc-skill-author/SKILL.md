@@ -124,6 +124,60 @@ fields are optional:
 - `setup_odo.sh`, `setup_frontier.sh`, `setup_perlmutter.sh` run on the compute
   node before the job script, as part of the job.
 
+#### Software environment
+
+**Prefer an environment that already exists.** Ask the user whether one is
+already built on the cluster (a conda env, a venv, a container image, a
+module). If so, the job only activates it: put its path in
+`cluster_defaults.json` (`iri.environment`, e.g. `"CONDA_ENV": "/path/to/env"`)
+and have the job script check it exists and fail with a clear message if not.
+Recommend the user pre-build the environment once by hand when it is large or
+fiddly; a job that builds its own spends queue time on it, and a failed build
+costs a whole allocation.
+
+**If the job must build a conda environment,** build it once into
+`$VISTA_JOB_DIR` (shared by every run; on Odo use a path the user gives you),
+under a lock, and mark it done so later runs skip straight to activating it.
+`templates/env/build_conda_env.sh` does exactly this. Copy it into the job
+folder (it is uploaded with the job's other files) and call it with
+`ENV_PARENT`, `ENV_NAME` and optionally `ENV_SPEC` set:
+`bash "$RUN_DIR_Lux/build_conda_env.sh"` from `setup_lux.sh` on Lux, or the
+same with `$RUN_DIR_Frontier` / `$RUN_DIR_Odo` from the job script. Fill in its
+`TODO`s (the cluster's modules, the packages). Its steps, which any hand-written build should follow too:
+
+1. **Set the proxy first.** The OLCF clusters reach the internet only through
+   it. VISTA exports it for `setup_lux.sh`; everywhere else, export it yourself
+   before `conda` or `pip`:
+   ```bash
+   export https_proxy=http://proxy.ccs.ornl.gov:3128
+   export http_proxy=http://proxy.ccs.ornl.gov:3128
+   ```
+2. **Check the cluster's documentation** for how it wants environments built
+   (which conda/Miniforge module, which compilers and MPI to build `mpi4py`
+   against, where envs should live). For OLCF see https://docs.olcf.ornl.gov/.
+   Ask the user to confirm anything the docs leave open rather than guessing.
+3. **Do not build directly on Lustre.** It is slow for the many small files an
+   environment has. Two fixes:
+   - Keep conda's package cache and the pip build off Lustre:
+     ```bash
+     export CONDA_PKGS_DIRS=/tmp/$USER/conda_pkgs
+     export TMPDIR=/tmp/$USER/tmp
+     mkdir -p "$CONDA_PKGS_DIRS" "$TMPDIR"
+     ```
+     Conda hard-links from its cache into the env, which is slow across
+     filesystems or on Lustre; pip compiles packages such as `mpi4py` in
+     `TMPDIR`, so this moves the compile to local disk.
+   - Set the env's parent directory to a stripe count of 1 before creating the
+     env. Small files gain nothing from striping, and it cuts OST overhead:
+     ```bash
+     mkdir -p "$ENV_PARENT" && lfs setstripe -c 1 "$ENV_PARENT"
+     ```
+
+Then `conda create --prefix "$ENV_PARENT/<name>" ...` (a prefix, not a name, so
+it lands in `$VISTA_JOB_DIR`), and record what was installed
+(`conda env export`) in the run's log. Put the build's own time in the job's
+`duration`, or tell the user the first run is slower.
+
 #### SKILL.md of the new skill
 
 `submit_hpc_job` lists only VISTA's built-in jobs, so the new SKILL.md must name

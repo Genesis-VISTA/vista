@@ -151,6 +151,7 @@ def check_cluster_defaults(job_dir: Path, rep: Report) -> dict:
 
 _ARGS_USE = re.compile(r'\$(?:@|\*|[1-9])|\$\{(?:@|\*|[1-9])\}')
 _ALLOW_LIST = re.compile(r"\bcase\b[\s\S]*=\*\)")
+_CONDA_BUILD = re.compile(r"\b(?:conda|mamba|micromamba)\s+(?:env\s+)?create\b")
 _RUN_DIR_WRITE = re.compile(r'(?:>>?|\bmkdir\b[^\n]*|\btouch\b[^\n]*)\s*"?\$\{?RUN_DIR_')
 
 
@@ -174,6 +175,10 @@ def check_script(path: Path, rep: Report) -> None:
     if is_job and _ARGS_USE.search(code) and not _ALLOW_LIST.search(code):
         rep.warn(path, "reads script_args without a KEY=VALUE allow-list "
                        "(a `case` that accepts KEY=* and refuses anything else)")
+    if _CONDA_BUILD.search(code) and "CONDA_PKGS_DIRS" not in code:
+        rep.warn(path, "builds a conda env without moving its package cache off Lustre "
+                       "(export CONDA_PKGS_DIRS and TMPDIR under /tmp first; see templates/env/"
+                       "build_conda_env.sh)")
     if _RUN_DIR_WRITE.search(code):
         rep.warn(path, "writes into $RUN_DIR_<Cluster>; it is read-only on Odo and Frontier, "
                        "write under $VISTA_OUT or $VISTA_JOB_DIR")
