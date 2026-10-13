@@ -175,7 +175,10 @@ export default function SkillsPage() {
                     }
                   }}
                 >
-                  <div className="skill-name">{skill.name}</div>
+                  <div className="skill-name">
+                    {skill.name}
+                    <HpcJobsBadge jobs={skill.hpcJobs} />
+                  </div>
                   <div className="skill-desc">{skill.description || "No description"}</div>
                   {(skill.author || skill.repoUrl) && (
                     <div className="skill-meta">
@@ -250,6 +253,7 @@ export default function SkillsPage() {
                 {typeof selected.frontmatter?.name === "string"
                   ? selected.frontmatter.name
                   : selected.slug}
+                <HpcJobsBadge jobs={selected.hpcJobs} />
               </div>
               <button
                 type="button"
@@ -319,5 +323,22 @@ export default function SkillsPage() {
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Marks a skill that ships HPC jobs. Loading it lets the agent run the skill's
+ * own scripts on a cluster as the researcher, which an imported skill could
+ * otherwise do without anyone noticing.
+ */
+function HpcJobsBadge({ jobs }: { jobs?: string[] }) {
+  if (!jobs?.length) return null;
+  return (
+    <span
+      className="skill-hpc"
+      title={`Loading this skill lets the agent submit its HPC jobs (${jobs.join(", ")}) under your cluster credentials. Review its hpc_jobs/ folder before loading a skill you did not write.`}
+    >
+      Runs HPC jobs: {jobs.join(", ")}
+    </span>
   );
 }

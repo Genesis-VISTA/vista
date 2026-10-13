@@ -55,6 +55,7 @@ it, and never creates the directory itself:
 
 ```
 <remote dir>.<user>.jobs/<job>/src/  your sources, uploaded by VISTA; the job only reads them
+                                     (src-<hash>/ for a skill's job, one per version)
 <remote dir>.out/log-<id>.out        Slurm stdout, with log-<id>.err beside it
 <remote dir>.out/<id>/               the job's outputs, exported to it as $VISTA_OUT
 <remote dir>.out/<job>/              state a job's runs share, exported as $VISTA_JOB_DIR

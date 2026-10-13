@@ -1,4 +1,5 @@
-"""Contract tests for the curated ``hpc_jobs/`` catalog."""
+"""Contract tests for the curated ``hpc_jobs/`` catalog, and for the jobs
+inside the skills VISTA ships (``db/skills/<skill>/hpc_jobs/<job>/``)."""
 
 from __future__ import annotations
 
@@ -14,10 +15,12 @@ from vista_mcp_server.submit_job_mcp import (
     PERLMUTTER_JOB_SCRIPT,
     ClusterDefaults,
     get_available_jobs,
+    resolve_job,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HPC_JOBS_DIR = REPO_ROOT / "hpc_jobs"
+SHIPPED_SKILLS_DIR = REPO_ROOT / "backend" / "src" / "vista_backend" / "db" / "skills"
 CLUSTER_SCRIPTS = (
     ODO_JOB_SCRIPT,
     PERLMUTTER_JOB_SCRIPT,
@@ -34,12 +37,29 @@ def _job_dirs() -> list[Path]:
     )
 
 
+def _skill_job_dirs() -> list[Path]:
+    """Jobs inside the shipped skills; a project loading the skill can submit them."""
+    return sorted(
+        p
+        for p in SHIPPED_SKILLS_DIR.glob("*/hpc_jobs/*")
+        if p.is_dir() and not p.name.startswith(".")
+    )
+
+
+def _skill_job_name(job_dir: Path) -> str:
+    return f"{job_dir.parents[1].name}/{job_dir.name}"
+
+
 @pytest.fixture
 def point_at_repo_jobs(monkeypatch):
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
 
 
-@pytest.mark.parametrize("job_dir", _job_dirs(), ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "job_dir",
+    [*_job_dirs(), *_skill_job_dirs()],
+    ids=lambda p: str(p.relative_to(REPO_ROOT)),
+)
 def test_on_disk_jobs_meet_contract(job_dir: Path):
     readme = job_dir / "README.md"
     assert readme.is_file(), f"{job_dir.name}: missing README.md"
@@ -62,6 +82,12 @@ def test_get_available_jobs_matches_disk(point_at_repo_jobs):
     for name, info in jobs.items():
         assert info.name == name
         assert info.description.startswith(f"# {name}")
+
+
+@pytest.mark.parametrize("job_dir", _skill_job_dirs(), ids=_skill_job_name)
+def test_shipped_skill_jobs_resolve(job_dir: Path):
+    info = resolve_job(_skill_job_name(job_dir), SHIPPED_SKILLS_DIR)
+    assert info.job_dir == job_dir.resolve()
 
 
 def test_missing_readme_raises(tmp_path, monkeypatch):
@@ -130,7 +156,7 @@ def test_forge_tune_runs_from_vista_out(script, run_dir):
     "job_dir",
     [
         d
-        for d in _job_dirs()
+        for d in [*_job_dirs(), *_skill_job_dirs()]
         if (d / "cluster_defaults.json").exists()
         and '"lux"' in (d / "cluster_defaults.json").read_text(encoding="utf-8")
     ],

@@ -24,7 +24,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     capture_run_messages,
 )
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.models import Model
 from pydantic_ai.mcp import (
     MCPServer,
@@ -74,6 +74,7 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
+from . import source_fetch
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
 from .campaign.hpc_tools import McpHpcTools
@@ -252,6 +253,32 @@ def _reset_dir(path: Path) -> None:
     path.mkdir()
 
 
+def agent_volume_root(project_id: uuid.UUID | str, user_id: uuid.UUID | str) -> Path:
+    """
+    The host folder mounted at `/mnt` in the sandbox of `user_id`'s agent in
+    `project_id`. Its `data/output` is the sandbox's `/mnt/data/output`.
+    """
+    return settings.data_dir / "volumes" / f"{project_id}-{user_id}"
+
+
+def stage_skills(
+    skills_volume_dir: Path, names: list[str], skill_dirs: dict[str, Path]
+) -> None:
+    """
+    Rebuild a sandbox's skills volume: each of `names` copied from its folder in
+    `skill_dirs` to `<skills_volume_dir>/<name>`, which is how the MCP server
+    finds a skill's jobs as `<name>/<job>`. A name without a folder is skipped.
+    """
+    _reset_dir(skills_volume_dir)
+    for name in names:
+        src = skill_dirs.get(name)
+        if src is None or not src.is_dir():
+            logging.warning(f"Skill {name!r} not found at {src}; skipping")
+            continue
+        shutil.copytree(src, skills_volume_dir / name, symlinks=True)
+    _make_readable_by_others(skills_volume_dir)
+
+
 class ProjectAgentResult(BaseModel):
     """
     Result of a single agent turn (`ProjectAgent.run`, or the terminal event
@@ -370,7 +397,7 @@ class ProjectAgent:
         # Id per project agent. A new ProjectAgent with the same input Project x User will have the
         # same id
         self.id = f"{project.id}-{user.id}"
-        self.volume_root = settings.data_dir / "volumes" / self.id
+        self.volume_root = agent_volume_root(project.id, user.id)
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
@@ -460,6 +487,11 @@ class ProjectAgent:
             get_dev_mcp_server(
                 volumes=[
                     (str(self.volume_root), "/mnt", "w"),
+                    # Read-only over the writable /mnt: the MCP server submits
+                    # `<skill>/<job>` from these files, so an agent able to write
+                    # here could add a cluster job to a loaded skill with no
+                    # import by the researcher.
+                    (str(self.skills_volume_dir), "/mnt/skills", "r"),
                 ],
                 elicitation_callback=elicitation_callback,
                 process_tool_call=process_tool_call,
@@ -554,6 +586,33 @@ class ProjectAgent:
             return "\n\n".join([p for p in parts if p])
 
         register_campaign_tools(agent, self._campaign_driver_deps(model))
+
+        @agent.tool_plain
+        async def fetch_repository(url: str, ref: str | None = None) -> str:
+            """
+            Download a github.com or gitlab.com repository (or a folder in it) into
+            /mnt/data/work/<name>/ for you to read, pinned to the commit `ref` (or
+            the default branch, or the branch or tag in a `/tree/<ref>` URL) points
+            at now. Use this instead of fetching code from the sandbox, which has no
+            credentials and may not trust the network's proxy. Returns the folder
+            and its SOURCE.json record (clone URL, commit, whether it is private).
+            """
+            try:
+                record = await asyncio.to_thread(
+                    source_fetch.fetch_repository,
+                    url,
+                    self.output_dir.parent / "work",
+                    ref=ref,
+                )
+            except source_fetch.SourceFetchError as e:
+                raise ModelRetry(str(e)) from e
+            folder = self.output_dir.parent / "work" / record["folder"]
+            _make_readable_by_others(folder)
+            return (
+                f"Fetched into /mnt/data/work/{record['folder']}/ "
+                f"({record['files']} files).\n"
+                f"SOURCE.json: {json.dumps(record)}"
+            )
 
         return agent
 
@@ -754,14 +813,7 @@ class ProjectAgent:
             row.name: row.allowed_tools for row in rows if row.allowed_tools
         }
 
-        _reset_dir(self.skills_volume_dir)
-        for name in self.project.skills:
-            src = skill_dirs.get(name)
-            if src is None or not src.is_dir():
-                logging.warning(f"Skill {name!r} not found at {src}; skipping")
-                continue
-            shutil.copytree(src, self.skills_volume_dir / name, symlinks=True)
-        _make_readable_by_others(self.skills_volume_dir)
+        stage_skills(self.skills_volume_dir, self.project.skills, skill_dirs)
 
     def _attribute_skill(self, tool_name: str, args_blob: str | None) -> str | None:
         """

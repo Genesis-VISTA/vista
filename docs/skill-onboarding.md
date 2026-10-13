@@ -59,7 +59,7 @@ is_public: true
 ...
 ```
 
-## Authoring a skill — three paths
+## Authoring a skill — four paths
 
 ### 1. Hand-write a SKILL.md
 
@@ -83,8 +83,7 @@ EOF
 ```
 
 To attach the skill to a project so the agent actually sees it, add the slug
-to the project's `skills` list. (Project skill editing from the UI is on the
-roadmap — until then, edit the project's row in `vista.db` or `defaults.py`.)
+to the project's `skills` list (Projects → edit → Skills).
 
 ### 2. Generate from a chat conversation
 
@@ -127,6 +126,63 @@ personal access token. Without a token, public repos work but the API rate
 limit is 60 requests/hour per IP. Public repos look like 404s when you're
 unauthenticated and the repo is actually private.
 
+### 4. Have the agent write it (HPC skills)
+
+"Save as skill" drafts a SKILL.md body only. For a skill that ships its own cluster job, ask the
+agent to write the whole folder:
+
+1. Load the bundled **hpc-skill-author** skill into the project (Projects → edit → Skills).
+2. In chat, ask for it: *"make an HPC skill that runs X on Lux"*. The skill gives the agent the
+   job contract, templates for a skill and a Lux job, and a validator. The agent writes the new
+   skill to `/mnt/data/output/<skill>/` and runs
+   `python3 /mnt/skills/hpc-skill-author/scripts/validate.py /mnt/data/output/<skill>` until
+   it prints `OK`.
+3. Open `/skills` → **Import…** → **From project output**, pick the folder, and click
+   **Import**. The list shows each folder's skill name and the HPC jobs it ships.
+
+**From existing code.** The agent can also wrap code you already have instead of writing a job
+from scratch: *"make an HPC skill from https://github.com/owner/repo"* (or a `gitlab.com` URL,
+subgroups included), or upload a `.zip` of a
+folder (or of a private repository) in chat and ask it to wrap that. For a URL, the agent calls the
+`fetch_repository` tool: VISTA's backend, not the sandbox, downloads the repository, pinned to the
+commit its branch or tag points at now, into the agent's `/mnt/data/work/<name>/`. That is the
+same route as **Import → GitHub URL**, so it works on networks whose HTTPS proxy the sandbox does
+not trust, and with `VISTA_BACKEND_GITHUB_TOKEN` or `VISTA_BACKEND_GITLAB_TOKEN` set it reads
+private repositories without the token entering the sandbox (the agent can read whatever the
+token can, so scope it read-only). An upload is unpacked in the sandbox by
+`scripts/get_source.py`. Either way the skill's `inventory.py` lists READMEs, build files, existing batch
+scripts and their `#SBATCH` lines, entry points and their flags. The agent proposes what the job
+runs and which flags become `script_args`, and translates an existing batch script's resources
+into `cluster_defaults.json`. A repository is not copied into the skill: its job, from the
+`wrap-repo` template, clones the repository on the cluster at the pinned commit
+(`$VISTA_JOB_DIR/src/<commit>`, once, from `setup_lux.sh` on the Lux login node). An uploaded
+folder's needed files are shipped in the job folder. Only github.com and gitlab.com are fetched (for another host, upload an archive). A private
+repository's needed files are shipped in the skill unless you confirm the cluster can clone it
+with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
+import it directly from GitHub or a local folder.
+
+**Software environments.** The skill tells the agent to prefer an environment you have already
+built on the cluster (its path goes in `cluster_defaults.json`), and to recommend pre-building one
+when it is large. When the job must build a conda environment itself, the skill's
+`templates/conda-env/build_conda_env.sh` builds it once into `$VISTA_JOB_DIR` and reuses it: it exports
+the OLCF proxy first, keeps conda's package cache and pip's build directory under `/tmp/$USER`
+rather than on Lustre (`CONDA_PKGS_DIRS`, `TMPDIR`), and sets the env's folder to a stripe count
+of 1. The validator warns about a job that creates a conda env without moving the package cache.
+See [OLCF's documentation](https://docs.olcf.ornl.gov/) for each cluster's recommended modules.
+
+The import applies the same checks and limits as a local-folder import and refuses a folder
+holding a symlink (the sandbox can create links to files outside it). The skill lands private,
+is added to the project's `skills` list, and shows the **Runs HPC jobs** badge; from the next
+message on, the agent can submit its jobs as `<skill>/<job>`. To change it, ask the agent to edit
+the folder and import it again: a folder whose name matches one of your private skills shows
+**Replace**, which swaps that skill's files and keeps it in the project. A published skill's name
+cannot be reused.
+
+The agent cannot import or load a skill itself; loading a skill lets it run the skill's scripts
+on a cluster under your credentials, so that step stays a click. The routes behind the tab are
+`GET` and `POST /projects/{project}/skills/from-output`; they read only the caller's own output
+folder in that project.
+
 ## Publishing to the Skill Hub
 
 Every skill starts out **private** (`is_public:false`). It's visible on
@@ -157,10 +213,13 @@ The list changes in four places, all for every member of the project:
   project with `PUT /projects/<name>`.
 - **Import** and **Save** (from a chat) pass the active project to
   `POST /skills/import`, `POST /skills/import/upload` or `POST /skills`, which
-  load the new skill into it in the same commit.
+  load the new skill into it in the same commit. **Import → From project
+  output** does the same through `POST /projects/<name>/skills/from-output`.
 - The project modal's skills picker.
 
-Every change rebuilds the project's agents, so the next turn sees it.
+Every change rebuilds the project's agents, so the next turn sees it. A
+**Replace** from project output rebuilds them too, since the skill's files
+changed even though the list did not.
 
 ## Lightweight & HPC-backed skills (clone at runtime)
 
@@ -178,8 +237,10 @@ runs across **two execution contexts**, each of which bootstraps the code itself
 | **HPC (GPU)** | OLCF Frontier | the GPU simulation | a thin `hpc_jobs/<job>/` clones the repo on the compute node |
 
 The GPU path is the only part that **can't** be pure clone-at-runtime: VISTA's
-`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (Globus-staged and
-launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)).
+`submit_hpc_job` only runs code from an `hpc_jobs/<name>/` directory (staged and
+launched by [`submit_job_mcp.py`](../mcp_servers/vista_mcp_server/src/vista_mcp_server/submit_job_mcp.py)),
+either VISTA's own or one inside the skill (see
+[HPC jobs inside a skill](#hpc-jobs-inside-a-skill)).
 So an HPC-backed skill pairs a `SKILL.md`
 with a **thin bootstrap job** — no simulation code vendored, just:
 
@@ -206,6 +267,41 @@ use `encoding: flags` with a `map` of variable → CLI flag, since job wrappers 
 flags with argparse) and `collect_files` (the output files the result parser needs, e.g.
 `[results.json]`). Both are opt-in: a role declaring neither keeps the older behavior of
 a JSON-serialized candidate and no fetched outputs.
+
+## HPC jobs inside a skill
+
+A skill can carry its jobs itself, at `<skill>/hpc_jobs/<job>/`, so adding an HPC skill needs no
+change to VISTA. A project that loads the skill can submit them as `<skill>/<job>`. The layout,
+the job contract and what to watch for (nested files, `setup_lux.sh`, a `KEY=VALUE` allow-list
+for `script_args`) are in
+[hpc-jobs.md](hpc-jobs.md#self-contained-hpc-skills). The SKILL.md should say which jobs the skill
+ships, which arguments they take and how to read their outputs, since the `submit_hpc_job` tool
+description lists only VISTA's own jobs.
+
+**Writing one.** The bundled `hpc-skill-author` skill has the agent write such a skill for you,
+check it with `scripts/validate.py`, and leave it in the project output for one-click import
+(see [Have the agent write it](#4-have-the-agent-write-it-hpc-skills)). The validator applies
+everything `submit_hpc_job` checks (job script, `# <job>` README heading, a parsing
+`cluster_defaults.json` with a section per job script, Lux partition and GPUs) and everything
+the import checks (SKILL.md, no symlinks, size limits), and requires the skill's folder to match
+its `name` and its SKILL.md to name each job as `<skill>/<job>`. It also warns about what VISTA
+cannot check: a job that never uses `$VISTA_OUT`, takes `script_args` without a `KEY=VALUE`
+allow-list, or writes into `$RUN_DIR_<Cluster>`. It runs on any skill folder, so use it on a
+hand-written one too. `test_skill_author_validator.py` in the MCP server's tests keeps it in step
+with the server.
+
+**Trust.** A skill job runs the skill's scripts on a cluster as the researcher: under their
+S3M, NERSC or Globus credentials, or their own SSH login on Lux. VISTA's own `hpc_jobs/` is
+reviewed with the code; a skill imported from GitHub is not. So:
+
+- The `/skills` page marks every skill that ships jobs with a **Runs HPC jobs** badge naming
+  them. The list comes from the skill's folder on disk, not from anything SKILL.md declares, so
+  a skill cannot hide it. Read an imported skill's `hpc_jobs/` before loading it.
+- A skill's jobs are available only in projects that load the skill, and only through the agent
+  calling `submit_hpc_job`. The researcher must have connected that cluster, and Lux also asks
+  for a login once per session.
+- Not done yet: a per-project "allow this skill to run cluster jobs" approval, which would leave
+  the skill's `hpc_jobs/` out of the project's skills volume until a researcher allows it.
 
 ## Troubleshooting
 

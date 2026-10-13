@@ -27,8 +27,10 @@ forced to `false` so imports land private (the user can publish them via the
 """
 
 import io
+import os
 import re
 import shutil
+import stat
 import tarfile
 import tempfile
 import urllib.request
@@ -278,3 +280,110 @@ def import_skill_from_files(
                         )
                     out.write(chunk)
         return _install_skill(root, dest_dir, "the root of the uploaded folder")
+
+
+class _LazyFile:
+    """A file opened on first read and closed at its end, so a folder with more
+    files than `MAX_UPLOAD_FILES` is refused before any descriptor is opened.
+
+    Opened without following a symlink and without blocking, and refused unless
+    it is a regular file: the sandbox can swap a file for a symlink or a FIFO
+    after the folder was walked, and a FIFO would block the read forever."""
+
+    _FLAGS = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+
+    def __init__(self, path: Path, rel: str):
+        self._path = path
+        self._rel = rel
+        self._stream: BinaryIO | None = None
+
+    def read(self, size: int = -1) -> bytes:
+        if self._stream is None:
+            try:
+                fd = os.open(self._path, self._FLAGS)
+            except OSError as e:
+                raise SkillImportError(f"{self._rel} could not be read: {e.strerror}")
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise SkillImportError(f"{self._rel} is not a regular file.")
+            self._stream = os.fdopen(fd, "rb")
+        chunk = self._stream.read(size)
+        if not chunk:
+            self._stream.close()
+        return chunk
+
+
+def read_plain_file(path: Path, rel: str) -> bytes:
+    """All of one file from a folder the sandbox can write, read as `_LazyFile`
+    does: refused unless it is a regular file, never through a symlink."""
+    f = _LazyFile(path, rel)
+    data = b""
+    while chunk := f.read(1 << 20):
+        data += chunk
+    return data
+
+
+def plain_files(source_dir: Path | str) -> list[tuple[str, Path]]:
+    """
+    Every file in a folder on the backend's disk that the agent's sandbox can
+    write, as `(path relative to it, file)`, refusing what would be unsafe to
+    read from the host: the folder itself or anything in it being a symlink
+    (the sandbox can point one anywhere on this machine), or anything but a
+    file or a folder (a FIFO would block the read). Folders and files an
+    import drops (`_IGNORED_DIRS`, `_IGNORED_FILES`) are skipped unread: a
+    .venv the agent built holds symlinks the validator rightly ignores.
+
+    Raises `SkillImportError`, naming the entry.
+    """
+    source_dir = Path(source_dir)
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise SkillImportError(f"{source_dir.name} is not a folder.")
+    files: list[tuple[str, Path]] = []
+    for dirpath, dirnames, filenames in os.walk(source_dir, followlinks=False):
+        here = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DIRS]
+        filenames = [f for f in filenames if f not in _IGNORED_FILES]
+        for name in [*dirnames, *filenames]:
+            rel = (here / name).relative_to(source_dir).as_posix()
+            mode = (here / name).lstat().st_mode
+            if stat.S_ISLNK(mode):
+                raise SkillImportError(
+                    f"{rel} is a symlink; a skill imported from the output folder "
+                    "may not contain symlinks."
+                )
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise SkillImportError(f"{rel} is not a regular file or folder.")
+        for name in filenames:
+            files.append(
+                ((here / name).relative_to(source_dir).as_posix(), here / name)
+            )
+            if len(files) > MAX_UPLOAD_FILES:
+                raise SkillImportError(
+                    f"{source_dir.name} has more than {MAX_UPLOAD_FILES} files."
+                )
+    return files
+
+
+def import_skill_from_dir(source_dir: Path | str, dest_dir: Path | str) -> Skill:
+    """
+    Import the skill in a folder on the backend's own disk, such as one the
+    agent wrote to its output folder, into `dest_dir` (which must not exist).
+
+    The folder goes through `import_skill_from_files`, so it meets exactly the
+    rules and limits of a folder upload, and must pass `plain_files`. Each
+    file is opened by `_LazyFile`, which checks again, since the sandbox can
+    change the folder after it was walked.
+    """
+    source_dir = Path(source_dir)
+    files: list[tuple[str, BinaryIO]] = [
+        # Prefixed with the folder's name, as a folder picker would, so
+        # import_skill_from_files strips exactly that one level.
+        (f"{source_dir.name}/{rel}", _LazyFile(path, rel))  # type: ignore[misc]
+        for rel, path in plain_files(source_dir)
+    ]
+    return import_skill_from_files(files, dest_dir)

@@ -7,6 +7,7 @@ type BackendSkill = {
   author?: string | null;
   repo_url?: string | null;
   is_public?: boolean;
+  hpc_jobs?: string[];
   created_at?: string;
 };
 
@@ -43,6 +44,7 @@ export async function relayImported(upstream: Response): Promise<NextResponse> {
       author: skill.author ?? null,
       repoUrl: skill.repo_url ?? null,
       isPublic: skill.is_public ?? false,
+      hpcJobs: skill.hpc_jobs ?? [],
       addedAt: Number.isFinite(createdAt) ? createdAt : null,
     },
     { status: 201 }

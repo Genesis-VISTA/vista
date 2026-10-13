@@ -13,7 +13,7 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import logging, os, posixpath, shlex, textwrap, dataclasses
+import logging, os, posixpath, re, shlex, textwrap, dataclasses, hashlib
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, NoReturn
 
@@ -90,36 +90,66 @@ class JobInfo:
     name: str
     description: str
     cluster_defaults: ClusterDefaults
+    dir: Path | None = None
+    """
+    The job's local folder. None for a built-in job, which lives at
+    `settings.local_hpc_jobs_dir / name` (read at call time, so a test that
+    repoints the setting needs nothing else); see `job_dir`.
+    """
+    skill: str | None = None
+    """ The loaded skill that ships this job; None for a built-in one. """
+
+    @property
+    def job_dir(self) -> Path:
+        return self.dir if self.dir is not None else settings.local_hpc_jobs_dir / self.name
 
 
 _CLUSTER_JOB_SCRIPTS = (ODO_JOB_SCRIPT, PERLMUTTER_JOB_SCRIPT, FRONTIER_JOB_SCRIPT, LUX_JOB_SCRIPT)
 
 
+def _load_job(folder: Path, name: str, *, dir: Path | None = None, skill: str | None = None) -> JobInfo:
+    """
+    Check one job folder against the job contract and parse it. The same rules
+    for a built-in job and a skill's: a script for at least one cluster, a
+    README.md starting `# <folder name>`, and a `cluster_defaults.json` that
+    parses when present. `name` is what the agent calls it.
+
+    The files VISTA reads itself (README, defaults, job and setup scripts) must
+    be regular files, not symlinks: a skill is copied with its symlinks, and
+    one could point at a file on this machine that would then be sent to the
+    cluster inside the job script.
+    """
+    for meta in sorted(_HPC_JOB_METADATA_FILES):
+        path = folder / meta
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"Job {name}: {meta} must be a regular file, not a symlink")
+    if not any((folder / s).exists() for s in _CLUSTER_JOB_SCRIPTS):
+        raise ValueError(
+            f"Job {name} ({folder}) has no job script; add at least one of: "
+            f"{', '.join(_CLUSTER_JOB_SCRIPTS)}"
+        )
+    readme = folder / "README.md"
+    if not readme.exists():
+        raise ValueError(f"No README.md in {folder} (job {name})")
+    description = readme.read_text(encoding="utf-8").strip()
+    if not description.startswith(f"# {folder.name}"):
+        raise ValueError(f'Job {name}: README.md should start with "# {folder.name}" header')
+    cluster_defaults_file = folder / "cluster_defaults.json"
+    if cluster_defaults_file.exists():
+        cluster_defaults = ClusterDefaults.model_validate_json(cluster_defaults_file.read_text(encoding="utf-8"))
+    else:
+        cluster_defaults = ClusterDefaults()
+    return JobInfo(
+        name=name, description=description, cluster_defaults=cluster_defaults, dir=dir, skill=skill,
+    )
+
+
 def get_available_jobs() -> dict[str, JobInfo]:
+    """ The built-in catalog, `settings.local_hpc_jobs_dir`. """
     jobs = {}
     for file in settings.local_hpc_jobs_dir.iterdir():
         if file.is_dir():
-            if not any((file / s).exists() for s in _CLUSTER_JOB_SCRIPTS):
-                raise ValueError(
-                    f"Job {file} has no job script; add at least one of: "
-                    f"{', '.join(_CLUSTER_JOB_SCRIPTS)}"
-                )
-            readme = file / "README.md"
-            if not readme.exists():
-                raise ValueError(f"No README.md in {file}")
-            description = readme.read_text(encoding="utf-8").strip()
-            if not description.startswith(f"# {file.name}"):
-                raise ValueError(f'Job README.md should start with "# {file.name}" header')
-            cluster_defaults_file = file / "cluster_defaults.json"
-            if cluster_defaults_file.exists():
-                cluster_defaults = ClusterDefaults.model_validate_json(cluster_defaults_file.read_text(encoding="utf-8"))
-            else:
-                cluster_defaults = ClusterDefaults()
-            jobs[file.name] = JobInfo(
-                name=file.name,
-                description=description,
-                cluster_defaults=cluster_defaults,
-            )
+            jobs[file.name] = _load_job(file, file.name)
     return jobs
 
 
@@ -128,6 +158,77 @@ AVAILABLE_JOBS = get_available_jobs()
 
 def build_job_descriptions() -> str:
     return '\n\n\n'.join(info.description for name, info in AVAILABLE_JOBS.items())
+
+
+SKILL_JOBS_DIR = "hpc_jobs"
+""" Where a skill keeps its jobs: `<skill>/hpc_jobs/<job>/`, submitted as `<skill>/<job>`. """
+
+_NAME_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _skill_job_dir(job: str, skills_dir: str | Path) -> tuple[str, Path]:
+    """
+    `(skill, folder)` for a `<skill>/<job>` name, refusing anything that could
+    reach outside the project's skills folder: exactly one `/`, each part a
+    plain name (no `..`, nothing hidden), and the folder must resolve inside
+    `skills_dir` (a skill is copied with its symlinks, so check where it lands).
+    """
+    parts = job.split("/")
+    if len(parts) != 2 or not all(_NAME_PART.fullmatch(p) for p in parts):
+        raise ToolError(
+            f"{job!r} is not a valid job name: use a built-in job's name, or "
+            f"<skill>/<job> for a job a loaded skill ships"
+        )
+    skill, name = parts
+    root = Path(skills_dir).resolve()
+    folder = (root / skill / SKILL_JOBS_DIR / name).resolve()
+    if not folder.is_relative_to(root):
+        raise ToolError(f"Job {job} resolves outside the project's skills folder")
+    return skill, folder
+
+
+def list_skill_jobs(skills_dir: str | Path | None) -> list[str]:
+    """
+    The `<skill>/<job>` names the project's loaded skills ship, valid or not
+    (submitting a broken one says what is wrong with it). Only folder names are
+    read, so one bad skill cannot hide another's jobs.
+    """
+    if not skills_dir or not Path(skills_dir).is_dir():
+        return []
+    names = []
+    for skill in sorted(Path(skills_dir).iterdir()):
+        jobs = skill / SKILL_JOBS_DIR
+        if not _NAME_PART.fullmatch(skill.name) or not jobs.is_dir():
+            continue
+        names += [
+            f"{skill.name}/{j.name}" for j in sorted(jobs.iterdir())
+            if j.is_dir() and _NAME_PART.fullmatch(j.name)
+        ]
+    return names
+
+
+def resolve_job(job: str, skills_dir: str | Path | None = None) -> JobInfo:
+    """
+    The job a `submit_hpc_job` name means, looked up on every call: a built-in
+    job first, then, for `<skill>/<job>`, a job shipped at
+    `<skills_dir>/<skill>/hpc_jobs/<job>/`. `skills_dir` is the calling
+    project's skills volume, which holds exactly the skills it loads, so a
+    skill the project has not loaded provides nothing.
+
+    A skill's job is loaded alone, with `_load_job`'s rules: a broken job in
+    one skill fails only its own submissions.
+    """
+    if job in AVAILABLE_JOBS:
+        return AVAILABLE_JOBS[job]
+    if "/" in job and skills_dir:
+        skill, folder = _skill_job_dir(job, skills_dir)
+        if folder.is_dir():
+            try:
+                return _load_job(folder, job, dir=folder, skill=skill)
+            except ValueError as e:
+                raise ToolError(f"Job {job} from skill {skill} is broken: {e}") from e
+    available = [*AVAILABLE_JOBS, *list_skill_jobs(skills_dir)]
+    raise ToolError(f"{job} is not recognized, should be one of: {' '.join(available)}")
 
 
 MAX_NODES = 64
@@ -168,6 +269,7 @@ class RemoteLayout:
     `<base>`, which itself is never created:
 
         <base>.<user>.jobs/<job>/src/  sources, uploaded by VISTA; the job only reads them
+                                       (`src-<hash>/` for a skill's job: `_sources_version`)
         <base>.out/log-<id>.out        Slurm stdout, and `.err` beside it
         <base>.out/<id>/               the job's outputs, exported to it as `VISTA_OUT`
         <base>.out/<job>/              state shared by a job's runs (a checkout, a
@@ -232,8 +334,12 @@ class RemoteLayout:
         """ The folder that must already exist: the one holding the sources and `out`. """
         return self.base if self.nested else (posixpath.dirname(self.base) or "/")
 
-    def src(self, job: str) -> str:
-        return f"{self.jobs}/{job}/src"
+    def src(self, job: str, version: str | None = None) -> str:
+        """
+        The job's sources folder: `src`, or `src-<version>` for a skill's job
+        (see `_sources_version`), so a changed skill never runs old sources.
+        """
+        return f"{self.jobs}/{job}/src-{version}" if version else f"{self.jobs}/{job}/src"
 
     def job_dir(self, job: str) -> str:
         """ Where a job's runs share state they write, so the job's user can. """
@@ -349,7 +455,9 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
         Submit a job to the HPC system.
 
         Args:
-            job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())})
+            job: The name of the job to run (available jobs: {' '.join(AVAILABLE_JOBS.keys())}).
+                Loaded skills may ship more jobs, named "<skill>/<job>"; a skill's SKILL.md
+                says which, and what its script_args are.
             cluster: Which cluster to submit to ("odo", "frontier", "perlmutter", or "lux"). If
                 only one cluster is configured, this can be omitted. Odo and Frontier use OLCF's
                 IRI service (compute) plus Globus (files), each with its own per-enclave S3M
@@ -380,15 +488,15 @@ async def submit_hpc_job(
     duration: str | None = None,
     script_args: str | None = None,
 ) -> str:
-    if job not in AVAILABLE_JOBS:
-        raise ValueError(f"{job} is not recognized, should be one of: {' '.join(AVAILABLE_JOBS)}")
+    meta = get_vista_meta(ctx)
+    job_info = resolve_job(job, meta.project_paths.skills_dir)
     if node_count and (node_count > MAX_NODES or node_count <= 0):
         raise ValueError(f"node_count out of range (max {MAX_NODES})")
     duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
     if duration_int and (duration_int > MAX_TIME or duration_int < 1):
         raise ValueError(f"Time limit too large (max: {MAX_TIME})")
 
-    cfg = get_vista_meta(ctx).user
+    cfg = meta.user
     cluster = _resolve_cluster(cluster, cfg)
     target = {
         "odo": "odo",
@@ -415,19 +523,19 @@ async def submit_hpc_job(
             job_id = dry_run.record_submit(cluster, job, eff_nodes, eff_duration)
         elif cluster == "odo":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
-                cfg, job, node_count, duration_int, script_args,
+                cfg, job, node_count, duration_int, script_args, job_info=job_info,
             )
         elif cluster == "perlmutter":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
-                cfg, job, node_count, duration_int, script_args,
+                cfg, job, node_count, duration_int, script_args, job_info=job_info,
             )
         elif cluster == "lux":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_lux_job(
-                ctx, cfg, job, node_count, duration_int, script_args,
+                ctx, cfg, job, node_count, duration_int, script_args, job_info=job_info,
             )
         else:  # "frontier"
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
-                cfg, job, node_count, duration_int, script_args,
+                cfg, job, node_count, duration_int, script_args, job_info=job_info,
             )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
@@ -453,6 +561,7 @@ async def submit_hpc_job(
 
 async def _submit_odo_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+    *, job_info: JobInfo | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Odo dispatch (OLCF open enclave): IRI compute + Globus file ops, the same
@@ -471,12 +580,12 @@ async def _submit_odo_job(
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
-    job_info = AVAILABLE_JOBS[job]
+    job_info = job_info or resolve_job(job)
     defaults = job_info.cluster_defaults.odo
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"odo\" section in cluster_defaults.json")
 
-    local_job_dir = settings.local_hpc_jobs_dir / job
+    local_job_dir = job_info.job_dir
     job_script_path = local_job_dir / ODO_JOB_SCRIPT
     if not job_script_path.exists():
         raise ValueError(
@@ -495,13 +604,13 @@ async def _submit_odo_job(
     layout = layout.with_user(
         await globus.home_owner(collection_id=settings.odo_globus_collection_id)
     )
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
 
     await _require_writable_out(
         globus, collection_id=settings.odo_globus_collection_id, layout=layout, cluster="odo",
     )
     await _sync_job_sources(
-        globus, job, src_dir, parents_below=layout.parent,
+        globus, local_job_dir, src_dir, parents_below=layout.parent,
         remote_endpoint=settings.odo_globus_collection_id,
     )
 
@@ -660,6 +769,7 @@ async def _require_writable_out(
 
 async def _submit_perlmutter_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+    *, job_info: JobInfo | None = None,
 ) -> tuple[str, str, str, int, int]:
     """ Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
     if not cfg.nersc_account:
@@ -669,12 +779,12 @@ async def _submit_perlmutter_job(
         )
     layout = _layout(cfg, "perlmutter")
 
-    job_info = AVAILABLE_JOBS[job]
+    job_info = job_info or resolve_job(job)
     defaults = job_info.cluster_defaults.perlmutter
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"perlmutter\" section in cluster_defaults.json")
 
-    local_job_dir = settings.local_hpc_jobs_dir / job
+    local_job_dir = job_info.job_dir
     job_script_path = local_job_dir / PERLMUTTER_JOB_SCRIPT
     if not job_script_path.exists():
         raise ValueError(
@@ -683,8 +793,8 @@ async def _submit_perlmutter_job(
         )
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
-    src_dir = layout.src(job)
-    await _sync_perlmutter_sources(iri_client, job, src_dir)
+    src_dir = layout.src(job, _sources_version(job_info))
+    await _sync_perlmutter_sources(iri_client, local_job_dir, src_dir)
     # Perlmutter runs as the researcher, so VISTA can make the log folder
     # itself; NERSC's Slurm has not been confirmed to create a missing one, as
     # OLCF's does.
@@ -777,9 +887,9 @@ async def _submit_perlmutter_job(
     )
 
 
-async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
+async def _sync_perlmutter_sources(iri_client, local_job_dir: Path, src_dir: str) -> None:
     """
-    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir` via the IRI
+    Upload a job's sources (`_job_sources`) to `src_dir` via the IRI
     Filesystem API, mirroring Odo's SCP-on-first-submit pattern. Idempotent: if
     `src_dir` already has entries we skip the upload entirely.
     """
@@ -787,24 +897,22 @@ async def _sync_perlmutter_sources(iri_client, job: str, src_dir: str) -> None:
         ls_result = await iri_client.ls(src_dir)
         existing = _flatten_ls_paths(ls_result, root=src_dir)
         if existing:
-            logging.debug(f"forge-tune src dir {src_dir} already populated ({len(existing)} entries); skipping upload")
+            logging.debug(f"src dir {src_dir} already populated ({len(existing)} entries); skipping upload")
             return
     except Exception as e:
         logging.debug(f"src dir {src_dir} not yet readable ({e}); creating and uploading")
 
-    await iri_client.mkdir(src_dir)
-    local_job_dir = settings.local_hpc_jobs_dir / job
-    uploaded: list[str] = []
-    for f in sorted(local_job_dir.iterdir()):
-        if not f.is_file() or f.name.startswith(".") or f.name in _HPC_JOB_METADATA_FILES:
-            continue
-        await iri_client.upload(f, f"{src_dir}/{f.name}")
-        uploaded.append(f.name)
-    logging.info(f"Uploaded {len(uploaded)} source file(s) to {src_dir}: {uploaded}")
+    sources = _job_sources(local_job_dir)
+    for parent in [src_dir, *(f"{src_dir}/{d}" for d in _source_subdirs(sources))]:
+        await iri_client.mkdir(parent)
+    for rel, f in sources:
+        await iri_client.upload(f, f"{src_dir}/{rel}")
+    logging.info(f"Uploaded {len(sources)} source file(s) to {src_dir}: {[rel for rel, _ in sources]}")
 
 
 async def _submit_frontier_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+    *, job_info: JobInfo | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Frontier dispatch (OLCF moderate enclave).
@@ -819,12 +927,12 @@ async def _submit_frontier_job(
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
-    job_info = AVAILABLE_JOBS[job]
+    job_info = job_info or resolve_job(job)
     defaults = job_info.cluster_defaults.frontier
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"frontier\" section in cluster_defaults.json")
 
-    local_job_dir = settings.local_hpc_jobs_dir / job
+    local_job_dir = job_info.job_dir
     job_script_path = local_job_dir / FRONTIER_JOB_SCRIPT
     if not job_script_path.exists():
         raise ValueError(
@@ -843,7 +951,7 @@ async def _submit_frontier_job(
     layout = layout.with_user(
         await globus.home_owner(collection_id=settings.frontier_globus_collection_id)
     )
-    src_dir = layout.src(job)
+    src_dir = layout.src(job, _sources_version(job_info))
 
     # File ops via Globus, which only ever creates the source tree the job
     # reads. Everything the job writes is created by Slurm and the job itself,
@@ -853,7 +961,7 @@ async def _submit_frontier_job(
         cluster="frontier",
     )
     await _sync_job_sources(
-        globus, job, src_dir, parents_below=layout.parent,
+        globus, local_job_dir, src_dir, parents_below=layout.parent,
         remote_endpoint=settings.frontier_globus_collection_id,
     )
 
@@ -992,6 +1100,7 @@ def _lux_proxy_env() -> dict[str, str]:
 
 async def _submit_lux_job(
     ctx: Context, cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
+    *, job_info: JobInfo | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Lux dispatch: plain Slurm over SSH, since Lux has no IRI service.
@@ -1012,12 +1121,12 @@ async def _submit_lux_job(
 
     Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds).
     """
-    job_info = AVAILABLE_JOBS[job]
+    job_info = job_info or resolve_job(job)
     defaults = job_info.cluster_defaults.lux
     if defaults is None:
         raise ValueError(f"Job '{job}' has no \"lux\" section in cluster_defaults.json")
 
-    local_job_dir = settings.local_hpc_jobs_dir / job
+    local_job_dir = job_info.job_dir
     job_script_path = local_job_dir / LUX_JOB_SCRIPT
     if not job_script_path.exists():
         raise ValueError(
@@ -1037,8 +1146,8 @@ async def _submit_lux_job(
     )
 
     layout = layout.with_user(await slurm_ssh.username(conn))
-    src_dir = layout.src(job)
-    await _sync_job_sources_ssh(conn, job, src_dir)
+    src_dir = layout.src(job, _sources_version(job_info))
+    await _sync_job_sources_ssh(conn, local_job_dir, src_dir)
     # Lux runs as the researcher, so VISTA can make the log folder itself, as on
     # Perlmutter. Odo's and Frontier's Slurm were seen creating a missing one;
     # Lux's has not been checked, and Slurm upstream does not. Made shared the
@@ -1111,43 +1220,106 @@ async def _submit_lux_job(
     )
 
 
-async def _sync_job_sources_ssh(conn, job: str, src_dir: str) -> None:
+_SOURCE_SKIP_DIRS = {"__pycache__"}
+""" Folder names never uploaded, besides anything starting with `.`. """
+
+
+def _job_sources(local_job_dir: Path) -> list[tuple[str, Path]]:
+    """
+    The files a job puts on the cluster, as `(path relative to the job folder,
+    local file)`, sorted. Everything under the folder, nested or not, except:
+
+    - the orchestration files (`_HPC_JOB_METADATA_FILES`), at the TOP level
+      only: a `README.md` in a subfolder is the job's own;
+    - anything whose name starts with `.`, and `__pycache__` folders;
+    - symlinks, files and folders alike. A skill is copied into the project
+      with its symlinks, and one could point anywhere on this machine.
+    """
+    sources: list[tuple[str, Path]] = []
+
+    def walk(folder: Path, prefix: str) -> None:
+        for f in sorted(folder.iterdir()):
+            if f.name.startswith(".") or f.is_symlink():
+                continue
+            if f.is_dir():
+                if f.name not in _SOURCE_SKIP_DIRS:
+                    walk(f, f"{prefix}{f.name}/")
+            elif f.is_file() and not (not prefix and f.name in _HPC_JOB_METADATA_FILES):
+                sources.append((f"{prefix}{f.name}", f))
+
+    walk(local_job_dir, "")
+    return sources
+
+
+def _sources_version(job_info: JobInfo) -> str | None:
+    """
+    For a skill's job, a short hash of its sources (`_job_sources`: paths and
+    contents), naming its sources folder on the cluster. Uploads are skipped
+    for files already there at the same size, the only check the HTTPS
+    interface allows, and re-importing a skill with Replace makes in-place
+    edits routine: a same-length fix to a config would otherwise never be
+    uploaded, and the job would run the old file, saying nothing. Each version
+    gets its own folder instead; old ones stay on the cluster.
+
+    None for a built-in job, whose `src/` keeps its name: forge-tune's
+    Perlmutter setup expects the researcher to have filled it.
+    """
+    if job_info.skill is None:
+        return None
+    h = hashlib.sha256()
+    for rel, f in _job_sources(job_info.job_dir):
+        data = f.read_bytes()
+        h.update(f"{rel}\0{len(data)}\0".encode("utf-8") + data)
+    return h.hexdigest()[:12]
+
+
+def _source_subdirs(sources: list[tuple[str, Path]]) -> list[str]:
+    """ Every folder the sources need below the sources folder, parents first. """
+    dirs: set[str] = set()
+    for rel, _ in sources:
+        parts = rel.split("/")[:-1]
+        dirs.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+    return sorted(dirs, key=lambda d: (d.count("/"), d))
+
+
+async def _sync_job_sources_ssh(conn, local_job_dir: Path, src_dir: str) -> None:
     """
     `_sync_job_sources` for an SSH cluster: the same upload set, and the same
     rule for skipping it (every file already there at its full length -- see
     the reasoning there), moved over SFTP instead of Globus.
     """
-    local_job_dir = settings.local_hpc_jobs_dir / job
-    sources = [
-        f for f in sorted(local_job_dir.iterdir())
-        if f.is_file() and not f.name.startswith(".")
-        and f.name not in _HPC_JOB_METADATA_FILES
-    ]
+    sources = _job_sources(local_job_dir)
     if not sources:
         # Still made: `<base>.jobs` is the job's working directory.
         logging.warning(f"no source files to upload from {local_job_dir} (only metadata?)")
         await slurm_ssh.makedirs(conn, src_dir)
         return
 
-    existing = await slurm_ssh.list_file_sizes(conn, src_dir)
-    stale = [f for f in sources if existing.get(f.name) != f.stat().st_size]
+    nested = any("/" in rel for rel, _ in sources)
+    existing = await slurm_ssh.list_file_sizes(
+        conn, src_dir, recursive=nested, exclude_segments=(".git", ".venv", "__pycache__"),
+    )
+    stale = [(rel, f) for rel, f in sources if existing.get(rel) != f.stat().st_size]
     if not stale:
         logging.debug(f"src dir {src_dir} already holds every source; skipping upload")
         return
     await slurm_ssh.makedirs(conn, src_dir)
-    await slurm_ssh.upload_files(conn, stale, src_dir)
-    logging.info(f"Uploaded {len(stale)} source file(s) to {src_dir}: {[f.name for f in stale]}")
+    for d in _source_subdirs(stale):
+        await slurm_ssh.makedirs(conn, f"{src_dir}/{d}")
+    await slurm_ssh.upload_files(conn, [f for _, f in stale], src_dir, names=[rel for rel, _ in stale])
+    logging.info(f"Uploaded {len(stale)} source file(s) to {src_dir}: {[rel for rel, _ in stale]}")
 
 
 async def _sync_job_sources(
-    globus: GlobusClient, job: str, src_dir: str, *, parents_below: str, remote_endpoint: str,
+    globus: GlobusClient, local_job_dir: Path, src_dir: str, *, parents_below: str, remote_endpoint: str,
 ) -> None:
     """
-    Upload `hpc_jobs/<job>/` (minus orchestration metadata) to `src_dir`, one
-    HTTPS `PUT` per file. Shared by the Odo and Frontier dispatchers — they
-    differ only in which OLCF collection `remote_endpoint` points at.
-    Idempotent: files already on the collection are not re-sent, and a
-    submission that follows a partly-failed one uploads only what is missing.
+    Upload a job's sources (`_job_sources`: the job folder minus orchestration
+    metadata, subfolders included) to `src_dir`, one HTTPS `PUT` per file.
+    Shared by the Odo and Frontier dispatchers — they differ only in which OLCF
+    collection `remote_endpoint` points at. Idempotent: files already on the
+    collection are not re-sent, and a submission that follows a partly-failed
+    one uploads only what is missing.
 
     `parents_below` is the deepest folder assumed to exist already -- the one
     holding the remote folder -- and the floor for the recursive mkdir.
@@ -1159,13 +1331,7 @@ async def _sync_job_sources(
     Pre-creating `<base>.jobs/<job>/src` manually also works — the mkdir here
     is idempotent and the transfer just adds files.
     """
-    # Stage the upload set: scan local_hpc_jobs_dir/<job> for files to push.
-    local_job_dir = settings.local_hpc_jobs_dir / job
-    sources = [
-        f for f in sorted(local_job_dir.iterdir())
-        if f.is_file() and not f.name.startswith(".")
-        and f.name not in _HPC_JOB_METADATA_FILES
-    ]
+    sources = _job_sources(local_job_dir)
 
     if not sources:
         # Still made: `<base>.jobs` is the job's working directory.
@@ -1187,20 +1353,28 @@ async def _sync_job_sources(
     # HTTPS interface has no checksum, so this is also as far as verification
     # goes). An entry with no size at all — which Transfer does not do for a
     # file — counts as stale, since re-sending is the harmless direction.
+    #
+    # A flat job is one listing; a nested one walks the tree (one Transfer
+    # call per folder), which answers a missing `src_dir` with nothing at all
+    # rather than a 404 -- the same "upload everything".
+    nested = any("/" in rel for rel, _ in sources)
     try:
         existing = {
-            e.get("name"): e.get("size")
-            for e in await globus.operation_ls(endpoint=remote_endpoint, path=src_dir)
+            _relative_to(e.get("path") or e.get("name") or "", src_dir): e.get("size")
+            for e in await globus.operation_ls(
+                endpoint=remote_endpoint, path=src_dir, recursive=nested,
+                exclude_segments=(".git", ".venv", "__pycache__"),
+            )
             if e.get("type") == "file"
         }
-        stale = [f for f in sources if existing.get(f.name) != f.stat().st_size]
+        stale = [(rel, f) for rel, f in sources if existing.get(rel) != f.stat().st_size]
         if not stale:
             logging.debug(f"src dir {src_dir} already holds every source; skipping upload")
             return
         if existing:
             logging.info(
                 f"src dir {src_dir} is missing or truncated for {len(stale)} of "
-                f"{len(sources)} source file(s); uploading {[f.name for f in stale]}"
+                f"{len(sources)} source file(s); uploading {[rel for rel, _ in stale]}"
             )
         sources = stale
     except GlobusSessionExpired:
@@ -1213,19 +1387,30 @@ async def _sync_job_sources(
         # fall through to mkdir + upload.
         logging.debug(f"src dir {src_dir} not yet readable ({e}); creating + uploading")
 
-    # mkdir -p `<base>.jobs/<job>/src` — Globus makes one level per call,
-    # and a PUT into a missing parent is a 404, so this has to come first.
+    # mkdir -p `<base>.jobs/<job>/src` and each subfolder a source needs —
+    # Globus makes one level per call, and a PUT into a missing parent is a
+    # 404, so this has to come first.
     await globus.operation_mkdir_p(
         endpoint=remote_endpoint, path=src_dir, parents_below=parents_below,
     )
+    for d in _source_subdirs(sources):
+        await globus.operation_mkdir_p(
+            endpoint=remote_endpoint, path=f"{src_dir}/{d}", parents_below=src_dir,
+        )
 
-    for f in sources:
+    for rel, f in sources:
         await globus.upload_file(
             collection_id=remote_endpoint,
             local_path=f,
-            remote_path=f"{src_dir}/{f.name}",
+            remote_path=f"{src_dir}/{rel}",
         )
-    logging.info(f"Uploaded {len(sources)} source file(s) to {src_dir}: {[f.name for f in sources]}")
+    logging.info(f"Uploaded {len(sources)} source file(s) to {src_dir}: {[rel for rel, _ in sources]}")
+
+
+def _relative_to(path: str, root: str) -> str:
+    """ `path` below `root`, or `path` itself when it is a bare name. """
+    root = root.rstrip("/") + "/"
+    return path[len(root):] if path.startswith(root) else path
 
 
 async def _tail_remote_log(
