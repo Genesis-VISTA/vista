@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, create_model
 # elicit credentials ONCE per chat-session/host and then reuse the same
 # connection for every subsequent tool call — crucial for the multi-worker
 # agenthpc pool, which would otherwise re-prompt for every worker's first
-# submit, and for jump-host chains like Lux's (hub -> login node), where each
+# submit, and for jump-host chains (e.g. hub -> login node), where each
 # hop costs the user a fresh RSA passcode. TTL matches agenthpc's per-session
 # caches (1 hour) and slides: every cache hit restarts it, so a chat that keeps
 # polling a job keeps its connection.

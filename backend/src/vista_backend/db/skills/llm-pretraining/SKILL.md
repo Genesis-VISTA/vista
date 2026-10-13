@@ -127,10 +127,8 @@ submit_hpc_job(job="forge-pretrain", cluster="frontier",
 
 **On Lux**, before the first Lux call in a chat, tell the user about the login:
 
-- Two login prompts appear: first `hub.ccs.ornl.gov`, then the Lux login node.
-  Each asks for their OLCF username and **PIN + RSA passcode**.
-- The second prompt needs a **new** passcode. Wait for the token to change; the
-  one used for the hub will not work again.
+- One login prompt appears for `lux.olcf.ornl.gov`. It asks for their OLCF
+  username and **PIN + RSA passcode**.
 - After that, the login is reused for every Lux call in the chat (status,
   outputs, cancel) for about an hour after the last call.
 

@@ -485,13 +485,11 @@ class HpcClusterSettings(BaseSettings):
     nersc_machine: str = "perlmutter"
     """ The IRI status group Perlmutter's `compute` resource sits in. """
 
-    lux_ssh_hosts: CommaSeparatedList[str] = [
-        "hub.ccs.ornl.gov",
-        "login1.lux.olcf.ornl.gov",
-    ]
+    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
     """
-    The SSH hops to Lux, hub first. Only the hub is probed: Lux has no IRI
-    service, and the login node is reachable only through the hub.
+    The SSH hops to Lux, ending at its login node. Only the first is probed:
+    Lux has no IRI service. Lux is now reached directly, so the default is one
+    hop; a jump host can still be listed first.
     """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"

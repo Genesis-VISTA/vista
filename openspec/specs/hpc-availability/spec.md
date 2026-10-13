@@ -46,17 +46,17 @@ is not up, or when an incident naming it is currently open. An incident that
 has ended SHALL NOT affect the result.
 
 For Lux, which is in no facility status list, the system SHALL instead open a
-connection to the configured Lux hub's SSH port and wait for its SSH greeting,
+connection to the configured Lux host's SSH port and wait for its SSH greeting,
 within the check timeout. It SHALL then send its own SSH identification line,
 naming itself as a VISTA status probe, and close the connection. It SHALL NOT
 begin key exchange or authenticate. Any failure SHALL be reported as unreachable, never as
 degraded, because the probe cannot tell an outage from a network path that
-does not reach the hub. The Lux login node behind the hub SHALL NOT be probed.
-If no Lux hub is configured, Lux SHALL be Couldn't verify, and no failure of
+does not reach it. When the configured hops include a jump host, only the
+first hop SHALL be probed. If no Lux host is configured, Lux SHALL be Couldn't verify, and no failure of
 the Lux check SHALL prevent the other clusters' status from being returned.
 
 Every probe is a pre-login connection from VISTA's host, so the system SHALL
-share one probe among concurrent requests and SHALL NOT probe the hub more
+share one probe among concurrent requests and SHALL NOT probe the Lux host more
 than once every 10 seconds, even for a fresh check. A failed probe SHALL be
 reused for no longer than 10 seconds.
 
@@ -78,27 +78,27 @@ The facility check SHALL NOT require any credential.
 - **WHEN** the facility's status endpoint does not answer within the check timeout
 - **THEN** the facility check fails as unreachable, and the cluster is not reported Ready
 
-#### Scenario: Lux hub answers
-- **WHEN** the Lux hub accepts the connection and sends a line beginning `SSH-` within the timeout
-- **THEN** Lux's facility check passes, and names the hub it reached
+#### Scenario: Lux host answers
+- **WHEN** the Lux host accepts the connection and sends a line beginning `SSH-` within the timeout
+- **THEN** Lux's facility check passes, and names the Lux host it reached
 
-#### Scenario: Lux hub does not answer
-- **WHEN** the hub's name does not resolve, the connection is refused or times out, or the first line is not an SSH greeting
+#### Scenario: Lux host does not answer
+- **WHEN** the Lux host's name does not resolve, the connection is refused or times out, or the first line is not an SSH greeting
 - **THEN** Lux's facility check fails as unreachable, and Lux is Couldn't verify, not Degraded
 
 #### Scenario: Lux probe is shared
 - **WHEN** two researchers request status within the result reuse window
-- **THEN** the Lux hub is probed once, unless one of them requests a fresh check more than 10 seconds after the last probe
+- **THEN** the Lux host is probed once, unless one of them requests a fresh check more than 10 seconds after the last probe
 
 #### Scenario: Repeated rechecks
 - **WHEN** a researcher presses Recheck on Lux several times within 10 seconds
-- **THEN** the hub is probed once
+- **THEN** the Lux host is probed once
 
 #### Scenario: Transient failure
-- **WHEN** one probe fails and the hub answers again
+- **WHEN** one probe fails and the Lux host answers again
 - **THEN** Lux is Ready again on the first status request more than 10 seconds after the failure
 
-#### Scenario: No hub configured
+#### Scenario: No Lux host configured
 - **WHEN** the Lux host list is empty
 - **THEN** Lux is Couldn't verify, and Frontier, Odo, and Perlmutter are reported as usual
 
@@ -145,7 +145,7 @@ of a chat's sign-in SHALL change it.
 - **THEN** Lux's credential check passes, says sign-in happens in a chat with a PIN and RSA passcode, names the researcher's Lux account if set, and makes no outbound call
 
 #### Scenario: A failed chat sign-in does not reject Lux
-- **WHEN** a researcher's Lux sign-in failed in a chat and the hub still answers
+- **WHEN** a researcher's Lux sign-in failed in a chat and the Lux host still answers
 - **THEN** Lux is Ready
 
 ### Requirement: Globus check for OLCF clusters
@@ -191,7 +191,7 @@ have no state of its own; it uses the same order.
 - **THEN** Perlmutter's state is Ready, with no Globus check applied
 
 #### Scenario: Lux ready
-- **WHEN** the Lux hub answers the probe and the researcher has set a Lux account and remote directory
+- **WHEN** the Lux host answers the probe and the researcher has set a Lux account and remote directory
 - **THEN** Lux's state is Ready, with no Globus check applied
 
 #### Scenario: Token but no remote directory
@@ -254,7 +254,7 @@ Hiding a cluster SHALL NOT delete or change any of its credentials.
 
 #### Scenario: Hide Lux
 - **WHEN** a researcher turns off "Show in sidebar" for Lux and saves
-- **THEN** the rail no longer shows Lux, and the Lux hub is not probed for that researcher
+- **THEN** the rail no longer shows Lux, and the Lux host is not probed for that researcher
 
 #### Scenario: All hidden
 - **WHEN** every cluster is hidden
@@ -342,7 +342,7 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Lux details
 - **WHEN** a researcher opens the Lux card
-- **THEN** the details show the hub's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
+- **THEN** the details show the Lux host's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
 
 #### Scenario: Collapsed rail is labelled
 - **WHEN** the rail is collapsed
@@ -362,7 +362,7 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Hermetic coverage
 - **WHEN** PR CI runs
-- **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M, Globus, and Lux hub responses with no network access, and any live check is marked `live` and excluded from PR CI
+- **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M, Globus, and Lux host responses with no network access, and any live check is marked `live` and excluded from PR CI
 
 ### Requirement: Settings check
 The system SHALL check, for every visible cluster, that the researcher has set

@@ -20,7 +20,7 @@ Hiding a cluster SHALL NOT delete or change any of its credentials.
 
 #### Scenario: Hide Lux
 - **WHEN** a researcher turns off "Show in sidebar" for Lux
-- **THEN** the rail no longer shows Lux, and the Lux hub is not probed for that researcher
+- **THEN** the rail no longer shows Lux, and the Lux host is not probed for that researcher
 
 #### Scenario: All hidden
 - **WHEN** every cluster is hidden
@@ -124,7 +124,7 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Lux details
 - **WHEN** a researcher opens the Lux card
-- **THEN** the details show the hub's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
+- **THEN** the details show the Lux host's reachability and the sign-in note with the Lux account, with no Globus row and no expiry
 
 #### Scenario: Collapsed rail is labelled
 - **WHEN** the rail is collapsed
@@ -144,4 +144,4 @@ states, noting how long ago they were checked. Once that result is more than
 
 #### Scenario: Hermetic coverage
 - **WHEN** PR CI runs
-- **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M, Globus, and Lux hub responses with no network access, and any live check is marked `live` and excluded from PR CI
+- **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M, Globus, and Lux host responses with no network access, and any live check is marked `live` and excluded from PR CI

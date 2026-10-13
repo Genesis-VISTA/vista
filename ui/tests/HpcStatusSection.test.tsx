@@ -325,7 +325,7 @@ describe("HpcStatusSection: Lux", () => {
   const LUX_READY = status("lux", "ready", {
     facility: {
       ...OK,
-      message: "The Lux hub hub.ccs.ornl.gov answered (SSH-2.0-OpenSSH_9.9).",
+      message: "Lux lux.olcf.ornl.gov answered (SSH-2.0-OpenSSH_9.9).",
     },
     credential: {
       ...OK,
@@ -344,15 +344,15 @@ describe("HpcStatusSection: Lux", () => {
     expect(screen.getByRole("button", { name: "Lux: Ready" })).toHaveTextContent("Lx");
   });
 
-  it("details show the hub and how sign-in works, with no Globus or expiry", async () => {
+  it("details show Lux reachability and how sign-in works, with no Globus or expiry", async () => {
     useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: "Lux: Ready" }));
 
     const dialog = screen.getByRole("dialog", { name: "Lux connection details" });
     expect(within(dialog).getByText("OLCF · Slurm over SSH")).toBeInTheDocument();
-    expect(within(dialog).getByText("Hub is reachable")).toBeInTheDocument();
-    expect(within(dialog).getByText(/hub\.ccs\.ornl\.gov answered/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Lux is reachable")).toBeInTheDocument();
+    expect(within(dialog).getByText(/lux\.olcf\.ornl\.gov answered/)).toBeInTheDocument();
     expect(within(dialog).getByText("Sign in from a chat")).toBeInTheDocument();
     // No project: Lux jobs go to the researcher's default Slurm account.
     expect(
@@ -364,7 +364,7 @@ describe("HpcStatusSection: Lux", () => {
     expect(within(dialog).queryByText("Facility is up")).toBeNull();
   });
 
-  it("an unreachable hub reads Couldn't verify, not a facility outage", async () => {
+  it("an unreachable Lux reads Couldn't verify, not a facility outage", async () => {
     useHpcStatusMock.mockReturnValue(
       view([
         {
@@ -372,7 +372,7 @@ describe("HpcStatusSection: Lux", () => {
             facility: {
               ok: false,
               reason: "unreachable",
-              message: "The Lux hub hub.ccs.ornl.gov did not answer within 5 s.",
+              message: "Lux lux.olcf.ornl.gov did not answer within 5 s.",
             },
             credential: LUX_READY.checks.credential,
           }),
@@ -382,7 +382,7 @@ describe("HpcStatusSection: Lux", () => {
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: "Lux: Couldn't verify" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Couldn't reach the hub")).toBeInTheDocument();
+    expect(within(dialog).getByText("Couldn't reach Lux")).toBeInTheDocument();
     expect(within(dialog).getByText(/did not answer within 5 s/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/degraded/i)).toBeNull();
   });

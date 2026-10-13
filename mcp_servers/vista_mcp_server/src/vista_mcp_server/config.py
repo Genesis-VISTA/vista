@@ -113,12 +113,12 @@ class AppSettings(BaseSettings):
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
     """
 
-    lux_ssh_hosts: CommaSeparatedList[str] = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
+    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
     """
     SSH hop chain to a Lux login node, ending at the login node. Lux has no IRI
-    service, so its jobs are submitted with `sbatch` over SSH. Its login node is
-    not public yet, hence the hub hop; each hop asks the researcher for their own
-    PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
+    service, so its jobs are submitted with `sbatch` over SSH. Lux is reached
+    directly; a jump host can still be listed first. Each hop asks the researcher
+    for their own PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
     """
     lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
     """

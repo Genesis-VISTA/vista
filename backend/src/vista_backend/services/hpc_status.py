@@ -21,8 +21,8 @@ from a bad one (see the hpc-cards change's design.md):
 
 Lux is the exception (see the lux-hpc-card change): it has no IRI service and
 no stored credential -- a researcher signs in with a PIN and RSA passcode when
-a chat first uses it. Its facility check is whether the hub's SSH server
-answers, and its credential check always passes, saying how sign-in works.
+a chat first uses it. Its facility check is whether its login node's SSH
+server answers, and its credential check always passes, saying how sign-in works.
 
 The checks run here rather than as an MCP tool because the rail is global --
 it shows with no project open, and MCP tools are reachable only through a
@@ -69,12 +69,12 @@ FACILITY_TTL = 60.0
 """ How long a facility's public status feed is reused, across researchers. """
 LUX_PROBE_MIN_INTERVAL = 10.0
 """
-The Lux hub is probed at most this often, even for a fresh check: every probe
+Lux's login node is probed at most this often, even for a fresh check: every probe
 is a pre-login SSH connection from the VISTA host, the same address the MCP
 server submits Lux jobs from, and sshd penalises bursts of those.
 """
 LUX_PROBE_FAILURE_TTL = 10.0
-""" How long a failed hub probe is reused. Shorter than a success, so one dropped connection doesn't keep Lux grey for a minute. """
+""" How long a failed Lux probe is reused. Shorter than a success, so one dropped connection doesn't keep Lux grey for a minute. """
 INTROSPECT_TTL = 600.0
 """ A token's project does not change; matches the MCP server's introspection cache. """
 
@@ -88,7 +88,7 @@ _TITLES: dict[HpcCluster, str] = {
 SSH_PORT = 22
 PROBE_IDENTIFICATION = b"SSH-2.0-VISTA_status_probe\r\n"
 """
-Sent back after the hub's greeting, so the hub logs a named client that hung
+Sent back after the server's greeting, so the server logs a named client that hung
 up before key exchange rather than a silent connection -- the pattern scanners
 leave and fail2ban-style filters match.
 """
@@ -541,7 +541,7 @@ class HpcStatusService:
 
     @staticmethod
     def _result_ttl(result: ClusterStatus) -> float:
-        """A failed Lux hub probe is kept no longer per researcher than it is shared."""
+        """A failed Lux probe is kept no longer per researcher than it is shared."""
         if result.cluster == "lux" and not result.checks.facility.ok:
             return LUX_PROBE_FAILURE_TTL
         return RESULT_TTL
@@ -679,7 +679,7 @@ class HpcStatusService:
         return Check(ok=True, message=f"The facility reports {title} up.")
 
     async def _lux_facility(self, *, fresh: bool) -> Check:
-        """Whether the Lux hub's SSH server answers. Shared across researchers.
+        """Whether Lux's login node (the first SSH hop) answers. Shared across researchers.
 
         Every failure is `unreachable` (Couldn't verify), never `degraded`: a
         probe that fails cannot tell Lux being down from a network that does
@@ -691,7 +691,7 @@ class HpcStatusService:
             return Check(
                 ok=False,
                 reason="unverifiable",
-                message="No Lux hub is configured (VISTA_MCP_LUX_SSH_HOSTS is empty).",
+                message="No Lux host is configured (VISTA_MCP_LUX_SSH_HOSTS is empty).",
             )
         host = hosts[0]
         cached = self._ssh_probes.get(host)
@@ -712,16 +712,16 @@ class HpcStatusService:
         try:
             greeting = await self._lux_probe(host, timeout=HTTP_TIMEOUT)
         except Exception as error:  # noqa: BLE001 -- any failure is "couldn't tell", never a 500
-            log.info("Lux hub %s probe failed: %s", host, type(error).__name__)
+            log.info("Lux %s probe failed: %s", host, type(error).__name__)
             check = Check(
                 ok=False,
                 reason="unreachable",
-                message=f"The Lux hub {host} {_probe_failure(error, HTTP_TIMEOUT)}.",
+                message=f"Lux {host} {_probe_failure(error, HTTP_TIMEOUT)}.",
             )
         else:
             check = Check(
                 ok=True,
-                message=f"The Lux hub {host} answered ({greeting}).",
+                message=f"Lux {host} answered ({greeting}).",
             )
         self._ssh_probes[host] = (self._monotonic(), check)
         return check

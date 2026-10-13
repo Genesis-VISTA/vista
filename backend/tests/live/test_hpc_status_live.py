@@ -12,9 +12,9 @@ named failure, never to Couldn't verify. That last state is for a facility
 answering in a way the checks do not understand, which is what this test
 exists to catch when an IRI deployment changes under us.
 
-Lux is left out of that: its facility check is a probe of the hub's SSH port,
+Lux is left out of that: its facility check is a probe of its login node's SSH port,
 which is Couldn't verify by design from a network that does not reach ORNL.
-Its own test probes the hub directly.
+Its own test probes the login node directly.
 """
 
 from __future__ import annotations
@@ -89,8 +89,10 @@ def test_response_carries_nothing_token_like():
 
 
 @pytest.mark.anyio
-async def test_lux_hub_answers():
-    """Needs the ORNL network (or a route to the hub); no credential involved."""
-    hub = HpcClusterSettings().lux_ssh_hosts[0]
-    greeting = await hpc_status.probe_ssh_greeting(hub, timeout=hpc_status.HTTP_TIMEOUT)
+async def test_lux_login_node_answers():
+    """Needs a route to Lux's SSH port; no credential involved."""
+    host = HpcClusterSettings().lux_ssh_hosts[0]
+    greeting = await hpc_status.probe_ssh_greeting(
+        host, timeout=hpc_status.HTTP_TIMEOUT
+    )
     assert greeting.startswith("SSH-2.0-"), greeting

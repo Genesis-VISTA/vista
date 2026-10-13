@@ -84,12 +84,12 @@ function clock(iso: string): string {
 type Row = { ok: boolean | null; title: string; detail: string };
 
 function facilityRow(cluster: HpcCluster, check: HpcCheck): Row {
-  // Lux is in no facility status feed; its check is whether the hub's SSH
+  // Lux is in no facility status feed; its check is whether its login node's SSH
   // server answers, and a failure there is never a reported outage.
   if (cluster === "lux") {
     return check.ok
-      ? { ok: true, title: "Hub is reachable", detail: check.message }
-      : { ok: null, title: "Couldn't reach the hub", detail: check.message };
+      ? { ok: true, title: "Lux is reachable", detail: check.message }
+      : { ok: null, title: "Couldn't reach Lux", detail: check.message };
   }
   if (check.ok) return { ok: true, title: "Facility is up", detail: check.message };
   if (check.reason === "degraded") {

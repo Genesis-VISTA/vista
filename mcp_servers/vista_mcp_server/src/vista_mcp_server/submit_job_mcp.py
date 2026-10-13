@@ -4,7 +4,7 @@ MCP for remote HPC job submission. Dispatches between:
 - Frontier (OLCF, moderate enclave) via the AmSC IRI API + Globus file ops
 - Perlmutter (NERSC) via the NERSC IRI API and amscrot SDK (`lib/iri.py`)
 - Lux (OLCF) via `sbatch` over SSH (`lib/slurm_ssh.py`) -- it has no IRI service. The
-  researcher logs in through the hub with their own passcodes, once per chat session.
+  researcher logs in with their own PIN + RSA passcode, once per chat session.
 
 The OLCF file ops are HTTPS `GET`/`PUT` straight against the cluster's own
 Globus collection, with directory listing and `mkdir` still on the Transfer API
@@ -965,9 +965,9 @@ async def _submit_frontier_job(
 
 async def _lux_conn(ctx: Context, tool: str, **call_args):
     """
-    The researcher's SSH connection to a Lux login node, through the hub. Cached
+    The researcher's SSH connection to a Lux login node. Cached
     per chat session by `get_ssh_conn_mcp_elicitation`, so only the first Lux
-    call in a session asks for passcodes; `tool`/`call_args` label that prompt.
+    call in a session asks for a passcode; `tool`/`call_args` label that prompt.
     """
     return await get_ssh_conn_mcp_elicitation(
         ctx,

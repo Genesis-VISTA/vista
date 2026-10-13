@@ -1,7 +1,7 @@
 """Tests for the per-session SSH connection cache in lib/ssh.
 
-A login costs the user an RSA passcode per hop (two for Lux: hub, then login
-node), so the cache must reuse live connections, serialize concurrent first
+A login costs the user an RSA passcode per hop (two for a jump chain: hub, then
+login node), so the cache must reuse live connections, serialize concurrent first
 logins into one prompt, drop dead connections, and never keep a half-built
 jump chain.
 """
@@ -61,7 +61,7 @@ def connects(monkeypatch):
     return calls_ns
 
 
-LUX = ["hub.ccs.ornl.gov", "login1.lux.olcf.ornl.gov"]
+LUX = ["hub.example", "login.example"]  # a two-hop chain
 
 
 @pytest.mark.unit

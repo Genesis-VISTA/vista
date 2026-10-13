@@ -161,7 +161,7 @@ class FakeGlobus:
 
 
 class FakeLux:
-    """Stands in for the Lux hub's SSH server."""
+    """Stands in for the Lux login node's SSH server."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -482,7 +482,7 @@ async def test_facility_feed_is_shared_across_users():
 async def test_no_token_means_not_connected_and_no_authenticated_call():
     fac = healthy()
     result = await statuses(make_service(fac), user())
-    # Lux has no credential to be missing; it is Ready once its hub answers.
+    # Lux has no credential to be missing; it is Ready once its login node answers.
     lux = result.pop("lux")
     assert lux.state == "ready"
     assert {s.state for s in result.values()} == {"not_connected"}
@@ -797,7 +797,7 @@ async def test_route_passes_fresh_and_cluster_through(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Lux: a hub probe instead of IRI, and no credential (spec: Facility check,
+# Lux: an SSH probe instead of IRI, and no credential (spec: Facility check,
 # Credential check)
 # ---------------------------------------------------------------------------
 
@@ -813,18 +813,18 @@ async def test_lux_names_the_researchers_account():
 
 
 @pytest.mark.anyio
-async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
+async def test_lux_is_ready_when_its_login_node_answers_with_no_credential_at_all():
     fac, lux = healthy(), FakeLux()
     result = await statuses(make_service(fac, lux=lux), user(**ONLY_LUX))
     lx = result["lux"]
     assert lx.state == "ready"
-    assert "hub.ccs.ornl.gov" in lx.checks.facility.message
+    assert "lux.olcf.ornl.gov" in lx.checks.facility.message
     assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
     assert lx.checks.credential.ok
     assert lx.checks.credential.project == SETTINGS["lux_account"]
     assert lx.checks.credential.message == hs.LUX_SIGN_IN
     assert lx.checks.globus is None
-    assert lux.calls == ["hub.ccs.ornl.gov"]  # the hub only, never the login node
+    assert lux.calls == ["lux.olcf.ornl.gov"]
     assert fac.calls == []  # no IRI, S3M, or other outbound call
 
 
@@ -842,19 +842,19 @@ async def test_lux_is_ready_when_the_hub_answers_with_no_credential_at_all():
     ],
 )
 @pytest.mark.anyio
-async def test_any_hub_failure_is_couldnt_verify_never_degraded(error, said):
+async def test_any_probe_failure_is_couldnt_verify_never_degraded(error, said):
     lux = FakeLux()
     lux.result = error
     lx = (await statuses(make_service(healthy(), lux=lux), user(**ONLY_LUX)))["lux"]
     assert lx.state == "unverifiable"
     assert lx.checks.facility.reason == "unreachable"
     assert said in lx.checks.facility.message
-    assert "hub.ccs.ornl.gov" in lx.checks.facility.message
+    assert "lux.olcf.ornl.gov" in lx.checks.facility.message
     assert lx.checks.credential.ok  # sign-in is still only described
 
 
 @pytest.mark.anyio
-async def test_hub_probe_is_shared_across_researchers_until_fresh_or_expired():
+async def test_lux_probe_is_shared_across_researchers_until_fresh_or_expired():
     lux, clock = FakeLux(), Clock()
     service = make_service(healthy(), lux=lux, clock=clock)
     await service.status(user(**ONLY_LUX))
@@ -869,7 +869,7 @@ async def test_hub_probe_is_shared_across_researchers_until_fresh_or_expired():
 
 
 @pytest.mark.anyio
-async def test_fresh_rechecks_do_not_probe_the_hub_more_than_every_few_seconds():
+async def test_fresh_rechecks_do_not_probe_lux_more_than_every_few_seconds():
     lux, clock = FakeLux(), Clock()
     service = make_service(healthy(), lux=lux, clock=clock)
     u = user(**ONLY_LUX)
@@ -917,7 +917,7 @@ async def test_a_failed_probe_is_retried_after_a_few_seconds_not_a_minute():
 
 
 @pytest.mark.anyio
-async def test_no_configured_hub_is_couldnt_verify_and_the_other_clusters_still_answer():
+async def test_no_configured_lux_host_is_couldnt_verify_and_the_other_clusters_still_answer():
     lux = FakeLux()
     settings = HpcClusterSettings.model_validate({"lux_ssh_hosts": []})
     result = await statuses(
