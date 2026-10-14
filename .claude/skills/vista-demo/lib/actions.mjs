@@ -62,7 +62,9 @@ export function RECORDER() {
     let list;
     if (spec.role) {
       const sel = ROLE_SELECTOR[spec.role] || `[role="${spec.role}"]`;
-      list = [...scope.querySelectorAll(sel)].filter((el) => roleOf(el) === spec.role && nameOf(el) === spec.name);
+      const re = typeof spec.name === "string" && spec.name.match(/^\/(.*)\/([a-z]*)$/);
+      const nameOk = re ? (n) => new RegExp(re[1], re[2]).test(n) : (n) => n === spec.name;
+      list = [...scope.querySelectorAll(sel)].filter((el) => roleOf(el) === spec.role && nameOk(nameOf(el)));
     } else if (spec.placeholder) list = [...scope.querySelectorAll("[placeholder]")].filter((el) => el.getAttribute("placeholder") === spec.placeholder);
     else if (spec.label) list = [...scope.querySelectorAll("input, textarea, select")].filter((el) => el.labels?.[0] && norm(el.labels[0].innerText) === spec.label);
     else if (spec.css && spec.has) {
@@ -90,11 +92,18 @@ export function RECORDER() {
     return null;
   }
 
+  // A trailing count ("Activity 2", "Conversations (3)") changes as a session
+  // goes on, so a name ending in one is matched by what comes before it.
+  const COUNTED = /^(.*?\D)\s*\(?\d+\)?$/;
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
   function candidates(el) {
     const out = [];
     const role = roleOf(el);
     const name = nameOf(el);
-    if (role && name && name.length <= 80) out.push({ role, name });
+    const counted = name.match(COUNTED);
+    if (role && counted && counted[1].trim()) out.push({ role, name: `/^${escapeRe(counted[1].trim())}/` });
+    else if (role && name && name.length <= 80) out.push({ role, name });
     if (el.getAttribute("placeholder")) out.push({ placeholder: el.getAttribute("placeholder") });
     if (el.labels?.length) out.push({ label: norm(el.labels[0].innerText) });
     const text = norm(el.innerText);

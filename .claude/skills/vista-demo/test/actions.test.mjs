@@ -13,6 +13,7 @@ const PAGE = `<!doctype html><html><body>
   <div class="project-card"><h3>NewProject</h3><p>Copied from molten-salt.</p><button>Open</button><button>Edit</button></div>
   <textarea placeholder="Ask a question… (e.g., 'What can you help me with?')"></textarea>
   <button aria-label="Send"><svg width="10" height="10"></svg></button>
+  <div role="tablist"><button role="tab">Artifacts</button><button role="tab">Activity 2</button></div>
   <script>
     // Like VISTA's composer: Enter or Send sends and clears, without an input event.
     const box = document.querySelector("textarea");
@@ -54,6 +55,16 @@ test("a click on a card's button is recorded within that card", async () => {
   // and the recorded locator finds that same button again
   const found = await toLocator(page, lines[0].spec).evaluate((el) => el.closest(".project-card").querySelector("h3").innerText);
   assert.equal(found, "molten-salt");
+  await page.close();
+});
+
+test("a name ending in a count is recorded without it", async () => {
+  const { lines, page } = await record(async (p) => {
+    await p.getByRole("tab", { name: "Activity 2" }).click();
+  });
+  assert.deepEqual(lines[0].spec, { role: "tab", name: "/^Activity/" });
+  await page.evaluate(() => (document.querySelector("[role=tab]:last-child").textContent = "Activity 5"));
+  assert.equal(await toLocator(page, lines[0].spec).textContent(), "Activity 5");
   await page.close();
 });
 
