@@ -1,0 +1,56 @@
+Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic unless marked.
+
+## 1. Tokens on the user, and the resolver
+
+- [ ] 1.1 `UserTable.github_token` / `gitlab_token` as `EncryptedStr`; `UserSelfUpdate` fields
+  that are write-only per design D3 (kept out of `_USER_CONFIG_NULLABLE_FIELDS`); read flags
+  `has_github_token` / `has_gitlab_token`; neither token in `UserPublicWithConfig`. Verify with
+  a new `backend/tests/test_repo_tokens.py`: save, read back only the flag, keep on an
+  unrelated save, remove with `""`, stored encrypted.
+- [ ] 1.2 `services/repo_tokens.repo_token(url, user, project=None)` per D1–D2. Verify with a
+  table test in the same file: github.com and api.github.com get the GitHub token, gitlab.com
+  the gitlab.com one, any other host none; with a project, its token wins and the user's is the
+  fallback; without a project, a project's token is never returned.
+
+## 2. Settings window
+
+- [ ] 2.1 A "Repositories" section in `ui/components/UserSettingsModal.tsx` with the two
+  fields, saved / replace / remove, and pre-filled "Create a token" links (D6); `ui/lib/user.ts`
+  types. Verify with `ui/tests/UserSettingsModal.test.tsx`: the saved state shows no token, an
+  unrelated save sends no token field, remove sends `""`.
+
+## 3. Callers use the resolver
+
+- [ ] 3.1 Skill import sends `repo_token(url, user)`; a 401/403 says to add a GitHub token in
+  Settings. Verify in the skill-import tests with a stubbed API: the header is sent with a
+  token, absent without one, and the message names Settings.
+- [ ] 3.2 `fetch_repository` sends `repo_token(url, user)`, opening a session if its tool
+  context has none (D2). Verify in `backend/tests/test_source_fetch.py`: each token only to its
+  own API host; a project's forum token never sent.
+- [ ] 3.3 `forum_config_for(project, user)` and its callers (D4), with the Settings token as
+  the forum fallback. Verify in `backend/tests/test_project_forum.py`: the project's token wins,
+  the Settings token serves a project without one, neither for a non-matching host; and the
+  existing debate/API suites pass with the user threaded through.
+- [ ] 3.4 The project dialog's hint when the Settings token will be used. Verify with a UI test
+  of the hint's condition.
+
+## 4. Remove the environment settings
+
+- [ ] 4.1 Delete `Settings.github_token` / `gitlab_token`; log one warning at start when either
+  variable is set (D5). Verify with a test that sets the variable and checks the warning, and
+  `rg -n 'GITHUB_TOKEN|GITLAB_TOKEN' backend/src` finds only the warning.
+
+## 5. Docs and the neighbouring change
+
+- [ ] 5.1 Amend `openspec/changes/hpc-skill-authoring/specs/hpc-skill-authoring/spec.md`'s
+  `fetch_repository` requirement to send "the user's Settings token for the host" instead of the
+  two environment settings, and its design note on per-user tokens. Verify with
+  `openspec validate --all`.
+- [ ] 5.2 `docs/skill-onboarding.md` and `docs/hypothesis-forum-hosting.md` point at Settings.
+  Verify with `./scripts/ci-local.sh docs`.
+
+## 6. Verify
+
+- [ ] 6.1 `./scripts/ci-local.sh` passes in full before pushing.
+- [ ] 6.2 Manual, not in PR CI: with only a Settings GitHub token, import a skill from a private
+  repository, and a project with no token of its own publishes a debate to a private forum.
