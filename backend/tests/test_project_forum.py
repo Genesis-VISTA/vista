@@ -445,17 +445,28 @@ def _header_git_sends(env: dict[str, str], url: str) -> str | None:
 @pytest.fixture
 def machine_wide_header(tmp_path, monkeypatch):
     """
-    A git config that already sends a header to every URL, as a CI runner's does.
+    Git config that already sends headers of its own, as a CI runner's does.
 
-    GitLab's runner sets an unscoped `http.extraHeader`, so on CI "what git sends
-    elsewhere" is never nothing. The forum's header must still go to the forum
-    alone, whatever the machine's own config adds.
+    GitLab's runner sets an unscoped `http.extraHeader`, and its environment
+    carries an `Authorization` header for its own remote. So on CI neither "git
+    sends nothing elsewhere" nor "no Authorization in the environment" holds.
+    What must hold is narrower: the forum's header goes to the forum alone.
     """
     config = tmp_path / "machine-gitconfig"
     config.write_text(
         "[http]\n\textraHeader = X-Gitaly-Correlation-ID: machine\n", encoding="utf-8"
     )
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.https://gitlab.com.extraHeader")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "Authorization: Basic cnVubmVy")
+
+
+def _forum_header() -> str:
+    """The header value the forum's token becomes, which nothing else can contain."""
+    import base64
+
+    return base64.b64encode(f"oauth2:{TOKEN}".encode()).decode()
 
 
 def test_git_sends_the_token_to_the_forum_and_nowhere_else(
@@ -475,26 +486,28 @@ def test_git_sends_the_token_to_the_forum_and_nowhere_else(
     assert scheme == "Basic"
     assert base64.b64decode(encoded).decode() == f"oauth2:{TOKEN}"
     elsewhere = _header_git_sends(env, "https://elsewhere.example.invalid/x.git")
-    assert elsewhere is None or "Authorization" not in elsewhere, (
+    assert elsewhere is None or _forum_header() not in elsewhere, (
         "only the machine's own header, never the forum's"
     )
     assert TOKEN not in " ".join(env.values()), "only ever encoded"
 
 
-def test_local_plumbing_never_carries_the_token(forum_home, tmp_path):
+def test_local_plumbing_never_carries_the_token(
+    forum_home, tmp_path, machine_wide_header
+):
     """Only fetch and push talk to the remote, so only they get the header."""
     env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=False)
-    assert not any("Authorization" in v for v in env.values())
+    assert _forum_header() not in " ".join(env.values())
 
 
 @pytest.mark.parametrize(
     "url",
     ["http://forge.example.invalid/forum.git", "git@forge.example.invalid:g/forum.git"],
 )
-def test_no_token_outside_https(forum_home, tmp_path, url):
+def test_no_token_outside_https(forum_home, tmp_path, machine_wide_header, url):
     """Plain HTTP would send it in the clear; SSH authenticates with its own keys."""
     env = _client(url, TOKEN, tmp_path)._env(network=True)
-    assert not any("Authorization" in v for v in env.values())
+    assert _forum_header() not in " ".join(env.values())
 
 
 def test_config_already_in_the_environment_is_kept(forum_home, tmp_path, monkeypatch):
