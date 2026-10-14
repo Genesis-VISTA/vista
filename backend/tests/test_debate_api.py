@@ -166,6 +166,36 @@ async def test_get_picks_up_a_peer_post_on_a_finished_debate(
 
 
 @pytest.mark.anyio
+async def test_a_failed_refresh_still_returns_the_debate(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """
+    A refresh that fails is logged and survived — the read still answers.
+
+    The failure path rolls back, and a rollback expires the caller's `run` just as
+    a commit does. Only the commit path re-read it, so the first view of a new
+    debate whose refresh lost a race serialised an expired row and was a 500.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    run_id, project_name = run.id, project.name
+    await session.commit()
+
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("the forum read failed")
+
+    monkeypatch.setattr(debate_service, "refresh_from_forum", broken)
+
+    resp = await app_client.get(f"/projects/{project_name}/debates/{run_id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["run"]["topic"] == "why does the knee move?"
+
+
+@pytest.mark.anyio
 async def test_get_returns_run_participants_and_posts(
     forum_config, app_client, session, alice
 ):

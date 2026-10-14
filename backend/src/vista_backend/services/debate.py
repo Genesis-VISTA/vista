@@ -19,6 +19,7 @@ import enum
 import uuid
 from typing import Any
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -510,7 +511,6 @@ async def project_thread(
                 else None
             ),
         )
-        session.add(row)
         created.append(row)
 
     present = {post.id for post in thread.posts}
@@ -520,6 +520,27 @@ async def project_thread(
             session.add(row)
 
     await session.flush()
+    # Inserted rather than added, and a post already there is skipped. The debate
+    # task and anyone watching the debate both project the thread, each from its
+    # own session, so another can write a post between the read of `existing`
+    # above and this insert. That is not a conflict: it is the same post, and the
+    # next replay refreshes whatever can change on it.
+    inserted: list[str] = []
     for row in created:
-        await session.refresh(row)
-    return created
+        result = await session.exec(
+            sqlite_insert(DebatePostTable)
+            .values(row.model_dump())
+            .on_conflict_do_nothing(index_elements=["run_id", "post_id"])
+        )
+        if result.rowcount:
+            inserted.append(row.post_id)
+    if not inserted:
+        return []
+    rows = await session.exec(
+        select(DebatePostTable).where(
+            DebatePostTable.run_id == run_id,
+            col(DebatePostTable.post_id).in_(inserted),
+        )
+    )
+    by_id = {row.post_id: row for row in rows}
+    return [by_id[post_id] for post_id in inserted]

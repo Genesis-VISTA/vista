@@ -199,6 +199,55 @@ async def test_replaying_a_thread_converges(session, alice):
 
 
 @pytest.mark.anyio
+async def test_a_post_another_session_projected_first_is_not_a_conflict(
+    session, engine, alice, monkeypatch
+):
+    """
+    Two writers project the same thread: the debate task, and whoever is watching.
+
+    Each reads which posts exist and then inserts the rest, so one can commit a
+    post between the other's read and its insert. That insert hit the unique
+    constraint, and a viewer's first look at a new debate failed on its own
+    opening post.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    run = await _make_run(session, alice)
+    run_id = run.id
+    await session.commit()
+    thread = _thread(
+        _post("p1", "TASK", "Debate it.", "human", "human"),
+        _post("p2", "PROPOSAL", "claim", "vista-proposer", "worker"),
+    )
+
+    # Let the other writer in just after this session has read what exists.
+    real_exec = session.exec
+    interleaved = False
+
+    async def exec_then_let_the_other_writer_in(*args, **kwargs):
+        nonlocal interleaved
+        result = await real_exec(*args, **kwargs)
+        if not interleaved:
+            interleaved = True
+            async with AsyncSession(engine) as other:
+                await debate_service.project_thread(
+                    other, run_id=run_id, thread=_thread(thread.posts[0].model_dump())
+                )
+                await other.commit()
+        return result
+
+    monkeypatch.setattr(session, "exec", exec_then_let_the_other_writer_in)
+    created = await debate_service.project_thread(session, run_id=run_id, thread=thread)
+    created_ids = [row.post_id for row in created]
+    await session.commit()
+
+    assert interleaved
+    assert created_ids == ["p2"], "p1 was the other writer's"
+    posts = await debate_service.list_posts(session, run_id=run_id)
+    assert sorted(p.post_id for p in posts) == ["p1", "p2"]
+
+
+@pytest.mark.anyio
 async def test_a_late_vote_updates_an_old_post(session, alice):
     """
     Bodies are immutable, tallies are not. A peer can agree with something from

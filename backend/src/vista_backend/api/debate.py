@@ -172,9 +172,11 @@ async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> boo
     concurrent fetches of the same thread, and the timestamp stops the queue
     behind it from each doing the fetch again the moment it is released.
 
-    Returns whether it committed, because a commit expires every object the
-    session holds — the caller's `run` included — and reading a field off it
-    afterwards is async IO in a context that cannot await.
+    Returns whether it ended the transaction, committed or rolled back, because
+    either expires every object the session holds — the caller's `run` included
+    — and reading a field off it afterwards is async IO in a context that cannot
+    await. The rollback counts too: a failed refresh is survived, so its caller
+    goes on to read `run`.
     """
     key, run_id = run.thread_id, run.id
     lock = _refresh_locks.setdefault(key, asyncio.Lock())
@@ -192,7 +194,7 @@ async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> boo
         except Exception:  # noqa: BLE001 — a stream must survive a bad fetch
             logger.warning("debate %s: forum refresh failed", run_id, exc_info=True)
             await session.rollback()
-            return False
+            return True
 
 
 STREAM_POLL_SECONDS = 1.0
