@@ -4,11 +4,12 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { assembleVideo, contactSheet, probe } from "../lib/assemble.mjs";
+import { assembleReadme, assembleVideo, contactSheet, probe } from "../lib/assemble.mjs";
 import { startFrames } from "../lib/frames.mjs";
 import { DEMO_HOME, PORTS, captureDirOf, videoDirs } from "../lib/paths.mjs";
 import { play } from "../lib/player.mjs";
 import { loadScript } from "../lib/script.mjs";
+import { checkPin, checkUnchanged, gitStatus } from "../lib/selftest.mjs";
 import { LIVE_DEFAULTS, captureSession, finishCapture } from "../lib/session.mjs";
 import { loadResponses, startReplayServer } from "../lib/server.mjs";
 import { ensureUiBuild, startUi } from "../lib/ui.mjs";
@@ -28,7 +29,9 @@ const HELP = `vista-demo <command> [video] [options]
   script <video>     regenerate script.original.yaml from capture/
   rehearse <video>   replay fast, one screenshot per step + out/contact.jpg
   record <video>     replay at human pace into out/frames/
-  assemble <video>   out/frames → out/video.mp4
+  assemble <video> [--no-frame]
+                     out/frames → out/video.mp4 (framed in a window; --no-frame
+                     for full-bleed) and the README clip out/readme.{webm,gif}
   selftest           rehearse, record and assemble the bundled self-test
 
 <video> is a folder name under ${DEMO_HOME}, an absolute path, or \`selftest\`.
@@ -79,12 +82,20 @@ async function replay(name, mode) {
   }
 }
 
-function assemble(name) {
+async function assemble(name, { framed = true } = {}) {
   const dirs = videoDirs(name);
-  const file = assembleVideo(dirs.out);
-  const p = probe(file);
-  const v = p.streams.find((s) => s.type === "video");
-  console.log(`${file}: ${p.duration.toFixed(1)} s, ${v.width}×${v.height} ${v.codec}, audio streams: ${p.streams.filter((s) => s.type === "audio").length}`);
+  const describe = (file) => {
+    const p = probe(file);
+    const v = p.streams.find((s) => s.type === "video");
+    const audio = p.streams.filter((s) => s.type === "audio").length;
+    return `${file}: ${p.duration.toFixed(1)} s, ${v.width}×${v.height} ${v.codec}, ${(p.size / 1e6).toFixed(1)} MB, audio streams: ${audio}`;
+  };
+  const file = await assembleVideo(dirs.out, { framed });
+  console.log(describe(file));
+  const clip = assembleReadme(dirs.out);
+  console.log(`README clip (${clip.start.toFixed(1)}–${clip.end.toFixed(1)} s of the video):`);
+  console.log(`  ${describe(clip.webm)}`);
+  console.log(`  ${describe(clip.gif)}`);
   return file;
 }
 
@@ -94,6 +105,7 @@ const { values: opts, positionals } = parseArgs({
     "by-hand": { type: "boolean" },
     storyboard: { type: "string" },
     "allow-spend": { type: "boolean" },
+    "no-frame": { type: "boolean" },
     again: { type: "boolean" },
     backend: { type: "string" },
     mcp: { type: "string" },
@@ -112,13 +124,18 @@ try {
       await replay(name, cmd);
       break;
     case "assemble":
-      assemble(name);
+      await assemble(name, { framed: !opts["no-frame"] });
       break;
-    case "selftest":
+    case "selftest": {
+      console.log(`Playwright ${checkPin()} pinned, matching ui/`);
+      const before = gitStatus();
       await replay("selftest", "rehearse");
       await replay("selftest", "record");
-      assemble("selftest");
+      await assemble("selftest");
+      checkUnchanged(before);
+      console.log("selftest passed: the checkout is unchanged");
       break;
+    }
     case "capture": {
       const src = captureDirOf(name);
       const mode = opts.storyboard ? "storyboard" : opts["by-hand"] ? "by-hand" : null;

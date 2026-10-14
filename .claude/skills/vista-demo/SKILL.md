@@ -72,13 +72,17 @@ which mirrors to a public GitHub repo. The tools refuse to write inside it.
    finishes and every tile of the contact sheet shows what the storyboard from
    step 2 says.
 6. **Record and assemble.** `vista-demo record <video>`, then
-   `vista-demo assemble <video>`. `out/frames/marks.json` gives each step's
+   `vista-demo assemble <video>`, which writes `out/video.mp4` (the UI in a
+   neutral VISTA window on a gradient backdrop, cards full-bleed) and the
+   README clip `out/readme.webm` and `out/readme.gif`: the first scene, or
+   what lies between `readme: start` and `readme: end` steps, at most 15 s.
+   `out/frames/marks.json` gives each step's
    start in seconds; pull a still a second or two into each `type` and
    `camera` step (`ffmpeg -ss <s> -i out/video.mp4 -frames:v 1 still.jpg`) and
    look at it. Done when every prompt being typed is readable and no zoom cuts
    off what the scene is about.
-7. **Hand over.** Give the paths to `video.mp4` and `script.yaml`, the
-   scrubbed fields, and the factual edits from step 4.
+7. **Hand over.** Give the paths to `video.mp4`, the README clip and
+   `script.yaml`, the scrubbed fields, and the factual edits from step 4.
 
 **Without a live stack**, a script can be hand-written instead of captured:
 copy the self-test (`cp -R .claude/skills/vista-demo/selftest

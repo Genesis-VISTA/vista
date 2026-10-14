@@ -36,8 +36,8 @@ provider; tasks marked **hpc** also spend cluster allocation.
 
 ## 4. Framing and export
 
-- [ ] 4.1 `templates/card.html` with the intro card ("VISTA" over "Visual Intelligence for Scientific & Tooling Assistant"), chapter cards for use cases, VISTA name and icon only (`electron/assets/icon.svg`); verify by rendering both and checking the text against the spec's "Framing public videos"
-- [ ] 4.2 `templates/frame.html` and the framed MP4 in `lib/assemble.mjs` (design D8): neutral rounded frame titled "VISTA", gradient backdrop, cards full-bleed; verify by checking still frames from `video.mp4`
-- [ ] 4.3 README clip from `readme:` markers (default first scene), ≤15 s, 960 px, as WebM (VP9) and GIF; verify sizes and durations with `ffprobe` and that the GIF plays in a GitHub markdown preview
-- [ ] 4.4 `vista-demo selftest`: replays `selftest/`, checks the Playwright pin against `ui/`, and leaves `git status` clean; verify it passes on a clean checkout and fails with the right message after bumping the pin
-- [ ] 4.5 **live** Make the first public video from a real capture, end to end through the skill, and check it against every requirement in `specs/demo-video/spec.md`; deliver `video.mp4`, `readme.webm` and `readme.gif` for review
+- [x] 4.1 `templates/card.html` with the intro card ("VISTA" over "Visual Intelligence for Scientific & Tooling Assistant"), chapter cards for use cases, VISTA name and icon only (`electron/assets/icon.svg`); verify by rendering both and checking the text against the spec's "Framing public videos"
+- [x] 4.2 `templates/frame.html` and the framed MP4 in `lib/assemble.mjs` (design D8): neutral rounded frame titled "VISTA", gradient backdrop, cards full-bleed; verify by checking still frames from `video.mp4`
+- [x] 4.3 README clip from `readme:` markers (default first scene), ≤15 s, 960 px, as WebM (VP9) and GIF; verify sizes and durations with `ffprobe` and that the GIF plays in a GitHub markdown preview
+- [x] 4.4 `vista-demo selftest`: replays `selftest/`, checks the Playwright pin against `ui/`, and leaves `git status` clean; verify it passes on a clean checkout and fails with the right message after bumping the pin
+- [x] 4.5 **live** Make the first public video from a real capture, end to end through the skill, and check it against every requirement in `specs/demo-video/spec.md`; deliver `video.mp4`, `readme.webm` and `readme.gif` for review
