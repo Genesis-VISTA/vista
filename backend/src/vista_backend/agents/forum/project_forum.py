@@ -94,6 +94,7 @@ def forum_config_for(
             "repo_root": forum_root(project.id),
             "remote_url": url,
             "remote_token": SecretStr(token.value) if token else None,
+            "remote_token_source": token.source if token else None,
         }
     )
 

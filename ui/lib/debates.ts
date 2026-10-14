@@ -236,7 +236,56 @@ export type ForumStatus = {
   git_reason: string | null;
   /** This install's posts the remote does not have yet — e.g. written offline. */
   unpublished: number;
+  /** Why publishing last failed; null once a push succeeds. */
+  publish_error?: PublishError | null;
 };
+
+/** Backend `PublishError`: why posts did not reach the forum. */
+export type PublishError = {
+  reason: "refused" | "unreachable" | "failed";
+  credential: "project" | "settings-github" | "settings-gitlab" | "system-git";
+  /** Git's own message. It never holds the token. */
+  message: string;
+  at: string;
+};
+
+const CREDENTIAL_NAMES: Record<PublishError["credential"], string> = {
+  project: "This project’s forum token",
+  "settings-github": "Your GitHub token from Settings",
+  "settings-gitlab": "Your gitlab.com token from Settings",
+  "system-git": "Your system git’s credentials",
+};
+
+const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
+  project: "Replace or remove it in the project’s settings on the Projects page.",
+  "settings-github": "Replace it in Settings → Repositories, or give this project its own token.",
+  "settings-gitlab": "Replace it in Settings → Repositories, or give this project its own token.",
+  "system-git":
+    "Add a token in Settings → Repositories, or give this project its own token on the Projects page.",
+};
+
+/**
+ * What the lab says about a failed publish: which credential was refused and
+ * where to change it, or that the forum could not be reached, or git's message.
+ * A refusal is never worded as "unreachable", and only a refusal names a token.
+ */
+export function publishErrorNotice(error: PublishError): { headline: string; detail: string } {
+  if (error.reason === "refused") {
+    return {
+      headline: `${CREDENTIAL_NAMES[error.credential]} ${
+        error.credential === "system-git" ? "were" : "was"
+      } refused by the forum.`,
+      detail: CREDENTIAL_FIXES[error.credential],
+    };
+  }
+  if (error.reason === "unreachable") {
+    return {
+      headline: "The forum could not be reached.",
+      detail: "Posts are kept here and publish on the next successful sync.",
+    };
+  }
+  return { headline: "Publishing to the forum failed.", detail: `Git said: ${error.message}` };
+}
 
 const JSON_HEADERS = { "content-type": "application/json" };
 

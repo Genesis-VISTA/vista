@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import AsyncIterator
+from typing import AsyncIterator, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -59,6 +59,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["debates"])
 
 
+class PublishError(BaseModel):
+    """Why posts did not reach the forum, for the lab page to explain (design D7)."""
+
+    reason: Literal["refused", "unreachable", "failed"]
+    """`refused`: the credential was turned away. `unreachable`: the forge was not reached."""
+    credential: Literal["project", "settings-github", "settings-gitlab", "system-git"]
+    """Which credential was sent, so the page can say which one to fix."""
+    message: str
+    """Git's own message; it never holds the token, which git gets from the environment."""
+    at: str
+
+
 class ForumStatus(BaseModel):
     """Whether this project's lab can run, and whether its forum is shared."""
 
@@ -75,6 +87,9 @@ class ForumStatus(BaseModel):
 
     unpublished: int = 0
     """This install's posts the remote does not have yet — e.g. written offline."""
+
+    publish_error: PublishError | None = None
+    """Why publishing last failed, or None. Cleared by the next successful push."""
 
 
 @router.get("/{project_name}/forum/status")
@@ -106,6 +121,7 @@ async def forum_status(
         # disagree exactly when it matters, e.g. a save that could not set it.
         remote = await client.remote()
         unpublished = await client.unpublished()
+        error = await client.publish_error()
     except Exception:  # noqa: BLE001
         logger.warning("forum: could not read forum status", exc_info=True)
         return ForumStatus(enabled=True, shared=False, git_ok=True)
@@ -117,7 +133,18 @@ async def forum_status(
         remote=remote if shared else None,
         git_ok=True,
         unpublished=unpublished,
+        publish_error=_publish_error(error),
     )
+
+
+def _publish_error(record: dict | None) -> PublishError | None:
+    """The stored failure, or None for none or one this version cannot read."""
+    if not record:
+        return None
+    try:
+        return PublishError.model_validate(record)
+    except ValueError:
+        return None
 
 
 def stream_session_factory() -> AsyncSession:

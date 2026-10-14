@@ -40,14 +40,14 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 4. A failed publish names its credential
 
-- [ ] 4.1 Classify git's fetch/push errors as refused / unreachable / failed, and record
+- [x] 4.1 Classify git's fetch/push errors as refused / unreachable / failed, and record
   `{reason, credential, at}` in `last-publish.json`, cleared on success (D7). Verify in
   `backend/tests/test_forum_git.py`: a table of real GitHub and GitLab refusal messages, a
   refusal against a bare remote made to reject the push (e.g. a `pre-receive` hook that exits
   1 and prints `Permission denied`), an unreachable remote, and the file gone after a success.
-- [ ] 4.2 `GET /forum/status` returns `publish_error`. Verify in
+- [x] 4.2 `GET /forum/status` returns `publish_error`. Verify in
   `backend/tests/test_debate_api.py` with the fake forum reporting each case.
-- [ ] 4.3 The lab's "not reached the forum yet" notice names the credential and links to the
+- [x] 4.3 The lab's "not reached the forum yet" notice names the credential and links to the
   project dialog or Settings, says "could not be reached" only for unreachable, and shows git's
   message for `failed`. Verify with a UI test per case.
 

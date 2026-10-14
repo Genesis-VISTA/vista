@@ -953,6 +953,75 @@ async def test_forum_status_reports_a_local_only_forum(
     assert body["unpublished"] == 0
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        None,
+        {
+            "reason": "refused",
+            "credential": "project",
+            "message": "Permission denied",
+            "at": "t",
+        },
+        {
+            "reason": "refused",
+            "credential": "settings-github",
+            "message": "Repository not found",
+            "at": "t",
+        },
+        {
+            "reason": "unreachable",
+            "credential": "system-git",
+            "message": "Could not resolve host",
+            "at": "t",
+        },
+        {
+            "reason": "failed",
+            "credential": "system-git",
+            "message": "something else",
+            "at": "t",
+        },
+    ],
+)
+@pytest.mark.anyio
+async def test_forum_status_says_why_publishing_failed(
+    forum_config, app_client, session, alice, error
+):
+    from vista_backend.agents.forum.project_forum import build_client_for
+    from vista_backend.db.schemas import UserTable
+
+    project = await _project(session, alice)
+    client = build_client_for(project, await session.get(UserTable, alice.id))
+    client.forum.publish_error = error
+
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+
+    assert body["publish_error"] == error
+
+
+@pytest.mark.anyio
+async def test_an_unreadable_failure_record_is_no_record(
+    forum_config, app_client, session, alice
+):
+    """The status route reports bad states; a record it cannot parse must not be one."""
+    from vista_backend.agents.forum.project_forum import build_client_for
+    from vista_backend.db.schemas import UserTable
+
+    project = await _project(session, alice)
+    client = build_client_for(project, await session.get(UserTable, alice.id))
+    client.forum.publish_error = {
+        "reason": "mystery",
+        "credential": "?",
+        "message": "",
+        "at": "",
+    }
+
+    resp = await app_client.get(f"/projects/{project.name}/forum/status")
+
+    assert resp.status_code == 200
+    assert resp.json()["publish_error"] is None
+
+
 @pytest.mark.anyio
 async def test_forum_status_says_this_project_has_no_lab(
     forum_config, app_client, session, alice
@@ -973,6 +1042,7 @@ async def test_forum_status_says_this_project_has_no_lab(
         "git_ok": True,
         "git_reason": None,
         "unpublished": 0,
+        "publish_error": None,
     }
 
 

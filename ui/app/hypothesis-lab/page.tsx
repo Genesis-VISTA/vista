@@ -22,6 +22,7 @@ import {
   listDebates,
   openDebate,
   postToDebate,
+  publishErrorNotice,
 } from "@/lib/debates";
 import { useActiveProject } from "@/lib/projects";
 
@@ -459,7 +460,29 @@ function DebatesPage() {
 
       {error && <p className="debate-error">{error}</p>}
 
-      {forum !== null && forum.unpublished > 0 && (
+      {forum?.publish_error && (
+        <p className="debate-note" role="status">
+          <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
+          {publishErrorNotice(forum.publish_error).detail}
+          {forum.publish_error.reason === "refused" &&
+            forum.publish_error.credential !== "settings-github" &&
+            forum.publish_error.credential !== "settings-gitlab" && (
+              <>
+                {" "}
+                <Link href="/projects">Open Projects</Link>
+              </>
+            )}
+          {forum.unpublished > 0 && (
+            <>
+              {" "}
+              {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
+              marked <em>not yet published</em>, until it works.
+            </>
+          )}
+        </p>
+      )}
+
+      {forum !== null && !forum.publish_error && forum.unpublished > 0 && (
         <p className="debate-note">
           <strong>
             {forum.unpublished === 1

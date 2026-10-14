@@ -146,6 +146,13 @@ class ForumSettings(BaseModel):
     system's own credentials — an SSH key in the agent, or a credential helper.
     """
 
+    remote_token_source: str | None = None
+    """
+    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or None
+    when there is none and git uses the system's credentials. A failed publish
+    names it, so the person knows which token to fix. Not configuration.
+    """
+
     max_simulations: int = 2
     """
     HPC jobs one debate may commission, in total.
