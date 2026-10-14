@@ -6,14 +6,14 @@ provider; tasks marked **hpc** also spend cluster allocation.
 
 ## 1. Replay toolkit (hand-written scripts)
 
-- [ ] 1.1 Create `.claude/skills/vista-demo/` with `package.json` (playwright pinned to `ui/package-lock.json`'s version, `yaml`) and `bin/vista-demo.mjs` listing the commands of design D1; verify `npm ci` in the skill folder succeeds and `node bin/vista-demo.mjs --help` lists them
-- [ ] 1.2 Implement `lib/ui.mjs` (design D5): private copy of `ui/`, linked `node_modules`, standalone build reused by tree hash; verify `vista-demo ui` serves `/projects` on :3100 while `./launch.sh logs --no-electron` runs on :3000 in the same checkout, and `git status` shows `ui/.next` untouched
-- [ ] 1.3 Implement `lib/script.mjs` parsing of the YAML script (design D3) into a replay plan, with `!asset` references and `pace`; verify on `selftest/script.yaml` that runs become the event sequence `run-renderer.ts` expects (unit test with `node --test`)
-- [ ] 1.4 Implement replay mode in `lib/server.mjs` (design D4): runs served in script order as SSE, other requests from `responses.jsonl` by method + path + query, the missing-response error; verify with `node --test` that an unanswered request fails naming method and path, and that two runs play in order
-- [ ] 1.5 Implement `lib/player.mjs` (design D7) for replay: overlay outside `<body>`, eased cursor, click ripple, human typing, camera, the two caption slots, and the step-naming error for a missing element; verify `vista-demo rehearse selftest` writes screenshots and a contact sheet, and a script with a bogus button name fails at that step
-- [ ] 1.6 Implement `lib/frames.mjs` and an MP4-only `lib/assemble.mjs` (design D8, without frame or README clip); verify `vista-demo record selftest && vista-demo assemble selftest` writes `out/video.mp4` at 1920×1080 with no audio stream (`ffprobe`)
-- [ ] 1.7 Port the spike's molten-salt scenes to `script.yaml` form as a second hand-written example (in `~/.vista/demo-captures/`, not the repo) and check every frame of a caption shown while typing leaves the composer visible; verify by reviewing the contact sheet
-- [ ] 1.8 Draft `SKILL.md` for the replay path (rehearse, record, assemble) following `writing-for-agents`; verify a fresh Claude session can produce the selftest video from the skill alone
+- [x] 1.1 Create `.claude/skills/vista-demo/` with `package.json` (playwright pinned to `ui/package-lock.json`'s version, `yaml`) and `bin/vista-demo.mjs` listing the commands of design D1; verify `npm ci` in the skill folder succeeds and `node bin/vista-demo.mjs --help` lists them
+- [x] 1.2 Implement `lib/ui.mjs` (design D5): private copy of `ui/`, linked `node_modules`, standalone build reused by tree hash; verify `vista-demo ui` serves `/projects` on :3100 while `./launch.sh logs --no-electron` runs on :3000 in the same checkout, and `git status` shows `ui/.next` untouched
+- [x] 1.3 Implement `lib/script.mjs` parsing of the YAML script (design D3) into a replay plan, with `!asset` references and `pace`; verify on `selftest/script.yaml` that runs become the event sequence `run-renderer.ts` expects (unit test with `node --test`)
+- [x] 1.4 Implement replay mode in `lib/server.mjs` (design D4): runs served in script order as SSE, other requests from `responses.jsonl` by method + path + query, the missing-response error; verify with `node --test` that an unanswered request fails naming method and path, and that two runs play in order
+- [x] 1.5 Implement `lib/player.mjs` (design D7) for replay: overlay outside `<body>`, eased cursor, click ripple, human typing, camera, the two caption slots, and the step-naming error for a missing element; verify `vista-demo rehearse selftest` writes screenshots and a contact sheet, and a script with a bogus button name fails at that step
+- [x] 1.6 Implement `lib/frames.mjs` and an MP4-only `lib/assemble.mjs` (design D8, without frame or README clip); verify `vista-demo record selftest && vista-demo assemble selftest` writes `out/video.mp4` at 1920×1080 with no audio stream (`ffprobe`)
+- [x] 1.7 Port the spike's molten-salt scenes to `script.yaml` form as a second hand-written example (in `~/.vista/demo-captures/`, not the repo) and check every frame of a caption shown while typing leaves the composer visible; verify by reviewing the contact sheet
+- [x] 1.8 Draft `SKILL.md` for the replay path (rehearse, record, assemble) following `writing-for-agents`; verify a fresh Claude session can produce the selftest video from the skill alone
 
 ## 2. Capture
 

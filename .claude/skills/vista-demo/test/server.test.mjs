@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { keyOf, normQuery, pickResponse, startReplayServer } from "../lib/server.mjs";
+import { parseScript } from "../lib/script.mjs";
+
+const plan = parseScript(`
+pace: { stream_wps: 1000, tool_min_s: 0, think_s: 0 }
+steps:
+  - run:
+      - answer: first phase diagram
+  - run:
+      - answer: second phase diagram
+`);
+
+function responses(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    const key = keyOf(r.method, r.path, normQuery(r.query ?? ""));
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  }
+  return map;
+}
+
+async function answerOf(url, prompt) {
+  const res = await fetch(`${url}/projects/p/agent/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user_prompt: prompt }),
+  });
+  const text = await res.text();
+  const end = text.split("\n\n").find((b) => b.includes("event: part_end"));
+  return JSON.parse(end.split("data: ")[1]).part.content;
+}
+
+test("runs are served in script order, not by matching prompts", async () => {
+  const server = await startReplayServer({ plan, responses: new Map(), port: 0 });
+  try {
+    assert.equal(await answerOf(server.url, "show me the phase diagram"), "first phase diagram");
+    assert.equal(await answerOf(server.url, "show me the phase diagram"), "second phase diagram");
+    assert.equal(server.state.runsFinished, 2);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("an unanswered request fails, naming its method and path", async () => {
+  const server = await startReplayServer({ plan, responses: new Map(), port: 0 });
+  try {
+    const res = await fetch(`${server.url}/projects/molten-salt/uploads`);
+    assert.equal(res.status, 404);
+    const state = await (await fetch(`${server.url}/__demo/state`)).json();
+    assert.match(state.errors[0], /GET \/projects\/molten-salt\/uploads/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("one run too many is an error, not a hang", async () => {
+  const server = await startReplayServer({ plan, responses: new Map(), port: 0 });
+  try {
+    await answerOf(server.url, "a");
+    await answerOf(server.url, "b");
+    const res = await fetch(`${server.url}/projects/p/agent/run`, { method: "POST", body: "{}" });
+    assert.equal(res.status, 500);
+    assert.match(server.state.errors[0], /only 2/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a response is picked by the player's step", async () => {
+  const rows = [
+    { seq: 1, step: 0, method: "GET", path: "/projects/p/chat-sessions", body: [] },
+    { seq: 2, step: 7, method: "GET", path: "/projects/p/chat-sessions", body: [{ id: "s1" }] },
+  ];
+  const server = await startReplayServer({ plan, responses: responses(rows), port: 0 });
+  try {
+    const list = async () => (await fetch(`${server.url}/projects/p/chat-sessions`)).json();
+    assert.deepEqual(await list(), []);
+    await fetch(`${server.url}/__demo/step`, { method: "POST", body: JSON.stringify({ step: 9 }) });
+    assert.deepEqual(await list(), [{ id: "s1" }]);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("queries match regardless of parameter order", () => {
+  assert.equal(normQuery("?b=2&a=1"), "a=1&b=2");
+  assert.equal(pickResponse([{ step: 3, seq: 1 }], 0).step, 3);
+});

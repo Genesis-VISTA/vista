@@ -156,11 +156,17 @@ Rejected: two similar prompts would play the wrong run.
 
 `lib/ui.mjs` copies `ui/` (minus `node_modules` and `.next`) to
 `~/.vista/demo-captures/_ui/<tree-hash>/`, links `node_modules` from the
-checkout, runs `next build` there, and copies `.next/static` and `public/` into
+checkout, runs `next build --webpack` there, and copies `.next/static` and `public/` into
 the standalone output. It runs `node server.js` with `PORT=3100`,
 `HOSTNAME=127.0.0.1` and `VISTA_BACKEND_URL` set to the server. The tree hash
 of `ui/` (`git rev-parse HEAD:ui` plus a dirty-file digest) names the build, so
 an unchanged UI is reused and a changed one rebuilt.
+
+Webpack, not the default Turbopack: Turbopack refuses a `node_modules` symlink
+that points outside the project ("points out of the filesystem root"), and
+copying `node_modules` (about 500 MB) per build is the costlier fix. Videos are
+therefore recorded from a webpack build of the same source VISTA ships with
+Turbopack; both render the same app code.
 
 *Alternative:* `next start` in `ui/`. Rejected: it writes `ui/.next` and
 breaks a running stack (Context).
