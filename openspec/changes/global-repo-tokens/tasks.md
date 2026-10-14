@@ -7,7 +7,7 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
   `has_github_token` / `has_gitlab_token`; neither token in `UserPublicWithConfig`. Verify with
   a new `backend/tests/test_repo_tokens.py`: save, read back only the flag, keep on an
   unrelated save, remove with `""`, stored encrypted.
-- [ ] 1.2 `services/repo_tokens.repo_token(url, user, project=None)` returning a
+- [x] 1.2 `services/repo_tokens.repo_token(url, user, project=None)` returning a
   `RepoToken(value, source)` or None, per D1–D2. **Sam writes this one.** Verify with a table
   test in the same file: github.com and api.github.com get the GitHub token (`settings-github`),
   gitlab.com the gitlab.com one (`settings-gitlab`), any other host none; with a project, its

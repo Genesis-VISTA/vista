@@ -20,6 +20,7 @@ The rules:
 
 from dataclasses import dataclass
 from typing import Literal
+from urllib import parse
 
 from ..db.schemas import ProjectTable, UserTable
 
@@ -36,5 +37,22 @@ class RepoToken:
 def repo_token(
     url: str, user: UserTable, project: ProjectTable | None = None
 ) -> RepoToken | None:
-    """The token to send to `url`, or None to send none."""
-    raise NotImplementedError("task 1.2 — Sam's carve-out")
+    """The token to send to url, or None to send none"""
+    url_parts = parse.urlsplit(url)
+
+    # only https gets a token
+    if url_parts.scheme != "https":
+        return None
+
+    # if a project token exists, return it
+    if project is not None and project.forum_repo_token:
+        return RepoToken(project.forum_repo_token, "project")
+
+    if (
+        "github.com" == url_parts.hostname or "api.github.com" == url_parts.hostname
+    ) and user.github_token:
+        return RepoToken(user.github_token, "settings-github")
+    elif "gitlab.com" == url_parts.hostname and user.gitlab_token:
+        return RepoToken(user.gitlab_token, "settings-gitlab")
+
+    return None
