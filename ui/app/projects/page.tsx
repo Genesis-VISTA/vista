@@ -6,6 +6,7 @@ import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import { AppTopBar } from "@/components/AppTopBar";
 import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
+import { forumTokenHelp } from "@/lib/forum-token-help";
 import {
   type Project,
   type UserPublic,
@@ -420,6 +421,38 @@ function MembersModal({
   );
 }
 
+/** "Don't have a token?": the forge's token form, pre-filled, and what to do there. */
+function ForumTokenHelpDetails({ repoUrl }: { repoUrl: string }) {
+  const help = forumTokenHelp(repoUrl);
+  return (
+    <details className="project-modal-token-help">
+      <summary>Don&rsquo;t have a token?</summary>
+      {help ? (
+        <>
+          <p>
+            <a href={help.url} target="_blank" rel="noreferrer">
+              Create a {help.forge} token for this repository
+            </a>{" "}
+            — the form opens filled in. Then:
+          </p>
+          <ol>
+            {help.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <p>Saving the project checks the token can reach the repository.</p>
+        </>
+      ) : (
+        <p>
+          Make an access token that can read and write this repository: on GitHub,
+          a fine-grained token with Contents set to Read and write; on GitLab, a
+          token with the read_repository and write_repository scopes.
+        </p>
+      )}
+    </details>
+  );
+}
+
 function ProjectModal({
   mode,
   initial,
@@ -681,6 +714,9 @@ function ProjectModal({
                 </span>
               )}
             </label>
+          )}
+          {forumRepoUrl.trim().startsWith("https://") && !removeForumToken && (
+            <ForumTokenHelpDetails repoUrl={forumRepoUrl} />
           )}
 
           {mode === "edit" && (

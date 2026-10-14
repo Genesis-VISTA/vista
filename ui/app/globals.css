@@ -3130,6 +3130,30 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--ink);
 }
 
+.project-modal-token-help {
+  margin-top: -4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.project-modal-token-help > summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.project-modal-token-help p,
+.project-modal-token-help ol {
+  margin: 6px 0 0;
+}
+
+.project-modal-token-help ol {
+  padding-left: 18px;
+}
+
+.project-modal-token-help a {
+  color: var(--brand);
+}
+
 .project-modal-skill-list {
   display: flex;
   flex-direction: column;
