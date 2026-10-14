@@ -20,6 +20,13 @@ or `.env` setting SHALL supply one.
 - **WHEN** they change their research profile and save
 - **THEN** both tokens SHALL still be saved
 
+#### Scenario: Settings explains which token wins
+
+- **WHEN** a user opens the Repositories section of Settings
+- **THEN** it SHALL say that a Hypothesis Lab forum uses the project's own token if it has
+  one, else this Settings token for the forum's host, else the system git's credentials
+- **AND** that skill import and repository fetches always use the Settings token
+
 #### Scenario: The environment supplies nothing
 
 - **GIVEN** `VISTA_BACKEND_GITHUB_TOKEN` set in the backend's environment and no token in Settings

@@ -18,7 +18,13 @@ desktop app neither can reach a private repository at all. That is the half of #
   repository alone.
 - **BREAKING** (dev checkouts only): `VISTA_BACKEND_GITHUB_TOKEN` and
   `VISTA_BACKEND_GITLAB_TOKEN` are removed. Settings is the only source.
-- The project dialog's token field says when the Settings token for that host will be used.
+- The Settings token is the default; a project's token is an optional override for that
+  project's forum. The Settings section explains the order (project token, then Settings
+  token, then the system git's credentials), and the project dialog's token field says it
+  overrides the Settings token for this forum only, and which token applies when it is empty.
+- When a debate's post cannot be published, the Hypothesis Lab says which credential was
+  refused (this project's token, the Settings token for the host, or the system git's
+  credentials) and where to change it, or that the forum could not be reached at all.
 - `docs/skill-onboarding.md` and `docs/hypothesis-forum-hosting.md` point at Settings.
 
 ## Capabilities
@@ -31,11 +37,12 @@ desktop app neither can reach a private repository at all. That is the half of #
 ### Modified Capabilities
 
 - `agent-forum`: the save-time remote check and the project-token requirement gain the
-  Settings token as the fallback before the system git's credentials.
+  Settings token as the fallback before the system git's credentials; a new requirement that
+  a failed publish names the credential it used.
 
 The open change `hpc-skill-authoring` names the two environment settings in its
 `fetch_repository` requirement. Its capability is not in the main specs yet, so this change
-amends that sentence in its delta instead of carrying a delta of its own (task 5.1).
+amends that sentence in its delta instead of carrying a delta of its own (task 6.1).
 
 ## Non-goals
 

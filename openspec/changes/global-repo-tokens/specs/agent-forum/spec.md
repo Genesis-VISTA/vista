@@ -76,3 +76,50 @@ repositories.
 - **GIVEN** a user with a GitHub token in Settings
 - **WHEN** they enter an `https://github.com/` forum URL with no project token
 - **THEN** the dialog SHALL say the Settings token will be used
+
+#### Scenario: The project token is an override
+
+- **WHEN** a user views the project dialog's token field
+- **THEN** it SHALL say that a token entered there overrides the Settings token for this
+  project's forum only, and is not used for importing skills or fetching repositories
+
+## ADDED Requirements
+
+### Requirement: A failed publish names the credential it used
+
+When posts cannot be published to a project's forum, the Hypothesis Lab SHALL
+say why, from the most recent failed attempt: either the remote refused the
+credential, naming which one was sent (the project's token, the user's Settings
+token for the host, or the system git's credentials) and where to change it; or
+the remote could not be reached; or, when the cause is neither, git's message.
+A refused credential MUST NOT be reported as the forum being unreachable. The reason SHALL clear once a publish succeeds. The
+token itself MUST NOT appear in the message.
+
+#### Scenario: The project's token is refused
+
+- **GIVEN** a project whose own token cannot push to its forum
+- **WHEN** a debate's post fails to publish
+- **THEN** the lab SHALL say the project's token was refused and point to the project's settings
+
+#### Scenario: The Settings token is refused
+
+- **GIVEN** a project with no token of its own, and a GitHub Settings token that cannot push to its forum
+- **WHEN** a debate's post fails to publish
+- **THEN** the lab SHALL say the GitHub token from Settings was refused and point to Settings
+
+#### Scenario: No token was sent
+
+- **GIVEN** a forum reached with the system git's credentials
+- **WHEN** a post fails to publish because the remote refused them
+- **THEN** the lab SHALL say the system git's credentials were refused, and that a token can be added in Settings or on the project
+
+#### Scenario: The forum is unreachable
+
+- **WHEN** a post fails to publish because the remote could not be reached
+- **THEN** the lab SHALL say the forum could not be reached, and SHALL NOT name a token as the cause
+
+#### Scenario: A later success clears it
+
+- **GIVEN** a failure reason on show
+- **WHEN** the next publish succeeds
+- **THEN** the reason SHALL no longer be shown

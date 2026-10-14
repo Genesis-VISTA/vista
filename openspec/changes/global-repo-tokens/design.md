@@ -27,7 +27,10 @@ takes no user; it has 14 call sites, nearly all in routes that already have `Use
 ## Decisions
 
 **D1. One resolver, `services/repo_tokens.repo_token(url, user, project=None)`.**
-It returns the token for a URL or None. With `project` given (only the forum passes one), the
+It returns a `RepoToken(value, source)` for a URL, where `source` is `"project"`,
+`"settings-github"` or `"settings-gitlab"`, or None when no token applies (so git falls back
+to the system's credentials, which D7 reports as `"system-git"`). The source is part of the
+answer, not something a caller re-derives, because D7 has to name it. With `project` given (only the forum passes one), the
 project's token wins; otherwise the user's token for the URL's host. Host comes from the
 parsed URL: `github.com` and `api.github.com` are GitHub, `gitlab.com` is gitlab.com, anything
 else gets None. Imports and fetches never pass a project, which is what keeps a repo-scoped
@@ -61,8 +64,25 @@ setting.
 fields with the same saved / replace / remove behaviour as the project dialog, each with a
 pre-filled "Create a token" link. GitHub's asks for Contents read-only on all repositories (or
 read and write for a forum to fall back to it); gitlab.com's for `read_api`,
-`read_repository` and `write_repository`. The project dialog's token field shows "Your GitHub
-token from Settings will be used" when the forum is on that host and no project token is set.
+`read_repository` and `write_repository`. A short note at the top of the section gives the
+order: a forum uses its project's token if it has one, else this token, else the system git's
+credentials; imports and fetches always use this token. The project dialog's token field is
+labelled as an override ("Use a different token for this forum"), says it is for the forum
+only, and when empty says "Your GitHub token from Settings will be used" (or that the system
+git's credentials will be, when there is none for the host).
+
+**D7. A failed publish is recorded with its credential, beside the outbox.**
+When a fetch or push fails, the forum client classifies git's error: refused (HTTP 401, 403,
+or GitHub's 404 "Repository not found" for a repository the credential cannot see,
+"Authentication failed", "Permission denied"), unreachable (DNS, connection refused, a
+timeout), or `failed` (anything else, shown with git's message). It writes `{reason, credential, at}` to `data/forum-git/<project-id>/last-publish.json`,
+where `credential` is the `RepoToken.source` it was built with or `"system-git"`, and deletes
+the file on the next successful push. It lives there, not in `vista.db`, for the reason the
+outbox does: the forum is written from inside open app-DB transactions. `GET
+/forum/status` returns it as `publish_error`, and the lab's existing "not reached the forum
+yet" notice names the credential and links to the project dialog or Settings. Git's message
+can be shown as it is: the token reaches git only through the environment, so it is never in
+an argument or an error.
 
 ## Risks / Trade-offs
 
@@ -71,5 +91,10 @@ token from Settings will be used" when the forum is on that host and no project 
   project dialog makes the fallback visible.
 - **Dev `.env` files stop supplying tokens.** Mitigated by D5's warning; desktop packages
   never read them.
+- **Classifying git's errors by text is brittle.** Forges word refusals differently. D7 keeps
+  the classification in one function with a table test of real messages from GitHub and
+  GitLab. Anything it doesn't recognise is reported as `failed` with git's message, naming no
+  credential and not claiming the forum is unreachable, so a misread never blames the wrong
+  token or hides a real refusal behind "unreachable".
 - **`fetch_repository` reads whatever the user's token can.** Same as today with a deployment
   token, but now it is the researcher's own reach, which is the intent of #75.
