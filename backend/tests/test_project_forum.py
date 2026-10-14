@@ -442,7 +442,25 @@ def _header_git_sends(env: dict[str, str], url: str) -> str | None:
     return out.stdout.strip() or None
 
 
-def test_git_sends_the_token_to_the_forum_and_nowhere_else(forum_home, tmp_path):
+@pytest.fixture
+def machine_wide_header(tmp_path, monkeypatch):
+    """
+    A git config that already sends a header to every URL, as a CI runner's does.
+
+    GitLab's runner sets an unscoped `http.extraHeader`, so on CI "what git sends
+    elsewhere" is never nothing. The forum's header must still go to the forum
+    alone, whatever the machine's own config adds.
+    """
+    config = tmp_path / "machine-gitconfig"
+    config.write_text(
+        "[http]\n\textraHeader = X-Gitaly-Correlation-ID: machine\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+
+
+def test_git_sends_the_token_to_the_forum_and_nowhere_else(
+    forum_home, tmp_path, machine_wide_header
+):
     """
     Asked of git, not of our dict: the point is that git scopes the header to the
     remote's URL, so a redirect or another remote never sees it.
@@ -456,14 +474,17 @@ def test_git_sends_the_token_to_the_forum_and_nowhere_else(forum_home, tmp_path)
     scheme, encoded = header.removeprefix("Authorization: ").split()
     assert scheme == "Basic"
     assert base64.b64decode(encoded).decode() == f"oauth2:{TOKEN}"
-    assert _header_git_sends(env, "https://elsewhere.example.invalid/x.git") is None
+    elsewhere = _header_git_sends(env, "https://elsewhere.example.invalid/x.git")
+    assert elsewhere is None or "Authorization" not in elsewhere, (
+        "only the machine's own header, never the forum's"
+    )
     assert TOKEN not in " ".join(env.values()), "only ever encoded"
 
 
 def test_local_plumbing_never_carries_the_token(forum_home, tmp_path):
     """Only fetch and push talk to the remote, so only they get the header."""
     env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=False)
-    assert "GIT_CONFIG_COUNT" not in env
+    assert not any("Authorization" in v for v in env.values())
 
 
 @pytest.mark.parametrize(
@@ -473,7 +494,7 @@ def test_local_plumbing_never_carries_the_token(forum_home, tmp_path):
 def test_no_token_outside_https(forum_home, tmp_path, url):
     """Plain HTTP would send it in the clear; SSH authenticates with its own keys."""
     env = _client(url, TOKEN, tmp_path)._env(network=True)
-    assert "GIT_CONFIG_COUNT" not in env
+    assert not any("Authorization" in v for v in env.values())
 
 
 def test_config_already_in_the_environment_is_kept(forum_home, tmp_path, monkeypatch):
