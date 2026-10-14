@@ -37,6 +37,7 @@ from ..db.schemas import (
     DebatePostPublic,
     DebateRunPublic,
     DebateStatePublic,
+    UserTable,
 )
 from ..services import debate as debate_service
 from ..services import project as project_service
@@ -98,7 +99,7 @@ async def forum_status(
             enabled=False, shared=False, git_ok=git.ok, git_reason=git.reason
         )
 
-    client = build_client_for(project)
+    client = await _client(session, project, user)
     url = forum_url_of(project)
     try:
         # The repository's own remote, not the project row's intention: they
@@ -162,6 +163,19 @@ seconds is fast enough for a human conversation.
 
 _last_refresh: dict[str, float] = {}
 _refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _client(session: AsyncSession, project, user) -> ForumClient:
+    """
+    This project's forum client, sending the token `user`'s forum should use.
+
+    Loads the user's row because the tokens are only there, not on the public
+    model `UserDep` gives. Raises `ForumDisabled` like `build_client_for`.
+    """
+    owner = await session.get(UserTable, user.id)
+    if owner is None:
+        raise ForumDisabled("the signed-in user no longer exists")
+    return build_client_for(project, owner)
 
 
 async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> bool:
@@ -247,7 +261,9 @@ async def open_debate(
     from ..agents.forum.wiring import build_orchestrator
 
     try:
-        run = await build_orchestrator(build_client_for(project), user=user).start(
+        run = await build_orchestrator(
+            await _client(session, project, user), user=user
+        ).start(
             session,
             project_id=project.id,
             user_id=user.id,
@@ -289,7 +305,7 @@ async def get_debate(
     project_id = project.id  # the refresh below commits, which expires `project`
     # Built before the refresh, for the same reason: a commit expires the project
     # row, and a client cannot be made from an expired one.
-    lab = build_client_for(project) if lab_enabled(project) else None
+    lab = await _client(session, project, user) if lab_enabled(project) else None
     run = await _require(session, run_id, project_id)
 
     # Read the forum here too, not only from the event stream.
@@ -347,7 +363,7 @@ async def post_to_debate(
     if run.thread_missing:
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
-    client = build_client_for(project)
+    client = await _client(session, project, user)
     try:
         post = await client.post_as_human(run.thread_id, body.body, kind=body.kind)
     except ForumDisabled as exc:
@@ -460,7 +476,7 @@ async def close_debate(
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     try:
-        await build_client_for(project).close_thread(run.thread_id)
+        await (await _client(session, project, user)).close_thread(run.thread_id)
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except ThreadMissing:
@@ -501,7 +517,7 @@ async def debate_events(
     # request's session, which closes as soon as the response starts streaming.
     # `None` when this project has no lab — the stream still runs, it just has no
     # forum to re-read for peer posts.
-    forum = build_client_for(project) if lab_enabled(project) else None
+    forum = await _client(session, project, user) if lab_enabled(project) else None
 
     async def events() -> AsyncIterator[dict]:
         # post_id -> the payload last sent for it. The payload itself is the

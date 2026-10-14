@@ -207,7 +207,17 @@ def build_debate_aware_collector(
                     job.job_id,
                 )
                 return
-            client = build_client_for(project)
+            # Posted as the campaign's user, whose Settings token is the
+            # forum's fallback when the project has none of its own.
+            owner = await session.get(UserTable, run.user_id)
+            if owner is None:
+                logger.warning(
+                    "job %s: its campaign's user is gone, so its result has no "
+                    "one to post as",
+                    job.job_id,
+                )
+                return
+            client = build_client_for(project, owner)
             # Failures are posted too. `post_result` has always written them
             # correctly — "did not complete", with the log attached — but the
             # monitor only ever called it on success, so a debate that lost a run

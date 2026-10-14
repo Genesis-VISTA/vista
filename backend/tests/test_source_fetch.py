@@ -49,8 +49,15 @@ class FakeApis:
         self.tree = tree or TREE
         self.calls: list[tuple[str, str | None]] = []
 
-    def __call__(self, url: str, host: str, *, limit: int = 10 * 1024 * 1024) -> bytes:
-        self.calls.append((url, source_fetch._token(host)))
+    def __call__(
+        self,
+        url: str,
+        host: str,
+        *,
+        token: str | None = None,
+        limit: int = 10 * 1024 * 1024,
+    ) -> bytes:
+        self.calls.append((url, token))
         gl = "https://gitlab.com/api/v4/projects/amsc2%2Fai-services%2Ftemplates"
         gh = "https://api.github.com/repos/o/melt"
         routes = {
@@ -77,8 +84,6 @@ class FakeApis:
 def apis(monkeypatch):
     fake = FakeApis()
     monkeypatch.setattr(source_fetch, "_request", fake)
-    monkeypatch.setattr(settings, "github_token", None)
-    monkeypatch.setattr(settings, "gitlab_token", None)
     return fake
 
 
@@ -189,10 +194,11 @@ class TestFetchRepository:
         )
         assert (tmp_path / "melt" / "frontier" / "run.sbatch").is_file()
 
-    def test_tokens_are_sent_only_to_their_own_host(self, tmp_path, apis, monkeypatch):
-        monkeypatch.setattr(settings, "gitlab_token", "glpat-secret")
+    def test_the_token_goes_with_every_request_for_its_repository(self, tmp_path, apis):
         source_fetch.fetch_repository(
-            "https://gitlab.com/amsc2/ai-services/templates", tmp_path
+            "https://gitlab.com/amsc2/ai-services/templates",
+            tmp_path,
+            token="glpat-secret",
         )
         source_fetch.fetch_repository("https://github.com/o/melt", tmp_path)
         assert {
@@ -201,6 +207,31 @@ class TestFetchRepository:
         assert {
             tok for url, tok in apis.calls if url.startswith("https://api.github.com/")
         } == {None}
+
+    @pytest.mark.anyio
+    async def test_the_agent_sends_each_host_its_own_token_and_never_the_forums(
+        self, session, alice
+    ):
+        """
+        Which token a fetch gets is `user_repo_token`'s choice, from the user's row:
+        GitHub's to GitHub, gitlab.com's to gitlab.com, and a project's forum token
+        to neither, since no project is ever passed.
+        """
+        from vista_backend.db.schemas import UserTable
+        from vista_backend.services.repo_tokens import user_repo_token
+
+        row = await session.get(UserTable, alice.id)
+        row.github_token, row.gitlab_token = "ghp_users", "glpat-users"
+        session.add(row)
+        await session.flush()
+
+        github = await user_repo_token(session, "https://github.com/o/melt", alice.id)
+        gitlab = await user_repo_token(session, "https://gitlab.com/g/r", alice.id)
+        other = await user_repo_token(session, "https://code.example.org/g/r", alice.id)
+
+        assert github is not None and github.value == "ghp_users"
+        assert gitlab is not None and gitlab.value == "glpat-users"
+        assert other is None
 
     def test_private_repository_is_reported(self, tmp_path, apis):
         apis.private = True

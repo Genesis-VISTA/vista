@@ -104,7 +104,9 @@ async def _project(session, user, name="api-debate", forum_repo_url=FORUM_URL):
 
 async def _run(session, user, project, *, topic="why does the knee move?"):
     """A debate row with a real forum thread behind it."""
-    client = build_client_for(project)
+    from vista_backend.db.schemas import UserTable
+
+    client = build_client_for(project, await session.get(UserTable, user.id))
     thread_id = await client.create_thread(topic, body="Debate it.")
     run = await debate_service.create_debate(
         session,

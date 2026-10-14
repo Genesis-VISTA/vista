@@ -24,17 +24,17 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 3. Callers use the resolver
 
-- [ ] 3.1 Skill import sends `repo_token(url, user)`; a 401/403 says to add a GitHub token in
+- [x] 3.1 Skill import sends `repo_token(url, user)`; a 401/403 says to add a GitHub token in
   Settings. Verify in the skill-import tests with a stubbed API: the header is sent with a
   token, absent without one, and the message names Settings.
-- [ ] 3.2 `fetch_repository` sends `repo_token(url, user)`, opening a session if its tool
+- [x] 3.2 `fetch_repository` sends `repo_token(url, user)`, opening a session if its tool
   context has none (D2). Verify in `backend/tests/test_source_fetch.py`: each token only to its
   own API host; a project's forum token never sent.
-- [ ] 3.3 `forum_config_for(project, user)` and its callers (D4), with the Settings token as
+- [x] 3.3 `forum_config_for(project, user)` and its callers (D4), with the Settings token as
   the forum fallback. Verify in `backend/tests/test_project_forum.py`: the project's token wins,
   the Settings token serves a project without one, neither for a non-matching host; and the
   existing debate/API suites pass with the user threaded through.
-- [ ] 3.4 The project dialog's token field as an override (D6): its label and note (forum
+- [x] 3.4 The project dialog's token field as an override (D6): its label and note (forum
   only, overrides Settings), and the hint for which token applies when it is empty. Verify with
   a UI test of the hint for each case: Settings token for the host, none (system git).
 

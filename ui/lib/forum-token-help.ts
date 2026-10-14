@@ -73,3 +73,31 @@ export function forumTokenHelp(repoUrl: string): ForumTokenHelp | null {
 
   return null;
 }
+
+/** Which tokens the signed-in user has saved in Settings → Repositories. */
+export interface SettingsTokens {
+  has_github_token?: boolean;
+  has_gitlab_token?: boolean;
+}
+
+/**
+ * What a forum without a token of its own falls back to, mirroring the
+ * backend's `repo_token`: the Settings token for the forum's host, else the
+ * system git's credentials. Null when the URL is not `https://`, where no token
+ * is ever sent.
+ */
+export function forumTokenFallback(
+  repoUrl: string,
+  tokens: SettingsTokens | null,
+): "settings-github" | "settings-gitlab" | "system-git" | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(repoUrl.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  if (parsed.hostname === "github.com" && tokens?.has_github_token) return "settings-github";
+  if (parsed.hostname === "gitlab.com" && tokens?.has_gitlab_token) return "settings-gitlab";
+  return "system-git";
+}

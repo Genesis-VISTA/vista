@@ -18,9 +18,12 @@ The rules:
     to the forum repository alone.
 """
 
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 from urllib import parse
+
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import ProjectTable, UserTable
 
@@ -56,3 +59,18 @@ def repo_token(
         return RepoToken(user.gitlab_token, "settings-gitlab")
 
     return None
+
+
+async def user_repo_token(
+    session: AsyncSession, url: str, user_id: uuid.UUID
+) -> RepoToken | None:
+    """
+    `repo_token` for a caller that has the user's id, not their row.
+
+    Reads the row now rather than taking the user an agent was built from: the
+    tokens are not on that model, and a token changed in Settings applies to the
+    next call without evicting anything (design D2). Never with a project — only
+    the forum passes one, and it already holds the project's row.
+    """
+    user = await session.get(UserTable, user_id)
+    return repo_token(url, user) if user is not None else None

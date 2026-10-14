@@ -6,7 +6,8 @@ import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import { AppTopBar } from "@/components/AppTopBar";
 import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
-import { forumTokenHelp } from "@/lib/forum-token-help";
+import { forumTokenFallback, forumTokenHelp, type SettingsTokens } from "@/lib/forum-token-help";
+import { fetchCurrentUserWithConfig } from "@/lib/user";
 import {
   type Project,
   type UserPublic,
@@ -421,6 +422,13 @@ function MembersModal({
   );
 }
 
+/** What an empty token field means, by what the forum will fall back to. */
+const FALLBACK_NOTES = {
+  "settings-github": "Left empty, your GitHub token from Settings will be used.",
+  "settings-gitlab": "Left empty, your gitlab.com token from Settings will be used.",
+  "system-git": "Left empty, your system git’s credentials will be used.",
+} as const;
+
 /** "Don't have a token?": the forge's token form, pre-filled, and what to do there. */
 function ForumTokenHelpDetails({ repoUrl }: { repoUrl: string }) {
   const help = forumTokenHelp(repoUrl);
@@ -481,6 +489,21 @@ function ProjectModal({
   const [forumRepoToken, setForumRepoToken] = useState("");
   const [removeForumToken, setRemoveForumToken] = useState(false);
   const hasForumToken = initial?.hasForumToken ?? false;
+  // Which Settings tokens exist, to say what an empty field falls back to.
+  const [settingsTokens, setSettingsTokens] = useState<SettingsTokens | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchCurrentUserWithConfig()
+      .then((u) => live && setSettingsTokens(u))
+      .catch(() => live && setSettingsTokens(null));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const fallback =
+    hasForumToken && !removeForumToken
+      ? null
+      : forumTokenFallback(forumRepoUrl, settingsTokens);
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -678,7 +701,7 @@ function ProjectModal({
 
           {forumRepoUrl.trim().startsWith("https://") && (
             <label className="project-modal-label">
-              Repository access token{" "}
+              Use a different token for this forum{" "}
               <span style={{ color: "var(--muted)", fontWeight: 400 }}>
                 (optional; a GitHub or GitLab token that can push to it)
               </span>
@@ -690,11 +713,16 @@ function ProjectModal({
                 disabled={removeForumToken}
                 onChange={(e) => setForumRepoToken(e.target.value)}
                 placeholder={
-                  hasForumToken
-                    ? "Saved — type a new one to replace it"
-                    : "Leave blank to use your own git credentials"
+                  hasForumToken ? "Saved — type a new one to replace it" : "Leave blank to use the default"
                 }
               />
+              <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+                Overrides your token in Settings → Repositories for this project&rsquo;s forum
+                only. It is never used for importing skills or fetching repositories.
+                {fallback && !forumRepoToken.trim() && (
+                  <> {FALLBACK_NOTES[fallback]}</>
+                )}
+              </span>
               {hasForumToken && (
                 <span
                   style={{

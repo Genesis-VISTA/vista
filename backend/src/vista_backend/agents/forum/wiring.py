@@ -56,11 +56,16 @@ async def client_for_run(session: AsyncSession, run: DebateRunTable) -> ForumCli
     Every path into the forum goes through a project, because that is where the
     repository is chosen. A debate whose project has since had its lab turned off
     raises `ForumDisabled` here rather than posting into a forum nobody agreed to.
+    It pushes as the user who opened the debate: their Settings token is the
+    fallback when the project has none of its own.
     """
     project = await session.get(ProjectTable, run.project_id)
     if project is None:
         raise ForumDisabled(f"debate {run.id} has no project to find a forum through")
-    return build_client_for(project)
+    opener = await session.get(UserTable, run.user_id)
+    if opener is None:
+        raise ForumDisabled(f"debate {run.id} has no user to publish as")
+    return build_client_for(project, opener)
 
 
 async def _read_skill_body(name: str) -> str:

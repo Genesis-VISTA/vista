@@ -159,12 +159,13 @@ async def import_skill(
     body: SkillImportRequest, session: SessionDep, user: UserDep
 ) -> SkillDetail:
     """
-    Import a skill from a public (or token-accessible) GitHub repository, loaded
-    into `body.project` if given. Imported skills are private; the user can
-    publish later via `PATCH /skills/{name}`.
+    Import a skill from a public GitHub repository, or a private one the user's
+    GitHub token in Settings can read, loaded into `body.project` if given.
+    Imported skills are private; the user can publish later via
+    `PATCH /skills/{name}`.
     """
     project = await _target_project(session, user, body.project)
-    skill = await skills_service.import_skill(session, body.url, project)
+    skill = await skills_service.import_skill(session, body.url, user.id, project)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
 

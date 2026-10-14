@@ -480,7 +480,7 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_client_for", lambda _project: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _user: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
@@ -547,7 +547,7 @@ async def test_a_failed_run_is_posted_to_the_thread_too(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_client_for", lambda _project: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _user: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
