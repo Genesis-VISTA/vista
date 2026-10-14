@@ -85,6 +85,29 @@ test("a response is picked by the action count", async () => {
   }
 });
 
+test("a conversation id the replay hands out is the one later requests carry", async () => {
+  const S1 = "6f1c2b9e-0000-4000-8000-0000000000a1";
+  const rows = [
+    { seq: 1, action: 3, method: "POST", path: "/projects/p/chat-sessions", body: { id: S1, title: "New conversation" } },
+    { seq: 2, action: 3, method: "GET", path: "/projects/p/chat-session", query: `chat_session_id=${S1}`, body: { id: S1, messages: [] } },
+    { seq: 3, action: 3, method: "GET", path: "/projects/p/campaigns", query: `chat_session_id=${S1}`, body: [] },
+  ];
+  const server = await startReplayServer({ plan, responses: responses(rows), port: 0 });
+  try {
+    await fetch(`${server.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 3 }) });
+    // the UI takes the id from the creation response and asks with it
+    const { id } = await (await fetch(`${server.url}/projects/p/chat-sessions`, { method: "POST", body: "{}" })).json();
+    assert.equal(id, S1);
+    for (const p of ["chat-session", "campaigns"]) {
+      const res = await fetch(`${server.url}/projects/p/${p}?chat_session_id=${id}`);
+      assert.equal(res.status, 200, p);
+    }
+    assert.deepEqual(server.state.errors, []);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("queries match regardless of parameter order", () => {
   assert.equal(normQuery("?b=2&a=1"), "a=1&b=2");
   assert.equal(pickResponse([{ action: 3, seq: 1 }], 0).action, 3);

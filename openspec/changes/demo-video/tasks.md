@@ -28,11 +28,11 @@ provider; tasks marked **hpc** also spend cluster allocation.
 
 ## 3. Page coverage
 
-- [ ] 3.1 Id mapping for fresh ids in queries and paths (design D4, "State over time"); verify with `node --test` that a replayed chat session id issued by `POST .../chat-sessions` is matched in later `chat-session?chat_session_id=` requests
-- [ ] 3.2 **live** Capture and replay the Skills pages (Skill Hub and project Skills); verify the replay finishes with no missing-response error and the skill cards match the capture
-- [ ] 3.3 **live** Capture and replay Datasets, including file listings and a figure output opened from it; verify as 3.2
-- [ ] 3.4 **live** Capture and replay Knowledge Bases, including a publication PDF; verify as 3.2 and that the PDF opens in the replay
-- [ ] 3.5 **live** Capture one tour across Projects, Chat (figure-producing run), Skills, Datasets and Knowledge Bases; verify it replays end to end with the stack stopped (the spec's "A tour of the covered pages")
+- [x] 3.1 Id mapping for fresh ids in queries and paths (design D4, "State over time"); verify with `node --test` that a replayed chat session id issued by `POST .../chat-sessions` is matched in later `chat-session?chat_session_id=` requests
+- [x] 3.2 **live** Capture and replay the Skills pages (Skill Hub and project Skills); verify the replay finishes with no missing-response error and the skill cards match the capture
+- [x] 3.3 **live** Capture and replay Datasets, including file listings and a figure output opened from it; verify as 3.2
+- [x] 3.4 **live** Capture and replay Knowledge Bases, including a publication PDF; verify as 3.2 and that the PDF opens in the replay
+- [x] 3.5 **live** Capture one tour across Projects, Chat (figure-producing run), Skills, Datasets and Knowledge Bases; verify it replays end to end with the stack stopped (the spec's "A tour of the covered pages")
 
 ## 4. Framing and export
 

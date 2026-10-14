@@ -150,9 +150,13 @@ it, then fails. Captions, pauses, camera moves and runs don't count, so adding
 or removing them never shifts a response. A request a click triggers can reach
 the capture server before the recorder reports the click, so at the end of a
 capture the counts are recomputed from timestamps: each action carries the
-browser's event time, each response and run its arrival time. Query parameters that carry fresh ids (the
-`chat_session_id` the UI was given) are matched through an id map built from
-the captured responses that created them.
+browser's event time, each response and run its arrival time.
+
+**Ids need no mapping.** Replay hands the UI the ids the capture recorded (a
+new conversation's id comes from the captured creation response), so every
+later request carries an id the capture already holds. The only ids replay
+makes up are run ids, and the UI never puts those in a request. (Found while
+doing task 3.1; the id map first planned here was never needed.)
 
 *Alternative:* match prompts to runs by regular expression, as the spike did.
 Rejected: two similar prompts would play the wrong run.
@@ -265,3 +269,11 @@ has Claude list the scrubbed fields to the researcher.
   missing.
 - [Playwright pin drifts from `ui/`] → `selftest` checks that the pinned
   version matches `ui/package-lock.json` and says which one to change.
+- [A publication PDF opens in a new tab] (`target="_blank"`), which the
+  screencast of the main page doesn't show, and headless Chromium can't
+  render PDFs anyway → the PDF is captured and replayed byte for byte, so
+  the click works hermetically; a video shows the publication's details and
+  the Open PDF click, not the PDF itself. Showing it would mean following
+  the new tab with a PDF-capable browser, which no task needs yet.
+- [Captured files are large] (the tour's 3 MB PDF is ~4 MB of base64 in
+  `responses.jsonl`) → acceptable, since captures live outside the repo.
