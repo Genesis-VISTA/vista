@@ -1,5 +1,7 @@
-// Plays a script in a browser (design D7). Replay modes: `record` (human pace,
-// screencast frames) and `rehearse` (fast, a screenshot per step).
+// Plays a script in a browser (design D7). Modes: `record` (human pace,
+// screencast frames) and `rehearse` (fast, a screenshot per step) against the
+// replay server; `live` (fast, a screenshot per step) against the capture
+// server, driving a real session from a storyboard.
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,9 +15,11 @@ const ICON = pathToFileURL(path.join(REPO_ROOT, "electron", "assets", "icon.svg"
 const FIND_MS = 6_000;
 
 export class StepError extends Error {}
+/** A storyboard reached a `spends:` step without --allow-spend. */
+export class SpendStop extends Error {}
 
-/** A step's locator spec, as Playwright locator. See SKILL.md for the fields. */
-export function toLocator(page, spec, base = page) {
+/** A step's locator spec, as Playwright locator. See SCRIPT.md for the fields. */
+export function toLocator(page, spec, base = page, { pick = true } = {}) {
   if (typeof spec === "string") spec = { text: spec };
   const scope = spec.within ? toLocator(page, spec.within, base) : base;
   const pattern = (s) => {
@@ -32,13 +36,18 @@ export function toLocator(page, spec, base = page) {
   else if (spec.text) loc = scope.getByText(pattern(spec.text), { exact: typeof pattern(spec.text) === "string" });
   else throw new Error(`A locator needs role, placeholder, label, css or text: ${JSON.stringify(spec)}`);
   if (spec.css && spec.text) loc = loc.filter({ hasText: pattern(spec.text) });
-  return loc.nth(spec.nth ?? 0);
+  if (spec.has) loc = loc.filter({ has: toLocator(page, spec.has, page, { pick: false }) });
+  return pick ? loc.nth(spec.nth ?? 0) : loc;
 }
 
 const describe = (spec) => JSON.stringify(spec);
 
-export async function play({ plan, uiUrl, serverUrl, mode = "record", out, frames: startFrames, log = console.log }) {
-  const fast = mode === "rehearse";
+export async function play({
+  plan, uiUrl, serverUrl, mode = "record", out, frames: startFrames, allowSpend = false, log = console.log,
+}) {
+  const live = mode === "live";
+  const fast = mode === "rehearse" || live;
+  const runLimitMs = live ? 15 * 60_000 : 120_000;
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: fast ? 1 : 4 / 3 });
   await context.addInitScript(OVERLAY);
@@ -157,7 +166,7 @@ export async function play({ plan, uiUrl, serverUrl, mode = "record", out, frame
       await sleep(0.25);
     },
     async run(step) {
-      const until = Date.now() + 15_000;
+      const until = Date.now() + (live ? 60_000 : 15_000);
       while ((await checkServer(step)).runsStarted <= step.run) {
         if (Date.now() > until) {
           throw new StepError(`Step ${step.n} (run): the UI never started agent run ${step.run + 1}; did a Send click come before it?`);
@@ -185,11 +194,11 @@ export async function play({ plan, uiUrl, serverUrl, mode = "record", out, frame
     async wait(step) {
       if (typeof step.value === "number") return sleep(step.value);
       if (step.value !== "run") throw new StepError(`Step ${step.n} (wait): expected \`run\` or seconds`);
-      const until = Date.now() + 120_000;
+      const until = Date.now() + runLimitMs;
       for (;;) {
         const s = await checkServer(step);
         if (s.runsFinished >= s.runsStarted) break;
-        if (Date.now() > until) throw new StepError(`Step ${step.n} (wait): the run did not finish in 2 minutes`);
+        if (Date.now() > until) throw new StepError(`Step ${step.n} (wait): the run did not finish in ${runLimitMs / 60_000} minutes`);
         await page.waitForTimeout(150);
       }
       // the composer's "Agent working…" goes when the page has drawn the end
@@ -206,8 +215,18 @@ export async function play({ plan, uiUrl, serverUrl, mode = "record", out, frame
       await moveTo(loc, 1000);
       await sleep(0.6);
     },
-    async spends() {
-      // Only capture stops here (design D7); a replay spends nothing.
+    async spends(step) {
+      // Only a live capture stops here (design D7); a replay spends nothing.
+      if (live && !allowSpend) {
+        throw new SpendStop(
+          `Step ${step.n} (spends: ${step.value}): the next run spends real allocation. ` +
+            "Ask the researcher; if they agree, capture again with --again --allow-spend.",
+        );
+      }
+    },
+    async press(step) {
+      await page.keyboard.press(String(step.value));
+      await sleep(0.3);
     },
     async readme(step) {
       frames?.mark(`readme-${step.value}`);
@@ -218,7 +237,7 @@ export async function play({ plan, uiUrl, serverUrl, mode = "record", out, frame
     await page.goto("about:blank");
     if (startFrames) frames = await startFrames(page);
     for (const step of plan.steps) {
-      await fetch(serverUrl + "/__demo/step", { method: "POST", body: JSON.stringify({ step: step.n }) });
+      if (step.action) await fetch(serverUrl + "/__demo/action", { method: "POST", body: JSON.stringify({ action: step.action }) });
       const brief = step.kind === "run" ? `run ${step.run + 1}` : JSON.stringify(step.value ?? null);
       log(`  ${String(step.n).padStart(3)} ${step.kind.padEnd(8)} ${brief.length > 90 ? brief.slice(0, 87) + "…" : brief}`);
       frames?.mark(`step ${step.n} ${step.kind}`);

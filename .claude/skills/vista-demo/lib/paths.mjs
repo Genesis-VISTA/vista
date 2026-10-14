@@ -20,6 +20,14 @@ const inside = (child, parent) => {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 };
 
+/** The folder a capture writes into: created if missing, never inside the repo. */
+export function captureDirOf(name) {
+  if (!name || name === "selftest") throw new Error("Name the video to capture (not `selftest`).");
+  const src = path.isAbsolute(name) ? name : path.join(DEMO_HOME, name);
+  if (inside(src, REPO_ROOT)) throw new Error(`Refusing to capture into ${src}: captures never go inside the repository.`);
+  return src;
+}
+
 /**
  * A video's folders. `src` holds script.yaml, capture/ and assets/; `out` gets
  * everything a run writes. The self-test reads its source from the skill but

@@ -141,11 +141,16 @@ pacing would be stuck at whatever the live model did.
   from it. Any other request is answered from `responses.jsonl`.
 
 **State over time.** The same request can get different answers as a session
-goes on (the chat-session list is empty, then holds one). The player tells the
-server which step it is on (`POST /__demo/step`), and every captured response
-is tagged with the step it arrived during. Replay answers with the latest
-capture of that method + path + query at or before the current step, then any
-capture of it, then fails (D8). Query parameters that carry fresh ids (the
+goes on (the chat-session list is empty, then holds one). Every captured
+response is tagged with the **action count**: how many UI actions (goto,
+click, type, press) came before it. The player reports the count before each
+action (`POST /__demo/action`), and replay answers with the latest capture of
+that method + path + query at or before the current count, then any capture of
+it, then fails. Captions, pauses, camera moves and runs don't count, so adding
+or removing them never shifts a response. A request a click triggers can reach
+the capture server before the recorder reports the click, so at the end of a
+capture the counts are recomputed from timestamps: each action carries the
+browser's event time, each response and run its arrival time. Query parameters that carry fresh ids (the
 `chat_session_id` the UI was given) are matched through an id map built from
 the captured responses that created them.
 
@@ -204,9 +209,12 @@ drives itself from a storyboard (`capture --storyboard`).
   it doesn't resolve within a few seconds, the run fails, naming the step
   number and locator.
 - **Spending guard.** In `capture --storyboard`, the player stops at a
-  `spends:` step and exits with a message unless `--allow-spend` is given.
-  The skill tells Claude to ask the researcher, then re-run with the flag.
-  Steps already captured are kept, so the re-run continues from there.
+  `spends:` step and exits (code 3) with a message unless `--allow-spend` is
+  given. The skill tells Claude to ask the researcher, then capture again with
+  `--again --allow-spend`. The re-run starts over rather than resuming:
+  resuming would mean rebuilding the live page's state mid-session, and
+  starting over repeats only the model turns before the stop, never an HPC
+  step.
 
 ### D8. Frames and assembly
 

@@ -17,14 +17,14 @@ provider; tasks marked **hpc** also spend cluster allocation.
 
 ## 2. Capture
 
-- [ ] 2.1 Implement `lib/scrub.mjs` (design D9) and its final scan; verify with `node --test` on fixtures containing an S3M-style JWT, an API key field and a cookie header that all are replaced and the scan fails on a planted one
-- [ ] 2.2 Implement capture mode in `lib/server.mjs`: forward to the backend and MCP URLs, pass streams through while recording events with arrival times, tag each response with the current step, scrub before writing; verify with `node --test` against a stub upstream that a streamed run is recorded event by event and forwarded unchanged
-- [ ] 2.3 Implement `lib/actions.mjs` (design D6) with the locator preference order and the uniqueness check; verify with `node --test` + Playwright on a fixture page that clicks on a card's button are recorded within the card and typing merges into one step
-- [ ] 2.4 Implement capture → `script.original.yaml` conversion in `lib/script.mjs` (runs to tool and answer steps, images to `assets/`, `log` and thinking dropped) and copy it to `script.yaml`; verify with `node --test` on a recorded run fixture that replaying the converted script yields the same tool calls, results and answer text
-- [ ] 2.5 **live** `vista-demo capture --by-hand <video>`: headed browser on the private UI with D6 injected; verify by capturing "what is the most studied salt in the database?" by hand and replaying it hermetically with the stack stopped
-- [ ] 2.6 **live** `vista-demo capture --storyboard <file>` with the `spends:` guard and resume (design D7); verify a storyboard with a `spends: hpc` step stops before it without `--allow-spend` and continues from there with it
+- [x] 2.1 Implement `lib/scrub.mjs` (design D9) and its final scan; verify with `node --test` on fixtures containing an S3M-style JWT, an API key field and a cookie header that all are replaced and the scan fails on a planted one
+- [x] 2.2 Implement capture mode in `lib/server.mjs`: forward to the backend and MCP URLs, pass streams through while recording events with arrival times, tag each response with the current step, scrub before writing; verify with `node --test` against a stub upstream that a streamed run is recorded event by event and forwarded unchanged
+- [x] 2.3 Implement `lib/actions.mjs` (design D6) with the locator preference order and the uniqueness check; verify with `node --test` + Playwright on a fixture page that clicks on a card's button are recorded within the card and typing merges into one step
+- [x] 2.4 Implement capture → `script.original.yaml` conversion in `lib/script.mjs` (runs to tool and answer steps, images to `assets/`, `log` and thinking dropped) and copy it to `script.yaml`; verify with `node --test` on a recorded run fixture that replaying the converted script yields the same tool calls, results and answer text
+- [x] 2.5 **live** `vista-demo capture --by-hand <video>`: headed browser on the private UI with D6 injected; verify by capturing "what is the most studied salt in the database?" by hand and replaying it hermetically with the stack stopped
+- [x] 2.6 **live** `vista-demo capture --storyboard <file>` with the `spends:` guard (design D7); verify a storyboard with a `spends: hpc` step stops before it without `--allow-spend`, and captures the whole storyboard when run again with `--again --allow-spend`
 - [ ] 2.7 **live** **hpc** Capture the Frontier submit → track → download flow from a storyboard with `--allow-spend`; verify the replayed video shows the real job id and the downloaded chart
-- [ ] 2.8 Extend `SKILL.md` with both capture paths, the scrubbed-field report, the scratch-project advice and the factual-edit summary before `record`; verify by following it in a fresh session for 2.5's flow
+- [x] 2.8 Extend `SKILL.md` with both capture paths, the scrubbed-field report, the scratch-project advice and the factual-edit summary before `record`; verify by following it in a fresh session for 2.5's flow
 
 ## 3. Page coverage
 

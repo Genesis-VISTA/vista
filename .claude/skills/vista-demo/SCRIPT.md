@@ -17,6 +17,28 @@ steps:
 is shown running, `think_s` the pause before the agent's first event. Timing is
 never stored per event; change `pace` (or a tool's `duration_s`) instead.
 
+## A scene
+
+Most scenes take this shape; the comments say why each step sits where it does.
+
+```yaml
+  - chapter: Molten salt properties        # once per use case, before its first scene
+  - caption: [1, "Ask the database", "MSTDB-TP, counted in the sandbox"]
+  - type: { placeholder: "Ask a question", text: "what is the most studied salt?" }
+  - click: { role: button, name: "/^(Start chat|Send)$/" }
+  - run: [ ... ]                           # returns as soon as the run has started…
+  - camera: { zoom: latest, scale: 1.3 }   # …so the zoom happens while it streams
+  - wait: run                              # until the answer is fully drawn
+  - pause: 2.0                             # time to read it
+  - camera: off
+  - caption: off                           # or the next scene's caption replaces it
+```
+
+Quote caption and other YAML strings that contain a comma or colon:
+`[1, Ask VISTA a question, in plain language]` is four items, not three.
+`camera` scales between 1.2 and 1.4 keep a chat exchange whole; larger ones
+crop its edges (the rehearsal's contact sheet shows the crop).
+
 ## Steps
 
 Each step has exactly one of these keys.
@@ -29,12 +51,13 @@ Each step has exactly one of these keys.
 | `caption` | `[num, text, sub]`, `[text]`, or `off` | Shows or hides the caption box. It takes the top slot, or the bottom when the top would cover the focused field or the camera's target. |
 | `click` | locator | Moves the cursor there and clicks. |
 | `type` | locator + `text` | Clicks the field and types the text. Fails if the caption covers the field. |
-| `run` | list of run steps | The agent's next turn (see below). The step waits until the UI has started it, so it comes after the click that sends the prompt. |
+| `press` | a key, e.g. `Enter` | Presses it (Enter in the composer sends). |
+| `run` | list of run steps, or `live` | The agent's next turn (see below). The step waits until the UI has started it, so it comes after the click that sends the prompt. `live` (storyboards only): the live agent answers, and capture records it. |
 | `camera` | `{ zoom: latest \| <locator>, scale }` or `off` | Eases the view in on the newest exchange (`latest`) or an element, or back out. |
 | `wait` | `run` or seconds | `run`: until every started run has finished and the page has drawn it. |
 | `pause` | seconds | Holds the frame. |
 | `point` | locator | Moves the cursor onto an element without clicking. |
-| `spends` | `hpc` | Marks that the next run spends allocation; replay ignores it, capture stops there. |
+| `spends` | `hpc` | Marks that what follows spends allocation. A storyboard capture stops here unless `--allow-spend`; replay ignores it. |
 | `readme` | `start` or `end` | Marks the README clip's bounds. |
 
 ## Locators
@@ -46,7 +69,9 @@ A locator names an element by what a person sees, resolved when its step runs:
 - `{ placeholder: "Ask a question" }`, `{ label: "Model" }`, `{ text: Frontier }`:
   the placeholder, the label, or the visible text.
 - `{ css: .project-card, text: molten-salt }`: elements matching the selector
-  that contain the text.
+  that contain the text; `{ css: .project-card, has: { text: molten-salt } }`:
+  those holding an element whose text is exactly that (use it when another
+  card's description mentions the same words).
 - `within: <locator>` scopes any of these to an ancestor; `nth: 1` picks the
   second match (default the first).
 
@@ -68,6 +93,10 @@ A `run` is one agent turn, as tool calls and answers in order:
       - tool: display_file
         args: { path: plot.png }
         result: !asset plot.png    # a file in assets/: images show in Artifacts
+      - tool: run_bash
+        args: { command: "python plot.py --bad" }
+        failed: true               # shown as a failed call (a retry prompt)
+        result: "exit 2: unknown flag"
       - answer: Working on it…
         interim: true              # shown as a step, collapsed after
       - answer: |
@@ -82,18 +111,20 @@ file: to show a different plot, make the image (matplotlib through
 
 ## capture/responses.jsonl
 
-One JSON object per line, answering the UI's other requests to the backend:
+One JSON object per line, answering the UI's other requests to the backend.
+Capture writes it; a hand-written script needs one too.
 
 ```json
-{"seq": 1, "step": 0, "method": "GET", "path": "/projects", "query": "", "status": 200, "type": "application/json", "body": []}
+{"seq": 1, "action": 0, "method": "GET", "path": "/projects", "query": "", "status": 200, "type": "application/json", "body": []}
 ```
 
-Replay answers a request with the entry of the same method, path and query
-(parameters in any order) whose `step` is the latest at or before the step
-being played, else the earliest. Steps count from 1 in script order, as
-`rehearse` prints them; `step: 0` means "from the start". So a list that
-changes during the video gets two entries, e.g. the chat-session list empty at
-step 0 and holding the new conversation from the step that sends the first
-prompt. Adding or removing steps before that one shifts its number: update the
-`step` of the entries tied to it. A request with no entry fails the rehearsal,
-naming it.
+`action` is how many UI actions (`goto`, `click`, `type`, `press`, counted in
+script order from 1) came before the answer; other steps don't count. Replay
+answers a request with the entry of the same method, path and query
+(parameters in any order) whose `action` is the latest at or before the current
+count, else the earliest. So a list that changes during the video gets two
+entries, e.g. the chat-session list at `action: 0` (empty) and at the action
+that sends the first prompt (holding the new conversation). Adding or removing
+captions, pauses or camera steps never shifts these; adding or removing an
+action before an entry does. A binary answer (a PDF, an image) has
+`"encoding": "base64"`. A request with no entry fails the rehearsal, naming it.

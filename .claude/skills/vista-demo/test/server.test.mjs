@@ -69,16 +69,16 @@ test("one run too many is an error, not a hang", async () => {
   }
 });
 
-test("a response is picked by the player's step", async () => {
+test("a response is picked by the action count", async () => {
   const rows = [
-    { seq: 1, step: 0, method: "GET", path: "/projects/p/chat-sessions", body: [] },
-    { seq: 2, step: 7, method: "GET", path: "/projects/p/chat-sessions", body: [{ id: "s1" }] },
+    { seq: 1, action: 0, method: "GET", path: "/projects/p/chat-sessions", body: [] },
+    { seq: 2, action: 4, method: "GET", path: "/projects/p/chat-sessions", body: [{ id: "s1" }] },
   ];
   const server = await startReplayServer({ plan, responses: responses(rows), port: 0 });
   try {
     const list = async () => (await fetch(`${server.url}/projects/p/chat-sessions`)).json();
     assert.deepEqual(await list(), []);
-    await fetch(`${server.url}/__demo/step`, { method: "POST", body: JSON.stringify({ step: 9 }) });
+    await fetch(`${server.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 5 }) });
     assert.deepEqual(await list(), [{ id: "s1" }]);
   } finally {
     await server.stop();
@@ -87,5 +87,5 @@ test("a response is picked by the player's step", async () => {
 
 test("queries match regardless of parameter order", () => {
   assert.equal(normQuery("?b=2&a=1"), "a=1&b=2");
-  assert.equal(pickResponse([{ step: 3, seq: 1 }], 0).step, 3);
+  assert.equal(pickResponse([{ action: 3, seq: 1 }], 0).action, 3);
 });

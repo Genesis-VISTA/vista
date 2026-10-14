@@ -15,15 +15,20 @@ export const DEFAULT_PACE = {
 };
 
 // `!asset name.png` in a script points at a file in the video's assets/.
-const assetTag = {
+export const assetTag = {
   tag: "!asset",
+  identify: (v) => Boolean(v && typeof v === "object" && "__asset" in v),
   resolve: (value) => ({ __asset: String(value) }),
+  stringify: (item) => String(item.value.__asset),
 };
 
-const STEP_KINDS = new Set([
-  "card", "chapter", "goto", "caption", "click", "type", "run", "camera",
+export const STEP_KINDS = new Set([
+  "card", "chapter", "goto", "caption", "click", "type", "press", "run", "camera",
   "wait", "pause", "point", "spends", "readme",
 ]);
+
+/** Steps that count as UI actions; see lib/server.mjs. */
+export const ACTION_KINDS = new Set(["goto", "click", "type", "press"]);
 
 const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".svg": "image/svg+xml", ".gif": "image/gif" };
 
@@ -71,9 +76,10 @@ export function runEvents(runSteps, pace = DEFAULT_PACE, { newId = () => crypto.
       const callPart = { part_kind: "tool-call", tool_name: step.tool, args: step.args ?? {}, tool_call_id: id };
       push("function_tool_call", { part: callPart }, lead());
       const ms = Math.max(pace.tool_min_s, step.duration_s ?? 0) * 1000;
+      const kind = step.failed ? "retry-prompt" : "tool-return";
       push(
         "function_tool_result",
-        { part: { part_kind: "tool-return", tool_name: step.tool, content: step.result ?? "", tool_call_id: id } },
+        { part: { part_kind: kind, tool_name: step.tool, content: step.result ?? "", tool_call_id: id } },
         Math.round(ms),
       );
     } else if ("answer" in step) {
@@ -100,6 +106,7 @@ export function parseScript(text, { assetsDir, file = "script.yaml" } = {}) {
   if (!Array.isArray(doc.steps)) throw new Error(`${file}: needs a \`steps:\` list.`);
   const pace = { ...DEFAULT_PACE, ...(doc.pace ?? {}) };
   const runs = [];
+  let actions = 0;
   const steps = doc.steps.map((raw, n) => {
     const kinds = Object.keys(raw ?? {}).filter((k) => STEP_KINDS.has(k));
     if (kinds.length !== 1) {
@@ -107,11 +114,16 @@ export function parseScript(text, { assetsDir, file = "script.yaml" } = {}) {
     }
     const kind = kinds[0];
     const step = { n: n + 1, kind, value: raw[kind] };
+    if (ACTION_KINDS.has(kind)) step.action = ++actions;
     if (kind === "run") {
-      if (!Array.isArray(step.value)) throw new Error(`${file}: step ${n + 1}: \`run\` is a list of tool and answer steps.`);
-      const runSteps = resolveAssets(step.value, assetsDir);
+      // `run: live` (storyboards only): the live agent supplies the turn.
+      const live = step.value === "live";
+      if (!live && !Array.isArray(step.value)) {
+        throw new Error(`${file}: step ${n + 1}: \`run\` is a list of tool and answer steps, or \`live\` in a storyboard.`);
+      }
       step.run = runs.length;
-      runs.push({ step: n + 1, steps: runSteps });
+      step.live = live;
+      runs.push({ step: n + 1, live, steps: live ? [] : resolveAssets(step.value, assetsDir) });
     }
     return step;
   });
