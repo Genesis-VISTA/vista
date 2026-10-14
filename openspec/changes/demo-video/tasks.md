@@ -23,7 +23,7 @@ provider; tasks marked **hpc** also spend cluster allocation.
 - [x] 2.4 Implement capture → `script.original.yaml` conversion in `lib/script.mjs` (runs to tool and answer steps, images to `assets/`, `log` and thinking dropped) and copy it to `script.yaml`; verify with `node --test` on a recorded run fixture that replaying the converted script yields the same tool calls, results and answer text
 - [x] 2.5 **live** `vista-demo capture --by-hand <video>`: headed browser on the private UI with D6 injected; verify by capturing "what is the most studied salt in the database?" by hand and replaying it hermetically with the stack stopped
 - [x] 2.6 **live** `vista-demo capture --storyboard <file>` with the `spends:` guard (design D7); verify a storyboard with a `spends: hpc` step stops before it without `--allow-spend`, and captures the whole storyboard when run again with `--again --allow-spend`
-- [ ] 2.7 **live** **hpc** Capture the Frontier submit → track → download flow from a storyboard with `--allow-spend`; verify the replayed video shows the real job id and the downloaded chart
+- [x] 2.7 **live** **hpc** Capture an HPC submit → track → download flow; verify the replayed video shows the real job id and the downloaded chart. Done on Odo by hand instead of Frontier from a storyboard (the `my-first` capture, 2026-10-14: job 44713 and its chart); Sam judged a Frontier run unnecessary.
 - [x] 2.8 Extend `SKILL.md` with both capture paths, the scrubbed-field report, the scratch-project advice and the factual-edit summary before `record`; verify by following it in a fresh session for 2.5's flow
 
 ## 3. Page coverage
@@ -36,7 +36,7 @@ provider; tasks marked **hpc** also spend cluster allocation.
 
 ## 4. Framing and export
 
-- [ ] 4.1 `templates/card.html` with the intro card stating the positioning line verbatim, chapter cards for use cases, VISTA name and icon only (`electron/assets/icon.svg`); verify by rendering both and checking the text against the spec's "Framing public videos"
+- [ ] 4.1 `templates/card.html` with the intro card ("VISTA" over "Visual Intelligence for Scientific & Tooling Assistant"), chapter cards for use cases, VISTA name and icon only (`electron/assets/icon.svg`); verify by rendering both and checking the text against the spec's "Framing public videos"
 - [ ] 4.2 `templates/frame.html` and the framed MP4 in `lib/assemble.mjs` (design D8): neutral rounded frame titled "VISTA", gradient backdrop, cards full-bleed; verify by checking still frames from `video.mp4`
 - [ ] 4.3 README clip from `readme:` markers (default first scene), ≤15 s, 960 px, as WebM (VP9) and GIF; verify sizes and durations with `ffprobe` and that the GIF plays in a GitHub markdown preview
 - [ ] 4.4 `vista-demo selftest`: replays `selftest/`, checks the Playwright pin against `ui/`, and leaves `git status` clean; verify it passes on a clean checkout and fails with the right message after bumping the pin

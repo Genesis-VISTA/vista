@@ -135,11 +135,13 @@ export function runToSteps(events, { assetsDir, run = 1 } = {}) {
   return steps.filter((s) => !("answer" in s) || s.answer.trim());
 }
 
+// Each action step keeps its number from the capture (`action:`), so cutting or
+// adding steps in script.yaml never changes which captured answers replay uses.
 function actionStep(a) {
-  if (a.kind === "goto") return { goto: a.path };
-  if (a.kind === "click") return { click: a.spec };
-  if (a.kind === "type") return { type: { ...a.spec, text: a.text } };
-  if (a.kind === "press") return { press: a.key };
+  if (a.kind === "goto") return { goto: a.path, action: a.action };
+  if (a.kind === "click") return { click: a.spec, action: a.action };
+  if (a.kind === "type") return { type: { ...a.spec, text: a.text }, action: a.action };
+  if (a.kind === "press") return { press: a.key, action: a.action };
   throw new Error(`Unknown captured action ${JSON.stringify(a)}`);
 }
 

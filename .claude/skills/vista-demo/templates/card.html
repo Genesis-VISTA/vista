@@ -5,8 +5,8 @@
 <title>Card</title>
 <!--
   Title and chapter cards. Query parameters: kind (intro | chapter | outro | custom),
-  kicker, title, sub, icon (a file: URL to VISTA's icon). The intro's line is
-  VISTA's public positioning, verbatim; cards carry no other branding.
+  kicker, title, sub, icon (a file: URL to VISTA's icon). The intro is "VISTA"
+  over what the name stands for; cards carry no other branding.
 -->
 <style>
   :root { --ink: #e9f1fb; --muted: #b9cde3; --accent: #4fb3ff; --warm: #ff8a3d; --deep: #061626; }
@@ -55,14 +55,11 @@
   <div class="sub" id="s"></div>
 </div>
 <script>
-  const POSITIONING =
-    "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for " +
-    "modeling and simulation (ModSim) that carries scientists from a research question to running " +
-    "campaigns on OLCF and AmSC resources.";
+  const EXPANSION = "Visual Intelligence for Scientific & Tooling Assistant";
   const q = new URLSearchParams(location.search);
   const kind = q.get("kind") || "custom";
   const preset = {
-    intro: { title: "VISTA", sub: POSITIONING },
+    intro: { title: "VISTA", sub: EXPANSION },
     outro: { title: "VISTA" },
     chapter: { kicker: "Use case" },
   }[kind] || {};

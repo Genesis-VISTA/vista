@@ -45,7 +45,7 @@ Each step has exactly one of these keys.
 
 | Step | Value | What happens |
 |---|---|---|
-| `card` | `intro`, `outro`, or `{ kicker, title, sub }` | Full-screen title card. `intro` states the positioning line. |
+| `card` | `intro`, `outro`, or `{ kicker, title, sub }` | Full-screen title card. `intro` is "VISTA" over what it stands for. |
 | `chapter` | text | "Use case" card titled with the text. |
 | `goto` | a UI path, e.g. `/projects` | Opens that page. |
 | `caption` | `[num, text, sub]`, `[text]`, or `off` | Shows or hides the caption box. It takes the top slot, or the bottom when the top would cover the focused field or the camera's target. |
@@ -118,13 +118,16 @@ Capture writes it; a hand-written script needs one too.
 {"seq": 1, "action": 0, "method": "GET", "path": "/projects", "query": "", "status": 200, "type": "application/json", "body": []}
 ```
 
-`action` is how many UI actions (`goto`, `click`, `type`, `press`, counted in
-script order from 1) came before the answer; other steps don't count. Replay
+`action` is how many UI actions (`goto`, `click`, `type`, `press`) came before
+the answer; other steps don't count. A script made from a capture tags each
+action step with its number from the capture (`action: 6` beside the `click:`),
+so cutting steps never changes which answers replay picks, and an action you
+add by hand (untagged) keeps the count where it is. In a hand-written script,
+untagged actions are counted in order from 1. Replay
 answers a request with the entry of the same method, path and query
 (parameters in any order) whose `action` is the latest at or before the current
 count, else the earliest. So a list that changes during the video gets two
 entries, e.g. the chat-session list at `action: 0` (empty) and at the action
-that sends the first prompt (holding the new conversation). Adding or removing
-captions, pauses or camera steps never shifts these; adding or removing an
-action before an entry does. A binary answer (a PDF, an image) has
+that sends the first prompt (holding the new conversation). In a hand-written
+script, adding or removing an action before an entry shifts it. A binary answer (a PDF, an image) has
 `"encoding": "base64"`. A request with no entry fails the rehearsal, naming it.

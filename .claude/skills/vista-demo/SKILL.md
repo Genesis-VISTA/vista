@@ -90,12 +90,13 @@ placeholder: say so in a comment at its top and in the hand-over.
 
 ## Framing rules
 
-- `card: intro` opens every video. It states VISTA's public positioning
-  verbatim and is the only description of VISTA a video gives.
+- `card: intro` opens every video: "VISTA" as the headline and what it stands
+  for ("Visual Intelligence for Scientific & Tooling Assistant") beneath. Keep
+  it to that; the video itself shows what VISTA does.
 - Each project shown is a use case: introduce it with `chapter: <use case>`
   (a "Use case" card with the use case as its title), never as what VISTA is.
-- The default arc ends on an HPC step, since the positioning promises campaigns
-  on OLCF and AmSC resources.
+- The default arc ends on an HPC step: VISTA carries scientists from a research
+  question to running campaigns on OLCF and AmSC resources.
 - Cards carry the VISTA name and icon only: no lab, programme or facility
   logos or names.
 

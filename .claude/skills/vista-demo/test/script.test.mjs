@@ -48,6 +48,22 @@ test("only the last non-interim answer is final", () => {
   assert.ok(order.indexOf("final_result") > order.indexOf("function_tool_result"));
 });
 
+test("action counts follow capture tags, and hand-added actions don't shift them", () => {
+  const tagged = parseScript(`
+steps:
+  - goto: /projects
+    action: 1
+  - click: { role: button, name: Open }
+    action: 5
+  - click: { role: button, name: "Odo: Ready" }
+  - type: { placeholder: Ask, text: hi }
+    action: 6
+`);
+  assert.deepEqual(tagged.steps.map((s) => s.action), [1, 5, 5, 6]);
+  const plain = parseScript("steps:\n  - goto: /a\n  - caption: [x]\n  - click: B\n");
+  assert.deepEqual(plain.steps.map((s) => s.action), [1, undefined, 2]);
+});
+
 test("a step with no known kind is refused, naming its number", () => {
   assert.throws(() => parseScript("steps:\n  - goto: /x\n  - jump: 3\n"), /step 2 needs exactly one of/);
 });

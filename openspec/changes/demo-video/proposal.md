@@ -37,8 +37,8 @@ answers and made-up figures. What's wanted is a toolkit Claude can use to make
 - **Assemble.** Frames become a 1920×1080 H.264 MP4 framed in a neutral window
   mock-up on a gradient backdrop, plus a short README clip (GIF and WebM).
   Videos are silent with on-screen captions.
-- **Framing.** Title cards use VISTA's public positioning line verbatim and the
-  VISTA name and icon only, with no lab or programme branding. Each project
+- **Framing.** The opening card is "VISTA" over what the name stands for, and
+  cards carry the VISTA name and icon only, with no lab or programme branding. Each project
   shown is a named use case, and the default arc ends on an HPC run.
 - Covered pages: Projects, Chat, Skills, Datasets and Knowledge Bases.
 - Captures, scripts and videos live outside the repository, under

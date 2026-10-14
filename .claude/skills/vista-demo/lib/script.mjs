@@ -106,6 +106,10 @@ export function parseScript(text, { assetsDir, file = "script.yaml" } = {}) {
   if (!Array.isArray(doc.steps)) throw new Error(`${file}: needs a \`steps:\` list.`);
   const pace = { ...DEFAULT_PACE, ...(doc.pace ?? {}) };
   const runs = [];
+  // Action counts: a step's own `action:` (scripts from a capture carry them),
+  // else the next number in order. In a tagged script, an untagged action
+  // (one added by hand) keeps the count where it is.
+  const tagged = doc.steps.some((s) => Number.isInteger(s?.action));
   let actions = 0;
   const steps = doc.steps.map((raw, n) => {
     const kinds = Object.keys(raw ?? {}).filter((k) => STEP_KINDS.has(k));
@@ -114,7 +118,11 @@ export function parseScript(text, { assetsDir, file = "script.yaml" } = {}) {
     }
     const kind = kinds[0];
     const step = { n: n + 1, kind, value: raw[kind] };
-    if (ACTION_KINDS.has(kind)) step.action = ++actions;
+    if (ACTION_KINDS.has(kind)) {
+      if (Number.isInteger(raw.action)) actions = raw.action;
+      else if (!tagged) actions += 1;
+      step.action = actions;
+    }
     if (kind === "run") {
       // `run: live` (storyboards only): the live agent supplies the turn.
       const live = step.value === "live";

@@ -99,7 +99,7 @@ YAML because both people and Claude edit it, and it diffs well. A sketch:
 video: molten-salt-tour
 pace: { typing: 1.0, stream_wps: 40, tool_min_s: 1.2 }
 steps:
-  - card: intro                         # positioning line, verbatim
+  - card: intro                         # "VISTA" and what it stands for
   - goto: /projects
   - chapter: "Use case: molten salt properties"
   - caption: [1, "Query the evaluated database", "MSTDB-TP, counted in the sandbox"]

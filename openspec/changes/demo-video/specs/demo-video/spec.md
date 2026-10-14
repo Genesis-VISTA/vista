@@ -138,17 +138,15 @@ fields in responses. A capture SHALL never hold such a value in clear.
 
 ### Requirement: Framing public videos
 
-The opening card SHALL state VISTA's public positioning verbatim: "Visual
-Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform
-for modeling and simulation (ModSim) that carries scientists from a research
-question to running campaigns on OLCF and AmSC resources." Cards SHALL use the
-VISTA name and icon only, with no lab, programme or facility logos or names
-beyond that line. A project shown in a video SHALL be introduced as a named use
-case, never as what VISTA is.
+The opening card SHALL show "VISTA" as its headline and, beneath it, what the
+name stands for: "Visual Intelligence for Scientific & Tooling Assistant".
+Cards SHALL use the VISTA name and icon only, with no lab, programme or
+facility logos or names. A project shown in a video SHALL be introduced as a
+named use case, never as what VISTA is.
 
 #### Scenario: A single-project video
 - **WHEN** a video shows only the `molten-salt` project
-- **THEN** its opening card states the positioning line, and the project appears as a use case such as "Use case: molten salt properties"
+- **THEN** its opening card reads "VISTA" over "Visual Intelligence for Scientific & Tooling Assistant", and the project appears as a use case such as "Use case: molten salt properties"
 
 ### Requirement: Pages a replay covers
 
