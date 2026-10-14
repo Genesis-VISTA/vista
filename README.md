@@ -1,5 +1,7 @@
 # VISTA
 
+![VISTA plotting a BeF2-NaF-UF4 liquidus phase diagram from the MSTDB-TP database](docs/figures/readme-demo.gif)
+
 **Visual Intelligence for Scientific & Tooling Assistant.** VISTA is an agentic scientific assistant. It is a desktop
 application in which an AI agent searches the literature, runs analysis code in a sandbox, and
 submits simulations to configured HPC clusters (currently supports OLCF and NERSC).

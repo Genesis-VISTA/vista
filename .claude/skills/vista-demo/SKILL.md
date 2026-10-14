@@ -27,6 +27,9 @@ out/                    contact.jpg, frames/, video.mp4
 
 Videos are public by default: they and their folders stay out of the repository,
 which mirrors to a public GitHub repo. The tools refuse to write inside it.
+The one exception is the README's own clip: when the researcher picks a video
+for the README, copy its `out/readme.gif` over `docs/figures/readme-demo.gif`
+and commit that file alone.
 `vista-demo` below means `node .claude/skills/vista-demo/bin/vista-demo.mjs`.
 
 ## Steps

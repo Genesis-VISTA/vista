@@ -126,7 +126,9 @@ Captures, scripts, frames and videos SHALL be written under
 `~/.vista/demo-captures/<video>/` and never inside the repository. Before
 writing a capture, the toolkit SHALL remove credentials from it: request
 authorization headers and cookies, and the values of token, key and secret
-fields in responses. A capture SHALL never hold such a value in clear.
+fields in responses. A capture SHALL never hold such a value in clear. The
+README's GIF is the one output kept in the repository: a researcher copies it
+by hand to `docs/figures/readme-demo.gif`; the toolkit never writes it there.
 
 #### Scenario: A settings response is scrubbed
 - **WHEN** a capture session opens Settings and the backend's response holds an inference API key and S3M tokens

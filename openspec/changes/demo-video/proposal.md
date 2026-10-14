@@ -42,7 +42,9 @@ answers and made-up figures. What's wanted is a toolkit Claude can use to make
   shown is a named use case, and the default arc ends on an HPC run.
 - Covered pages: Projects, Chat, Skills, Datasets and Knowledge Bases.
 - Captures, scripts and videos live outside the repository, under
-  `~/.vista/demo-captures/<video>/`, and are never committed.
+  `~/.vista/demo-captures/<video>/`, and are never committed. The one
+  exception is the GIF the README shows, copied by hand to
+  `docs/figures/readme-demo.gif`.
 
 No change to VISTA's own behaviour: the UI, backend and MCP servers are
 untouched, and the toolkit reaches them only through their existing
