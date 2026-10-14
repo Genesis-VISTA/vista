@@ -85,6 +85,10 @@ export type UserPublicWithConfig = UserPublic & {
   globus_https_token: string | null;
   odo_globus_https_token: string | null;
   frontier_globus_https_token: string | null;
+  /** Whether a GitHub token is saved. The token itself is never sent back. */
+  has_github_token?: boolean;
+  /** Whether a gitlab.com token is saved. The token itself is never sent back. */
+  has_gitlab_token?: boolean;
 };
 
 /**
@@ -119,6 +123,10 @@ export type UserSelfUpdate = {
   nersc_iri_token?: string | null;
   /** Clusters to leave out of the NavRail. `[]` shows them all. */
   hpc_hidden_clusters?: string[] | null;
+  /** Write-only, unlike the fields above: `null` keeps the saved token, `""` removes it. */
+  github_token?: string | null;
+  /** Write-only, like `github_token`. */
+  gitlab_token?: string | null;
 };
 
 let userCache: UserPublic | null = null;

@@ -16,7 +16,7 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 2. Settings window
 
-- [ ] 2.1 A "Repositories" section in `ui/components/UserSettingsModal.tsx` with the two
+- [x] 2.1 A "Repositories" section in `ui/components/UserSettingsModal.tsx` with the two
   fields, saved / replace / remove, pre-filled "Create a token" links, and the order-of-use
   note (D6); `ui/lib/user.ts` types. Verify with `ui/tests/UserSettingsModal.test.tsx`: the
   saved state shows no token, an unrelated save sends no token field, remove sends `""`, and

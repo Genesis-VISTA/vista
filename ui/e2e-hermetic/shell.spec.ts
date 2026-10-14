@@ -397,7 +397,8 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
     expect(await stub.requests()).toContain("PUT /api/users/me");
-    await expect(settings.getByRole("button", { name: "Save" })).toHaveCount(0);
+    // Exact: a nav entry's state, such as "Repositories, none saved", is not a Save button.
+    await expect(settings.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
   });
 
   test("pasting a token saves it and rechecks only that cluster", async ({ page }) => {
