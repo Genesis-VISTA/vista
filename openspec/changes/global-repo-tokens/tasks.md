@@ -2,7 +2,7 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 1. Tokens on the user, and the resolver
 
-- [ ] 1.1 `UserTable.github_token` / `gitlab_token` as `EncryptedStr`; `UserSelfUpdate` fields
+- [x] 1.1 `UserTable.github_token` / `gitlab_token` as `EncryptedStr`; `UserSelfUpdate` fields
   that are write-only per design D3 (kept out of `_USER_CONFIG_NULLABLE_FIELDS`); read flags
   `has_github_token` / `has_gitlab_token`; neither token in `UserPublicWithConfig`. Verify with
   a new `backend/tests/test_repo_tokens.py`: save, read back only the flag, keep on an

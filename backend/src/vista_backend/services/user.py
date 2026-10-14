@@ -9,6 +9,9 @@ from ..db.schemas import UserCreate, UserTable, UserUpdate, UserSelfUpdate
 from .project_agent import invalidate_agents
 from ._helpers import ServiceUser
 
+WRITE_ONLY_TOKENS = ("github_token", "gitlab_token")
+"""User fields that are never read back, so a save that sends null keeps them."""
+
 
 def _require_admin(user: ServiceUser) -> None:
     """Raise 403 unless `user` is admin. `user="system"` bypasses the check."""
@@ -90,7 +93,15 @@ async def update_user(
 ) -> UserTable:
     _require_self_or_admin(user, user_id)
     existing = await get_user_by_id(session, user_id, user)
-    for key, value in updates.model_dump(exclude_unset=True).items():
+    changes = updates.model_dump(exclude_unset=True)
+    for key in WRITE_ONLY_TOKENS:
+        # Write-only: null keeps the stored token (the client never has it to
+        # send back), "" removes it.
+        if key in changes:
+            value = changes.pop(key)
+            if value is not None:
+                setattr(existing, key, value or None)
+    for key, value in changes.items():
         setattr(existing, key, value)
     session.add(existing)
     await session.flush()
