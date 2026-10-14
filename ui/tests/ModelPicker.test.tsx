@@ -29,6 +29,7 @@ const PROJECT: Project = {
   skills: [],
   knowledgeBases: [],
   forumRepoUrl: "",
+  hasForumToken: false,
   tools: [],
   usageLimits: {},
 };

@@ -91,13 +91,22 @@ class ProjectBase(SQLModel):
 class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
-    pass
+    forum_repo_token: str | None = None
+    """
+    Access token git sends to an `https://` forum repository, or what to do with it.
+
+    Write-only, because a save replaces the whole project and the token is never
+    read back: None keeps whatever is stored, "" removes it, anything else
+    replaces it.
+    """
 
 
 class ProjectPublic(ProjectBase):
     """Project fields the user can read"""
 
     id: uuid.UUID
+    has_forum_token: bool = False
+    """Whether the project stores a forum access token. The token is never read back."""
 
 
 class ProjectTable(ProjectBase, table=True):
@@ -105,6 +114,21 @@ class ProjectTable(ProjectBase, table=True):
 
     __tablename__: str = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    forum_repo_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Access token for the forum repository over HTTPS. Encrypted at rest.
+
+    Here and not on `ProjectBase`, so no read model carries it: `ProjectPublic` is
+    what an agent is built from, and a credential has no business near a prompt.
+    Without one, git uses whatever credentials the system git has, as before.
+    """
+
+    @property
+    def has_forum_token(self) -> bool:
+        """Read by `ProjectPublic.model_validate`, which validates from attributes."""
+        return bool(self.forum_repo_token)
 
 
 class ProjectMemberTable(SQLModel, table=True):

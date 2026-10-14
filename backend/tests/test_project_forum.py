@@ -350,3 +350,139 @@ async def test_adding_a_lab_to_an_existing_project_sets_it_up(
     assert (forum_root(project_id) / REPO_DIR / "HEAD").is_file(), (
         "the edit opened the lab"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The forum access token
+# --------------------------------------------------------------------------- #
+
+TOKEN = "glpat-not-a-real-token"
+HTTPS_URL = "https://forge.example.invalid/group/forum.git"
+
+
+async def test_a_token_is_stored_but_never_read_back(
+    forum_home, forge, app_client, session
+):
+    """
+    The token goes in and only the fact of it comes out.
+
+    Encrypted at rest like every other credential, and missing from the read
+    model, which an agent is built from.
+    """
+    from sqlalchemy import text
+
+    body = {**_body("tokened", str(forge)), "forum_repo_token": TOKEN}
+    resp = await app_client.post("/projects", json=body)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["has_forum_token"] is True
+    assert TOKEN not in resp.text
+    stored = (
+        await session.exec(
+            text("SELECT forum_repo_token FROM project WHERE name = 'tokened'")
+        )
+    ).scalar_one()
+    assert stored and TOKEN not in stored, "encrypted at rest"
+    listed = await app_client.get("/projects")
+    assert TOKEN not in listed.text
+
+
+async def test_saving_without_a_token_keeps_it_and_blank_removes_it(
+    forum_home, forge, app_client
+):
+    """
+    A save replaces the whole project, and the dialog never has the token to send
+    back. Leaving it out has to mean "unchanged", or every edit would drop it.
+    """
+    body = {**_body("kept", str(forge)), "forum_repo_token": TOKEN}
+    await app_client.post("/projects", json=body)
+
+    body["description"] = "edited"
+    del body["forum_repo_token"]
+    kept = await app_client.put("/projects/kept", json=body)
+    assert kept.json()["has_forum_token"] is True
+
+    body["forum_repo_token"] = ""
+    removed = await app_client.put("/projects/kept", json=body)
+    assert removed.json()["has_forum_token"] is False
+
+
+def test_the_projects_token_reaches_its_forum_config(forum_home):
+    project = ProjectTable(name="t", forum_repo_url=HTTPS_URL, forum_repo_token=TOKEN)
+    config = forum_config_for(project)
+
+    assert config is not None and config.remote_token is not None
+    assert config.remote_token.get_secret_value() == TOKEN
+    untokened = forum_config_for(_project(HTTPS_URL))
+    assert untokened is not None and untokened.remote_token is None
+
+
+def _client(url: str, token: str | None, tmp_path) -> ForumClient:
+    from pydantic import SecretStr
+
+    return ForumClient(
+        ForumSettings(
+            enabled=True,
+            repo_root=tmp_path / "forum",
+            remote_url=url,
+            remote_token=SecretStr(token) if token else None,
+        )
+    )
+
+
+def _header_git_sends(env: dict[str, str], url: str) -> str | None:
+    """What git itself resolves `http.extraHeader` to for `url`, under `env`."""
+    out = subprocess.run(
+        ["git", "config", "--get-urlmatch", "http.extraheader", url],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return out.stdout.strip() or None
+
+
+def test_git_sends_the_token_to_the_forum_and_nowhere_else(forum_home, tmp_path):
+    """
+    Asked of git, not of our dict: the point is that git scopes the header to the
+    remote's URL, so a redirect or another remote never sees it.
+    """
+    import base64
+
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=True)
+
+    header = _header_git_sends(env, HTTPS_URL + "/info/refs")
+    assert header is not None
+    scheme, encoded = header.removeprefix("Authorization: ").split()
+    assert scheme == "Basic"
+    assert base64.b64decode(encoded).decode() == f"oauth2:{TOKEN}"
+    assert _header_git_sends(env, "https://elsewhere.example.invalid/x.git") is None
+    assert TOKEN not in " ".join(env.values()), "only ever encoded"
+
+
+def test_local_plumbing_never_carries_the_token(forum_home, tmp_path):
+    """Only fetch and push talk to the remote, so only they get the header."""
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=False)
+    assert "GIT_CONFIG_COUNT" not in env
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://forge.example.invalid/forum.git", "git@forge.example.invalid:g/forum.git"],
+)
+def test_no_token_outside_https(forum_home, tmp_path, url):
+    """Plain HTTP would send it in the clear; SSH authenticates with its own keys."""
+    env = _client(url, TOKEN, tmp_path)._env(network=True)
+    assert "GIT_CONFIG_COUNT" not in env
+
+
+def test_config_already_in_the_environment_is_kept(forum_home, tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.sslVerify")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=True)
+
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "http.sslVerify"
+    assert env["GIT_CONFIG_KEY_1"] == f"http.{HTTPS_URL}.extraHeader"

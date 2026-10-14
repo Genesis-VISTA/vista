@@ -138,6 +138,14 @@ class ForumSettings(BaseModel):
     choosing it, not whoever can edit a `.env`.
     """
 
+    remote_token: SecretStr | None = None
+    """
+    Access token git sends to an `https://` `remote_url`. Not configuration either.
+
+    Filled in per project from `Project.forum_repo_token`. None leaves git to the
+    system's own credentials — an SSH key in the agent, or a credential helper.
+    """
+
     max_simulations: int = 2
     """
     HPC jobs one debate may commission, in total.

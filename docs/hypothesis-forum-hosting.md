@@ -31,7 +31,12 @@ repository's collaborator list**.
   once the Command Line Tools are installed (`xcode-select --install`) — VISTA
   checks without triggering the install dialog.
 - **Credentials that let that git push** to the forum repository, non-interactively:
-  an SSH key in your agent, or a credential helper for HTTPS. VISTA runs git with
+  an SSH key in your agent, a credential helper for HTTPS, or an access token
+  saved on the project (the project dialog offers the field for an `https://`
+  URL). A token needs permission to read and write the repository — on GitHub,
+  `Contents: read and write`; on GitLab, `read_repository` and
+  `write_repository`. It is stored encrypted, sent only to that repository's
+  URL, and never shown again. VISTA runs git with
   prompts disabled, so a remote that would ask for a password fails the save
   with git's error instead of hanging.
 - `VISTA_BACKEND_FORUM__ENABLED=true` in the deployment's environment.

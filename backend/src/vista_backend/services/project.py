@@ -80,6 +80,7 @@ async def create_project(
     session: AsyncSession, payload: ProjectCreate, user: ServiceUser
 ) -> ProjectTable:
     new = ProjectTable.model_validate(payload)
+    new.forum_repo_token = payload.forum_repo_token or None
     session.add(new)
     try:
         await session.flush()
@@ -99,8 +100,11 @@ async def update_project(
     session: AsyncSession, name: str, updates: ProjectCreate, user: ServiceUser
 ) -> ProjectTable:
     project = await get_project_by_name(session, name, user)
-    for key, value in updates.model_dump().items():
+    for key, value in updates.model_dump(exclude={"forum_repo_token"}).items():
         setattr(project, key, value)
+    # Write-only: None keeps the stored token, "" removes it.
+    if updates.forum_repo_token is not None:
+        project.forum_repo_token = updates.forum_repo_token or None
     session.add(project)
     try:
         await session.flush()

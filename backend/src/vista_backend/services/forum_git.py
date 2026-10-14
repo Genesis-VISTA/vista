@@ -29,6 +29,7 @@ and never into an argv or a commit message.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -784,6 +785,43 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
 # --------------------------------------------------------------------------- #
 
 
+TOKEN_USERNAME = "oauth2"
+"""
+The username sent with a forum access token.
+
+GitLab accepts any username with a personal, project or group access token, and
+`oauth2` with an OAuth token too; GitHub ignores the username for a personal
+access token. So one name serves both.
+"""
+
+
+def _token_config(env: dict[str, str], config: ForumSettings) -> dict[str, str]:
+    """
+    The environment that makes git send the project's token to its remote, or none.
+
+    Passed as `GIT_CONFIG_*` variables, not as a `-c` argument or inside the URL:
+    an argument is visible to every process on the machine and lands in
+    `ForumCommandError`, and a URL is written into the repository's config in
+    plain text. Scoped to the remote's URL, so the header is sent only there.
+    Only over `https://` — plain HTTP would send the token in the clear, and SSH
+    has its own keys.
+
+    Appended after any `GIT_CONFIG_*` entries the environment already holds.
+    """
+    token, url = config.remote_token, config.remote_url
+    if token is None or url is None or not url.startswith("https://"):
+        return {}
+    basic = base64.b64encode(
+        f"{TOKEN_USERNAME}:{token.get_secret_value()}".encode()
+    ).decode()
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    return {
+        "GIT_CONFIG_COUNT": str(n + 1),
+        f"GIT_CONFIG_KEY_{n}": f"http.{url}.extraHeader",
+        f"GIT_CONFIG_VALUE_{n}": f"Authorization: Basic {basic}",
+    }
+
+
 @dataclass
 class StagedAttachment:
     name: str
@@ -859,6 +897,8 @@ class ForumClient:
             # push read it, because that is where their credentials live.
             env["GIT_CONFIG_GLOBAL"] = os.devnull
             env["GIT_CONFIG_NOSYSTEM"] = "1"
+        else:
+            env.update(_token_config(env, self.config))
         return env
 
     async def _git(

@@ -22,6 +22,8 @@ import logging
 import uuid
 from pathlib import Path
 
+from pydantic import SecretStr
+
 from ...config import ForumSettings, settings
 from ...db.schemas import ProjectTable
 from ...services.forum_git import ForumClient, ForumDisabled
@@ -79,7 +81,13 @@ def forum_config_for(project: ProjectTable) -> ForumSettings | None:
     if url is None or not settings.forum.enabled or not git_status().ok:
         return None
     return settings.forum.model_copy(
-        update={"repo_root": forum_root(project.id), "remote_url": url}
+        update={
+            "repo_root": forum_root(project.id),
+            "remote_url": url,
+            "remote_token": SecretStr(project.forum_repo_token)
+            if project.forum_repo_token
+            else None,
+        }
     )
 
 

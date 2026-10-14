@@ -443,6 +443,11 @@ function ProjectModal({
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
+  // Write-only: the saved token never comes back, so the field starts empty and
+  // empty means "keep it".
+  const [forumRepoToken, setForumRepoToken] = useState("");
+  const [removeForumToken, setRemoveForumToken] = useState(false);
+  const hasForumToken = initial?.hasForumToken ?? false;
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -502,6 +507,8 @@ function ProjectModal({
         skills: Array.from(skills),
         knowledgeBases: Array.from(kbs),
         forumRepoUrl: forumRepoUrl.trim(),
+        hasForumToken,
+        forumRepoToken: removeForumToken ? "" : forumRepoToken.trim() || undefined,
         // New projects inherit every available MCP tool. Keep an existing
         // project's saved patterns intact when editing it.
         tools: mode === "create" ? [] : splitTags(toolsRaw),
@@ -635,6 +642,46 @@ function ProjectModal({
               pulls in any threads it already holds.
             </span>
           </label>
+
+          {forumRepoUrl.trim().startsWith("https://") && (
+            <label className="project-modal-label">
+              Repository access token{" "}
+              <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+                (optional; a GitHub or GitLab token that can push to it)
+              </span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                value={forumRepoToken}
+                disabled={removeForumToken}
+                onChange={(e) => setForumRepoToken(e.target.value)}
+                placeholder={
+                  hasForumToken
+                    ? "Saved — type a new one to replace it"
+                    : "Leave blank to use your own git credentials"
+                }
+              />
+              {hasForumToken && (
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: 400,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={removeForumToken}
+                    onChange={(e) => setRemoveForumToken(e.target.checked)}
+                  />
+                  Remove the saved token
+                </span>
+              )}
+            </label>
+          )}
 
           {mode === "edit" && (
             <label className="project-modal-label">
