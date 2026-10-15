@@ -68,6 +68,6 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 7. Verify
 
-- [ ] 7.1 `./scripts/ci-local.sh` passes in full before pushing.
+- [x] 7.1 `./scripts/ci-local.sh` passes in full before pushing.
 - [ ] 7.2 Manual, not in PR CI: with only a Settings GitHub token, import a skill from a private
   repository, and a project with no token of its own publishes a debate to a private forum.

@@ -271,9 +271,14 @@ class TestFetchRepository:
 
 
 @pytest.mark.anyio
-async def test_agent_tool_fetches_into_its_own_workspace(tmp_path, apis, monkeypatch):
+async def test_agent_tool_fetches_into_its_own_workspace(
+    tmp_path, apis, monkeypatch, engine
+):
     """The agent asks by URL; the files land where its sandbox sees /mnt/data/work."""
     monkeypatch.setattr(settings, "data_dir", tmp_path)
+    # The tool reads the user's token through its own session; keep that off the
+    # real database, which CI does not have (and a dev checkout should not touch).
+    monkeypatch.setattr("vista_backend.agents.agents.get_engine", lambda: engine)
     project = make_project(tools=["*"])
     model = step_model(
         [
@@ -298,8 +303,11 @@ async def test_agent_tool_fetches_into_its_own_workspace(tmp_path, apis, monkeyp
 
 
 @pytest.mark.anyio
-async def test_agent_tool_error_is_a_retry_not_a_crash(tmp_path, apis, monkeypatch):
+async def test_agent_tool_error_is_a_retry_not_a_crash(
+    tmp_path, apis, monkeypatch, engine
+):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr("vista_backend.agents.agents.get_engine", lambda: engine)
     model = step_model(
         [call("fetch_repository", url="https://bitbucket.org/o/r"), say("cannot")]
     )
