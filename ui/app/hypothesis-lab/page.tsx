@@ -423,7 +423,8 @@ function DebatesPage() {
   ) : null;
 
   // And when it works, say so and say where: the remote has every post written
-  // here. The URL is the forum's own remote, so this is also where to look.
+  // here. The URL is the forum's own remote, so this is also where to look. A
+  // plain note, not a success colour: only the failure needs to stand out.
   const syncedTo =
     forum && forum.shared && forum.remote && !forum.publish_error && forum.unpublished === 0
       ? forum.remote
@@ -432,7 +433,7 @@ function DebatesPage() {
   const forumNotice =
     publishNotice ??
     (syncedTo ? (
-      <p className="debate-synced" role="status">
+      <p className="debate-note" role="status">
         Synced with{" "}
         {syncedLink ? (
           <a href={syncedLink} target="_blank" rel="noreferrer">
