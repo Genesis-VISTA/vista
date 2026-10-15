@@ -40,9 +40,9 @@ desktop app neither can reach a private repository at all. That is the half of #
   Settings token as the fallback before the system git's credentials; a new requirement that
   a failed publish names the credential it used.
 
-The open change `hpc-skill-authoring` names the two environment settings in its
-`fetch_repository` requirement. Its capability is not in the main specs yet, so this change
-amends that sentence in its delta instead of carrying a delta of its own (task 6.1).
+- `hpc-skill-authoring`: the `fetch_repository` requirement sends the user's Settings token
+  for the host instead of the two environment settings. That change was archived first
+  (task 6.1), so this is an ordinary delta against its main spec.
 
 ## Non-goals
 

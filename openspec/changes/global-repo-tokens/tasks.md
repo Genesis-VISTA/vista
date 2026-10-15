@@ -59,11 +59,11 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 6. Docs and the neighbouring change
 
-- [ ] 6.1 Amend `openspec/changes/hpc-skill-authoring/specs/hpc-skill-authoring/spec.md`'s
-  `fetch_repository` requirement to send "the user's Settings token for the host" instead of the
-  two environment settings, and its design note on per-user tokens. Verify with
-  `openspec validate --all`.
-- [ ] 6.2 `docs/skill-onboarding.md` and `docs/hypothesis-forum-hosting.md` point at Settings.
+- [x] 6.1 Archive `hpc-skill-authoring` (its work has shipped), then carry a `MODIFIED` delta of
+  its `fetch_repository` requirement that sends "the user's Settings token for the host" instead
+  of the two environment settings. Its archived design note stays as the record of the time.
+  Verify with `openspec validate --all`.
+- [x] 6.2 `docs/skill-onboarding.md` and `docs/hypothesis-forum-hosting.md` point at Settings.
   Verify with `./scripts/ci-local.sh docs`.
 
 ## 7. Verify
