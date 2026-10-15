@@ -395,6 +395,32 @@ function DebatesPage() {
     [state]
   );
 
+  // Why posts are not reaching the forum. An error, so it is drawn as one, and
+  // it sits on the open debate, whose posts are the ones marked "not yet
+  // published", rather than at the top of the page where it read as one more
+  // note about the lab. With no debate open it falls back to the top.
+  const publishNotice = forum?.publish_error ? (
+    <p className="debate-publish-error" role="alert">
+      <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
+      {publishErrorNotice(forum.publish_error).detail}
+      {forum.publish_error.reason === "refused" &&
+        forum.publish_error.credential !== "settings-github" &&
+        forum.publish_error.credential !== "settings-gitlab" && (
+          <>
+            {" "}
+            <Link href="/projects">Open Projects</Link>
+          </>
+        )}
+      {forum.unpublished > 0 && (
+        <>
+          {" "}
+          {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
+          marked <em>not yet published</em>, until it works.
+        </>
+      )}
+    </p>
+  ) : null;
+
   if (!projectName) {
     return <main className="debate-page"><p>Select a project first.</p></main>;
   }
@@ -482,27 +508,7 @@ function DebatesPage() {
 
       {error && <p className="debate-error">{error}</p>}
 
-      {forum?.publish_error && (
-        <p className="debate-note" role="status">
-          <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
-          {publishErrorNotice(forum.publish_error).detail}
-          {forum.publish_error.reason === "refused" &&
-            forum.publish_error.credential !== "settings-github" &&
-            forum.publish_error.credential !== "settings-gitlab" && (
-              <>
-                {" "}
-                <Link href="/projects">Open Projects</Link>
-              </>
-            )}
-          {forum.unpublished > 0 && (
-            <>
-              {" "}
-              {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
-              marked <em>not yet published</em>, until it works.
-            </>
-          )}
-        </p>
-      )}
+      {!state && publishNotice}
 
       {forum !== null && !forum.publish_error && forum.unpublished > 0 && (
         <p className="debate-note">
@@ -624,6 +630,8 @@ function DebatesPage() {
                   </span>
                 )}
               </div>
+
+              {publishNotice}
 
               {state.run.thread_missing && (
                 <p className="debate-warning">
