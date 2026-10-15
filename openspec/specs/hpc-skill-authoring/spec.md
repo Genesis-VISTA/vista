@@ -50,8 +50,8 @@ commit it points at now, downloads the repository by that commit from the
 host's API over https, and unpacks it, or the URL's subfolder, into the
 agent's own `/mnt/data/work/<name>/` with a `SOURCE.json` recording the clone
 URL, ref, commit and whether the repository is private. Only the github.com and
-gitlab.com APIs SHALL be requested. When `VISTA_BACKEND_GITHUB_TOKEN` or
-`VISTA_BACKEND_GITLAB_TOKEN` is set it SHALL be sent to its own host only, and
+gitlab.com APIs SHALL be requested. When the user has saved a token for the
+URL's host in Settings → Repositories it SHALL be sent to that host only, and
 SHALL NOT reach the sandbox. Unpacking SHALL keep regular files only and refuse
 paths outside the destination. A failure SHALL be returned to the agent as a
 retry with the reason, not end the run.
@@ -77,7 +77,7 @@ folder instead.
 - **THEN** the backend downloads it and the sandbox reads it from `/mnt/data/work/<name>/` without making a request
 
 #### Scenario: A private repository
-- **WHEN** the repository is private and VISTA has a token for its host
+- **WHEN** the repository is private and the user has saved a token for its host in Settings → Repositories
 - **THEN** `fetch_repository` downloads it, `SOURCE.json` says `"private": true`, and the token appears nowhere in the agent's workspace
 
 #### Scenario: Wrapping a GitLab repository in a subgroup

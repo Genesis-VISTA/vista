@@ -3,7 +3,8 @@ Which repository token a URL gets, and where it came from.
 
 The one place that decides it, so skill import, `fetch_repository` and a project's
 forum cannot drift apart. Each caller loads the user's row and passes it in; this
-module only chooses. See openspec/changes/global-repo-tokens/design.md (D1).
+module only chooses. See openspec/changes/archive/2026-10-15-global-repo-tokens/design.md
+(D1), and the `repo-tokens` spec.
 
 The rules:
 
