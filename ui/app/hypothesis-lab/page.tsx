@@ -35,6 +35,13 @@ const FINISHED_POLL_MS = 15_000;
  * own. A peer's comment on a concluded debate is not a live conversation.
  */
 
+const FORUM_STATUS_POLL_MS = 15_000;
+/**
+ * How often the forum's status is re-read while the lab is open, so a failed
+ * publish is explained without a reload. Reading it touches only this machine's
+ * copy of the forum, never the remote.
+ */
+
 const STATUS_LABEL: Record<DebateRun["status"], string> = {
   setting_up: "Setting up",
   debating: "Arguing",
@@ -206,19 +213,34 @@ function DebatesPage() {
     return () => controller.abort();
   }, [refresh]);
 
+  // The forum's status, kept current while the page is open.
+  //
+  // Read once, it went stale exactly when it mattered: a debate's first push is
+  // refused seconds after the page loads, so the notice saying why would appear
+  // only after a reload. So it is re-read on an interval, and at once whenever
+  // the open debate's count of unpublished posts changes, which is when a push
+  // has just been tried. A failed read keeps what is shown.
+  const unpublishedHere =
+    state?.posts.filter((post) => post.published === false).length ?? 0;
   useEffect(() => {
     if (!projectName) {
       setForum(null);
       return;
     }
     const controller = new AbortController();
-    fetchForumStatus(projectName, controller.signal)
-      .then(setForum)
-      .catch(() => {
-        /* the banner is advisory; its absence should not shout */
-      });
-    return () => controller.abort();
-  }, [projectName]);
+    const load = () =>
+      fetchForumStatus(projectName, controller.signal)
+        .then(setForum)
+        .catch(() => {
+          /* the banner is advisory; its absence should not shout */
+        });
+    void load();
+    const timer = setInterval(load, FORUM_STATUS_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [projectName, unpublishedHere]);
 
   useEffect(() => {
     if (!projectName || !selectedId) {
