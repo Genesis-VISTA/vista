@@ -16,6 +16,7 @@ import {
   closedBy,
   fetchForumStatus,
   fetchDebate,
+  forumWebUrl,
   isActive,
   simulationStanding,
   watchesForPeerPosts,
@@ -421,6 +422,28 @@ function DebatesPage() {
     </p>
   ) : null;
 
+  // And when it works, say so and say where: the remote has every post written
+  // here. The URL is the forum's own remote, so this is also where to look.
+  const syncedTo =
+    forum && forum.shared && forum.remote && !forum.publish_error && forum.unpublished === 0
+      ? forum.remote
+      : null;
+  const syncedLink = syncedTo ? forumWebUrl(syncedTo) : null;
+  const forumNotice =
+    publishNotice ??
+    (syncedTo ? (
+      <p className="debate-synced" role="status">
+        Synced with{" "}
+        {syncedLink ? (
+          <a href={syncedLink} target="_blank" rel="noreferrer">
+            {syncedTo}
+          </a>
+        ) : (
+          <code>{syncedTo}</code>
+        )}
+      </p>
+    ) : null);
+
   if (!projectName) {
     return <main className="debate-page"><p>Select a project first.</p></main>;
   }
@@ -631,7 +654,7 @@ function DebatesPage() {
                 )}
               </div>
 
-              {publishNotice}
+              {forumNotice}
 
               {state.run.thread_missing && (
                 <p className="debate-warning">

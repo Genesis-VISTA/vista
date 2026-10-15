@@ -6267,6 +6267,24 @@ textarea.input:focus {
   font-weight: 600;
 }
 
+/* Its counterpart when publishing works: the same place, quieter, in green. */
+.debate-synced {
+  background: var(--success-tint);
+  border: 1px solid var(--success-line);
+  border-left: 4px solid var(--success);
+  color: var(--success);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin: 0 0 16px;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.debate-synced a {
+  color: inherit;
+  font-weight: 600;
+}
+
 .debate-note {
   background: var(--panel);
   border: 1px solid var(--line);

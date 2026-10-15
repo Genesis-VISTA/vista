@@ -265,6 +265,25 @@ const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
 };
 
 /**
+ * The page a forum's remote can be opened at in a browser, or null.
+ *
+ * Only an `https://` remote has one: its URL without the `.git` the clone URL
+ * ends in, which GitHub and GitLab both serve as the repository's page. An SSH
+ * remote (`git@host:org/repo.git`) is shown as text instead. Credentials in the
+ * URL are never put in a link.
+ */
+export function forumWebUrl(remote: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(remote);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  return `${url.origin}${url.pathname.replace(/\.git\/?$/, "")}`;
+}
+
+/**
  * What the lab says about a failed publish: which credential was refused and
  * where to change it, or that the forum could not be reached, or git's message.
  * A refusal is never worded as "unreachable", and only a refusal names a token.
