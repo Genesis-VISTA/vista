@@ -18,6 +18,8 @@ The rules:
     to the forum repository alone.
 """
 
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -26,6 +28,8 @@ from urllib import parse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import ProjectTable, UserTable
+
+logger = logging.getLogger(__name__)
 
 TokenSource = Literal["project", "settings-github", "settings-gitlab"]
 """Where a token came from, which a failed publish names to the user (design D7)."""
@@ -74,3 +78,25 @@ async def user_repo_token(
     """
     user = await session.get(UserTable, user_id)
     return repo_token(url, user) if user is not None else None
+
+
+LEGACY_TOKEN_ENV = ("VISTA_BACKEND_GITHUB_TOKEN", "VISTA_BACKEND_GITLAB_TOKEN")
+
+
+def check_legacy_token_env() -> None:
+    """
+    Say out loud that the old token variables do nothing (design D5).
+
+    Settings ignores unknown variables, so a leftover `.env` line would otherwise
+    look like it still worked while private imports quietly failed. `.env` is
+    loaded into the environment at import, so this reads both. Names only: the
+    value is never logged.
+    """
+    for name in LEGACY_TOKEN_ENV:
+        if os.environ.get(name):
+            logger.warning(
+                "%s no longer does anything — repository tokens are set per "
+                "user in Settings → Repositories. Add the token there and "
+                "delete this line.",
+                name,
+            )

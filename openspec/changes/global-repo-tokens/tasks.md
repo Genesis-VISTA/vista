@@ -53,7 +53,7 @@ Branch `global-repo-tokens`, on top of `debate-fixes` (!159). All tests hermetic
 
 ## 5. Remove the environment settings
 
-- [ ] 5.1 Delete `Settings.github_token` / `gitlab_token`; log one warning at start when either
+- [x] 5.1 Delete `Settings.github_token` / `gitlab_token`; log one warning at start when either
   variable is set (D5). Verify with a test that sets the variable and checks the warning, and
   `rg -n 'GITHUB_TOKEN|GITLAB_TOKEN' backend/src` finds only the warning.
 

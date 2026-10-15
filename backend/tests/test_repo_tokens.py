@@ -13,6 +13,7 @@ from sqlalchemy import text
 from vista_backend.agents.campaign.mcp_invoke import build_metadata
 from vista_backend.api.users import get_me, update_me
 from vista_backend.db.schemas import UserPublicWithConfig, UserSelfUpdate, UserTable
+from vista_backend.services.repo_tokens import check_legacy_token_env
 
 GITHUB = "ghp_not_a_real_token"
 GITLAB = "glpat-not-a-real-token"
@@ -152,3 +153,35 @@ def test_without_a_project_its_token_is_never_returned():
 
     user = UserTable(email="r@example.org")
     assert repo_token("https://github.com/o/r", user) is None
+
+
+# --------------------------------------------------------------------------- #
+# 5.1 — The environment variables are gone, out loud
+# --------------------------------------------------------------------------- #
+
+
+def test_a_leftover_token_variable_is_named_not_used(monkeypatch, caplog):
+    monkeypatch.setenv("VISTA_BACKEND_GITHUB_TOKEN", GITHUB)
+    monkeypatch.delenv("VISTA_BACKEND_GITLAB_TOKEN", raising=False)
+    with caplog.at_level("WARNING"):
+        check_legacy_token_env()
+
+    assert "VISTA_BACKEND_GITHUB_TOKEN no longer does anything" in caplog.text
+    assert "Settings → Repositories" in caplog.text
+    assert "GITLAB" not in caplog.text, "only the variable that is set"
+    assert GITHUB not in caplog.text, "never the value"
+
+
+def test_no_variable_no_warning(monkeypatch, caplog):
+    for name in ("VISTA_BACKEND_GITHUB_TOKEN", "VISTA_BACKEND_GITLAB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    with caplog.at_level("WARNING"):
+        check_legacy_token_env()
+    assert caplog.text == ""
+
+
+def test_settings_no_longer_has_the_tokens():
+    from vista_backend.config import Settings
+
+    assert "github_token" not in Settings.model_fields
+    assert "gitlab_token" not in Settings.model_fields
