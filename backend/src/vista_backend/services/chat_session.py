@@ -84,6 +84,7 @@ async def create_chat_session(
     project_id,
     user_id,
     payload: ChatSessionCreate | None = None,
+    origin: str = "app",
 ) -> ChatSessionTable:
     existing = await list_chat_sessions(session, project_id=project_id, user_id=user_id)
     now = now_iso()
@@ -101,6 +102,7 @@ async def create_chat_session(
         run_state="idle",
         run_unseen=False,
         run_events=None,
+        origin=origin,
         created_at=now,
         updated_at=now,
     )
