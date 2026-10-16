@@ -54,11 +54,15 @@ export async function startFrames(page, dir, { quality = 92, width = 1920, heigh
         list += `file '${f.file}'\nduration ${dur}\n`;
       });
       list += `file '${frames[frames.length - 1].file}'\n`; // ffconcat honours the last duration only when repeated
-      // A mark resume() tied to a frame starts exactly where that frame does.
+      // Every mark names the first frame it applies to: the one resume() kept, else the
+      // first to start at or after it. A mark tied by resume() starts where its frame does.
       for (const m of marks) {
-        if (m.frame === undefined) continue;
-        m.at = Math.round(startsAt[m.frame] * 1e6) / 1e6;
-        delete m.frame;
+        if (m.frame === undefined) {
+          const i = startsAt.findIndex((s) => s >= m.at - 1e-9);
+          m.frame = i < 0 ? frames.length : i;
+        } else {
+          m.at = Math.round(startsAt[m.frame] * 1e6) / 1e6;
+        }
       }
       writeFileSync(path.join(dir, "frames.ffconcat"), list, "utf-8");
       writeFileSync(path.join(dir, "marks.json"), JSON.stringify(marks, null, 2) + "\n", "utf-8");

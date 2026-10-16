@@ -1,7 +1,7 @@
 // ffmpeg steps (design D8): the framed MP4, the README clip, and the
 // rehearsal contact sheet.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { chromium } from "playwright";
@@ -61,33 +61,70 @@ const stepMarks = (marks) =>
     .filter((m) => m.name.startsWith("step "))
     .map((m) => ({ ...m, kind: m.name.split(" ")[2] }));
 
-/** [start, end] seconds of every card and chapter step: shown full-bleed, not framed. */
-export function cardIntervals(marks, duration) {
+/**
+ * [first, end) recorded frames of every card and chapter step: shown full-bleed,
+ * not framed. A step's `frame` is the first recorded frame it applies to.
+ */
+export function cardFrames(marks, frameCount) {
   const steps = stepMarks(marks);
   return steps
-    .map((s, i) => (s.kind === "card" || s.kind === "chapter" ? [s.at, steps[i + 1]?.at ?? duration] : null))
+    .map((s, i) => (s.kind === "card" || s.kind === "chapter" ? [s.frame, steps[i + 1]?.frame ?? frameCount] : null))
     .filter(Boolean);
 }
 
-/** fps=30 told to round up, so a source frame starting at t is first shown on output frame ceil(t·30). */
-const FPS = "fps=30:round=up";
+const FPS = 30;
 
-/**
- * A card boundary, moved to halfway before the output frame that first shows
- * the frame at t, so that output frame is drawn with the step that starts at t.
- * In whole microseconds, the concat demuxer's unit, so no float lands t on the
- * wrong side of a frame.
- */
-export function onFrameGrid(t, fps = 30) {
-  const first = Math.ceil((Math.round(t * 1e6) * fps) / 1e6);
-  return Math.max(0, (first - 0.5) / fps);
+/** The recorded frames and their durations, from frames.ffconcat. */
+export function readList(list) {
+  const entries = [];
+  for (const line of readFileSync(list, "utf-8").split("\n")) {
+    const file = line.match(/^file '(.+)'$/);
+    if (file) entries.push({ file: file[1], dur: null });
+    const dur = line.match(/^duration (.+)$/);
+    if (dur) entries[entries.length - 1].dur = Number(dur[1]);
+  }
+  return entries.filter((e) => e.dur !== null); // the last file is repeated without one
 }
 
-function concatDuration(list) {
-  return readFileSync(list, "utf-8")
-    .split("\n")
-    .filter((l) => l.startsWith("duration "))
-    .reduce((s, l) => s + Number(l.slice(9)), 0);
+/**
+ * Which recorded frame each output frame shows: the one on screen at n/fps.
+ * Doing this here, rather than with ffmpeg's fps filter, is what lets a card
+ * boundary fall on exactly the output frame where the step's first frame appears.
+ */
+export function resample(durations, fps = FPS) {
+  const total = durations.reduce((s, d) => s + d, 0);
+  const count = Math.max(1, Math.round(total * fps));
+  const shown = [];
+  let src = 0;
+  let end = durations[0];
+  for (let n = 0; n < count; n++) {
+    const t = n / fps;
+    while (src < durations.length - 1 && t >= end - 1e-9) end += durations[++src];
+    shown.push(src);
+  }
+  return shown;
+}
+
+/** `between(n,a,b)` terms for the runs of output frames whose recorded frame is in a card. */
+export function cardEnable(shown, cards) {
+  const inCard = (src) => cards.some(([a, b]) => src >= a && src < b);
+  const runs = [];
+  shown.forEach((src, n) => {
+    if (!inCard(src)) return;
+    const last = runs[runs.length - 1];
+    if (last && last[1] === n - 1) last[1] = n;
+    else runs.push([n, n]);
+  });
+  return runs.map(([a, b]) => `between(n,${a},${b})`).join("+");
+}
+
+/** Link the output frames, in order, as seq/000000.jpg…: ffmpeg reads them at exactly 30 fps. */
+function writeSequence(framesDir, entries, shown) {
+  const dir = path.join(framesDir, "seq");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir);
+  shown.forEach((src, n) => symlinkSync(path.join("..", entries[src].file), path.join(dir, `${String(n).padStart(6, "0")}.jpg`)));
+  return path.join(dir, "%06d.jpg");
 }
 
 /**
@@ -100,30 +137,30 @@ export async function assembleVideo(out, { framed = true } = {}) {
   if (!existsSync(list)) throw new Error(`No frames in ${path.dirname(list)}; run \`record\` first.`);
   const file = path.join(out, "video.mp4");
   const encode = ["-an", "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-tune", "animation", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file];
+  const entries = readList(list);
+  const shown = resample(entries.map((e) => e.dur));
+  const seq = ["-framerate", String(FPS), "-i", writeSequence(path.dirname(list), entries, shown)];
   if (!framed) {
-    ffmpeg(["-f", "concat", "-safe", "0", "-i", list, "-vf", `${FPS},scale=1920:1080:flags=lanczos`, ...encode]);
+    ffmpeg([...seq, "-vf", "scale=1920:1080:flags=lanczos", ...encode]);
     return file;
   }
-  const duration = concatDuration(list);
+  const duration = (shown.length / FPS).toFixed(3);
   const { bg, mask } = await renderFrame(path.join(out, "frame"));
-  const cards = cardIntervals(readMarks(out), duration);
+  const on = cardEnable(shown, cardFrames(readMarks(out), entries.length));
   const F = FRAME;
   const graph = [
-    `[0:v]${FPS},scale=1920:1080:flags=lanczos,format=rgba,split=2[full][ui0]`,
+    `[0:v]scale=1920:1080:flags=lanczos,format=rgba,split=2[full][ui0]`,
     `[ui0]scale=${F.w}:${F.h}:flags=lanczos,pad=1920:1080:${F.x}:${F.y + F.title}:color=black@0,format=rgba[ui]`,
     `[2:v]format=gray[m]`,
     `[ui][m]alphamerge[uia]`,
     `[1:v]format=rgba[bg]`,
-    `[bg][uia]overlay=0:0:shortest=1${cards.length ? "[framed]" : ",format=yuv420p[v]"}`,
+    `[bg][uia]overlay=0:0:shortest=1${on ? "[framed]" : ",format=yuv420p[v]"}`,
   ];
-  if (cards.length) {
-    const on = cards.map(([a, b]) => `gte(t,${onFrameGrid(a).toFixed(4)})*lt(t,${onFrameGrid(b).toFixed(4)})`).join("+");
-    graph.push(`[framed][full]overlay=0:0:enable='${on}',format=yuv420p[v]`);
-  }
+  if (on) graph.push(`[framed][full]overlay=0:0:enable='${on}',format=yuv420p[v]`);
   ffmpeg([
-    "-f", "concat", "-safe", "0", "-i", list,
-    "-loop", "1", "-framerate", "30", "-t", duration.toFixed(3), "-i", bg,
-    "-loop", "1", "-framerate", "30", "-t", duration.toFixed(3), "-i", mask,
+    ...seq,
+    "-loop", "1", "-framerate", String(FPS), "-t", duration, "-i", bg,
+    "-loop", "1", "-framerate", String(FPS), "-t", duration, "-i", mask,
     "-filter_complex", graph.join(";"), "-map", "[v]", ...encode,
   ]);
   return file;

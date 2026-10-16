@@ -1,29 +1,32 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cardIntervals, onFrameGrid, readmeWindow } from "../lib/assemble.mjs";
+import { cardEnable, cardFrames, readmeWindow, resample } from "../lib/assemble.mjs";
 import { checkPin, checkUnchanged, pins } from "../lib/selftest.mjs";
 
 const marks = [
-  { name: "step 1 card", at: 0 },
-  { name: "step 2 chapter", at: 5.2 },
-  { name: "step 3 goto", at: 9.1 },
-  { name: "step 4 click", at: 11 },
-  { name: "step 9 run", at: 20 },
-  { name: "step 30 card", at: 55.5 },
+  { name: "step 1 card", at: 0, frame: 0 },
+  { name: "step 2 chapter", at: 5.2, frame: 40 },
+  { name: "step 3 goto", at: 9.1, frame: 80 },
+  { name: "step 4 click", at: 11, frame: 95 },
+  { name: "step 9 run", at: 20, frame: 300 },
+  { name: "step 30 card", at: 55.5, frame: 900 },
 ];
 
-test("cards and chapters play full-bleed, from their start to the next step", () => {
-  assert.deepEqual(cardIntervals(marks, 60), [[0, 5.2], [5.2, 9.1], [55.5, 60]]);
+test("cards and chapters play full-bleed, from their first recorded frame to the next step's", () => {
+  assert.deepEqual(cardFrames(marks, 1000), [[0, 40], [40, 80], [900, 1000]]);
 });
 
-test("a boundary falls just before the output frame that first shows its step", () => {
-  // A card frame starting at 85.743 s is first shown on output frame 2573 (round up).
-  const at = onFrameGrid(85.743);
-  assert.ok(at > 2572 / 30 && at < 2573 / 30, `at ${at}`);
-  // A frame exactly on the grid is shown on that frame, not the next.
-  const on = onFrameGrid(10.2);
-  assert.ok(on > 305 / 30 && on < 306 / 30, `at ${on}`);
-  assert.equal(onFrameGrid(0), 0);
+test("each output frame shows the recorded frame on screen at n/30 s", () => {
+  // Frames of 0.05, 0.02 and 0.1 s: 0 s → 0, 1/30 → 0, 2/30 (0.0667) → 1, 3/30 (0.1) → 2.
+  assert.deepEqual(resample([0.05, 0.02, 0.1]), [0, 0, 1, 2, 2]);
+});
+
+test("a card covers exactly the output frames that show its recorded frames", () => {
+  // Recorded frames 0–1 are a card; the UI starts at recorded frame 2, wherever it lands.
+  const shown = [0, 0, 1, 1, 1, 2, 2, 3];
+  assert.equal(cardEnable(shown, [[0, 2]]), "between(n,0,4)");
+  assert.equal(cardEnable(shown, [[0, 2], [3, 4]]), "between(n,0,4)+between(n,7,7)");
+  assert.equal(cardEnable(shown, []), "");
 });
 
 test("the README clip defaults to the first scene, 12 s", () => {

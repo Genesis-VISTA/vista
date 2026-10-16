@@ -26,7 +26,7 @@ test("a hold before the first frame drops it: the video opens on what follows", 
   frame(); // the card
   const { count, marks } = await frames.stop();
   assert.equal(count, 1);
-  assert.deepEqual(marks, [{ name: "step 1 card", at: 0 }]);
+  assert.deepEqual(marks, [{ name: "step 1 card", at: 0, frame: 0 }]);
 });
 
 test("a resumed mark starts where its frame does on the list's rounded timeline", async () => {
