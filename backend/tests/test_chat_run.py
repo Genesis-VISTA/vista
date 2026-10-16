@@ -475,6 +475,11 @@ async def test_the_channel_holds_for_its_run_only(env):
         prior_history=[],
         channel="slack",
     )
+    # `quick` is not read-only, so in a Slack run it waits for Confirm.
+    async for event in run.subscribe():
+        if event.kind == "mcp_tool_approval":
+            assert event.prompt_id is not None
+            await chat_run.resolve_prompt(event.prompt_id, "accept")
     await run.wait()
 
     assert run.channel == "slack"

@@ -75,6 +75,7 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
+from ..slack.gate import SLACK_INSTRUCTIONS, SlackGateCapability
 from . import source_fetch
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
@@ -559,6 +560,11 @@ class ProjectAgent:
         capabilities.append(
             PalisadeApprovalCapability(request_approval=self._request_tool_approval)
         )
+        # A Slack turn's side effects wait for the requester's Confirm, through
+        # the approval path above. Inert on every other channel.
+        capabilities.append(
+            SlackGateCapability(channel=lambda: self._cur_channel, user_id=self.user.id)
+        )
 
         agent = Agent(
             model=model,
@@ -600,6 +606,12 @@ class ProjectAgent:
             parts.append(skills_block)
 
             return "\n\n".join([p for p in parts if p])
+
+        @agent.instructions
+        def channel_instructions() -> str | None:
+            # Instructions, not the system prompt: they are read on every turn
+            # and kept out of the history, so they hold for Slack turns only.
+            return SLACK_INSTRUCTIONS if self._cur_channel == "slack" else None
 
         register_campaign_tools(agent, self._campaign_driver_deps(model))
 
@@ -881,6 +893,9 @@ class ProjectAgent:
             ],
             params: mcp.types.ElicitRequestParams,
         ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
+            if self._cur_channel == "slack":
+                # Forms ask for logins and secrets, which never go through Slack.
+                return mcp.types.ElicitResult(action="decline")
             if isinstance(params, mcp.types.ElicitRequestFormParams):
                 event = McpFormElicitationEvent(
                     elicitation_id=str(uuid.uuid4()),
