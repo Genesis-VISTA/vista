@@ -1625,7 +1625,7 @@ class SlackPendingTable(SQLModel, table=True):
     created_at: str
     expires_at: str
     outcome: str | None = None
-    """ None while open, then "confirmed", "cancelled", "expired", "refused". """
+    """ None while open, then "confirmed", "cancelled", "expired", "refused", "chosen". """
 
 
 class SlackDetailTable(SQLModel, table=True):

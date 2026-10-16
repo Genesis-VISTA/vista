@@ -75,6 +75,7 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
+from ..slack.choices import choice_schema, register_choice_tool
 from ..slack.gate import SLACK_INSTRUCTIONS, SlackGateCapability
 from . import source_fetch
 from .skills import to_prompt
@@ -446,6 +447,10 @@ class ProjectAgent:
         self._cur_progress_emitter: Callable[[str], None] | None = None
         # The current run's channel, read by capabilities through `channel`.
         self._cur_channel: Channel = "app"
+        # Asks the researcher to tap one of a few options (`offer_choices`).
+        self._cur_choice_ask: (
+            Callable[[str, list[str]], Awaitable[str | None]] | None
+        ) = None
         self.agent = self._build_agent()
 
     @property
@@ -614,6 +619,9 @@ class ProjectAgent:
             return SLACK_INSTRUCTIONS if self._cur_channel == "slack" else None
 
         register_campaign_tools(agent, self._campaign_driver_deps(model))
+        register_choice_tool(
+            agent, channel=lambda: self._cur_channel, ask=lambda: self._cur_choice_ask
+        )
 
         @agent.tool_plain
         async def fetch_repository(url: str, ref: str | None = None) -> str:
@@ -1019,6 +1027,36 @@ class ProjectAgent:
 
         return request_approval
 
+    def _make_choice_ask(
+        self, stream_merger: StreamMerger[ProjectAgentStreamEvent]
+    ) -> Callable[[str, list[str]], Awaitable[str | None]]:
+        async def ask(question: str, options: list[str]) -> str | None:
+            # A form with one enum field, which Slack shows as buttons.
+            event = McpFormElicitationEvent(
+                elicitation_id=str(uuid.uuid4()),
+                message=question,
+                requested_schema=choice_schema(options),  # type: ignore[arg-type]
+            )
+            future: asyncio.Future[mcp.types.ElicitResult] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._elicitations[event.elicitation_id] = future
+            try:
+                stream_merger.send(event)
+            except StreamClosedError:
+                self._elicitations.pop(event.elicitation_id, None)
+                return None
+            try:
+                result = await future
+            finally:
+                self._elicitations.pop(event.elicitation_id, None)
+            chosen = (result.content or {}).get("choice")
+            if result.action != "accept" or chosen not in options:
+                return None
+            return chosen
+
+        return ask
+
     async def run(
         self,
         user_prompt: str,
@@ -1130,6 +1168,9 @@ class ProjectAgent:
                 self._cur_db_session = db_session
                 self._cur_progress_emitter = progress
                 self._cur_channel = channel
+                self._cur_choice_ask = (
+                    self._make_choice_ask(merger) if enable_elicitation else None
+                )
                 try:
                     # SEV1 termination (PALISADE incident playbook): once
                     # the trust scorer is terminated, refuse every request
@@ -1264,6 +1305,7 @@ class ProjectAgent:
                     self._cur_db_session = None
                     self._cur_progress_emitter = None
                     self._cur_channel = "app"
+                    self._cur_choice_ask = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)

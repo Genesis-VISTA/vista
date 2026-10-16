@@ -7,6 +7,9 @@ with what would actually happen. Only the Slack user who asked can answer it.
 Confirm checks the lock and limits again before the run is told to go ahead;
 an unanswered card is declined after `confirmation_ttl` (10 minutes).
 
+An `offer_choices` question (a form whose one field is an enum) is shown the
+same way, as one button per option, and answered with the option tapped.
+
 Every card is also a `slack_pending` row, so the outcome survives a restart
 and a card left open when VISTA quit is marked expired the next time it starts.
 Button values carry only the elicitation id: nothing in a card is trusted.
@@ -26,6 +29,7 @@ from ..config import settings
 from ..db.schemas import ChatSessionTable, SlackPendingTable
 from ..services import chat_run as chat_run_module
 from . import format, gate
+from .choices import options_of
 from .events import Action
 from .relay import Place, step_label
 from .store import now
@@ -35,6 +39,8 @@ log = logging.getLogger(__name__)
 
 CONFIRM = "vista_confirm"
 CANCEL = "vista_cancel"
+CHOOSE = "vista_choose_"
+""" Prefix of a choice button's action id; the suffix is the option's index. """
 
 Preview = Callable[[uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]]
 """ (user id, tool name, args) → card fields describing what would really happen. """
@@ -88,7 +94,43 @@ def _field(name: str, value: str) -> dict[str, str]:
     return {"type": "mrkdwn", "text": f"*{name}*\n{format.truncate(value, 1900, '…')}"}
 
 
+def _choice_card(pending: SlackPendingTable) -> format.Reply:
+    summary = pending.summary or {}
+    question = str(summary.get("question") or "Which one?")
+    options: list[str] = summary.get("options") or []
+    blocks: list[dict[str, Any]] = [format.section(f"*{question}*")]
+    if pending.outcome is None:
+        minutes = round(settings.slack.confirmation_ttl / 60)
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    format.button(option, f"{CHOOSE}{i}", pending.elicitation_id)
+                    for i, option in enumerate(options)
+                ],
+            }
+        )
+        blocks.append(
+            format.context(
+                f"Only <@{pending.slack_user_id}> can choose. "
+                f"Expires in {minutes} minutes."
+            )
+        )
+    elif pending.outcome == "chosen":
+        blocks.append(
+            format.context(
+                f":point_right: <@{pending.slack_user_id}> chose "
+                f"*{summary.get('chosen', '?')}*."
+            )
+        )
+    else:
+        blocks.append(format.context(_outcome_text(pending)))
+    return format.Reply(text=question, blocks=blocks)
+
+
 def card(pending: SlackPendingTable) -> format.Reply:
+    if pending.kind == "choice":
+        return _choice_card(pending)
     summary = pending.summary or {}
     title = f"*Confirm: {step_label(pending.tool_name or '')}?*"
     fields = [_field(k, str(v)) for k, v in (summary.get("fields") or {}).items()]
@@ -125,7 +167,9 @@ def _outcome_text(pending: SlackPendingTable) -> str:
     return {
         "confirmed": f":white_check_mark: Confirmed by {who}.",
         "cancelled": f":no_entry_sign: Cancelled by {who}. Nothing was done.",
-        "expired": ":hourglass: Expired. Nothing was done.",
+        "expired": ":hourglass: Expired. Nothing was done."
+        if pending.kind == "confirm"
+        else ":hourglass: Expired.",
         "refused": f":lock: Not done: {reason}",
     }.get(pending.outcome or "", "Closed.")
 
@@ -147,6 +191,22 @@ class Confirmations:
         """Post the card for a `mcp_tool_approval` event; anything else is declined."""
         data = json.loads(event.data)
         elicitation_id = data.get("elicitation_id") or event.prompt_id
+        options = (
+            options_of(data.get("requested_schema"))
+            if event.kind == "mcp_form_elicitation"
+            else None
+        )
+        if options and elicitation_id:
+            pending = self._pending(
+                elicitation_id,
+                "choice",
+                place=place,
+                team_id=team_id,
+                chat_session_id=chat_session_id,
+                summary={"question": data.get("message") or "", "options": options},
+            )
+            await self._post(pending, place)
+            return
         if event.kind != "mcp_tool_approval" or not elicitation_id:
             # Forms are declined in Slack runs before they get here; a URL or
             # anything else needs the desktop.
@@ -160,21 +220,46 @@ class Confirmations:
             fields.update(await _preview(user_id, tool_name, args))
         except Exception:
             log.exception("Could not preview %s for Slack", tool_name)
+        pending = self._pending(
+            elicitation_id,
+            "confirm",
+            place=place,
+            team_id=team_id,
+            chat_session_id=chat_session_id,
+            tool_name=tool_name,
+            summary={"fields": fields, "args": args},
+        )
+        await self._post(pending, place)
+
+    def _pending(
+        self,
+        elicitation_id: str,
+        kind: str,
+        *,
+        place: Place,
+        team_id: str,
+        chat_session_id: uuid.UUID,
+        summary: dict[str, Any],
+        tool_name: str | None = None,
+    ) -> SlackPendingTable:
         created = now()
-        pending = SlackPendingTable(
+        return SlackPendingTable(
             elicitation_id=elicitation_id,
-            kind="confirm",
+            kind=kind,
             team_id=team_id,
             channel_id=place.channel,
             slack_user_id=place.slack_user_id,
             chat_session_id=chat_session_id,
             tool_name=tool_name,
-            summary={"fields": fields, "args": args},
+            summary=summary,
             created_at=created.isoformat(timespec="seconds"),
             expires_at=(
                 created + timedelta(seconds=settings.slack.confirmation_ttl)
             ).isoformat(timespec="seconds"),
         )
+
+    async def _post(self, pending: SlackPendingTable, place: Place) -> None:
+        elicitation_id = pending.elicitation_id
         reply = card(pending)
         pending.message_ts = await self.transport.post(
             place.channel, reply.text, blocks=reply.blocks, thread_ts=place.thread_ts
@@ -221,6 +306,21 @@ class Confirmations:
             await self._close(elicitation_id, "expired")
             await self._tell(action, "That request expired. Nothing was done.")
             return
+        if action.action_id.startswith(CHOOSE):
+            options: list[str] = (pending.summary or {}).get("options") or []
+            index = action.action_id.removeprefix(CHOOSE)
+            if (
+                pending.kind != "choice"
+                or not index.isdigit()
+                or int(index) >= len(options)
+            ):
+                await self._tell(action, "That request is no longer open.")
+                return
+            await self._close(elicitation_id, "chosen", chosen=options[int(index)])
+            return
+        if pending.kind != "confirm":
+            await self._tell(action, "That request is no longer open.")
+            return
         if action.action_id == CANCEL:
             await self._close(elicitation_id, "cancelled")
             return
@@ -235,7 +335,9 @@ class Confirmations:
             return
         await self._close(elicitation_id, "confirmed")
 
-    async def _close(self, elicitation_id: str, outcome: str, reason: str = "") -> None:
+    async def _close(
+        self, elicitation_id: str, outcome: str, reason: str = "", chosen: str = ""
+    ) -> None:
         async with chat_run_module.session_factory() as db:
             pending = await db.get(SlackPendingTable, elicitation_id)
             if pending is None or pending.outcome is not None:
@@ -243,15 +345,22 @@ class Confirmations:
             pending.outcome = outcome
             if reason:
                 pending.summary = {**(pending.summary or {}), "reason": reason}
+            if chosen:
+                pending.summary = {**(pending.summary or {}), "chosen": chosen}
             db.add(pending)
             await db.commit()
             await db.refresh(pending)
         timer = self._timers.pop(elicitation_id, None)
         if timer is not None and timer is not asyncio.current_task():
             timer.cancel()
-        action = "accept" if outcome == "confirmed" else "decline"
-        answered = await chat_run_module.resolve_prompt(elicitation_id, action)
-        if not answered and outcome == "confirmed":
+        if outcome == "chosen":
+            answered = await chat_run_module.resolve_prompt(
+                elicitation_id, "accept", {"choice": chosen}
+            )
+        else:
+            action = "accept" if outcome == "confirmed" else "decline"
+            answered = await chat_run_module.resolve_prompt(elicitation_id, action)
+        if not answered and outcome in ("confirmed", "chosen"):
             # The run is gone (VISTA restarted, or it was stopped): nothing ran.
             await self._set_outcome(pending, "expired")
         await self._redraw(pending)
