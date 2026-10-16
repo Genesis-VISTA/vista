@@ -34,7 +34,7 @@
 ## 6. HPC tools and jobs
 
 - [x] 6.1 MCP `preview_hpc_job` and `get_hpc_queue_status` (read-only) with hermetic tests in `mcp_servers/vista_mcp_server/tests/test_queue_and_preview.py`
-- [ ] 6.2 Record jobs on successful submit for every channel; `list_my_recent_jobs`; `backend/tests/slack/test_job_refs.py`
+- [x] 6.2 Record jobs on successful submit for every channel; `list_my_recent_jobs`; `backend/tests/slack/test_job_refs.py`
 - [ ] 6.3 `JobMonitor` and notifications (DM or in-thread mention, desktop-jobs setting, offline catch-up, once only); `backend/tests/slack/test_job_monitor.py`
 
 ## 7. Presence

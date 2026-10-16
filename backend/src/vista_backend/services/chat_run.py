@@ -36,6 +36,7 @@ from ..db.db import get_engine
 from ..db.schemas import ChatSessionTable
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from .job_records import SubmitWatcher
 from .project_agent import (
     ProjectAgentKey,
     project_agent_pool,
@@ -267,6 +268,12 @@ class ChatRunRegistry:
                             }
                         ),
                     )
+                    submits = SubmitWatcher(
+                        session_factory=lambda: session_factory(),
+                        user_id=run.user_id,
+                        chat_session_id=run.chat_session_id,
+                        channel=run.channel,
+                    )
                     async for event in agent.run_stream(
                         user_prompt=run.user_prompt,
                         message_history=run.prior_history,
@@ -282,6 +289,7 @@ class ChatRunRegistry:
                             prompt_id = event.elicitation_id
                         if isinstance(event, ProjectAgentResultEvent):
                             run.result = event.result
+                        await submits.observe(event)
                         await run.append(
                             event.event_kind,
                             _EVENT_ADAPTER.dump_json(event).decode(),

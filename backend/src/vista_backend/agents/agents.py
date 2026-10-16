@@ -59,6 +59,8 @@ from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
 from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
+from ..services.job_records import describe as describe_jobs
+from ..services.job_records import recent_jobs
 from ..services.repo_tokens import user_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
@@ -76,7 +78,7 @@ from palisade.quarantine import (
 )
 from .eval_metrics import EvalMetricsCapability
 from ..slack.choices import choice_schema, register_choice_tool
-from ..slack.gate import SLACK_INSTRUCTIONS, SlackGateCapability
+from ..slack.gate import READ_ONLY, SLACK_INSTRUCTIONS, SlackGateCapability
 from . import source_fetch
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
@@ -622,6 +624,23 @@ class ProjectAgent:
         register_choice_tool(
             agent, channel=lambda: self._cur_channel, ask=lambda: self._cur_choice_ask
         )
+
+        @agent.tool_plain(metadata=READ_ONLY)
+        async def list_my_recent_jobs(
+            cluster: str | None = None, limit: int = 10
+        ) -> str:
+            """
+            The HPC jobs this researcher submitted from a chat (here or in Slack),
+            newest first: job id, cluster, job folder, when, and what was asked
+            for. Use it to resolve "my last job" or "the job I submitted this
+            morning" before checking a status, reading logs or cancelling, rather
+            than guessing a job id. `cluster` narrows it to one system.
+            """
+            async with AsyncSession(get_engine()) as session:
+                jobs = await recent_jobs(
+                    session, self.user.id, cluster=cluster, limit=limit
+                )
+                return describe_jobs(jobs)
 
         @agent.tool_plain
         async def fetch_repository(url: str, ref: str | None = None) -> str:
