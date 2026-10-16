@@ -69,6 +69,20 @@ export function cardIntervals(marks, duration) {
     .filter(Boolean);
 }
 
+/** fps=30 told to round up, so a source frame starting at t is first shown on output frame ceil(t·30). */
+const FPS = "fps=30:round=up";
+
+/**
+ * A card boundary, moved to halfway before the output frame that first shows
+ * the frame at t, so that output frame is drawn with the step that starts at t.
+ * In whole microseconds, the concat demuxer's unit, so no float lands t on the
+ * wrong side of a frame.
+ */
+export function onFrameGrid(t, fps = 30) {
+  const first = Math.ceil((Math.round(t * 1e6) * fps) / 1e6);
+  return Math.max(0, (first - 0.5) / fps);
+}
+
 function concatDuration(list) {
   return readFileSync(list, "utf-8")
     .split("\n")
@@ -87,7 +101,7 @@ export async function assembleVideo(out, { framed = true } = {}) {
   const file = path.join(out, "video.mp4");
   const encode = ["-an", "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-tune", "animation", "-pix_fmt", "yuv420p", "-movflags", "+faststart", file];
   if (!framed) {
-    ffmpeg(["-f", "concat", "-safe", "0", "-i", list, "-vf", "fps=30,scale=1920:1080:flags=lanczos", ...encode]);
+    ffmpeg(["-f", "concat", "-safe", "0", "-i", list, "-vf", `${FPS},scale=1920:1080:flags=lanczos`, ...encode]);
     return file;
   }
   const duration = concatDuration(list);
@@ -95,7 +109,7 @@ export async function assembleVideo(out, { framed = true } = {}) {
   const cards = cardIntervals(readMarks(out), duration);
   const F = FRAME;
   const graph = [
-    `[0:v]fps=30,scale=1920:1080:flags=lanczos,format=rgba,split=2[full][ui0]`,
+    `[0:v]${FPS},scale=1920:1080:flags=lanczos,format=rgba,split=2[full][ui0]`,
     `[ui0]scale=${F.w}:${F.h}:flags=lanczos,pad=1920:1080:${F.x}:${F.y + F.title}:color=black@0,format=rgba[ui]`,
     `[2:v]format=gray[m]`,
     `[ui][m]alphamerge[uia]`,
@@ -103,7 +117,7 @@ export async function assembleVideo(out, { framed = true } = {}) {
     `[bg][uia]overlay=0:0:shortest=1${cards.length ? "[framed]" : ",format=yuv420p[v]"}`,
   ];
   if (cards.length) {
-    const on = cards.map(([a, b]) => `between(t,${a.toFixed(3)},${b.toFixed(3)})`).join("+");
+    const on = cards.map(([a, b]) => `gte(t,${onFrameGrid(a).toFixed(4)})*lt(t,${onFrameGrid(b).toFixed(4)})`).join("+");
     graph.push(`[framed][full]overlay=0:0:enable='${on}',format=yuv420p[v]`);
   }
   ffmpeg([

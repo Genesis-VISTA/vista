@@ -110,8 +110,11 @@ export async function play({
       const v = step.value;
       const params = typeof v === "string" ? { kind: v } : { kind: "custom", ...v };
       params.icon = ICON;
+      // As in goto: the last frame holds while the card loads, and the card starts at its first frame.
+      frames?.hold();
       await page.goto(`${CARD}?${new URLSearchParams(params)}`);
       await overlay("showCursor", false);
+      frames?.resume();
       await sleep(params.kind === "intro" ? 4.5 : 3.2);
       await page.evaluate(() => document.body.classList.add("out"));
       await sleep(0.65);
@@ -132,7 +135,6 @@ export async function play({
       });
       await page.waitForTimeout(300);
       frames?.resume();
-      frames?.restamp();
       await overlay("showCursor", true);
       // Chrome sends a frame only on a change: a near-invisible one sends the settled page now.
       await page.evaluate(async () => {

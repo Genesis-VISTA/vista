@@ -12,16 +12,16 @@ export async function startFrames(page, dir, { quality = 92, width = 1920, heigh
   const marks = [];
   let firstArrival = null; // wall clock at the first frame, which is 0 s in the video
   let held = false;
+  let markNextFrame = false; // resume(): the latest mark moves to the next frame kept
   cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
-    if (held && firstArrival !== null) {
-      cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
-      return;
-    }
+    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+    if (held) return; // before the first frame too, so a video can open on its first card
     firstArrival ??= Date.now() / 1000;
     const file = `f${String(frames.length).padStart(6, "0")}.jpg`;
     writeFileSync(path.join(dir, file), Buffer.from(data, "base64"));
     frames.push({ file, t: metadata.timestamp });
-    cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+    if (markNextFrame && marks.length) marks[marks.length - 1].frame = frames.length - 1;
+    markNextFrame = false;
   });
   await cdp.send("Page.startScreencast", { format: "jpeg", quality, maxWidth: width, maxHeight: height, everyNthFrame: 1 });
 
@@ -35,26 +35,31 @@ export async function startFrames(page, dir, { quality = 92, width = 1920, heigh
     hold() {
       held = true;
     },
+    /** Keep frames again; the latest mark moves to the first one kept, where the step is first seen. */
     resume() {
       held = false;
-    },
-    /** Move the latest mark to now, for a step whose first visible moment comes after a hold. */
-    restamp() {
-      const last = marks[marks.length - 1];
-      if (!last) return;
-      const now = Date.now() / 1000;
-      last.at = Number((now - (firstArrival ?? now)).toFixed(2));
+      markNextFrame = true;
     },
     async stop() {
       await cdp.send("Page.stopScreencast").catch(() => {});
       if (frames.length === 0) throw new Error("The screencast produced no frames.");
       let list = "ffconcat version 1.0\n";
+      const startsAt = []; // each frame's start on the video's timeline: the list's own rounded durations
+      let elapsed = 0;
       frames.forEach((f, i) => {
         const next = frames[i + 1];
-        const dur = next ? Math.max(0.001, next.t - f.t) : 0.5;
-        list += `file '${f.file}'\nduration ${dur.toFixed(4)}\n`;
+        const dur = (next ? Math.max(0.001, next.t - f.t) : 0.5).toFixed(4);
+        startsAt.push(elapsed);
+        elapsed += Number(dur);
+        list += `file '${f.file}'\nduration ${dur}\n`;
       });
       list += `file '${frames[frames.length - 1].file}'\n`; // ffconcat honours the last duration only when repeated
+      // A mark resume() tied to a frame starts exactly where that frame does.
+      for (const m of marks) {
+        if (m.frame === undefined) continue;
+        m.at = Math.round(startsAt[m.frame] * 1e6) / 1e6;
+        delete m.frame;
+      }
       writeFileSync(path.join(dir, "frames.ffconcat"), list, "utf-8");
       writeFileSync(path.join(dir, "marks.json"), JSON.stringify(marks, null, 2) + "\n", "utf-8");
       return { count: frames.length, seconds: frames[frames.length - 1].t - frames[0].t, marks };

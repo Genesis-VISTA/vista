@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cardIntervals, readmeWindow } from "../lib/assemble.mjs";
+import { cardIntervals, onFrameGrid, readmeWindow } from "../lib/assemble.mjs";
 import { checkPin, checkUnchanged, pins } from "../lib/selftest.mjs";
 
 const marks = [
@@ -14,6 +14,16 @@ const marks = [
 
 test("cards and chapters play full-bleed, from their start to the next step", () => {
   assert.deepEqual(cardIntervals(marks, 60), [[0, 5.2], [5.2, 9.1], [55.5, 60]]);
+});
+
+test("a boundary falls just before the output frame that first shows its step", () => {
+  // A card frame starting at 85.743 s is first shown on output frame 2573 (round up).
+  const at = onFrameGrid(85.743);
+  assert.ok(at > 2572 / 30 && at < 2573 / 30, `at ${at}`);
+  // A frame exactly on the grid is shown on that frame, not the next.
+  const on = onFrameGrid(10.2);
+  assert.ok(on > 305 / 30 && on < 306 / 30, `at ${on}`);
+  assert.equal(onFrameGrid(0), 0);
 });
 
 test("the README clip defaults to the first scene, 12 s", () => {

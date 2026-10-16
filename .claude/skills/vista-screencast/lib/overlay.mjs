@@ -41,6 +41,8 @@ export function OVERLAY() {
     const pos = { x: innerWidth * 0.6, y: innerHeight * 0.55 };
     const place = () => (cursor.style.transform = `translate(${pos.x - 4}px, ${pos.y - 2}px)`);
     place();
+    // Cards are local pages: hidden from the first frame, not from when the card step hides it.
+    if (location.protocol === "file:") cursor.style.display = "none";
     const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
     const hits = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
     let avoid = [];

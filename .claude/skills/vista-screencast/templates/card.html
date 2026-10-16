@@ -29,7 +29,8 @@
   .kicker { font-size: 18px; letter-spacing: .32em; text-transform: uppercase; color: var(--accent);
     opacity: 0; animation: up .9s .15s cubic-bezier(.2,.8,.2,1) forwards; }
   .kicker:empty { display: none; }
-  h1 { margin: 0; font-size: 128px; font-weight: 800; letter-spacing: -.02em; line-height: 1;
+  /* background-clip: text paints only inside the box, so padding keeps descenders (the j of "job") whole */
+  h1 { margin: 0 0 -.15em; padding-bottom: .15em; font-size: 128px; font-weight: 800; letter-spacing: -.02em; line-height: 1;
     background: linear-gradient(90deg, #fff, #bfe3ff 50%, #ffd1ad); -webkit-background-clip: text; background-clip: text; color: transparent;
     opacity: 0; filter: blur(14px); animation: focus 1.2s .35s cubic-bezier(.2,.8,.2,1) forwards; }
   body.chapter h1 { font-size: 76px; }
