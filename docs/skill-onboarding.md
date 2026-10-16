@@ -121,8 +121,9 @@ required), validates that SKILL.md exists at the target path, copies the
 `skills/<name>/`, forces `is_public:false`, and auto-fills `repo_url` from the
 source URL if the imported frontmatter didn't already set it.
 
-For private repos, set `VISTA_BACKEND_GITHUB_TOKEN` in `.env` to a GitHub
-personal access token. Without a token, public repos work but the API rate
+For private repos, save a GitHub token in **Settings → Repositories** (read
+access to the repository's contents is enough). Each researcher's own token is
+used for their imports. Without a token, public repos work but the API rate
 limit is 60 requests/hour per IP. Public repos look like 404s when you're
 unauthenticated and the repo is actually private.
 
@@ -147,9 +148,9 @@ folder (or of a private repository) in chat and ask it to wrap that. For a URL, 
 `fetch_repository` tool: VISTA's backend, not the sandbox, downloads the repository, pinned to the
 commit its branch or tag points at now, into the agent's `/mnt/data/work/<name>/`. That is the
 same route as **Import → GitHub URL**, so it works on networks whose HTTPS proxy the sandbox does
-not trust, and with `VISTA_BACKEND_GITHUB_TOKEN` or `VISTA_BACKEND_GITLAB_TOKEN` set it reads
-private repositories without the token entering the sandbox (the agent can read whatever the
-token can, so scope it read-only). An upload is unpacked in the sandbox by
+not trust, and with a GitHub or gitlab.com token saved in **Settings → Repositories** it reads
+private repositories on that host without the token entering the sandbox (the agent can read
+whatever the token can, so scope it read-only). An upload is unpacked in the sandbox by
 `scripts/get_source.py`. Either way the skill's `inventory.py` lists READMEs, build files, existing batch
 scripts and their `#SBATCH` lines, entry points and their flags. The agent proposes what the job
 runs and which flags become `script_args`, and translates an existing batch script's resources
@@ -319,7 +320,8 @@ delete the directory by hand if you need to remove a skill.
 accepts `github.com` URLs in one of the two forms described above.
 
 **`GitHub returned 404 for …`** — Either the repo really doesn't exist, or
-it's private and you haven't set `VISTA_BACKEND_GITHUB_TOKEN`.
+it's private and you haven't saved a GitHub token in Settings → Repositories
+(or that token can't read it).
 
 **`No SKILL.md found at <subpath>`** — Double-check the tree URL points to a
 directory containing a SKILL.md (or skill.md). If you're pointing at a

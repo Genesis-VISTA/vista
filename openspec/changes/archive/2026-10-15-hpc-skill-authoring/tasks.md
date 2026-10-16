@@ -33,6 +33,6 @@
 ## 7. Docs and CI
 
 - [x] 7.1 Update `docs/skill-onboarding.md` ("Authoring a skill", "HPC jobs inside a skill") and link from `docs/hpc-jobs.md`; verify the link check in `ci-local.sh`
-- [ ] 7.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
+- [x] 7.2 Run `./scripts/ci-local.sh backend mcp ui` and verify it passes; `openspec validate hpc-skill-authoring --strict`
   (2026-10-11: all jobs pass except `ui:browser`, which needs `npx playwright install chromium` on this machine,
   and `test_environment_path_is_unchanged`, which fails only because a `.env` above the worktree sets a model)

@@ -51,6 +51,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     check_legacy_forum_env()
 
+    # Likewise the deployment-wide repository tokens, which moved to Settings.
+    from ..services.repo_tokens import check_legacy_token_env
+
+    check_legacy_token_env()
+
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
         await mcp_server.list_tools()

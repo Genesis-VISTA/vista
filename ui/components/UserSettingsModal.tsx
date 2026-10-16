@@ -35,7 +35,15 @@ import { useTheme, type ThemeChoice } from "@/lib/theme";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
 /** What the modal can show: the four top-level areas, or one cluster's section. */
-type Section = "appearance" | "profile" | "agent" | "compute" | HpcCluster;
+type Section = "appearance" | "profile" | "agent" | "repositories" | "compute" | HpcCluster;
+
+/**
+ * The repository tokens, which unlike every field in `TEXT_FIELDS` are
+ * write-only: the backend never sends them back, so each starts empty, an empty
+ * field saves nothing, and only Remove sends `""`.
+ */
+const REPO_TOKEN_FIELDS = ["github_token", "gitlab_token"] as const;
+type RepoTokenField = (typeof REPO_TOKEN_FIELDS)[number];
 
 /** Every free-text field the modal edits, as named in `UserSelfUpdate`. */
 const TEXT_FIELDS = [
@@ -65,6 +73,8 @@ type TextField = (typeof TEXT_FIELDS)[number];
  */
 type Draft = {
   text: Record<TextField, string>;
+  /** A repository token being typed; cleared once it saves. */
+  tokens: Record<RepoTokenField, string>;
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
   interests: string[];
@@ -80,6 +90,7 @@ function draftFrom(user: UserPublicWithConfig): Draft {
   for (const field of TEXT_FIELDS) text[field] = user[field] ?? "";
   return {
     text,
+    tokens: { github_token: "", gitlab_token: "" },
     provider: user.inference_provider ?? null,
     interests: user.research_interests ?? [],
     preferredUnits: user.preferred_units ?? "si",
@@ -126,6 +137,7 @@ const SETTING_FIELDS = new Set([
 /** The section each field lives in, for going to a field whose save failed. */
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
+  if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (
     field.startsWith("research_") ||
     field === "preferred_units" ||
@@ -178,6 +190,8 @@ const FIELD_LABELS: Record<string, string> = {
   frontier_s3m_token: "Frontier S3M token",
   lux_account: "Lux account",
   lux_remote_dir: "Lux remote directory",
+  github_token: "GitHub token",
+  gitlab_token: "gitlab.com token",
 };
 
 type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
@@ -241,6 +255,13 @@ export function UserSettingsModal({
     if (field === HIDDEN_FIELD || SETTING_FIELDS.has(field)) void refreshHpcStatus();
     // The picker's label and list follow the provider, endpoint and key.
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
+    // A repository token never comes back, so what to show is "saved" or not:
+    // read that from the server, and empty the field it was typed into.
+    if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) {
+      const token = field as RepoTokenField;
+      setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [token]: "" } } : d));
+      setUser(await fetchCurrentUserWithConfig());
+    }
   }
 
   const [announcement, setAnnouncement] = useState("");
@@ -263,6 +284,8 @@ export function UserSettingsModal({
       const next = draftFrom(loaded);
       const seeded: Record<string, unknown> = { inference_provider: next.provider };
       for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
+      // Null is "keep" for a write-only token, so an untouched field never saves.
+      for (const field of REPO_TOKEN_FIELDS) seeded[field] = null;
       seeded.research_interests = next.interests;
       seeded.preferred_units = next.preferredUnits;
       seeded.technical_depth = next.technicalDepth;
@@ -352,6 +375,33 @@ export function UserSettingsModal({
     };
   };
 
+  /** Like `bind`, for a write-only token: a blank field saves null, which keeps it. */
+  const bindToken = (field: RepoTokenField): FieldBinding => {
+    const error = autosave.errors[field];
+    return {
+      error,
+      mark: autosave.marks[field],
+      inputProps: {
+        id: fieldId(field),
+        value: draft?.tokens[field] ?? "",
+        onChange: (e) => {
+          const value = e.target.value;
+          setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field]: value } } : d));
+          autosave.edit(field, blankToNull(value), pasted.current.delete(field) ? "now" : "hold");
+        },
+        onPaste: () => void pasted.current.add(field),
+        onBlur: () => autosave.commit(field),
+        "aria-invalid": error ? true : undefined,
+        "aria-describedby": error ? `${fieldId(field)}-error` : undefined,
+      },
+    };
+  };
+
+  function removeToken(field: RepoTokenField) {
+    setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field]: "" } } : d));
+    autosave.edit(field, "", "now");
+  }
+
   function setShown(cluster: HpcCluster, shown: boolean) {
     if (!draft) return;
     const hidden = new Set(draft.hidden);
@@ -429,6 +479,8 @@ export function UserSettingsModal({
         providerError={autosave.errors.inference_provider}
       />
     );
+  } else if (section === "repositories") {
+    content = <RepositoriesSection user={user} bindToken={bindToken} onRemove={removeToken} />;
   } else if (section === "compute") {
     content = (
       <ComputeSection
@@ -478,6 +530,7 @@ export function UserSettingsModal({
             section={section}
             hidden={hidden}
             personalize={draft?.personalizeResponses ?? true}
+            repoTokens={(user?.has_github_token ? 1 : 0) + (user?.has_gitlab_token ? 1 : 0)}
             failed={failedSections}
             onChoose={choose}
           />
@@ -539,12 +592,15 @@ function SettingsNav({
   section,
   hidden,
   personalize,
+  repoTokens,
   failed,
   onChoose,
 }: {
   section: Section;
   hidden: Set<HpcCluster>;
   personalize: boolean;
+  /** How many repository tokens are saved, for the entry's note. */
+  repoTokens: number;
   /** Sections holding a field whose save failed. */
   failed: Set<Section>;
   onChoose: (section: Section) => void;
@@ -606,6 +662,21 @@ function SettingsNav({
         {providerNote && (
           <span className={`settings-nav-note${providerReady ? "" : " hpc-word--warn"}`}>{providerNote}</span>
         )}
+      </NavEntry>
+      <NavEntry
+        label={`Repositories, ${repoTokens ? `${repoTokens} saved` : "none saved"}`}
+        current={section === "repositories"}
+        failed={failed.has("repositories")}
+        onClick={() => onChoose("repositories")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="6" cy="6" r="2" />
+          <circle cx="6" cy="18" r="2" />
+          <circle cx="18" cy="9" r="2" />
+          <path d="M6 8v8M18 11c0 3-4 3-10 6" />
+        </svg>
+        <span className="settings-nav-name">Repositories</span>
+        <span className="settings-nav-note">{repoTokens ? `${repoTokens} saved` : "None"}</span>
       </NavEntry>
       <NavEntry
         label={`Compute, ${ready} of ${visible.length} ready`}
@@ -1217,6 +1288,131 @@ function AgentSection({
 }
 
 /** Each cluster's own fields, in the order the old collapsible sections had them. */
+/** GitHub's fine-grained token form, pre-filled; `contents` decides read-only or read-write. */
+function githubTokenUrl(contents: "read" | "write"): string {
+  const params = new URLSearchParams({
+    name: contents === "write" ? "VISTA (read and write)" : "VISTA (read)",
+    description:
+      contents === "write"
+        ? "VISTA: skill import, repository fetches and Hypothesis Lab forums"
+        : "VISTA: skill import and repository fetches",
+    expires_in: "90",
+    contents,
+  });
+  return `https://github.com/settings/personal-access-tokens/new?${params}`;
+}
+
+const GITLAB_TOKEN_URL = `https://gitlab.com/-/user_settings/personal_access_tokens?${new URLSearchParams({
+  name: "VISTA",
+  scopes: "read_api,read_repository,write_repository",
+})}`;
+
+function RepositoriesSection({
+  user,
+  bindToken,
+  onRemove,
+}: {
+  user: UserPublicWithConfig;
+  bindToken: (field: RepoTokenField) => FieldBinding;
+  onRemove: (field: RepoTokenField) => void;
+}) {
+  return (
+    <section className="settings-section" aria-label="Repositories">
+      <SectionHeader title="Repositories">
+        <span className="user-settings-hint">
+          Tokens VISTA uses to reach your private repositories. Importing a skill and the
+          agent&rsquo;s repository fetches always use the token here. A Hypothesis Lab forum uses
+          its project&rsquo;s own token if it has one, else the token here for the forum&rsquo;s
+          host, else your system git&rsquo;s credentials.
+        </span>
+      </SectionHeader>
+      <div className="settings-section-body">
+        <RepoTokenField
+          label="GitHub token"
+          field="github_token"
+          saved={Boolean(user.has_github_token)}
+          binding={bindToken("github_token")}
+          onRemove={() => onRemove("github_token")}
+          hint={
+            <>
+              A fine-grained token with Contents access to the repositories you import from: choose{" "}
+              <a href={githubTokenUrl("read")} target="_blank" rel="noreferrer">
+                read-only
+              </a>
+              , or{" "}
+              <a href={githubTokenUrl("write")} target="_blank" rel="noreferrer">
+                read and write
+              </a>{" "}
+              if Hypothesis Lab forums should use it too. The form opens filled in; pick the
+              repositories under Repository access.
+            </>
+          }
+        />
+        <RepoTokenField
+          label="gitlab.com token"
+          field="gitlab_token"
+          saved={Boolean(user.has_gitlab_token)}
+          binding={bindToken("gitlab_token")}
+          onRemove={() => onRemove("gitlab_token")}
+          hint={
+            <>
+              A personal access token with <code>read_api</code> and <code>read_repository</code>,
+              plus <code>write_repository</code> for forums.{" "}
+              <a href={GITLAB_TOKEN_URL} target="_blank" rel="noreferrer">
+                Create one on gitlab.com
+              </a>
+              ; the form opens with those scopes ticked.
+            </>
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
+function RepoTokenField({
+  label,
+  field,
+  saved,
+  binding,
+  onRemove,
+  hint,
+}: {
+  label: string;
+  field: RepoTokenField;
+  saved: boolean;
+  binding: FieldBinding;
+  onRemove: () => void;
+  hint: ReactNode;
+}) {
+  return (
+    <div className="project-modal-label">
+      <label htmlFor={fieldId(field)}>{label}</label>
+      <span className="settings-input-wrap" data-marked={binding.mark ? true : undefined}>
+        <input
+          className="input"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={saved ? "Saved. Paste a new one to replace it" : "Not set"}
+          {...binding.inputProps}
+        />
+        <SaveMark mark={binding.mark} />
+      </span>
+      {saved && (
+        <span className="user-settings-hint">
+          Saved and stored encrypted; it is never shown again.{" "}
+          <button type="button" className="button ghost button-xs" onClick={onRemove}>
+            Remove
+          </button>
+        </span>
+      )}
+      <FieldError field={field} error={binding.error} />
+      <span className="user-settings-hint">{hint}</span>
+    </div>
+  );
+}
+
 function ClusterFields({
   cluster,
   user,

@@ -138,6 +138,21 @@ class ForumSettings(BaseModel):
     choosing it, not whoever can edit a `.env`.
     """
 
+    remote_token: SecretStr | None = None
+    """
+    Access token git sends to an `https://` `remote_url`. Not configuration either.
+
+    Filled in per project from `Project.forum_repo_token`. None leaves git to the
+    system's own credentials — an SSH key in the agent, or a credential helper.
+    """
+
+    remote_token_source: str | None = None
+    """
+    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or None
+    when there is none and git uses the system's credentials. A failed publish
+    names it, so the person knows which token to fix. Not configuration.
+    """
+
     max_simulations: int = 2
     """
     HPC jobs one debate may commission, in total.
@@ -327,24 +342,6 @@ class Settings(BaseSettings):
 
     Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     Required in prod, defaults to a dummy key in dev.
-    """
-
-    github_token: str | None = None
-    """
-    Optional GitHub personal access token used when importing skills from
-    private repos via `POST /skills/import`, and by the agent's
-    `fetch_repository` tool. Sent as the `Authorization: Bearer` header on
-    requests to api.github.com. If unset, only public repos work. The agent can
-    read whatever repository the token can, so give it read-only access to what
-    researchers here may wrap.
-    """
-
-    gitlab_token: str | None = None
-    """
-    Optional gitlab.com access token (`read_api` scope) for the agent's
-    `fetch_repository` tool, sent as a bearer token to gitlab.com/api/v4. If
-    unset, only public gitlab.com projects can be fetched. As with
-    `github_token`, the agent can read whatever the token can.
     """
 
     vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None

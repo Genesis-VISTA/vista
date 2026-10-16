@@ -918,3 +918,125 @@ def test_file_outbox_import_keeps_existing_rows(tmp_path):
     box = FileOutbox(tmp_path / OUTBOX_FILE)
     assert box.insert_rows([("p1", "t", "a", None), ("p2", "t", "b", "c")]) == 2
     assert box.insert_rows([("p1", "t", "a", "changed"), ("p3", "t", "d", None)]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Why publishing last failed (design D7)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [
+        # GitHub over HTTPS: a bad token, and a token that cannot see the repo.
+        (
+            "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/o/r.git/'",
+            "refused",
+        ),
+        (
+            "remote: Repository not found.\nfatal: repository 'https://github.com/o/r.git/' not found",
+            "refused",
+        ),
+        (
+            "remote: Permission to o/r.git denied to someone.\nfatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403",
+            "refused",
+        ),
+        # GitLab: a token without write, and HTTP Basic refused.
+        ("remote: You are not allowed to push code to this project.", "refused"),
+        ("remote: HTTP Basic: Access denied.", "refused"),
+        # No credential at all, with prompts off.
+        (
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            "refused",
+        ),
+        # SSH without a key the forge accepts.
+        ("git@github.com: Permission denied (publickey).", "refused"),
+        # Never reached the forge.
+        (
+            "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com",
+            "unreachable",
+        ),
+        (
+            "fatal: unable to access 'http://127.0.0.1:9/x.git/': Failed to connect to 127.0.0.1 port 9: Connection refused",
+            "unreachable",
+        ),
+        ("timed out", "unreachable"),
+        # Anything else names nothing.
+        ("fatal: 'nowhere' does not appear to be a git repository", "failed"),
+    ],
+)
+def test_git_failures_are_classified(message, reason):
+    assert forum_git.classify_git_failure(message) == reason
+
+
+def _refusing(remote: Path) -> None:
+    """Make the bare remote reject every push the way a forge refuses a credential."""
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\necho 'Permission denied to forum.git' >&2\nexit 1\n",
+        encoding="utf-8",
+    )
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC)
+
+
+async def _publish_one(client) -> None:
+    try:
+        await client.create_thread("Why does the knee move?", body="Debate it.")
+    except ForumCommandError:
+        pass  # local-first: the post is kept; the record is what this checks
+
+
+@pytest.mark.anyio
+async def test_a_refused_push_is_recorded_with_its_credential(tmp_path, remote):
+    _refusing(remote)
+    client = ForumClient(
+        ForumSettings(
+            enabled=True,
+            repo_root=tmp_path / "host" / "forum-git" / str(PROJECT),
+            timeout=30.0,
+            remote_token_source="settings-github",
+        )
+    )
+    await client.ensure_repo()
+    await client.set_remote(str(remote))
+
+    await _publish_one(client)
+
+    error = await client.publish_error()
+    assert error is not None
+    assert (error["reason"], error["credential"]) == ("refused", "settings-github")
+    assert "Permission denied" in error["message"]
+
+
+@pytest.mark.anyio
+async def test_without_a_token_the_system_git_is_named(a, remote):
+    _refusing(remote)
+    await _publish_one(a)
+
+    error = await a.publish_error()
+    assert error is not None and error["credential"] == "system-git"
+
+
+@pytest.mark.anyio
+async def test_an_unreachable_forge_is_not_blamed_on_a_token(tmp_path):
+    """Port 9 on localhost refuses connections: unreachable, and hermetic."""
+    client = await _host(tmp_path / "offline", "http://127.0.0.1:9/forum.git")
+    with pytest.raises(ForumCommandError):
+        await client.sync()
+
+    error = await client.publish_error()
+    assert error is not None and error["reason"] == "unreachable"
+
+
+@pytest.mark.anyio
+async def test_a_successful_push_clears_the_record(a, remote):
+    hook = remote / "hooks" / "pre-receive"
+    _refusing(remote)
+    await _publish_one(a)
+    assert await a.publish_error() is not None
+
+    hook.unlink()
+    await a.create_thread("Again", body="This time it lands.")
+
+    assert await a.publish_error() is None
+    assert not (a.repo_root / forum_git.LAST_PUBLISH_FILE).exists()

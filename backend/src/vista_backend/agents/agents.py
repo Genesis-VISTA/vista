@@ -59,6 +59,7 @@ from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
 from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
+from ..services.repo_tokens import user_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
 from palisade import PalisadeSidecar
@@ -597,12 +598,17 @@ class ProjectAgent:
             credentials and may not trust the network's proxy. Returns the folder
             and its SOURCE.json record (clone URL, commit, whether it is private).
             """
+            # The user's token for this host, read from their row now: it is not
+            # on `self.user`, so a token changed in Settings applies at once.
+            async with AsyncSession(get_engine()) as session:
+                token = await user_repo_token(session, url, self.user.id)
             try:
                 record = await asyncio.to_thread(
                     source_fetch.fetch_repository,
                     url,
                     self.output_dir.parent / "work",
                     ref=ref,
+                    token=token.value if token else None,
                 )
             except source_fetch.SourceFetchError as e:
                 raise ModelRetry(str(e)) from e

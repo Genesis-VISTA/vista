@@ -3,7 +3,13 @@ from pydantic import BaseModel
 
 from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..db.db import SessionDep
-from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable, UserPublic
+from ..db.schemas import (
+    ProjectCreate,
+    ProjectPublic,
+    ProjectTable,
+    UserPublic,
+    UserTable,
+)
 from ..services import project as project_service
 from ..services.auth import UserDep
 
@@ -25,7 +31,7 @@ async def get_project(
     return ProjectPublic.model_validate(project)
 
 
-async def _open_the_lab(project: ProjectTable) -> None:
+async def _open_the_lab(session, project: ProjectTable, user) -> None:
     """
     Initialise this project's forum, or refuse the save with the reason.
 
@@ -37,10 +43,18 @@ async def _open_the_lab(project: ProjectTable) -> None:
     that conversation instead of starting an empty one beside it.
 
     A project with no URL has no lab and nothing to set up. Saving one on a
-    machine without a usable git fails here too, saying so.
+    machine without a usable git fails here too, saying so. The check reaches the
+    remote with the token this user's forum would push with, so a token that
+    cannot push fails the save here too.
     """
+    # The row, not the public model: the tokens are only on the row.
+    owner = await session.get(UserTable, user.id)
+    if owner is None:
+        raise HTTPException(
+            status_code=401, detail="the signed-in user no longer exists"
+        )
     try:
-        await ensure_forum(project)
+        await ensure_forum(project, owner)
     except ForumSetupError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -50,7 +64,7 @@ async def create_project(
     payload: ProjectCreate, session: SessionDep, user: UserDep
 ) -> ProjectPublic:
     project = await project_service.create_project(session, payload, user)
-    await _open_the_lab(project)
+    await _open_the_lab(session, project, user)
     return ProjectPublic.model_validate(project)
 
 
@@ -59,7 +73,7 @@ async def update_project(
     project_name: str, updates: ProjectCreate, session: SessionDep, user: UserDep
 ) -> ProjectPublic:
     project = await project_service.update_project(session, project_name, updates, user)
-    await _open_the_lab(project)
+    await _open_the_lab(session, project, user)
     return ProjectPublic.model_validate(project)
 
 

@@ -12,9 +12,9 @@ For GitHub, two URL forms are accepted:
       at <subpath>/ inside the repo. This covers monorepos like
       anthropic-skills where each skill is its own subdirectory.
 
-The tarball is fetched from the GitHub API (no `git` binary needed). If
-`settings.github_token` is set it is passed as a bearer token, enabling private
-repos.
+The tarball is fetched from the GitHub API (no `git` binary needed). The
+caller passes the user's GitHub token from Settings, if they have one, as a
+bearer token, enabling private repos.
 
 A local import receives the files of a folder the user picked in the browser,
 each with its path relative to that folder (see `import_skill_from_files`).
@@ -47,7 +47,6 @@ from .skills import (
     find_skill_md,
     read_skill,
 )
-from ..config import settings
 
 
 class SkillImportError(Exception):
@@ -99,49 +98,60 @@ def parse_github_url(url: str) -> ParsedGithubUrl:
     )
 
 
-def _api_request(url: str, accept: str = "application/json") -> bytes:
-    """Send a GET to api.github.com with the optional auth token."""
+def _api_request(
+    url: str, accept: str = "application/json", *, token: str | None = None
+) -> bytes:
+    """Send a GET to api.github.com, with the user's GitHub token if they have one."""
     if not url.startswith("https://"):
         raise SkillImportError(f"Refusing to fetch non-HTTPS URL: {url}")
     req = urllib.request.Request(
         url, headers={"Accept": accept, "User-Agent": "vista-backend"}
     )
-    if settings.github_token:
-        req.add_header("Authorization", f"Bearer {settings.github_token}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
         # URL scheme is restricted to https by the guard above.
         with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
             return resp.read()
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            raise SkillImportError(f"GitHub returned 404 for {url}.") from e
-        if e.code in (401, 403):
-            raise SkillImportError(
-                f"GitHub returned {e.code} for {url}. "
-                "Set VISTA_BACKEND_GITHUB_TOKEN for private repos or to raise rate limits."
-            ) from e
+        # GitHub answers 404, not 401, for a private repository the request
+        # cannot see, so a 404 without a token is the private-repo case too.
+        if e.code in (401, 403, 404):
+            hint = (
+                "If the repository is private, add a GitHub token in "
+                "Settings → Repositories."
+                if not token
+                else "Your GitHub token in Settings → Repositories may not have "
+                "access to it."
+            )
+            raise SkillImportError(f"GitHub returned {e.code} for {url}. {hint}") from e
         raise SkillImportError(f"GitHub request failed ({e.code}): {url}") from e
     except urllib.error.URLError as e:
         raise SkillImportError(f"Failed to reach github.com: {e.reason}") from e
 
 
-def _resolve_default_branch(owner: str, repo: str) -> str:
+def _resolve_default_branch(owner: str, repo: str, token: str | None) -> str:
     import json
 
-    payload = json.loads(_api_request(f"https://api.github.com/repos/{owner}/{repo}"))
+    payload = json.loads(
+        _api_request(f"https://api.github.com/repos/{owner}/{repo}", token=token)
+    )
     return payload.get("default_branch") or "main"
 
 
-def _download_tarball(parsed: ParsedGithubUrl, dest_root: Path) -> Path:
+def _download_tarball(
+    parsed: ParsedGithubUrl, dest_root: Path, token: str | None
+) -> Path:
     """
     Download the repo as a tarball and extract it under `dest_root`.
 
     Returns the path to the extracted repo root (which contains the subpath, if any).
     """
-    ref = parsed.ref or _resolve_default_branch(parsed.owner, parsed.repo)
+    ref = parsed.ref or _resolve_default_branch(parsed.owner, parsed.repo, token)
     tar_bytes = _api_request(
         f"https://api.github.com/repos/{parsed.owner}/{parsed.repo}/tarball/{ref}",
         accept="application/vnd.github+json",
+        token=token,
     )
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
         # tarballs from GitHub wrap everything in a single top-level directory
@@ -181,18 +191,21 @@ def _install_skill(source_dir: Path, dest_dir: Path, where: str) -> Skill:
     return skill
 
 
-def import_skill_from_github(url: str, dest_dir: Path | str) -> Skill:
+def import_skill_from_github(
+    url: str, dest_dir: Path | str, *, token: str | None = None
+) -> Skill:
     """
     Import the skill at `url` into `dest_dir` (which must not already exist).
 
-    Returns the imported `Skill`. Raises `SkillImportError` for any
-    user-facing problem.
+    `token` is the user's GitHub token, from `services/repo_tokens`; without one
+    only public repositories can be read. Returns the imported `Skill`. Raises
+    `SkillImportError` for any user-facing problem.
     """
     parsed = parse_github_url(url)
     dest_dir = Path(dest_dir).resolve()
 
     with tempfile.TemporaryDirectory() as tmp:
-        extracted = _download_tarball(parsed, Path(tmp))
+        extracted = _download_tarball(parsed, Path(tmp), token)
         source_dir = extracted / parsed.subpath if parsed.subpath else extracted
         if not source_dir.exists() or not source_dir.is_dir():
             raise SkillImportError(

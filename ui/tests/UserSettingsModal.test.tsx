@@ -153,7 +153,7 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists four focused sections and opens on Research profile", async () => {
+  it("lists five focused sections and opens on Research profile", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
@@ -161,7 +161,13 @@ describe("UserSettingsModal navigation", () => {
     const names = within(nav())
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label")?.split(",")[0]);
-    expect(names).toEqual(["Appearance", "Research profile", "Models and providers", "Compute"]);
+    expect(names).toEqual([
+      "Appearance",
+      "Research profile",
+      "Models and providers",
+      "Repositories",
+      "Compute",
+    ]);
 
     expect(entry("Research profile")).toHaveAttribute("aria-current", "page");
     for (const cluster of ["Odo", "Frontier", "Lux", "Perlmutter"]) {
@@ -218,6 +224,72 @@ describe("UserSettingsModal navigation", () => {
     expect(updateCurrentUserMock).toHaveBeenCalledWith({ odo_remote_dir: "/odo/vista" });
     await openOn("Odo");
     expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue("/odo/vista");
+  });
+});
+
+describe("UserSettingsModal repositories", () => {
+  it("says a token is saved without showing it, and the order tokens are used in", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Repositories")).toHaveAccessibleName("Repositories, 1 saved");
+
+    const section = await openOn("Repositories");
+    const github = within(section).getByLabelText("GitHub token");
+    expect(github).toHaveValue("");
+    expect(github).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
+    expect(within(section).getByLabelText("gitlab.com token")).toHaveAttribute("placeholder", "Not set");
+
+    const note = within(section).getByText(/always use the token here/);
+    expect(note.textContent).toMatch(/project.s own token .* else the token here .* else your system git/);
+  });
+
+  it("saves a pasted token once, then shows it as saved and empties the field", async () => {
+    fetchCurrentUserWithConfigMock
+      .mockResolvedValueOnce(user())
+      .mockResolvedValueOnce(user({ has_github_token: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Repositories");
+
+    await userEvent.click(within(section).getByLabelText("GitHub token"));
+    await userEvent.paste("ghp_pasted");
+    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ github_token: "ghp_pasted" }));
+    await waitFor(() => expect(within(section).getByLabelText("GitHub token")).toHaveValue(""));
+    expect(within(section).getByLabelText("GitHub token")).toHaveAttribute(
+      "placeholder",
+      expect.stringMatching(/^Saved/),
+    );
+    await userEvent.tab();
+    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an untouched token alone, and only Remove sends a blank", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Repositories");
+
+    // Focusing and leaving the empty field is not a removal.
+    await userEvent.click(within(section).getByLabelText("GitHub token"));
+    await userEvent.tab();
+    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+
+    await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ github_token: "" }));
+    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never sends a token with another setting's save", async () => {
+    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true, has_gitlab_token: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const profile = await region("Research profile");
+
+    await userEvent.type(within(profile).getByLabelText(/^Role/), "chemist");
+    await userEvent.tab();
+    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ research_role: "chemist" }));
+    for (const [update] of updateCurrentUserMock.mock.calls) {
+      expect(update).not.toHaveProperty("github_token");
+      expect(update).not.toHaveProperty("gitlab_token");
+    }
   });
 });
 

@@ -35,6 +35,14 @@ export interface Project {
    * line of work.
    */
   forumRepoUrl: string;
+  /** Whether the project stores an access token for that repository. */
+  hasForumToken: boolean;
+  /**
+   * Only on a draft being saved: a new token, or "" to remove the stored one.
+   * Absent keeps it, which is what every save that is not editing it wants —
+   * the token is never read back, so there is nothing to echo.
+   */
+  forumRepoToken?: string;
   tools: string[];
   usageLimits: Record<string, unknown>;
 }
@@ -50,6 +58,7 @@ function fromPublic(p: ProjectPublic): Project {
     skills: Array.isArray(p.skills) ? p.skills : [],
     knowledgeBases: Array.isArray(p.knowledge_bases) ? p.knowledge_bases : [],
     forumRepoUrl: p.forum_repo_url ?? "",
+    hasForumToken: p.has_forum_token ?? false,
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
   };
@@ -64,6 +73,7 @@ export function toCreate(project: Omit<Project, "id">): ProjectCreate {
     skills: project.skills,
     knowledge_bases: project.knowledgeBases,
     forum_repo_url: project.forumRepoUrl.trim() || null,
+    forum_repo_token: project.forumRepoToken ?? null,
     tools: project.tools,
     usage_limits: project.usageLimits ?? {},
   };

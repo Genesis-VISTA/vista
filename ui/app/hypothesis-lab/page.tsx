@@ -16,12 +16,14 @@ import {
   closedBy,
   fetchForumStatus,
   fetchDebate,
+  forumWebUrl,
   isActive,
   simulationStanding,
   watchesForPeerPosts,
   listDebates,
   openDebate,
   postToDebate,
+  publishErrorNotice,
 } from "@/lib/debates";
 import { useActiveProject } from "@/lib/projects";
 
@@ -32,6 +34,13 @@ const FINISHED_POLL_MS = 15_000;
  * Comfortably above the backend's own forum-refresh interval, so a poll finds
  * either fresh news or a cheap cache hit rather than forcing a git fetch of its
  * own. A peer's comment on a concluded debate is not a live conversation.
+ */
+
+const FORUM_STATUS_POLL_MS = 15_000;
+/**
+ * How often the forum's status is re-read while the lab is open, so a failed
+ * publish is explained without a reload. Reading it touches only this machine's
+ * copy of the forum, never the remote.
  */
 
 const STATUS_LABEL: Record<DebateRun["status"], string> = {
@@ -205,19 +214,34 @@ function DebatesPage() {
     return () => controller.abort();
   }, [refresh]);
 
+  // The forum's status, kept current while the page is open.
+  //
+  // Read once, it went stale exactly when it mattered: a debate's first push is
+  // refused seconds after the page loads, so the notice saying why would appear
+  // only after a reload. So it is re-read on an interval, and at once whenever
+  // the open debate's count of unpublished posts changes, which is when a push
+  // has just been tried. A failed read keeps what is shown.
+  const unpublishedHere =
+    state?.posts.filter((post) => post.published === false).length ?? 0;
   useEffect(() => {
     if (!projectName) {
       setForum(null);
       return;
     }
     const controller = new AbortController();
-    fetchForumStatus(projectName, controller.signal)
-      .then(setForum)
-      .catch(() => {
-        /* the banner is advisory; its absence should not shout */
-      });
-    return () => controller.abort();
-  }, [projectName]);
+    const load = () =>
+      fetchForumStatus(projectName, controller.signal)
+        .then(setForum)
+        .catch(() => {
+          /* the banner is advisory; its absence should not shout */
+        });
+    void load();
+    const timer = setInterval(load, FORUM_STATUS_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [projectName, unpublishedHere]);
 
   useEffect(() => {
     if (!projectName || !selectedId) {
@@ -372,6 +396,55 @@ function DebatesPage() {
     [state]
   );
 
+  // Why posts are not reaching the forum. An error, so it is drawn as one, and
+  // it sits on the open debate, whose posts are the ones marked "not yet
+  // published", rather than at the top of the page where it read as one more
+  // note about the lab. With no debate open it falls back to the top.
+  const publishNotice = forum?.publish_error ? (
+    <p className="debate-publish-error" role="alert">
+      <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
+      {publishErrorNotice(forum.publish_error).detail}
+      {forum.publish_error.reason === "refused" &&
+        forum.publish_error.credential !== "settings-github" &&
+        forum.publish_error.credential !== "settings-gitlab" && (
+          <>
+            {" "}
+            <Link href="/projects">Open Projects</Link>
+          </>
+        )}
+      {forum.unpublished > 0 && (
+        <>
+          {" "}
+          {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
+          marked <em>not yet published</em>, until it works.
+        </>
+      )}
+    </p>
+  ) : null;
+
+  // And when it works, say so and say where: the remote has every post written
+  // here. The URL is the forum's own remote, so this is also where to look. A
+  // plain note, not a success colour: only the failure needs to stand out.
+  const syncedTo =
+    forum && forum.shared && forum.remote && !forum.publish_error && forum.unpublished === 0
+      ? forum.remote
+      : null;
+  const syncedLink = syncedTo ? forumWebUrl(syncedTo) : null;
+  const forumNotice =
+    publishNotice ??
+    (syncedTo ? (
+      <p className="debate-note" role="status">
+        Synced with{" "}
+        {syncedLink ? (
+          <a href={syncedLink} target="_blank" rel="noreferrer">
+            {syncedTo}
+          </a>
+        ) : (
+          <code>{syncedTo}</code>
+        )}
+      </p>
+    ) : null);
+
   if (!projectName) {
     return <main className="debate-page"><p>Select a project first.</p></main>;
   }
@@ -459,7 +532,9 @@ function DebatesPage() {
 
       {error && <p className="debate-error">{error}</p>}
 
-      {forum !== null && forum.unpublished > 0 && (
+      {!state && publishNotice}
+
+      {forum !== null && !forum.publish_error && forum.unpublished > 0 && (
         <p className="debate-note">
           <strong>
             {forum.unpublished === 1
@@ -579,6 +654,8 @@ function DebatesPage() {
                   </span>
                 )}
               </div>
+
+              {forumNotice}
 
               {state.run.thread_missing && (
                 <p className="debate-warning">

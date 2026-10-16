@@ -71,6 +71,8 @@ class _Forum:
     online: bool = True
     attachments: dict[str, tuple[str, str]] = field(default_factory=dict)
     """ post id → (name, published content), for tests to inspect. """
+    publish_error: dict[str, str] | None = None
+    """ What `ForumClient.publish_error` would report; tests set it directly. """
 
 
 _forums: dict[str, _Forum] = {}
@@ -138,6 +140,9 @@ class FakeForumClient:
     async def publish(self, thread: str) -> int:
         self._thread(thread)
         return self._publish()
+
+    async def publish_error(self) -> dict[str, str] | None:
+        return self.forum.publish_error
 
     async def unpublished(self, thread: str | None = None) -> int:
         return sum(

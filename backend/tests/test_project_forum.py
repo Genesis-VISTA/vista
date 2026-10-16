@@ -30,7 +30,7 @@ from vista_backend.agents.forum.project_forum import (
 )
 from vista_backend.config import ForumSettings
 from vista_backend.config import settings as app_settings
-from vista_backend.db.schemas import ProjectTable
+from vista_backend.db.schemas import ProjectTable, UserTable
 from vista_backend.services.forum_git import REPO_DIR, ForumClient, ForumDisabled
 from vista_backend.services.git_check import GitCheck
 
@@ -90,6 +90,11 @@ def _project(url: str | None = "https://example.invalid/forum.git", name="salt")
     return ProjectTable(name=name, forum_repo_url=url)
 
 
+def _user(**tokens) -> UserTable:
+    """The user a forum publishes as: just the row, never saved, with any Settings tokens."""
+    return UserTable(email="researcher@example.org", **tokens)
+
+
 def _body(name: str, url: str | None) -> dict:
     return {
         "name": name,
@@ -117,7 +122,7 @@ def test_a_project_with_no_url_has_no_lab(forum_home):
     assert forum_config_for(_project(None)) is None
     assert not lab_enabled(_project(None))
     with pytest.raises(ForumDisabled):
-        build_client_for(_project(None))
+        build_client_for(_project(None), _user())
 
 
 def test_a_blank_url_counts_as_none(forum_home):
@@ -138,7 +143,7 @@ def test_no_lab_anywhere_without_git(forum_home, monkeypatch):
     monkeypatch.setattr(project_forum, "git_status", lambda: missing)
     assert not lab_enabled(_project())
     with pytest.raises(ForumDisabled, match="Git is not installed."):
-        build_client_for(_project())
+        build_client_for(_project(), _user())
 
 
 def test_the_repository_comes_from_the_project_never_the_environment(
@@ -219,7 +224,7 @@ async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
     forum_home, forge
 ):
     project = _project(str(forge))
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
 
     assert (forum_root(project.id) / REPO_DIR / "HEAD").is_file(), "a bare repository"
     client = ForumClient(forum_config_for(project))  # type: ignore[arg-type]
@@ -229,9 +234,9 @@ async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
 async def test_ensure_forum_is_idempotent(forum_home, forge):
     """Called on every save, and on first use. Twice must be the same as once."""
     project = _project(str(forge))
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
     config = (forum_root(project.id) / REPO_DIR / "config").read_text(encoding="utf-8")
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
     assert (forum_root(project.id) / REPO_DIR / "config").read_text(
         encoding="utf-8"
     ) == config
@@ -241,16 +246,16 @@ async def test_changing_the_url_moves_the_remote(forum_home, forge, tmp_path):
     other = tmp_path / "forge" / "other.git"
     subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
     project = _project(str(forge))
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
     project.forum_repo_url = str(other)
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
     client = ForumClient(forum_config_for(project))  # type: ignore[arg-type]
     assert await client.remote() == str(other)
 
 
 async def test_ensure_forum_does_nothing_for_a_project_with_no_lab(forum_home):
     project = _project(None)
-    await ensure_forum(project)
+    await ensure_forum(project, _user())
     assert not forum_root(project.id).exists(), "no URL, no directory"
 
 
@@ -263,7 +268,7 @@ async def test_an_unreachable_url_is_raised_with_gits_reason(forum_home, tmp_pat
     """
     typo = str(tmp_path / "no-such-forge" / "typo.git")
     with pytest.raises(ForumSetupError) as caught:
-        await ensure_forum(_project(typo))
+        await ensure_forum(_project(typo), _user())
 
     assert typo in str(caught.value)
     assert "does not appear to be a git repository" in str(caught.value), (
@@ -275,7 +280,7 @@ async def test_saving_without_git_says_the_lab_needs_it(forum_home, monkeypatch)
     missing = GitCheck(ok=False, reason="Git is not installed.")
     monkeypatch.setattr(project_forum, "git_status", lambda: missing)
     with pytest.raises(ForumSetupError, match="needs git. Git is not installed."):
-        await ensure_forum(_project())
+        await ensure_forum(_project(), _user())
 
 
 async def test_joining_an_existing_forum_lists_its_threads(forum_home, forge, tmp_path):
@@ -292,8 +297,8 @@ async def test_joining_an_existing_forum_lists_its_threads(forum_home, forge, tm
     thread = await elsewhere.create_thread("already being argued", body="go")
 
     project = _project(str(forge))
-    await ensure_forum(project)
-    client = build_client_for(project)
+    await ensure_forum(project, _user())
+    client = build_client_for(project, _user())
     assert [t.id for t in await client.list_threads()] == [thread]
 
 
@@ -350,3 +355,202 @@ async def test_adding_a_lab_to_an_existing_project_sets_it_up(
     assert (forum_root(project_id) / REPO_DIR / "HEAD").is_file(), (
         "the edit opened the lab"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The forum access token
+# --------------------------------------------------------------------------- #
+
+TOKEN = "glpat-not-a-real-token"
+HTTPS_URL = "https://forge.example.invalid/group/forum.git"
+
+
+async def test_a_token_is_stored_but_never_read_back(
+    forum_home, forge, app_client, session
+):
+    """
+    The token goes in and only the fact of it comes out.
+
+    Encrypted at rest like every other credential, and missing from the read
+    model, which an agent is built from.
+    """
+    from sqlalchemy import text
+
+    body = {**_body("tokened", str(forge)), "forum_repo_token": TOKEN}
+    resp = await app_client.post("/projects", json=body)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["has_forum_token"] is True
+    assert TOKEN not in resp.text
+    stored = (
+        await session.exec(
+            text("SELECT forum_repo_token FROM project WHERE name = 'tokened'")
+        )
+    ).scalar_one()
+    assert stored and TOKEN not in stored, "encrypted at rest"
+    listed = await app_client.get("/projects")
+    assert TOKEN not in listed.text
+
+
+async def test_saving_without_a_token_keeps_it_and_blank_removes_it(
+    forum_home, forge, app_client
+):
+    """
+    A save replaces the whole project, and the dialog never has the token to send
+    back. Leaving it out has to mean "unchanged", or every edit would drop it.
+    """
+    body = {**_body("kept", str(forge)), "forum_repo_token": TOKEN}
+    await app_client.post("/projects", json=body)
+
+    body["description"] = "edited"
+    del body["forum_repo_token"]
+    kept = await app_client.put("/projects/kept", json=body)
+    assert kept.json()["has_forum_token"] is True
+
+    body["forum_repo_token"] = ""
+    removed = await app_client.put("/projects/kept", json=body)
+    assert removed.json()["has_forum_token"] is False
+
+
+GITHUB_FORUM = "https://github.com/o/forum.git"
+SETTINGS_TOKEN = "ghp_from_settings"
+
+
+def _forum_token(project, user=None) -> str | None:
+    config = forum_config_for(project, user)
+    assert config is not None
+    return config.remote_token.get_secret_value() if config.remote_token else None
+
+
+@pytest.mark.parametrize(
+    ("url", "project_token", "user_tokens", "expected"),
+    [
+        # The project's own token wins, on any https host.
+        (GITHUB_FORUM, TOKEN, {"github_token": SETTINGS_TOKEN}, TOKEN),
+        (HTTPS_URL, TOKEN, {}, TOKEN),
+        # Without one, the user's Settings token for the forum's host.
+        (GITHUB_FORUM, None, {"github_token": SETTINGS_TOKEN}, SETTINGS_TOKEN),
+        # Not for another host: a GitHub token never goes to a self-hosted forum.
+        (HTTPS_URL, None, {"github_token": SETTINGS_TOKEN}, None),
+        # Nothing at all: git uses the system's credentials.
+        (GITHUB_FORUM, None, {}, None),
+    ],
+)
+def test_which_token_a_forum_pushes_with(
+    forum_home, url, project_token, user_tokens, expected
+):
+    project = ProjectTable(name="t", forum_repo_url=url, forum_repo_token=project_token)
+    assert _forum_token(project, _user(**user_tokens)) == expected
+
+
+def test_without_a_user_a_forum_config_carries_no_token(forum_home):
+    """Only `lab_enabled` asks without a user, and it never reaches the remote."""
+    project = ProjectTable(
+        name="t", forum_repo_url=GITHUB_FORUM, forum_repo_token=TOKEN
+    )
+    assert _forum_token(project) is None
+
+
+def _client(url: str, token: str | None, tmp_path) -> ForumClient:
+    from pydantic import SecretStr
+
+    return ForumClient(
+        ForumSettings(
+            enabled=True,
+            repo_root=tmp_path / "forum",
+            remote_url=url,
+            remote_token=SecretStr(token) if token else None,
+        )
+    )
+
+
+def _header_git_sends(env: dict[str, str], url: str) -> str | None:
+    """What git itself resolves `http.extraHeader` to for `url`, under `env`."""
+    out = subprocess.run(
+        ["git", "config", "--get-urlmatch", "http.extraheader", url],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return out.stdout.strip() or None
+
+
+@pytest.fixture
+def machine_wide_header(tmp_path, monkeypatch):
+    """
+    Git config that already sends headers of its own, as a CI runner's does.
+
+    GitLab's runner sets an unscoped `http.extraHeader`, and its environment
+    carries an `Authorization` header for its own remote. So on CI neither "git
+    sends nothing elsewhere" nor "no Authorization in the environment" holds.
+    What must hold is narrower: the forum's header goes to the forum alone.
+    """
+    config = tmp_path / "machine-gitconfig"
+    config.write_text(
+        "[http]\n\textraHeader = X-Gitaly-Correlation-ID: machine\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.https://gitlab.com.extraHeader")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "Authorization: Basic cnVubmVy")
+
+
+def _forum_header() -> str:
+    """The header value the forum's token becomes, which nothing else can contain."""
+    import base64
+
+    return base64.b64encode(f"oauth2:{TOKEN}".encode()).decode()
+
+
+def test_git_sends_the_token_to_the_forum_and_nowhere_else(
+    forum_home, tmp_path, machine_wide_header
+):
+    """
+    Asked of git, not of our dict: the point is that git scopes the header to the
+    remote's URL, so a redirect or another remote never sees it.
+    """
+    import base64
+
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=True)
+
+    header = _header_git_sends(env, HTTPS_URL + "/info/refs")
+    assert header is not None
+    scheme, encoded = header.removeprefix("Authorization: ").split()
+    assert scheme == "Basic"
+    assert base64.b64decode(encoded).decode() == f"oauth2:{TOKEN}"
+    elsewhere = _header_git_sends(env, "https://elsewhere.example.invalid/x.git")
+    assert elsewhere is None or _forum_header() not in elsewhere, (
+        "only the machine's own header, never the forum's"
+    )
+    assert TOKEN not in " ".join(env.values()), "only ever encoded"
+
+
+def test_local_plumbing_never_carries_the_token(
+    forum_home, tmp_path, machine_wide_header
+):
+    """Only fetch and push talk to the remote, so only they get the header."""
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=False)
+    assert _forum_header() not in " ".join(env.values())
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://forge.example.invalid/forum.git", "git@forge.example.invalid:g/forum.git"],
+)
+def test_no_token_outside_https(forum_home, tmp_path, machine_wide_header, url):
+    """Plain HTTP would send it in the clear; SSH authenticates with its own keys."""
+    env = _client(url, TOKEN, tmp_path)._env(network=True)
+    assert _forum_header() not in " ".join(env.values())
+
+
+def test_config_already_in_the_environment_is_kept(forum_home, tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "http.sslVerify")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+
+    env = _client(HTTPS_URL, TOKEN, tmp_path)._env(network=True)
+
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "http.sslVerify"
+    assert env["GIT_CONFIG_KEY_1"] == f"http.{HTTPS_URL}.extraHeader"

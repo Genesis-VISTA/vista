@@ -6,6 +6,7 @@ Skills service.
 import logging
 import re
 import shutil
+import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -39,6 +40,7 @@ from ..config import settings
 from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
 from ..utils.misc import now_iso
 from ._helpers import ServiceUser, new_storage_path
+from .repo_tokens import user_repo_token
 
 
 logger = logging.getLogger(__name__)
@@ -168,16 +170,24 @@ async def create_skill(
 
 
 async def import_skill(
-    session: AsyncSession, url: str, project: ProjectTable | None = None
+    session: AsyncSession,
+    url: str,
+    user_id: uuid.UUID,
+    project: ProjectTable | None = None,
 ) -> SkillTable:
     """
     Import a skill from GitHub. Imported skills are private (`is_public=False`)
     and record the source `url` as their `repo_url`; the user can publish later.
-    Given a `project`, the skill is loaded into it.
+    Given a `project`, the skill is loaded into it. The download uses the user's
+    GitHub token from Settings — never the project's forum token, so the project
+    is not passed to the lookup.
     """
+    token = await user_repo_token(session, url, user_id)
     path = new_storage_path()
     try:
-        skill = import_skill_from_github(url, settings.data_dir / path)
+        skill = import_skill_from_github(
+            url, settings.data_dir / path, token=token.value if token else None
+        )
     except SkillImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await _register_imported(session, skill, path, repo_url=url, project=project)

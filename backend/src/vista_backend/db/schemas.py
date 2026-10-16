@@ -91,13 +91,22 @@ class ProjectBase(SQLModel):
 class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
-    pass
+    forum_repo_token: str | None = None
+    """
+    Access token git sends to an `https://` forum repository, or what to do with it.
+
+    Write-only, because a save replaces the whole project and the token is never
+    read back: None keeps whatever is stored, "" removes it, anything else
+    replaces it.
+    """
 
 
 class ProjectPublic(ProjectBase):
     """Project fields the user can read"""
 
     id: uuid.UUID
+    has_forum_token: bool = False
+    """Whether the project stores a forum access token. The token is never read back."""
 
 
 class ProjectTable(ProjectBase, table=True):
@@ -105,6 +114,21 @@ class ProjectTable(ProjectBase, table=True):
 
     __tablename__: str = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    forum_repo_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    Access token for the forum repository over HTTPS. Encrypted at rest.
+
+    Here and not on `ProjectBase`, so no read model carries it: `ProjectPublic` is
+    what an agent is built from, and a credential has no business near a prompt.
+    Without one, git uses whatever credentials the system git has, as before.
+    """
+
+    @property
+    def has_forum_token(self) -> bool:
+        """Read by `ProjectPublic.model_validate`, which validates from attributes."""
+        return bool(self.forum_repo_token)
 
 
 class ProjectMemberTable(SQLModel, table=True):
@@ -591,6 +615,15 @@ class UserSelfUpdate(UserBase):
     frontier_globus_https_token: str | None = None
     hpc_hidden_clusters: list[HpcCluster] | None = None
     """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
+    github_token: str | None = None
+    """
+    The researcher's GitHub token, or what to do with it. Write-only: absent or
+    null keeps the stored one, "" removes it, anything else replaces it. Kept out
+    of `_USER_CONFIG_NULLABLE_FIELDS` on purpose — that turns "" into null, which
+    here would make "remove" mean "keep". See `services/user.update_user`.
+    """
+    gitlab_token: str | None = None
+    """ The researcher's gitlab.com token. Write-only, like `github_token`. """
 
     @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -662,6 +695,13 @@ class UserPublicWithConfig(UserBase):
     globus_https_token: str | None = None
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
+    has_github_token: bool = False
+    has_gitlab_token: bool = False
+    """
+    Whether each repository token is saved. The tokens themselves are left out:
+    this is the model an agent is built from, and they are read from the user's
+    row when used (`services/repo_tokens`), never from here.
+    """
     hpc_hidden_clusters: list[str] = []
     """
     Clusters left out of the NavRail; not a secret, so on the light view too.
@@ -858,6 +898,28 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ Frontier collection's HTTPS refresh token. Encrypted at rest. """
+    github_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    GitHub token for skill import, `fetch_repository`, and a forum's fallback.
+    Encrypted at rest and never returned; `services/repo_tokens` decides where it
+    may go.
+    """
+    gitlab_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """ gitlab.com token, used the same way as `github_token`. Encrypted at rest. """
+
+    @property
+    def has_github_token(self) -> bool:
+        """Read by `UserPublicWithConfig.model_validate`, which validates from attributes."""
+        return bool(self.github_token)
+
+    @property
+    def has_gitlab_token(self) -> bool:
+        return bool(self.gitlab_token)
+
     hpc_hidden_clusters: list[str] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )

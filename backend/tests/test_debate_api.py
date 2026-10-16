@@ -104,7 +104,9 @@ async def _project(session, user, name="api-debate", forum_repo_url=FORUM_URL):
 
 async def _run(session, user, project, *, topic="why does the knee move?"):
     """A debate row with a real forum thread behind it."""
-    client = build_client_for(project)
+    from vista_backend.db.schemas import UserTable
+
+    client = build_client_for(project, await session.get(UserTable, user.id))
     thread_id = await client.create_thread(topic, body="Debate it.")
     run = await debate_service.create_debate(
         session,
@@ -163,6 +165,36 @@ async def test_get_picks_up_a_peer_post_on_a_finished_debate(
     assert "FINDING" in [p["kind"] for p in body["posts"]], (
         "a peer commented on a finished debate and the interface never showed it"
     )
+
+
+@pytest.mark.anyio
+async def test_a_failed_refresh_still_returns_the_debate(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    """
+    A refresh that fails is logged and survived — the read still answers.
+
+    The failure path rolls back, and a rollback expires the caller's `run` just as
+    a commit does. Only the commit path re-read it, so the first view of a new
+    debate whose refresh lost a race serialised an expired row and was a 500.
+    """
+    project = await _project(session, alice)
+    run, client, _ = await _run(session, alice, project)
+    await debate_service.project_thread(
+        session, run_id=run.id, thread=await client.read_thread(run.thread_id)
+    )
+    run_id, project_name = run.id, project.name
+    await session.commit()
+
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("the forum read failed")
+
+    monkeypatch.setattr(debate_service, "refresh_from_forum", broken)
+
+    resp = await app_client.get(f"/projects/{project_name}/debates/{run_id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["run"]["topic"] == "why does the knee move?"
 
 
 @pytest.mark.anyio
@@ -921,6 +953,75 @@ async def test_forum_status_reports_a_local_only_forum(
     assert body["unpublished"] == 0
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        None,
+        {
+            "reason": "refused",
+            "credential": "project",
+            "message": "Permission denied",
+            "at": "t",
+        },
+        {
+            "reason": "refused",
+            "credential": "settings-github",
+            "message": "Repository not found",
+            "at": "t",
+        },
+        {
+            "reason": "unreachable",
+            "credential": "system-git",
+            "message": "Could not resolve host",
+            "at": "t",
+        },
+        {
+            "reason": "failed",
+            "credential": "system-git",
+            "message": "something else",
+            "at": "t",
+        },
+    ],
+)
+@pytest.mark.anyio
+async def test_forum_status_says_why_publishing_failed(
+    forum_config, app_client, session, alice, error
+):
+    from vista_backend.agents.forum.project_forum import build_client_for
+    from vista_backend.db.schemas import UserTable
+
+    project = await _project(session, alice)
+    client = build_client_for(project, await session.get(UserTable, alice.id))
+    client.forum.publish_error = error
+
+    body = (await app_client.get(f"/projects/{project.name}/forum/status")).json()
+
+    assert body["publish_error"] == error
+
+
+@pytest.mark.anyio
+async def test_an_unreadable_failure_record_is_no_record(
+    forum_config, app_client, session, alice
+):
+    """The status route reports bad states; a record it cannot parse must not be one."""
+    from vista_backend.agents.forum.project_forum import build_client_for
+    from vista_backend.db.schemas import UserTable
+
+    project = await _project(session, alice)
+    client = build_client_for(project, await session.get(UserTable, alice.id))
+    client.forum.publish_error = {
+        "reason": "mystery",
+        "credential": "?",
+        "message": "",
+        "at": "",
+    }
+
+    resp = await app_client.get(f"/projects/{project.name}/forum/status")
+
+    assert resp.status_code == 200
+    assert resp.json()["publish_error"] is None
+
+
 @pytest.mark.anyio
 async def test_forum_status_says_this_project_has_no_lab(
     forum_config, app_client, session, alice
@@ -941,6 +1042,7 @@ async def test_forum_status_says_this_project_has_no_lab(
         "git_ok": True,
         "git_reason": None,
         "unpublished": 0,
+        "publish_error": None,
     }
 
 

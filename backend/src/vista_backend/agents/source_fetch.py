@@ -16,9 +16,9 @@ Two hosts, over their APIs only:
 
 The ref (or the default branch) is resolved to the commit it points at now and
 the archive is downloaded by that commit, so what the skill wraps cannot move.
-`settings.github_token` / `settings.gitlab_token`, when set, are sent as bearer
-tokens and make the token's private repositories readable; the token itself
-never reaches the sandbox.
+The caller passes the user's token for the URL's host, from Settings (see
+`services/repo_tokens`); it is sent as a bearer token and makes that token's
+private repositories readable. The token itself never reaches the sandbox.
 """
 
 import io
@@ -32,8 +32,6 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-
-from ..config import settings
 
 
 class SourceFetchError(Exception):
@@ -124,17 +122,15 @@ def parse_remote(url: str, ref: str | None = None) -> Remote:
     return remote
 
 
-def _token(host: str) -> str | None:
-    return settings.github_token if host == "github" else settings.gitlab_token
-
-
-def _request(url: str, host: str, *, limit: int = 10 * 1024 * 1024) -> bytes:
-    """GET from one of the two APIs, with that host's token if one is configured."""
+def _request(
+    url: str, host: str, *, token: str | None = None, limit: int = 10 * 1024 * 1024
+) -> bytes:
+    """GET from one of the two APIs, with the user's token for that host, if any."""
     if not url.startswith(API_PREFIXES):
         raise SourceFetchError(f"Refusing to fetch {url}.")
     name = "GitHub" if host == "github" else "GitLab"
     req = urllib.request.Request(url, headers={"User-Agent": "vista-backend"})
-    if token := _token(host):
+    if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
         # The guard above restricts this to the GitHub and GitLab APIs over https.
@@ -143,10 +139,10 @@ def _request(url: str, host: str, *, limit: int = 10 * 1024 * 1024) -> bytes:
     except urllib.error.HTTPError as e:
         if e.code in (401, 403, 404):
             hint = (
-                f"The repository may be private: VISTA's {name} token "
-                f"(VISTA_BACKEND_{name.upper()}_TOKEN) is not set."
-                if not _token(host)
-                else f"VISTA's {name} token may not have access to it."
+                f"The repository may be private, and the user has no {name} token "
+                "in Settings → Repositories: ask them to add one."
+                if not token
+                else f"The user's {name} token in Settings may not have access to it."
             )
             raise SourceFetchError(
                 f"{name} returned {e.code} for {url}. {hint} The ref may also not "
@@ -163,27 +159,32 @@ def _request(url: str, host: str, *, limit: int = 10 * 1024 * 1024) -> bytes:
     return data
 
 
-def _resolve(remote: Remote) -> tuple[str, str, bool, bytes]:
+def _resolve(remote: Remote, token: str | None) -> tuple[str, str, bool, bytes]:
     """`(ref, commit, private, tarball)`: the ref pinned to the commit it points at now."""
     quote = lambda s: urllib.parse.quote(s, safe="")  # noqa: E731
     if remote.host == "github":
         api = f"https://api.github.com/repos/{remote.project}"
-        info = json.loads(_request(api, "github"))
-        ref = remote.ref or info.get("default_branch") or "main"
-        commit = json.loads(_request(f"{api}/commits/{quote(ref)}", "github"))["sha"]
-        private = bool(info.get("private"))
-        tar = _request(f"{api}/tarball/{commit}", "github", limit=MAX_ARCHIVE_BYTES)
-    else:
-        api = f"https://gitlab.com/api/v4/projects/{quote(remote.project)}"
-        info = json.loads(_request(api, "gitlab"))
+        info = json.loads(_request(api, "github", token=token))
         ref = remote.ref or info.get("default_branch") or "main"
         commit = json.loads(
-            _request(f"{api}/repository/commits/{quote(ref)}", "gitlab")
+            _request(f"{api}/commits/{quote(ref)}", "github", token=token)
+        )["sha"]
+        private = bool(info.get("private"))
+        tar = _request(
+            f"{api}/tarball/{commit}", "github", token=token, limit=MAX_ARCHIVE_BYTES
+        )
+    else:
+        api = f"https://gitlab.com/api/v4/projects/{quote(remote.project)}"
+        info = json.loads(_request(api, "gitlab", token=token))
+        ref = remote.ref or info.get("default_branch") or "main"
+        commit = json.loads(
+            _request(f"{api}/repository/commits/{quote(ref)}", "gitlab", token=token)
         )["id"]
         private = info.get("visibility", "public") != "public"
         tar = _request(
             f"{api}/repository/archive.tar.gz?sha={commit}",
             "gitlab",
+            token=token,
             limit=MAX_ARCHIVE_BYTES,
         )
     return ref, commit, private, tar
@@ -234,14 +235,19 @@ def _unpack(tar_bytes: bytes, dest: Path, subpath: str) -> int:
     return count
 
 
-def fetch_repository(url: str, work_dir: Path, *, ref: str | None = None) -> dict:
+def fetch_repository(
+    url: str, work_dir: Path, *, ref: str | None = None, token: str | None = None
+) -> dict:
     """
     Download the repository `url` names into `work_dir/<name>/` (replacing a
     previous fetch of the same name) and return its SOURCE.json record, which
     is also written there.
+
+    `token` is the user's token for `url`'s host, chosen by
+    `services/repo_tokens`, and is sent only to that host's API.
     """
     remote = parse_remote(url, ref)
-    ref_, commit, private, tar = _resolve(remote)
+    ref_, commit, private, tar = _resolve(remote, token)
     dest = work_dir / remote.name
     work_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=work_dir) as tmp:

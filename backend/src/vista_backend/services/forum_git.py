@@ -29,6 +29,7 @@ and never into an argv or a commit message.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -728,6 +729,60 @@ _PUSH_RACES = (
 )
 """Push failures that mean a peer got there first, so fetch, replay and retry."""
 
+_REFUSED = (
+    "authentication failed",
+    "access denied",
+    "permission denied",
+    "repository not found",
+    "returned error: 401",
+    "returned error: 403",
+    "returned error: 404",
+    "not allowed to push",
+    "denied to ",
+    "could not read username",
+    "terminal prompts disabled",
+    "invalid username or password",
+)
+"""
+What forges say when they refuse the credential, lowercased. GitHub hides a
+repository the credential cannot see behind "Repository not found" (a 404), and
+a missing credential with prompts off reads "could not read Username".
+"""
+
+_UNREACHABLE = (
+    "could not resolve host",
+    "failed to connect",
+    "connection refused",
+    "connection timed out",
+    "operation timed out",
+    "timed out",
+    "network is unreachable",
+    "no route to host",
+)
+"""What git says when it never reached the forge, lowercased."""
+
+LAST_PUBLISH_FILE = "last-publish.json"
+"""
+Why publishing last failed, beside the outbox and for the same reason: the forum
+is written from inside open app-DB transactions (design D7). Gone once a push
+succeeds.
+"""
+
+
+def classify_git_failure(text: str) -> str:
+    """
+    `refused`, `unreachable` or `failed` for a failed fetch or push.
+
+    Refusals are checked first: a refusal must never read as "unreachable", and
+    anything unrecognised is `failed` — shown with git's message, blaming nothing.
+    """
+    lowered = text.lower()
+    if any(marker in lowered for marker in _REFUSED):
+        return "refused"
+    if any(marker in lowered for marker in _UNREACHABLE):
+        return "unreachable"
+    return "failed"
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="microseconds")
@@ -782,6 +837,43 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
 # --------------------------------------------------------------------------- #
 # Client
 # --------------------------------------------------------------------------- #
+
+
+TOKEN_USERNAME = "oauth2"
+"""
+The username sent with a forum access token.
+
+GitLab accepts any username with a personal, project or group access token, and
+`oauth2` with an OAuth token too; GitHub ignores the username for a personal
+access token. So one name serves both.
+"""
+
+
+def _token_config(env: dict[str, str], config: ForumSettings) -> dict[str, str]:
+    """
+    The environment that makes git send the project's token to its remote, or none.
+
+    Passed as `GIT_CONFIG_*` variables, not as a `-c` argument or inside the URL:
+    an argument is visible to every process on the machine and lands in
+    `ForumCommandError`, and a URL is written into the repository's config in
+    plain text. Scoped to the remote's URL, so the header is sent only there.
+    Only over `https://` — plain HTTP would send the token in the clear, and SSH
+    has its own keys.
+
+    Appended after any `GIT_CONFIG_*` entries the environment already holds.
+    """
+    token, url = config.remote_token, config.remote_url
+    if token is None or url is None or not url.startswith("https://"):
+        return {}
+    basic = base64.b64encode(
+        f"{TOKEN_USERNAME}:{token.get_secret_value()}".encode()
+    ).decode()
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    return {
+        "GIT_CONFIG_COUNT": str(n + 1),
+        f"GIT_CONFIG_KEY_{n}": f"http.{url}.extraHeader",
+        f"GIT_CONFIG_VALUE_{n}": f"Authorization: Basic {basic}",
+    }
 
 
 @dataclass
@@ -859,6 +951,8 @@ class ForumClient:
             # push read it, because that is where their credentials live.
             env["GIT_CONFIG_GLOBAL"] = os.devnull
             env["GIT_CONFIG_NOSYSTEM"] = "1"
+        else:
+            env.update(_token_config(env, self.config))
         return env
 
     async def _git(
@@ -977,15 +1071,54 @@ class ForumClient:
     async def _fetch(self) -> None:
         """Fetch every thread from the remote. Raises when it cannot be reached."""
         async with _fetch_lock(self.repo):
-            await self._git(
-                "fetch",
-                "--prune",
-                "--no-tags",
-                "--quiet",
-                REMOTE,
-                FETCH_REFSPEC,
-                network=True,
+            try:
+                await self._git(
+                    "fetch",
+                    "--prune",
+                    "--no-tags",
+                    "--quiet",
+                    REMOTE,
+                    FETCH_REFSPEC,
+                    network=True,
+                )
+            except ForumCommandError as exc:
+                self._record_failure(exc.stderr or exc.stdout)
+                raise
+
+    # -- why publishing last failed ---------------------------------------- #
+
+    def _record_failure(self, message: str) -> None:
+        """Remember why the remote turned us away, and with which credential."""
+        record = {
+            "reason": classify_git_failure(message),
+            "credential": self.config.remote_token_source or "system-git",
+            "message": _collapse(message.strip())[:500],
+            "at": _now(),
+        }
+        try:
+            (self.repo_root / LAST_PUBLISH_FILE).write_text(
+                json.dumps(record), encoding="utf-8"
             )
+        except OSError:
+            logger.warning(
+                "forum: could not record why publishing failed", exc_info=True
+            )
+
+    def _clear_failure(self) -> None:
+        (self.repo_root / LAST_PUBLISH_FILE).unlink(missing_ok=True)
+
+    async def publish_error(self) -> dict[str, str] | None:
+        """
+        Why publishing last failed — `reason`, `credential`, `message`, `at` — or
+        None when the last push succeeded or none has failed. Read by the lab page.
+        """
+        try:
+            data = json.loads(
+                (self.repo_root / LAST_PUBLISH_FILE).read_text(encoding="utf-8")
+            )
+        except OSError, ValueError:
+            return None
+        return data if isinstance(data, dict) else None
 
     async def _try_fetch(self) -> bool:
         """Fetch if there is a remote; False (logged) when it cannot be reached."""
@@ -1209,10 +1342,14 @@ class ForumClient:
             check=False,
         )
         if code == 0:
+            # A push is the proof the credential can publish; a fetch is not, as
+            # a read-only token fetches fine.
+            self._clear_failure()
             return True, ""
         text = out.decode(errors="replace") + err
         if any(race in text for race in _PUSH_RACES):
             return False, "rejected"
+        self._record_failure(err or out.decode(errors="replace"))
         raise ForumCommandError(
             [self.config.git_binary, "push", REMOTE, f"{ref}:{ref}"],
             code,
