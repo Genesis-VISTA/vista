@@ -2,8 +2,8 @@
 Slurm over SSH, for clusters with no IRI service (Lux).
 
 Every operation takes a live `asyncssh.SSHClientConnection`, normally the one
-`lib.ssh.get_ssh_conn_mcp_elicitation` caches per chat session, so a researcher
-types their passcodes once and every later submit / status / fetch reuses it.
+`lib.ssh.get_ssh_conn_mcp_elicitation` caches per researcher, so they
+type their passcodes once and every later submit / status / fetch reuses it.
 
 Commands run under a non-login `bash -c`, so a login banner or module chatter
 cannot end up in output that gets parsed (a job id, a state). Anything that

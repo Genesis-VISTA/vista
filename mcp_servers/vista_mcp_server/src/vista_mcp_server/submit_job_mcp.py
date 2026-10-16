@@ -1073,9 +1073,9 @@ async def _submit_frontier_job(
 
 async def _lux_conn(ctx: Context, tool: str, **call_args):
     """
-    The researcher's SSH connection to a Lux login node. Cached
-    per chat session by `get_ssh_conn_mcp_elicitation`, so only the first Lux
-    call in a session asks for a passcode; `tool`/`call_args` label that prompt.
+    The researcher's SSH connection to a Lux login node. Cached per
+    researcher by `get_ssh_conn_mcp_elicitation`, so only the first Lux call in
+    an hour asks for a passcode; `tool`/`call_args` label that prompt.
     """
     return await get_ssh_conn_mcp_elicitation(
         ctx,

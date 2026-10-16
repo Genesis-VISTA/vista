@@ -24,6 +24,8 @@ than escaped in four different syntaxes.
 
 
 class UserConfig(BaseModel):
+    id: str | None = None
+    """ The researcher's VISTA user id: what their SSH logins are cached under. """
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     nersc_iri_token: str | None = None
