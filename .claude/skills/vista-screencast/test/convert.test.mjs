@@ -53,7 +53,7 @@ function visible(events) {
 }
 
 function captureDir() {
-  const src = mkdtempSync(path.join(os.tmpdir(), "vista-demo-convert-"));
+  const src = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-convert-"));
   mkdirSync(path.join(src, "capture", "runs"), { recursive: true });
   const t0 = 1_760_000_000_000;
   const actions = [
@@ -98,7 +98,7 @@ test("the run is placed after the click that sent it, and responses are retagged
 });
 
 test("conversion keeps the readable parts and drops the noise", () => {
-  const src = mkdtempSync(path.join(os.tmpdir(), "vista-demo-convert-"));
+  const src = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-convert-"));
   const steps = runToSteps(RECORDED, { assetsDir: path.join(src, "assets"), run: 1 });
   assert.deepEqual(steps.map((s) => Object.keys(s)[0]), ["answer", "tool", "tool", "tool", "answer"]);
   assert.equal(steps[0].interim, true, "text before the final result is interim");

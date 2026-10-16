@@ -1,11 +1,11 @@
-// A private build of the UI (design D5): a copy of ui/ under DEMO_HOME, built
+// A private build of the UI (design D5): a copy of ui/ under SCREENCAST_HOME, built
 // standalone and run with its own backend URL, so the checkout's ui/.next and
 // any running ./launch.sh stack are never touched.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DEMO_HOME, PORTS, REPO_ROOT } from "./paths.mjs";
+import { SCREENCAST_HOME, PORTS, REPO_ROOT } from "./paths.mjs";
 
 const UI = path.join(REPO_ROOT, "ui");
 const git = (...args) => execFileSync("git", ["-C", REPO_ROOT, ...args], { encoding: "utf-8" });
@@ -33,7 +33,7 @@ export async function ensureUiBuild({ log = console.log } = {}) {
     throw new Error(`ui/node_modules is missing; run \`npm ci\` in ${UI} first.`);
   }
   const hash = uiTreeHash();
-  const root = path.join(DEMO_HOME, "_ui", hash);
+  const root = path.join(SCREENCAST_HOME, "_ui", hash);
   const standalone = path.join(root, "ui", ".next", "standalone");
   const done = path.join(root, "BUILT");
   if (existsSync(done)) {

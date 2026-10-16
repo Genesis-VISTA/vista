@@ -5,7 +5,7 @@
 //
 // Both tie answers to the *action count*: how many UI actions (goto, click,
 // type, press) have been done so far. The player, or the capture recorder,
-// reports it at POST /__demo/action. Captions, pauses and camera moves don't
+// reports it at POST /__screencast/action. Captions, pauses and camera moves don't
 // count, so they can be added or removed without touching responses.jsonl.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -79,14 +79,14 @@ function listen(server, port, state) {
   });
 }
 
-/** Shared /__demo endpoints. Returns true when it answered. */
-async function demoEndpoint(req, res, url, state) {
-  if (url.pathname === "/__demo/state") {
+/** Shared /__screencast endpoints. Returns true when it answered. */
+async function screencastEndpoint(req, res, url, state) {
+  if (url.pathname === "/__screencast/state") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(state));
     return true;
   }
-  if (url.pathname === "/__demo/action" && req.method === "POST") {
+  if (url.pathname === "/__screencast/action" && req.method === "POST") {
     state.action = Number(parseJson(await readBody(req)).action) || 0;
     res.writeHead(204);
     res.end();
@@ -141,7 +141,7 @@ export function startReplayServer({ plan, responses, port = PORTS.server, speed 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://replay");
     const method = req.method.toUpperCase();
-    if (await demoEndpoint(req, res, url, state)) return;
+    if (await screencastEndpoint(req, res, url, state)) return;
 
     const run = url.pathname.match(AGENT_RUN);
     if (run && method === "POST") return streamRun(res, parseJson(await readBody(req)), decodeURIComponent(run[1]));
@@ -156,7 +156,7 @@ export function startReplayServer({ plan, responses, port = PORTS.server, speed 
     if (!hit) {
       fail(`No captured response for ${key} (after action ${state.action})`);
       res.writeHead(404, { "content-type": "application/json" });
-      return res.end(JSON.stringify({ detail: `vista-demo replay has no response for ${key}` }));
+      return res.end(JSON.stringify({ detail: `vista-screencast replay has no response for ${key}` }));
     }
     res.writeHead(hit.status ?? 200, { "content-type": hit.type ?? "application/json" });
     if (hit.encoding === "base64") res.end(Buffer.from(hit.body, "base64"));
@@ -221,7 +221,7 @@ export function startCaptureServer({ src, backendUrl, mcpUrl, port = PORTS.serve
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://capture");
     const method = req.method.toUpperCase();
-    if (await demoEndpoint(req, res, url, state)) return;
+    if (await screencastEndpoint(req, res, url, state)) return;
 
     const arrived = Date.now(); // `at`: lets finishCapture order this after the action that caused it
     const body = await readBody(req);

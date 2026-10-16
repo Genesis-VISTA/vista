@@ -1,9 +1,11 @@
-# demo-video Specification
+# screencast Specification
 
 ## Purpose
-Let Claude make a VISTA demo video of whatever a researcher asks for, from a real
-session: capture it, edit it as a script, and replay it hermetically into a
-polished, repeatable recording.
+Let Claude make a VISTA screencast (a demo, a tutorial, a README clip) of
+whatever a researcher asks for, from a real session: capture it, edit it as a
+script, and replay it hermetically into a polished, repeatable recording.
+Claude runs every command; in a hand capture the researcher's only part is
+using VISTA in the window the capture opens.
 
 ## Requirements
 
@@ -122,7 +124,7 @@ for the GitHub README in GIF and WebM. Videos SHALL have no audio track.
 ### Requirement: Captures stay out of the repository
 
 Captures, scripts, frames and videos SHALL be written under
-`~/.vista/demo-captures/<video>/` and never inside the repository. Before
+`~/.vista/screencasts/<video>/` and never inside the repository. Before
 writing a capture, the toolkit SHALL remove credentials from it: request
 authorization headers and cookies, and the values of token, key and secret
 fields in responses. A capture SHALL never hold such a value in clear. The

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// vista-demo: capture, edit and replay VISTA sessions into demo videos.
+// vista-screencast: capture, edit and replay VISTA sessions into screencasts: demos, tutorials and README clips.
 // See ../SKILL.md for how Claude uses it.
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { assembleReadme, assembleVideo, contactSheet, probe } from "../lib/assemble.mjs";
 import { startFrames } from "../lib/frames.mjs";
-import { DEMO_HOME, PORTS, captureDirOf, videoDirs } from "../lib/paths.mjs";
+import { SCREENCAST_HOME, PORTS, captureDirOf, videoDirs } from "../lib/paths.mjs";
 import { play } from "../lib/player.mjs";
 import { loadScript } from "../lib/script.mjs";
 import { checkPin, checkUnchanged, gitStatus } from "../lib/selftest.mjs";
@@ -14,9 +14,9 @@ import { LIVE_DEFAULTS, captureSession, finishCapture } from "../lib/session.mjs
 import { loadResponses, startReplayServer } from "../lib/server.mjs";
 import { ensureUiBuild, startUi } from "../lib/ui.mjs";
 
-const HELP = `vista-demo <command> [video] [options]
+const HELP = `vista-screencast <command> [video] [options]
 
-  ui                 build (or reuse) the private UI under ${DEMO_HOME}/_ui
+  ui                 build (or reuse) the private UI under ${SCREENCAST_HOME}/_ui
   capture <video> --by-hand
                      record a live session you drive in a browser window;
                      close the window to finish
@@ -34,7 +34,7 @@ const HELP = `vista-demo <command> [video] [options]
                      for full-bleed) and the README clip out/readme.{webm,gif}
   selftest           rehearse, record and assemble the bundled self-test
 
-<video> is a folder name under ${DEMO_HOME}, an absolute path, or \`selftest\`.
+<video> is a folder name under ${SCREENCAST_HOME}, an absolute path, or \`selftest\`.
 `;
 
 function report({ original, script, runs, scrubbed }) {
@@ -152,7 +152,7 @@ try {
         driver: opts.driver,
       });
       if (result.stopped) {
-        console.error(`vista-demo: ${result.stopped}`);
+        console.error(`vista-screencast: ${result.stopped}`);
         process.exit(3);
       }
       report(result);
@@ -169,6 +169,6 @@ try {
       throw new Error(`Unknown command \`${cmd}\`.\n\n${HELP}`);
   }
 } catch (e) {
-  console.error(`vista-demo: ${e.message}`);
+  console.error(`vista-screencast: ${e.message}`);
   process.exit(1);
 }

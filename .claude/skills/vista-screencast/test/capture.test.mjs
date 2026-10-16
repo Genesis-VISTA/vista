@@ -49,10 +49,10 @@ function stubUpstream() {
 
 test("a streamed run is forwarded unchanged and recorded event by event", async () => {
   const up = await stubUpstream();
-  const src = mkdtempSync(path.join(os.tmpdir(), "vista-demo-capture-"));
+  const src = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-capture-"));
   const cap = await startCaptureServer({ src, backendUrl: up.url, mcpUrl: `${up.url}/mcp`, port: 0 });
   try {
-    await fetch(`${cap.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 4 }) });
+    await fetch(`${cap.url}/__screencast/action`, { method: "POST", body: JSON.stringify({ action: 4 }) });
     const res = await fetch(`${cap.url}/projects/p/agent/run`, { method: "POST", body: JSON.stringify({ user_prompt: "list files" }) });
     const text = await res.text();
     assert.equal(text, EVENTS.map(([e, d], i) => sse(e, d, i + 1)).join(""), "the UI gets the stream byte for byte");
@@ -73,12 +73,12 @@ test("a streamed run is forwarded unchanged and recorded event by event", async 
 
 test("responses are recorded with the action count, scrubbed, and binaries kept", async () => {
   const up = await stubUpstream();
-  const src = mkdtempSync(path.join(os.tmpdir(), "vista-demo-capture-"));
+  const src = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-capture-"));
   const cap = await startCaptureServer({ src, backendUrl: up.url, mcpUrl: `${up.url}/mcp`, port: 0 });
   try {
     const me = await (await fetch(`${cap.url}/users/me?config=true`, { headers: { cookie: "x=1" } })).json();
     assert.equal(me.inference_api_key, "sk-not-real-0123456789abcdef", "the live UI still sees real values");
-    await fetch(`${cap.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 2 }) });
+    await fetch(`${cap.url}/__screencast/action`, { method: "POST", body: JSON.stringify({ action: 2 }) });
     await (await fetch(`${cap.url}/knowledge-bases/kb/publications/a.pdf`)).arrayBuffer();
     assert.deepEqual(await (await fetch(`${cap.url}/mcp`, { method: "POST", body: "{}" })).json(), { from: "mcp" });
 

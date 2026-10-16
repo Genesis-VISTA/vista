@@ -55,7 +55,7 @@ test("the scan finds JWTs and keys but not shas, uuids or images", () => {
 });
 
 test("a planted token fails the folder scan, naming file and line", () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "vista-demo-scan-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-scan-"));
   mkdirSync(path.join(dir, "capture", "runs"), { recursive: true });
   const image = { kind: "binary", media_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" };
   writeFileSync(path.join(dir, "capture", "runs", "1.jsonl"), JSON.stringify({ event: "function_tool_result", data: { part: { content: [image] } } }) + "\n", "utf-8");

@@ -31,7 +31,7 @@ before(async () => {
 after(async () => browser?.close());
 
 async function record(drive) {
-  const file = path.join(mkdtempSync(path.join(os.tmpdir(), "vista-demo-actions-")), "actions.jsonl");
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), "vista-screencast-actions-")), "actions.jsonl");
   const page = await browser.newPage();
   await page.addInitScript(RECORDER);
   const counts = [];

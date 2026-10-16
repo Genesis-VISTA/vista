@@ -6,37 +6,37 @@
 // <body>. So zooms never scale the cursor or captions, and rects read with
 // getBoundingClientRect are already in screen space.
 export function OVERLAY() {
-  if (window.__demo) return;
+  if (window.__screencast) return;
   const install = () => {
-    if (window.__demo || !document.body) return;
+    if (window.__screencast || !document.body) return;
     const root = document.createElement("div");
-    root.id = "demo-overlay";
+    root.id = "sc-overlay";
     root.innerHTML = `
       <style>
-        #demo-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; }
-        #demo-cursor { position: fixed; left: 0; top: 0; width: 26px; height: 26px; will-change: transform;
+        #sc-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 2147483647; }
+        #sc-cursor { position: fixed; left: 0; top: 0; width: 26px; height: 26px; will-change: transform;
           filter: drop-shadow(0 3px 6px rgba(0,0,0,.35)); }
-        .demo-ripple { position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
-          border: 3px solid #4fb3ff; animation: demo-rip .55s ease-out forwards; }
-        @keyframes demo-rip { from { transform: scale(.4); opacity: .95; } to { transform: scale(3.6); opacity: 0; } }
-        #demo-cap { position: fixed; left: 50%; display: flex; align-items: center; gap: 14px; max-width: 70vw;
+        .sc-ripple { position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+          border: 3px solid #4fb3ff; animation: sc-rip .55s ease-out forwards; }
+        @keyframes sc-rip { from { transform: scale(.4); opacity: .95; } to { transform: scale(3.6); opacity: 0; } }
+        #sc-cap { position: fixed; left: 50%; display: flex; align-items: center; gap: 14px; max-width: 70vw;
           padding: 9px 22px 9px 10px; border-radius: 14px; background: rgba(6,22,38,.9); color: #eaf3ff;
           font: 600 19px -apple-system, "Segoe UI", "Helvetica Neue", sans-serif; letter-spacing: -.01em;
           box-shadow: 0 18px 50px rgba(6,22,38,.35); backdrop-filter: blur(8px);
-          opacity: 0; transform: translate(-50%, var(--demo-hide, -14px));
+          opacity: 0; transform: translate(-50%, var(--sc-hide, -14px));
           transition: opacity .45s, transform .45s cubic-bezier(.2,.8,.2,1), top .5s cubic-bezier(.65,0,.35,1); }
-        #demo-cap.on { opacity: 1; transform: translate(-50%, 0); }
-        #demo-cap b { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px;
+        #sc-cap.on { opacity: 1; transform: translate(-50%, 0); }
+        #sc-cap b { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px;
           background: linear-gradient(135deg, #4fb3ff, #ff8a3d); color: #061626; font-size: 17px; }
-        #demo-cap b:empty { display: none; }
-        #demo-cap small { display: block; font-weight: 400; font-size: 14px; color: #a9c2dc; margin-top: 1px; }
+        #sc-cap b:empty { display: none; }
+        #sc-cap small { display: block; font-weight: 400; font-size: 14px; color: #a9c2dc; margin-top: 1px; }
       </style>
-      <svg id="demo-cursor" viewBox="0 0 24 24"><path d="M4 2.5v17.2l4.7-4.4 3 6.6 2.9-1.3-3-6.5h6.3z"
+      <svg id="sc-cursor" viewBox="0 0 24 24"><path d="M4 2.5v17.2l4.7-4.4 3 6.6 2.9-1.3-3-6.5h6.3z"
         fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
-      <div id="demo-cap"><b></b><span></span></div>`;
+      <div id="sc-cap"><b></b><span></span></div>`;
     document.documentElement.appendChild(root);
-    const cursor = root.querySelector("#demo-cursor");
-    const cap = root.querySelector("#demo-cap");
+    const cursor = root.querySelector("#sc-cursor");
+    const cap = root.querySelector("#sc-cap");
     const MARGIN = 10;
     const pos = { x: innerWidth * 0.6, y: innerHeight * 0.55 };
     const place = () => (cursor.style.transform = `translate(${pos.x - 4}px, ${pos.y - 2}px)`);
@@ -53,10 +53,10 @@ export function OVERLAY() {
       const clear = (t) => !avoid.some((r) => hits(rect(t), r));
       const y = clear(top) || !clear(bottom) ? top : bottom;
       cap.style.top = y + "px";
-      cap.style.setProperty("--demo-hide", y === top ? "-14px" : "14px");
+      cap.style.setProperty("--sc-hide", y === top ? "-14px" : "14px");
     };
 
-    window.__demo = {
+    window.__screencast = {
       move(x, y, ms = 700) {
         const from = { ...pos };
         const bend = (Math.random() - 0.5) * 80; // a slight arc reads as a hand
@@ -74,7 +74,7 @@ export function OVERLAY() {
       },
       ripple() {
         const r = document.createElement("div");
-        r.className = "demo-ripple";
+        r.className = "sc-ripple";
         r.style.left = pos.x + "px";
         r.style.top = pos.y + "px";
         root.appendChild(r);

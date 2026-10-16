@@ -49,7 +49,7 @@ test("an unanswered request fails, naming its method and path", async () => {
   try {
     const res = await fetch(`${server.url}/projects/molten-salt/uploads`);
     assert.equal(res.status, 404);
-    const state = await (await fetch(`${server.url}/__demo/state`)).json();
+    const state = await (await fetch(`${server.url}/__screencast/state`)).json();
     assert.match(state.errors[0], /GET \/projects\/molten-salt\/uploads/);
   } finally {
     await server.stop();
@@ -78,7 +78,7 @@ test("a response is picked by the action count", async () => {
   try {
     const list = async () => (await fetch(`${server.url}/projects/p/chat-sessions`)).json();
     assert.deepEqual(await list(), []);
-    await fetch(`${server.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 5 }) });
+    await fetch(`${server.url}/__screencast/action`, { method: "POST", body: JSON.stringify({ action: 5 }) });
     assert.deepEqual(await list(), [{ id: "s1" }]);
   } finally {
     await server.stop();
@@ -94,7 +94,7 @@ test("a conversation id the replay hands out is the one later requests carry", a
   ];
   const server = await startReplayServer({ plan, responses: responses(rows), port: 0 });
   try {
-    await fetch(`${server.url}/__demo/action`, { method: "POST", body: JSON.stringify({ action: 3 }) });
+    await fetch(`${server.url}/__screencast/action`, { method: "POST", body: JSON.stringify({ action: 3 }) });
     // the UI takes the id from the creation response and asks with it
     const { id } = await (await fetch(`${server.url}/projects/p/chat-sessions`, { method: "POST", body: "{}" })).json();
     assert.equal(id, S1);

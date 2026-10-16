@@ -1,7 +1,7 @@
 // Recording what the researcher does, by meaning (design D6).
 //
 // RECORDER runs in the capture browser (page.addInitScript) and reports each
-// action through the `__demoRecord` binding. Locators are worked out at
+// action through the `__screencastRecord` binding. Locators are worked out at
 // pointerdown, before the click's own handler can re-render the page, in the
 // order SCRIPT.md gives: role and name, placeholder or label, visible text,
 // then the same scoped within the nearest card-like ancestor. Pointer
@@ -12,8 +12,8 @@
 import { appendFileSync } from "node:fs";
 
 export function RECORDER() {
-  if (window.__demoRecorder) return;
-  window.__demoRecorder = true;
+  if (window.__screencastRecorder) return;
+  window.__screencastRecorder = true;
 
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
   const visible = (el) => {
@@ -136,7 +136,7 @@ export function RECORDER() {
 
   // `at` is when the event happened (ms since the epoch), so requests it
   // triggered can be ordered after it even if they reach the server first.
-  const send = (action) => window.__demoRecord?.({ ...action, at: performance.timeOrigin + performance.now() });
+  const send = (action) => window.__screencastRecord?.({ ...action, at: performance.timeOrigin + performance.now() });
   const isField = (el) => el.matches?.("input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]), textarea, [contenteditable='true']");
 
   addEventListener(
@@ -193,7 +193,7 @@ export async function startActionRecorder(page, file, { onAction = async () => {
     return a;
   };
 
-  await page.exposeBinding("__demoRecord", async (_source, a) => {
+  await page.exposeBinding("__screencastRecord", async (_source, a) => {
     if (a.kind === "unlocated") {
       log(`  (a click on <${a.tag}> ${JSON.stringify(a.text)} could not be named; it is left out of the script)`);
       return;

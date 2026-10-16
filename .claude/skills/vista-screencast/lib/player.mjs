@@ -59,8 +59,8 @@ export async function play({
   }
 
   const sleep = (s) => page.waitForTimeout(Math.round(s * 1000 * (fast ? 0.25 : 1)));
-  const demo = (fn, ...args) => page.evaluate(([f, a]) => window.__demo?.[f](...a), [fn, args]);
-  const state = async () => (await fetch(serverUrl + "/__demo/state")).json();
+  const overlay = (fn, ...args) => page.evaluate(([f, a]) => window.__screencast?.[f](...a), [fn, args]);
+  const state = async () => (await fetch(serverUrl + "/__screencast/state")).json();
   const checkServer = async (step) => {
     const s = await state();
     if (s.errors.length) throw new StepError(`Step ${step.n} (${step.kind}): ${s.errors[0]}`);
@@ -78,7 +78,7 @@ export async function play({
   }
   async function moveTo(loc, ms = 800) {
     const box = await loc.boundingBox();
-    await demo("move", box.x + box.width / 2, box.y + box.height / 2, fast ? 120 : ms);
+    await overlay("move", box.x + box.width / 2, box.y + box.height / 2, fast ? 120 : ms);
     return box;
   }
   async function cameraTarget(zoom) {
@@ -111,7 +111,7 @@ export async function play({
       const params = typeof v === "string" ? { kind: v } : { kind: "custom", ...v };
       params.icon = ICON;
       await page.goto(`${CARD}?${new URLSearchParams(params)}`);
-      await demo("showCursor", false);
+      await overlay("showCursor", false);
       await sleep(params.kind === "intro" ? 4.5 : 3.2);
       await page.evaluate(() => document.body.classList.add("out"));
       await sleep(0.65);
@@ -122,23 +122,23 @@ export async function play({
     },
     async goto(step) {
       await page.goto(uiUrl + step.value, { waitUntil: "load" });
-      await demo("showCursor", true);
+      await overlay("showCursor", true);
       await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
       await sleep(0.6);
     },
     async caption(step) {
       const v = step.value;
-      if (!v || v === "off") return demo("caption", null);
+      if (!v || v === "off") return overlay("caption", null);
       const [num, text, sub] = Array.isArray(v) ? (v.length === 1 ? [null, v[0]] : v) : [null, v];
-      await demo("avoid", [await focusedRect(), cameraRect]);
-      await demo("caption", num == null ? null : String(num), text, sub ?? null);
+      await overlay("avoid", [await focusedRect(), cameraRect]);
+      await overlay("caption", num == null ? null : String(num), text, sub ?? null);
       await sleep(0.5);
     },
     async click(step) {
       const loc = await find(step, step.value);
       await moveTo(loc);
       await sleep(0.12);
-      await demo("ripple");
+      await overlay("ripple");
       await loc.click();
       await sleep(0.3);
     },
@@ -146,18 +146,18 @@ export async function play({
       const { text, ...spec } = step.value;
       const loc = await find(step, spec);
       await moveTo(loc, 700);
-      await demo("ripple");
+      await overlay("ripple");
       await loc.click();
       const field = await loc.evaluate((el) => el.getBoundingClientRect().toJSON());
-      await demo("avoid", [field, cameraRect]);
+      await overlay("avoid", [field, cameraRect]);
       await page.waitForTimeout(550); // let the caption settle into its slot
-      const cap = await demo("captionRect");
+      const cap = await overlay("captionRect");
       if (cap && cap.x < field.x + field.width && field.x < cap.x + cap.width && cap.y < field.y + field.height && field.y < cap.y + cap.height) {
         throw new StepError(`Step ${step.n} (type): the caption covers the field being typed into`);
       }
       // move the cursor off the field so the text stays readable
       const box = await loc.boundingBox();
-      await demo("move", box.x + box.width * 0.85, box.y + box.height + 30, fast ? 80 : 500);
+      await overlay("move", box.x + box.width * 0.85, box.y + box.height + 30, fast ? 80 : 500);
       const pace = plan.pace.typing || 1;
       for (const ch of String(text)) {
         await loc.pressSequentially(ch);
@@ -173,23 +173,23 @@ export async function play({
         }
         await page.waitForTimeout(100);
       }
-      await demo("move", VIEWPORT.width * 0.55, VIEWPORT.height * 0.72, fast ? 100 : 900);
+      await overlay("move", VIEWPORT.width * 0.55, VIEWPORT.height * 0.72, fast ? 100 : 900);
     },
     async camera(step) {
       const v = step.value;
       if (!v || v === "off" || v.zoom === "off") {
         cameraRect = null;
-        await demo("camera", null, 1, fast ? 200 : 1100);
-        await demo("avoid", [await focusedRect()]);
+        await overlay("camera", null, 1, fast ? 200 : 1100);
+        await overlay("avoid", [await focusedRect()]);
         return sleep(1.2);
       }
       const rect = await cameraTarget(v.zoom ?? "latest");
       if (!rect) throw new StepError(`Step ${step.n} (camera): nothing to zoom on for ${describe(v.zoom)}`);
-      await demo("camera", rect, v.scale ?? 1.3, fast ? 200 : 1100);
+      await overlay("camera", rect, v.scale ?? 1.3, fast ? 200 : 1100);
       await sleep(1.2);
       // where the target sits on screen now
       cameraRect = await cameraTarget(v.zoom ?? "latest");
-      await demo("avoid", [cameraRect]);
+      await overlay("avoid", [cameraRect]);
     },
     async wait(step) {
       if (typeof step.value === "number") return sleep(step.value);
@@ -237,7 +237,7 @@ export async function play({
     await page.goto("about:blank");
     if (startFrames) frames = await startFrames(page);
     for (const step of plan.steps) {
-      if (step.action) await fetch(serverUrl + "/__demo/action", { method: "POST", body: JSON.stringify({ action: step.action }) });
+      if (step.action) await fetch(serverUrl + "/__screencast/action", { method: "POST", body: JSON.stringify({ action: step.action }) });
       const brief = step.kind === "run" ? `run ${step.run + 1}` : JSON.stringify(step.value ?? null);
       log(`  ${String(step.n).padStart(3)} ${step.kind.padEnd(8)} ${brief.length > 90 ? brief.slice(0, 87) + "…" : brief}`);
       frames?.mark(`step ${step.n} ${step.kind}`);

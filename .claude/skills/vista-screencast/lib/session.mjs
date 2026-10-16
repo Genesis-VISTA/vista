@@ -80,7 +80,7 @@ export async function captureSession({ src, mode, storyboard, allowSpend = false
 
   const server = await startCaptureServer({ src, backendUrl: backend, mcpUrl: mcp, port: PORTS.server, log });
   const ui = await startUi({ backendUrl: server.url, log });
-  const setAction = (action) => fetch(server.url + "/__demo/action", { method: "POST", body: JSON.stringify({ action }) });
+  const setAction = (action) => fetch(server.url + "/__screencast/action", { method: "POST", body: JSON.stringify({ action }) });
   let stopped = null;
   try {
     if (mode === "storyboard") {

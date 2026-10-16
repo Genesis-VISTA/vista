@@ -21,7 +21,7 @@ export function checkPin(p = pins()) {
   if (!p.ui) throw new Error("ui/package-lock.json locks no Playwright; the skill can't tell which browsers ui/ installs.");
   if (p.skill !== p.ui) {
     throw new Error(
-      `Playwright is pinned to ${p.skill} in .claude/skills/vista-demo/package.json but ui/ locks ${p.ui}. ` +
+      `Playwright is pinned to ${p.skill} in .claude/skills/vista-screencast/package.json but ui/ locks ${p.ui}. ` +
         `Set the skill's pin to "${p.ui}" and run npm install there, so both use the same browsers.`,
     );
   }
