@@ -61,8 +61,14 @@ camera move, pointing at an element, pause). An agent run SHALL appear as
 readable steps (each tool call with its arguments and result, each answer as
 one block of text), not as the raw event stream. Timing SHALL NOT be stored per
 event; it SHALL be generated at replay from pace settings. Any step MAY be
-edited, removed, reordered or added. The original capture SHALL be kept
-unchanged beside the edited script, so the two can be compared.
+edited, removed, reordered or added. The captured responses MAY be edited too,
+to keep things out of the video (other projects, old conversations). The
+original capture SHALL be kept unchanged beside the edited script and
+responses, so each can be compared with what was captured.
+
+#### Scenario: Hiding another project
+- **WHEN** the captured responses list two projects and one is removed from every response that shows it
+- **THEN** the replayed video shows only the other project, and the responses as captured are still present beside the edited ones
 
 #### Scenario: Removing a failed tool call
 - **WHEN** a captured run contains a failed `run_bash` call and its retry, and the failed call is deleted from the script

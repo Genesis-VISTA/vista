@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { captureToScript, retagByTime, runToSteps } from "../lib/capture.mjs";
+import { captureToScript, keepOriginalResponses, retagByTime, runToSteps } from "../lib/capture.mjs";
 import { loadScript, runEvents } from "../lib/script.mjs";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -109,6 +109,17 @@ test("conversion keeps the readable parts and drops the noise", () => {
   assert.ok(existsSync(path.join(src, "assets", "run1-1.png")));
   assert.equal(steps[4].interim, undefined);
   assert.equal(steps[4].answer, "Here is the **liquidus** diagram.\n");
+});
+
+test("the captured responses are kept beside the ones cleaned up", () => {
+  const src = captureDir();
+  const responses = path.join(src, "capture", "responses.jsonl");
+  const captured = readFileSync(responses, "utf-8");
+  keepOriginalResponses(src);
+  writeFileSync(responses, "cleaned\n", "utf-8");
+  keepOriginalResponses(src);
+  assert.equal(readFileSync(path.join(src, "capture", "responses.original.jsonl"), "utf-8"), captured);
+  assert.equal(readFileSync(responses, "utf-8"), "cleaned\n");
 });
 
 test("script.yaml is a copy to edit, left alone once it exists", () => {

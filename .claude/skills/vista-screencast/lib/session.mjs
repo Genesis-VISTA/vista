@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 import { RECORDER, startActionRecorder } from "./actions.mjs";
-import { captureToScript, checkScrubbed, retagByTime } from "./capture.mjs";
+import { captureToScript, checkScrubbed, keepOriginalResponses, retagByTime } from "./capture.mjs";
 import { PORTS } from "./paths.mjs";
 import { SpendStop, VIEWPORT, play } from "./player.mjs";
 import { parseScript } from "./script.mjs";
@@ -50,6 +50,7 @@ export function scrubbedFields(src) {
 export function finishCapture(src) {
   retagByTime(src);
   checkScrubbed(src);
+  keepOriginalResponses(src);
   const { original, script, runs } = captureToScript(src);
   return { original, script, runs, scrubbed: scrubbedFields(src) };
 }

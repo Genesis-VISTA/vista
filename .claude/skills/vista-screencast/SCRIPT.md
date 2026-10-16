@@ -112,7 +112,9 @@ file: to show a different plot, make the image (matplotlib through
 ## capture/responses.jsonl
 
 One JSON object per line, answering the UI's other requests to the backend.
-Capture writes it; a hand-written script needs one too.
+Capture writes it, with `responses.original.jsonl` beside it as captured; edit
+`responses.jsonl` to clean up what the video shows. A hand-written script
+needs one too.
 
 ```json
 {"seq": 1, "action": 0, "method": "GET", "path": "/projects", "query": "", "status": 200, "type": "application/json", "body": []}

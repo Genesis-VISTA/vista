@@ -39,6 +39,17 @@ export function retagByTime(src) {
   }
 }
 
+/**
+ * Keep `capture/responses.original.jsonl` as captured, so cleaning up
+ * responses.jsonl (hiding other projects, say) can always be diffed. Written
+ * once; regenerating the script leaves it alone.
+ */
+export function keepOriginalResponses(src) {
+  const responses = path.join(src, "capture", "responses.jsonl");
+  const original = path.join(src, "capture", "responses.original.jsonl");
+  if (existsSync(responses) && !existsSync(original)) copyFileSync(responses, original);
+}
+
 /** Fail with every credential-shaped string left in the capture, by file and line. */
 export function checkScrubbed(src) {
   const found = scanDir(path.join(src, "capture"));

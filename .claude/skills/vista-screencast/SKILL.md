@@ -15,8 +15,9 @@ script comes from a **capture** of a real session, which you then edit. Each
 video is a folder under `~/.vista/screencasts/<video>/`:
 
 ```
-capture/                what the live session recorded; never edited
-  responses.jsonl       the backend's answers, replayed by path
+capture/                what the live session recorded
+  responses.jsonl       the backend's answers, replayed by path; clean up here
+  responses.original.jsonl  the answers as captured; never edited
   runs/<n>.jsonl        each agent run's events
   actions.jsonl         what the researcher did (hand captures)
   storyboard.yaml       the storyboard played (storyboard captures)
@@ -70,11 +71,16 @@ and commit that file alone.
 4. **Edit the script.** Edit `script.yaml`: cut failed tool calls and retries,
    shorten slow tools (`duration_s`) and long answers, add `chapter:`,
    `caption:`, `camera:` and `pause:` steps (SCRIPT.md, "A scene", shows where
-   each goes). Then compare with `git diff --no-index
-   ~/.vista/screencasts/<video>/script.original.yaml
-   ~/.vista/screencasts/<video>/script.yaml` and list every **factual edit**
-   for the researcher: a changed number, result, figure or claim, including a
-   cut that drops a caveat or qualifier, as opposed to timing, formatting and
+   each goes). **Clean up** what the researcher wants kept out of the video in
+   `capture/responses.jsonl`: other projects, old conversations, uploads,
+   datasets, a name. One thing shows up in several answers (`/projects`, its
+   own `/projects/<name>/…` paths, lists that mention it), so grep for it and
+   edit every entry, then confirm in the rehearsal's contact sheet. Then
+   compare each edited file with its original (`git diff --no-index
+   script.original.yaml script.yaml`, and `capture/responses.original.jsonl`
+   with `capture/responses.jsonl`) and list every **factual edit** for the
+   researcher: a changed number, result, figure or claim, including a cut that
+   drops a caveat or qualifier, as opposed to timing, formatting, cleanup and
    cuts that leave the meaning whole. Done when the researcher has seen that
    list.
 5. **Rehearse until clean.** `vista-screencast rehearse <video>` plays fast and writes
