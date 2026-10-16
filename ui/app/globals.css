@@ -696,6 +696,34 @@ main {
   white-space: nowrap;
 }
 
+/* Pinned to the top of the scrolling menu; the negative margins cancel the
+   menu's padding so options don't show through above it. */
+.model-picker-search {
+  position: sticky;
+  top: -5px;
+  z-index: 1;
+  margin: -5px -5px 2px;
+  padding: 5px 5px 4px;
+  background: var(--panel-2);
+}
+
+.model-picker-search input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.model-picker-search input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+
 /* Filled for the active model, hollow for the rest -- same convention as
    `.project-switcher-dot` right next to it in the header. */
 .model-picker-dot {

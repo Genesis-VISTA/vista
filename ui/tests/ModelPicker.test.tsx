@@ -239,6 +239,50 @@ describe("ModelPicker menu", () => {
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
   });
 
+  it("opens on a search box that filters the list, ignoring case", async () => {
+    render(<ModelPicker />);
+    await openPicker();
+    const search = await screen.findByRole("searchbox", { name: "Search models" });
+    await waitFor(() => expect(search).toHaveFocus());
+
+    await userEvent.type(search, "OPUS");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["claude-opus"]);
+
+    await userEvent.clear(search);
+    await userEvent.type(search, "gpt");
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(screen.getByText("No models match “gpt”.")).toBeInTheDocument();
+  });
+
+  it("Enter in the search box chooses the first match", async () => {
+    render(<ModelPicker />);
+    await openPicker();
+    await userEvent.type(await screen.findByRole("searchbox"), "claude{Enter}");
+
+    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("clears the search when it closes", async () => {
+    render(<ModelPicker />);
+    await openPicker();
+    await userEvent.type(await screen.findByRole("searchbox"), "opus");
+    await userEvent.keyboard("{Escape}");
+    await openPicker();
+    expect(await screen.findByRole("searchbox")).toHaveValue("");
+    expect(await screen.findAllByRole("option")).toHaveLength(2);
+  });
+
+  it("shows each model's full id, and the label's, on hover", async () => {
+    const long = "meta-llama/Llama-3.3-70B-Instruct-FP8-dynamic-long-context";
+    models = { status: 200, body: { supported: true, models: [{ id: long, owned_by: "openai" }] } };
+    inference = view({ model: `openai:${long}`, model_is_default: false });
+    render(<ModelPicker />);
+    expect(await screen.findByTitle(long)).toHaveClass("model-picker-label");
+    await openPicker();
+    expect(await screen.findByRole("option", { name: long })).toHaveAttribute("title", long);
+  });
+
   it("closes on Escape", async () => {
     render(<ModelPicker />);
     await openPicker();
