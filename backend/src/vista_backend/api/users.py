@@ -13,9 +13,11 @@ from ..db.schemas import (
     UserSelfUpdate,
     UserPublic,
     UserPublicWithConfig,
+    UserTable,
 )
 from ..services import globus_auth, hpc_status, user as user_service
 from ..services.auth import AdminDep, UserDep
+from ..utils.misc import now_iso
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -178,6 +180,11 @@ async def complete_globus_login(
         ),
         user,
     )
+    row = await session.get(UserTable, user.id)
+    if row is not None:
+        setattr(row, f"{cluster}_globus_connected_at", now_iso())
+        session.add(row)
+        await session.commit()
     return GlobusConnected(cluster=cluster, identity=connection.identity)
 
 

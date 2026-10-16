@@ -17,7 +17,7 @@ from sqlmodel import col, select
 
 from ..db.schemas import HpcJobRecordTable, SlackConfigTable
 from ..services import chat_run as chat_run_module
-from . import store
+from . import credentials, store
 
 LOCKED = "Slack is locked, so I can't change anything from here. Unlock it in the VISTA desktop app (Settings → Slack)."  # noqa: E501
 DAY = timedelta(hours=24)
@@ -100,12 +100,18 @@ async def check(
 async def refusal(
     user_id: uuid.UUID, tool_name: str, args: dict[str, Any]
 ) -> str | None:
-    """`check` against the saved settings; installed as the gate's refusal."""
+    """
+    The gate's refusal: the lock, then an expired credential for the system,
+    then `check` against the saved limits.
+    """
     async with chat_run_module.session_factory() as db:
         config = await store.get_config(db)
         snapshot = SlackConfigTable.model_validate(config.model_dump())
         await db.commit()
-    return await check(snapshot, user_id, tool_name, args)
+    if snapshot.locked:
+        return LOCKED
+    expired = credentials.refusal(user_id, tool_name, args)
+    return expired or await check(snapshot, user_id, tool_name, args)
 
 
 async def lock(slack_user_id: str) -> None:

@@ -618,7 +618,13 @@ class ProjectAgent:
         def channel_instructions() -> str | None:
             # Instructions, not the system prompt: they are read on every turn
             # and kept out of the history, so they hold for Slack turns only.
-            return SLACK_INSTRUCTIONS if self._cur_channel == "slack" else None
+            if self._cur_channel != "slack":
+                return None
+            # Imported here: `slack.credentials` reaches `chat_run`, which imports this.
+            from ..slack.credentials import prompt_note
+
+            note = prompt_note(self.user.id)
+            return f"{SLACK_INSTRUCTIONS}\n{note}" if note else SLACK_INSTRUCTIONS
 
         register_campaign_tools(agent, self._campaign_driver_deps(model))
         register_choice_tool(

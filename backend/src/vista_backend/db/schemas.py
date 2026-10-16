@@ -898,6 +898,13 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ Frontier collection's HTTPS refresh token. Encrypted at rest. """
+    odo_globus_connected_at: str | None = None
+    frontier_globus_connected_at: str | None = None
+    """
+    When the researcher last connected Globus for the cluster. OLCF's High
+    Assurance session lasts three days from that login and refreshing does not
+    extend it, so this is how its expiry is estimated (`slack/credentials.py`).
+    """
     github_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
