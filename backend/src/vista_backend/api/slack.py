@@ -7,12 +7,16 @@ from Slack itself — the limits and unlocking especially, so a lost phone canno
 loosen them.
 """
 
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..db.db import SessionDep
+from ..db.schemas import SlackLinkTable
+from ..services import project as project_service
 from ..services.auth import UserDep
-from ..slack import store
+from ..slack import access, linking, store
 from ..utils import secret_store
 
 router = APIRouter(prefix="/slack", tags=["slack"])
@@ -125,3 +129,78 @@ async def update_slack_config(
     session.add(row)
     await session.commit()
     return await _view(session)
+
+
+class SlackLinkView(BaseModel):
+    id: uuid.UUID
+    team_id: str
+    slack_user_id: str
+    project_id: uuid.UUID | None
+    notify_in_thread: bool
+    created_at: str
+
+
+class SlackLinkCreate(BaseModel):
+    code: str
+
+
+class SlackLinkUpdate(BaseModel):
+    project_id: uuid.UUID | None = None
+    notify_in_thread: bool | None = None
+
+
+def _link_view(link: SlackLinkTable) -> SlackLinkView:
+    return SlackLinkView.model_validate(link, from_attributes=True)
+
+
+async def _own_link(session, user, link_id: uuid.UUID) -> SlackLinkTable:
+    link = await session.get(SlackLinkTable, link_id)
+    if link is None or link.user_id != user.id:
+        raise HTTPException(status_code=404, detail="No such Slack link.")
+    return link
+
+
+@router.get("/links")
+async def list_slack_links(session: SessionDep, user: UserDep) -> list[SlackLinkView]:
+    """The Slack accounts linked to the signed-in user."""
+    return [_link_view(link) for link in await access.links_for_user(session, user.id)]
+
+
+@router.post("/links", status_code=201)
+async def create_slack_link(
+    body: SlackLinkCreate, session: SessionDep, user: UserDep
+) -> SlackLinkView:
+    """Link the Slack account a code was shown to, to the signed-in user."""
+    try:
+        link = await linking.redeem_code(session, code=body.code, user_id=user.id)
+    except linking.LinkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _link_view(link)
+
+
+@router.put("/links/{link_id}")
+async def update_slack_link(
+    link_id: uuid.UUID, body: SlackLinkUpdate, session: SessionDep, user: UserDep
+) -> SlackLinkView:
+    link = await _own_link(session, user, link_id)
+    if "project_id" in body.model_fields_set:
+        if body.project_id is not None:
+            mine = {p.id for p in await project_service.list_projects(session, user)}
+            if body.project_id not in mine:
+                raise HTTPException(status_code=400, detail="No such project.")
+        link.project_id = body.project_id
+    if body.notify_in_thread is not None:
+        link.notify_in_thread = body.notify_in_thread
+    session.add(link)
+    await session.commit()
+    await session.refresh(link)
+    return _link_view(link)
+
+
+@router.delete("/links/{link_id}", status_code=204)
+async def delete_slack_link(
+    link_id: uuid.UUID, session: SessionDep, user: UserDep
+) -> None:
+    link = await _own_link(session, user, link_id)
+    await session.delete(link)
+    await session.commit()

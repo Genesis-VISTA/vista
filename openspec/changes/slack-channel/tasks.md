@@ -14,8 +14,8 @@
 
 ## 3. Access
 
-- [ ] 3.1 Workspace/channel allowlist and link lookup middleware; `backend/tests/slack/test_access.py` (unlinked refused, rate-limited refusal, foreign workspace ignored, channel allowlist)
-- [ ] 3.2 Link codes from DM and `POST /slack/link`; tests for expiry and wrong code
+- [x] 3.1 Workspace/channel allowlist and link lookup middleware; `backend/tests/slack/test_access.py` (unlinked refused, rate-limited refusal, foreign workspace ignored, channel allowlist)
+- [x] 3.2 Link codes from DM and `POST /slack/links`; tests for expiry and wrong code
 
 ## 4. Transport and relay
 

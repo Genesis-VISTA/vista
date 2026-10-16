@@ -1,0 +1,37 @@
+"""Fixtures for Slack tests: an enabled config and linked users, no real Slack."""
+
+import pytest
+
+from vista_backend.db.schemas import SlackConfigTable, SlackLinkTable
+from vista_backend.slack import store
+
+TEAM = "T0001"
+OTHER_TEAM = "T9999"
+
+
+@pytest.fixture
+async def slack_config(session) -> SlackConfigTable:
+    row = await store.get_config(session)
+    row.enabled = True
+    row.handle_here = True
+    row.allowed_team_ids = [TEAM]
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    # A detached copy, as a handler reads it once per event; tests may change it.
+    return SlackConfigTable.model_validate(row.model_dump())
+
+
+async def link(
+    session, user, slack_user_id: str, *, team_id: str = TEAM
+) -> SlackLinkTable:
+    row = SlackLinkTable(
+        team_id=team_id,
+        slack_user_id=slack_user_id,
+        user_id=user.id,
+        dm_channel_id=f"D{slack_user_id}",
+        created_at=store.now_iso(),
+    )
+    session.add(row)
+    await session.commit()
+    return row
