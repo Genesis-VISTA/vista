@@ -41,7 +41,7 @@
 
 - [x] 7.1 Lease in Slack, takeover, foreign-lease disconnect; `backend/tests/slack/test_lease.py`
 - [x] 7.2 Offline/online notices with 2-minute debounce, shutdown hook; `backend/tests/slack/test_notices.py`
-- [ ] 7.3 Sleep notifications and sleep prevention per OS (`slack/power.py`), optional; unit tests for command construction only
+- [x] 7.3 Sleep notifications and sleep prevention per OS (`slack/power.py`), optional; unit tests for command construction only
 - [ ] 7.4 Credential reminders at 24 h and 2 h, post-expiry refusal; `backend/tests/slack/test_credential_reminders.py`
 - [ ] 7.5 App Home view; snapshot test of the blocks
 - [ ] 7.6 Audit log with redaction; `backend/tests/slack/test_audit.py`
