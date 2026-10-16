@@ -344,6 +344,13 @@ class Settings(BaseSettings):
     Required in prod, defaults to a dummy key in dev.
     """
 
+    encryption_key_in_secret_store: bool = False
+    """
+    When no `encryption_key` is set, encrypt with a key of this install's own,
+    created in the OS secret store, instead of the public development key. The
+    packaged launcher turns this on; existing values are re-encrypted at startup.
+    """
+
     vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None
     """
     Optional GitLab personal access token, used to fetch private data. Needs Developer role and read_api and

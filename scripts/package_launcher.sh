@@ -306,6 +306,10 @@ export VISTA_DEV_MCP_IMAGE="vista-sandbox:latest"
 # On here, because each project is still gated on its own repository and a
 # usable git; the caller's own value wins.
 export VISTA_BACKEND_FORUM__ENABLED="${VISTA_BACKEND_FORUM__ENABLED:-true}"
+# A package sets no database key of its own, so the backend makes one for this
+# install and keeps it in the OS secret store rather than using the public
+# development key. A key the caller sets wins.
+export VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE="${VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE:-true}"
 LOGS="$STATE/logs"
 
 # ─── window ─────────────────────────────────────────────────────────────────

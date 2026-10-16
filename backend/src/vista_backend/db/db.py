@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
+from ..utils.crypto import reencrypt_legacy_values
 from .seed import seed_db, sync_bundled_skills, sync_default_projects
 
 
@@ -144,6 +145,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
+        await conn.run_sync(reencrypt_legacy_values)
 
     await seed_db(engine)
     # The AI-safety default reaches first runs and upgrades alike, after seed_db so

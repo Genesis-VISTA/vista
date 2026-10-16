@@ -36,6 +36,10 @@ dependencies = [
     # separate distribution and is deliberately NOT depended on: a
     # 205-instance attack corpus has no business in a production install.
     "palisade==1.0.0",
+    "slack-bolt>=1.21",
+    "slack-sdk>=3.33",
+    "aiohttp>=3.10",
+    "keyring>=25",
 ]
 
 [project.optional-dependencies]

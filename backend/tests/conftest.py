@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from harness.memory_keyring import memory_keyring  # noqa: F401  (fixture)
 from vista_backend.db.schemas import UserPublicWithConfig, UserTable
 
 

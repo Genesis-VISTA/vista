@@ -283,6 +283,10 @@ $env:VISTA_DATA_PAYLOAD_DIR = "$STATE\vista-data"
 $env:VISTA_MCP_URL = "http://127.0.0.1:$MCP_PORT/mcp"
 $env:VISTA_BACKEND_URL = "http://127.0.0.1:$BACKEND_PORT"
 $env:VISTA_BACKEND_PORT = $BACKEND_PORT
+# A package sets no database key of its own, so the backend makes one for this
+# install and keeps it in the OS secret store rather than using the public
+# development key. A key the caller sets wins.
+if (-not $env:VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE) { $env:VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE = 'true' }
 $env:HF_HOME = "$STATE\huggingface"
 # A cache miss must fail loudly rather than quietly reaching the network: the
 # weights ship inside the package precisely so this works offline.
