@@ -1,12 +1,23 @@
 """Fixtures for Slack tests: an enabled config and linked users, no real Slack."""
 
 import pytest
+from slack_sdk.web.async_client import AsyncWebClient
 
 from vista_backend.db.schemas import SlackConfigTable, SlackLinkTable
 from vista_backend.slack import store
 
 TEAM = "T0001"
 OTHER_TEAM = "T9999"
+
+
+@pytest.fixture(autouse=True)
+def no_real_slack(monkeypatch):
+    """Any Web API call a test did not stub fails loudly instead of reaching Slack."""
+
+    async def refuse(self, *args, **kwargs):
+        raise AssertionError(f"a test tried to call Slack: {args[:1]}")
+
+    monkeypatch.setattr(AsyncWebClient, "api_call", refuse)
 
 
 @pytest.fixture
