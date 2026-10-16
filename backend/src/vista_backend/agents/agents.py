@@ -174,6 +174,14 @@ class McpUrlElicitationEvent(BaseModel):
     url: str
 
 
+Channel = Literal["app", "slack"]
+"""
+Where a turn was started from. One pooled agent serves every channel; the
+channel only changes how prompts are answered and what the agent is told (see
+`ProjectAgent.channel`).
+"""
+
+
 class McpToolApprovalEvent(BaseModel):
     """
     A high-stakes tool call awaiting human approval (PALISADE, Phase 3.5).
@@ -435,7 +443,14 @@ class ProjectAgent:
         # that streams planner/subagent progress into this run's event stream.
         self._cur_db_session: AsyncSession | None = None
         self._cur_progress_emitter: Callable[[str], None] | None = None
+        # The current run's channel, read by capabilities through `channel`.
+        self._cur_channel: Channel = "app"
         self.agent = self._build_agent()
+
+    @property
+    def channel(self) -> Channel:
+        """The channel of the run in progress; "app" between runs."""
+        return self._cur_channel
 
     @property
     def sidecar(self) -> PalisadeSidecar:
@@ -1014,6 +1029,7 @@ class ProjectAgent:
         enable_elicitation: bool = False,
         db_session: AsyncSession | None = None,
         capture: RunCapture | None = None,
+        channel: Channel = "app",
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
         Run the agent and return a stream of events.
@@ -1030,6 +1046,9 @@ class ProjectAgent:
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
 
         Pass capture to read the turn's messages after it is cancelled or fails (see `RunCapture`).
+
+        Pass channel for a turn started from somewhere other than the in-app chat; it holds for
+        this run only.
 
         Raises:
             MissingInferenceCredential: if no inference credential is
@@ -1095,6 +1114,7 @@ class ProjectAgent:
                 )
                 self._cur_db_session = db_session
                 self._cur_progress_emitter = progress
+                self._cur_channel = channel
                 try:
                     # SEV1 termination (PALISADE incident playbook): once
                     # the trust scorer is terminated, refuse every request
@@ -1228,6 +1248,7 @@ class ProjectAgent:
                     self._cur_approval_emit = None
                     self._cur_db_session = None
                     self._cur_progress_emitter = None
+                    self._cur_channel = "app"
 
         merger.add_stream(agent_stream())
         return aiter(merger)

@@ -10,9 +10,9 @@ from sse_starlette.event import ServerSentEvent
 from ..agents.agents import ProjectAgentResult
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
-from ..services import chat_session as chat_session_service
 from ..services import project as project_service
-from ..services.chat_run import RunBusy, chat_run_registry
+from ..services.chat_run import RunBusy
+from ..services.conversation import start_turn
 from ..services.project_agent import get_project_agent_key, project_agent_pool
 from ..agents.inference import require_inference_credential
 from ..services.auth import UserDep
@@ -86,19 +86,6 @@ async def agent_run(
 
     project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
-    agent_key = await get_project_agent_key(
-        session,
-        project_id=project.id,
-        user_id=user.id,
-        chat_session_id=body.chat_session_id,
-    )
-    effective_history = await chat_session_service.get_effective_message_history(
-        session,
-        project_id=project.id,
-        user_id=user.id,
-        fallback_history=body.message_history,
-        chat_session_id=body.chat_session_id,
-    )
 
     if body.stream and body.chat_session_id is None:
         raise HTTPException(
@@ -106,17 +93,14 @@ async def agent_run(
         )
 
     if body.chat_session_id is not None:
-        # The run writes through its own session, so end this request's
-        # transaction first rather than hold a lock it could wait on.
-        await session.commit()
         try:
-            run = await chat_run_registry.start(
+            run = await start_turn(
+                session,
+                user=user,
+                project=project,
                 chat_session_id=body.chat_session_id,
-                project_id=project.id,
-                user_id=user.id,
-                agent_key=agent_key,
                 user_prompt=body.user_prompt,
-                prior_history=effective_history,
+                fallback_history=body.message_history,
             )
         except RunBusy:
             raise HTTPException(
@@ -139,8 +123,11 @@ async def agent_run(
             raise HTTPException(status_code=500, detail=f"Turn {run.state}.")
         return run.result
 
+    agent_key = await get_project_agent_key(
+        session, project_id=project.id, user_id=user.id, chat_session_id=None
+    )
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.run(
             user_prompt=body.user_prompt,
-            message_history=effective_history,
+            message_history=body.message_history,
         )

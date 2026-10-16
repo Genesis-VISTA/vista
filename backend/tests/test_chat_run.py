@@ -453,3 +453,30 @@ async def test_a_watcher_that_sees_run_finished_finds_the_outcome_saved(env):
             assert saved.run_state == "done" and saved.run_unseen is True
             assert env.registry.get(row.id) is None, "no longer reported as running"
             assert [e["event"] for e in saved.run_events or []][-1] == "run_finished"
+
+
+async def test_the_channel_holds_for_its_run_only(env):
+    row, key = await env.conversation([call("quick"), say("done")])
+    agent = env.agents[row.id]
+    seen: list[str] = []
+    real = agent.run_stream
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("channel", "app"))
+        return real(*args, **kwargs)
+
+    agent.run_stream = spy  # type: ignore[method-assign]
+    run = await env.registry.start(
+        chat_session_id=row.id,
+        project_id=env.project.id,
+        user_id=env.user.id,
+        agent_key=key,
+        user_prompt="go",
+        prior_history=[],
+        channel="slack",
+    )
+    await run.wait()
+
+    assert run.channel == "slack"
+    assert seen == ["slack"]
+    assert agent.channel == "app", "the agent is back on the app channel between runs"

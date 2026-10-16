@@ -26,6 +26,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import (
+    Channel,
     McpElicitationEvent,
     ProjectAgentResult,
     ProjectAgentResultEvent,
@@ -98,6 +99,7 @@ class ChatRun:
     agent_key: ProjectAgentKey
     user_prompt: str
     prior_history: list[ModelMessage]
+    channel: Channel = "app"
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     state: str = "running"
     events: list[RunEvent] = field(default_factory=list)
@@ -192,6 +194,7 @@ class ChatRunRegistry:
         agent_key: ProjectAgentKey,
         user_prompt: str,
         prior_history: list[ModelMessage],
+        channel: Channel = "app",
     ) -> ChatRun:
         """
         Start a turn in the background. Raises `RunBusy` if the conversation has one.
@@ -208,6 +211,7 @@ class ChatRunRegistry:
             agent_key=agent_key,
             user_prompt=user_prompt,
             prior_history=prior_history,
+            channel=channel,
         )
         self._runs[chat_session_id] = run
         try:
@@ -269,6 +273,7 @@ class ChatRunRegistry:
                         enable_elicitation=True,
                         db_session=db,
                         capture=run.capture,
+                        channel=run.channel,
                     ):
                         prompt_id = None
                         if isinstance(event, McpElicitationEvent):
