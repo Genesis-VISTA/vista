@@ -11,7 +11,12 @@ export async function startFrames(page, dir, { quality = 92, width = 1920, heigh
   const frames = [];
   const marks = [];
   let firstArrival = null; // wall clock at the first frame, which is 0 s in the video
+  let held = false;
   cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
+    if (held && firstArrival !== null) {
+      cdp.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+      return;
+    }
     firstArrival ??= Date.now() / 1000;
     const file = `f${String(frames.length).padStart(6, "0")}.jpg`;
     writeFileSync(path.join(dir, file), Buffer.from(data, "base64"));
@@ -25,6 +30,20 @@ export async function startFrames(page, dir, { quality = 92, width = 1920, heigh
     mark(name) {
       const now = Date.now() / 1000;
       marks.push({ name, at: Number((now - (firstArrival ?? now)).toFixed(2)) });
+    },
+    /** Drop frames until resume(): the last frame before holds while a page loads out of sight. */
+    hold() {
+      held = true;
+    },
+    resume() {
+      held = false;
+    },
+    /** Move the latest mark to now, for a step whose first visible moment comes after a hold. */
+    restamp() {
+      const last = marks[marks.length - 1];
+      if (!last) return;
+      const now = Date.now() / 1000;
+      last.at = Number((now - (firstArrival ?? now)).toFixed(2));
     },
     async stop() {
       await cdp.send("Page.stopScreencast").catch(() => {});

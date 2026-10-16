@@ -121,9 +121,26 @@ export async function play({
       await steps.card({ ...step, value: { kind: "chapter", title: step.value } });
     },
     async goto(step) {
+      // The page loads out of sight: the previous frame holds until it has
+      // settled, so the video cuts to it whole instead of showing it lay out.
+      frames?.hold();
       await page.goto(uiUrl + step.value, { waitUntil: "load" });
-      await overlay("showCursor", true);
       await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      });
+      await page.waitForTimeout(300);
+      frames?.resume();
+      frames?.restamp();
+      await overlay("showCursor", true);
+      // Chrome sends a frame only on a change: a near-invisible one sends the settled page now.
+      await page.evaluate(async () => {
+        const dot = Object.assign(document.createElement("div"), { style: "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;background:#000" });
+        document.body.appendChild(dot);
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        dot.remove();
+      });
       await sleep(0.6);
     },
     async caption(step) {
