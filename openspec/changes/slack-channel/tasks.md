@@ -27,7 +27,7 @@
 ## 5. Confirmation and safeguards
 
 - [x] 5.1 `SlackGateCapability`, form decline in Slack runs, read-only tags on native tools; tests that read-only runs and others raise approval
-- [ ] 5.2 Block Kit confirmation, requester-only, 10-minute expiry, recheck on Confirm; `backend/tests/slack/test_gate.py`
+- [x] 5.2 Block Kit confirmation, requester-only, 10-minute expiry, recheck on Confirm; `backend/tests/slack/test_confirm.py`
 - [ ] 5.3 Limits (nodes, walltime, jobs/day) and lock/unlock; tests in `test_gate.py`
 - [ ] 5.4 `offer_choices` buttons; tests
 
