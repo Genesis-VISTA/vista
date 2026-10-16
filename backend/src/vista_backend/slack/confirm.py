@@ -42,12 +42,14 @@ CANCEL = "vista_cancel"
 CHOOSE = "vista_choose_"
 """ Prefix of a choice button's action id; the suffix is the option's index. """
 
-Preview = Callable[[uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]]
-""" (user id, tool name, args) → card fields describing what would really happen. """
+Preview = Callable[
+    [uuid.UUID, uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]
+]
+""" (user id, conversation id, tool name, args) → card fields for what would happen. """
 
 
 async def no_preview(
-    user_id: uuid.UUID, tool: str, args: dict[str, Any]
+    user_id: uuid.UUID, chat_session_id: uuid.UUID, tool: str, args: dict[str, Any]
 ) -> dict[str, str]:
     return {}
 
@@ -217,7 +219,7 @@ class Confirmations:
         args = data.get("args") or {}
         fields = fields_for(tool_name, args)
         try:
-            fields.update(await _preview(user_id, tool_name, args))
+            fields.update(await _preview(user_id, chat_session_id, tool_name, args))
         except Exception:
             log.exception("Could not preview %s for Slack", tool_name)
         pending = self._pending(

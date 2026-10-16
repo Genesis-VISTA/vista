@@ -17,6 +17,7 @@ from ..db.schemas import SlackLinkTable
 from ..services import project as project_service
 from ..services.auth import UserDep
 from ..slack import access, linking, store
+from ..slack import service as slack_service
 from ..utils import secret_store
 
 router = APIRouter(prefix="/slack", tags=["slack"])
@@ -39,6 +40,11 @@ class SlackConfigView(BaseModel):
     locked_by: str | None
     prevent_sleep: bool
     notify_desktop_jobs: bool
+    connection: str
+    """ off · connected · standby (another machine has Slack) · error. """
+    connection_detail: str | None
+    lease_status: dict | None
+    """ Who has Slack and when they were last seen, as of the last check. """
 
 
 class SlackConfigUpdate(BaseModel):
@@ -65,6 +71,7 @@ def _ids(values: list[str]) -> list[str]:
 async def _view(session) -> SlackConfigView:
     row = await store.get_config(session)
     ok, problem = secret_store.available()
+    state, detail = slack_service.status()
     return SlackConfigView(
         enabled=row.enabled,
         handle_here=row.handle_here,
@@ -82,6 +89,9 @@ async def _view(session) -> SlackConfigView:
         locked_by=row.locked_by,
         prevent_sleep=row.prevent_sleep,
         notify_desktop_jobs=row.notify_desktop_jobs,
+        connection=state,
+        connection_detail=detail,
+        lease_status=row.lease_status,
     )
 
 
@@ -128,6 +138,26 @@ async def update_slack_config(
 
     session.add(row)
     await session.commit()
+    # Locking needs no reconnect: the gate reads the lock on every call.
+    if set(updates.model_fields_set) - {
+        "locked",
+        "max_nodes",
+        "max_walltime_minutes",
+        "max_jobs_per_day",
+        "notify_desktop_jobs",
+    }:
+        await slack_service.restart()
+    return await _view(session)
+
+
+@router.post("/take-over")
+async def take_over_slack(session: SessionDep, user: UserDep) -> SlackConfigView:
+    """Handle Slack on this machine now, though another machine is."""
+    if slack_service.service is None or slack_service.service.slack is None:
+        raise HTTPException(
+            status_code=409, detail="Slack isn't set to run on this machine."
+        )
+    await slack_service.service.take_over()
     return await _view(session)
 
 

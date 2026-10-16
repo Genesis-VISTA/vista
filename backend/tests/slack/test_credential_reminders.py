@@ -151,7 +151,7 @@ async def test_after_expiry_the_slack_prompt_says_which_systems(linked):
         return say("ok")
 
     for channel in ["slack", "app"]:
-        with agent.agent.override(model=scripted_model(capture)):
+        with agent.agent.override(model=scripted_model(capture), toolsets=[]):
             async for _ in agent.run_stream(user_prompt="hi", channel=channel):
                 pass
 

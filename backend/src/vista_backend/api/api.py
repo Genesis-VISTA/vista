@@ -77,9 +77,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         logging.getLogger("vista.campaign_monitor").info("Campaign monitor started.")
 
+    # Slack, when it is on and this machine handles it; otherwise nothing starts.
+    # A failure here costs only Slack, never the app.
+    from ..slack import service as slack_service
+
+    try:
+        await slack_service.start()
+    except Exception:
+        logging.getLogger("vista.slack").exception("Slack did not start.")
+
     try:
         yield
     finally:
+        # First, while runs and the connection are still up: the offline notice.
+        with contextlib.suppress(Exception):
+            await slack_service.stop()
         if monitor_stop is not None:
             monitor_stop.set()
         if monitor_task is not None:

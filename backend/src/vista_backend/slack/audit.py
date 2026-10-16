@@ -30,6 +30,7 @@ Event = Literal[
     "cancelled",
     "expired",
     "tool_result",
+    "locked",
 ]
 
 REDACTED = "[redacted]"

@@ -21,6 +21,16 @@ def no_real_slack(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def slack_db_is_the_test_db(engine, monkeypatch):
+    """Slack code opens its own sessions; every one must reach the test's database."""
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from vista_backend.services import chat_run
+
+    monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
+
+
+@pytest.fixture(autouse=True)
 def audit_log_in_tmp(tmp_path, monkeypatch):
     """The audit file goes to the test's directory, not the install's data dir."""
     from vista_backend.slack import audit

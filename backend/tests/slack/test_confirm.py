@@ -114,7 +114,7 @@ async def test_the_card_shows_what_would_be_submitted(answers, session, alice):
 
 
 async def test_the_preview_adds_the_account(answers, session, alice, monkeypatch):
-    async def preview(user_id, tool, args):
+    async def preview(user_id, chat_session_id, tool, args):
         assert user_id == alice.id
         return {"Account": "MAT123"}
 

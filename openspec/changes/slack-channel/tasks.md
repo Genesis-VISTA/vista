@@ -45,7 +45,7 @@
 - [x] 7.4 Credential reminders at 24 h and 2 h, post-expiry refusal; `backend/tests/slack/test_credential_reminders.py`
 - [x] 7.5 App Home view; snapshot test of the blocks
 - [x] 7.6 Audit log with redaction; `backend/tests/slack/test_audit.py`
-- [ ] 7.7 Lifespan wiring: nothing starts with Slack off (test)
+- [x] 7.7 Lifespan wiring: nothing starts with Slack off (test)
 
 ## 8. Desktop
 

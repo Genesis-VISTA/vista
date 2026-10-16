@@ -38,7 +38,7 @@ async def _turn(channel, args, answer=None):
     agent = ProjectAgent(make_project(tools=["*"]), make_user(), uuid.uuid4())
     events = []
     model = step_model([call("offer_choices", **args), say("done")])
-    with agent.agent.override(model=model):
+    with agent.agent.override(model=model, toolsets=[]):
         async for event in agent.run_stream(
             user_prompt="status of my flibe job?",
             enable_elicitation=True,
@@ -99,7 +99,7 @@ async def test_the_tool_is_hidden_outside_slack():
         return ModelResponse(parts=[TextPart("ok")])
 
     for channel in ["slack", "app"]:
-        with agent.agent.override(model=scripted_model(model)):
+        with agent.agent.override(model=scripted_model(model), toolsets=[]):
             async for _ in agent.run_stream(user_prompt="hi", channel=channel):
                 pass
 

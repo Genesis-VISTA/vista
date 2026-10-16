@@ -193,7 +193,7 @@ async def test_the_agent_can_list_my_recent_jobs(engine, session, alice, monkeyp
     agent = ProjectAgent(make_project(tools=["*"]), user, uuid.uuid4())
     results = []
     model = step_model([call("list_my_recent_jobs"), say("done")])
-    with agent.agent.override(model=model):
+    with agent.agent.override(model=model, toolsets=[]):
         async for event in agent.run_stream(
             user_prompt="my last job?", channel="slack"
         ):
