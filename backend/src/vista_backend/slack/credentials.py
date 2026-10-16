@@ -141,6 +141,11 @@ _known: dict[uuid.UUID, list[Expiry]] = {}
 """ The last expiries worked out per researcher, for the gate and the prompt. """
 
 
+def known(user_id: uuid.UUID) -> list[Expiry]:
+    """The expiries last worked out for this researcher (for Home)."""
+    return list(_known.get(user_id, []))
+
+
 def expired_clusters(user_id: uuid.UUID) -> dict[str, list[str]]:
     """Cluster → what has expired, as of now."""
     out: dict[str, list[str]] = {}
