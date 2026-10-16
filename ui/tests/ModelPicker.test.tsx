@@ -58,7 +58,7 @@ const CHOSEN_OPUS = { model: "openai:claude-opus", model_is_default: false };
 const MAG_NO_MODEL = {
   provider: "mag",
   source: "user",
-  base_url: "https://i2-api.staging.american-science-cloud.org/v1",
+  base_url: "https://mag.genesis.americansciencecloud.org/v1",
   model: null,
   model_is_default: false,
   keys_set: { i2: true, mag: true, olcf: false, custom: false },

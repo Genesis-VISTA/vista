@@ -231,7 +231,7 @@ async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
 
     assert response.status_code == 200, response.text
     assert response.json()["supported"] is True
-    assert seen[0].url.host == "i2-api.staging.american-science-cloud.org"
+    assert seen[0].url.host == "mag.genesis.americansciencecloud.org"
     assert seen[0].url.path == "/v1/models"
     assert seen[0].headers["authorization"] == "Bearer mag-token"
 

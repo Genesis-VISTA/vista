@@ -148,7 +148,7 @@ def test_presets():
     assert list(PROVIDER_PRESETS) == ["i2", "mag", "olcf", "custom"]
     assert i2.base_url == "https://api.i2-core.american-science-cloud.org"
     assert i2.default_model == "claude-sonnet"
-    assert mag.base_url == "https://i2-api.staging.american-science-cloud.org/v1"
+    assert mag.base_url == "https://mag.genesis.americansciencecloud.org/v1"
     assert mag.default_model == "claude-sonnet"
     assert olcf.name == "OLCF Inference"
     assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
