@@ -29,7 +29,7 @@ from .lib.iri import (
 from .lib.globus import (
     GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
 )
-from .lib.olcf_token import get_s3m_token_project
+from .lib.olcf_token import cached_s3m_token_project, get_s3m_token_project
 from .lib import slurm_ssh
 from .lib.ssh import get_ssh_conn_mcp_elicitation
 from .lib.user_config import UserConfig, get_vista_meta
@@ -449,6 +449,84 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     return _default_cluster(cfg)
 
 
+def _validate_submit(
+    skills_dir: str | Path | None, job: str, node_count: int | None, duration: str | None,
+) -> tuple[JobInfo, int | None]:
+    """ The checks `submit_hpc_job` and `preview_hpc_job` share: the job, and its limits. """
+    job_info = resolve_job(job, skills_dir)
+    if node_count and (node_count > MAX_NODES or node_count <= 0):
+        raise ValueError(f"node_count out of range (max {MAX_NODES})")
+    duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
+    if duration_int and (duration_int > MAX_TIME or duration_int < 1):
+        raise ValueError(f"Time limit too large (max: {MAX_TIME})")
+    return job_info, duration_int
+
+
+_CLUSTER_SCRIPTS: dict[str, str] = {
+    "odo": ODO_JOB_SCRIPT,
+    "frontier": FRONTIER_JOB_SCRIPT,
+    "perlmutter": PERLMUTTER_JOB_SCRIPT,
+    "lux": LUX_JOB_SCRIPT,
+}
+
+
+def _hms(seconds: int) -> str:
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def _account_without_asking(cfg: UserConfig, cluster: Cluster) -> str:
+    """
+    The account a job would be charged to, from what is already known: the
+    settings for Perlmutter and Lux, and for Odo and Frontier the S3M token's
+    project if it was introspected recently. Never a network call.
+    """
+    if cluster == "perlmutter":
+        return cfg.nersc_account or "(no NERSC account set)"
+    if cluster == "lux":
+        return cfg.lux_account or "(no Lux account set)"
+    token = cfg.odo_s3m_token if cluster == "odo" else cfg.frontier_s3m_token
+    if not token:
+        return f"(no {cluster.capitalize()} S3M token)"
+    url = settings.odo_introspect_url if cluster == "odo" else settings.frontier_introspect_url
+    return cached_s3m_token_project(token, introspect_url=url) or "the S3M token's project"
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+async def preview_hpc_job(
+    ctx: Context,
+    job: str,
+    cluster: Cluster | None = None,
+    node_count: int | None = None,
+    duration: str | None = None,
+    script_args: str | None = None,
+) -> str:
+    """
+    What submit_hpc_job would submit with these arguments, without submitting
+    or contacting the cluster: the system, account, nodes, walltime and script,
+    after the job's defaults are applied. Takes the same arguments as
+    submit_hpc_job and rejects the same mistakes.
+    """
+    meta = get_vista_meta(ctx)
+    job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
+    cluster = _resolve_cluster(cluster, meta.user)
+    defaults = getattr(job_info.cluster_defaults, cluster)
+    if defaults is None:
+        raise ToolError(f'Job {job!r} has no "{cluster}" section in cluster_defaults.json')
+    nodes = node_count or defaults.resources.node_count or 1
+    seconds = duration_int or defaults.duration
+    script = _CLUSTER_SCRIPTS[cluster]
+    command = f"{script} {shlex.join(shlex.split(script_args or ''))}".strip()
+    return "\n".join([
+        f"cluster: {cluster}",
+        f"account: {_account_without_asking(meta.user, cluster)}",
+        f"nodes: {nodes}",
+        f"duration: {_hms(seconds)} ({seconds}s)",
+        f"script: {job}/{command}",
+    ])
+
+
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
@@ -489,12 +567,7 @@ async def submit_hpc_job(
     script_args: str | None = None,
 ) -> str:
     meta = get_vista_meta(ctx)
-    job_info = resolve_job(job, meta.project_paths.skills_dir)
-    if node_count and (node_count > MAX_NODES or node_count <= 0):
-        raise ValueError(f"node_count out of range (max {MAX_NODES})")
-    duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
-    if duration_int and (duration_int > MAX_TIME or duration_int < 1):
-        raise ValueError(f"Time limit too large (max: {MAX_TIME})")
+    job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
 
     cfg = meta.user
     cluster = _resolve_cluster(cluster, cfg)
@@ -2038,6 +2111,88 @@ async def _get_lux_job_outputs(
             await slurm_ssh.download_file(conn, remote_path, local_path)
     logging.info(f"SFTP-fetched {len(wanted)} file(s); served {len(files) - len(wanted)} from local cache")
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+async def get_hpc_queue_status(ctx: Context, cluster: Cluster) -> str:
+    """
+    How busy a cluster is, and the researcher's own jobs on it.
+
+    Lux: the queue's jobs and nodes by state, from `squeue`. Odo, Frontier and
+    Perlmutter: the facility's status and open incidents from IRI, plus the
+    researcher's jobs where IRI lists them; IRI does not say how deep the queue
+    is, so the answer says so rather than guessing.
+
+    Args:
+        cluster: "odo", "frontier", "perlmutter" or "lux".
+    """
+    cfg = get_vista_meta(ctx).user
+    if cluster == "lux":
+        return await _lux_queue_status(ctx)
+    if cluster == "perlmutter":
+        iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())
+    else:
+        iri_client = await _create_olcf_iri_for(cluster, cfg)
+    return await _iri_queue_status(iri_client, cluster)
+
+
+async def _iri_queue_status(iri_client: IriClient, cluster: Cluster) -> str:
+    facility = await iri_client.facility_status()
+    lines = [f"cluster: {cluster}", f"status: {facility.get('status') or 'unknown'}"]
+    incidents = facility.get("incidents") or []
+    if incidents:
+        lines.append("open incidents:")
+        for incident in incidents:
+            span = " to ".join(t for t in (incident.get("start"), incident.get("end")) if t)
+            lines.append(f"- {incident['name']} ({incident.get('type')}, {incident.get('status')}) {span}".rstrip())
+    else:
+        lines.append("open incidents: none")
+    lines.append("queue depth: not available from IRI")
+    try:
+        jobs = await iri_client.list_jobs()
+    except Exception as e:
+        logging.info(f"IRI could not list jobs on {cluster}: {e}")
+        lines.append("your jobs: IRI could not list them")
+    else:
+        live = [j for j in jobs if str(j.get("state", "")).upper() not in _FINISHED_STATES]
+        if live:
+            lines.append("your jobs:")
+            lines += [f"- {j['id']} {j.get('name') or ''} {j.get('state')}".replace("  ", " ") for j in live]
+        else:
+            lines.append("your jobs: none queued or running")
+    return "\n".join(lines)
+
+
+_FINISHED_STATES = {"COMPLETED", "FAILED", "CANCELED", "CANCELLED"}
+
+
+async def _lux_queue_status(ctx: Context) -> str:
+    conn = await _lux_conn(ctx, "get_hpc_queue_status")
+    queue = await slurm_ssh.run(conn, "squeue -h -o '%T|%D'")
+    if queue.exit_status != 0:
+        raise ToolError(f"squeue failed on Lux: {queue.output}")
+    jobs: dict[str, int] = {}
+    nodes: dict[str, int] = {}
+    for line in queue.stdout.splitlines():
+        state, _, count = line.strip().partition("|")
+        if not state:
+            continue
+        jobs[state] = jobs.get(state, 0) + 1
+        nodes[state] = nodes.get(state, 0) + (int(count) if count.isdigit() else 0)
+    lines = ["cluster: lux"]
+    if jobs:
+        lines.append("queue:")
+        lines += [f"- {state}: {jobs[state]} jobs, {nodes[state]} nodes" for state in sorted(jobs)]
+    else:
+        lines.append("queue: empty")
+    mine = await slurm_ssh.run(conn, "squeue -h --me -o '%i|%j|%T|%M'")
+    own = [line.split("|") for line in mine.stdout.splitlines() if line.count("|") == 3]
+    if own:
+        lines.append("your jobs:")
+        lines += [f"- {i} {name} {state} ({elapsed})" for i, name, state, elapsed in own]
+    else:
+        lines.append("your jobs: none queued or running")
+    return "\n".join(lines)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))

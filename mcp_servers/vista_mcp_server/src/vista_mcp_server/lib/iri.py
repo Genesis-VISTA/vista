@@ -235,6 +235,48 @@ class IriClient:
         job.resource_id = self.compute_resource_id
         return self._service_client.status(job).to_dict()
 
+    async def facility_status(self) -> dict[str, Any]:
+        """
+        The compute resource's status ("up", "down", "degraded", "unknown") and
+        its incidents that are not resolved, from the IRI status API. The
+        researcher's position in the queue is not part of IRI, nor is its depth.
+        """
+        return await asyncio.to_thread(self._facility_status)
+
+    def _facility_status(self) -> dict[str, Any]:
+        api = self._service_client._status_api
+        resource = api.get_resource(resource_id=self.compute_resource_id)
+        status = getattr(resource.current_status, "value", resource.current_status)
+        incidents = []
+        for incident in api.get_incidents(resource_id=self.compute_resource_id, limit=20) or []:
+            resolution = getattr(incident.resolution, "value", incident.resolution)
+            if resolution in ("completed", "cancelled"):
+                continue
+            incidents.append({
+                "name": incident.name or "incident",
+                "status": getattr(incident.status, "value", incident.status),
+                "type": getattr(incident.type, "value", incident.type),
+                "start": incident.start.isoformat() if incident.start else None,
+                "end": incident.end.isoformat() if incident.end else None,
+            })
+        return {"status": status, "incidents": incidents}
+
+    async def list_jobs(self) -> list[dict[str, Any]]:
+        """ The jobs IRI lists for this token on the compute resource: id, name, state. """
+        return await asyncio.to_thread(self._list_jobs)
+
+    def _list_jobs(self) -> list[dict[str, Any]]:
+        api = self._service_client._compute_api
+        jobs = api.get_jobs(resource_id=self.compute_resource_id, include_spec=True, limit=50)
+        return [
+            {
+                "id": job.id,
+                "name": (job.job_spec.name if job.job_spec else None) or "",
+                "state": str(getattr(job.status.state, "value", job.status.state)) if job.status else "UNKNOWN",
+            }
+            for job in jobs or []
+        ]
+
     async def cancel_job(self, job_id: str) -> None:
         await asyncio.to_thread(self._cancel_job, job_id)
 

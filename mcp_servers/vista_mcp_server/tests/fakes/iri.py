@@ -32,6 +32,8 @@ class FakeIriClient:
         self.ls_paths: dict[str, list[str]] = {}
         self.head_content: dict[str, str] = {}
         self._job_counter = 0
+        self.facility: dict[str, Any] = {"status": "up", "incidents": []}
+        self.jobs: list[dict[str, Any]] | Exception = []
 
     @property
     def compute_resource_id(self) -> str:
@@ -53,6 +55,14 @@ class FakeIriClient:
 
     async def get_job_status(self, job_id: str) -> dict:
         return dict(self._status)
+
+    async def facility_status(self) -> dict[str, Any]:
+        return dict(self.facility)
+
+    async def list_jobs(self) -> list[dict[str, Any]]:
+        if isinstance(self.jobs, Exception):
+            raise self.jobs
+        return list(self.jobs)
 
     async def cancel_job(self, job_id: str) -> None:
         self.cancelled.append(job_id)

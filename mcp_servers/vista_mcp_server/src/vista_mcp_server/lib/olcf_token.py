@@ -16,6 +16,11 @@ _introspect_cache = TTLCache[tuple[str, str], str](maxsize=256, ttl=600.0)
 """ (introspect_url, token) -> project. """
 
 
+def cached_s3m_token_project(s3m_token: str, *, introspect_url: str) -> str | None:
+    """ The token's project if it was introspected recently; never asks S3M. """
+    return _introspect_cache.get((introspect_url, s3m_token))
+
+
 async def get_s3m_token_project(s3m_token: str, *, introspect_url: str) -> str:
     """
     Return the OLCF `project` claim of an S3M token, verifying it against the
