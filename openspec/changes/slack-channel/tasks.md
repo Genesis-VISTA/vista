@@ -20,7 +20,7 @@
 ## 4. Transport and relay
 
 - [x] 4.1 `SlackTransport`, `FakeTransport` (tests/slack/fakes.py) and Bolt Socket Mode implementation; a unit test that the Bolt app acks and dispatches a fake event
-- [ ] 4.2 Thread→conversation mapping and per-thread queue; `backend/tests/slack/test_threads.py`
+- [x] 4.2 Thread→conversation mapping and per-thread queue; `backend/tests/slack/test_threads.py`
 - [ ] 4.3 `RunRelay` progress message with throttled edits and transcript writes; tests against a scripted `ChatRun`
 - [x] 4.4 `slack/format.py` mrkdwn, summary-first, chunking, fallbacks, Show more; `backend/tests/slack/test_format.py`
 

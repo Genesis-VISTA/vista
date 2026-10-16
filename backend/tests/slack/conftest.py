@@ -46,3 +46,15 @@ async def link(
     session.add(row)
     await session.commit()
     return row
+
+
+async def project(session, user, name: str = "molten-salts"):
+    from vista_backend.db.schemas import ProjectMemberTable, ProjectTable
+
+    row = ProjectTable(name=name, skills=[], knowledge_bases=[])
+    session.add(row)
+    await session.flush()
+    session.add(ProjectMemberTable(project_id=row.id, user_id=user.id))
+    await session.commit()
+    await session.refresh(row)
+    return row
