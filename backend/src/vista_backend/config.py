@@ -41,6 +41,47 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+class SlackSettings(BaseModel):
+    """
+    Timings for the Slack integration (`vista_backend.slack`, `docs/slack.md`).
+
+    Whether Slack is on, its tokens, allowlists and limits are the researcher's
+    and are set in the desktop app (the `slack_config` row and the OS secret
+    store), not here. These are the install's fixed behaviour; override via
+    `VISTA_BACKEND_SLACK__<FIELD>=...`, mostly so tests can shorten them.
+    """
+
+    confirmation_ttl: float = 600.0
+    """ Seconds a Confirm/Cancel prompt stays usable before it expires. """
+
+    link_code_ttl: float = 600.0
+    """ Seconds a link code shown in Slack can be entered in the desktop app. """
+
+    progress_edit_interval: float = 1.5
+    """ Least seconds between edits of a reply's progress message. """
+
+    lease_heartbeat: float = 60.0
+    """ Seconds between renewals of this machine's claim on Slack. """
+
+    lease_stale_after: float = 180.0
+    """ Seconds after which another machine's claim is treated as abandoned. """
+
+    online_notice_debounce: float = 120.0
+    """ A reconnect this soon after the last back-online notice sends none. """
+
+    job_poll_interval: float = 120.0
+    """ Seconds between checks of jobs VISTA submitted that have not finished. """
+
+    reminder_interval: float = 900.0
+    """ Seconds between checks for HPC credentials about to expire. """
+
+    home_refresh_interval: float = 300.0
+    """ Seconds between republishing the App Home tab. """
+
+    unlinked_reply_interval: float = 3600.0
+    """ An unlinked user is told how to link at most this often. """
+
+
 class ForumSettings(BaseModel):
     """
     Agent-forum settings — the git-backed debate forum (see
@@ -439,6 +480,9 @@ class Settings(BaseSettings):
     Agent-forum (debate) settings; see `ForumSettings`. Disabled by default,
     so the backend runs unchanged without git installed.
     """
+
+    slack: SlackSettings = Field(default_factory=SlackSettings)
+    """ Slack integration timings; see `SlackSettings`. Slack itself is off until enabled. """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
     """

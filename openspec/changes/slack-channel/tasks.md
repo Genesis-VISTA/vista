@@ -2,15 +2,15 @@
 
 ## 1. Shared run path
 
-- [ ] 1.1 Add `services/conversation.start_turn` and route `api/agent.py` through it; existing `backend/tests/test_agent_api*.py` and chat-run tests pass unchanged
-- [ ] 1.2 Add `channel` to `ChatRun` and `ProjectAgent.run_stream`, reset per run; test that a pooled agent serves an app run after a Slack run with app behaviour
+- [x] 1.1 Add `services/conversation.start_turn` and route `api/agent.py` through it; existing `backend/tests/test_agent_api*.py` and chat-run tests pass unchanged
+- [x] 1.2 Add `channel` to `ChatRun` and `ProjectAgent.run_stream`, reset per run; test that a pooled agent serves an app run after a Slack run with app behaviour
 
 ## 2. Data and secrets
 
-- [ ] 2.1 Add tables `slack_config`, `slack_link`, `slack_link_code`, `slack_thread`, `slack_pending`, `slack_detail`, `slack_reminder`, `slack_audit`, `hpc_job_record` and `chat_session.origin`; `init_db` on an existing DB adds them (test in `backend/tests/slack/test_schema.py`)
-- [ ] 2.2 `slack/secrets.py` over `keyring`, refusing fail/null backends; tests with an in-memory keyring backend
-- [ ] 2.3 Per-install encryption key in the keyring with one-time re-encryption from the dummy key; `backend/tests/test_encryption_key.py`
-- [ ] 2.4 `SlackSettings` in `config.py` and `api/slack.py` config endpoints with write-only tokens; API tests
+- [x] 2.1 Add tables `slack_config`, `slack_link`, `slack_link_code`, `slack_thread`, `slack_pending`, `slack_detail`, `slack_reminder`, `slack_audit`, `hpc_job_record` and `chat_session.origin`; `init_db` on an existing DB adds them (test in `backend/tests/slack/test_schema.py`)
+- [x] 2.2 `utils/secret_store.py` over `keyring`, refusing fail/null backends; tests with an in-memory keyring backend
+- [x] 2.3 Per-install encryption key in the keyring with one-time re-encryption from the dummy key; `backend/tests/test_encryption_key.py`
+- [x] 2.4 `SlackSettings` in `config.py` and `api/slack.py` config endpoints with write-only tokens; API tests
 
 ## 3. Access
 

@@ -30,6 +30,7 @@ from .palisade import router as palisade_router
 from .projects import router as projects_router
 from .reports import router as reports_router
 from .skills import router as skills_router
+from .slack import router as slack_router
 from .users import router as users_router
 
 
@@ -130,6 +131,7 @@ app.include_router(models_router)
 app.include_router(projects_router)
 app.include_router(reports_router)
 app.include_router(skills_router)
+app.include_router(slack_router)
 app.include_router(files_router)
 app.include_router(users_router)
 

@@ -156,7 +156,7 @@ Published on `app_home_opened`, on lock/link/job change, and every 5 minutes, wi
 time so a stale view is obvious (Slack keeps the last published view when we are offline).
 
 ### D16. Secrets
-`slack/secrets.py` wraps `keyring` (service `org.vista`, names `slack-bot-token`,
+`utils/secret_store.py` wraps `keyring` (service `VISTA`, entries scoped to the data directory, names `slack-bot-token`,
 `slack-app-token`, `db-encryption-key`). On a backend without a real keyring
 (`keyring.backends.fail` / `null`), Slack refuses to enable. The packaged launcher asks the
 backend for the encryption key at start: if `VISTA_BACKEND_ENCRYPTION_KEY` is unset and the
