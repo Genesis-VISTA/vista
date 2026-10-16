@@ -83,6 +83,14 @@ class SlackGateCapability(AbstractCapability):
         )
         if why is not None:
             log.info("Refused %s from Slack: %s", tool_def.name, why)
+            from . import audit  # Here, as the agent imports this module.
+
+            await audit.record(
+                "refused",
+                user_id=self._user_id,
+                tool_name=tool_def.name,
+                detail={"args": args, "reason": why},
+            )
             return f"Not done: {why}"
         raise ApprovalRequired()
 

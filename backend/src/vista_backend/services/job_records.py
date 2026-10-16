@@ -107,8 +107,20 @@ class SubmitWatcher:
                 await db.commit()
         except IntegrityError:
             log.info("Job %s is already recorded", found["job_id"])
+            return
         except Exception:
             log.exception("Could not record job %s", found["job_id"])
+        if self._channel == "slack":
+            from ..slack import audit  # Here, as it imports the chat run.
+
+            await audit.record(
+                "tool_result",
+                user_id=self._user_id,
+                chat_session_id=self._chat_session_id,
+                tool_name=SUBMIT,
+                detail={"args": args, "cluster": found["cluster"]},
+                job_id=found["job_id"],
+            )
 
 
 def _int(value: Any) -> int | None:

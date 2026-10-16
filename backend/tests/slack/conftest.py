@@ -20,6 +20,14 @@ def no_real_slack(monkeypatch):
     monkeypatch.setattr(AsyncWebClient, "api_call", refuse)
 
 
+@pytest.fixture(autouse=True)
+def audit_log_in_tmp(tmp_path, monkeypatch):
+    """The audit file goes to the test's directory, not the install's data dir."""
+    from vista_backend.slack import audit
+
+    monkeypatch.setattr(audit, "log_path", lambda: tmp_path / "slack-audit.jsonl")
+
+
 @pytest.fixture
 async def slack_config(session) -> SlackConfigTable:
     row = await store.get_config(session)

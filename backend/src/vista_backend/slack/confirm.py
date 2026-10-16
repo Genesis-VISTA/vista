@@ -21,14 +21,14 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlmodel import select
 
 from ..config import settings
 from ..db.schemas import ChatSessionTable, SlackPendingTable
 from ..services import chat_run as chat_run_module
-from . import format, gate
+from . import audit, format, gate
 from .choices import options_of
 from .events import Action
 from .relay import Place, step_label
@@ -264,12 +264,22 @@ class Confirmations:
         pending.message_ts = await self.transport.post(
             place.channel, reply.text, blocks=reply.blocks, thread_ts=place.thread_ts
         )
+        posted = SlackPendingTable.model_validate(pending.model_dump())
         async with chat_run_module.session_factory() as db:
             db.add(pending)
             await db.commit()
         self._timers[elicitation_id] = asyncio.create_task(
             self._expire_later(elicitation_id)
         )
+        if posted.kind == "confirm":
+            await audit.record(
+                "confirm_posted",
+                team_id=posted.team_id,
+                slack_user_id=posted.slack_user_id,
+                chat_session_id=posted.chat_session_id,
+                tool_name=posted.tool_name,
+                detail=posted.summary,
+            )
 
     async def _expire_later(self, elicitation_id: str) -> None:
         await asyncio.sleep(settings.slack.confirmation_ttl)
@@ -363,7 +373,27 @@ class Confirmations:
         if not answered and outcome in ("confirmed", "chosen"):
             # The run is gone (VISTA restarted, or it was stopped): nothing ran.
             await self._set_outcome(pending, "expired")
+        if pending.kind == "confirm":
+            await self._audit(pending)
         await self._redraw(pending)
+
+    async def _audit(self, pending: SlackPendingTable) -> None:
+        """How a card closed, and by whom: only its requester can answer it."""
+        summary = pending.summary or {}
+        await audit.record(
+            cast(audit.Event, pending.outcome),
+            team_id=pending.team_id,
+            slack_user_id=pending.slack_user_id,
+            chat_session_id=pending.chat_session_id,
+            tool_name=pending.tool_name,
+            detail={
+                "by": pending.slack_user_id
+                if pending.outcome in ("confirmed", "cancelled")
+                else None,
+                "args": summary.get("args"),
+                "reason": summary.get("reason"),
+            },
+        )
 
     async def _set_outcome(self, pending: SlackPendingTable, outcome: str) -> None:
         async with chat_run_module.session_factory() as db:
