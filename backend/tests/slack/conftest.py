@@ -1,5 +1,7 @@
 """Fixtures for Slack tests: an enabled config and linked users, no real Slack."""
 
+import inspect
+
 import pytest
 from slack_sdk.web.async_client import AsyncWebClient
 
@@ -21,12 +23,17 @@ def no_real_slack(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def slack_db_is_the_test_db(engine, monkeypatch):
+def slack_db_is_the_test_db(request, monkeypatch):
     """Slack code opens its own sessions; every one must reach the test's database."""
     from sqlmodel.ext.asyncio.session import AsyncSession
 
     from vista_backend.services import chat_run
 
+    # `engine` is async, which a sync test may not depend on (pytest 8 makes
+    # that an error); a sync test opens no session anyway.
+    if not inspect.iscoroutinefunction(request.function):
+        return
+    engine = request.getfixturevalue("engine")
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
 
 

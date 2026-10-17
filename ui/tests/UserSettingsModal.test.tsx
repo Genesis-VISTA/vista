@@ -153,7 +153,7 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists five focused sections and opens on Research profile", async () => {
+  it("lists six focused sections and opens on Research profile", async () => {
     fetchCurrentUserWithConfigMock.mockResolvedValue(user());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
@@ -167,6 +167,7 @@ describe("UserSettingsModal navigation", () => {
       "Models and providers",
       "Repositories",
       "Compute",
+      "Slack",
     ]);
 
     expect(entry("Research profile")).toHaveAttribute("aria-current", "page");
