@@ -392,7 +392,7 @@ async def test_list_files_cuts_off_a_slow_walk(tmp_path):
 
 
 async def test_parallel_calls_queue_for_a_channel(tmp_path):
-    # Lux refuses a third session on a connection, so the agent's parallel tool
+    # Lux refuses a second session on a connection, so the agent's parallel tool
     # calls must wait for a slot instead of opening one each.
     import asyncio
 

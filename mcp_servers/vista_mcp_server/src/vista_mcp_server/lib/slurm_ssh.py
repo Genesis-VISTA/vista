@@ -41,8 +41,12 @@ _retry_channel_open = tenacity.retry(
 )
 """ Same policy as `lib.ssh.ssh_bash_retry`: retry when the login node refuses a new channel. """
 
-CHANNELS_PER_CONNECTION = 2
-""" Lux refuses a third session on a connection; the retry above covers a close still in flight. """
+CHANNELS_PER_CONNECTION = 1
+"""
+Lux refuses a second session while one is open on the connection (seen in its
+logs: every refused open had exactly one other channel live), so commands and
+SFTP sessions take turns. The retry above covers a close still in flight.
+"""
 
 _channel_slots: weakref.WeakKeyDictionary[asyncssh.SSHClientConnection, asyncio.Semaphore] = (
     weakref.WeakKeyDictionary()
