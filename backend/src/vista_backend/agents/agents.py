@@ -831,6 +831,8 @@ class ProjectAgent:
             "get_hpc_job_status",
             "get_hpc_job_outputs",
             "cancel_hpc_job",
+            "get_hpc_queue_status",
+            "preview_hpc_job",
         }
         if name in HPC_TOOLS:
             metadata["vista"]["user"] = self.user.model_dump(mode="json")

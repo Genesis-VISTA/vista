@@ -379,3 +379,13 @@ async def test_render_batch_script_tasks_and_gpus_per_node():
     )
     assert "#SBATCH --ntasks-per-node=8" in script
     assert "#SBATCH --gpus-per-node=8" in script
+
+
+async def test_list_files_cuts_off_a_slow_walk(tmp_path):
+    # A walk of a large Lustre directory held its channel for minutes, and Lux
+    # then refused every other command on the connection.
+    conn = FakeSshConn(tmp_path)
+    conn.on("find .", (0, "a.out\nb.log\n", ""))
+    assert await slurm_ssh.list_files(conn, "/scratch/out") == ["a.out", "b.log"]
+    command, _ = conn.commands[-1]
+    assert f"timeout {slurm_ssh.LIST_FILES_TIMEOUT} find ." in command

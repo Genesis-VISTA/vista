@@ -149,6 +149,8 @@ def test_vista_metadata_paths_are_scoped_per_project_and_user():
         "get_hpc_job_status",
         "get_hpc_job_outputs",
         "cancel_hpc_job",
+        "get_hpc_queue_status",
+        "preview_hpc_job",
     ],
 )
 def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):

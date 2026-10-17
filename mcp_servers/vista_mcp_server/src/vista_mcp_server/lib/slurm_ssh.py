@@ -294,14 +294,26 @@ async def list_files(
     conn: asyncssh.SSHClientConnection, root: str, *, limit: int = 20,
     exclude: tuple[str, ...] = (".venv", "__pycache__"),
 ) -> list[str]:
-    """ Up to `limit` file paths under `root`, relative to it, sorted. Empty if `root` is missing. """
+    """
+    Up to `limit` file paths under `root`, relative to it, sorted. Empty if `root` is missing.
+
+    The walk is cut off after `LIST_FILES_TIMEOUT` seconds on the remote side: `sort`
+    makes `find` walk the whole tree, which on a large output directory on Lustre took
+    minutes, and the channel it held meant every later command on the connection was
+    refused (Lux allows only a couple at once). A cut-off walk lists what it found.
+    """
     prune = " -o ".join(f"-name {shlex.quote(x)}" for x in exclude)
     cmd = (
         f"cd {shlex.quote(root)} 2>/dev/null || exit 0; "
-        f"find . \\( {prune} \\) -prune -o -type f -print | sed 's|^\\./||' | sort | head -n {int(limit)}"
+        f"timeout {LIST_FILES_TIMEOUT} find . \\( {prune} \\) -prune -o -type f -print"
+        f" | sed 's|^\\./||' | sort | head -n {int(limit)}"
     )
     out = await run_checked(conn, cmd, what=f"list {root}")
     return [line for line in out.splitlines() if line]
+
+
+LIST_FILES_TIMEOUT = 20
+""" Seconds `list_files` lets `find` walk before listing what it has. """
 
 
 class SftpLogReader:
