@@ -8,6 +8,7 @@ It is published when the tab is opened, after a lock or link change or a job
 ending, and every five minutes.
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -100,11 +101,19 @@ class Home:
     def __init__(self, slack: SlackTransport, *, host: str | None = None) -> None:
         self._slack = slack
         self._host = host or host_name()
+        # One publish at a time, reading and sending together: otherwise a
+        # periodic refresh that read the settings before a lock could land
+        # after the lock's own publish and show the tab as unlocked.
+        self._publishing = asyncio.Lock()
 
     async def publish(
         self, team_id: str, slack_user_id: str, *, online: bool = True
     ) -> bool:
         """One researcher's Home tab. False when they are not linked."""
+        async with self._publishing:
+            return await self._publish(team_id, slack_user_id, online=online)
+
+    async def _publish(self, team_id: str, slack_user_id: str, *, online: bool) -> bool:
         async with chat_run_module.session_factory() as db:
             link = (
                 await db.exec(
