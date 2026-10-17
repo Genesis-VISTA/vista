@@ -1,0 +1,41 @@
+# The Slack app VISTA talks through. Create it at https://api.slack.com/apps
+# → Create New App → From an app manifest, and paste this file; see docs/slack.md.
+#
+# Socket Mode only: VISTA opens the connection from the researcher's machine,
+# so the app has no request URL and nothing needs to reach that machine.
+# The scopes are exactly what slack/socket_mode.py calls; keep them in step.
+display_information:
+  name: VISTA
+  description: Ask VISTA about molten salts and your HPC jobs, from anywhere.
+  background_color: "#1d2433"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: VISTA
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read # @VISTA in a channel
+      - chat:write # replies, the "working" message, confirmations, notices
+      - im:history # DMs to VISTA, and reading the status (lease) message back
+      - im:read
+      - im:write # opening a DM for job notices and reminders
+      - files:write # logs posted on request
+      - pins:read # finding the pinned status message
+      - pins:write
+      - metadata.message:read # the status message's holder and heartbeat
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

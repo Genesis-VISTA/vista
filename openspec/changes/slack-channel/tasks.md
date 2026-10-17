@@ -57,6 +57,6 @@
 
 ## 9. Docs and verification
 
-- [ ] 9.1 `backend/src/vista_backend/slack/manifest.yaml`, `docs/slack.md`, `docs/slack-relay.md`; manifest parses as YAML in a test
+- [x] 9.1 `backend/src/vista_backend/slack/manifest.yaml`, `docs/slack.md`, `docs/slack-relay.md`; manifest parses as YAML in a test
 - [ ] 9.2 Full `./scripts/ci-local.sh` passes
 - [ ] 9.3 Manual mobile checklist (iOS, Android) — live, not in PR CI
