@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import re
 import shlex
@@ -92,12 +93,14 @@ async def run(
     """
     shell = "bash -lc" if login_shell else "bash -c"
     async with _slots(conn):
-        # The context closes the channel on the way out, also when the wait times out.
-        async with conn.create_process(f"{shell} {shlex.quote(command)}", input=input) as process:
-            try:
-                result = await process.wait(check=False, timeout=timeout)
-            except asyncssh.TimeoutError as e:
-                raise SlurmSshError(f"timed out after {timeout:g} s: {command[:200]}") from e
+        process = await conn.create_process(f"{shell} {shlex.quote(command)}", input=input)
+        try:
+            result = await process.wait(check=False, timeout=timeout)
+        except asyncssh.TimeoutError as e:
+            # Close without waiting for Lux to agree: it took minutes to for a
+            # process stuck in Lustre I/O, and the slot was held all that time.
+            process.close()
+            raise SlurmSshError(f"timed out after {timeout:g} s: {command[:200]}") from e
     return CommandResult(
         exit_status=result.exit_status if result.exit_status is not None else -1,
         stdout=str(result.stdout or ""),
@@ -345,29 +348,54 @@ async def list_files(
     """
     Up to `limit` file paths under `root`, relative to it, sorted. Empty if `root` is missing.
 
-    A walk of a large output directory on Lustre took minutes, holding the
-    connection's only channel, so every other call on it waited. So the walk stops
-    at the first `limit` files (no remote `sort`, which needs the whole tree, and
-    no deeper than `LIST_FILES_DEPTH`), `find` is killed after `LIST_FILES_TIMEOUT`
-    seconds, and the channel is closed if even that doesn't end it (a `find`
-    stuck in a Lustre stat ignores signals). The files listed are the first
-    found, sorted, not the first in sort order.
+    A `find` in a job's output directory on Lustre has run for minutes and ignored
+    its `timeout`, and Lux keeps a session open until its process exits, even after
+    VISTA closes the channel: with one session per connection, every other call
+    waited behind it. So the walk runs detached on the login node, writing to a
+    file under `~/.cache/vista-ls`, and this polls for the result with commands
+    that take milliseconds, freeing the channel in between. After
+    `LIST_FILES_WAIT` seconds it raises `SlurmSshError` and leaves the walk
+    running; a later call within ten minutes waits for that walk rather than
+    starting a second one behind it.
     """
     prune = " -o ".join(f"-name {shlex.quote(x)}" for x in exclude)
-    cmd = (
-        f"cd {shlex.quote(root)} 2>/dev/null || exit 0; "
+    f = f"$HOME/.cache/vista-ls/{hashlib.sha256(root.encode('utf-8')).hexdigest()[:16]}"
+    walk = (
+        f"cd {shlex.quote(root)} 2>/dev/null && "
         f"timeout -k 2 {LIST_FILES_TIMEOUT} find . -maxdepth {LIST_FILES_DEPTH}"
-        f" \\( {prune} \\) -prune -o -type f -print | head -n {int(limit)} | sed 's|^\\./||'"
+        f" \\( {prune} \\) -prune -o -type f -print | head -n {int(limit)}"
     )
-    out = await run_checked(conn, cmd, what=f"list {root}", timeout=LIST_FILES_TIMEOUT + 10)
-    return sorted(line for line in out.splitlines() if line)
+    start = (
+        f"mkdir -p $HOME/.cache/vista-ls; "
+        f'if [ ! -e "{f}.done" ] && [ -n "$(find "{f}.run" -mmin -10 2>/dev/null)" ]; then exit 0; fi; '
+        f'rm -f "{f}.done"; touch "{f}.run"; '
+        # Every stream redirected, so the session closes as soon as this shell exits.
+        f"nohup bash -c {shlex.quote(f'{{ {walk}; }} > \"{f}.out\"; touch \"{f}.done\"')}"
+        f" </dev/null >/dev/null 2>&1 &"
+    )
+    await run_checked(conn, start, what=f"list {root}")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + LIST_FILES_WAIT
+    while True:
+        result = await run(conn, f'test -e "{f}.done" && cat "{f}.out"')
+        if result.exit_status == 0:
+            return sorted(line.removeprefix("./") for line in result.stdout.splitlines() if line)
+        if loop.time() >= deadline:
+            raise SlurmSshError(f"still listing {root} after {LIST_FILES_WAIT} s on Lux; ask again shortly")
+        await asyncio.sleep(LIST_FILES_POLL)
 
 
-LIST_FILES_TIMEOUT = 10
-""" Seconds `list_files` lets `find` walk before listing what it has. """
+LIST_FILES_TIMEOUT = 60
+""" Seconds the detached walk may run before `find` is killed. """
 
 LIST_FILES_DEPTH = 3
 """ How many folders deep `list_files` looks. """
+
+LIST_FILES_WAIT = 15
+""" Seconds `list_files` waits for the walk before giving up on this call. """
+
+LIST_FILES_POLL = 1.0
+""" Seconds between checks for the walk's result; the channel is free in between. """
 
 
 class SftpLogReader:

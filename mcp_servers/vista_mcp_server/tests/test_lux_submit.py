@@ -7,6 +7,7 @@ sends to the login node and how it reads the answers back.
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 import pytest
@@ -381,14 +382,39 @@ async def test_render_batch_script_tasks_and_gpus_per_node():
     assert "#SBATCH --gpus-per-node=8" in script
 
 
-async def test_list_files_cuts_off_a_slow_walk(tmp_path):
-    # A walk of a large Lustre directory held its channel for minutes, and Lux
-    # then refused every other command on the connection.
+async def test_list_files_walks_detached_and_polls(tmp_path):
+    # A find on Lustre ran for minutes, and Lux keeps the session until it ends:
+    # every other call on the connection waited behind it. The walk is detached,
+    # and the channel is only held by short polls.
     conn = FakeSshConn(tmp_path)
-    conn.on("find .", (0, "a.out\nb.log\n", ""))
-    assert await slurm_ssh.list_files(conn, "/scratch/out") == ["a.out", "b.log"]
-    command, _ = conn.commands[-1]
-    assert f"timeout -k 2 {slurm_ssh.LIST_FILES_TIMEOUT} find ." in command
+    conn.on("find .", (0, "./b.log\n./a.out\n", ""))
+    assert await slurm_ssh.list_files(conn, "/scratch/out", limit=2) == [
+        "a.out",
+        "b.log",
+    ]
+    (start, _), (poll, _) = conn.commands
+    assert "nohup bash -c" in start and start.endswith("&")
+    assert f"timeout -k 2 {slurm_ssh.LIST_FILES_TIMEOUT} find ." in start
+    assert f"-maxdepth {slurm_ssh.LIST_FILES_DEPTH}" in start
+    assert "| head -n 2" in start and "sort" not in start
+    assert poll.startswith("test -e ")
+
+
+async def test_list_files_gives_up_waiting_but_leaves_the_walk(tmp_path, monkeypatch):
+    monkeypatch.setattr(slurm_ssh, "LIST_FILES_WAIT", 0.05)
+    monkeypatch.setattr(slurm_ssh, "LIST_FILES_POLL", 0.01)
+
+    class SlowWalk(FakeSshConn):
+        async def run(self, command, **kwargs):
+            if "test -e " in command:
+                return types.SimpleNamespace(exit_status=1, stdout="", stderr="")
+            return await super().run(command, **kwargs)
+
+    conn = SlowWalk(tmp_path)
+    with pytest.raises(slurm_ssh.SlurmSshError, match="still listing"):
+        await slurm_ssh.list_files(conn, "/scratch/out")
+    # Every command it ran returned at once; none held the channel for the walk.
+    assert all("test -e " in c or "nohup" in c for c, _ in conn.commands)
 
 
 async def test_parallel_calls_queue_for_a_channel(tmp_path):
@@ -432,16 +458,5 @@ async def test_a_hung_command_gives_up_its_channel(tmp_path):
     conn = HungConn(tmp_path)
     with pytest.raises(slurm_ssh.SlurmSshError, match="timed out"):
         await slurm_ssh.run(conn, "hang", timeout=0.05)
+    assert conn.closed_processes and "hang" in conn.closed_processes[0]
     assert (await slurm_ssh.run(conn, "echo ok")).exit_status == 0
-
-
-async def test_list_files_stops_at_the_limit_without_sorting_remotely(tmp_path):
-    conn = FakeSshConn(tmp_path)
-    conn.on("find .", (0, "b.log\na.out\n", ""))
-    assert await slurm_ssh.list_files(conn, "/scratch/out", limit=2) == [
-        "a.out",
-        "b.log",
-    ]
-    command, _ = conn.commands[-1]
-    assert "| head -n 2" in command and "sort" not in command
-    assert f"-maxdepth {slurm_ssh.LIST_FILES_DEPTH}" in command

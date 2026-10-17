@@ -119,6 +119,8 @@ class FakeSshConn:
         self.commands: list[tuple[str, str | None]] = []
         self.puts: list[str] = []
         self.gets: list[str] = []
+        self.walk: str | None = None
+        self.closed_processes: list[str] = []
 
     def local(self, remote: str) -> Path:
         return self.root / remote.lstrip("/")
@@ -137,25 +139,33 @@ class FakeSshConn:
         parts = shlex.split(command)
         inner = parts[-1] if parts[:1] == ["bash"] else command
         self.commands.append((inner, input))
+        if "vista-ls" in inner and inner.startswith("test -e "):
+            # `list_files` polling for its detached walk: answer as the walk would.
+            if self.walk is None:
+                return types.SimpleNamespace(exit_status=1, stdout="", stderr="")
+            return self._answer(self.walk, input)
+        if "vista-ls" in inner:
+            self.walk = inner
+            return types.SimpleNamespace(exit_status=0, stdout="", stderr="")
         if inner.startswith("mkdir -p "):
             self.local(shlex.split(inner)[-1]).mkdir(parents=True, exist_ok=True)
             return types.SimpleNamespace(exit_status=0, stdout="", stderr="")
+        return self._answer(inner, input)
+
+    def _answer(self, inner: str, input: str | None):
         for substring, responder in self.handlers:
             if substring in inner:
                 code, out, err = responder(inner, input)
                 return types.SimpleNamespace(exit_status=code, stdout=out, stderr=err)
         return types.SimpleNamespace(exit_status=0, stdout="", stderr="")
 
-    def create_process(self, command: str, *, input: str | None = None):
-        """`run`'s answer behind asyncssh's `async with conn.create_process(...)` shape."""
+    async def create_process(self, command: str, *, input: str | None = None):
+        """`run`'s answer behind asyncssh's `await conn.create_process(...)` shape."""
         conn = self
 
         class _Process:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *exc):
-                return False
+            def close(self):
+                conn.closed_processes.append(command)
 
             async def wait(self, check: bool = False, timeout: float | None = None):
                 try:
