@@ -1368,6 +1368,11 @@ export default function HomePage() {
                       onClick={() => handleOpenConversation(chatSession)}
                     >
                       <span className="conversation-list-title">{chatSession.title}</span>
+                      {chatSession.origin === "slack" && (
+                        <span className="conversation-origin-badge" title="Started in Slack">
+                          Slack
+                        </span>
+                      )}
                       <span className="conversation-list-date">
                         {new Date(chatSession.updated_at).toLocaleString()}
                       </span>

@@ -10,6 +10,8 @@ export type PersistedChatSessionSummary = {
   user_id: string;
   project_id: string;
   title: string;
+  /** Where the conversation started: here, or in a Slack thread. */
+  origin?: "app" | "slack";
   created_at: string;
   updated_at: string;
 };

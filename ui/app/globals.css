@@ -6483,3 +6483,70 @@ textarea.input:focus {
 @media (prefers-reduced-motion: reduce) {
   .debate-working__pulse { animation: none; opacity: 0.9; }
 }
+
+/* ---------------------------------------------------------------------- */
+/*  Settings → Slack                                                       */
+/* ---------------------------------------------------------------------- */
+
+.slack-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.slack-status-word {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.slack-status-word--quiet {
+  color: var(--muted);
+}
+
+.slack-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-weight: 400;
+}
+
+.slack-link-who {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.slack-link-project {
+  width: auto;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.slack-link-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slack-link-form {
+  display: flex;
+  gap: 8px;
+  max-width: 320px;
+}
+
+/* A conversation that started in a Slack thread. */
+.conversation-origin-badge {
+  align-self: flex-start;
+  padding: 0 6px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--brand);
+}
