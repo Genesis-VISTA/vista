@@ -75,15 +75,29 @@ class CommandResult:
         return "\n".join(s for s in (self.stdout.strip(), self.stderr.strip()) if s)
 
 
+COMMAND_TIMEOUT = 120
+""" Seconds a command may hold the connection's channel before it is closed and reported failed. """
+
+
 @_retry_channel_open
 async def run(
     conn: asyncssh.SSHClientConnection, command: str, *, input: str | None = None,
-    login_shell: bool = False,
+    login_shell: bool = False, timeout: float = COMMAND_TIMEOUT,
 ) -> CommandResult:
-    """ Run `command` under bash on the remote host, returning exit status and both streams. """
+    """
+    Run `command` under bash on the remote host, returning exit status and both streams.
+
+    A command still running after `timeout` seconds has its channel closed and raises
+    `SlurmSshError`: while it runs, every other call on the connection waits for it.
+    """
     shell = "bash -lc" if login_shell else "bash -c"
     async with _slots(conn):
-        result = await conn.run(f"{shell} {shlex.quote(command)}", input=input, check=False)
+        # The context closes the channel on the way out, also when the wait times out.
+        async with conn.create_process(f"{shell} {shlex.quote(command)}", input=input) as process:
+            try:
+                result = await process.wait(check=False, timeout=timeout)
+            except asyncssh.TimeoutError as e:
+                raise SlurmSshError(f"timed out after {timeout:g} s: {command[:200]}") from e
     return CommandResult(
         exit_status=result.exit_status if result.exit_status is not None else -1,
         stdout=str(result.stdout or ""),
@@ -331,23 +345,29 @@ async def list_files(
     """
     Up to `limit` file paths under `root`, relative to it, sorted. Empty if `root` is missing.
 
-    The walk is cut off after `LIST_FILES_TIMEOUT` seconds on the remote side: `sort`
-    makes `find` walk the whole tree, which on a large output directory on Lustre took
-    minutes, and the channel it held meant every later command on the connection was
-    refused (Lux allows only a couple at once). A cut-off walk lists what it found.
+    A walk of a large output directory on Lustre took minutes, holding the
+    connection's only channel, so every other call on it waited. So the walk stops
+    at the first `limit` files (no remote `sort`, which needs the whole tree, and
+    no deeper than `LIST_FILES_DEPTH`), `find` is killed after `LIST_FILES_TIMEOUT`
+    seconds, and the channel is closed if even that doesn't end it (a `find`
+    stuck in a Lustre stat ignores signals). The files listed are the first
+    found, sorted, not the first in sort order.
     """
     prune = " -o ".join(f"-name {shlex.quote(x)}" for x in exclude)
     cmd = (
         f"cd {shlex.quote(root)} 2>/dev/null || exit 0; "
-        f"timeout {LIST_FILES_TIMEOUT} find . \\( {prune} \\) -prune -o -type f -print"
-        f" | sed 's|^\\./||' | sort | head -n {int(limit)}"
+        f"timeout -k 2 {LIST_FILES_TIMEOUT} find . -maxdepth {LIST_FILES_DEPTH}"
+        f" \\( {prune} \\) -prune -o -type f -print | head -n {int(limit)} | sed 's|^\\./||'"
     )
-    out = await run_checked(conn, cmd, what=f"list {root}")
-    return [line for line in out.splitlines() if line]
+    out = await run_checked(conn, cmd, what=f"list {root}", timeout=LIST_FILES_TIMEOUT + 10)
+    return sorted(line for line in out.splitlines() if line)
 
 
 LIST_FILES_TIMEOUT = 10
 """ Seconds `list_files` lets `find` walk before listing what it has. """
+
+LIST_FILES_DEPTH = 3
+""" How many folders deep `list_files` looks. """
 
 
 class SftpLogReader:

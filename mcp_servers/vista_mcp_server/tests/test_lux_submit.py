@@ -388,7 +388,7 @@ async def test_list_files_cuts_off_a_slow_walk(tmp_path):
     conn.on("find .", (0, "a.out\nb.log\n", ""))
     assert await slurm_ssh.list_files(conn, "/scratch/out") == ["a.out", "b.log"]
     command, _ = conn.commands[-1]
-    assert f"timeout {slurm_ssh.LIST_FILES_TIMEOUT} find ." in command
+    assert f"timeout -k 2 {slurm_ssh.LIST_FILES_TIMEOUT} find ." in command
 
 
 async def test_parallel_calls_queue_for_a_channel(tmp_path):
@@ -416,3 +416,32 @@ async def test_parallel_calls_queue_for_a_channel(tmp_path):
     )
     assert peak <= slurm_ssh.CHANNELS_PER_CONNECTION
     assert len(conn.commands) == 6
+
+
+async def test_a_hung_command_gives_up_its_channel(tmp_path):
+    # A find stuck on Lustre held the connection's only channel, so every later
+    # call waited behind it with no answer.
+    import asyncio
+
+    class HungConn(FakeSshConn):
+        async def run(self, command, **kwargs):
+            if "hang" in command:
+                await asyncio.sleep(10)
+            return await super().run(command, **kwargs)
+
+    conn = HungConn(tmp_path)
+    with pytest.raises(slurm_ssh.SlurmSshError, match="timed out"):
+        await slurm_ssh.run(conn, "hang", timeout=0.05)
+    assert (await slurm_ssh.run(conn, "echo ok")).exit_status == 0
+
+
+async def test_list_files_stops_at_the_limit_without_sorting_remotely(tmp_path):
+    conn = FakeSshConn(tmp_path)
+    conn.on("find .", (0, "b.log\na.out\n", ""))
+    assert await slurm_ssh.list_files(conn, "/scratch/out", limit=2) == [
+        "a.out",
+        "b.log",
+    ]
+    command, _ = conn.commands[-1]
+    assert "| head -n 2" in command and "sort" not in command
+    assert f"-maxdepth {slurm_ssh.LIST_FILES_DEPTH}" in command

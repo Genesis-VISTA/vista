@@ -9,6 +9,7 @@ stands in for the remote filesystem root, so ``/lustre/x`` lives at
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 import types
 from pathlib import Path
@@ -144,6 +145,29 @@ class FakeSshConn:
                 code, out, err = responder(inner, input)
                 return types.SimpleNamespace(exit_status=code, stdout=out, stderr=err)
         return types.SimpleNamespace(exit_status=0, stdout="", stderr="")
+
+    def create_process(self, command: str, *, input: str | None = None):
+        """`run`'s answer behind asyncssh's `async with conn.create_process(...)` shape."""
+        conn = self
+
+        class _Process:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def wait(self, check: bool = False, timeout: float | None = None):
+                try:
+                    return await asyncio.wait_for(
+                        conn.run(command, input=input, check=check), timeout
+                    )
+                except asyncio.TimeoutError:
+                    raise asyncssh.TimeoutError(
+                        None, command, None, None, None, None, "", ""
+                    ) from None
+
+        return _Process()
 
     async def start_sftp_client(self):
         return FakeSftp(self)
