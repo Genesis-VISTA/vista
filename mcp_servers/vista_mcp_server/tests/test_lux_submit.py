@@ -389,3 +389,30 @@ async def test_list_files_cuts_off_a_slow_walk(tmp_path):
     assert await slurm_ssh.list_files(conn, "/scratch/out") == ["a.out", "b.log"]
     command, _ = conn.commands[-1]
     assert f"timeout {slurm_ssh.LIST_FILES_TIMEOUT} find ." in command
+
+
+async def test_parallel_calls_queue_for_a_channel(tmp_path):
+    # Lux refuses a third session on a connection, so the agent's parallel tool
+    # calls must wait for a slot instead of opening one each.
+    import asyncio
+
+    open_now = peak = 0
+
+    class SlowConn(FakeSshConn):
+        async def run(self, command, **kwargs):
+            nonlocal open_now, peak
+            open_now += 1
+            peak = max(peak, open_now)
+            await asyncio.sleep(0.01)
+            open_now -= 1
+            return await super().run(command, **kwargs)
+
+    conn = SlowConn(tmp_path)
+    (tmp_path / "log").write_text("x", encoding="utf-8")
+    reader = slurm_ssh.SftpLogReader(conn)
+    await asyncio.gather(
+        *(slurm_ssh.run(conn, f"echo {i}") for i in range(6)),
+        reader.stat(remote_path="/log"),
+    )
+    assert peak <= slurm_ssh.CHANNELS_PER_CONNECTION
+    assert len(conn.commands) == 6

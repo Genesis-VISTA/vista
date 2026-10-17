@@ -12,13 +12,20 @@ needs the login environment (the per-job setup script) asks for it explicitly.
 File operations use SFTP on the same connection. One SFTP channel is opened per
 operation and closed again: some OLCF login nodes cap sessions per connection,
 and a long-lived SFTP channel would make every command after it fail to open.
+For the same reason no more than `CHANNELS_PER_CONNECTION` commands or SFTP
+sessions are open on a connection at once; the agent's parallel tool calls
+queue for a slot rather than being refused by the login node.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import re
 import shlex
 import stat as stat_mod
+import weakref
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +40,20 @@ _retry_channel_open = tenacity.retry(
     reraise=True,
 )
 """ Same policy as `lib.ssh.ssh_bash_retry`: retry when the login node refuses a new channel. """
+
+CHANNELS_PER_CONNECTION = 2
+""" Lux refuses a third session on a connection; the retry above covers a close still in flight. """
+
+_channel_slots: weakref.WeakKeyDictionary[asyncssh.SSHClientConnection, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _slots(conn: asyncssh.SSHClientConnection) -> asyncio.Semaphore:
+    slots = _channel_slots.get(conn)
+    if slots is None:
+        slots = _channel_slots[conn] = asyncio.Semaphore(CHANNELS_PER_CONNECTION)
+    return slots
 
 
 class SlurmSshError(RuntimeError):
@@ -57,7 +78,8 @@ async def run(
 ) -> CommandResult:
     """ Run `command` under bash on the remote host, returning exit status and both streams. """
     shell = "bash -lc" if login_shell else "bash -c"
-    result = await conn.run(f"{shell} {shlex.quote(command)}", input=input, check=False)
+    async with _slots(conn):
+        result = await conn.run(f"{shell} {shlex.quote(command)}", input=input, check=False)
     return CommandResult(
         exit_status=result.exit_status if result.exit_status is not None else -1,
         stdout=str(result.stdout or ""),
@@ -217,8 +239,16 @@ class RemoteFileNotFound(FileNotFoundError):
 
 
 @_retry_channel_open
-async def _sftp(conn: asyncssh.SSHClientConnection) -> asyncssh.SFTPClient:
+async def _start_sftp(conn: asyncssh.SSHClientConnection) -> asyncssh.SFTPClient:
     return await conn.start_sftp_client()
+
+
+@contextlib.asynccontextmanager
+async def _sftp(conn: asyncssh.SSHClientConnection) -> AsyncIterator[asyncssh.SFTPClient]:
+    """ An SFTP session holding one of the connection's channel slots until it closes. """
+    async with _slots(conn):
+        async with await _start_sftp(conn) as sftp:
+            yield sftp
 
 
 async def username(conn: asyncssh.SSHClientConnection) -> str:
@@ -245,7 +275,7 @@ async def list_file_sizes(
     `exclude_segments` (a `.venv` built there can hold thousands).
     """
     out: dict[str, int] = {}
-    async with await _sftp(conn) as sftp:
+    async with _sftp(conn) as sftp:
         queue = [""]
         while queue:
             rel = queue.pop(0)
@@ -276,14 +306,14 @@ async def upload_files(
     Put each file in `remote_dir`, under its own name or the matching entry of
     `names` (a relative path, whose folders must exist already).
     """
-    async with await _sftp(conn) as sftp:
+    async with _sftp(conn) as sftp:
         for f, name in zip(files, names or [f.name for f in files], strict=True):
             await sftp.put(str(f), f"{remote_dir}/{name}")
 
 
 async def download_file(conn: asyncssh.SSHClientConnection, remote_path: str, local_path: Path) -> None:
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    async with await _sftp(conn) as sftp:
+    async with _sftp(conn) as sftp:
         try:
             await sftp.get(remote_path, str(local_path))
         except asyncssh.SFTPNoSuchFile as e:
@@ -312,7 +342,7 @@ async def list_files(
     return [line for line in out.splitlines() if line]
 
 
-LIST_FILES_TIMEOUT = 20
+LIST_FILES_TIMEOUT = 10
 """ Seconds `list_files` lets `find` walk before listing what it has. """
 
 
@@ -328,7 +358,7 @@ class SftpLogReader:
         self._conn = conn
 
     async def stat(self, *, collection_id: str | None = None, remote_path: str) -> int:
-        async with await _sftp(self._conn) as sftp:
+        async with _sftp(self._conn) as sftp:
             try:
                 attrs = await sftp.stat(remote_path)
             except asyncssh.SFTPNoSuchFile as e:
@@ -338,7 +368,7 @@ class SftpLogReader:
     async def read_range(
         self, *, collection_id: str | None = None, remote_path: str, start: int, end: int,
     ) -> bytes:
-        async with await _sftp(self._conn) as sftp:
+        async with _sftp(self._conn) as sftp:
             try:
                 async with sftp.open(remote_path, "rb", encoding=None) as f:
                     data = await f.read(end - start + 1, start)
