@@ -331,6 +331,38 @@ try {
   }
   if (-not $proc.HasExited) { $proc.Kill() }
   [void]$proc.WaitForExit(10000)
+  Stop-FakeServices
+
+  # --- -Service: the login item's mode ------------------------------------------
+
+  $r = Invoke-Launcher @('-Service', '-Supervised', '-Progress', 'jsonl')
+  if ($r.Status -ne 0 -and $r.Stderr -match '-Service and -Supervised cannot be used together') {
+    Pass '-Service with -Supervised is refused'
+  } else { Fail "-Service -Supervised: status $($r.Status), stderr: $($r.Stderr)" }
+
+  # A file left by a crashed service (its pid long gone) is replaced.
+  $serviceFile = Join-Path $State 'service.json'
+  Write-Text $serviceFile '{"pid": 999999, "url": "http://127.0.0.1:1"}'
+  $proc = [System.Diagnostics.Process]::Start((New-LauncherInfo @('-Service')))
+  $stderr = $proc.StandardError.ReadToEndAsync()
+  $described = $null
+  for ($i = 0; $i -lt 900 -and -not $proc.HasExited; $i++) {
+    try { $described = Get-Content -Raw -Encoding UTF8 $serviceFile | ConvertFrom-Json } catch { $described = $null }
+    if ($described -and $described.pid -eq $proc.Id) { break }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($described -and $described.pid -eq $proc.Id -and $described.url -eq $url -and
+      $described.started_at -match '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$') {
+    Pass 'service.json says where the running service is'
+  } else {
+    Fail "service.json: $(Get-Content -Raw $serviceFile -ErrorAction SilentlyContinue)`n--- stderr`n$(if ($proc.HasExited) { $stderr.Result })"
+  }
+  $r = Invoke-Launcher @('-Service')
+  if ($r.Status -ne 0 -and $r.Stderr -match "background service is already running \(process $($proc.Id)\)") {
+    Pass 'a second -Service refuses while the first runs'
+  } else { Fail "second -Service: status $($r.Status), stderr: $($r.Stderr)" }
+  if (-not $proc.HasExited) { $proc.Kill() }
+  [void]$proc.WaitForExit(10000)
 } finally {
   Stop-FakeServices
   Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue

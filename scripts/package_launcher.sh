@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Start VISTA from an unpacked package. Installed at the package root as `vista`.
 #
-#   ./vista         first-run setup if needed, then start and open the window
-#   ./vista --help  show this
+#   ./vista            first-run setup if needed, then start and open the window
+#   ./vista --service  start the services with no window, as VISTA's background
+#                      service (what the login item runs); see service.json
+#   ./vista --help     show this
 #
 # Closing the VISTA window stops VISTA, as does Ctrl-C here or closing this
 # terminal. VISTA is a desktop application: in a session that cannot show its
@@ -37,6 +39,7 @@ BACKEND_PORT="${VISTA_BACKEND_PORT:-8001}"
 VERSION="$(cat "$PACKAGE/VERSION" 2>/dev/null || echo unknown)"
 
 SUPERVISED=false
+SERVICE=false
 PROGRESS_FORMAT=''
 PROGRESS_STARTED=false
 CURRENT_PHASE=preflight
@@ -93,6 +96,7 @@ for arg in "$@"; do
       exit 0
       ;;
     --supervised) SUPERVISED=true ;;
+    --service) SERVICE=true ;;
     --progress=jsonl) PROGRESS_FORMAT=jsonl ;;
     *) die "unexpected argument: $arg (try --help)" ;;
   esac
@@ -106,6 +110,9 @@ if [[ "$SUPERVISED" == true && "$PROGRESS_FORMAT" != jsonl ]]; then
 fi
 if [[ "$SUPERVISED" != true && -n "$PROGRESS_FORMAT" ]]; then
   die "--progress=jsonl requires --supervised"
+fi
+if [[ "$SERVICE" == true && "$SUPERVISED" == true ]]; then
+  die "--service and --supervised cannot be used together"
 fi
 
 # ─── platform guard ─────────────────────────────────────────────────────────
@@ -378,7 +385,7 @@ window_sandbox_args() {
 # started or extracted, with the reason. VISTA_NO_WINDOW=1 starts the services
 # alone and is for the build's smoke test, which has no one to look at a window.
 WINDOW_EXE="$(manifest_field exe)"
-if [[ "$SUPERVISED" != true && "${VISTA_NO_WINDOW:-}" != 1 ]]; then
+if [[ "$SUPERVISED" != true && "$SERVICE" != true && "${VISTA_NO_WINDOW:-}" != 1 ]]; then
   [[ -n "$WINDOW_EXE" && -x "$PACKAGE/$WINDOW_EXE" ]] \
     || die "this package has no VISTA window; rebuild it with build_local_package.sh."
   reason="$(can_show_window)" \
@@ -407,6 +414,31 @@ CURRENT_PHASE=resources
 progress_event resources running "Installing bundled resources"
 
 mkdir -p "$STATE" "$LOGS" || die "could not create the VISTA state directory"
+
+# ─── background service ─────────────────────────────────────────────────────
+
+# `--service` is what the login item runs. It records itself in service.json
+# once the interface answers, so the VISTA application can open a window onto
+# it instead of starting a second stack, and removes the file when it stops.
+# A file whose process is gone is left from a crash and is replaced.
+SERVICE_FILE="$STATE/service.json"
+SERVICE_WRITTEN=false
+if [[ "$SERVICE" == true && -f "$SERVICE_FILE" ]]; then
+  running_pid="$(sed -nE 's/.*"pid": ?([0-9]+).*/\1/p' "$SERVICE_FILE" | head -1)"
+  if [[ -n "$running_pid" ]] && kill -0 "$running_pid" 2>/dev/null; then
+    die "VISTA's background service is already running (process $running_pid)."
+  fi
+  rm -f "$SERVICE_FILE"
+fi
+
+write_service_file() {
+  local tmp="$SERVICE_FILE.$$"
+  printf '{"pid": %s, "url": "%s", "version": "%s", "started_at": "%s"}\n' \
+    "$$" "$(json_escape "$1")" "$(json_escape "$VERSION")" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp"
+  mv -f "$tmp" "$SERVICE_FILE"
+  SERVICE_WRITTEN=true
+}
 
 FIRST_RUN=false
 [[ -f "$STATE/vista.db" ]] || FIRST_RUN=true
@@ -525,6 +557,10 @@ STOPPING=false
 stop() {
   trap - INT TERM HUP EXIT
   STOPPING=true
+  # First, so nothing opens a window onto services that are going away.
+  if [[ "$SERVICE_WRITTEN" == true ]]; then
+    rm -f "$SERVICE_FILE" 2>/dev/null || true
+  fi
   progress_event stopping running "Stopping VISTA"
   { log ""; log "Stopping VISTA..."; } 2>/dev/null || true
   if [[ -n "$PARENT_WATCHER_PID" ]]; then
@@ -693,6 +729,14 @@ start_window() {
 if [[ "$SUPERVISED" == true ]]; then
   log ""
   log "VISTA is running at $UI_URL (supervised by the VISTA application)"
+  wait
+  exit 0
+fi
+
+if [[ "$SERVICE" == true ]]; then
+  write_service_file "$UI_URL"
+  log ""
+  log "VISTA is running at $UI_URL (background service)"
   wait
   exit 0
 fi

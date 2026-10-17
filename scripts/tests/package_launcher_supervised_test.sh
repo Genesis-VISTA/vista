@@ -382,6 +382,54 @@ wait "$LAUNCHER_PID" 2>/dev/null || true
 LAUNCHER_PID=''
 expect_fake_services_stopped
 
+# --service is the login item's mode: no window, and service.json says where
+# the interface is until the launcher stops. It cannot be combined with
+# --supervised, and a second one refuses while the first is alive.
+expect_failure "--service and --supervised cannot be used together" \
+  env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" "$PACKAGE/vista" \
+  --service --supervised --progress=jsonl
+stop_fake_services
+rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
+  "$TMP"/service-pids/*.alive "$TMP"/service-pids/*.ready
+# A file left by a crashed service (its pid long gone) is replaced.
+printf '%s\n' '{"pid": 999999, "url": "http://127.0.0.1:1"}' > "$STATE/service.json"
+env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+  TEST_SERVICE_PIDS="$TMP/service-pids" \
+  VISTA_UI_PORT="$PORT_BASE" \
+  VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+  VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+  "$PACKAGE/vista" --service > "$TMP/service-stdout" 2> "$TMP/service-stderr" &
+LAUNCHER_PID=$!
+for (( i = 0; i < 100; i++ )); do
+  grep -q "\"pid\": $LAUNCHER_PID," "$STATE/service.json" 2>/dev/null && break
+  kill -0 "$LAUNCHER_PID" 2>/dev/null || {
+    printf 'service mode exited early:\n' >&2
+    cat "$TMP/service-stdout" "$TMP/service-stderr" >&2
+    exit 1
+  }
+  sleep 0.05
+done
+grep -q "\"pid\": $LAUNCHER_PID, \"url\": \"http://127.0.0.1:$PORT_BASE\", \"version\": " \
+  "$STATE/service.json" || {
+  printf 'service.json does not describe the running service:\n' >&2
+  cat "$STATE/service.json" >&2
+  exit 1
+}
+grep -q '"started_at": "[0-9-]*T[0-9:]*Z"' "$STATE/service.json"
+grep -q "VISTA is running at http://127.0.0.1:$PORT_BASE (background service)" \
+  "$TMP/service-stdout"
+wait_for_fake_services
+expect_failure "background service is already running (process $LAUNCHER_PID)" \
+  env PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" "$PACKAGE/vista" --service
+kill -TERM "$LAUNCHER_PID"
+wait "$LAUNCHER_PID" 2>/dev/null || true
+LAUNCHER_PID=''
+expect_fake_services_stopped
+if [[ -e "$STATE/service.json" ]]; then
+  printf 'service.json outlived the service\n' >&2
+  exit 1
+fi
+
 # On Linux without KVM, supervised mode fails in preflight with its own code,
 # so the application can say what is wrong instead of a generic failure.
 if [[ ! -e /dev/kvm ]]; then
