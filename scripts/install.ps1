@@ -81,7 +81,10 @@ function Install-Vista([string]$Version, [bool]$Launch) {
   # --- before downloading ----------------------------------------------------
   # D11: replacing files a running VISTA uses fails on locked files, or worse
   # half-way. Its window, its launcher's services and the sandbox all run from
-  # the package folder.
+  # the package folder. A background service is stopped for the upgrade and
+  # started again after it, whichever way it ends.
+  $serviceStopped = Stop-BackgroundService $installDir
+  try {
   Assert-NotRunning $installDir
 
   # Windows caps a path at 260 characters unless long paths are enabled, and the
@@ -164,6 +167,14 @@ function Install-Vista([string]$Version, [bool]$Launch) {
 
   Add-Shortcut $installDir
   Say "installed VISTA $Version"
+  if ($serviceStopped) {
+    # A window opened now would start a second VISTA on the service's ports.
+    Say "VISTA's background service is starting again; open VISTA as usual in a minute"
+    $Launch = $false
+  }
+  } finally {
+    if ($serviceStopped) { Start-BackgroundService }
+  }
   Start-Installed $installDir $Launch
 }
 
@@ -190,6 +201,38 @@ function Assert-NotRunning([string]$InstallDir) {
     Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
   if ($running.Count -gt 0) {
     throw "VISTA was not installed: VISTA is running from $InstallDir. Close VISTA, then run this again."
+  }
+}
+
+# VISTA's background service (backend services/background_service.py): a
+# scheduled task, run at logon, of the package's `vista.ps1 -Service`. schtasks
+# is Windows-only, so elsewhere (the hermetic tests) there is no service.
+$ServiceTask = 'VISTA'
+function Test-ServiceRunning {
+  if (-not (Get-Command schtasks.exe -ErrorAction SilentlyContinue)) { return $false }
+  $line = & schtasks.exe /Query /TN $ServiceTask /FO CSV /NH 2>$null
+  return ($LASTEXITCODE -eq 0 -and "$line" -match '"Running"')
+}
+
+# Stops the background service, and waits for what it started from the package
+# to go. True when it was running, so it is started again after.
+function Stop-BackgroundService([string]$InstallDir) {
+  if (-not (Test-ServiceRunning)) { return $false }
+  Write-Host "==> stopping VISTA's background service for the upgrade"
+  & schtasks.exe /End /TN $ServiceTask 2>&1 | Out-Null
+  # /End ends only the task's own process; the services it started go too.
+  $prefix = $InstallDir.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+  Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 1
+  return $true
+}
+
+function Start-BackgroundService {
+  & schtasks.exe /Run /TN $ServiceTask 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "warning: could not start VISTA's background service again; it starts at your next sign-in"
   }
 }
 

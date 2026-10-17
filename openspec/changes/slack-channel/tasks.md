@@ -53,7 +53,7 @@
 - [x] 8.2 Launcher `--service` with `service.json`; `./scripts/ci-local.sh launcher`
 - [x] 8.3 Login item install/remove (`services/background_service.py`) for launchd, systemd, schtasks; unit tests of generated files and commands
 - [x] 8.4 Electron attaches to a running service; `cd electron && npm test`
-- [ ] 8.5 Installers stop/restart the service; `./scripts/ci-local.sh install`
+- [x] 8.5 Installers stop/restart the service; `./scripts/ci-local.sh install`
 
 ## 9. Docs and verification
 

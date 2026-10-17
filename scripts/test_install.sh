@@ -199,6 +199,42 @@ out="$(VISTA_INSTALL_BASE_URL="file://$root/releases/1.1.0" run_installer "$LINU
 check "a Linux upgrade replaces the package in the same folder" test "$(installed "$linux_pkg")" = 1.1.0
 check "the app-menu entry still points at it" grep -qx "Exec=\"$linux_pkg/app/window/vista-app\"" "$desktop"
 
+# ─── background service ───────────────────────────────────────────────────────
+
+# A registered, running service is stopped for the upgrade and started again
+# after it, also when the upgrade fails; VISTA is not opened onto its ports.
+echo "install.sh (background service)"
+svc_tools="$root/bin-service"
+mkdir -p "$svc_tools"
+cp "$MAC"/* "$svc_tools/"
+# shellcheck disable=SC2016  # $* belongs to the fake launchctl
+printf '#!/bin/sh\necho "launchctl $*" >> "%s/service.log"\n' "$root" > "$svc_tools/launchctl"
+chmod +x "$svc_tools/launchctl"
+agent="$root/home/Library/LaunchAgents/org.vista.service.plist"
+mkdir -p "$(dirname "$agent")" && echo plist > "$agent"
+uid="$(id -u)"
+rm -f "$root/ran" "$root/service.log"
+out="$(VISTA_INSTALL_BASE_URL="file://$root/releases/2.0.0" run_installer "$svc_tools" --version 2.0.0 2>&1)" \
+  || { echo "$out"; fail "an upgrade with the background service succeeds"; }
+check "the upgrade installs" test "$(installed "$mac_pkg")" = 2.0.0
+check "the service is stopped before and started after the upgrade" test "$(cat "$root/service.log")" = \
+  "launchctl print gui/$uid/org.vista.service
+launchctl bootout gui/$uid/org.vista.service
+launchctl bootstrap gui/$uid $agent"
+check "no window is opened onto the restarting service" test ! -e "$root/ran"
+check "it says the service is starting again" grep -q "background service is starting again" <<<"$out"
+
+rm -f "$root/service.log"
+cp -R "$root/releases/3.0.0" "$root/releases/bad3"
+echo "corrupt" >> "$root/releases/bad3/vista-3.0.0-mac-arm64.tar.gz"
+if VISTA_INSTALL_BASE_URL="file://$root/releases/bad3" run_installer "$svc_tools" --version 3.0.0 --no-launch >/dev/null 2>&1; then
+  fail "a failed upgrade fails"
+fi
+check "a failed upgrade starts the old service again" \
+  grep -qx "launchctl bootstrap gui/$uid $agent" "$root/service.log"
+check "a failed upgrade keeps the installed version" test "$(installed "$mac_pkg")" = 2.0.0
+rm -f "$agent" "$root/service.log"
+
 # ─── either ───────────────────────────────────────────────────────────────────
 
 # What the release workflow does with each archive (.github/scripts/package.sh).

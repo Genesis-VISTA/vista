@@ -22,7 +22,8 @@
 # It links ~/.local/bin/vista to the package's terminal launcher, removes what
 # earlier install layouts left, and opens the VISTA application. Run it again to
 # start the installed copy, which downloads nothing, or to upgrade; it refuses
-# while VISTA is running. VISTA's state (VISTA_HOME, ~/.vista by default) lives
+# while VISTA is running. A background service (Settings -> Slack) is stopped
+# for the upgrade and started again after it. VISTA's state (VISTA_HOME, ~/.vista by default) lives
 # outside the install and is never touched.
 #
 # Environment:
@@ -118,6 +119,12 @@ main() {
   fi
 
   # ─── before downloading ─────────────────────────────────────────────────
+  # VISTA's background service runs from the package too. It is stopped here
+  # and started again once the new version is in place, or, if anything
+  # fails, the old one (the EXIT trap).
+  stop_service "$os" "$package"
+  trap 'start_service' EXIT
+
   # D11: replacing files a running VISTA uses can crash it. Its window, its
   # launcher and every service run from the package folder, so a process
   # started from there, by anyone, means VISTA is open. VISTA's port is not
@@ -157,7 +164,7 @@ main() {
   # next run looks.
   local base="${VISTA_INSTALL_BASE_URL:-$repo_url/releases/download/v$version}"
   WORK="$(mktemp -d "$parent/.vista-install.XXXXXX")"
-  trap 'rm -rf "$WORK"' EXIT
+  trap 'rm -rf "$WORK"; start_service' EXIT
   local work="$WORK"
 
   say "downloading VISTA $version for $platform"
@@ -202,6 +209,15 @@ main() {
   say "installed VISTA $version in $package"
   link_launcher "$package" "$bin_dir"
   integrate "$os" "$package" "$data_home"
+  if [[ -n "$SERVICE_STOPPED" ]]; then
+    start_service
+    # A window opened now would start a second VISTA on the service's ports
+    # while the service is still starting.
+    if (( launch )); then
+      say "VISTA's background service is starting again; open VISTA as usual in a minute"
+      launch=0
+    fi
+  fi
   finish "$os" "$package" "$launch"
 }
 
@@ -239,6 +255,57 @@ refuse_if_running() {
       die "VISTA is running from $dir. Close VISTA, then run this again."
     fi
   done
+}
+
+# VISTA's background service (backend services/background_service.py): a
+# LaunchAgent or a systemd user unit running the package's `vista --service`.
+SERVICE_LABEL=org.vista.service
+SERVICE_UNIT=vista.service
+SERVICE_STOPPED=''
+service_file() {
+  if [[ "$1" == macos ]]; then
+    echo "$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
+  else
+    echo "$HOME/.config/systemd/user/$SERVICE_UNIT"
+  fi
+}
+
+# Stops the background service if it is running, and waits for what it started
+# from the package to go.
+stop_service() {
+  local os="$1" package="$2" file
+  file="$(service_file "$os")"
+  [[ -f "$file" ]] || return 0
+  if [[ "$os" == macos ]]; then
+    launchctl print "gui/$(id -u)/$SERVICE_LABEL" >/dev/null 2>&1 || return 0
+    say "stopping VISTA's background service for the upgrade"
+    launchctl bootout "gui/$(id -u)/$SERVICE_LABEL" >/dev/null 2>&1 || true
+  else
+    command -v systemctl >/dev/null 2>&1 || return 0
+    systemctl --user is-active --quiet "$SERVICE_UNIT" 2>/dev/null || return 0
+    say "stopping VISTA's background service for the upgrade"
+    systemctl --user stop "$SERVICE_UNIT" >/dev/null 2>&1 || true
+  fi
+  SERVICE_STOPPED="$os"
+  local i
+  for (( i = 0; i < 50; i++ )); do
+    pgrep -f -- "$package/" >/dev/null 2>&1 || return 0
+    sleep 0.2
+  done
+}
+
+# Starts again a background service stop_service stopped; once only.
+start_service() {
+  local os="$SERVICE_STOPPED"
+  [[ -n "$os" ]] || return 0
+  SERVICE_STOPPED=''
+  if [[ "$os" == macos ]]; then
+    launchctl bootstrap "gui/$(id -u)" "$(service_file macos)" >/dev/null 2>&1 \
+      || warn "could not start VISTA's background service again; it starts at your next login"
+  else
+    systemctl --user start "$SERVICE_UNIT" >/dev/null 2>&1 \
+      || warn "could not start VISTA's background service again; it starts at your next login"
+  fi
 }
 
 # Finder can write a .DS_Store into a folder open in a window while it is being
