@@ -26,6 +26,10 @@ export type SlackConfig = {
   /** Why it is off, which machine has Slack, or what went wrong. */
   connection_detail: string | null;
   lease_status: Record<string, unknown> | null;
+  /** VISTA starts at login with no window, so Slack reaches it while you are away. */
+  background_mode: boolean;
+  /** Why background mode can't be used here (a development checkout, no systemd), or null. */
+  background_problem: string | null;
 };
 
 export type SlackConfigUpdate = Partial<
@@ -40,6 +44,7 @@ export type SlackConfigUpdate = Partial<
     | "connection"
     | "connection_detail"
     | "lease_status"
+    | "background_problem"
   >
 > & { bot_token?: string; app_token?: string };
 

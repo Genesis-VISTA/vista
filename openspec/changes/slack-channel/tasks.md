@@ -49,9 +49,9 @@
 
 ## 8. Desktop
 
-- [ ] 8.1 Settings → Slack section (tokens, allowlists, links, limits, lock, notifications, handle here, sleep, background) and Slack badge; `npm run lint` and colour check pass
+- [x] 8.1 Settings → Slack section (tokens, allowlists, links, limits, lock, notifications, handle here, sleep, background) and Slack badge; `npm run lint` and colour check pass
 - [x] 8.2 Launcher `--service` with `service.json`; `./scripts/ci-local.sh launcher`
-- [ ] 8.3 Login item install/remove (`services/background_service.py`) for launchd, systemd, schtasks; unit tests of generated files and commands
+- [x] 8.3 Login item install/remove (`services/background_service.py`) for launchd, systemd, schtasks; unit tests of generated files and commands
 - [ ] 8.4 Electron attaches to a running service; `cd electron && npm test`
 - [ ] 8.5 Installers stop/restart the service; `./scripts/ci-local.sh install`
 

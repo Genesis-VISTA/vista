@@ -5673,6 +5673,11 @@ textarea.input:focus {
   justify-content: flex-end;
 }
 
+.user-settings-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .user-settings-switch:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;

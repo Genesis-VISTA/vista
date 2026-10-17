@@ -221,6 +221,18 @@ export function SlackSection({
             onToggle={(on) => save("prevent_sleep", { prevent_sleep: on })}
             {...field("prevent_sleep")}
           />
+          <Switch
+            name="background_mode"
+            label="Run VISTA in the background"
+            hint={
+              config.background_problem ??
+              "Start VISTA at login with no window, and keep it running after you close the window, so Slack can reach it while you are away. Takes effect at your next login; open VISTA as usual to see it."
+            }
+            checked={config.background_mode}
+            disabled={config.background_problem !== null && !config.background_mode}
+            onToggle={(on) => save("background_mode", { background_mode: on })}
+            {...field("background_mode")}
+          />
         </Group>
       </div>
     </section>
@@ -284,6 +296,7 @@ function Switch({
   label,
   hint,
   checked,
+  disabled,
   onToggle,
   mark,
   error,
@@ -292,6 +305,7 @@ function Switch({
   label: string;
   hint: string;
   checked: boolean;
+  disabled?: boolean;
   onToggle: (on: boolean) => void;
 }) {
   return (
@@ -310,6 +324,7 @@ function Switch({
         aria-label={label}
         aria-describedby={error ? `${fieldId(`slack-${name}`)}-error` : undefined}
         className="user-settings-switch"
+        disabled={disabled}
         onClick={() => onToggle(!checked)}
       >
         <span className="user-settings-switch-thumb" aria-hidden="true" />

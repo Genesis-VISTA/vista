@@ -288,6 +288,7 @@ export PATH="$PACKAGE/bin:$PACKAGE/node/bin:$PATH"
 export UV_NO_SYNC=1
 export VISTA_VERSION="$VERSION"
 export VISTA_DATA_DIR="$STATE"
+export VISTA_PACKAGE_DIR="$PACKAGE"
 export VISTA_MCP_SERVERS_PATH="$PACKAGE/app/mcp_servers"
 export VISTA_MCP_LOCAL_HPC_JOBS_DIR="$PACKAGE/app/hpc_jobs"
 export VISTA_HPC_JOBS_DIR="$PACKAGE/app/hpc_jobs"

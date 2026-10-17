@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..db.db import SessionDep
 from ..db.schemas import SlackLinkTable
+from ..services import background_service
 from ..services import project as project_service
 from ..services.auth import UserDep
 from ..slack import access, linking, store
@@ -45,6 +46,10 @@ class SlackConfigView(BaseModel):
     connection_detail: str | None
     lease_status: dict | None
     """ Who has Slack and when they were last seen, as of the last check. """
+    background_mode: bool
+    """ VISTA starts at login with no window (a login item is registered). """
+    background_problem: str | None
+    """ Why background mode can't be used here, or None. """
 
 
 class SlackConfigUpdate(BaseModel):
@@ -62,6 +67,7 @@ class SlackConfigUpdate(BaseModel):
     locked: bool | None = None
     prevent_sleep: bool | None = None
     notify_desktop_jobs: bool | None = None
+    background_mode: bool | None = None
 
 
 def _ids(values: list[str]) -> list[str]:
@@ -72,6 +78,7 @@ async def _view(session) -> SlackConfigView:
     row = await store.get_config(session)
     ok, problem = secret_store.available()
     state, detail = slack_service.status()
+    background = background_service.current()
     return SlackConfigView(
         enabled=row.enabled,
         handle_here=row.handle_here,
@@ -92,6 +99,8 @@ async def _view(session) -> SlackConfigView:
         connection=state,
         connection_detail=detail,
         lease_status=row.lease_status,
+        background_mode=background.installed(),
+        background_problem=background.why_unavailable(),
     )
 
 
@@ -108,7 +117,8 @@ async def update_slack_config(
 ) -> SlackConfigView:
     row = await store.get_config(session)
     fields = updates.model_dump(
-        exclude_unset=True, exclude={"bot_token", "app_token", "locked"}
+        exclude_unset=True,
+        exclude={"bot_token", "app_token", "locked", "background_mode"},
     )
     if "allowed_team_ids" in fields:
         fields["allowed_team_ids"] = _ids(fields["allowed_team_ids"] or [])
@@ -128,6 +138,8 @@ async def update_slack_config(
         store.set_tokens(bot=updates.bot_token, app=updates.app_token)
     except store.SlackConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updates.background_mode is not None:
+        _set_background(updates.background_mode)
 
     for name, value in fields.items():
         setattr(row, name, value)
@@ -140,6 +152,7 @@ async def update_slack_config(
     await session.commit()
     # Locking needs no reconnect: the gate reads the lock on every call.
     if set(updates.model_fields_set) - {
+        "background_mode",
         "locked",
         "max_nodes",
         "max_walltime_minutes",
@@ -148,6 +161,21 @@ async def update_slack_config(
     }:
         await slack_service.restart()
     return await _view(session)
+
+
+def _set_background(on: bool) -> None:
+    """Register or remove the login item. It is the machine's, not a DB row."""
+    background = background_service.current()
+    problem = background.why_unavailable()
+    if problem is not None and on:
+        raise HTTPException(status_code=400, detail=problem)
+    try:
+        if on:
+            background.install()
+        elif problem is None:
+            background.remove()
+    except background_service.BackgroundServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/take-over")

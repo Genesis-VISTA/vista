@@ -281,6 +281,7 @@ $env:UV_NO_SYNC = '1'
 $env:PYTHONUTF8 = '1'
 $env:VISTA_VERSION = $VERSION
 $env:VISTA_DATA_DIR = $STATE
+$env:VISTA_PACKAGE_DIR = $PACKAGE
 $env:VISTA_MCP_SERVERS_PATH = "$PACKAGE\app\mcp_servers"
 $env:VISTA_MCP_LOCAL_HPC_JOBS_DIR = "$PACKAGE\app\hpc_jobs"
 $env:VISTA_HPC_JOBS_DIR = "$PACKAGE\app\hpc_jobs"

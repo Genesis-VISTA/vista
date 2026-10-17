@@ -76,3 +76,22 @@ async def project(session, user, name: str = "molten-salts"):
     await session.commit()
     await session.refresh(row)
     return row
+
+
+@pytest.fixture(autouse=True)
+def no_real_login_item(tmp_path, monkeypatch):
+    """Background mode in a test home, its commands recorded and never run."""
+    from vista_backend.services import background_service
+
+    ran: list[list[str]] = []
+    service = background_service.BackgroundService(
+        platform="darwin",
+        package=tmp_path / "package",
+        state=tmp_path / "state",
+        home=tmp_path / "home",
+        uid=501,
+        run=ran.append,
+    )
+    service.ran = ran  # type: ignore[attr-defined]
+    monkeypatch.setattr(background_service, "current", lambda: service)
+    return service
