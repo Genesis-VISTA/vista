@@ -20,6 +20,7 @@ import { parseArgs } from './args.js';
 import { allowPermission } from './permissions.js';
 import { classify, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
+import { findRunningService } from './background-service.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
 import { resolvePackage } from './package-root.js';
@@ -439,7 +440,7 @@ for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGHUP'])) {
   process.on(signal, () => { void requestQuit(); });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!origin && !args.startup) return;
   configureSession();
   if (args.smokeTest) {
@@ -474,10 +475,19 @@ app.whenReady().then(() => {
         return;
       }
     }
-    startupWindow = createStartupWindow();
     const stateDirectory = process.env.VISTA_HOME
       || path.join(app.getPath('home'), developmentApp ? '.vista-dev' : '.vista');
     if (developmentApp && !process.env.VISTA_HOME) process.env.VISTA_HOME = stateDirectory;
+    // Background mode: VISTA is already running from the login item, so this
+    // is only a window onto it, and closing it leaves the service running.
+    const serviceUrl = await findRunningService(stateDirectory);
+    if (serviceUrl) {
+      console.log(`vista-window: opening the background service at ${serviceUrl}`);
+      origin = originOf(serviceUrl);
+      mainWindow = createMainWindow(serviceUrl);
+      return;
+    }
+    startupWindow = createStartupWindow();
     const logsDirectory = path.join(stateDirectory, 'logs');
     launcherController = new LauncherController({
       launcherPath,
