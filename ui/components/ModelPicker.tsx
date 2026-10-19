@@ -26,6 +26,10 @@ import { providerName, refreshAgentSettings, useAgentSettings } from "@/lib/agen
  * listed. The list is fetched again each time the menu opens and whenever the
  * provider, endpoint or key changes.
  *
+ * Providers like MAG list many long, similar ids, so the menu opens on a
+ * search box (substring match, Enter takes the first match), and every option
+ * and the label carry the full id as a tooltip for when it's cut off.
+ *
  * `useAvailableModels` only lists the chosen provider's OpenAI-compatible
  * endpoint, so a listed id, and a typed one, always belongs to the `openai`
  * provider. `qualifyModelId` persists that; `displayModelName` hides it again,
@@ -48,17 +52,20 @@ export function ModelPicker() {
   const [asking, setAsking] = useState(false);
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState("");
+  const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const typedRef = useRef<HTMLInputElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const seenRequest = useRef(modelChoiceRequest);
 
   function close() {
     setOpen(false);
     setAsking(false);
     setTyping(false);
+    setQuery("");
   }
 
   function openMenu() {
@@ -79,6 +86,11 @@ export function ModelPicker() {
   useEffect(() => {
     if (typing) typedRef.current?.focus();
   }, [typing]);
+
+  const searchable = modelsState.status === "ready" && modelsState.models.length > 0;
+  useEffect(() => {
+    if (open && searchable && !typing) searchRef.current?.focus();
+  }, [open, searchable, typing]);
 
   useEffect(() => {
     if (!open) return;
@@ -137,6 +149,14 @@ export function ModelPicker() {
 
   const typedHint = "Type its name under “Use another model…” below.";
 
+  const needle = query.trim().toLowerCase();
+  const shown =
+    modelsState.status === "ready"
+      ? [...modelsState.models]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .filter((m) => m.id.toLowerCase().includes(needle))
+      : [];
+
   return (
     <div className="model-picker" ref={rootRef}>
       <button
@@ -149,7 +169,9 @@ export function ModelPicker() {
         disabled={saving}
         onClick={() => (open ? close() : openMenu())}
       >
-        <span className="model-picker-label">{label}</span>
+        <span className="model-picker-label" title={label}>
+          {label}
+        </span>
         {unlistedBy && (
           <span className="model-picker-unlisted">not listed by {unlistedBy}</span>
         )}
@@ -202,27 +224,50 @@ export function ModelPicker() {
             <div className="model-picker-empty">No models reported.</div>
           )}
 
+          {searchable && (
+            <div className="model-picker-search">
+              <input
+                ref={searchRef}
+                type="search"
+                aria-label="Search models"
+                placeholder="Search models"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && shown.length > 0) {
+                    event.preventDefault();
+                    void choose(qualifyModelId(shown[0].id));
+                  }
+                }}
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          )}
+
+          {searchable && shown.length === 0 && (
+            <div className="model-picker-empty">No models match “{query.trim()}”.</div>
+          )}
+
           <div className="model-picker-options" role="listbox" aria-label="Models">
-            {modelsState.status === "ready" &&
-              [...modelsState.models]
-                .sort((a, b) => a.id.localeCompare(b.id))
-                .map((model) => {
-                  const isActive = qualifyModelId(model.id) === current;
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      role="option"
-                      aria-selected={isActive}
-                      className="model-picker-option"
-                      data-active={isActive ? "true" : "false"}
-                      onClick={() => void choose(qualifyModelId(model.id))}
-                    >
-                      <span className="model-picker-dot" aria-hidden="true" />
-                      <span className="model-picker-option-id">{model.id}</span>
-                    </button>
-                  );
-                })}
+            {shown.map((model) => {
+              const isActive = qualifyModelId(model.id) === current;
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isActive}
+                  className="model-picker-option"
+                  data-active={isActive ? "true" : "false"}
+                  title={model.id}
+                  onClick={() => void choose(qualifyModelId(model.id))}
+                >
+                  <span className="model-picker-dot" aria-hidden="true" />
+                  <span className="model-picker-option-id">{model.id}</span>
+                </button>
+              );
+            })}
           </div>
 
           <div className="model-picker-separator" aria-hidden="true" />
