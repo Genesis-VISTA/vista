@@ -46,7 +46,7 @@ https://claude.ai/artifact/DXBpde9TDS5rwo1WSEVpQM (row "A, revised").
 A constant, next to `resolve_inference_target`, maps each provider id to its display name,
 base URL and default model:
 - `i2`: `https://api.i2-core.american-science-cloud.org`, `claude-sonnet`;
-- `mag`: `https://i2-api.staging.american-science-cloud.org/v1`, no default;
+- `mag`: `https://mag.genesis.americansciencecloud.org/v1` (production; it started on staging), `claude-sonnet`;
 - `olcf` (OLCF Inference): `https://s3m.olcf.ornl.gov/olcf/open/v1/inference`,
   `gpt-oss-120b`;
 - `custom`: URL from the row, no default.
@@ -74,7 +74,7 @@ endpoint and is ignored otherwise.
 
 Alternatives:
 - Work out the provider from the saved URL. Rejected: with per-provider keys VISTA must
-  know which key is which, and MAG's URL is hidden and will move from staging to
+  know which key is which, and MAG's URL is hidden and has already moved from staging to
   production.
 - One JSON credentials column. Rejected: `EncryptedStr` already works per column, and the
   users API is field-oriented.

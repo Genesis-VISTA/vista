@@ -1108,7 +1108,7 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
               Get a token
             </a>
             {" · "}
-            <a href="https://amsc-docs-d762d2.gitlab.io/mag-get-started" target="_blank" rel="noopener noreferrer">
+            <a href="https://docs.amsc.energy.gov/mag-get-started" target="_blank" rel="noopener noreferrer">
               About MAG
             </a>
             .

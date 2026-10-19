@@ -90,7 +90,7 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
     "mag": ProviderPreset(
         id="mag",
         name="AmSC MAG",
-        base_url="https://i2-api.staging.american-science-cloud.org/v1",
+        base_url="https://mag.genesis.americansciencecloud.org/v1",
         default_model="claude-sonnet",
         key_field="inference_mag_api_key",
     ),
