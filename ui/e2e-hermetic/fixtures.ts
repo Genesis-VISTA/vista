@@ -199,6 +199,31 @@ export const INFERENCE = {
   keys_set: { i2: true, mag: false, olcf: false, custom: false },
 };
 
+/** Slack as a fresh install has it: off, no tokens, the default limits. */
+export const SLACK_CONFIG = {
+  enabled: false,
+  handle_here: false,
+  has_bot_token: false,
+  has_app_token: false,
+  secret_store_available: true,
+  secret_store_problem: null,
+  allowed_team_ids: [],
+  allowed_channel_ids: [],
+  max_nodes: 4,
+  max_walltime_minutes: 120,
+  max_jobs_per_day: 5,
+  locked: false,
+  locked_at: null,
+  locked_by: null,
+  prevent_sleep: false,
+  notify_desktop_jobs: false,
+  connection: "off",
+  connection_detail: null,
+  lease_status: null,
+  background_mode: false,
+  background_problem: "a development checkout",
+};
+
 export const ROUTES: Record<string, unknown> = {
   "GET /api/users/me": USER,
   "GET /api/users/me/inference": INFERENCE,
@@ -220,6 +245,8 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/knowledge-bases/molten-salt-papers/publications": [],
   "GET /api/files/uploads": [],
   "GET /api/files/outputs": [],
+  "GET /api/slack/config": SLACK_CONFIG,
+  "GET /api/slack/links": [],
 };
 
 /** The one route that streams instead of returning JSON. */

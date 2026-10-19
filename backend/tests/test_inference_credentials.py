@@ -864,6 +864,9 @@ class TestCitationCredentials:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.example/v1")
         monkeypatch.setenv("VISTA_BACKEND_MODEL", "openai:env-model")
+        # Takes precedence over VISTA_BACKEND_MODEL, and a `.env` above the
+        # checkout may set it.
+        monkeypatch.delenv("OPENAI_MODEL", raising=False)
         assert has_llm_credentials(None) is True
 
         _get_text_rag_cls()
