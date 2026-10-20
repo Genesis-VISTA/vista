@@ -5791,7 +5791,7 @@ textarea.input:focus {
   font-weight: 400;
 }
 
-.debate-open input,
+.debate-open input:not(.model-picker input),
 .debate-open textarea,
 .debate-say textarea {
   font: inherit;
@@ -5806,9 +5806,9 @@ textarea.input:focus {
   width: 90px;
 }
 
-.debate-open button,
+.debate-open button:not(.model-picker button),
 .debate-say button,
-.debate-detail__head button {
+.debate-detail__head button:not(.model-picker button) {
   justify-self: start;
   font: inherit;
   font-weight: 600;
@@ -5820,14 +5820,14 @@ textarea.input:focus {
   cursor: pointer;
 }
 
-.debate-open button:disabled,
+.debate-open button:disabled:not(.model-picker button),
 .debate-say button:disabled,
-.debate-detail__head button:disabled {
+.debate-detail__head button:disabled:not(.model-picker button) {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.debate-detail__head button {
+.debate-detail__head button:not(.model-picker button) {
   background: transparent;
   color: var(--brand-2);
   border-color: var(--brand-2);
@@ -6318,6 +6318,44 @@ textarea.input:focus {
   white-space: nowrap;
 }
 
+/* A model per role, on the open form and on Continue. */
+.debate-role-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.debate-role-model {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.debate-role-model__name {
+  text-transform: capitalize;
+}
+
+.debate-detail__continue .debate-role-models {
+  flex-basis: 100%;
+}
+
+.debate-detail__continue {
+  flex-wrap: wrap;
+}
+
+.debate-roster__models {
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+
+.debate-post__model {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--muted);
+}
+
 /* Continuing a concluded debate. Kept beside the status rather than in the
    composer, because it acts on the debate as a whole and not on one post. */
 .debate-detail__continue {
@@ -6341,7 +6379,7 @@ textarea.input:focus {
 
 /* The header's buttons are outlined in red because "End this debate" is the
    destructive one. Continuing is the opposite, so it is the primary button. */
-.debate-detail__head .debate-detail__continue button {
+.debate-detail__head .debate-detail__continue button:not(.model-picker button) {
   background: var(--brand-fill);
   color: var(--on-brand);
   border-color: var(--brand);

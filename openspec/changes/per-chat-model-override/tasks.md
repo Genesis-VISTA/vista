@@ -29,8 +29,8 @@
 
 ## 6. UI: the Hypothesis Lab
 
-- [ ] 6.1 Add three role model selects (the controlled menu) beside Rounds on the open-debate form in `ui/app/hypothesis-lab/page.tsx`, each starting at "Default (<model>)", and send `models` from `openDebate` in `ui/lib/debates.ts`; verify with a unit test for the request body
-- [ ] 6.2 Add the same three selects to Continue, pre-filled from the debate's participants (a null role shows "Default (<current default>)"), and send changed models with `continueDebate`; show the roster line "Proposer <m> · Reviewer <m> · Referee <m>" and the model on each role post; verify in `ui/e2e-hermetic/hypothesis-lab.spec.ts` that the roster line and post models render from fixture data
+- [x] 6.1 Add three role model selects (the controlled menu) beside Rounds on the open-debate form in `ui/app/hypothesis-lab/page.tsx`, each starting at "Default (<model>)", and send `models` from `openDebate` in `ui/lib/debates.ts`; verify with a unit test for the request body
+- [x] 6.2 Add the same three selects to Continue, pre-filled from the debate's participants (a null role shows "Default (<current default>)"), and send changed models with `continueDebate`; show the roster line "Proposer <m> · Reviewer <m> · Referee <m>" and the model on each role post; verify in `ui/e2e-hermetic/hypothesis-lab.spec.ts` that the roster line and post models render from fixture data
 
 ## 7. Verification
 

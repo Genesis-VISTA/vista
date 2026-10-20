@@ -62,7 +62,58 @@ export type DebateParticipant = {
   active: boolean;
   /** What this role was allowed to use. Empty means it had nothing to reach for. */
   granted_tools: string[];
+  /** This role's own model (`openai:<name>`); null follows the opener's default. */
+  model: string | null;
 };
+
+export const DEBATE_ROLES = ["proposer", "reviewer", "referee"] as const;
+export type DebateRoleName = (typeof DEBATE_ROLES)[number];
+
+/** Each role's own model; null is a role on the default. */
+export type RoleModels = Record<DebateRoleName, string | null>;
+
+export const noRoleModels = (): RoleModels => ({
+  proposer: null,
+  reviewer: null,
+  referee: null,
+});
+
+/** The models a debate's roster recorded, one per role. */
+export function modelsOf(participants: DebateParticipant[]): RoleModels {
+  const models = noRoleModels();
+  for (const p of participants) {
+    if ((DEBATE_ROLES as readonly string[]).includes(p.debate_role)) {
+      models[p.debate_role as DebateRoleName] = p.model ?? null;
+    }
+  }
+  return models;
+}
+
+/** The roles with a model of their own, for opening a debate. Omitted roles use the default. */
+export function chosenModels(models: RoleModels): Partial<Record<DebateRoleName, string>> {
+  const chosen: Partial<Record<DebateRoleName, string>> = {};
+  for (const role of DEBATE_ROLES) {
+    const model = models[role];
+    if (model) chosen[role] = model;
+  }
+  return chosen;
+}
+
+/**
+ * The roles whose model differs from `original`, for continuing a debate. A
+ * role returned to the default is sent as null; an unchanged role is left out,
+ * so the backend leaves its row alone.
+ */
+export function changedModels(
+  current: RoleModels,
+  original: RoleModels
+): Partial<Record<DebateRoleName, string | null>> {
+  const changed: Partial<Record<DebateRoleName, string | null>> = {};
+  for (const role of DEBATE_ROLES) {
+    if (current[role] !== original[role]) changed[role] = current[role];
+  }
+  return changed;
+}
 
 /**
  * How much this install actually knows about where a post came from.
@@ -145,6 +196,12 @@ export type DebatePost = {
    */
   authored_by: string | null;
   round_index: number | null;
+  /**
+   * The model that wrote this post, as resolved at the time; null for a human or
+   * peer post and for one from before it was recorded. Ours, never the poster's
+   * claim.
+   */
+  model: string | null;
   /**
    * The tools the agent called for this post.
    *
@@ -343,7 +400,13 @@ export async function fetchDebate(
 
 export async function openDebate(
   projectName: string,
-  body: { topic: string; framing?: string | null; rounds?: number | null }
+  body: {
+    topic: string;
+    framing?: string | null;
+    rounds?: number | null;
+    /** A model per role; a role left out uses the default. */
+    models?: Partial<Record<DebateRoleName, string>>;
+  }
 ): Promise<DebateRun> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(
@@ -385,14 +448,16 @@ export async function closeDebate(
 export async function continueDebate(
   projectName: string,
   runId: string,
-  rounds: number
+  rounds: number,
+  /** Roles to move to another model (null: back to the default); the rest keep theirs. */
+  models: Partial<Record<DebateRoleName, string | null>> = {}
 ): Promise<DebateRun> {
   const params = new URLSearchParams({ project_name: projectName, run_id: runId });
   return unwrap(
     await fetch(`/api/debates/continue?${params}`, {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ rounds }),
+      body: JSON.stringify({ rounds, models }),
     })
   );
 }
