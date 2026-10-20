@@ -555,6 +555,7 @@ class TestHttpSurface:
         detail = response.json()["detail"]
         assert SETTINGS_LOCATION in detail
         assert "claude-sonnet" in detail
+        assert response.json()["code"] == "inference_not_configured"
 
     @pytest.mark.anyio
     @pytest.mark.integration
@@ -585,6 +586,7 @@ class TestHttpSurface:
         assert response.status_code == 409, response.text
         assert "Custom" in response.json()["detail"]
         assert "model picker" in response.json()["detail"]
+        assert response.json()["code"] == "inference_not_configured"
 
     @pytest.mark.anyio
     @pytest.mark.integration
@@ -714,6 +716,40 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
     assert finished["state"] == "failed"
     assert finished["error"] == rejected_credential_detail("claude-sonnet")
     assert SETTINGS_LOCATION in finished["error"]
+
+
+@pytest.mark.anyio
+@pytest.mark.integration
+async def test_rejected_credential_without_a_conversation_is_a_409(session):
+    """
+    Called without a conversation, the agent answers in one response, so the
+    rejected key arrives as the same named 409 as a missing one, not a 500.
+    """
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from harness import agent_under_test, api_client, scripted_model
+    from harness import seed_project, seed_user
+    from vista_backend.agents.inference import rejected_credential_detail
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice, name="alices-project")
+
+    def reject(messages, info):
+        raise ModelHTTPError(status_code=403, model_name="claude-sonnet")
+
+    with agent_under_test(project, alice, scripted_model(reject)) as (agent, _):
+        with api_client(session, agent=agent) as (client, _):
+            response = await client.post(
+                "/projects/alices-project/agent/run",
+                json={"user_prompt": "hi", "stream": False},
+                headers={"X-Vista-User-Email": alice.email},
+            )
+
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "detail": rejected_credential_detail("claude-sonnet"),
+        "code": "inference_not_configured",
+    }
 
 
 @pytest.mark.anyio

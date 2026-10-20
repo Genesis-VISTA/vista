@@ -23,15 +23,15 @@ ones with `./scripts/ci-local.sh ui test`.
 
 ## 2. Backend and proxy: refusals say which they are
 
-- [ ] 2.1 Register `RejectedInferenceCredential` with the handler in `api/api.py` and add
+- [x] 2.1 Register `RejectedInferenceCredential` with the handler in `api/api.py` and add
   `code: "inference_not_configured"` to its 409 body. Verify by extending
   `test_chat_with_no_credential_is_reported_not_crashed` and
   `test_chat_with_no_model_is_reported_not_crashed` (`test_inference_credentials.py`) to assert
   the `code`, and that the model picker tests in `backend/tests/test_models_api.py` still pass.
-- [ ] 2.2 Answer `RunBusy` in `api/agent.py` with `409 {"detail", "code": "run_busy"}`. Verify
+- [x] 2.2 Answer `RunBusy` in `api/agent.py` with `409 {"detail", "code": "run_busy"}`. Verify
   by extending `test_a_send_while_busy_is_a_409_and_changes_nothing`
   (`backend/tests/test_chat_run_api.py`) to assert the `code`.
-- [ ] 2.3 In `ui/app/api/chat/route.ts`, pass a JSON error body through with its status, and
+- [x] 2.3 In `ui/app/api/chat/route.ts`, pass a JSON error body through with its status, and
   wrap only a non-JSON body as `{ok: false, error}`. Verify with a new `POST /api/chat` block in
   `ui/tests/chat-run-routes.test.ts`: a JSON 409 arrives with `detail` and `code` intact, and a
   plain-text 500 arrives wrapped.

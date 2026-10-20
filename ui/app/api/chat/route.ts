@@ -15,6 +15,9 @@ export const dynamic = "force-dynamic";
  * `agent_run_result`, `mcp_form_elicitation`, `mcp_url_elicitation`) as
  * Server-Sent Events with real `event:` lines — this route streams them
  * straight through; the parser lives in `app/page.tsx`.
+ *
+ * A non-OK backend response with a JSON body (`{detail, code}`) passes through
+ * with its status; any other body is wrapped as `{ ok: false, error }`.
  */
 export async function POST(request: Request) {
   let body: {
@@ -68,10 +71,18 @@ export async function POST(request: Request) {
   }
 
   if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text().catch(() => "");
+    const status = upstream.status || 502;
+    const text = await upstream.text().catch(() => "");
+    if ((upstream.headers.get("content-type") ?? "").includes("application/json")) {
+      try {
+        return NextResponse.json(JSON.parse(text), { status });
+      } catch {
+        // Claims JSON but isn't: wrap it like any other text.
+      }
+    }
     return NextResponse.json(
-      { ok: false, error: detail || `Backend returned ${upstream.status}` },
-      { status: upstream.status || 502 }
+      { ok: false, error: text || `Backend returned ${upstream.status}` },
+      { status }
     );
   }
 

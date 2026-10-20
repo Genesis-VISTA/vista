@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // works inside a Next request. Stand in an empty header set.
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 
+import { POST as postChat } from "@/app/api/chat/route";
 import { GET as getEvents } from "@/app/api/chat/run/events/route";
 import { POST as postStop } from "@/app/api/chat/run/stop/route";
 import { GET as getStatus } from "@/app/api/chat/runs/status/route";
@@ -220,5 +221,49 @@ describe("PUT /api/chat/session", () => {
     await put({ project_name: "p", chat_session_id: "abc", messages: [] });
     const sent = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(sent.ack_run).toBe(false);
+  });
+});
+
+describe("POST /api/chat", () => {
+  const send = () =>
+    postChat(
+      post("/api/chat", { project_name: "p", user_prompt: "hi", chat_session_id: "c" }),
+    );
+
+  it("passes a JSON error body through with its status", async () => {
+    const body = { detail: "A run is already active.", code: "run_busy" };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(body);
+  });
+
+  it("wraps a plain-text error body as { ok: false, error }", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("boom", { status: 500, headers: { "content-type": "text/plain" } }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ ok: false, error: "boom" });
+  });
+
+  it("wraps a body that claims JSON but does not parse", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("<html>", { status: 502, headers: { "content-type": "application/json" } }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ ok: false, error: "<html>" });
   });
 });
