@@ -338,7 +338,8 @@ class TestWhereTheMessageComesFrom:
             await c.stat(collection_id=COLLECTION, remote_path="/lustre/log.out")
 
         message = str(refusal.value)
-        assert "opensso.ccs.ornl.gov" in message
+        assert "Globus needs a fresh login with opensso.ccs.ornl.gov." in message
+        assert "clients.auth.globus.org" not in message
         assert "Frontier" in message
         assert "settings" in message.lower()
         assert "refused to serve" not in message
@@ -598,8 +599,13 @@ class TestGareParsing:
     def test_a_body_that_is_not_json_yields_no_message(self):
         assert globus_lib._gare_message("<html>502</html>") is None
 
-    def test_the_session_message_is_preferred(self):
-        assert "sso.ccs.ornl.gov" in globus_lib._gare_message(json.dumps(GARE_401))
+    def test_a_gare_names_the_required_login_without_globus_own_domain(self):
+        message = globus_lib._gare_message(json.dumps(GARE_403_HTTPS))
+        assert message == "Globus needs a fresh login with opensso.ccs.ornl.gov."
+
+    def test_the_session_message_is_used_when_no_login_is_named(self):
+        body = {"authorization_parameters": {"session_message": "Please log in again."}}
+        assert globus_lib._gare_message(json.dumps(body)) == "Please log in again."
 
     def test_a_plain_detail_is_used_when_there_is_no_gare(self):
         assert globus_lib._gare_message(json.dumps({"detail": "token expired"})) == (
@@ -740,7 +746,9 @@ class TestTheTransferSide:
         text = str(refusal.value)
         assert "Frontier" in text
         assert "Reconnect Globus" in text
-        assert "Login Failed" in text
+        assert "Globus needs a fresh login with sso.ccs.ornl.gov." in text
+        assert "clients.auth.globus.org" not in text
+        assert "Login Failed" not in text  # the raw GridFTP dump stays out
 
     async def test_a_gare_is_not_swallowed_by_a_recursive_walk(
         self, client, monkeypatch

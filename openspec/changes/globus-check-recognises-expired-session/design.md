@@ -45,14 +45,19 @@ reconnecting fixes. Any other Auth error (a 5xx, `invalid_client` from a misconf
 ID) is Couldn't verify with its status and code. Today every `GlobusAPIError` there reads as
 expired.
 
-**3. The card names the login; the file operations quote Globus.** The Transfer GARE's
+**3. Both surfaces name the login from the GARE.** The Transfer GARE's
 `session_message` says nothing useful, so the card builds its detail from
 `session_required_single_domain`, leaving out `clients.auth.globus.org` (Globus's own
 app-client domain, never the researcher's login): "The Globus session for Odo has expired:
 Globus needs a fresh login with opensso.ccs.ornl.gov. Connect Globus again." With no domain,
-it gives the plain remedy, never "Globus said: None". The file operations keep the existing
-`_session_expired(detail)` wording and `_gare_message`, because the HTTPS `session_message`
-already names the domains.
+it gives the plain remedy, never "Globus said: None". The file operations keep their
+`_session_expired(detail)` remedy, and its "Globus said:" detail is the same sentence
+("Globus needs a fresh login with opensso.ccs.ornl.gov."), for a Transfer GARE and an HTTPS
+one alike. Globus's verbatim text is used only when the refusal names no domain.
+*Alternative (the first implementation):* quote Globus's message, as the HTTPS
+`session_message` already names the domains. Rejected after a live run (2026-10-20): a chat
+agent repeated `clients.auth.globus.org` to the researcher as a login to use, and on a
+Transfer listing the message is a raw GridFTP dump.
 
 **4. The probe raises a typed outcome carrying its detail.** `probe_globus` raises
 `GlobusSessionExpired(detail)` or a new `GlobusCheckFailed(detail, log)`. `_globus` puts the

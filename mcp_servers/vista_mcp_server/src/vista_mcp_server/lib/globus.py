@@ -103,12 +103,32 @@ def _body_is_gare(body: str) -> bool:
     return isinstance(parsed, dict) and gare.is_gare(parsed)
 
 
-def _gare_message(body: str) -> str | None:
-    """Globus's own account of why it refused, out of a GARE 401 body.
+_GLOBUS_APP_DOMAIN = "clients.auth.globus.org"
+""" Globus's own app-client domain. Every OLCF GARE lists it; no researcher logs in with it. """
 
-    Surfaced verbatim rather than reworded. The message names the identity
-    domains the collection accepts, which is both the actual remedy and
-    something VISTA would get wrong if it tried to say it itself.
+
+def _required_login(refusal: dict | GlobusAPIError) -> str | None:
+    """The login a GARE asks for, as a sentence, or None if it names none.
+
+    Built from `session_required_single_domain` rather than quoted from
+    Globus's message, which also lists `clients.auth.globus.org` and, on a
+    Transfer listing, is a raw GridFTP dump.
+    """
+    found = gare.to_gare(refusal)
+    if found is None:
+        return None
+    required = found.authorization_parameters.session_required_single_domain or []
+    domains = [d for d in required if d != _GLOBUS_APP_DOMAIN]
+    if not domains:
+        return None
+    return f"Globus needs a fresh login with {', '.join(domains)}."
+
+
+def _gare_message(body: str) -> str | None:
+    """Why Globus refused, out of an HTTPS refusal body.
+
+    For a GARE, the login it asks for (`_required_login`); failing that,
+    Globus's `session_message`, then its `detail` or `message`.
     """
     try:
         parsed = json.loads(body)
@@ -116,6 +136,9 @@ def _gare_message(body: str) -> str | None:
         return None
     if not isinstance(parsed, dict):
         return None
+    login = _required_login(parsed)
+    if login:
+        return login
     params = parsed.get("authorization_parameters")
     if isinstance(params, dict):
         message = params.get("session_message")
@@ -205,12 +228,11 @@ class GlobusClient:
         the caller to handle, which matters because `operation_mkdir` treats
         "already exists" as success.
         """
+        if gare.is_gare(error):
+            # Not `error.message`: on a listing that is the raw GridFTP dump.
+            raise self._session_expired(_required_login(error)) from error
         code = error.code or ""
-        if (
-            gare.is_gare(error)
-            or error.http_status == 401
-            or code in ("ConsentRequired", "AuthenticationFailed")
-        ):
+        if error.http_status == 401 or code in ("ConsentRequired", "AuthenticationFailed"):
             raise self._session_expired(error.message) from error
 
     # --- the HTTPS interface ------------------------------------------------
