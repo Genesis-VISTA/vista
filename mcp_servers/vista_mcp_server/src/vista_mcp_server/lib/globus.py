@@ -47,6 +47,7 @@ from urllib.parse import quote
 import globus_sdk
 import httpx
 from fastmcp.exceptions import ToolError
+from globus_sdk import gare
 from globus_sdk.exc import GlobusAPIError
 
 from ..config import settings
@@ -91,6 +92,15 @@ class GlobusFileNotFound(ToolError):
     answers `401 application/json`. "No outputs yet" is the correct reading of
     this one and only this one.
     """
+
+
+def _body_is_gare(body: str) -> bool:
+    """True when an HTTPS body is a Globus re-authentication answer (a GARE)."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and gare.is_gare(parsed)
 
 
 def _gare_message(body: str) -> str | None:
@@ -196,7 +206,11 @@ class GlobusClient:
         "already exists" as success.
         """
         code = error.code or ""
-        if error.http_status == 401 or code in ("ConsentRequired", "AuthenticationFailed"):
+        if (
+            gare.is_gare(error)
+            or error.http_status == 401
+            or code in ("ConsentRequired", "AuthenticationFailed")
+        ):
             raise self._session_expired(error.message) from error
 
     # --- the HTTPS interface ------------------------------------------------
@@ -261,7 +275,7 @@ class GlobusClient:
         """
         if response.is_success:
             return
-        if response.status_code == 401:
+        if response.status_code == 401 or _body_is_gare(body):
             raise self._session_expired(_gare_message(body))
         if response.status_code == 404:
             raise GlobusFileNotFound(
@@ -284,7 +298,8 @@ class GlobusClient:
         async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
             response = await client.head(url, headers=headers)
             body = ""
-            if response.status_code == 401:
+            if response.status_code in (401, 403):
+                # A lapsed session answers 403 InsufficientSession as well as 401.
                 # A HEAD has no body by definition, and the body is where the
                 # GARE `session_message` lives -- the one sentence that names
                 # the identity domains this collection accepts. This is the

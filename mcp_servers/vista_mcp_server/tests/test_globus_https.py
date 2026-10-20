@@ -24,6 +24,7 @@ from functools import partial
 import globus_sdk
 import httpx
 import pytest
+from fastmcp.exceptions import ToolError
 
 from vista_mcp_server.lib import globus as globus_lib
 from vista_mcp_server.lib.globus import (
@@ -38,6 +39,20 @@ pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 COLLECTION = "36d521b3-c182-4071-b7d5-91db5d380d42"
 SERVER = "https://m-36da98.abb646.36fe.data.globus.org"
 
+GARE_502_TRANSFER = {
+    "code": "ExternalError.DirListingFailed.LoginFailed",
+    "message": "Command Failed: Error (login) ... Login Failed ...",
+    "authorization_parameters": {
+        "session_message": "Session reauthentication required (Globus Transfer)",
+        "session_required_identities": [],
+        "session_required_mfa": False,
+        "session_required_single_domain": [
+            "sso.ccs.ornl.gov",
+            "clients.auth.globus.org",
+        ],
+    },
+}
+
 GARE_401 = {
     "code": "InvalidToken",
     "authorization_parameters": {
@@ -47,6 +62,25 @@ GARE_401 = {
             "granted access to this collection."
         ),
         "session_required_single_domain": ["sso.ccs.ornl.gov"],
+    },
+}
+
+GARE_403_HTTPS = {
+    "code": "InsufficientSession",
+    "message": "You must authenticate to access this collection.",
+    "authorization_parameters": {
+        "session_message": (
+            "You must authenticate or link with an identity from one of these "
+            "domains (opensso.ccs.ornl.gov, clients.auth.globus.org) which has "
+            "been granted access to this collection."
+        ),
+        "session_required_single_domain": [
+            "opensso.ccs.ornl.gov",
+            "clients.auth.globus.org",
+        ],
+        "required_scopes": [
+            "https://auth.globus.org/scopes/7399956e-a57b-4560-b3d7-a035ff42cad4/https"
+        ],
     },
 }
 
@@ -166,6 +200,40 @@ class TestTellingFailuresApart:
         assert "503" in str(failure.value)
         assert not isinstance(failure.value, (GlobusSessionExpired, GlobusFileNotFound))
 
+    async def test_a_403_that_is_not_a_gare_is_still_a_refusal(self, client):
+        c, recorded = client(lambda r: httpx.Response(403, text="permission denied"))
+
+        with pytest.raises(ToolError) as failure:
+            await c.stat(collection_id=COLLECTION, remote_path="/lustre/log.out")
+
+        assert "403" in str(failure.value)
+        assert "refused to serve" in str(failure.value)
+        assert not isinstance(failure.value, (GlobusSessionExpired, GlobusFileNotFound))
+        assert [r.method for r in recorded] == ["HEAD", "GET"]
+
+    async def test_a_404_still_means_the_file_is_missing_and_costs_one_request(
+        self, client
+    ):
+        c, recorded = client(lambda r: httpx.Response(404, text="not found"))
+
+        with pytest.raises(GlobusFileNotFound):
+            await c.stat(collection_id=COLLECTION, remote_path="/lustre/missing")
+
+        assert len([r for r in recorded if str(r.url).startswith(SERVER)]) == 1
+
+    async def test_a_gare_on_any_status_is_an_expired_session(self, client):
+        c, _ = client(lambda r: httpx.Response(502, json=GARE_403_HTTPS))
+
+        with pytest.raises(GlobusSessionExpired) as refusal:
+            await c.read_range(
+                collection_id=COLLECTION,
+                remote_path="/lustre/log.out",
+                start=0,
+                end=9,
+            )
+
+        assert "opensso.ccs.ornl.gov" in str(refusal.value)
+
 
 class TestSizeAndRanges:
     async def test_stat_reads_the_size_from_head(self, client):
@@ -251,6 +319,30 @@ class TestWhereTheMessageComesFrom:
 
         assert "sso.ccs.ornl.gov" in str(refusal.value)
         # And the second request costs one byte, not the file.
+        assert recorded[1].headers["Range"] == "bytes=0-0"
+
+    async def test_a_403_insufficient_session_on_head_carries_globus_own_words(
+        self, client
+    ):
+        """The live lapse on an OLCF High Assurance collection answers `403
+        InsufficientSession`; the HEAD has no body, so the GET fetches it."""
+
+        def handler(request):
+            if request.method == "HEAD":
+                return httpx.Response(403)
+            return httpx.Response(403, json=GARE_403_HTTPS)
+
+        c, recorded = client(handler)
+
+        with pytest.raises(GlobusSessionExpired) as refusal:
+            await c.stat(collection_id=COLLECTION, remote_path="/lustre/log.out")
+
+        message = str(refusal.value)
+        assert "opensso.ccs.ornl.gov" in message
+        assert "Frontier" in message
+        assert "settings" in message.lower()
+        assert "refused to serve" not in message
+        assert recorded[1].method == "GET"
         assert recorded[1].headers["Range"] == "bytes=0-0"
 
     async def test_a_successful_head_makes_only_one_request(self, client):
@@ -514,6 +606,12 @@ class TestGareParsing:
             "token expired"
         )
 
+    def test_a_gare_body_is_recognised_and_a_plain_one_is_not(self):
+        assert globus_lib._body_is_gare(json.dumps(GARE_403_HTTPS)) is True
+        assert globus_lib._body_is_gare("not found") is False
+        assert globus_lib._body_is_gare(json.dumps({"detail": "x"})) is False
+        assert globus_lib._body_is_gare("[]") is False
+
 
 class TestTheTransferSide:
     """The other half of D5.
@@ -545,13 +643,17 @@ class TestTheTransferSide:
 
         c._tc = Refusing()
 
-    def transfer_error(self, status: int, code: str, message: str):
+    def transfer_error(
+        self, status: int, code: str, message: str, body: dict | None = None
+    ):
         import globus_sdk
         import requests
 
         response = requests.Response()
         response.status_code = status
-        response._content = json.dumps({"code": code, "message": message}).encode()
+        response._content = json.dumps(
+            body if body is not None else {"code": code, "message": message}
+        ).encode()
         response.headers["Content-Type"] = "application/json"
         response.reason = "Unauthorized"
         response.request = requests.Request(
@@ -618,3 +720,59 @@ class TestTheTransferSide:
         self.refusing_transfer_client(c, monkeypatch, "operation_mkdir", error)
 
         await c.operation_mkdir(endpoint=COLLECTION, path="/lustre/out")
+
+    def gare_502(self):
+        return self.transfer_error(
+            502,
+            GARE_502_TRANSFER["code"],
+            GARE_502_TRANSFER["message"],
+            body=GARE_502_TRANSFER,
+        )
+
+    async def test_a_gare_on_ls_is_an_expired_session_whatever_its_status(
+        self, client, monkeypatch
+    ):
+        c, _ = client(lambda r: pytest.fail("HTTPS should not be reached"))
+        self.refusing_transfer_client(c, monkeypatch, "operation_ls", self.gare_502())
+
+        with pytest.raises(GlobusSessionExpired) as refusal:
+            await c.operation_ls(endpoint=COLLECTION, path="/lustre/out")
+        text = str(refusal.value)
+        assert "Frontier" in text
+        assert "Reconnect Globus" in text
+        assert "Login Failed" in text
+
+    async def test_a_gare_is_not_swallowed_by_a_recursive_walk(
+        self, client, monkeypatch
+    ):
+        c, _ = client(lambda r: pytest.fail("HTTPS should not be reached"))
+        self.refusing_transfer_client(c, monkeypatch, "operation_ls", self.gare_502())
+
+        with pytest.raises(GlobusSessionExpired):
+            await c.operation_ls(
+                endpoint=COLLECTION, path="/lustre/out", recursive=True
+            )
+
+    async def test_a_gare_on_mkdir_is_an_expired_session(self, client, monkeypatch):
+        c, _ = client(lambda r: pytest.fail("HTTPS should not be reached"))
+        self.refusing_transfer_client(
+            c, monkeypatch, "operation_mkdir", self.gare_502()
+        )
+
+        with pytest.raises(GlobusSessionExpired):
+            await c.operation_mkdir(endpoint=COLLECTION, path="/lustre/out")
+
+    async def test_a_502_without_a_gare_is_left_for_the_caller(
+        self, client, monkeypatch
+    ):
+        import globus_sdk
+
+        c, _ = client(lambda r: pytest.fail("HTTPS should not be reached"))
+        error = self.transfer_error(
+            502, "ExternalError.DirListingFailed.Other", "listing failed"
+        )
+        self.refusing_transfer_client(c, monkeypatch, "operation_ls", error)
+
+        with pytest.raises(globus_sdk.TransferAPIError) as refusal:
+            await c.operation_ls(endpoint=COLLECTION, path="/lustre/out")
+        assert not isinstance(refusal.value, GlobusSessionExpired)

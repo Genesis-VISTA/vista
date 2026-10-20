@@ -12,9 +12,9 @@
 
 ## 3. File operations: same rule in the MCP server
 
-- [ ] 3.1 In `lib/globus.py`, make `_raise_for_transfer_error` treat a GARE as an expired session before its existing rules. Verify with a test in `mcp_servers/vista_mcp_server/tests/test_globus_https.py` (or its Transfer tests) using the live 502 body: the listing raises `GlobusSessionExpired` and `operation_mkdir`'s "already exists" handling is unchanged
-- [ ] 3.2 Make `_check` treat a response whose body is a GARE as an expired session, whatever its status, and have `stat` fetch the one-byte body on a `403` as well as a `401`. Verify with the live `403 InsufficientSession` body: `stat` raises `GlobusSessionExpired` whose text includes Globus's message naming `opensso.ccs.ornl.gov`; a `403` with no GARE still raises the generic refusal; a `404` still raises `GlobusFileNotFound`
-- [ ] 3.3 Raise `globus-sdk>=3.40` to `>=4.7` in `mcp_servers/vista_mcp_server/pyproject.toml` and run `uv lock`. Verify that `./scripts/ci-local.sh mcp` passes
+- [x] 3.1 In `lib/globus.py`, make `_raise_for_transfer_error` treat a GARE as an expired session before its existing rules. Verify with a test in `mcp_servers/vista_mcp_server/tests/test_globus_https.py` (or its Transfer tests) using the live 502 body: the listing raises `GlobusSessionExpired` and `operation_mkdir`'s "already exists" handling is unchanged
+- [x] 3.2 Make `_check` treat a response whose body is a GARE as an expired session, whatever its status, and have `stat` fetch the one-byte body on a `403` as well as a `401`. Verify with the live `403 InsufficientSession` body: `stat` raises `GlobusSessionExpired` whose text includes Globus's message naming `opensso.ccs.ornl.gov`; a `403` with no GARE still raises the generic refusal; a `404` still raises `GlobusFileNotFound`
+- [x] 3.3 Raise `globus-sdk>=3.40` to `>=4.7` in `mcp_servers/vista_mcp_server/pyproject.toml` and run `uv lock`. Verify that `./scripts/ci-local.sh mcp` passes
 
 ## 4. Docs
 
