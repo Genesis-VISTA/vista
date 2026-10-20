@@ -794,11 +794,6 @@ class TestDescribeRunFailure:
     def test_an_exception_with_no_message_is_its_type(self):
         assert describe_run_failure(TimeoutError()) == "TimeoutError"
 
-    def test_a_group_of_one_is_described_by_that_one(self):
-        group = ExceptionGroup("unhandled errors in a TaskGroup", [ValueError("bad")])
-
-        assert describe_run_failure(group) == "bad"
-
     def test_an_over_long_body_is_cut(self):
         from pydantic_ai.exceptions import ModelHTTPError
 

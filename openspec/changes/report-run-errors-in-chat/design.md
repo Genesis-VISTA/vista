@@ -121,9 +121,10 @@ this change still draw.
 - [A provider message may include details the researcher does not need, such as request ids]
   → It is the provider's own message, already shown in the log panel today; the cap keeps it
   bounded.
-- [An exception wrapped in an `ExceptionGroup` (from a task group in the MCP layer) would be
-  described by its group text] → `describe_run_failure` describes the sole leaf when a group
-  holds exactly one exception; anything else falls back to `str(exc)`.
+- [An exception wrapped in an `ExceptionGroup` (from the MCP client's task group) would be
+  described by its group text, "unhandled errors in a TaskGroup"] → Not handled: nothing in a
+  turn's path is known to raise one (`StreamMerger` re-raises the original). Add the case with
+  a reproduction if that text is ever seen.
 - [The rejected-key turn now shows the red "failed" status instead of "done"] → Intended: the
   turn did not answer, and the status now agrees with the note.
 - [`test_rejected_credential_is_reported_not_a_broken_stream` asserts an `agent_run_result`]

@@ -6,10 +6,9 @@ ones with `./scripts/ci-local.sh ui test`.
 
 - [ ] 1.1 Add `describe_run_failure(exc)` to `backend/src/vista_backend/agents/inference.py`
   (design decision 2: `detail` passthrough, `ModelHTTPError` summary from the OpenAI-shaped,
-  `message`, `detail` or string body, single-leaf exception groups, `str(exc)` fallback, length
-  cap). Verify with unit tests in `backend/tests/test_inference_credentials.py` covering a 404
+  `message`, `detail` or string body, `str(exc)` fallback, length cap). Verify with unit tests in `backend/tests/test_inference_credentials.py` covering a 404
   with an OpenAI-shaped body, a body with no message, a plain exception, an empty-message
-  exception, a one-leaf `ExceptionGroup`, and an over-long body.
+  exception, and an over-long body.
 - [x] 1.2 Add `RejectedInferenceCredential(model_name)` to `agents/inference.py`, with `detail`
   from `rejected_credential_detail`. In `agents/agents.py` raise it on a 401/403
   `ModelHTTPError` instead of yielding the log line and empty result. Verify by rewriting
