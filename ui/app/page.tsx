@@ -195,6 +195,8 @@ export default function HomePage() {
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
+  /** The open conversation's own model; null follows the researcher's default. */
+  const [activeChatModel, setActiveChatModel] = useState<string | null>(null);
   const [editingChatSessionId, setEditingChatSessionId] = useState<string | null>(null);
   const [draftChatSessionTitle, setDraftChatSessionTitle] = useState("");
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<PersistedChatSessionSummary | null>(null);
@@ -285,6 +287,7 @@ export default function HomePage() {
       hydratedSessionKeyRef.current = null;
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
+      setActiveChatModel(null);
       setIsSessionHydrated(false);
       return;
     }
@@ -292,6 +295,7 @@ export default function HomePage() {
       hydratedSessionKeyRef.current = null;
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
+      setActiveChatModel(null);
       setMessages([]);
       setMessageHistory([]);
       setLatestResult(null);
@@ -310,6 +314,7 @@ export default function HomePage() {
     // an answer with no question.
     if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
       locallyCreatedSessionIdRef.current = null;
+      setActiveChatModel(null);
       hydratedSessionKeyRef.current = sessionKey;
       // Nothing is persisted for it yet, so the next change must save.
       lastPersistedSnapshotRef.current = null;
@@ -331,6 +336,7 @@ export default function HomePage() {
           notifyActiveChatSessionChanged();
         }
         setActiveChatSessionTitle(persisted.title);
+        setActiveChatModel(persisted.inference_model ?? null);
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -351,6 +357,7 @@ export default function HomePage() {
           notifyActiveChatSessionChanged();
         }
         setActiveChatSessionTitle(null);
+        setActiveChatModel(null);
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
@@ -613,7 +620,12 @@ export default function HomePage() {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+          body: JSON.stringify({
+            message_history: messageHistory,
+            hint: hint || null,
+            // The chat's own model, if it has one, writes the draft.
+            chat_session_id: activeChatSessionId,
+          }),
         }
       );
       if (resp.ok) draft = (await resp.json()) as ReportDraft;
@@ -684,7 +696,11 @@ export default function HomePage() {
       const resp = await fetch("/api/skills/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+        body: JSON.stringify({
+          message_history: messageHistory,
+          hint: hint || null,
+          chat_session_id: activeChatSessionId,
+        }),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
@@ -979,7 +995,7 @@ export default function HomePage() {
     const text = input.trim();
     if (!text || isRunActive) return;
     // No model and no default (MAG, Custom): keep the text and open the picker.
-    if (holdSendWithoutModel()) return;
+    if (holdSendWithoutModel(activeChatModel)) return;
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -1306,7 +1322,17 @@ export default function HomePage() {
                 </button>
               </div>
             ) : null}
-            <ModelPicker />
+            <ModelPicker
+              chat={
+                activeChatSessionId
+                  ? {
+                      id: activeChatSessionId,
+                      model: activeChatModel,
+                      onModelChange: setActiveChatModel,
+                    }
+                  : undefined
+              }
+            />
           </div>
         }
       />

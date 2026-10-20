@@ -23,9 +23,9 @@
 
 ## 5. UI: the chat picker
 
-- [ ] 5.1 Read the relevant docs in `ui/node_modules/next/dist/docs/`, then split `ui/components/ModelPicker.tsx` into a controlled menu (`value`, `onChange`, default label) and the existing default-setting wrapper with no behaviour change; verify `ui/tests/ModelPicker.test.tsx` still passes unchanged
-- [ ] 5.2 Add the chat-open wrapper: shows the chat's model with "· this chat", offers "Use default (<model>)" only while overridden, and patches the chat session; `ui/app/page.tsx` passes the open chat and the conversation list passes none; verify new cases in `ModelPicker.test.tsx` (label in each state, selecting in a chat leaves the default untouched, clearing restores "Default (<model>)")
-- [ ] 5.3 Make the send-hold for "no model" honour the chat's model, and send the open chat's id with report and skill draft requests (a skill drafted from a saved report sends the report's `chat_session_id`); verify with a unit test for the send-hold and `cd ui && npm run lint`
+- [x] 5.1 Read the relevant docs in `ui/node_modules/next/dist/docs/`, then split `ui/components/ModelPicker.tsx` into a controlled menu (`value`, `onChange`, default label) and the existing default-setting wrapper with no behaviour change; verify `ui/tests/ModelPicker.test.tsx` still passes unchanged
+- [x] 5.2 Add the chat-open wrapper: shows the chat's model with "· this chat", offers "Use default (<model>)" only while overridden, and patches the chat session; `ui/app/page.tsx` passes the open chat and the conversation list passes none; verify new cases in `ModelPicker.test.tsx` (label in each state, selecting in a chat leaves the default untouched, clearing restores "Default (<model>)")
+- [x] 5.3 Make the send-hold for "no model" honour the chat's model, and send the open chat's id with report and skill draft requests (a skill drafted from a saved report sends the report's `chat_session_id`); verify with a unit test for the send-hold and `cd ui && npm run lint`
 
 ## 6. UI: the Hypothesis Lab
 

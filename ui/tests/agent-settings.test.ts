@@ -99,6 +99,26 @@ describe("agent settings store", () => {
     expect(result.current.modelChoiceRequest).toBe(1);
   });
 
+  it("never holds a send for a chat that has a model of its own", async () => {
+    const { result } = renderHook(() => useAgentSettings());
+    await waitFor(() => expect(result.current.settings).not.toBeNull());
+    current = inferenceView({ provider: "mag", model: null, model_is_default: false });
+    await act(() => refreshAgentSettings());
+
+    let held = true;
+    act(() => {
+      held = holdSendWithoutModel("openai:claude-opus");
+    });
+
+    expect(held).toBe(false);
+    expect(result.current.modelChoiceRequest).toBe(0);
+    // A chat without one still waits, as before.
+    act(() => {
+      held = holdSendWithoutModel(null);
+    });
+    expect(held).toBe(true);
+  });
+
   it("does not hold a send before the first answer", () => {
     fetchMock.mockImplementation(() => new Promise(() => {}));
     renderHook(() => useAgentSettings());
