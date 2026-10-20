@@ -304,6 +304,26 @@ describe("HpcStatusSection", () => {
     expect(odo).not.toHaveTextContent(/expire|lapse|3 days/i);
   });
 
+  it("shows the Globus detail on an expired session row", async () => {
+    const message =
+      "The Globus session for Odo has expired: Globus needs a fresh login with opensso.ccs.ornl.gov. Connect Globus again.";
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("odo", "globus_session_expired", {
+            globus: { ok: false, reason: "session_expired", message, http_status: 502 },
+          }),
+        },
+      ]),
+    );
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Globus session expired" }));
+    const dialog = screen.getByRole("dialog", { name: "Odo connection details" });
+    expect(within(dialog).getAllByText("Globus session expired").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(message)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Connect Globus again to reach this cluster's files.");
+  });
+
   it("notes a stale result in the section header", () => {
     useHpcStatusMock.mockReturnValue(
       view([{ status: status("odo", "ready") }], { failing: true, lastSuccessAt: NOW - 12 * 60_000 }),

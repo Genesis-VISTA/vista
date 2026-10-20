@@ -8,7 +8,7 @@
 
 ## 2. Card: show the detail
 
-- [ ] 2.1 In `globusRow` (`ui/components/HpcStatusSection.tsx`), show `check.message` as the `session_expired` row's detail instead of the fixed text. Verify with a case in `ui/tests/HpcStatusSection.test.tsx`: an Odo status whose Globus check is `session_expired`, with a message naming `opensso.ccs.ornl.gov`, renders that message, and `./scripts/ci-local.sh ui` passes
+- [x] 2.1 In `globusRow` (`ui/components/HpcStatusSection.tsx`), show `check.message` as the `session_expired` row's detail instead of the fixed text. Verify with a case in `ui/tests/HpcStatusSection.test.tsx`: an Odo status whose Globus check is `session_expired`, with a message naming `opensso.ccs.ornl.gov`, renders that message, and `./scripts/ci-local.sh ui` passes
 
 ## 3. File operations: same rule in the MCP server
 
