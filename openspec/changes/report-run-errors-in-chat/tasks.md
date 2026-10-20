@@ -38,7 +38,7 @@ ones with `./scripts/ci-local.sh ui test`.
 
 ## 3. UI: the conversation shows it
 
-- [ ] 3.1 In `ui/lib/run-renderer.ts`, draw `"Agent run failed: <error>"` for a failed
+- [x] 3.1 In `ui/lib/run-renderer.ts`, draw `"Agent run failed: <error>"` for a failed
   `run_finished` with a non-empty string `error`, and the plain note otherwise. Verify by
   extending the finish-note cases in `ui/tests/run-renderer.test.ts` with an `error`, a
   non-string `error`, and none.
