@@ -35,5 +35,5 @@
 ## 7. Verification
 
 - [x] 7.1 Run `./scripts/ci-local.sh backend ui lint` and `./scripts/ci-local.sh backend ui test`; both pass
-- [ ] 7.2 Manual (not PR CI, needs a live provider): launch with `./launch.sh logs`, set a default from the conversation list, override one chat and confirm another chat and a new chat stay on the default, generate a report from the overridden chat, then open a debate with a different Referee and continue it with a changed Reviewer; check the roster line and post models
+- [x] 7.2 Manual (not PR CI, needs a live provider): launch with `./launch.sh logs`, set a default from the conversation list, override one chat and confirm another chat and a new chat stay on the default, generate a report from the overridden chat, then open a debate with a different Referee and continue it with a changed Reviewer; check the roster line and post models
 - [x] 7.3 Run `openspec validate per-chat-model-override --strict`; it passes
