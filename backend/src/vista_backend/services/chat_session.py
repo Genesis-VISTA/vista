@@ -74,6 +74,31 @@ async def get_chat_session(
     return row
 
 
+async def get_chat_model(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+) -> str | None:
+    """
+    The `provider:name` model a chat overrides the default with, or `None`.
+
+    Work launched from a chat (a report or skill draft) runs on that chat's
+    model. A missing chat, or one that is not this user's (nor this project's,
+    where the caller knows the project), is a 404.
+    """
+    stmt = select(ChatSessionTable).where(
+        ChatSessionTable.id == chat_session_id, ChatSessionTable.user_id == user_id
+    )
+    if project_id is not None:
+        stmt = stmt.where(ChatSessionTable.project_id == project_id)
+    row = (await session.exec(stmt)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return row.inference_model
+
+
 def _default_chat_title(existing_count: int) -> str:
     return f"Conversation {existing_count + 1}"
 

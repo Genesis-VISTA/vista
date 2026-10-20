@@ -48,6 +48,7 @@ from .inference import (
     build_model_for,
     rejected_credential_detail,
     require_inference_credential,
+    resolve_inference_target,
 )
 import mcp.client.session
 import mcp.shared.context
@@ -651,6 +652,7 @@ class ProjectAgent:
                 session, run, model=campaign_model
             ),
             emit_progress=emit_progress,
+            model=resolve_inference_target(self.user, self.model_override).model,
         )
 
     async def _build_campaign_planner_for_run(

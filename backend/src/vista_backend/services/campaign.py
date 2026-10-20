@@ -61,8 +61,15 @@ async def create_campaign(
     session_id: uuid.UUID | None = None,
     title: str | None = None,
     spec: dict | None = None,
+    model: str | None = None,
 ) -> CampaignRunTable:
-    """Create a new campaign run in the initial `gathering` status."""
+    """
+    Create a new campaign run in the initial `gathering` status.
+
+    `model` is the launching agent's resolved model, kept so the monitor
+    rebuilds this run's planner on it rather than on whatever the chat or the
+    researcher's default has become.
+    """
     now = now_iso()
     run = CampaignRunTable(
         project_id=project_id,
@@ -74,6 +81,7 @@ async def create_campaign(
         spec=spec or {},
         plan=[],
         status="gathering",
+        model=model,
         created_at=now,
         updated_at=now,
     )

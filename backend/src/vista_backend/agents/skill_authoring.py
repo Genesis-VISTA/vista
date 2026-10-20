@@ -52,6 +52,7 @@ async def generate_skill_draft(
     message_history: list[ModelMessage],
     hint: str | None = None,
     user: UserPublicWithConfig | None = None,
+    model: str | None = None,
 ) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation.
@@ -64,12 +65,13 @@ async def generate_skill_draft(
         user: The signed-in user, whose settings row supplies the model,
             endpoint, and credential. Without it this falls back to `Settings`,
             which on an install configured only through the UI has no key.
+        model: The source chat's own `provider:name` model, if it has one.
 
     Returns:
         A `SkillDraft` the caller can edit before persisting via `POST /skills`.
     """
     agent = Agent(
-        model=build_model_for(user),
+        model=build_model_for(user, model),
         # `instructions`, not `system_prompt`: PydanticAI drops a system prompt
         # when `message_history` is non-empty, and the chat history always is.
         instructions=_SYSTEM_PROMPT,

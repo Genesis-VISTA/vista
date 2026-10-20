@@ -126,7 +126,7 @@ async def build_planner_for_job(
         hpc=hpc,
         skills_dir=skills_dir,
         parser_factory=parser_factory,
-        model=model or build_model_for(user),
+        model=model or build_model_for(user, run.model),
     )
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 

@@ -21,6 +21,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..agents.report_authoring import ConversationReport, generate_report_draft
 from ..config import settings
 from ..utils.misc import path_is_under, write_file_unique
+from . import chat_session as chat_session_service
 from . import project as project_service
 from ._helpers import ServiceUser
 from .files import _require_user_id
@@ -47,11 +48,24 @@ async def generate_draft(
     message_history: list[ModelMessage],
     hint: str | None,
     user: ServiceUser,
+    chat_session_id: uuid.UUID | None = None,
 ) -> ConversationReport:
-    """Draft a report from a chat in a project the user can access. Persists nothing."""
-    await project_service.get_project_by_name(session, project_name, user)
+    """
+    Draft a report from a chat in a project the user can access. Persists nothing.
+
+    With `chat_session_id`, the draft is written on that chat's own model.
+    """
+    project = await project_service.get_project_by_name(session, project_name, user)
+    model = None
+    if chat_session_id is not None:
+        model = await chat_session_service.get_chat_model(
+            session,
+            user_id=_require_user_id(user),
+            chat_session_id=chat_session_id,
+            project_id=project.id,
+        )
     return await generate_report_draft(
-        message_history, hint, None if user == "system" else user
+        message_history, hint, None if user == "system" else user, model
     )
 
 

@@ -385,3 +385,65 @@ async def test_a_chat_campaign_that_lost_its_session_is_still_refused(session, a
 
     with pytest.raises(ValueError, match="no session_id"):
         await _job_run_user_paths(session, job)
+
+
+# --- the model a run was launched on ---------------------------------------
+
+
+async def _planner_model(session, job, monkeypatch):
+    """The `(user, override)` the monitor's planner rebuild asked a model for."""
+    from vista_backend.agents.campaign import wiring
+
+    asked: list[tuple] = []
+
+    def build(user, model=None):
+        asked.append((user, model))
+        return "built"
+
+    monkeypatch.setattr(wiring, "build_model_for", build)
+    monkeypatch.setattr(wiring, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(wiring, "build_subagents", lambda *a, **kw: {})
+    monkeypatch.setattr(wiring, "CampaignPlanner", lambda **kw: kw)
+    await wiring.build_planner_for_job(
+        session, job, invoke_builder=lambda user, paths: None
+    )
+    return asked
+
+
+@pytest.mark.anyio
+async def test_a_run_is_rebuilt_on_the_model_it_launched_on(
+    session, alice, monkeypatch
+):
+    """
+    Launched on B, the run is rebuilt on B after its chat has moved to C: the
+    run carries its own model across the background boundary.
+    """
+    from vista_backend.db.schemas import ChatSessionUpdate
+
+    run, _step, job = await _make_job(session, alice)
+    run.model = "openai:b"
+    session.add(run)
+    await session.flush()
+    await chat_session_service.update_chat_session(
+        session,
+        project_id=run.project_id,
+        user_id=alice.id,
+        chat_session_id=run.session_id,
+        updates=ChatSessionUpdate(inference_model="openai:c"),
+    )
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _user, model in asked] == ["openai:b"]
+
+
+@pytest.mark.anyio
+async def test_an_older_run_without_a_model_uses_the_users_default(
+    session, alice, monkeypatch
+):
+    run, _step, job = await _make_job(session, alice)
+    assert run.model is None
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _user, model in asked] == [None]

@@ -44,6 +44,8 @@ class CampaignDriverDeps:
     get_session: Callable[[], AsyncSession | None]
     get_planner: PlannerForRun
     emit_progress: Callable[[str], None] = _noop
+    model: str | None = None
+    """ The launching agent's resolved `provider:name`, recorded on each run it starts. """
 
 
 def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
@@ -94,6 +96,7 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             domain=domain,
             planner_skill=planner_skill,
             title=title,
+            model=deps.model,
         )
         return (
             f"Started campaign. run_id={run.id} status={run.status}. "

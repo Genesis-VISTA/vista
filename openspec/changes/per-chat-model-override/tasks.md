@@ -11,8 +11,8 @@
 
 ## 3. Work launched from a chat
 
-- [ ] 3.1 Add optional `chat_session_id` to the report and skill draft request bodies (`api/reports.py`, `api/skills.py`); the services look up the chat (scoped to user and project) and pass its model to `generate_report_draft` / `generate_skill_draft`; verify in `backend/tests/test_reports.py` and `test_skill_authoring.py` that an overridden chat's draft is built on its model and a missing or foreign chat id is a 404
-- [ ] 3.2 Add nullable `model` to `CampaignRunBase`, record the launching agent's resolved model id in `services/campaign.create_campaign_run`, and pass `model=run.model` when the monitor rebuilds a planner (`agents/campaign/wiring.py`); verify in `backend/tests/test_campaign_monitor.py` that a run launched on B is rebuilt on B after the chat moves to C, and that a run with null `model` still uses the user's default
+- [x] 3.1 Add optional `chat_session_id` to the report and skill draft request bodies (`api/reports.py`, `api/skills.py`); the services look up the chat (scoped to user and project) and pass its model to `generate_report_draft` / `generate_skill_draft`; verify in `backend/tests/test_reports.py` and `test_skill_authoring.py` that an overridden chat's draft is built on its model and a missing or foreign chat id is a 404
+- [x] 3.2 Add nullable `model` to `CampaignRunBase`, record the launching agent's resolved model id in `services/campaign.create_campaign_run`, and pass `model=run.model` when the monitor rebuilds a planner (`agents/campaign/wiring.py`); verify in `backend/tests/test_campaign_monitor.py` that a run launched on B is rebuilt on B after the chat moves to C, and that a run with null `model` still uses the user's default
 
 ## 4. Per-role debate models in the backend
 

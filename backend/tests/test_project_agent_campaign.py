@@ -75,3 +75,20 @@ def test_campaign_settings_default_off():
     fresh = CampaignSettings()
     assert fresh.monitor_enabled is False
     assert fresh.monitor_interval == 300.0
+
+
+def test_driver_deps_carry_the_resolved_model():
+    """What the launching agent resolved, default or the chat's own, is recorded on its runs."""
+    project = ProjectPublic(id=uuid.uuid4(), name="campaign-model")
+    user = UserPublicWithConfig(
+        id=uuid.uuid4(),
+        email="x@ornl.gov",
+        inference_provider="mag",
+        inference_model="openai:default-model",
+    )
+
+    default = ProjectAgent(project, user, uuid.uuid4())
+    assert default._campaign_driver_deps().model == "openai:default-model"
+
+    own = ProjectAgent(project, user, uuid.uuid4(), "openai:chat-model")
+    assert own._campaign_driver_deps().model == "openai:chat-model"

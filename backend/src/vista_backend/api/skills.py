@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Form, UploadFile
@@ -53,6 +54,8 @@ class SkillGenerateRequest(BaseModel):
 
     message_history: list[ModelMessage] = Field(default_factory=list)
     hint: str | None = None
+    chat_session_id: uuid.UUID | None = None
+    """ The chat the draft is from; its own model, if it has one, writes the draft. """
 
 
 class SkillImportRequest(BaseModel):
@@ -146,12 +149,20 @@ async def create_skill(
 
 
 @router.post("/skills/generate")
-async def generate_skill(body: SkillGenerateRequest, user: UserDep) -> SkillDraft:
+async def generate_skill(
+    body: SkillGenerateRequest, session: SessionDep, user: UserDep
+) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation. Does NOT persist anything — the
     client edits the draft in a form and then submits `POST /skills` to save.
     """
-    return await skills_service.generate_draft(body.message_history, body.hint, user)
+    return await skills_service.generate_draft(
+        body.message_history,
+        body.hint,
+        user,
+        session=session,
+        chat_session_id=body.chat_session_id,
+    )
 
 
 @router.post("/skills/import", status_code=201)

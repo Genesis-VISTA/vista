@@ -1087,6 +1087,8 @@ class CampaignRunBase(SQLModel):
             sa_column=Column(String, nullable=False, default="gathering"),
         ),
     ]
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """ The `provider:name` model the launching agent resolved, so a rebuild in the background uses it. Null on older runs: the user's default. """
 
 
 class CampaignRunPublic(CampaignRunBase):
