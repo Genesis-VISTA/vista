@@ -8,6 +8,7 @@ disk, that an absent key is a named condition rather than a traceback, and
 that a change takes effect without a restart.
 """
 
+import json
 import sqlite3
 import uuid
 from pathlib import Path
@@ -23,9 +24,11 @@ from vista_backend.agents.inference import (
     PROVIDER_PRESETS,
     MissingInferenceCredential,
     MissingInferenceModel,
+    RUN_FAILURE_MAX_CHARS,
     SETTINGS_LOCATION,
     build_inference_model,
     build_model_for,
+    describe_run_failure,
     require_inference_credential,
     resolve_inference_target,
 )
@@ -661,9 +664,9 @@ class TestHttpSurface:
 async def test_rejected_credential_is_reported_not_a_broken_stream(session):
     """
     A typo'd key is the likeliest first-run failure, and it can only be
-    discovered by asking the provider — after the response has started. It has
-    to arrive as a message naming the setting, on the same path VISTAGuard's
-    refusal uses, rather than as a 500 or a truncated stream.
+    discovered by asking the provider — after the response has started. The
+    turn has to end failed, with a reason naming the setting, rather than as a
+    500, a truncated stream, or an empty success.
     """
     from pydantic_ai.exceptions import ModelHTTPError
 
@@ -705,11 +708,12 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
 
     assert response.status_code == 200, response.text
     events = parse_sse(response.text)
-    kinds = [name for name, _ in events]
-    assert "agent_run_result" in kinds, kinds
-    body = response.text
-    assert SETTINGS_LOCATION in body
-    assert rejected_credential_detail("claude-sonnet")[:40] in body
+    name, data = events[-1]
+    assert name == "run_finished", [n for n, _ in events]
+    finished = json.loads(data)
+    assert finished["state"] == "failed"
+    assert finished["error"] == rejected_credential_detail("claude-sonnet")
+    assert SETTINGS_LOCATION in finished["error"]
 
 
 @pytest.mark.anyio
@@ -734,6 +738,79 @@ async def test_other_provider_errors_still_propagate(session):
             async for _ in agent.run_stream(user_prompt="hi"):
                 pass
     assert excinfo.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Why a turn failed, in words for the researcher
+# ---------------------------------------------------------------------------
+
+
+class TestDescribeRunFailure:
+    """
+    `describe_run_failure` is what a failed turn's note says after
+    "Agent run failed:". It must name what went wrong without dumping the
+    provider's raw response into the conversation.
+    """
+
+    def test_a_provider_error_names_status_model_and_its_message(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=404,
+            model_name="claude-sonet",
+            body={
+                "error": {
+                    "message": "The model `claude-sonet` does not exist.",
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                }
+            },
+        )
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 404 for model 'claude-sonet': "
+            "The model `claude-sonet` does not exist."
+        )
+
+    def test_a_provider_error_without_a_message_stops_after_the_model(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(status_code=502, model_name="claude-sonnet", body=None)
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 502 for model 'claude-sonnet'"
+        )
+
+    def test_a_named_condition_says_its_own_detail(self):
+        exc = MissingInferenceModel("custom")
+
+        assert describe_run_failure(exc) == exc.detail
+
+    def test_a_plain_exception_is_its_message(self):
+        assert describe_run_failure(RuntimeError("MCP server went away")) == (
+            "MCP server went away"
+        )
+
+    def test_an_exception_with_no_message_is_its_type(self):
+        assert describe_run_failure(TimeoutError()) == "TimeoutError"
+
+    def test_a_group_of_one_is_described_by_that_one(self):
+        group = ExceptionGroup("unhandled errors in a TaskGroup", [ValueError("bad")])
+
+        assert describe_run_failure(group) == "bad"
+
+    def test_an_over_long_body_is_cut(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=500, model_name="claude-sonnet", body="<html>" + "x" * 5000
+        )
+
+        reason = describe_run_failure(exc)
+        assert reason.startswith(
+            "The provider answered 500 for model 'claude-sonnet': "
+        )
+        assert len(reason) <= RUN_FAILURE_MAX_CHARS
 
 
 class TestCitationCredentials:

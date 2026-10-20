@@ -247,6 +247,26 @@ def rejected_credential_detail(model_name: str | None) -> str:
     )
 
 
+# How long a failure reason may be before it is cut, so a provider that
+# answers with a page of HTML cannot flood the conversation's note.
+RUN_FAILURE_MAX_CHARS = 500
+
+
+def describe_run_failure(exc: BaseException) -> str:
+    """
+    The reason a turn failed, in words for the researcher (design decision 2).
+
+    - An exception with a researcher-facing `detail` returns that `detail`.
+    - `ModelHTTPError` names the status, the model and the provider's own
+      message where its body has one.
+    - An exception group holding exactly one exception is described by it.
+    - Anything else is `str(exc)`, or the type name when that is empty.
+
+    Capped at `RUN_FAILURE_MAX_CHARS`.
+    """
+    raise NotImplementedError("report-run-errors-in-chat task 1.1")
+
+
 class MissingInferenceCredential(Exception):
     """
     No inference credential is configured, from any source.
@@ -285,6 +305,22 @@ class MissingInferenceModel(Exception):
             f"No model is chosen for {name}, which has no default. Choose one "
             "from the model picker at the top of the chat."
         )
+        super().__init__(self.detail)
+
+
+class RejectedInferenceCredential(Exception):
+    """
+    The provider refused the configured credential (401/403).
+
+    Raised mid-run, once the provider has been asked, so in a conversation it
+    fails the turn and its `detail` becomes the turn's reason. The same
+    handler as `MissingInferenceCredential` answers it on the paths that call
+    the agent without a conversation.
+    """
+
+    def __init__(self, model_name: str | None) -> None:
+        self.model_name = model_name
+        self.detail = rejected_credential_detail(model_name)
         super().__init__(self.detail)
 
 

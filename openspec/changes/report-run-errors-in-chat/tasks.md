@@ -10,7 +10,7 @@ ones with `./scripts/ci-local.sh ui test`.
   cap). Verify with unit tests in `backend/tests/test_inference_credentials.py` covering a 404
   with an OpenAI-shaped body, a body with no message, a plain exception, an empty-message
   exception, a one-leaf `ExceptionGroup`, and an over-long body.
-- [ ] 1.2 Add `RejectedInferenceCredential(model_name)` to `agents/inference.py`, with `detail`
+- [x] 1.2 Add `RejectedInferenceCredential(model_name)` to `agents/inference.py`, with `detail`
   from `rejected_credential_detail`. In `agents/agents.py` raise it on a 401/403
   `ModelHTTPError` instead of yielding the log line and empty result. Verify by rewriting
   `test_rejected_credential_is_reported_not_a_broken_stream` to assert the stream ends with

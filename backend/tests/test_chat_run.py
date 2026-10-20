@@ -13,6 +13,7 @@ from contextlib import ExitStack, asynccontextmanager
 
 import mcp.types
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
@@ -23,7 +24,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import call, make_project, make_user, say, seed_project, seed_user
-from harness import step_model
+from harness import scripted_model, step_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
@@ -191,6 +192,43 @@ async def test_a_finished_run_saves_its_outcome_without_anyone_watching(env):
         saved.message_history
     )
     assert _texts(history) == ["earlier answer", "hello there"]
+
+
+async def test_a_failed_run_reports_why(env):
+    """
+    The reason a turn failed reaches the conversation on `run_finished`, both
+    live and in the saved events a page replays when the conversation is
+    reopened. The ERROR log line stays as it was.
+    """
+    row, key = await env.conversation([])
+
+    def unknown_model(messages, info):
+        raise ModelHTTPError(
+            status_code=404,
+            model_name="claude-sonet",
+            body={"error": {"message": "The model `claude-sonet` does not exist."}},
+        )
+
+    env.stack.enter_context(
+        env.agents[row.id].agent.override(model=scripted_model(unknown_model))
+    )
+
+    run = await env.start(row, key)
+    seen = [event async for event in run.subscribe()]
+    await run.wait()
+
+    finished = json.loads(seen[-1].data)
+    assert seen[-1].kind == "run_finished"
+    assert finished["state"] == "failed"
+    for words in ("404", "claude-sonet", "does not exist"):
+        assert words in finished["error"], finished["error"]
+    assert any(
+        e.kind == "log" and json.loads(e.data)["level"] == "ERROR" for e in seen
+    ), "the ERROR log line is kept"
+
+    saved = await env.row(row.id)
+    assert saved.run_state == "failed"
+    assert (saved.run_events or [])[-1] == {"event": "run_finished", "data": finished}
 
 
 async def test_saved_events_are_compacted_and_hold_no_prompts_or_deltas(env):
