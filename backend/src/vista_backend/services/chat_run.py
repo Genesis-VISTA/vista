@@ -31,6 +31,7 @@ from ..agents.agents import (
     ProjectAgentResultEvent,
     RunCapture,
 )
+from ..agents.inference import describe_run_failure
 from ..db.db import get_engine
 from ..db.schemas import ChatSessionTable
 from ..utils.misc import now_iso
@@ -250,6 +251,7 @@ class ChatRunRegistry:
         run._started.set()
         history: list[ModelMessage] | None = None
         reraise: BaseException | None = None
+        error_msg: str | None = None
         try:
             async with project_agent_pool.get(run.agent_key) as agent:
                 async with session_factory() as db:
@@ -305,6 +307,7 @@ class ChatRunRegistry:
                     }
                 ),
             )
+            error_msg = describe_run_failure(exc)
 
         if history is None:
             history = trim_partial_history(
@@ -317,7 +320,10 @@ class ChatRunRegistry:
         # left the registry. A page that acknowledges the run the moment it sees
         # this event then finds the row final, and a fetch of the conversation
         # no longer reports a run in progress.
-        finished_data = json.dumps({"event_kind": "run_finished", "state": run.state})
+        finished = {"event_kind": "run_finished", "state": run.state}
+        if error_msg:
+            finished["error"] = error_msg
+        finished_data = json.dumps(finished)
         try:
             await asyncio.shield(
                 _write_row(

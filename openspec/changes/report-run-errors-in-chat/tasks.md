@@ -15,7 +15,7 @@ ones with `./scripts/ci-local.sh ui test`.
   `test_rejected_credential_is_reported_not_a_broken_stream` to assert the stream ends with
   `run_finished` `state: "failed"` whose `error` is the rejected-credential message, and that
   `test_other_provider_errors_still_propagate` still passes.
-- [ ] 1.3 In `services/chat_run.py`, set `error: describe_run_failure(exc)` on `run_finished`
+- [x] 1.3 In `services/chat_run.py`, set `error: describe_run_failure(exc)` on `run_finished`
   when the run fails, keeping the existing ERROR `log` event. Verify with a new
   `test_a_failed_run_reports_why` in `backend/tests/test_chat_run.py`: an agent that raises
   ends with `run_finished` carrying the reason both to a live subscriber and in the saved row's
