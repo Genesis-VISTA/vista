@@ -81,6 +81,11 @@ class GlobusSessionExpired(ToolError):
     timeout that refreshing a token does NOT reset, and Frontier queue waits
     routinely exceed that. So this is an expected outcome of a long job, not an
     exceptional one, and it must arrive saying what to do about it.
+
+    Globus signals a lapse by asking for a new session (a GARE), under various
+    statuses: `502 ExternalError.DirListingFailed.LoginFailed` from Transfer,
+    `403 InsufficientSession` over HTTPS; a 401 means the same. Either is
+    recognised before any status rule.
     """
 
 
@@ -89,8 +94,9 @@ class GlobusFileNotFound(ToolError):
 
     Distinct from `GlobusSessionExpired` on purpose, and distinguishable at the
     wire too: a missing file answers `404 text/plain`, an unusable credential
-    answers `401 application/json`. "No outputs yet" is the correct reading of
-    this one and only this one.
+    answers with a GARE (`application/json`) under another status: `403
+    InsufficientSession` over HTTPS, `502` from Transfer, or `401`. "No
+    outputs yet" is the correct reading of this one and only this one.
     """
 
 
@@ -222,9 +228,11 @@ class GlobusClient:
     def _raise_for_transfer_error(self, error: globus_sdk.TransferAPIError) -> None:
         """Re-raise a Transfer refusal as a session expiry when that is what it is.
 
-        Transfer reports a lapsed High Assurance session as `401
-        AuthenticationFailed`, and a missing consent as `ConsentRequired`; both
-        are fixed by connecting Globus again. Anything else is left alone for
+        Transfer reports a lapsed High Assurance session as `502
+        ExternalError.DirListingFailed.LoginFailed` with a GARE body (checked
+        first, whatever the status); a `401`, an `AuthenticationFailed` or a
+        missing consent (`ConsentRequired`) mean the same. All are fixed by
+        connecting Globus again. Anything else is left alone for
         the caller to handle, which matters because `operation_mkdir` treats
         "already exists" as success.
         """
@@ -292,8 +300,10 @@ class GlobusClient:
     def _check(self, response: httpx.Response, *, remote_path: str, body: str) -> None:
         """Turn a non-2xx HTTPS answer into the right exception type.
 
-        The two that callers branch on are separated by status code alone, so
-        this never inspects a message to decide which happened.
+        A GARE body (whatever the status) or a 401 is an expired session; a 404
+        is `GlobusFileNotFound`; anything else is a generic refusal. It decides
+        from the status and from whether the body is a GARE, never from the
+        wording of a message.
         """
         if response.is_success:
             return
@@ -314,6 +324,10 @@ class GlobusClient:
         The ONLY way to learn it. A plain `GET` on these collections returns no
         `Content-Length`, and a ranged `206` reports its total as `*`, so every
         caller that needs to know how much there is has to come through here.
+
+        A `HEAD` carries no body, so on a 401 or 403 it follows up with a
+        one-byte `GET` to read the GARE; the live lapse is `403
+        InsufficientSession`.
         """
         url = await self._url(collection_id, remote_path)
         headers = await self._auth_header()
@@ -323,11 +337,11 @@ class GlobusClient:
             if response.status_code in (401, 403):
                 # A lapsed session answers 403 InsufficientSession as well as 401.
                 # A HEAD has no body by definition, and the body is where the
-                # GARE `session_message` lives -- the one sentence that names
-                # the identity domains this collection accepts. This is the
-                # first HTTPS request of every status poll, so it is where a
-                # lapsed session is normally caught; losing the message here
-                # would lose it almost always. One byte, on the failure path.
+                # GARE lives, and `_required_login` builds from it the one
+                # sentence that names the login. This is the first HTTPS
+                # request of every status poll, so it is where a lapsed
+                # session is normally caught; losing the message here would
+                # lose it almost always. One byte, on the failure path.
                 body = (await client.get(url, headers={**headers, "Range": "bytes=0-0"})).text
             self._check(response, remote_path=remote_path, body=body)
         length = response.headers.get("Content-Length")

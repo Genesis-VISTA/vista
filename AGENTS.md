@@ -199,8 +199,9 @@ Both OLCF collections are High Assurance with a 3-day authentication timeout tha
 token does **not** reset, and a Frontier queue wait routinely exceeds it. So an expired session
 is an expected outcome, not an exceptional one, and it must never be reported as an empty output
 directory — that confusion is the bug this transport exists to remove. `GlobusSessionExpired`
-(401, from either surface) and `GlobusFileNotFound` (404) are separate types for exactly that
-reason; branch on them rather than on a message.
+(Globus asking for a new session, a GARE, under whatever status: `502` from Transfer,
+`403 InsufficientSession` over HTTPS) and `GlobusFileNotFound` (404) are separate types for
+exactly that reason; branch on them rather than on a message.
 
 The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,

@@ -18,8 +18,8 @@
 
 ## 4. Docs
 
-- [ ] 4.1 Correct every claim that a lapsed session answers 401: the Globus section of `AGENTS.md`, and the `GlobusSessionExpired`, `GlobusFileNotFound`, `_check` and `stat` docstrings in `lib/globus.py`. Say instead that Globus asks for a new session (a GARE) under various statuses: `502` from Transfer, `403 InsufficientSession` over HTTPS. Verify by grepping for "401" in both files and reviewing each hit
-- [ ] 4.2 Add a "When the Globus card isn't Ready" subsection under `### Globus` in `docs/hpc.md`. For Globus not connected, Globus session expired (lapsed login vs a saved connection no longer accepted) and Couldn't verify, give the cause, what to do, and where the "Globus check failed" line is in `logs/backend.log`. Verify by reading it against the card's actual messages from group 1
+- [x] 4.1 Correct every claim that a lapsed session answers 401: the Globus section of `AGENTS.md`, and the `GlobusSessionExpired`, `GlobusFileNotFound`, `_check` and `stat` docstrings in `lib/globus.py`. Say instead that Globus asks for a new session (a GARE) under various statuses: `502` from Transfer, `403 InsufficientSession` over HTTPS. Verify by grepping for "401" in both files and reviewing each hit
+- [x] 4.2 Add a "When the Globus card isn't Ready" subsection under `### Globus` in `docs/hpc.md`. For Globus not connected, Globus session expired (lapsed login vs a saved connection no longer accepted) and Couldn't verify, give the cause, what to do, and where the "Globus check failed" line is in `logs/backend.log`. Verify by reading it against the card's actual messages from group 1
 
 ## 5. Live verification
 
