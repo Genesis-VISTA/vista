@@ -3655,7 +3655,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=48.0.0" },
     { name = "fastapi", specifier = ">=0.136.3" },
     { name = "flowcept", specifier = ">=0.10.6" },
-    { name = "globus-sdk", specifier = ">=3.40" },
+    { name = "globus-sdk", specifier = ">=4.7" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "numpy", specifier = ">=1.26,<3" },
