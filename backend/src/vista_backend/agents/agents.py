@@ -391,10 +391,14 @@ class ProjectAgent:
         project: ProjectPublic,
         user: UserPublicWithConfig,
         session_id: uuid.UUID | None = None,
+        model_override: str | None = None,
     ):
         self.project = project
         self.user = user
         self.session_id = session_id
+        # This chat's own `provider:name` model, loaded when the agent is
+        # pooled; changing it evicts the agent (see `update_chat_session`).
+        self.model_override = model_override
         # Id per project agent. A new ProjectAgent with the same input Project x User will have the
         # same id
         self.id = f"{project.id}-{user.id}"
@@ -518,7 +522,7 @@ class ProjectAgent:
         # -- see `agents.inference.resolve_inference_target`. Shared rather
         # than rebuilt per sub-agent so all four talk to the same endpoint
         # with the same credential, and so a single HTTP client is reused.
-        model = build_model_for(self.user)
+        model = build_model_for(self.user, self.model_override)
         if settings.palisade.quarantine_enabled:
             quarantine_agent = build_quarantine_agent(model)
             intent_extraction_agent = build_intent_extraction_agent(model)
@@ -636,7 +640,7 @@ class ProjectAgent:
         # here otherwise, so a caller that forgets cannot fall back to
         # `Settings` alone -- which on a single-user install cannot see the key
         # from the researcher's settings row.
-        campaign_model = model or build_model_for(self.user)
+        campaign_model = model or build_model_for(self.user, self.model_override)
 
         return CampaignDriverDeps(
             project_id=self.project.id,
@@ -1044,7 +1048,7 @@ class ProjectAgent:
         # stays current because `services.user.update_user` evicts this user's
         # agents after every commit, which is also what lets a key pasted into
         # the settings modal take effect without a restart.
-        require_inference_credential(self.user)
+        require_inference_credential(self.user, self.model_override)
 
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 

@@ -990,6 +990,11 @@ class ChatSessionBase(SQLModel):
         list[dict[str, Any]] | None,
         Field(default=None, sa_column=Column(JSON, nullable=True)),
     ]
+    inference_model: A[
+        str | None,
+        Field(default=None, sa_column=Column(String, nullable=True)),
+    ]
+    """ This chat's own `provider:name` model; null follows the researcher's default. """
 
 
 class ChatSessionCreate(BaseModel):
@@ -1004,6 +1009,8 @@ class ChatSessionUpdate(BaseModel):
     latest_result: dict[str, Any] | None = None
     ack_run: bool = False
     """ The researcher has seen the last run: clear its unseen flag and its stored events. """
+    inference_model: str | None = None
+    """ This chat's model. An explicit null clears it (follow the default); absent leaves it untouched. """
 
 
 class ChatSessionSummary(BaseModel):

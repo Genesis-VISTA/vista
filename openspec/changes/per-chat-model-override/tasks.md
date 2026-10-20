@@ -4,10 +4,10 @@
 
 ## 2. Per-chat model in the backend
 
-- [ ] 2.1 Add nullable `inference_model` to `ChatSessionBase`, expose it on `ChatSessionPublic`, and accept it on `ChatSessionUpdate` with `model_fields_set` telling explicit null (clear) from absent; verify in `backend/tests/test_chat_sessions.py` that set, clear and untouched round-trip, and that an existing DB gains the column via `init_db`
-- [ ] 2.2 Add a `chat_session_id` filter to `invalidate_agents` (`services/project_agent.py`) and call it from the chat-session update when `inference_model` is in the update; verify a test evicts only that chat's pool entry and leaves the user's other chats pooled
-- [ ] 2.3 Load the chat session's `inference_model` in `_build_project_agent` and use it as `ProjectAgent`'s model override in `_build_agent`, `_campaign_driver_deps` and the `require_inference_credential` call in `stream()`, and in `api/agent.py`'s up-front check; verify in `backend/tests/test_project_agent_turn.py` with a `FunctionModel`-backed pair of chats that the overridden chat's turn uses B while the other uses the default A, and that a default change (user update) moves only the un-overridden chat
-- [ ] 2.4 Verify that a turn already running when its chat's model changes finishes on the old model (pool eviction waits for holders); one test in `backend/tests/test_project_agent_session_scope.py`
+- [x] 2.1 Add nullable `inference_model` to `ChatSessionBase`, expose it on `ChatSessionPublic`, and accept it on `ChatSessionUpdate` with `model_fields_set` telling explicit null (clear) from absent; verify in `backend/tests/test_chat_sessions.py` that set, clear and untouched round-trip, and that an existing DB gains the column via `init_db`
+- [x] 2.2 Add a `chat_session_id` filter to `invalidate_agents` (`services/project_agent.py`) and call it from the chat-session update when `inference_model` is in the update; verify a test evicts only that chat's pool entry and leaves the user's other chats pooled
+- [x] 2.3 Load the chat session's `inference_model` in `_build_project_agent` and use it as `ProjectAgent`'s model override in `_build_agent`, `_campaign_driver_deps` and the `require_inference_credential` call in `stream()`, and in `api/agent.py`'s up-front check; verify in `backend/tests/test_project_agent_turn.py` with a `FunctionModel`-backed pair of chats that the overridden chat's turn uses B while the other uses the default A, and that a default change (user update) moves only the un-overridden chat
+- [x] 2.4 Verify that a turn already running when its chat's model changes finishes on the old model (pool eviction waits for holders); one test in `backend/tests/test_project_agent_session_scope.py`
 
 ## 3. Work launched from a chat
 

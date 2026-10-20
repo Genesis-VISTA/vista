@@ -79,13 +79,23 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
+    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project = ProjectPublic.model_validate(project_row)
+    chat_row = (
+        await chat_session_service.get_chat_session_optional(
+            session,
+            project_id=project.id,
+            user_id=user.id,
+            chat_session_id=body.chat_session_id,
+        )
+        if body.chat_session_id
+        else None
+    )
     # Checked before either branch: in the streaming case the response status
     # is committed the moment `EventSourceResponse` is returned, so a raise
     # from inside the generator could only surface as a truncated stream.
-    require_inference_credential(user)
-
-    project_row = await project_service.get_project_by_name(session, project_name, user)
-    project = ProjectPublic.model_validate(project_row)
+    # The chat's own model counts, so it can send on a provider with no default.
+    require_inference_credential(user, chat_row.inference_model if chat_row else None)
     agent_key = await get_project_agent_key(
         session,
         project_id=project.id,

@@ -101,6 +101,7 @@ async def create_chat_session(
         run_state="idle",
         run_unseen=False,
         run_events=None,
+        inference_model=None,
         created_at=now,
         updated_at=now,
     )
@@ -163,6 +164,12 @@ async def update_chat_session(
         row.run_state = "idle"
     if updates.title is not None and updates.title.strip():
         row.title = updates.title.strip()
+    if "inference_model" in updates.model_fields_set:
+        row.inference_model = (updates.inference_model or "").strip() or None
+        from .project_agent import invalidate_agents  # import cycle
+
+        # Only this chat's pooled agent holds the old model.
+        invalidate_agents(session, chat_session_id=row.id)
     row.updated_at = now_iso()
     session.add(row)
     await session.flush()
