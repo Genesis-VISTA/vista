@@ -49,7 +49,10 @@ ones with `./scripts/ci-local.sh ui test`.
 - [x] 3.3 Use the helper in `ui/app/page.tsx`'s send: on `run_busy` keep today's attach; on any
   other refusal drop the unsent bubble, restore the text into the input, and add the message as
   a note. Verify with `./scripts/ci-local.sh ui lint` and the UI tests.
-- [ ] 3.4 Manual check in the running app (`./launch.sh logs`, not in CI): with the key cleared,
+- [x] 3.4 Manual check in the running app (`./launch.sh logs`, not in CI): with the key cleared,
   Send shows the "No inference API key…" note and the text is back in the input; with a wrong
   model chosen through Custom, the turn ends "Agent run failed: The provider answered 404…", and
-  reopening the conversation shows the same note.
+  reopening the conversation shows the same note. The check found the notes' pill shape cut
+  into reasons that wrap, so `.chat-bubble.system` in `ui/app/globals.css` now has card corners.
+  To clear an i2 key for this check, also leave `OPENAI_API_KEY` out of `.env`: i2 falls back
+  to it.
