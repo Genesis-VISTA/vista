@@ -781,6 +781,52 @@ class TestDescribeRunFailure:
             "The provider answered 502 for model 'claude-sonnet'"
         )
 
+    def test_a_string_error_is_not_mistaken_for_an_error_object(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=400,
+            model_name="claude-sonnet",
+            body={"error": "invalid message format"},
+        )
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 400 for model 'claude-sonnet'"
+        )
+
+    def test_a_body_with_no_known_message_is_not_dumped(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=404, model_name="claude-sonnet", body={"error": {"code": 404}}
+        )
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 404 for model 'claude-sonnet'"
+        )
+
+    def test_a_message_that_is_not_a_string_is_ignored(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=500, model_name="claude-sonnet", body={"message": None}
+        )
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 500 for model 'claude-sonnet'"
+        )
+
+    def test_a_body_that_is_neither_text_nor_an_object_is_not_dumped(self):
+        from pydantic_ai.exceptions import ModelHTTPError
+
+        exc = ModelHTTPError(
+            status_code=502, model_name="claude-sonnet", body=["upstream", "reset"]
+        )
+
+        assert describe_run_failure(exc) == (
+            "The provider answered 502 for model 'claude-sonnet'"
+        )
+
     def test_a_named_condition_says_its_own_detail(self):
         exc = MissingInferenceModel("custom")
 

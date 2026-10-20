@@ -4,7 +4,7 @@ ones with `./scripts/ci-local.sh ui test`.
 
 ## 1. Backend: a failed turn carries its reason
 
-- [ ] 1.1 Add `describe_run_failure(exc)` to `backend/src/vista_backend/agents/inference.py`
+- [x] 1.1 Add `describe_run_failure(exc)` to `backend/src/vista_backend/agents/inference.py`
   (design decision 2: `detail` passthrough, `ModelHTTPError` summary from the OpenAI-shaped,
   `message`, `detail` or string body, `str(exc)` fallback, length cap). Verify with unit tests in `backend/tests/test_inference_credentials.py` covering a 404
   with an OpenAI-shaped body, a body with no message, a plain exception, an empty-message

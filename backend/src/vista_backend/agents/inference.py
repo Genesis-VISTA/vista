@@ -33,6 +33,7 @@ from pydantic_ai.models import Model, infer_model, parse_model_id
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.exceptions import ModelHTTPError
 
 from ..config import settings
 
@@ -252,19 +253,51 @@ def rejected_credential_detail(model_name: str | None) -> str:
 RUN_FAILURE_MAX_CHARS = 500
 
 
-def describe_run_failure(exc: BaseException) -> str:
+def describe_run_failure(exc: Exception) -> str:
     """
     The reason a turn failed, in words for the researcher (design decision 2).
 
     - An exception with a researcher-facing `detail` returns that `detail`.
     - `ModelHTTPError` names the status, the model and the provider's own
       message where its body has one.
-    - An exception group holding exactly one exception is described by it.
     - Anything else is `str(exc)`, or the type name when that is empty.
 
     Capped at `RUN_FAILURE_MAX_CHARS`.
     """
-    raise NotImplementedError("report-run-errors-in-chat task 1.1")
+    if isinstance(
+        exc,
+        (
+            MissingInferenceCredential,
+            MissingInferenceModel,
+            RejectedInferenceCredential,
+        ),
+    ):
+        ret = exc.detail
+    elif isinstance(exc, ModelHTTPError):
+        ret = f"The provider answered {exc.status_code} for model '{exc.model_name}'"
+        if exc.body:
+            add = None
+            if isinstance(exc.body, dict):
+                if (
+                    "error" in exc.body
+                    and isinstance(exc.body["error"], dict)
+                    and "message" in exc.body["error"]
+                ):
+                    add = exc.body["error"]["message"]
+                elif "message" in exc.body:
+                    add = exc.body["message"]
+                elif "detail" in exc.body:
+                    add = exc.body["detail"]
+            elif isinstance(exc.body, str):
+                add = exc.body
+            if add:
+                ret += f": {add}"
+    else:
+        ret = str(exc)
+        if len(ret) == 0:
+            ret = type(exc).__name__
+
+    return ret[:RUN_FAILURE_MAX_CHARS]
 
 
 class MissingInferenceCredential(Exception):
