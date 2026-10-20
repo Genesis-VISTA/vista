@@ -1269,9 +1269,24 @@ async def test_a_finished_debate_reports_no_activity(
     assert body["run"]["activity_since"] is None
 
 
+@pytest.fixture
+def inference_key(monkeypatch):
+    """
+    An inference key from `Settings`, so a role's own model passes the guard.
+
+    A role model is an `openai:` name on the configured endpoint, so without a
+    key it is refused with a 409 -- which is the guard's job, tested elsewhere,
+    and not what these tests are about. Supplied here rather than inherited:
+    a developer's own `.env` above the checkout would otherwise provide one.
+    """
+    from pydantic import SecretStr
+
+    monkeypatch.setattr(settings, "openai_api_key", SecretStr("test-key"))
+
+
 @pytest.mark.anyio
 async def test_opening_a_debate_records_each_roles_model(
-    forum_config, app_client, session, alice, monkeypatch
+    forum_config, app_client, session, alice, monkeypatch, inference_key
 ):
     from vista_backend.api import debate as debate_api
 
@@ -1315,7 +1330,7 @@ async def test_opening_a_debate_rejects_an_unknown_role(
 
 @pytest.mark.anyio
 async def test_continue_changes_only_the_roles_it_names(
-    forum_config, app_client, session, alice, monkeypatch
+    forum_config, app_client, session, alice, monkeypatch, inference_key
 ):
     from vista_backend.api import debate as debate_api
 
