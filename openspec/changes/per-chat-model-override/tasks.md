@@ -16,10 +16,10 @@
 
 ## 4. Per-role debate models in the backend
 
-- [ ] 4.1 Add nullable `model` to `DebateParticipantBase` and `DebatePostBase` and expose both on their public schemas; verify in `backend/tests/test_forum_db_columns.py` that an existing DB gains both columns
-- [ ] 4.2 Add `models: dict[DebateRole, str | None]` to `DebateCreate` and `ContinueDebate`; `_add_roster` records each role's choice, and continue updates the rows it is given; verify in `backend/tests/test_debate_api.py` that open records the choices (null for omitted roles) and that continue with only the Reviewer changed leaves the other rows alone
-- [ ] 4.3 Add `models_for(session, run)` in `agents/forum/wiring.py` and a `models=` argument to `build_orchestrator` that builds `RoleAgents(models=…)` through `build_model_for(opener, model=…)`; use it in `run_debate_task` and `continue_debate_task`; verify in `backend/tests/test_debate_inference.py` that a debate opened with Referee B runs its Referee on B and the others on the default, and that continuing without changes keeps B
-- [ ] 4.4 Record each role post's resolved model name on `debate_post.model`, next to `record_post_tools`; verify in `backend/tests/test_debate_driver.py` that posts from a continued debate whose Reviewer moved from A to C record A for the earlier rounds and C for the new ones
+- [x] 4.1 Add nullable `model` to `DebateParticipantBase` and `DebatePostBase` and expose both on their public schemas; verify in `backend/tests/test_forum_db_columns.py` that an existing DB gains both columns
+- [x] 4.2 Add `models: dict[DebateRole, str | None]` to `DebateCreate` and `ContinueDebate`; `_add_roster` records each role's choice, and continue updates the rows it is given; verify in `backend/tests/test_debate_api.py` that open records the choices (null for omitted roles) and that continue with only the Reviewer changed leaves the other rows alone
+- [x] 4.3 Add `models_for(session, run)` in `agents/forum/wiring.py` and a `models=` argument to `build_orchestrator` that builds `RoleAgents(models=…)` through `build_model_for(opener, model=…)`; use it in `run_debate_task` and `continue_debate_task`; verify in `backend/tests/test_debate_inference.py` that a debate opened with Referee B runs its Referee on B and the others on the default, and that continuing without changes keeps B
+- [x] 4.4 Record each role post's resolved model name on `debate_post.model`, next to `record_post_tools`; verify in `backend/tests/test_debate_driver.py` that posts from a continued debate whose Reviewer moved from A to C record A for the earlier rounds and C for the new ones
 
 ## 5. UI: the chat picker
 

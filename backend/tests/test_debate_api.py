@@ -1267,3 +1267,102 @@ async def test_a_finished_debate_reports_no_activity(
     body = (await app_client.get(f"/projects/{project_name}/debates/{run_id}")).json()
     assert body["run"]["activity"] is None
     assert body["run"]["activity_since"] is None
+
+
+@pytest.mark.anyio
+async def test_opening_a_debate_records_each_roles_model(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    from vista_backend.api import debate as debate_api
+
+    async def fake_task(run_id):
+        return None
+
+    monkeypatch.setattr(debate_api, "run_debate_task", fake_task)
+
+    project = await _project(session, alice)
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates",
+        json={
+            "topic": "t",
+            "rounds": 1,
+            "models": {"referee": "openai:referee-b", "reviewer": "  "},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = await debate_service.list_participants(
+        session, run_id=uuid.UUID(resp.json()["id"])
+    )
+    assert {r.debate_role: r.model for r in rows} == {
+        "proposer": None,
+        "reviewer": None,  # blank is no choice
+        "referee": "openai:referee-b",
+    }
+
+
+@pytest.mark.anyio
+async def test_opening_a_debate_rejects_an_unknown_role(
+    forum_config, app_client, session, alice
+):
+    project = await _project(session, alice)
+    resp = await app_client.post(
+        f"/projects/{project.name}/debates",
+        json={"topic": "t", "models": {"judge": "openai:x"}},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_continue_changes_only_the_roles_it_names(
+    forum_config, app_client, session, alice, monkeypatch
+):
+    from vista_backend.api import debate as debate_api
+
+    async def fake_task(run_id, extra_rounds):
+        return None
+
+    monkeypatch.setattr(debate_api, "continue_debate_task", fake_task)
+
+    project = await _project(session, alice)
+    run, _, _ = await _run(session, alice, project)
+    run_id, project_name = run.id, project.name
+    for role, model in (("reviewer", None), ("referee", "openai:referee-b")):
+        await debate_service.add_participant(
+            session,
+            run_id=run_id,
+            participant=Participant(identity=f"vista-{role}-x", role=role),
+            debate_role=role,
+            model=model,
+        )
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+
+    async def models():
+        rows = await debate_service.list_participants(session, run_id=run_id)
+        return {r.debate_role: r.model for r in rows}
+
+    resp = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue",
+        json={"rounds": 1, "models": {"reviewer": "openai:reviewer-c"}},
+    )
+    assert resp.status_code == 200, resp.text
+    assert await models() == {
+        "proposer": None,
+        "reviewer": "openai:reviewer-c",
+        "referee": "openai:referee-b",
+    }
+
+    # Untouched form: nothing changes. An explicit null returns a role to the default.
+    await debate_service.set_status(session, run_id=run_id, status="converged")
+    await session.commit()
+    resp = await app_client.post(
+        f"/projects/{project_name}/debates/{run_id}/continue",
+        json={"rounds": 1, "models": {"referee": None}},
+    )
+    assert resp.status_code == 200, resp.text
+    assert await models() == {
+        "proposer": None,
+        "reviewer": "openai:reviewer-c",
+        "referee": None,
+    }

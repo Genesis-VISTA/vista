@@ -17,7 +17,8 @@ from vista_backend.db.db import _add_missing_columns
 from vista_backend.db import schemas  # noqa: F401  (registers the tables)
 
 NEW_COLUMNS = {
-    "debate_post": {"published", "on_remote"},
+    "debate_post": {"published", "on_remote", "model"},
+    "debate_participant": {"model"},
     "debate_run": {"thread_missing"},
 }
 

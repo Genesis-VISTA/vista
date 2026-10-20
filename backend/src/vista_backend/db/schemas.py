@@ -1340,6 +1340,8 @@ class DebateParticipantBase(SQLModel):
     identical on a thread and mean very different things — the second is a
     configuration problem, and without this there is no way to see it.
     """
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """ This role's own `provider:name` model; null follows the opener's default. """
 
 
 class DebateParticipantPublic(DebateParticipantBase):
@@ -1440,6 +1442,14 @@ class DebatePostBase(SQLModel):
     on an agent's post is meaningful — it says the claim rests on the model
     alone.
     """
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """
+    The `provider:name` model that wrote this post, as resolved at the time.
+
+    Null for human and peer posts and for posts from before this was recorded.
+    The resolved model rather than the role's choice, so it stays true after
+    the default moves or the role is changed for a continued debate.
+    """
 
 
 class DebatePostPublic(DebatePostBase):
@@ -1455,12 +1465,30 @@ class DebatePostTable(DebatePostBase, table=True):
     run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
 
 
+DebateRoleName = Literal["proposer", "reviewer", "referee"]
+""" The debate's roles; the same vocabulary as `agents.forum.roles.DebateRole`. """
+
+
+def clean_role_models(
+    models: dict[DebateRoleName, str | None],
+) -> dict[DebateRoleName, str | None]:
+    """A blank model is no choice: the role follows the default."""
+    return {role: (model or "").strip() or None for role, model in models.items()}
+
+
 class DebateCreate(BaseModel):
     """Fields a user supplies to open a debate (the project comes from the URL)."""
 
     topic: str
     framing: str | None = None
     rounds: int | None = None
+    models: dict[DebateRoleName, str | None] = {}
+    """ A model per role; a missing key or null means the opener's default. """
+
+    @field_validator("models")
+    @classmethod
+    def _clean_models(cls, models):
+        return clean_role_models(models)
 
 
 class DebateStatePublic(BaseModel):

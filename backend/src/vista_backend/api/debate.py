@@ -28,16 +28,24 @@ from ..agents.forum.project_forum import (
     forum_url_of,
     lab_enabled,
 )
-from ..agents.forum.wiring import continue_debate_task, opener_of, run_debate_task
+from ..agents.forum.debate import ROSTER
+from ..agents.forum.wiring import (
+    continue_debate_task,
+    models_for,
+    opener_of,
+    run_debate_task,
+)
 from ..agents.inference import require_inference_credential
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
     DebateCreate,
     DebateParticipantPublic,
     DebatePostPublic,
+    DebateRoleName,
     DebateRunPublic,
     DebateStatePublic,
     UserTable,
+    clean_role_models,
 )
 from ..services import debate as debate_service
 from ..services import project as project_service
@@ -283,13 +291,15 @@ async def open_debate(
     project = await project_service.get_project_by_name(session, project_name, user)
     # Before anything is opened on the forum: without a key the debate could not
     # argue, and a 409 naming the setting beats a 500 from inside the provider.
-    require_inference_credential(user)
+    # Each role's own model counts, so a role can name one where there is no default.
+    for role in ROSTER:
+        require_inference_credential(user, body.models.get(role))
 
     from ..agents.forum.wiring import build_orchestrator
 
     try:
         run = await build_orchestrator(
-            await _client(session, project, user), user=user
+            await _client(session, project, user), user=user, models=body.models
         ).start(
             session,
             project_id=project.id,
@@ -427,9 +437,13 @@ async def post_to_debate(
 
 
 class ContinueDebate(BaseModel):
-    """How much more arguing to buy."""
+    """How much more arguing to buy, and on which models."""
 
     rounds: int = Field(default=3, ge=1, le=10)
+    models: dict[DebateRoleName, str | None] = Field(default_factory=dict)
+    """ Roles to move to another model; null returns one to the default. Roles not named keep theirs. """
+
+    _clean_models = field_validator("models")(clean_role_models)
 
 
 @router.post("/{project_name}/debates/{run_id}/continue")
@@ -476,7 +490,15 @@ async def continue_debate(
         )
     # The rounds run on the opener's settings (`opener_of`), who may not be the
     # person continuing, so it is their credential that has to be there.
-    require_inference_credential(await opener_of(session, run))
+    opener = await opener_of(session, run)
+    if body.models:
+        changes: dict[str, str | None] = {str(r): m for r, m in body.models.items()}
+        await debate_service.set_participant_models(
+            session, run_id=run.id, models=changes
+        )
+    chosen = await models_for(session, run)
+    for role in ROSTER:
+        require_inference_credential(opener, chosen.get(role))
 
     payload = DebateRunPublic.model_validate(run)
     extra = body.rounds
