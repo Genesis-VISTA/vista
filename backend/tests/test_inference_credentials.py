@@ -296,6 +296,60 @@ def test_no_model_still_builds_an_agent_model(i2_settings):
         Agent(model).run_sync("hi")
 
 
+# ---------------------------------------------------------------------------
+# A model override (a chat's or a debate role's own choice)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "row_model", [None, "openai:row-choice"], ids=["default", "row"]
+)
+def test_override_beats_the_row_and_the_provider_default(i2_settings, row_model):
+    user = _user(inference_provider="mag", inference_model=row_model, **_ALL_KEYS)
+    target = resolve_inference_target(user, "openai:chat-choice")
+    assert target.model == "openai:chat-choice"
+    assert target.model_is_default is False
+
+
+def test_override_keeps_provider_endpoint_and_key(i2_settings):
+    user = _user(inference_provider="mag", inference_model="openai:row", **_ALL_KEYS)
+    plain = resolve_inference_target(user)
+    target = resolve_inference_target(user, "openai:chat-choice")
+    assert (target.provider, target.base_url, target.api_key, target.source) == (
+        plain.provider,
+        plain.base_url,
+        plain.api_key,
+        plain.source,
+    )
+    assert target.api_key == "mag-key"
+
+
+def test_no_override_changes_nothing(i2_settings):
+    user = _user(inference_provider="mag", **_ALL_KEYS)
+    assert resolve_inference_target(user, None) == resolve_inference_target(user)
+
+
+def test_override_on_a_provider_with_no_default_passes_the_guard(i2_settings):
+    """A chat can name its own model where the researcher never set a default."""
+    user = _user(
+        inference_provider="custom",
+        inference_custom_api_key="t",
+        inference_base_url="https://custom.example/v1",
+    )
+    with pytest.raises(MissingInferenceModel):
+        require_inference_credential(user)
+    target = require_inference_credential(user, "openai:chat-choice")
+    assert target.model == "openai:chat-choice"
+
+
+def test_override_is_the_model_that_gets_built(i2_settings):
+    user = _user(inference_provider="mag", **_ALL_KEYS)
+    model = build_model_for(user, "openai:chat-choice")
+    assert model.model_name == "chat-choice"
+    assert str(model.client.base_url).rstrip("/") == PROVIDER_PRESETS["mag"].base_url
+    assert model.client.api_key == "mag-key"
+
+
 @pytest.mark.anyio
 async def test_new_keys_are_not_plaintext_in_the_database_file(tmp_path, monkeypatch):
     key = Fernet.generate_key().decode()

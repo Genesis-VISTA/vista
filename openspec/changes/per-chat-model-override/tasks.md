@@ -1,6 +1,6 @@
 ## 1. Model resolution with an override
 
-- [ ] 1.1 Add an optional `model` override to `resolve_inference_target`, `build_model_for` and `require_inference_credential` in `backend/src/vista_backend/agents/inference.py` (replaces row model and provider default; keeps provider, endpoint, key; `model_is_default` false); verify with new cases in `backend/tests/test_inference_credentials.py`: override wins over row and default, endpoint and key unchanged, an override on a provider with no default passes `require_inference_credential`
+- [x] 1.1 Add an optional `model` override to `resolve_inference_target`, `build_model_for` and `require_inference_credential` in `backend/src/vista_backend/agents/inference.py` (replaces row model and provider default; keeps provider, endpoint, key; `model_is_default` false); verify with new cases in `backend/tests/test_inference_credentials.py`: override wins over row and default, endpoint and key unchanged, an override on a provider with no default passes `require_inference_credential`
 
 ## 2. Per-chat model in the backend
 
