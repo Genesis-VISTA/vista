@@ -67,6 +67,7 @@ import {
   type RunPrompt,
   type RunRenderer,
 } from "@/lib/run-renderer";
+import { readRefusedSend } from "@/lib/refused-send";
 import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
 import { RunStatusDot } from "@/components/RunStatusDot";
 
@@ -1056,30 +1057,27 @@ export default function HomePage() {
         signal: controller.signal
       });
 
-      if (response.status === 409) {
-        // Another view is already running a turn here. Show that run instead,
-        // and give the researcher their unsent text back.
+      if (!response.ok || !response.body) {
+        // The turn never started: give the researcher their unsent text back.
+        // A busy conversation shows the turn another view is running; any other
+        // refusal (no key, no model) says why, so they can fix it and resend.
+        const refused = readRefusedSend(
+          response.status,
+          await response.json().catch(() => null)
+        );
         setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
         setInput(text);
-        if (streamRef.current?.controller === controller) streamRef.current = null;
-        if (!(await attachToRun(projectName, conversationId))) {
-          setIsRunActive(false);
-          setLiveStatus(null);
-        }
-        return;
-      }
-
-      if (!response.ok || !response.body) {
-        let detail = `Backend returned ${response.status}`;
-        try {
-          const errData = await response.json();
-          detail = errData?.error || errData?.detail || detail;
-        } catch {
-          // ignore
+        if (refused.kind === "attach") {
+          if (streamRef.current?.controller === controller) streamRef.current = null;
+          if (!(await attachToRun(projectName, conversationId))) {
+            setIsRunActive(false);
+            setLiveStatus(null);
+          }
+          return;
         }
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: `Agent error: ${detail}` }
+          { id: crypto.randomUUID(), role: "system", content: refused.message }
         ]);
         endRun(controller);
         return;

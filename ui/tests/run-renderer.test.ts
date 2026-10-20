@@ -221,6 +221,52 @@ describe("run renderer: how a run ends", () => {
     expect(renderer.finishedState).toBe(state);
   });
 
+  it("says why a failed turn failed", () => {
+    const page = makeHost();
+    const renderer = createRunRenderer(page.host, { drawUserPrompt: true, newId: counter() });
+    renderer.dispatch("run_started", runStarted("run-1"));
+    renderer.dispatch("run_finished", {
+      event_kind: "run_finished",
+      state: "failed",
+      error: "The provider answered 404 for model 'claude-sonet': The model does not exist.",
+    });
+
+    const last = page.state.messages[page.state.messages.length - 1];
+    expect(last).toMatchObject({
+      role: "system",
+      content:
+        "Agent run failed: The provider answered 404 for model 'claude-sonet': The model does not exist.",
+      run_id: "run-1",
+    });
+    expect(renderer.finishedState).toBe("failed");
+  });
+
+  it.each([
+    ["no reason", undefined],
+    ["an empty reason", ""],
+    ["a reason that is not text", { code: 404 }],
+  ])("keeps the plain note for a failed turn with %s", (_label, error) => {
+    const page = makeHost();
+    const renderer = createRunRenderer(page.host, { newId: counter() });
+    renderer.dispatch("run_finished", { event_kind: "run_finished", state: "failed", error });
+
+    const last = page.state.messages[page.state.messages.length - 1];
+    expect(last).toMatchObject({ role: "system", content: "Agent run failed" });
+  });
+
+  it("does not append a reason to a turn that was stopped", () => {
+    const page = makeHost();
+    const renderer = createRunRenderer(page.host, { newId: counter() });
+    renderer.dispatch("run_finished", {
+      event_kind: "run_finished",
+      state: "stopped",
+      error: "should not be shown",
+    });
+
+    const last = page.state.messages[page.state.messages.length - 1];
+    expect(last).toMatchObject({ role: "system", content: "Stopped" });
+  });
+
   it("ignores a finish state it does not know", () => {
     const { state, host } = makeHost();
     const renderer = createRunRenderer(host, { newId: counter() });

@@ -42,11 +42,11 @@ ones with `./scripts/ci-local.sh ui test`.
   `run_finished` with a non-empty string `error`, and the plain note otherwise. Verify by
   extending the finish-note cases in `ui/tests/run-renderer.test.ts` with an `error`, a
   non-string `error`, and none.
-- [ ] 3.2 Extract the decision on a refused send into a small pure helper in `ui/lib` (input:
+- [x] 3.2 Extract the decision on a refused send into a small pure helper in `ui/lib` (input:
   status and parsed body; output: attach to the running turn, or the message to show), so it can
   be tested without the page. Verify with a unit test: `run_busy` attaches; a 409 with
   `inference_not_configured`, a 409 with no code, and a 500 each yield their message.
-- [ ] 3.3 Use the helper in `ui/app/page.tsx`'s send: on `run_busy` keep today's attach; on any
+- [x] 3.3 Use the helper in `ui/app/page.tsx`'s send: on `run_busy` keep today's attach; on any
   other refusal drop the unsent bubble, restore the text into the input, and add the message as
   a note. Verify with `./scripts/ci-local.sh ui lint` and the UI tests.
 - [ ] 3.4 Manual check in the running app (`./launch.sh logs`, not in CI): with the key cleared,
