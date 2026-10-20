@@ -23,4 +23,9 @@
 
 ## 5. Live verification
 
-- [ ] 5.1 Before the test admin reconnects Globus, run a stack on this branch against a copy of their data, then check Odo and Frontier. Verify that each card's Globus row reads "Globus session expired", names `opensso.ccs.ornl.gov` / `sso.ccs.ornl.gov`, and that the log line shows the 502 code. Then reconnect Globus for Odo and verify the row passes
+- [x] 5.1 Before the test admin reconnects Globus, run a stack on this branch against a copy of their data, then check Odo and Frontier. Verify that each card's Globus row reads "Globus session expired", names `opensso.ccs.ornl.gov` / `sso.ccs.ornl.gov`, and that the log line shows the 502 code. Then reconnect Globus for Odo and verify the row passes
+  - Result (2026-10-20, run against `~/.vista` rather than a copy, since nothing here writes the database):
+    - Expired: Odo's and Frontier's Globus checks were `session_expired` (HTTP 502), naming `opensso.ccs.ornl.gov` and `sso.ccs.ornl.gov`, and `logs/backend.log` had `Frontier Globus check failed: HTTP 502 code=ExternalError.DirListingFailed.LoginFailed body=…`. The card word stayed Token rejected, because both S3M tokens had expired too.
+    - A chat fetch of an Odo job's `chart.png` went HEAD 403 → one-byte GET → expired session, and the agent told the researcher to reconnect Globus for Odo, not that Globus refused to serve the file.
+    - Reconnected: after Sam reconnected Globus for Odo, the Globus row passed and the agent fetched `chart.png`.
+    - First run's oddity: Odo's very first check after a cold start hit the 10 s limit ("Globus did not answer within 10 s"); a recheck seconds later answered. Not seen again.
