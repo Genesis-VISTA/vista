@@ -288,6 +288,40 @@ async def test_unknown_chat_session_is_404(session):
     assert response.json()["detail"] == "Chat session not found"
 
 
+async def test_a_turn_reads_its_chat_once_for_the_model_and_the_agent(
+    session, monkeypatch
+):
+    """The chat's model and its pooled agent's key come from one lookup."""
+    alice = await seed_user(session)
+    project = await seed_project(session, alice, tools=["*"])
+    chat_session_id = await _new_chat_session(session, project, alice)
+
+    lookups: list[uuid.UUID] = []
+    real = chat_session_service.get_chat_session_optional
+
+    async def counting(*args, **kwargs):
+        lookups.append(kwargs["chat_session_id"])
+        return await real(*args, **kwargs)
+
+    class Reached(Exception):
+        """Raised where the turn moves on to its history."""
+
+    async def stop(*_args, **_kwargs):
+        raise Reached
+
+    monkeypatch.setattr(chat_session_service, "get_chat_session_optional", counting)
+    monkeypatch.setattr(chat_session_service, "get_effective_message_history", stop)
+
+    with api_client(session) as (client, _), pytest.raises(Reached):
+        await client.post(
+            RUN.format(name=project.name),
+            json={"user_prompt": "hi", "chat_session_id": str(chat_session_id)},
+            headers=_headers(alice),
+        )
+
+    assert lookups == [chat_session_id]
+
+
 async def test_completed_turn_appends_to_the_chat_session(session):
     alice = await seed_user(session)
     project = await seed_project(session, alice, tools=["*"])
