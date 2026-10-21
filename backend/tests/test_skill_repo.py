@@ -250,6 +250,48 @@ def test_a_manifest_says_which_folders_are_skills(monkeypatch, tmp_path):
     assert paths == ["skills/listed"]
 
 
+def test_a_manifest_entry_can_be_a_folder_of_skills(monkeypatch, tmp_path):
+    FakeHost(
+        monkeypatch,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(
+                {
+                    "plugins": [
+                        {"source": "./", "skills": ["./a/one"]},
+                        {"source": "./b", "skills": ["./skills"]},
+                    ]
+                }
+            ),
+            "a/one/SKILL.md": skill_md("one"),
+            "b/skills/two/SKILL.md": skill_md("two"),
+            "b/skills/three/SKILL.md": skill_md("three"),
+            "c/unlisted/SKILL.md": skill_md("unlisted"),
+        },
+    )
+    _, paths = _scan("https://github.com/acme/skills", tmp_path)
+    assert paths == ["a/one", "b/skills/three", "b/skills/two"]
+
+
+def test_a_plugin_hosted_elsewhere_is_left_out(monkeypatch, tmp_path):
+    FakeHost(
+        monkeypatch,
+        {
+            ".claude-plugin/marketplace.json": json.dumps(
+                {
+                    "plugins": [
+                        {"source": "./", "skills": ["./skills/here"]},
+                        {"source": {"source": "github", "repo": "other/repo"}},
+                    ]
+                }
+            ),
+            "skills/here/SKILL.md": skill_md("here"),
+            "skills/not-listed/SKILL.md": skill_md("not-listed"),
+        },
+    )
+    _, paths = _scan("https://github.com/acme/skills", tmp_path)
+    assert paths == ["skills/here"]
+
+
 def test_no_skill_md_anywhere(monkeypatch, tmp_path):
     FakeHost(monkeypatch, {"README.md": "# nothing\n", "src/main.py": "\n"})
     with pytest.raises(SkillRepoError, match="No SKILL.md found in the repository"):
@@ -897,6 +939,86 @@ class TestScanAndBatch:
         assert response.status_code == 409
         assert "would all be named same" in response.json()["detail"]
         assert await _skill(session, "same") is None
+
+    async def test_scan_flags_names_shared_within_the_repository(
+        self, session, monkeypatch
+    ):
+        FakeHost(
+            monkeypatch,
+            {
+                "a/SKILL.md": skill_md("same"),
+                "b/SKILL.md": skill_md("same"),
+                "c/SKILL.md": skill_md("other"),
+            },
+        )
+        alice = await seed_user(session)
+        with api_client(session) as (client, _):
+            response = await client.post(
+                SCAN,
+                json={"url": "https://github.com/acme/skills"},
+                headers={"X-Vista-User-Email": alice.email},
+            )
+        assert response.status_code == 200, response.text
+        flags = {s["path"]: s["duplicate"] for s in response.json()["skills"]}
+        assert flags == {"a": True, "b": True, "c": False}
+
+    async def test_a_shared_name_imports_twice_when_one_is_renamed(
+        self, session, monkeypatch
+    ):
+        FakeHost(
+            monkeypatch,
+            {
+                "a/SKILL.md": skill_md("same", "The first."),
+                "b/SKILL.md": skill_md("same", "The second."),
+            },
+        )
+        alice = await seed_user(session)
+        with api_client(session) as (client, _):
+            response = await client.post(
+                BATCH,
+                json={
+                    "url": "https://github.com/acme/skills",
+                    "skills": [
+                        {"path": "a", "on_conflict": "rename", "rename_to": "same-a"},
+                        {"path": "b"},
+                    ],
+                },
+                headers={"X-Vista-User-Email": alice.email},
+            )
+        assert response.status_code == 200, response.text
+        assert [(r["name"], r["status"]) for r in response.json()] == [
+            ("same-a", "renamed"),
+            ("same", "imported"),
+        ]
+        renamed = await _skill(session, "same-a")
+        assert renamed is not None and renamed.description == "The first."
+        assert read_skill(settings.data_dir / renamed.path).name == "same-a"
+        kept = await _skill(session, "same")
+        assert kept is not None and kept.description == "The second."
+
+    async def test_rename_with_no_name_imports_a_free_name_as_is(
+        self, session, monkeypatch
+    ):
+        FakeHost(
+            monkeypatch,
+            {"a/SKILL.md": skill_md("solo"), "b/SKILL.md": skill_md("pair")},
+        )
+        alice = await seed_user(session)
+        with api_client(session) as (client, _):
+            response = await client.post(
+                BATCH,
+                json={
+                    "url": "https://github.com/acme/skills",
+                    "skills": [
+                        {"path": "a", "on_conflict": "rename", "rename_to": " "}
+                    ],
+                },
+                headers={"X-Vista-User-Email": alice.email},
+            )
+        assert response.status_code == 200, response.text
+        assert [(r["name"], r["status"]) for r in response.json()] == [
+            ("solo", "imported")
+        ]
 
     async def test_a_path_the_repository_does_not_hold(self, session, monkeypatch):
         FakeHost(monkeypatch, MULTI)

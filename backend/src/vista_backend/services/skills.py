@@ -9,6 +9,9 @@ import re
 import shutil
 import tempfile
 import uuid
+from collections import Counter
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -237,6 +240,8 @@ class ScannedSkill(BaseModel):
     """ A skill with this name is already in the library. """
     replaceable: bool = False
     """ It exists and is private, so it may be overwritten. """
+    duplicate: bool = False
+    """ Another skill in this scan has the same name: import one, or rename. """
 
 
 class RepoScan(BaseModel):
@@ -247,6 +252,19 @@ class RepoScan(BaseModel):
     """ What an install of these skills downloads, so it copies what was listed. """
     path: str
     skills: list[ScannedSkill]
+
+
+@asynccontextmanager
+async def _work_dir() -> AsyncIterator[Path]:
+    """
+    A temporary folder, removed off the event loop: it can hold a whole
+    unpacked repository.
+    """
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        yield tmp
+    finally:
+        await asyncio.to_thread(shutil.rmtree, tmp, ignore_errors=True)
 
 
 def _scan(
@@ -266,7 +284,7 @@ async def scan_repository(
 ) -> RepoScan:
     """List the skills a repository URL holds, without importing any."""
     sent = await _import_token(session, url, user_id, token)
-    with tempfile.TemporaryDirectory() as tmp:
+    async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, None, Path(tmp)
@@ -274,6 +292,7 @@ async def scan_repository(
         except SkillRepoError as e:
             raise _repo_error(e, sent)
     library = {row.name: row for row in await list_skills(session)}
+    counts = Counter(info.name for info, _ in staged if info.name and not info.error)
     skills = []
     for info, _ in staged:
         existing = library.get(info.name) if info.name else None
@@ -290,6 +309,7 @@ async def scan_repository(
                 files=info.files,
                 exists=existing is not None,
                 replaceable=existing is not None and not existing.is_public,
+                duplicate=counts[info.name] > 1 if info.name else False,
             )
         )
     return RepoScan(
@@ -309,7 +329,11 @@ class SkillChoice(BaseModel):
     path: str
     """ The skill's folder in the repository, as the scan listed it. """
     on_conflict: OnConflict | None = None
-    """ What to do if its name is taken; without one, a taken name is an error. """
+    """
+    What to do if its name is taken; without one, a taken name is an error.
+    "rename" with a `rename_to` renames it even if its name is free, so two
+    skills of one repository that share a name can both be imported.
+    """
     rename_to: str | None = None
 
 
@@ -346,23 +370,27 @@ async def _install_staged(
         return result("failed", info.error)
     name = info.name
     assert name is not None
-    existing = await get_skill_optional(session, name)
     status: Literal["imported", "overwritten", "renamed"] = "imported"
+    # A new name applies whether or not the original is taken: it also tells
+    # apart two skills of one repository that share a name.
+    new_name = (
+        (choice.rename_to or "").strip() if choice.on_conflict == "rename" else ""
+    )
+    if new_name:
+        if await get_skill_optional(session, new_name) is not None:
+            return result("failed", f"{new_name} is taken too.", name=new_name)
+        try:
+            await asyncio.to_thread(skill_repo.rename_skill, staged, new_name)
+        except SkillRepoError as e:
+            return result("failed", str(e), name=new_name)
+        name, status = new_name, "renamed"
+    existing = await get_skill_optional(session, name)
     if existing is not None:
         if choice.on_conflict == "skip":
             return result("skipped", f"A skill named {name} is already installed.")
         if choice.on_conflict == "rename":
-            new_name = (choice.rename_to or "").strip()
-            if not new_name:
-                return result("failed", "Give a new name to rename it to.")
-            if await get_skill_optional(session, new_name) is not None:
-                return result("failed", f"{new_name} is taken too.", name=new_name)
-            try:
-                skill_repo.rename_skill(staged, new_name)
-            except SkillRepoError as e:
-                return result("failed", str(e), name=new_name)
-            existing, name, status = None, new_name, "renamed"
-        elif choice.on_conflict == "overwrite":
+            return result("failed", "Give a new name to rename it to.")
+        if choice.on_conflict == "overwrite":
             if existing.is_public:
                 return result(
                     "failed",
@@ -380,7 +408,7 @@ async def _install_staged(
     path = new_storage_path()
     dest = settings.data_dir / path
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(staged, dest)
+    await asyncio.to_thread(shutil.copytree, staged, dest)
 
     old_path: str | None = None
     if existing is None:
@@ -414,14 +442,16 @@ async def _install_staged(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        shutil.rmtree(dest, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, dest, ignore_errors=True)
         return result("failed", f"Name already in use: {skill.name}", name=skill.name)
     except Exception:
         await session.rollback()
-        shutil.rmtree(dest, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, dest, ignore_errors=True)
         raise
     if old_path is not None:
-        shutil.rmtree(settings.data_dir / old_path, ignore_errors=True)
+        await asyncio.to_thread(
+            shutil.rmtree, settings.data_dir / old_path, ignore_errors=True
+        )
     await session.refresh(row)
     if project is not None:
         await session.refresh(project)
@@ -452,7 +482,7 @@ async def import_repository_skills(
     if len(set(paths)) != len(paths):
         raise HTTPException(status_code=400, detail="A skill was chosen twice.")
     sent = await _import_token(session, url, user_id, token)
-    with tempfile.TemporaryDirectory() as tmp:
+    async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, commit, Path(tmp)
@@ -522,7 +552,7 @@ async def import_skill(
     `import_repository_skills`.
     """
     sent = await _import_token(session, url, user_id, token)
-    with tempfile.TemporaryDirectory() as tmp:
+    async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, None, Path(tmp)

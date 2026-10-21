@@ -33,6 +33,8 @@ type ScannedSkill = {
   files: number;
   exists: boolean;
   replaceable: boolean;
+  /** Another skill in this repository has the same name. */
+  duplicate: boolean;
 };
 
 /** What `/api/skills/import/scan` found (backend `RepoScan`). */
@@ -149,7 +151,9 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
   }
 
   function choiceFor(s: ScannedSkill): Choice {
-    return choices[s.path] ?? { on_conflict: s.replaceable ? "overwrite" : "skip", rename_to: "" };
+    // A name shared within the repository but free in the library can only be renamed.
+    const fallback: OnConflict = s.exists ? (s.replaceable ? "overwrite" : "skip") : "rename";
+    return choices[s.path] ?? { on_conflict: fallback, rename_to: "" };
   }
 
   async function postJson(path: string, body: unknown): Promise<unknown> {
@@ -166,7 +170,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
   async function importChosen(found: RepoScan, paths: string[]) {
     const skills = paths.map((path) => {
       const s = found.skills.find((x) => x.path === path)!;
-      if (!s.exists) return { path };
+      if (!s.exists && !s.duplicate) return { path };
       const c = choiceFor(s);
       return c.on_conflict === "rename"
         ? { path, on_conflict: c.on_conflict, rename_to: c.rename_to.trim() }
@@ -209,7 +213,15 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
       return;
     }
     setScan(found);
-    setSelected(new Set(found.skills.filter((s) => !s.error && !s.exists).map((s) => s.path)));
+    // Of skills sharing a name, only the first is ticked: they cannot all go in under it.
+    const names = new Set<string>();
+    const ticked = found.skills.filter((s) => {
+      if (s.error || s.exists) return false;
+      if (s.name && names.has(s.name)) return false;
+      if (s.name) names.add(s.name);
+      return true;
+    });
+    setSelected(new Set(ticked.map((s) => s.path)));
   }
 
   function request(): Promise<Response> {
@@ -619,6 +631,20 @@ function RepoSkillList({
                       />
                     )}
                     {!s.replaceable && <span>(published, so it cannot be replaced)</span>}
+                  </span>
+                )}
+                {s.duplicate && !s.exists && !s.error && (
+                  <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...muted }}>
+                    Another skill here is also named {s.name}. Import only one, or import this one as:
+                    <input
+                      className="input"
+                      style={{ width: 180, padding: "2px 6px" }}
+                      aria-label={`New name for ${s.path}`}
+                      placeholder={`${s.name}-2`}
+                      value={c.rename_to}
+                      disabled={busy}
+                      onChange={(e) => setChoice(s.path, { on_conflict: "rename", rename_to: e.target.value })}
+                    />
                   </span>
                 )}
                 {result && (

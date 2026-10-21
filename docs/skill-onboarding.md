@@ -129,7 +129,8 @@ pinned to the commit its branch or tag points at, and finds the skills in it:
 - A `SKILL.md` at the linked folder (or the repository root) makes that folder
   the one skill — a single-skill repository imports exactly as it always did.
 - Otherwise, if the repository has a `.claude-plugin/marketplace.json`, the
-  skill folders it lists.
+  skill folders it lists (an entry that is a folder of skills means every skill
+  in it; a plugin hosted in another repository is left out).
 - Otherwise every folder below with a `SKILL.md`, at any depth, skipping
   `.git`, `node_modules` and other dot-folders. A folder holding a `SKILL.md` is
   one skill, including everything below it.
@@ -151,7 +152,9 @@ Beyond it, the dialog also shows:
 
 If a skill's name is already taken, choose **Skip**, **Replace my private
 skill** (not offered for a published one), or **Import under another name**,
-which rewrites only the `name:` line of its frontmatter. Each skill is imported
+which rewrites only the `name:` line of its frontmatter. Skills in one
+repository that share a name are ticked only once; give the others a new name
+to import them too. Each skill is imported
 on its own and the dialog says what happened to each. An imported skill is
 private, loaded into the project, and its `repo_url` is its folder at the
 imported commit (or, for a single URL, the URL given). The upload limits apply

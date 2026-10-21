@@ -454,8 +454,9 @@ def _manifest_skills(fetched: FetchedRepo) -> list[str]:
     for plugin in plugins if isinstance(plugins, list) else []:
         if not isinstance(plugin, dict):
             continue
-        base = plugin.get("source")
-        base = base if isinstance(base, str) else "."
+        base = plugin.get("source") or "."
+        if not isinstance(base, str):
+            continue  # hosted in another repository: none of its skills are here
         skills = plugin.get("skills")
         entries = (
             [s for s in skills if isinstance(s, str)]
@@ -470,7 +471,7 @@ def _manifest_skills(fetched: FetchedRepo) -> list[str]:
                 continue
             if find_skill_md(fetched.root / path) is not None:
                 found.append(path)
-            elif not entries:
+            else:  # a folder of skills (or the plugin's own, with no list)
                 found.extend(_search(fetched.root, path))
     return list(dict.fromkeys(found))
 
