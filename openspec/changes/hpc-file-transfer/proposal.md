@@ -33,7 +33,7 @@ with the guidance in their descriptions. Every project has them, and no skill ne
 - Cluster-to-cluster moves through Globus Transfer tasks: the collections are High Assurance in
   different OLCF enclaves, and whether OLCF permits it is unasked.
 - Perlmutter (IRI download is text-only) and Lux (SFTP).
-- A `SKILL.md`, MCP server `instructions`, or any backend or UI change.
+- A `SKILL.md`, MCP server `instructions`, or a UI change.
 - A download size cap, or approval before an upload.
 - VISTAGuard.
 
@@ -56,6 +56,8 @@ with the guidance in their descriptions. Every project has them, and no skill ne
 - `submit_job_mcp.py`: the download loop in `_get_olcf_job_outputs` becomes a shared helper,
   and `_job_output_paths` is generalised for both callers.
 - `lib/globus.py`: unchanged; listing, `stat`, download, upload and `mkdir -p` are reused.
+- `backend/src/vista_backend/agents/agents.py`: the three tool names join `HPC_TOOLS`, the
+  list of tools the researcher's credentials are sent to.
 - Tests: new `mcp_servers/vista_mcp_server/tests/test_transfer_tools.py` with a fake Globus
   client; existing output-retrieval tests keep passing.
 - Docs: `docs/hpc.md` and the Globus section of `AGENTS.md`.
