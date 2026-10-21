@@ -7,6 +7,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.server import create_proxy
 from .display_file_mcp import mcp as display_file_mcp
 from .submit_job_mcp import mcp as submit_job_mcp
+from .transfer_mcp import mcp as transfer_mcp
 from .rag_mcp import mcp as rag_mcp
 from .agenthpc.mcp import mcp as agenthpc_mcp
 from .metrics import MetricsMiddleware, get_recorder
@@ -24,6 +25,8 @@ if get_recorder().enabled:
 
 if "submit_job" not in settings.disable_servers:
     mcp.mount(submit_job_mcp)
+if "transfer" not in settings.disable_servers:
+    mcp.mount(transfer_mcp)
 if "display_file" not in settings.disable_servers:
     mcp.mount(display_file_mcp)
 if "rag" not in settings.disable_servers:
