@@ -1,6 +1,6 @@
 "use client";
 
-import { ModelMenu } from "@/components/ModelMenu";
+import { ModelMenu, useProviderModels } from "@/components/ModelMenu";
 import { DEBATE_ROLES, type RoleModels } from "@/lib/debates";
 import { useAgentSettings } from "@/lib/agent-settings";
 
@@ -20,6 +20,8 @@ export function RoleModelSelects({
   onChange: (next: RoleModels) => void;
 }) {
   const { settings } = useAgentSettings();
+  // One list for the three menus: each fetching its own cost a provider call per role.
+  const models = useProviderModels();
   return (
     <div className="debate-role-models">
       {DEBATE_ROLES.map((role) => (
@@ -30,6 +32,7 @@ export function RoleModelSelects({
             value={value[role]}
             defaultModel={settings?.model ?? null}
             offerDefault
+            models={models}
             onChange={async (model) => onChange({ ...value, [role]: model })}
           />
         </div>

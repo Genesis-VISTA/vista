@@ -7,6 +7,7 @@ import {
   qualifyModelId,
   qualifyModelInput,
   displayModelName,
+  type UseAvailableModelsResult,
 } from "@/lib/models";
 import { providerName, useAgentSettings } from "@/lib/agent-settings";
 
@@ -49,7 +50,28 @@ export type ModelMenuProps = {
   offerDefault?: boolean;
   /** Names the control for assistive technology; "Model" by default. */
   name?: string;
+  /** A list shared with the menus beside this one (`useProviderModels`); fetched here otherwise. */
+  models?: UseAvailableModelsResult;
 };
+
+/**
+ * The researcher's provider's model list for the active project, fetched again
+ * whenever the provider, endpoint or key changes. Menus that sit together share
+ * one (see `RoleModelSelects`); with `enabled` false this fetches nothing.
+ */
+export function useProviderModels(enabled = true): UseAvailableModelsResult {
+  const activeProject = useActiveProject();
+  const { settings } = useAgentSettings();
+  const sourceKey = settings
+    ? `${settings.provider}|${settings.baseUrl}|${settings.hasCredential}`
+    : "";
+  // Wait for the settings: listing before them would fetch for a source that
+  // is about to change.
+  return useAvailableModels(
+    enabled && settings ? (activeProject?.name ?? null) : null,
+    sourceKey,
+  );
+}
 
 export function ModelMenu({
   value,
@@ -58,18 +80,11 @@ export function ModelMenu({
   scope,
   offerDefault = false,
   name = "Model",
+  models,
 }: ModelMenuProps) {
-  const activeProject = useActiveProject();
   const { settings, modelChoiceRequest } = useAgentSettings();
-  const sourceKey = settings
-    ? `${settings.provider}|${settings.baseUrl}|${settings.hasCredential}`
-    : "";
-  // Wait for the settings: listing before them would fetch for a source that
-  // is about to change.
-  const modelsState = useAvailableModels(
-    settings ? (activeProject?.name ?? null) : null,
-    sourceKey,
-  );
+  const ownModels = useProviderModels(!models);
+  const modelsState = models ?? ownModels;
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState(false);
   const [typing, setTyping] = useState(false);

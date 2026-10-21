@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { ModelMenu } from "@/components/ModelMenu";
 import { useActiveProject } from "@/lib/projects";
 import { savePersistedChatSession } from "@/lib/chat-session";
@@ -53,6 +54,15 @@ function DefaultModelPicker() {
 function ChatModelPicker({ chat }: { chat: ChatModelBinding }) {
   const activeProject = useActiveProject();
   const { settings } = useAgentSettings();
+  // The chat open now, or null once this picker is gone. A save that returns
+  // after another chat opened must not report its model as that chat's.
+  const openChat = useRef<string | null>(chat.id);
+  useEffect(() => {
+    openChat.current = chat.id;
+    return () => {
+      openChat.current = null;
+    };
+  }, [chat.id]);
   return (
     <ModelMenu
       value={chat.model}
@@ -66,6 +76,7 @@ function ChatModelPicker({ chat }: { chat: ChatModelBinding }) {
           chatSessionId: chat.id,
           inferenceModel: model,
         });
+        if (openChat.current !== chat.id) return;
         chat.onModelChange(saved.inference_model ?? null);
       }}
     />

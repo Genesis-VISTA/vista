@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { ModelPicker } from "@/components/ModelPicker";
+import { RoleModelSelects } from "@/components/RoleModelSelects";
+import { noRoleModels } from "@/lib/debates";
 import {
   holdSendWithoutModel,
   refreshAgentSettings,
@@ -426,5 +428,76 @@ describe("ModelPicker in a chat", () => {
     await waitFor(() => expect(savePersistedChatSessionMock).toHaveBeenCalled());
     expect(updateCurrentUserMock).not.toHaveBeenCalled();
     expect(holdSendWithoutModel("openai:claude-opus")).toBe(false);
+  });
+
+  /**
+   * The page's shape around a slow save: one model state for whichever chat is
+   * open, a conversation list between chats, and A's save still in flight.
+   */
+  function Chats() {
+    const [open, setOpen] = useState<string | null>("A");
+    const [model, setModel] = useState<string | null>(null);
+    const show = (id: string | null) => {
+      setOpen(id);
+      setModel(null); // the page's hydration: the next chat follows the default
+    };
+    return (
+      <>
+        <button onClick={() => show("B")}>open chat B</button>
+        <button onClick={() => show(null)}>back to the list</button>
+        <output data-testid="open">{`${open}:${model ?? "default"}`}</output>
+        <ModelPicker
+          chat={open ? { id: open, model, onModelChange: setModel } : undefined}
+        />
+      </>
+    );
+  }
+
+  async function chooseOpusAndHoldTheSave() {
+    let finish!: (row: { id: string; inference_model: string }) => void;
+    savePersistedChatSessionMock.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    render(<Chats />);
+    await openPicker();
+    await userEvent.click(await screen.findByRole("option", { name: /claude-opus/ }));
+    expect(savePersistedChatSessionMock).toHaveBeenCalledWith("molten-salt", {
+      chatSessionId: "A",
+      inferenceModel: "openai:claude-opus",
+    });
+    return () => act(async () => finish({ id: "A", inference_model: "openai:claude-opus" }));
+  }
+
+  it("a save that returns after another chat opened leaves that chat alone", async () => {
+    const release = await chooseOpusAndHoldTheSave();
+    await userEvent.click(screen.getByRole("button", { name: "open chat B" }));
+    await release();
+
+    expect(screen.getByTestId("open")).toHaveTextContent("B:default");
+    expect(
+      screen.getByRole("button", { name: /^Model: Default \(claude-sonnet\)\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("so does one that returns after a trip through the conversation list", async () => {
+    const release = await chooseOpusAndHoldTheSave();
+    await userEvent.click(screen.getByRole("button", { name: "back to the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "open chat B" }));
+    await release();
+
+    expect(screen.getByTestId("open")).toHaveTextContent("B:default");
+  });
+});
+
+describe("RoleModelSelects", () => {
+  it("lists the models once for its three menus", async () => {
+    render(<RoleModelSelects value={noRoleModels()} onChange={() => {}} />);
+    await screen.findByRole("button", { name: /^Referee model: Default \(claude-sonnet\)/ });
+    await waitFor(() => expect(modelFetches).toBe(1));
+
+    // Opening one refreshes the shared list, once.
+    await userEvent.click(screen.getByRole("button", { name: /^Reviewer model: / }));
+    expect(await screen.findByRole("option", { name: /claude-opus/ })).toBeInTheDocument();
+    expect(modelFetches).toBe(2);
   });
 });
