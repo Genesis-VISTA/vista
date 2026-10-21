@@ -51,9 +51,9 @@
 
 ## 5. UI
 
-- [ ] 5.1 Widen both upload pickers in `ui/app/knowledge-bases/explorer.tsx` (`accept` and the two non-PDF checks) to the accepted formats, and update the "PDFs:" folder label. Verify with `cd ui && npm run lint` and a manual upload of a CSV in the explorer
-- [ ] 5.2 Show a format badge, the description and (for CSV/TSV) the row count for non-PDF publications, keeping PDFs as they are, and verify with a hermetic Playwright screenshot of a KB fixture containing a PDF and a CSV
-- [ ] 5.3 Run `./scripts/ci-local.sh` (all lint + test) and verify that it passes. Note that the UI lane rebuilds `ui/.next` and stops any `launch.sh` stack running in this checkout
+- [x] 5.1 Widen both upload pickers in `ui/app/knowledge-bases/explorer.tsx` (`accept` and the two non-PDF checks) to the accepted formats, and update the "PDFs:" folder label. Verify with `cd ui && npm run lint` and a manual upload of a CSV in the explorer
+- [x] 5.2 Show a format badge, the description and (for CSV/TSV) the row count for non-PDF publications, keeping PDFs as they are, and verify with a hermetic Playwright screenshot of a KB fixture containing a PDF and a CSV
+- [x] 5.3 Run `./scripts/ci-local.sh` (all lint + test) and verify that it passes. Note that the UI lane rebuilds `ui/.next` and stops any `launch.sh` stack running in this checkout
 
 ## 6. Hands-on test (manual, not in PR CI)
 

@@ -10,6 +10,14 @@ import type {
   KnowledgeBaseSummary,
   Publication,
 } from "@/lib/types";
+import {
+  KB_ACCEPT_ATTR,
+  formatBadge,
+  isAcceptedKbFile,
+  rowCountLabel,
+  unsupportedFileMessage,
+} from "@/lib/kb-formats";
+import { fileLinkProps } from "@/lib/file-links";
 
 /* ---------------------------------------------------------------------- */
 /*  Helpers                                                               */
@@ -735,9 +743,9 @@ function KbDetailView({
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const arr = Array.from(files);
-    const nonPdf = arr.find((f) => !/\.pdf$/i.test(f.name));
-    if (nonPdf) {
-      onError(`'${nonPdf.name}' is not a PDF. Only PDF files are accepted.`);
+    const rejected = arr.find((f) => !isAcceptedKbFile(f.name));
+    if (rejected) {
+      onError(unsupportedFileMessage(rejected.name));
       return;
     }
     setIsUploading(true);
@@ -754,7 +762,7 @@ function KbDetailView({
         return;
       }
       onUpdated(data.kb as KnowledgeBase);
-      onMessage(`${arr.length} PDF${arr.length === 1 ? "" : "s"} added.`);
+      onMessage(`${arr.length} file${arr.length === 1 ? "" : "s"} added.`);
     } catch {
       onError("Upload failed.");
     } finally {
@@ -899,7 +907,7 @@ function KbDetailView({
                     rebuild step required.
                   </span>
                   <span>
-                    PDFs: <code>{kb.pdfs_dir}</code>
+                    Files: <code>{kb.pdfs_dir}</code>
                   </span>
                   <span>
                     ChromaDB: <code>{kb.rag_db_path}</code>
@@ -947,7 +955,7 @@ function KbDetailView({
               onClick={() => uploadInputRef.current?.click()}
               disabled={isUploading}
             >
-              {isUploading ? "Uploading…" : "+ Add PDFs"}
+              {isUploading ? "Uploading…" : "+ Add files"}
             </button>
           </div>
         </div>
@@ -1008,13 +1016,13 @@ function KbDetailView({
             }
           }}
         >
-          Drag and drop PDFs here, or click to browse.
+          Drag and drop files here (PDF, CSV, TSV, TXT, MD), or click to browse.
         </div>
         <input
           ref={uploadInputRef}
           type="file"
           multiple
-          accept="application/pdf,.pdf"
+          accept={KB_ACCEPT_ATTR}
           style={{ display: "none" }}
           onChange={(e) => {
             void uploadFiles(e.target.files);
@@ -1025,7 +1033,7 @@ function KbDetailView({
         <div className="kb-pubs-list">
           {kb.publications.length === 0 ? (
             <div className="kb-empty-block">
-              No publications yet. Upload PDFs to populate this knowledge base.
+              No publications yet. Upload files to populate this knowledge base.
             </div>
           ) : visiblePublications.length === 0 ? (
             <div className="kb-empty-block">
@@ -1258,6 +1266,11 @@ function PublicationItem({
   // hasPdf defaults to true for backwards compatibility with older
   // records that didn't set the field.
   const hasPdf = publication.has_pdf !== false;
+  // Non-PDF files carry their description in `abstract` and have no citation.
+  const badge = formatBadge(publication);
+  const isFile = badge !== null;
+  const rowLabel = rowCountLabel(publication);
+  const description = isFile ? publication.abstract?.trim() || null : null;
 
   return (
     <div className="pub-item">
@@ -1274,8 +1287,17 @@ function PublicationItem({
         }}
       >
         <div className="pub-item-text">
-          <div className="pub-item-title">{displayTitle}</div>
+          <div className="pub-item-title">
+            {isFile && (
+              <span className="pub-item-tag pub-item-kind" style={{ marginRight: 6 }}>
+                {badge}
+              </span>
+            )}
+            {displayTitle}
+          </div>
+          {description && <div className="pub-item-desc">{description}</div>}
           <div className="pub-item-meta">
+            {rowLabel && <span>{rowLabel}</span>}
             {authorLine && <span>{authorLine}</span>}
             {publication.journal && <span>· {publication.journal}</span>}
             {publication.year && <span>· {publication.year}</span>}
@@ -1313,7 +1335,7 @@ function PublicationItem({
               instead of waiting indefinitely for something that's not
               coming.
             */}
-            {!authorLine && !publication.journal && !publication.year && (() => {
+            {!isFile && !authorLine && !publication.journal && !publication.year && (() => {
               const ix = publication.index_status;
               const cs = publication.citation_status ?? "pending";
               if (ix === "queued" || ix === "indexing") {
@@ -1385,7 +1407,7 @@ function PublicationItem({
             {hasPdf && (
               <Field label="Added" value={formatDate(publication.added_at)} />
             )}
-            {publication.title && (
+            {!isFile && publication.title && (
               <Field label="Title" value={publication.title} />
             )}
             {publication.authors && publication.authors.length > 0 && (
@@ -1413,8 +1435,9 @@ function PublicationItem({
             {publication.keywords && publication.keywords.length > 0 && (
               <Field label="Keywords" value={publication.keywords.join(", ")} />
             )}
+            {rowLabel && <Field label="Rows" value={rowLabel} />}
             {publication.abstract && (
-              <Field label="Abstract" value={publication.abstract} />
+              <Field label={isFile ? "Description" : "Abstract"} value={publication.abstract} />
             )}
           </dl>
           {!hasPdf && (
@@ -1433,10 +1456,11 @@ function PublicationItem({
                   href={`/api/knowledge-bases/${encodeURIComponent(
                     slug
                   )}/publications/${encodeURIComponent(publication.filename)}`}
-                  target="_blank"
-                  rel="noreferrer"
+                  {...(isFile
+                    ? fileLinkProps("/")
+                    : { target: "_blank", rel: "noreferrer" })}
                 >
-                  Open PDF
+                  {isFile ? "Download" : "Open PDF"}
                 </a>
                 <button
                   type="button"
@@ -1508,9 +1532,9 @@ function CreateKbModal({
   function addFiles(list: FileList | null) {
     if (!list) return;
     const incoming = Array.from(list);
-    const nonPdf = incoming.find((f) => !/\.pdf$/i.test(f.name));
-    if (nonPdf) {
-      setError(`'${nonPdf.name}' is not a PDF. Only PDF files are accepted.`);
+    const rejected = incoming.find((f) => !isAcceptedKbFile(f.name));
+    if (rejected) {
+      setError(unsupportedFileMessage(rejected.name));
       return;
     }
     setError("");
@@ -1710,13 +1734,13 @@ function CreateKbModal({
                 }
               }}
             >
-              Drag and drop PDFs here, or click to browse.
+              Drag and drop files here (PDF, CSV, TSV, TXT, MD), or click to browse.
             </div>
             <input
               ref={inputRef}
               type="file"
               multiple
-              accept="application/pdf,.pdf"
+              accept={KB_ACCEPT_ATTR}
               style={{ display: "none" }}
               onChange={(e) => {
                 addFiles(e.target.files);
