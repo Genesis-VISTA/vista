@@ -44,6 +44,7 @@ from typing import Any, Callable, Literal, Protocol
 
 import globus_sdk
 import httpx
+from globus_sdk import gare
 from pydantic import BaseModel
 
 from ..config import HpcClusterSettings, hpc_settings
@@ -298,22 +299,65 @@ def settings_check(cluster: HpcCluster, user: Any) -> Check:
 class GlobusSessionExpired(Exception):
     """The researcher has to connect Globus again for this cluster."""
 
+    def __init__(
+        self, detail: str, log: str = "", http_status: int | None = None
+    ) -> None:
+        super().__init__(detail)
+        self.detail, self.log, self.http_status = detail, log, http_status
+
+
+class GlobusCheckFailed(Exception):
+    """Globus answered, but not in a way that says whether the session works;
+    the card reads Couldn't verify."""
+
+    def __init__(
+        self, detail: str, log: str = "", http_status: int | None = None
+    ) -> None:
+        super().__init__(detail)
+        self.detail, self.log, self.http_status = detail, log, http_status
+
+
+def _describe(error: globus_sdk.GlobusAPIError) -> tuple[str, str]:
+    """(detail, log) for a Globus answer: status, code and message, no headers."""
+    code, message = error.code, error.message
+    detail = f"Globus answered HTTP {error.http_status}"
+    if code:
+        detail += f" ({code})"
+    if message:
+        detail += f": {message}"
+    log = f"HTTP {error.http_status} code={code} body={(error.text or '')[:500]}"
+    return detail + ".", log
+
 
 class GlobusProbe(Protocol):
     def __call__(
-        self, *, transfer: str, https: str, collection_id: str, client_id: str
+        self,
+        *,
+        transfer: str,
+        https: str,
+        collection_id: str,
+        client_id: str,
+        title: str,
     ) -> None: ...
 
 
 def probe_globus(
-    *, transfer: str, https: str, collection_id: str, client_id: str
+    *,
+    transfer: str,
+    https: str,
+    collection_id: str,
+    client_id: str,
+    title: str = "this cluster",
 ) -> None:
     """Prove a Globus pair still reaches the collection. Blocking.
 
     Classifies failures the way the MCP server's `lib/globus.py` does, so the
-    card and the file operations agree on what an expired session is: a
-    refresh token Globus will not exchange, a Transfer 401, or a
-    `ConsentRequired` / `AuthenticationFailed` refusal.
+    card and the file operations agree on what an expired session is. A GARE
+    (Globus's re-authentication answer) is checked first, whatever its status,
+    because an expired High Assurance login answers 502. Then: a refresh token
+    Globus will not exchange, a Transfer 401, or a `ConsentRequired` /
+    `AuthenticationFailed` refusal. Raises GlobusSessionExpired or
+    GlobusCheckFailed, and lets network errors through.
     """
     auth_client = globus_sdk.NativeAppAuthClient(client_id)
     try:
@@ -322,23 +366,60 @@ def probe_globus(
         transfer_auth = globus_sdk.RefreshTokenAuthorizer(transfer, auth_client)
         globus_sdk.RefreshTokenAuthorizer(https, auth_client)
     except globus_sdk.GlobusAPIError as error:
-        raise GlobusSessionExpired(error.message) from error
+        detail, log = _describe(error)
+        raw = error.raw_json
+        if (
+            error.http_status == 400
+            and isinstance(raw, dict)
+            and raw.get("error") == "invalid_grant"
+        ):
+            raise GlobusSessionExpired(
+                f"Globus no longer accepts the saved {title} connection. "
+                "Connect Globus again.",
+                log=log,
+                http_status=400,
+            ) from error
+        raise GlobusCheckFailed(
+            f"Globus token exchange: {detail}", log, error.http_status
+        ) from error
 
     client = globus_sdk.TransferClient(authorizer=transfer_auth)
     try:
         client.operation_ls(collection_id, path="/~/", limit=1)
     except globus_sdk.TransferAPIError as error:
+        detail, log = _describe(error)
+        reauth = gare.to_gare(error)
+        if reauth is not None:
+            params = reauth.authorization_parameters
+            required = params.session_required_single_domain or []
+            domains = [d for d in required if d != "clients.auth.globus.org"]
+            if domains:
+                detail = (
+                    f"The Globus session for {title} has expired: Globus needs a "
+                    f"fresh login with {', '.join(domains)}. Connect Globus again."
+                )
+            else:
+                detail = (
+                    f"The Globus session for {title} has expired. Connect Globus again."
+                )
+            raise GlobusSessionExpired(
+                detail, log=log, http_status=error.http_status
+            ) from error
         code = error.code or ""
         if error.http_status == 401 or code in (
             "ConsentRequired",
             "AuthenticationFailed",
         ):
-            raise GlobusSessionExpired(error.message) from error
+            raise GlobusSessionExpired(
+                f"The Globus session for {title} has expired. Connect Globus again.",
+                log=log,
+                http_status=error.http_status,
+            ) from error
         if error.http_status in (403, 404):
             # Authenticated, and the collection answered; the home directory
             # just is not listable. The session is what this check is about.
             return
-        raise
+        raise GlobusCheckFailed(detail, log, error.http_status) from error
 
 
 @dataclass(frozen=True)
@@ -877,14 +958,41 @@ class HpcStatusService:
                     https=source.https,
                     collection_id=collection,
                     client_id=self._settings.globus_native_app_client_id,
+                    title=title,
                 ),
                 GLOBUS_TIMEOUT,
             )
-        except GlobusSessionExpired:
+        except GlobusSessionExpired as error:
+            log.info("%s Globus check failed: %s", title, error.log or error.detail)
             return Check(
                 ok=False,
                 reason="session_expired",
-                message=f"The Globus session for {title} has expired; connect Globus again.",
+                message=error.detail,
+                http_status=error.http_status,
+            )
+        except GlobusCheckFailed as error:
+            log.info("%s Globus check failed: %s", title, error.log or error.detail)
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=error.detail,
+                http_status=error.http_status,
+            )
+        except TimeoutError:
+            log.info(
+                "%s Globus check failed: no answer within %g s", title, GLOBUS_TIMEOUT
+            )
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=f"Globus did not answer within {GLOBUS_TIMEOUT:g} s",
+            )
+        except globus_sdk.NetworkError as error:
+            log.info("%s Globus check failed: %s", title, type(error).__name__)
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message="Globus could not be reached",
             )
         except Exception as error:  # noqa: BLE001 -- any other failure is "couldn't tell"
             log.info("%s Globus check failed: %s", title, type(error).__name__)

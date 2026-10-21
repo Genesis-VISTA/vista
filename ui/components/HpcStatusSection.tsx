@@ -174,7 +174,7 @@ function globusRow(check: HpcCheck): Row {
     case "not_connected":
       return { ok: false, title: "Globus not connected", detail: "Outputs can't be fetched until you connect it." };
     case "session_expired":
-      return { ok: false, title: "Globus session expired", detail: "Connect Globus again to reach this cluster's files." };
+      return { ok: false, title: "Globus session expired", detail: check.message };
     default:
       return { ok: null, title: "Couldn't verify Globus", detail: check.message };
   }

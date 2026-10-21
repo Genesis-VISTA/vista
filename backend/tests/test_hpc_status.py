@@ -8,6 +8,7 @@ check and state requirements has a case here.
 
 import asyncio
 import contextlib
+import json
 import socket
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -15,7 +16,8 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 import requests
-from globus_sdk import GlobusAPIError, TransferAPIError
+import globus_sdk
+from globus_sdk import AuthAPIError, TransferAPIError
 
 from vista_backend.config import HpcClusterSettings
 from vista_backend.db.schemas import UserPublicWithConfig
@@ -23,6 +25,7 @@ from vista_backend.services import hpc_status as hs
 from vista_backend.services.hpc_status import (
     Check,
     ClusterChecks,
+    GlobusCheckFailed,
     GlobusSessionExpired,
     HpcStatusService,
     SshProbeError,
@@ -624,13 +627,125 @@ async def test_globus_failure_of_another_kind_is_unverifiable():
     assert odo.state == "unverifiable"
 
 
-def _globus_error(cls, status: int, code: str, url: str):
+NETWORK_ERROR = globus_sdk.NetworkError(
+    "Network Error", requests.ConnectionError("refused")
+)
+
+
+async def _odo_globus(result: Exception, **kw):
+    globus = FakeGlobus()
+    globus.result = result
+    odo = (await statuses(make_service(healthy(), globus), user(**CONNECTED), **kw))[
+        "odo"
+    ]
+    return odo
+
+
+@pytest.mark.anyio
+async def test_globus_expired_card_names_the_login():
+    odo = await _odo_globus(
+        GlobusSessionExpired(
+            "The Globus session for Odo has expired: Globus needs a fresh login "
+            "with opensso.ccs.ornl.gov. Connect Globus again.",
+            http_status=502,
+        )
+    )
+    assert odo.state == "globus_session_expired"
+    assert odo.checks.globus.reason == "session_expired"
+    assert "opensso.ccs.ornl.gov" in odo.checks.globus.message
+    assert odo.checks.globus.http_status == 502
+
+
+@pytest.mark.anyio
+async def test_globus_503_is_unverifiable_with_the_status():
+    odo = await _odo_globus(
+        GlobusCheckFailed(
+            "Globus answered HTTP 503 (ServiceUnavailable): try later.",
+            http_status=503,
+        )
+    )
+    assert odo.state == "unverifiable"
+    assert "503" in odo.checks.globus.message
+    assert odo.checks.globus.http_status == 503
+
+
+@pytest.mark.anyio
+async def test_globus_timeout_is_unverifiable_with_the_limit():
+    odo = await _odo_globus(TimeoutError())
+    assert odo.state == "unverifiable"
+    assert odo.checks.globus.message == "Globus did not answer within 10 s"
+
+
+@pytest.mark.anyio
+async def test_globus_network_error_is_unverifiable():
+    odo = await _odo_globus(NETWORK_ERROR)
+    assert odo.state == "unverifiable"
+    assert odo.checks.globus.message == "Globus could not be reached"
+
+
+@pytest.mark.anyio
+async def test_globus_failure_is_logged_with_code_and_body_but_no_token(caplog):
+    with caplog.at_level("INFO", logger="vista_backend.services.hpc_status"):
+        await _odo_globus(
+            GlobusCheckFailed(
+                "d",
+                log="HTTP 503 code=ServiceUnavailable body=try later",
+                http_status=503,
+            )
+        )
+    assert "Globus check failed" in caplog.text
+    assert "ServiceUnavailable" in caplog.text
+    assert "try later" in caplog.text
+    assert "odo-gt" not in caplog.text
+    assert "odo-gh" not in caplog.text
+
+
+def _globus_error(cls, status: int, code: str, url: str, *, body=None):
     response = requests.Response()
     response.status_code = status
-    response._content = b'{"code":"%s","message":"m"}' % code.encode()
-    response.headers["Content-Type"] = "application/json"
+    if body is None:
+        response._content = b'{"code":"%s","message":"m"}' % code.encode()
+        response.headers["Content-Type"] = "application/json"
+    elif isinstance(body, bytes):
+        response._content = body
+        response.headers["Content-Type"] = "text/html"
+    else:
+        response._content = json.dumps(body).encode()
+        response.headers["Content-Type"] = "application/json"
     response.request = requests.Request("GET", url).prepare()
     return cls(response)
+
+
+TRANSFER_URL = "https://transfer.api.globus.org/v0.10/operation"
+AUTH_URL = "https://auth.globus.org/v2/oauth2/token"
+
+# Live bodies from the change's design.md Context.
+GARE_502_ODO = {
+    "code": "ExternalError.DirListingFailed.LoginFailed",
+    "message": "Login Required",
+    "request_id": "r-gare",
+    "authorization_parameters": {
+        "session_message": "Session reauthentication required (Globus Transfer)",
+        "session_required_single_domain": [
+            "opensso.ccs.ornl.gov",
+            "clients.auth.globus.org",
+        ],
+    },
+}
+GARE_NO_DOMAIN = {
+    "code": "ExternalError.DirListingFailed.LoginFailed",
+    "message": "Login Required",
+    "request_id": "r-gare",
+    "authorization_parameters": {"session_message": "Please log in again"},
+}
+INVALID_GRANT_400 = {"error": "invalid_grant"}
+EXCHANGE_503 = {"code": "ServiceUnavailable", "message": "Auth is overloaded"}
+TRANSFER_503_PLAIN = b"<html>Service Unavailable</html>"
+TRANSFER_400_PLAIN = {
+    "code": "ClientError.BadRequest",
+    "message": "bad path",
+    "request_id": "r-400",
+}
 
 
 def _patch_globus_sdk(monkeypatch, *, refresh_error=None, ls_error=None):
@@ -659,8 +774,8 @@ def _patch_globus_sdk(monkeypatch, *, refresh_error=None, ls_error=None):
     return calls
 
 
-def _probe():
-    hs.probe_globus(transfer="t", https="h", collection_id="c", client_id="id")
+def _probe(**kw):
+    hs.probe_globus(transfer="t", https="h", collection_id="c", client_id="id", **kw)
 
 
 def test_probe_refreshes_both_tokens_then_lists(monkeypatch):
@@ -670,12 +785,53 @@ def test_probe_refreshes_both_tokens_then_lists(monkeypatch):
 
 
 def test_probe_refresh_refusal_is_session_expired(monkeypatch):
+    err = _globus_error(AuthAPIError, 400, "", AUTH_URL, body=INVALID_GRANT_400)
+    _patch_globus_sdk(monkeypatch, refresh_error=err)
+    with pytest.raises(GlobusSessionExpired) as exc:
+        _probe(title="Frontier")
+    assert "no longer accepts the saved" in str(exc.value)
+    assert "Frontier" in str(exc.value)
+
+
+def test_probe_exchange_503_is_check_failed_not_expired(monkeypatch):
+    err = _globus_error(AuthAPIError, 503, "", AUTH_URL, body=EXCHANGE_503)
+    _patch_globus_sdk(monkeypatch, refresh_error=err)
+    with pytest.raises(GlobusCheckFailed) as exc:
+        _probe()
+    for part in ("503", "ServiceUnavailable", "Auth is overloaded"):
+        assert part in str(exc.value)
+    assert exc.value.http_status == 503
+
+
+def test_probe_exchange_400_other_than_invalid_grant_is_check_failed(monkeypatch):
     err = _globus_error(
-        GlobusAPIError, 400, "invalid_grant", "https://auth.globus.org/v2/oauth2/token"
+        AuthAPIError, 400, "", AUTH_URL, body={"error": "invalid_client"}
     )
     _patch_globus_sdk(monkeypatch, refresh_error=err)
-    with pytest.raises(GlobusSessionExpired):
+    with pytest.raises(GlobusCheckFailed):
         _probe()
+
+
+def test_probe_transfer_503_without_a_gare_is_check_failed(monkeypatch):
+    err = _globus_error(
+        TransferAPIError, 503, "", TRANSFER_URL, body=TRANSFER_503_PLAIN
+    )
+    _patch_globus_sdk(monkeypatch, ls_error=err)
+    with pytest.raises(GlobusCheckFailed) as exc:
+        _probe()
+    assert "503" in str(exc.value)
+    assert "None" not in str(exc.value)
+
+
+def test_probe_transfer_400_with_a_plain_code_is_check_failed(monkeypatch):
+    err = _globus_error(
+        TransferAPIError, 400, "", TRANSFER_URL, body=TRANSFER_400_PLAIN
+    )
+    _patch_globus_sdk(monkeypatch, ls_error=err)
+    with pytest.raises(GlobusCheckFailed) as exc:
+        _probe()
+    for part in ("400", "ClientError.BadRequest", "bad path"):
+        assert part in str(exc.value)
 
 
 @pytest.mark.parametrize(
@@ -705,6 +861,36 @@ def test_probe_unlistable_home_still_proves_the_session(monkeypatch, status, cod
     )
     _patch_globus_sdk(monkeypatch, ls_error=err)
     _probe()  # no raise
+
+
+def test_probe_gare_502_is_session_expired(monkeypatch):
+    err = _globus_error(TransferAPIError, 502, "", TRANSFER_URL, body=GARE_502_ODO)
+    _patch_globus_sdk(monkeypatch, ls_error=err)
+    with pytest.raises(GlobusSessionExpired) as exc:
+        _probe(title="Odo")
+    detail = str(exc.value)
+    assert "opensso.ccs.ornl.gov" in detail
+    assert "clients.auth.globus.org" not in detail
+    assert "Odo" in detail
+    assert "Connect Globus again" in detail
+    assert exc.value.http_status == 502
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_probe_gare_wins_over_the_403_404_rule(monkeypatch, status):
+    err = _globus_error(TransferAPIError, status, "", TRANSFER_URL, body=GARE_502_ODO)
+    _patch_globus_sdk(monkeypatch, ls_error=err)
+    with pytest.raises(GlobusSessionExpired):
+        _probe()
+
+
+def test_probe_gare_without_a_domain_is_still_session_expired(monkeypatch):
+    err = _globus_error(TransferAPIError, 502, "", TRANSFER_URL, body=GARE_NO_DOMAIN)
+    _patch_globus_sdk(monkeypatch, ls_error=err)
+    with pytest.raises(GlobusSessionExpired) as exc:
+        _probe(title="Odo")
+    assert "None" not in str(exc.value)
+    assert "Connect Globus again" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -769,7 +955,7 @@ async def test_no_secret_ever_appears_in_the_response():
     fac.s3m["fr-tok"] = (200, "other", {})
     fac.iri[(NERSC, "pm-tok")] = 500
     globus = FakeGlobus()
-    globus.result = GlobusSessionExpired("token odo-gt refused")
+    globus.result = GlobusSessionExpired("expired", log="token odo-gt refused")
     u = user(**CONNECTED)
     body = (await make_service(fac, globus).status(u)).model_dump_json()
     for secret in [*CONNECTED.values(), "Bearer"]:
