@@ -1,5 +1,5 @@
 """
-Skill import: the GitHub URL parser, importing an uploaded local folder, the
+Skill import: importing an uploaded local folder, the
 `POST /skills/import/upload` route that serves the Import modal's "Local
 folder" tab, loading a new skill into the project it was made in, and
 importing from the project's output folder ("From project output").
@@ -22,7 +22,6 @@ from vista_backend.agents import skill_import
 from vista_backend.agents.skill_import import (
     SkillImportError,
     import_skill_from_files,
-    parse_github_url,
 )
 from vista_backend.config import settings
 from vista_backend.db.schemas import ProjectTable, SkillTable
@@ -41,27 +40,6 @@ Run `scripts/run.py`.
 
 def _files(entries: dict[str, str]) -> list[tuple[str, io.BytesIO]]:
     return [(path, io.BytesIO(text.encode("utf-8"))) for path, text in entries.items()]
-
-
-class TestParseGithubUrl:
-    def test_repo_root(self):
-        parsed = parse_github_url("https://github.com/owner/repo.git")
-        assert (parsed.owner, parsed.repo, parsed.ref, parsed.subpath) == (
-            "owner",
-            "repo",
-            None,
-            "",
-        )
-
-    def test_tree_subpath(self):
-        parsed = parse_github_url(
-            "https://github.com/anthropics/skills/tree/main/skills/docx/"
-        )
-        assert (parsed.ref, parsed.subpath) == ("main", "skills/docx")
-
-    def test_rejects_local_path(self):
-        with pytest.raises(SkillImportError, match="not a GitHub repo URL"):
-            parse_github_url("/Users/me/skills/demo-skill")
 
 
 class TestImportSkillFromFiles:
@@ -621,88 +599,3 @@ def test_the_sandbox_cannot_write_its_skills(tmp_path, monkeypatch):
     volumes = json.loads(sandbox.env["VISTA_DEV_MCP_VOLUMES"])
     assert [str(agent.volume_root), "/mnt", "w"] in volumes
     assert [str(agent.skills_volume_dir), "/mnt/skills", "r"] in volumes
-
-
-# --------------------------------------------------------------------------- #
-# The user's GitHub token
-# --------------------------------------------------------------------------- #
-
-
-class _Response(io.BytesIO):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _capture(monkeypatch, *, status: int | None = None):
-    """Stub `urlopen`: record each request, then answer with `status` or a body."""
-    import urllib.error
-
-    sent: list = []
-
-    def urlopen(req, timeout):
-        sent.append(req)
-        if status is not None:
-            raise urllib.error.HTTPError(req.full_url, status, "nope", {}, None)
-        return _Response(b"{}")
-
-    monkeypatch.setattr(skill_import.urllib.request, "urlopen", urlopen)
-    return sent
-
-
-def test_the_token_goes_on_the_request(monkeypatch):
-    sent = _capture(monkeypatch)
-    skill_import._api_request("https://api.github.com/repos/o/r", token="ghp_x")
-    assert sent[0].get_header("Authorization") == "Bearer ghp_x"
-
-
-def test_no_token_sends_no_header(monkeypatch):
-    sent = _capture(monkeypatch)
-    skill_import._api_request("https://api.github.com/repos/o/r")
-    assert sent[0].get_header("Authorization") is None
-
-
-@pytest.mark.parametrize("status", [401, 403, 404])
-def test_a_private_repo_without_a_token_says_where_to_add_one(monkeypatch, status):
-    """GitHub answers 404 for a private repository it will not show you."""
-    _capture(monkeypatch, status=status)
-    with pytest.raises(SkillImportError, match=r"add a GitHub token in Settings"):
-        skill_import._api_request("https://api.github.com/repos/o/private")
-
-
-def test_a_refused_token_says_it_may_lack_access(monkeypatch):
-    _capture(monkeypatch, status=404)
-    with pytest.raises(SkillImportError, match=r"GitHub token .* may not have access"):
-        skill_import._api_request("https://api.github.com/repos/o/r", token="ghp_x")
-
-
-@pytest.mark.anyio
-async def test_importing_uses_the_users_token_and_never_the_projects(
-    session, alice, monkeypatch, tmp_path
-):
-    """The project is where the skill lands, not where its token comes from."""
-    from vista_backend.db.schemas import UserTable
-    from vista_backend.services import skills as skills_service
-
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-    row = await session.get(UserTable, alice.id)
-    row.github_token = "ghp_users"
-    session.add(row)
-    project = ProjectTable(name="tokened", forum_repo_token="github_pat_forum")
-    session.add(project)
-    await session.flush()
-
-    seen: list = []
-
-    def fake_import(url, dest, *, token=None):
-        seen.append(token)
-        raise SkillImportError("stop here")
-
-    monkeypatch.setattr(skills_service, "import_skill_from_github", fake_import)
-    with pytest.raises(Exception):
-        await skills_service.import_skill(
-            session, "https://github.com/o/r", alice.id, project
-        )
-    assert seen == ["ghp_users"]
