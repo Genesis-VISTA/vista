@@ -2,7 +2,7 @@ import uuid
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
@@ -119,9 +119,14 @@ async def agent_run(
                 prior_history=effective_history,
             )
         except RunBusy:
-            raise HTTPException(
+            # HTTPException can't carry a sibling field without making `detail`
+            # an object, so the machine-readable code goes in a plain response.
+            return JSONResponse(
                 status_code=409,
-                detail="This conversation already has a turn running.",
+                content={
+                    "detail": "This conversation already has a turn running.",
+                    "code": "run_busy",
+                },
             )
 
         if body.stream:

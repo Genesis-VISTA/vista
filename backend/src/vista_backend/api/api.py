@@ -11,7 +11,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import get_vista_mcp_server
 from ..agents.campaign.wiring import build_default_monitor
-from ..agents.inference import MissingInferenceCredential, MissingInferenceModel
+from ..agents.inference import (
+    MissingInferenceCredential,
+    MissingInferenceModel,
+    RejectedInferenceCredential,
+)
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..services.auth import get_user
@@ -103,20 +107,29 @@ app = FastAPI(
 
 @app.exception_handler(MissingInferenceCredential)
 @app.exception_handler(MissingInferenceModel)
+@app.exception_handler(RejectedInferenceCredential)
 async def _missing_inference_credential(
-    request: Request, exc: MissingInferenceCredential | MissingInferenceModel
+    request: Request,
+    exc: MissingInferenceCredential
+    | MissingInferenceModel
+    | RejectedInferenceCredential,
 ) -> JSONResponse:
     """
-    Report a missing inference credential, or a provider with no model chosen
-    and no default, as a named condition.
+    Report a missing or rejected inference credential, or a provider with no
+    model chosen and no default, as a named condition.
 
     409 rather than a 5xx: nothing has failed. On a fresh install this is the
     expected state, and the request cannot be satisfied until the researcher
     supplies a value the server has no way to obtain. `detail` carries the
     message naming the setting and where to enter it, which is the shape
-    `ui/lib/user.ts:extractError` already surfaces.
+    `ui/lib/user.ts:extractError` already surfaces. `code` tells it apart from
+    the chat endpoint's other 409, a conversation that is already running a
+    turn (`run_busy`).
     """
-    return JSONResponse(status_code=409, content={"detail": exc.detail})
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.detail, "code": "inference_not_configured"},
+    )
 
 
 app.include_router(agent_router)

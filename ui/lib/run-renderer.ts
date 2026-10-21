@@ -306,6 +306,7 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
 
       case "run_finished": {
         const state = (data as { state?: string }).state;
+        const err = (data as { error?: unknown }).error;
         if (state !== "done" && state !== "failed" && state !== "interrupted" && state !== "stopped") {
           break;
         }
@@ -313,9 +314,13 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
         host.setLiveStatus(null);
         host.setLatestIntermediateId(() => null);
         if (state !== "done") {
+          const note =
+            (state === "failed" && typeof err === "string" && err.length > 0)
+            ? `Agent run failed: ${err}`
+            : FINISH_NOTES[state];
           host.setMessages((prev) => [
             ...prev,
-            tagged({ id: newId(), role: "system", content: FINISH_NOTES[state] }),
+            tagged({ id: newId(), role: "system", content: note }),
           ]);
         }
         break;

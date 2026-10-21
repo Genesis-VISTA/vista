@@ -167,8 +167,12 @@ export async function installStub(
         if (method === "POST" && url.pathname === streamPath) {
           if (window.__vista.conflictArmed) {
             window.__vista.conflictArmed = false;
+            // The backend's busy refusal, which the proxy passes through as is.
             return new Response(
-              JSON.stringify({ ok: false, error: "This conversation already has a turn running." }),
+              JSON.stringify({
+                detail: "This conversation already has a turn running.",
+                code: "run_busy",
+              }),
               { status: 409, headers: { "content-type": "application/json" } },
             );
           }

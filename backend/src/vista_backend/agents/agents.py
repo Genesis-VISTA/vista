@@ -45,8 +45,8 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from .inference import (
+    RejectedInferenceCredential,
     build_model_for,
-    rejected_credential_detail,
     require_inference_credential,
 )
 import mcp.client.session
@@ -1204,23 +1204,13 @@ class ProjectAgent:
                     # an absent one -- a typo'd key is the likeliest first-run
                     # failure -- but it can only be discovered by asking the
                     # provider, which happens after the response has started.
-                    # Reported in-stream on the SEV1 pattern above rather than
-                    # as a broken stream. Anything else propagates: an outage
-                    # or a bad request is not a configuration problem and must
-                    # not be described as one.
+                    # Raised as a named condition, which fails the turn with
+                    # its message as the reason. Anything else propagates
+                    # as it is: an outage or a bad request is not a
+                    # configuration problem and must not be described as one.
                     if exc.status_code not in (401, 403):
                         raise
-                    yield log(
-                        "ERROR", "Agent", rejected_credential_detail(exc.model_name)
-                    )
-                    yield ProjectAgentResultEvent(
-                        result=ProjectAgentResult(
-                            new_messages=[],
-                            usage=RunUsage(),
-                            logs=list(logs),
-                        )
-                    )
-                    return
+                    raise RejectedInferenceCredential(exc.model_name) from exc
                 finally:
                     self._cur_mcp_elicitation_callback = None
                     self._cur_mcp_process_tool_call = None

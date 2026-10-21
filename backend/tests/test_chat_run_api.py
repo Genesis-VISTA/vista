@@ -106,6 +106,7 @@ async def test_a_send_while_busy_is_a_409_and_changes_nothing(session):
             )
             assert busy.status_code == 409
             assert "already has a turn running" in busy.json()["detail"]
+            assert busy.json()["code"] == "run_busy"
             assert chat_run.chat_run_registry.get(conversation) is not None
 
             stopped = await client.post(
