@@ -72,9 +72,10 @@ not empty" check work as a cache with no record kept. Job outputs keep their `<j
 destination.
 
 **Shared helper, per-file outcome.** The per-file part of `_get_olcf_job_outputs` becomes a
-helper. It takes a client, a collection, a remote path and a local path, skips the file if it
-is already local, and otherwise downloads it, letting `GlobusFileNotFound` and
-`GlobusSessionExpired` propagate. The transfer tool catches `GlobusFileNotFound` per file and
+helper. It takes a function that builds the client, a collection, a remote path and a local
+path, skips the file if it is already local, and otherwise downloads it. The client is built
+only when a file has to be fetched, so a call served from local copies needs no Globus
+credential, as before. `GlobusFileNotFound` and `GlobusSessionExpired` propagate from it. The transfer tool catches `GlobusFileNotFound` per file and
 reports it, and lets an expired session fail the whole call. `get_hpc_job_outputs` keeps
 letting both propagate, so its behaviour is unchanged. `_job_output_paths` is generalised into a
 path check for both tools: it confines a relative name under a root, both as a POSIX and as a
