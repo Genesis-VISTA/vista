@@ -351,8 +351,11 @@ try {
     if ($described -and $described.pid -eq $proc.Id) { break }
     Start-Sleep -Milliseconds 100
   }
+  # started_at is checked in the raw text: ConvertFrom-Json turns an ISO string
+  # into a DateTime, which no longer reads as the string the file holds.
+  $raw = Get-Content -Raw -Encoding UTF8 $serviceFile -ErrorAction SilentlyContinue
   if ($described -and $described.pid -eq $proc.Id -and $described.url -eq $url -and
-      $described.started_at -match '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$') {
+      $raw -match '"started_at": "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"') {
     Pass 'service.json says where the running service is'
   } else {
     Fail "service.json: $(Get-Content -Raw $serviceFile -ErrorAction SilentlyContinue)`n--- stderr`n$(if ($proc.HasExited) { $stderr.Result })"

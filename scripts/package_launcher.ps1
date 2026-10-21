@@ -361,7 +361,9 @@ New-Item -ItemType Directory -Force -Path $STATE, $LOGS | Out-Null
 # instead of starting a second stack, and removes the file when it stops. A
 # file whose process is gone is left from a crash -- or from `schtasks /End`,
 # which runs no cleanup -- and is replaced; the application checks the pid too.
-$SERVICE_FILE = "$STATE\service.json"
+# Join-Path, not "\": the .NET call in Write-ServiceFile does not read "\" as a
+# separator off Windows, so the file it wrote was not the one Move-Item looked for.
+$SERVICE_FILE = Join-Path $STATE 'service.json'
 $SERVICE_WRITTEN = $false
 if ($SERVICE -and (Test-Path $SERVICE_FILE)) {
   $running = $null
