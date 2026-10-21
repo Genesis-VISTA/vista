@@ -94,7 +94,8 @@ function ProjectsPageContent() {
         notifyActiveProjectChanged();
       }
     } else {
-      await createProject(toCreate(draft));
+      const project = await createProject(toCreate(draft));
+      open(project);
     }
     setModal({ mode: "closed" });
   }
