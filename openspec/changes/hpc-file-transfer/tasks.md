@@ -13,6 +13,7 @@
 - [x] 2.6 Write the tool descriptions: what each tool reads or writes, that downloads land under `/mnt/data/output/transfers/<cluster>/`, that bulk data should stay on the cluster for a job to process, that uploads go only to `transfers/` and replace same-named files, and that the reported remote path is what a job reads. Verify by reading the tool listing from `uv run vista-mcp-server` against the spec's Transfer tools requirement
 - [x] 2.7 Verify that `./scripts/ci-local.sh mcp` passes (lint and test)
 - [x] 2.8 Add the three tool names to `HPC_TOOLS` in `_build_vista_metadata` (`backend/src/vista_backend/agents/agents.py`), which decides which tool calls carry the researcher's credentials. Found live: without it every transfer call reads as "Globus not connected". Verify by adding them to `test_vista_metadata_attaches_user_credentials_for_hpc_tools` in `backend/tests/test_project_agent_tools.py`, and that `./scripts/ci-local.sh backend` passes
+- [x] 2.9 Give `GlobusClient.operation_ls` a `skip_hidden` option that keeps a recursive walk out of folders named `.*`, marking each folder it does not walk `walked: False`, and have the list tool use it with `__pycache__` excluded, printing "(not walked)". Found live (4.1): one job folder listed 1,818 entries, nearly all `.cache` and `.local`. Verify with tests in `tests/test_globus_wait_and_walk.py` (hidden folders listed but not descended; a hidden folder asked for by name still walked) and `tests/test_transfer_tools.py` (the marker is printed)
 
 ## 3. Docs
 

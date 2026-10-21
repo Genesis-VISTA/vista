@@ -90,6 +90,14 @@ sees sandbox paths, as with `get_hpc_job_outputs` and `display_file`.
 can turn it off on its own. It imports the layout and collection-id helpers from
 `submit_job_mcp.py` rather than duplicating them.
 
+**A recursive listing skips hidden folders.** In the first live try, one job's output folder
+listed 1,818 entries, almost all under the `.cache/pip`, `.cache/matplotlib` and `.local`
+trees the job's Python left behind, to find one PNG. Each folder walked is a sequential
+Transfer call. The walk already prunes by exact name (`exclude_segments`), which can't express
+"every name starting with `.`", so `operation_ls` gains `skip_hidden`. A pruned folder is still
+listed and marked as not walked, so the agent can see it and list it by its own path.
+Filtering the results afterwards would save tokens but not the round trips.
+
 **Remote paths must be absolute.** The HTTPS interface takes absolute paths, and accepting
 `~/` would mean resolving the home folder over Transfer, which isn't worth an extra round trip
 for this.
