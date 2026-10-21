@@ -37,17 +37,17 @@
 
 ## 4. Search hits and the fetch tool
 
-- [ ] 4.1 Make `rag_mcp._format_results` head hits by kind:
+- [x] 4.1 Make `rag_mcp._format_results` head hits by kind:
   - PDF unchanged;
   - `rows 51-100 (CSV)` / `summary (CSV)`;
   - `passage N (Markdown|Text)`.
 
   Non-PDF hits get the description and a `fetch_kb_file(kb_slug=…, filename=…)` line, and the `rag_search` docstring loses "Do NOT use this for quantitative lookups" in favour of the fetch guidance. Verify with a new `mcp_servers/vista_mcp_server/tests/test_rag_format_results.py` covering a PDF, a CSV window, a CSV summary and a Markdown hit.
-- [ ] 4.2 Add `fetch_kb_file(kb_slug, filename)` beside `fetch_repository` in `agents/agents.py`, per design.md. Verify in a new `backend/tests/test_fetch_kb_file.py`:
+- [x] 4.2 Add `fetch_kb_file(kb_slug, filename)` beside `fetch_repository` in `agents/agents.py`, per design.md. Verify in a new `backend/tests/test_fetch_kb_file.py`:
   - an attached KB's CSV is copied byte-identical to `<volume>/data/work/kb/<slug>/<file>`, and the sandbox path is returned;
   - an unattached slug fails with the attached slugs listed;
   - a missing file and `../x.csv` each fail with nothing copied.
-- [ ] 4.3 Mention `fetch_kb_file` in the system prompt's knowledge-base block next to the slug list. Verify the existing system-prompt test (or a new assertion in `test_fetch_kb_file.py`) that the block names the tool when the project has KBs
+- [x] 4.3 Mention `fetch_kb_file` in the system prompt's knowledge-base block next to the slug list. Verify the existing system-prompt test (or a new assertion in `test_fetch_kb_file.py`) that the block names the tool when the project has KBs
 
 ## 5. UI
 

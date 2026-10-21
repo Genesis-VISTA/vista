@@ -435,8 +435,9 @@ async def rag_search(
     ] = 0.5,
 ) -> str:
     """
-    Search an indexed literature corpus (papers, reports, technical notes)
-    for passages relevant to the query, within a specific Knowledge Base.
+    Search an indexed Knowledge Base for passages relevant to the query.
+    A knowledge base may hold papers and reports (PDF), data tables
+    (CSV/TSV) and notes (TXT/Markdown).
 
     Use this tool for qualitative, conceptual, or literature-review
     questions such as:
@@ -444,11 +445,16 @@ async def rag_search(
       - "How is thermal conductivity of fluoride salts typically measured?"
       - "What do recent studies say about tritium management in FHRs?"
 
-    Do NOT use this for quantitative lookups (melting points, viscosity
-    values) — use run_bash with the structured JSON database for those.
+    Table hits show a row range (or "summary") and name the file; the
+    hit is only a sample. For quantitative questions, copy the whole file
+    into the sandbox with `fetch_kb_file` and compute on it with run_bash
+    (e.g. pandas) instead of reading numbers off the passage.
 
-    Returns passages with source filename, page number, and full citation
-    (title, authors, journal, year, DOI) when available.
+    Returns passages with source filename and location (page for PDFs,
+    row range for tables, passage number for notes). PDF hits carry the
+    full citation (title, authors, journal, year, DOI) when available;
+    other hits carry the file's description and a `fetch_kb_file` call
+    for the full file.
 
     ## Hybrid retrieval
 
@@ -650,6 +656,14 @@ def _chromadb_to_retrieval_results(
     return results
 
 
+_KIND_LABELS = {
+    "csv": "CSV",
+    "tsv": "TSV",
+    "text": "Text",
+    "markdown": "Markdown",
+}
+
+
 def _format_results(
     handle: _KbHandle,
     *,
@@ -667,17 +681,34 @@ def _format_results(
     for idx, (doc, meta) in enumerate(zip(documents, metadatas), 1):
         meta = meta or {}
         source = meta.get("source", "unknown")
-        page = meta.get("page", "?")
+        kind = meta.get("kind") or "pdf"
 
         if source not in seen_sources:
             seen_sources[source] = _get_citation_for_source(handle, source)
-
         citation = seen_sources[source]
-        citation_str = _format_citation(citation)
 
-        header = f"[{idx}] {source}, page {page}"
-        if citation_str:
-            header += f"\n    Citation: {citation_str}"
+        if kind == "pdf":
+            header = f"[{idx}] {source}, page {meta.get('page', '?')}"
+            citation_str = _format_citation(citation)
+            if citation_str:
+                header += f"\n    Citation: {citation_str}"
+        else:
+            label = _KIND_LABELS.get(kind, kind)
+            if "rows" in meta:
+                rows = str(meta["rows"])
+                where = "summary" if rows == "summary" else f"rows {rows}"
+            elif "chunk_id" in meta:
+                where = f"passage {int(meta['chunk_id']) + 1}"
+            else:
+                where = "passage ?"
+            header = f"[{idx}] {source}, {where} ({label})"
+            abstract = (citation or {}).get("abstract")
+            if abstract:
+                header += f"\n    Description: {abstract}"
+            header += (
+                f'\n    Full file: fetch_kb_file(kb_slug="{handle.slug}", '
+                f'filename="{source}")'
+            )
 
         output_parts.append(f"{header}\n\n{doc}")
 

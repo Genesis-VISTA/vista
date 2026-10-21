@@ -76,6 +76,7 @@ from palisade.quarantine import (
 )
 from .eval_metrics import EvalMetricsCapability
 from . import source_fetch
+from .kb_fetch import copy_kb_file, kb_prompt_block
 from .skills import to_prompt
 from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
 from .campaign.hpc_tools import McpHpcTools
@@ -563,19 +564,7 @@ class ProjectAgent:
                 parts.append(self.project.system_prompt)
 
             # TODO Should cache these, but do need them to update when the project is edited
-            if self.project.knowledge_bases:
-                kb_lines = "\n".join(
-                    f"  - {slug}" for slug in self.project.knowledge_bases
-                )
-                kb_block = (
-                    "Knowledge Bases available to this project (pass one of these "
-                    "slugs as the `kb_slug` argument to `rag_search`):\n" + kb_lines
-                )
-            else:
-                kb_block = (
-                    "No Knowledge Bases are configured for this project; the "
-                    "`rag_search` tool is not available."
-                )
+            kb_block = kb_prompt_block(self.project.knowledge_bases)
             parts.append(kb_block)
 
             skills_block = to_prompt(
@@ -618,6 +607,36 @@ class ProjectAgent:
                 f"Fetched into /mnt/data/work/{record['folder']}/ "
                 f"({record['files']} files).\n"
                 f"SOURCE.json: {json.dumps(record)}"
+            )
+
+        @agent.tool_plain
+        async def fetch_kb_file(kb_slug: str, filename: str) -> str:
+            """
+            Copy a file from one of this project's knowledge bases into the sandbox, so
+            you can read or compute on it with run_bash. Use it after `rag_search`
+            returns a hit from a CSV, TSV, TXT, MD (or PDF) file that you need in full;
+            the hit names the `kb_slug` and `filename`. The whole file is copied, even
+            if only part of it was indexed. Returns the sandbox path
+            (/mnt/data/work/kb/<kb_slug>/<filename>) and the size in bytes.
+
+            Args:
+                kb_slug: Slug of an attached knowledge base.
+                filename: The file's name in that knowledge base, as shown in the hit.
+            """
+            work = self.output_dir.parent / "work"
+            async with AsyncSession(get_engine()) as session:
+                dest, size = await copy_kb_file(
+                    session,
+                    attached=self.project.knowledge_bases,
+                    kb_slug=kb_slug,
+                    filename=filename,
+                    work_dir=work,
+                )
+            _make_readable_by_others(work / "kb")
+            rel = dest.relative_to(work).as_posix()
+            return (
+                f"Copied to /mnt/data/work/{rel} ({size} bytes). "
+                "For a table, read it with pandas or csv in run_bash."
             )
 
         return agent
