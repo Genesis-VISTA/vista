@@ -192,6 +192,9 @@ PublicationCitationStatus = Literal[
 ]
 
 
+PublicationKind = Literal["pdf", "csv", "tsv", "text", "markdown"]
+
+
 class Publication(BaseModel):
     """
     A single paper inside a Knowledge Base.
@@ -238,6 +241,10 @@ class Publication(BaseModel):
     """
     citation_error: Optional[str] = None
     """Last error from the citation LLM call, if citation_status='failed'."""
+    kind: PublicationKind = "pdf"
+    """File format, from the suffix; rows without one read as a PDF."""
+    row_count: Optional[int] = None
+    """Data rows in a CSV/TSV file; None for other formats or when unknown."""
 
 
 KnowledgeBaseBuildStatus = Literal[

@@ -43,6 +43,24 @@ logger.warning("indexer.py loaded (version: %s)", _INDEXER_VERSION)
 
 
 # ---------------------------------------------------------------------------
+# Accepted file formats
+#
+# Mirrors `build_rag.ACCEPTED_SUFFIXES` / `build_rag.SUFFIX_KIND`. build_rag
+# imports sentence-transformers and chromadb at module top, so the API layer
+# cannot read them from there just to validate an upload; a test asserts the
+# two stay equal.
+# ---------------------------------------------------------------------------
+ACCEPTED_SUFFIXES: tuple[str, ...] = (".pdf", ".csv", ".tsv", ".txt", ".md")
+SUFFIX_KIND: dict[str, str] = {
+    ".pdf": "pdf",
+    ".csv": "csv",
+    ".tsv": "tsv",
+    ".txt": "text",
+    ".md": "markdown",
+}
+
+
+# ---------------------------------------------------------------------------
 # Lazy import of build_rag.TextRAG
 # ---------------------------------------------------------------------------
 _TextRAG = None  # populated on first call
@@ -147,6 +165,64 @@ def invalidate_rag_cache(rag_db_path: str) -> None:
     key = str(Path(rag_db_path).resolve())
     if _text_rag_instances.pop(key, None) is not None:
         logger.info("Invalidated cached TextRAG for %s", key)
+
+
+# ---------------------------------------------------------------------------
+# Shared TextRAG construction
+# ---------------------------------------------------------------------------
+def _get_or_build_rag(
+    rag_db_p: Path,
+    pdfs_dir_p: Path,
+    *,
+    extract_citations: bool,
+    force_reindex: bool,
+    llm_credentials: Any | None,
+):
+    """
+    Return the cached TextRAG for `rag_db_p`, constructing it on first use.
+
+    We cache the instance by resolved rag_db_path so later runs against the same
+    KB reuse the same chromadb.PersistentClient (see the `_text_rag_instances`
+    comment block for why: it avoids SQLITE_READONLY_DBMOVED on second-run
+    writes). Blocking and slow on first call; run it in the executor, under the
+    per-DB lock.
+    """
+    cache_key = str(rag_db_p)
+    cached = _text_rag_instances.get(cache_key)
+    if cached is not None:
+        # Sanity check: the on-disk chroma dir must still exist. If the user
+        # deleted and re-created the KB, we want a fresh client against the new
+        # directory. (KB delete also invalidates the cache via
+        # invalidate_rag_cache, but be defensive.)
+        if not (rag_db_p / "chroma.sqlite3").is_file():
+            logger.info(
+                "Discarding cached TextRAG for %s: chroma.sqlite3 no longer on disk",
+                cache_key,
+            )
+            _text_rag_instances.pop(cache_key, None)
+        else:
+            logger.info("Reusing cached TextRAG for %s", cache_key)
+            # Re-stamp mutable fields. The wrapped chromadb client and the
+            # embedding model are reused.
+            cached.pdf_folder = str(pdfs_dir_p)
+            cached.extract_citations = extract_citations
+            cached.force_reindex = force_reindex
+            # Re-stamped like the others: instances are cached per rag_db path,
+            # so without this a second run against the same knowledge base
+            # would keep using the credential the first caller happened to
+            # supply.
+            cached.llm_credentials = llm_credentials
+            return cached
+    logger.info("Constructing TextRAG for %s", cache_key)
+    instance = _get_text_rag_cls()(
+        pdf_folder=str(pdfs_dir_p),
+        db_path=str(rag_db_p),
+        extract_citations=extract_citations,
+        force_reindex=False,  # we manage per-file dedup ourselves
+        llm_credentials=llm_credentials,
+    )
+    _text_rag_instances[cache_key] = instance
+    return instance
 
 
 # ---------------------------------------------------------------------------
@@ -508,57 +584,16 @@ async def index_publications(
     async with lock:
         loop = asyncio.get_running_loop()
 
-        # Build TextRAG inside the executor — this triggers the slow
-        # sentence-transformers import + chroma open. We cache the
-        # instance by resolved rag_db_path so subsequent runs against
-        # the same KB reuse the same chromadb.PersistentClient. See
-        # the _text_rag_instances comment block above for why this
-        # matters (avoids SQLITE_READONLY_DBMOVED on second-run writes).
-        TextRAG = _get_text_rag_cls()
-        cache_key = str(rag_db_p)
-
+        # Build TextRAG inside the executor: this triggers the slow
+        # sentence-transformers import + chroma open (see `_get_or_build_rag`).
         def _build_rag():
-            cached = _text_rag_instances.get(cache_key)
-            if cached is not None:
-                # Sanity check: the on-disk chroma dir must still
-                # exist. If the user deleted and re-created the KB,
-                # we want a fresh client against the new directory.
-                # (KB delete also invalidates the cache via
-                # invalidate_rag_cache below, but be defensive.)
-                sqlite_file = rag_db_p / "chroma.sqlite3"
-                if not sqlite_file.is_file():
-                    logger.info(
-                        "Discarding cached TextRAG for %s: "
-                        "chroma.sqlite3 no longer on disk",
-                        cache_key,
-                    )
-                    _text_rag_instances.pop(cache_key, None)
-                else:
-                    # Re-stamp mutable fields. The wrapped chromadb
-                    # client and the embedding model are reused.
-                    logger.info(
-                        "Reusing cached TextRAG for %s",
-                        cache_key,
-                    )
-                    cached.pdf_folder = str(pdfs_dir_p)
-                    cached.extract_citations = extract_citations
-                    cached.force_reindex = force_reindex
-                    # Re-stamped like the others: instances are cached per
-                    # rag_db path, so without this a second run against the
-                    # same knowledge base would keep using the credential the
-                    # first caller happened to supply.
-                    cached.llm_credentials = llm_credentials
-                    return cached
-            logger.info("Constructing TextRAG for %s", cache_key)
-            instance = TextRAG(
-                pdf_folder=str(pdfs_dir_p),
-                db_path=str(rag_db_p),
+            return _get_or_build_rag(
+                rag_db_p,
+                pdfs_dir_p,
                 extract_citations=extract_citations,
-                force_reindex=False,  # we manage per-PDF dedup ourselves
+                force_reindex=force_reindex,
                 llm_credentials=llm_credentials,
             )
-            _text_rag_instances[cache_key] = instance
-            return instance
 
         try:
             rag = await loop.run_in_executor(_executor, _build_rag)
@@ -706,3 +741,37 @@ async def _delayed_clear(rag_db_path: str, *, delay: float) -> None:
     except asyncio.CancelledError:
         return
     _clear_progress(rag_db_path)
+
+
+async def delete_publication_rows(
+    rag_db_path: str, pdfs_dir: str, filename: str
+) -> int:
+    """
+    Remove every chroma row (text chunks and citation) whose source is
+    `filename`; returns how many were removed.
+
+    Goes through the cached TextRAG under the per-DB lock, never a fresh chromadb
+    client: a second client against a path the indexer holds can trigger
+    SQLITE_READONLY_DBMOVED on the indexer's next write. When there is no store
+    yet (nothing was ever indexed) it returns 0 without creating one.
+    """
+    rag_db_p = Path(rag_db_path).resolve()
+    if not (rag_db_p / "chroma.sqlite3").is_file():
+        return 0
+    pdfs_dir_p = Path(pdfs_dir).resolve()
+    async with _db_lock(rag_db_path):
+        loop = asyncio.get_running_loop()
+
+        def _delete() -> int:
+            # The mutable settings stamped here are irrelevant to deleting, and
+            # every indexing run re-stamps its own.
+            rag = _get_or_build_rag(
+                rag_db_p,
+                pdfs_dir_p,
+                extract_citations=False,
+                force_reindex=False,
+                llm_credentials=None,
+            )
+            return rag.delete_source(filename)
+
+        return await loop.run_in_executor(_executor, _delete)

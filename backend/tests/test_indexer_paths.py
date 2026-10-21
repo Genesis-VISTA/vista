@@ -204,3 +204,43 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     assert results[0]["status"] == "indexed"
     assert results[0]["citation_status"] == "disabled"
     assert fake_rag[0].extract_citations is False
+
+
+async def test_delete_publication_rows_uses_cached_instance_under_lock(
+    fake_rag, tmp_path
+):
+    rag_db = tmp_path / "rag_db"
+    _pdf(tmp_path / "pdfs" / "a.pdf")
+    await _index(tmp_path, ["a.pdf"])
+    (rag_db / "chroma.sqlite3").write_bytes(b"")
+    [rag] = fake_rag
+    seen: list[tuple[str, bool]] = []
+
+    def delete_source(filename):
+        seen.append((filename, indexer._db_lock(str(rag_db)).locked()))
+        return 3
+
+    rag.delete_source = delete_source
+    removed = await indexer.delete_publication_rows(
+        str(rag_db), str(tmp_path / "pdfs"), "table.csv"
+    )
+    assert removed == 3
+    assert seen == [("table.csv", True)]
+    assert len(fake_rag) == 1  # the cached instance, not a new one
+
+
+async def test_delete_publication_rows_without_a_store_does_nothing(fake_rag, tmp_path):
+    removed = await indexer.delete_publication_rows(
+        str(tmp_path / "rag_db"), str(tmp_path / "pdfs"), "table.csv"
+    )
+    assert removed == 0
+    assert fake_rag == []
+    assert not (tmp_path / "rag_db").exists()
+
+
+async def test_non_pdf_filename_reaches_index_single_file(fake_rag, tmp_path):
+    (tmp_path / "pdfs").mkdir()
+    (tmp_path / "pdfs" / "runs.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    results = await _index(tmp_path, ["runs.csv"])
+    assert results[0]["status"] == "indexed"
+    assert [p.name for p in fake_rag[0].indexed] == ["runs.csv"]

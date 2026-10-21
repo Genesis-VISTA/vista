@@ -238,7 +238,14 @@ def test_disabled_credentials_make_no_call(tmp_path, monkeypatch):
     assert calls == []
     assert result["status"] == "indexed"
     assert result["citation_status"] == "disabled"
-    assert rag.citation_collection.upserts == []
+    # No description, but the file still has its row, with the row count.
+    [row] = rag.citation_collection.upserts
+    meta = row["metadatas"][0]
+    assert meta["kind"] == "csv" and meta["record"] == "dataset"
+    assert meta["row_count"] == 10
+    assert meta["title"] == "salts.csv"
+    assert meta["abstract"] == ""
+    assert result["citation"] == meta
     assert "Description:" not in rag.text_collection.upserts[0]["documents"][0]
 
 
@@ -256,7 +263,9 @@ def test_failed_description_does_not_block_indexing(tmp_path, monkeypatch):
     assert result["status"] == "indexed"
     assert result["citation_status"] == "failed"
     assert result["chunk_count"] > 0
-    assert rag.citation_collection.upserts == []
+    [row] = rag.citation_collection.upserts
+    assert row["metadatas"][0]["row_count"] == 10
+    assert row["metadatas"][0]["abstract"] == ""
 
 
 def test_unsupported_suffix_fails_cleanly(tmp_path):

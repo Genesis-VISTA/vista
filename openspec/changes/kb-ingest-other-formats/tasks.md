@@ -25,15 +25,15 @@
 
 ## 3. Backend API and indexer
 
-- [ ] 3.1 Use the accepted-format list in `api/knowledge_bases.py`:
+- [x] 3.1 Use the accepted-format list in `api/knowledge_bases.py`:
   - filename sanitising keeps the extension and rejects other suffixes with a message listing the formats;
   - `_reconcile_with_disk` scans every accepted suffix;
   - downloads use `mimetypes` (`text/csv`, `text/tab-separated-values`, `text/plain`, `text/markdown`, `application/pdf`).
 
   Verify in `backend/tests/test_knowledge_base_upload.py`: uploading `.pdf`, `.csv`, `.tsv`, `.txt` and `.md` stores each under its own name; `.xlsx` is rejected and nothing is stored; downloading a CSV returns `text/csv`.
-- [ ] 3.2 Make `utils/indexer.py` index every format through `index_single_file`, and add a `delete_publication_rows(rag_db_path, filename)` that runs `delete_source` under the per-DB lock, reusing the cached `TextRAG`. Verify a test in `test_indexer_paths.py` that a non-PDF filename is passed through, and that deletion takes the lock
-- [ ] 3.3 Call the row deletion from `delete_publication`, so the file's stub no longer reappears after reconciliation. Verify in `test_knowledge_base_upload.py` (indexer faked) that delete invokes the row deletion for that filename, and that the KB read afterwards no longer lists it
-- [ ] 3.4 Add `kind` (default `"pdf"`) and `row_count` to `Publication` and `ui/lib/types.ts`, filled by `_merge_chroma_metadata_into_pub` / `_merge_citation_into_pub` from chunk and citation metadata, with the description in `abstract`. Verify a reconciler test that a CSV's citation row yields `kind="csv"`, its row count and its description, and that a row without `kind` reads as `pdf`
+- [x] 3.2 Make `utils/indexer.py` index every format through `index_single_file`, and add a `delete_publication_rows(rag_db_path, filename)` that runs `delete_source` under the per-DB lock, reusing the cached `TextRAG`. Verify a test in `test_indexer_paths.py` that a non-PDF filename is passed through, and that deletion takes the lock
+- [x] 3.3 Call the row deletion from `delete_publication`, so the file's stub no longer reappears after reconciliation. Verify in `test_knowledge_base_upload.py` (indexer faked) that delete invokes the row deletion for that filename, and that the KB read afterwards no longer lists it
+- [x] 3.4 Add `kind` (default `"pdf"`) and `row_count` to `Publication` and `ui/lib/types.ts`, filled by `_merge_chroma_metadata_into_pub` / `_merge_citation_into_pub` from chunk and citation metadata, with the description in `abstract`. Verify a reconciler test that a CSV's citation row yields `kind="csv"`, its row count and its description, and that a row without `kind` reads as `pdf`
 
 ## 4. Search hits and the fetch tool
 

@@ -1552,9 +1552,11 @@ class TextRAG:
                     citation.get("title", "(no title)"),
                 )
 
-            if description:
-                # The description is the file's row in the citation collection.
-                citation = {"title": pdf_path.name, "abstract": description}
+            if not is_pdf:
+                # Every non-PDF file gets a row in the citation collection, so
+                # the explorer can show its kind and row count whether or not a
+                # description could be written (abstract is empty then).
+                citation = {"title": pdf_path.name, "abstract": description or ""}
                 if self.force_reindex:
                     self._delete_source_rows(filename, texts=False)
                 doc_text = self._citation_to_document(citation)
