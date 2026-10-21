@@ -1,7 +1,7 @@
 ## 1. Extraction by format (`build_rag.py`)
 
-- [ ] 1.1 Add the suffix → extractor table (`.pdf`, `.csv`, `.tsv`, `.txt`, `.md`, case-insensitive), exported so the backend can import the accepted-format list, and move PDF extraction behind it, setting `metadata.kind="pdf"`. Verify that a new `backend/tests/test_build_rag_formats.py` asserts the table's suffixes and that a small PDF made with PyMuPDF extracts as before (`source`, `page`, `chunk_id`, `kind`)
-- [ ] 1.2 Implement the CSV/TSV extractor per design.md:
+- [x] 1.1 Add the suffix → extractor table (`.pdf`, `.csv`, `.tsv`, `.txt`, `.md`, case-insensitive), exported so the backend can import the accepted-format list, and move PDF extraction behind it, setting `metadata.kind="pdf"`. Verify that a new `backend/tests/test_build_rag_formats.py` asserts the table's suffixes and that a small PDF made with PyMuPDF extracts as before (`source`, `page`, `chunk_id`, `kind`)
+- [x] 1.2 Implement the CSV/TSV extractor per design.md:
   - `utf-8-sig`, `csv.Sniffer` with an extension fallback, per-column int/float/text inference;
   - a summary passage, then 50-row header-prefixed windows capped at 200, with a truncation note and the total row count;
   - `rows` metadata, and the wide-file bounds from design.md's risks.
@@ -10,9 +10,9 @@
   - 120 rows → summary + windows `1-50`, `51-100`, `101-120`, each starting with the header;
   - a 50,000-row file → ≤200 windows and a summary stating 50,000 rows and the truncation;
   - a BOM-prefixed CSV with a quoted comma, and a TSV, parse into the right columns.
-- [ ] 1.3 Implement the TXT/MD extractor with the existing `_chunk_text`, setting `kind` (`text` / `markdown`) and `chunk_id`. Verify in `test_build_rag_formats.py` that a Markdown file's sentence lands in one of its passages
-- [ ] 1.4 Add the description call for non-PDF files: same LLM resolution and fallback as citations, input as in design.md, result stored as a citation row (`record: dataset | note`, `title`=file name, `abstract`=description) and inserted into a table's summary before embedding; status via `citation_status`. Verify with a stubbed `send_prompt_to_chatgpt`: with credentials, the summary and citation row both carry the description; with `llm_credentials` disabled, no call is made and the status is `disabled`
-- [ ] 1.5 Rename `index_single_pdf` to `index_single_file`, routing through the table (citation for PDFs, description for the rest), and update the batch `index_pdfs` to scan every accepted suffix. Verify `uv run --extra dev pytest tests/test_build_rag_formats.py tests/test_indexer_paths.py` in `backend/` passes
+- [x] 1.3 Implement the TXT/MD extractor with the existing `_chunk_text`, setting `kind` (`text` / `markdown`) and `chunk_id`. Verify in `test_build_rag_formats.py` that a Markdown file's sentence lands in one of its passages
+- [x] 1.4 Add the description call for non-PDF files: same LLM resolution and fallback as citations, input as in design.md, result stored as a citation row (`record: dataset | note`, `title`=file name, `abstract`=description) and inserted into a table's summary before embedding; status via `citation_status`. Verify with a stubbed `send_prompt_to_chatgpt`: with credentials, the summary and citation row both carry the description; with `llm_credentials` disabled, no call is made and the status is `disabled`
+- [x] 1.5 Rename `index_single_pdf` to `index_single_file`, routing through the table (citation for PDFs, description for the rest), and update the batch `index_pdfs` to scan every accepted suffix. Verify `uv run --extra dev pytest tests/test_build_rag_formats.py tests/test_indexer_paths.py` in `backend/` passes
 
 ## 2. Identity keyed on source (`build_rag.py`)
 

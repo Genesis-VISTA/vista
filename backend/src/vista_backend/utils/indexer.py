@@ -222,7 +222,7 @@ def _clear_progress(rag_db_path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Thread pool for the synchronous TextRAG.index_single_pdf calls.
+# Thread pool for the synchronous TextRAG.index_single_file calls.
 # A single worker is fine — concurrent indexing on the same DB is
 # serialized by the per-DB lock above, and we want CPU/memory pressure
 # from sentence-transformers to be bounded. Across different KBs, we
@@ -380,7 +380,7 @@ async def index_publications(
     Index a list of PDFs into the rag_db at `rag_db_path`. PDFs are
     resolved against `pdfs_dir` (relative paths allowed; `..` is rejected).
     Returns a list of result dicts shaped like
-    `TextRAG.index_single_pdf`:
+    `TextRAG.index_single_file`:
 
         {
           "filename": "...",
@@ -595,7 +595,7 @@ async def index_publications(
                 )
                 continue
 
-            # Per-paper progress callback. TextRAG.index_single_pdf
+            # Per-paper progress callback. TextRAG.index_single_file
             # fires this at each milestone — we mirror them into the
             # progress dict so the UI can show whether the slow LLM
             # citation step is what we're currently on, and (for the
@@ -642,7 +642,7 @@ async def index_publications(
             try:
                 res = await loop.run_in_executor(
                     _executor,
-                    lambda p=pdf_path, c=make_cb(i, filename): rag.index_single_pdf(
+                    lambda p=pdf_path, c=make_cb(i, filename): rag.index_single_file(
                         p, progress_cb=c
                     ),
                 )

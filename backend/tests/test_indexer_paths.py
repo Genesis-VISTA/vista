@@ -37,7 +37,7 @@ class FakeTextRAG:
         self.llm_credentials = llm_credentials
         self.indexed: list[Path] = []
 
-    def index_single_pdf(self, pdf_path, progress_cb=None):
+    def index_single_file(self, pdf_path, progress_cb=None):
         self.indexed.append(Path(pdf_path))
         return {
             "filename": Path(pdf_path).name,
