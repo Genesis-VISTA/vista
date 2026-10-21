@@ -62,6 +62,10 @@ contacting the cluster.
 - **WHEN** the listed path does not exist on the cluster
 - **THEN** the call reports that the path is not on the cluster, not an empty folder
 
+#### Scenario: Missing path, listed recursively
+- **WHEN** an agent recursively lists a path that does not exist on Odo
+- **THEN** the call reports that the path is not on Odo, not an empty folder
+
 ### Requirement: Downloading remote files
 The download tool SHALL take a list of absolute remote paths and SHALL save each file in the
 project's output folder at `transfers/<cluster>/<remote path without its leading slash>`,
@@ -69,8 +73,8 @@ reporting each one's sandbox path (`/mnt/data/output/transfers/...`), so that th
 file display can open it. Any file the researcher's identity can read SHALL be downloadable,
 and the system SHALL impose no size limit. A file already saved there and not empty SHALL NOT
 be fetched again. A path that is not on the cluster SHALL be reported as missing while the
-other files are still downloaded. A relative path, or one containing `..`, SHALL be refused
-without contacting the cluster. An interrupted download SHALL NOT leave a partial file at the
+other files are still downloaded. A relative path, one containing `..`, or `/` itself SHALL be
+refused without contacting the cluster. An interrupted download SHALL NOT leave a partial file at the
 reported path.
 
 #### Scenario: Fetch a dataset file
@@ -89,6 +93,10 @@ reported path.
 - **WHEN** an agent downloads `/lustre/../etc/passwd`
 - **THEN** the call fails before contacting the cluster, and nothing is written locally
 
+#### Scenario: The root is not a file
+- **WHEN** an agent downloads `/` from Odo
+- **THEN** the call fails before contacting the cluster, and nothing is written locally
+
 ### Requirement: Uploading local files
 The upload tool SHALL take a list of local files and a destination folder relative to the
 researcher's `transfers/` folder on that cluster (see hpc-job-submission, One folder layout),
@@ -96,7 +104,8 @@ and SHALL upload each file there under its own name, creating any missing folder
 `transfers/`. It SHALL report each file's absolute remote path. It SHALL NOT write anywhere
 else on the cluster: an absolute destination, or one containing `..` or a backslash, SHALL be
 refused without contacting the cluster. A file of the same name already in the destination
-SHALL be replaced.
+SHALL be replaced. Two local files with the same name in one call SHALL be refused before
+anything is uploaded, since one would replace the other.
 
 Local files SHALL be given as sandbox paths under `/mnt/data/output` or `/mnt/data/uploads`;
 any other path, one that leaves those folders, a folder, or a missing file SHALL be refused
@@ -118,6 +127,10 @@ cluster, and SHALL fail naming the setting when it is not set.
 #### Scenario: Local file outside the project
 - **WHEN** an agent uploads `/etc/hosts` or `/mnt/data/output/../../etc/hosts`
 - **THEN** the call fails before anything is uploaded
+
+#### Scenario: Two files with one name
+- **WHEN** an agent uploads `/mnt/data/uploads/a.txt` and `/mnt/data/output/a.txt` in one call
+- **THEN** the call fails before anything is uploaded, saying two of the files have the same name
 
 #### Scenario: Remote folder not set
 - **WHEN** a researcher with no Odo remote folder uploads a file to Odo
