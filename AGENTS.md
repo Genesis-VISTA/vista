@@ -178,9 +178,18 @@ Use Playwright (install globally if not present) to interact with the browser, t
 The vista MCP server boots without any interactive login — HPC job submission authenticates
 with per-user tokens (S3M / NERSC IRI for compute, Globus for file ops) supplied via the UI, each
 connected once per cluster in the settings modal rather than exported anywhere. Set
-`VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
+`VISTA_MCP_DISABLE_SERVERS=submit_job` (or `transfer`) if you want to skip mounting the job tools
+(or the file transfer tools) entirely.
 
-Odo and Frontier file operations go through Globus, split across two of its surfaces
+Those credentials reach an MCP tool only if its name is in `HPC_TOOLS`, in `_build_vista_metadata`
+([`backend/src/vista_backend/agents/agents.py`](backend/src/vista_backend/agents/agents.py)). A new
+tool that reads `get_vista_meta(ctx).user` must be added there too: otherwise every call reads
+as "not connected", and no test catches it, because the MCP tests hand tools their config
+directly.
+
+Odo and Frontier file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
+the transfer tools (`transfer_mcp.py`, which list, download and upload outside a job), split across
+two of its surfaces
 ([`lib/globus.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/globus.py)). **File
 contents** move over the **HTTPS interface** — ordinary `GET`/`PUT` against the cluster's own
 collection, authorized by a bearer token. **Directory listings and `mkdir`** stay on the

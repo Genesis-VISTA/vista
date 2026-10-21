@@ -17,7 +17,7 @@
 
 ## 3. Docs
 
-- [ ] 3.1 In `docs/hpc.md`, add a short section on the transfer tools: what they reach, where downloads land, the `transfers/` folder, and that they need only a Globus connection. In the Globus section of `AGENTS.md`, mention that the transfer tools are the third caller of `lib/globus.py`. Verify by reading both against the specs
+- [x] 3.1 In `docs/hpc.md`, add a short section on the transfer tools: what they reach, where downloads land, the `transfers/` folder, and that they need only a Globus connection. In the Globus section of `AGENTS.md`, mention that the transfer tools are the third caller of `lib/globus.py`. Verify by reading both against the specs
 
 ## 4. Live verification (manual, not in PR CI)
 
