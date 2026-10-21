@@ -13,7 +13,8 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import logging, os, posixpath, re, shlex, textwrap, dataclasses, hashlib
+import logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, NoReturn
 
@@ -1913,32 +1914,60 @@ SANDBOX_OUTPUT_DIR = PurePosixPath("/mnt/data/output")
 """Where job outputs appear inside the sandbox. A sandbox path, so POSIX on every host."""
 
 
-def _job_output_paths(
-    local_out_dir: Path, sandbox_out_dir: PurePosixPath, file: str
+def _confined_paths(
+    local_root: Path, sandbox_root: PurePosixPath, name: str
 ) -> tuple[Path, PurePosixPath]:
     """
-    Map a requested output file name to its local download path and its sandbox path.
+    Map a relative name to the same place under a local folder and its sandbox mount.
 
-    The name must be relative and stay inside the job's output directory. It is checked as
-    both a POSIX and a Windows path, because either reading could escape: on Windows
-    `/etc/x` is not absolute, and on POSIX `..\\x` is not a parent reference. A backslash is
-    refused outright: a Windows host would save `a\\b` as `a/b`, while the reported sandbox
-    path would still say `a\\b`, a file that doesn't exist.
+    The name must be relative and stay inside `local_root`. It is checked as both a POSIX
+    and a Windows path, because either reading could escape: on Windows `/etc/x` is not
+    absolute, and on POSIX `..\\x` is not a parent reference. A backslash is refused
+    outright: a Windows host would save `a\\b` as `a/b`, while the reported sandbox path
+    would still say `a\\b`, a file that doesn't exist. The resolved local path is checked
+    too, so a symlink cannot lead out of the folder.
     """
-    posix, windows = PurePosixPath(file), PureWindowsPath(file)
+    posix, windows = PurePosixPath(name), PureWindowsPath(name)
     if (
-        not file
-        or "\\" in file
+        not name
+        or "\\" in name
         or posix.is_absolute()
         or windows.anchor
         or ".." in posix.parts
         or ".." in windows.parts
     ):
-        raise ValueError(f'Invalid path "{file}"')
-    local_path = local_out_dir.joinpath(*posix.parts)
-    if not local_path.resolve().is_relative_to(local_out_dir.resolve()):
-        raise ValueError(f'Invalid path "{file}"')
-    return local_path, sandbox_out_dir.joinpath(*posix.parts)
+        raise ValueError(f'Invalid path "{name}"')
+    local_path = local_root.joinpath(*posix.parts)
+    if not local_path.resolve().is_relative_to(local_root.resolve()):
+        raise ValueError(f'Invalid path "{name}"')
+    return local_path, sandbox_root.joinpath(*posix.parts)
+
+
+def _job_output_paths(
+    local_out_dir: Path, sandbox_out_dir: PurePosixPath, file: str
+) -> tuple[Path, PurePosixPath]:
+    """ Map a requested output file name to its local download path and its sandbox path. """
+    return _confined_paths(local_out_dir, sandbox_out_dir, file)
+
+
+async def _fetch_once(
+    globus: Callable[[], GlobusClient], *, collection_id: str, remote_path: str, local_path: Path,
+) -> Literal["cached", "downloaded"]:
+    """
+    Download one file from an OLCF collection unless it is already held locally.
+
+    A local file that exists and is not empty counts as already downloaded: `download_file`
+    moves a file into place only once it is complete, so a partial one never looks done.
+    `globus` is called only when something has to be fetched, so a call served entirely
+    from local copies needs no Globus credential. `GlobusFileNotFound` and
+    `GlobusSessionExpired` propagate, for the caller to report per file or for the call.
+    """
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return "cached"
+    await globus().download_file(
+        collection_id=collection_id, remote_path=remote_path, local_path=local_path,
+    )
+    return "downloaded"
 
 
 async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
@@ -1980,34 +2009,30 @@ async def _get_olcf_job_outputs(
     local_out_dir = host_output_dir / job_id
     sandbox_out_dir = SANDBOX_OUTPUT_DIR / job_id
 
-    wanted: list[tuple[str, Path]] = []
-    sandbox_paths: list[str] = []
-    cached_paths: list[str] = []
-    for file in files:
-        # The HTTPS interface acts as the researcher's own mapped POSIX identity,
-        # so the facility enforces what they may read. This relative-path check
-        # plus the server-defined remote_out_dir confine the fetch to the
-        # resolved output dir on top of that.
-        local_path, sandbox_path = _job_output_paths(local_out_dir, sandbox_out_dir, file)
-        sandbox_paths.append(str(sandbox_path))
-        if local_path.exists() and local_path.stat().st_size > 0:
-            cached_paths.append(str(sandbox_path))
-            continue
-        wanted.append((f"{remote_out_dir}/{file}", local_path))
-
-    if wanted:
-        globus = create_globus_client(
-            tokens=cfg.require_globus_token(cluster), cluster=cluster,
+    # The HTTPS interface acts as the researcher's own mapped POSIX identity, so
+    # the facility enforces what they may read. This relative-path check plus the
+    # server-defined remote_out_dir confine the fetch to the resolved output dir
+    # on top of that. Every name is checked before anything is fetched.
+    targets = [
+        (f"{remote_out_dir}/{file}", *_job_output_paths(local_out_dir, sandbox_out_dir, file))
+        for file in files
+    ]
+    globus = functools.cache(
+        lambda: create_globus_client(tokens=cfg.require_globus_token(cluster), cluster=cluster)
+    )
+    outcomes = [
+        await _fetch_once(
+            globus, collection_id=_olcf_collection_id(cluster),
+            remote_path=remote_path, local_path=local_path,
         )
-        for remote_path, local_path in wanted:
-            await globus.download_file(
-                collection_id=_olcf_collection_id(cluster),
-                remote_path=remote_path,
-                local_path=local_path,
-            )
-        logging.info(f"Globus-fetched {len(wanted)} file(s); served {len(cached_paths)} from local cache")
+        for remote_path, local_path, _ in targets
+    ]
+    fetched = outcomes.count("downloaded")
+    if fetched:
+        logging.info(f"Globus-fetched {fetched} file(s); served {len(outcomes) - fetched} from local cache")
     else:
-        logging.info(f"All {len(cached_paths)} requested files served from local cache (no Globus call)")
+        logging.info(f"All {len(outcomes)} requested files served from local cache (no Globus call)")
+    sandbox_paths = [str(sandbox_path) for _, _, sandbox_path in targets]
 
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
 

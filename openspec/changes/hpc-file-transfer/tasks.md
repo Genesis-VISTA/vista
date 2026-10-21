@@ -1,7 +1,7 @@
 ## 1. Shared download helper
 
-- [ ] 1.1 Generalise `_job_output_paths` in `submit_job_mcp.py` into a path check that confines a relative name under a local root and a sandbox root, refusing an empty name, an absolute POSIX or Windows path, `..` in either reading, a backslash, or a resolved path outside the root. Keep `_job_output_paths` as a thin caller. Verify that `mcp_servers/vista_mcp_server/tests/test_output_paths.py` passes unchanged
-- [ ] 1.2 Move the per-file part of `_get_olcf_job_outputs` into a helper `(client, collection_id, remote_path, local_path) -> "cached" | "downloaded"`. It skips a file already local and not empty, and otherwise calls `download_file`, letting `GlobusFileNotFound` and `GlobusSessionExpired` propagate. Make `_get_olcf_job_outputs` call it. Verify that the existing output-retrieval tests (`test_output_paths.py`, `test_globus_https.py`) pass unchanged
+- [x] 1.1 Generalise `_job_output_paths` in `submit_job_mcp.py` into a path check that confines a relative name under a local root and a sandbox root, refusing an empty name, an absolute POSIX or Windows path, `..` in either reading, a backslash, or a resolved path outside the root. Keep `_job_output_paths` as a thin caller. Verify that `mcp_servers/vista_mcp_server/tests/test_output_paths.py` passes unchanged
+- [x] 1.2 Move the per-file part of `_get_olcf_job_outputs` into a helper `(client, collection_id, remote_path, local_path) -> "cached" | "downloaded"`. It skips a file already local and not empty, and otherwise calls `download_file`, letting `GlobusFileNotFound` and `GlobusSessionExpired` propagate. Make `_get_olcf_job_outputs` call it. Verify that the existing output-retrieval tests (`test_output_paths.py`, `test_globus_https.py`) pass unchanged
 
 ## 2. Transfer tools
 
