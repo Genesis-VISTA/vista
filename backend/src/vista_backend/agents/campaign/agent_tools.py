@@ -13,20 +13,48 @@ conversationally. `dispatch_cycle` launches HPC work and returns immediately —
 emails the user and fills in results as jobs finish.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models import Model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...db.schemas import CampaignRunTable
+from ...db.schemas import CampaignRunTable, InferenceProvider, UserPublicWithConfig
 from ...services import campaign as campaign_service
+from ..inference import build_model_for, resolve_inference_target
 from .planner import CampaignPlanner
 
+logger = logging.getLogger(__name__)
 
 PlannerForRun = Callable[[AsyncSession, CampaignRunTable], Awaitable[CampaignPlanner]]
+
+
+def campaign_model_for(user: UserPublicWithConfig, run: CampaignRunTable) -> Model:
+    """
+    The model a campaign's planner is rebuilt on, in the chat and in the monitor.
+
+    The run keeps the model it launched on (`run.model`), whatever the chat or
+    the default has become since. Two exceptions follow the user's current
+    default: an older run that recorded no model, and a run whose user has
+    since switched provider, where the launch model's name means nothing.
+    """
+    model = run.model
+    if model is not None and run.provider is not None:
+        now_on = resolve_inference_target(user).provider
+        if now_on != run.provider:
+            logger.info(
+                "Campaign %s launched on %s (%s); its user is now on %s, so it uses the current default.",
+                run.id,
+                model,
+                run.provider,
+                now_on,
+            )
+            model = None
+    return build_model_for(user, model)
 
 
 def _noop(_msg: str) -> None:
@@ -46,6 +74,8 @@ class CampaignDriverDeps:
     emit_progress: Callable[[str], None] = _noop
     model: str | None = None
     """ The launching agent's resolved `provider:name`, recorded on each run it starts. """
+    provider: InferenceProvider | None = None
+    """ The provider `model` was resolved on, recorded beside it. """
 
 
 def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
@@ -97,6 +127,7 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             planner_skill=planner_skill,
             title=title,
             model=deps.model,
+            provider=deps.provider,
         )
         return (
             f"Started campaign. run_id={run.id} status={run.status}. "

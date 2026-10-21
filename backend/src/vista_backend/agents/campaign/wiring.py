@@ -39,7 +39,7 @@ from ...services.campaign_monitor import CampaignMonitor, normalize_state
 from .hpc_tools import InvokeTool, McpHpcTools
 from .manifest import load_manifest
 from .mcp_invoke import build_mcp_invoke, project_paths_for
-from ..inference import build_model_for
+from .agent_tools import campaign_model_for
 from .planner import CampaignPlanner, build_subagents
 from .subagent import ResultParser
 
@@ -126,7 +126,7 @@ async def build_planner_for_job(
         hpc=hpc,
         skills_dir=skills_dir,
         parser_factory=parser_factory,
-        model=model or build_model_for(user, run.model),
+        model=model or campaign_model_for(user, run),
     )
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 

@@ -78,7 +78,11 @@ from palisade.quarantine import (
 from .eval_metrics import EvalMetricsCapability
 from . import source_fetch
 from .skills import to_prompt
-from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from .campaign.agent_tools import (
+    CampaignDriverDeps,
+    campaign_model_for,
+    register_campaign_tools,
+)
 from .campaign.hpc_tools import McpHpcTools
 from .campaign.manifest import load_manifest
 from .campaign.mcp_invoke import build_invoke
@@ -591,7 +595,7 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
-        register_campaign_tools(agent, self._campaign_driver_deps(model))
+        register_campaign_tools(agent, self._campaign_driver_deps())
 
         @agent.tool_plain
         async def fetch_repository(url: str, ref: str | None = None) -> str:
@@ -627,7 +631,7 @@ class ProjectAgent:
 
         return agent
 
-    def _campaign_driver_deps(self, model: Model | None = None) -> CampaignDriverDeps:
+    def _campaign_driver_deps(self) -> CampaignDriverDeps:
         """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
 
         def emit_progress(message: str) -> None:
@@ -635,13 +639,11 @@ class ProjectAgent:
             if cb is not None:
                 cb(message)
 
-        # The same resolved `Model` the agent and its Q-LLM sub-agents use, so
-        # a campaign's parser agents reach the same endpoint with the same
-        # credential. `_build_agent` passes the one it already built; resolved
-        # here otherwise, so a caller that forgets cannot fall back to
-        # `Settings` alone -- which on a single-user install cannot see the key
-        # from the researcher's settings row.
-        campaign_model = model or build_model_for(self.user, self.model_override)
+        # What this agent resolved is recorded on the runs it starts. A run's
+        # planner is rebuilt on the run's own model, the same way the monitor
+        # rebuilds it (`campaign_model_for`), not on this agent's: the chat may
+        # have moved to another model since the campaign launched.
+        target = resolve_inference_target(self.user, self.model_override)
 
         return CampaignDriverDeps(
             project_id=self.project.id,
@@ -649,10 +651,11 @@ class ProjectAgent:
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
             get_planner=lambda session, run: self._build_campaign_planner_for_run(
-                session, run, model=campaign_model
+                session, run, model=campaign_model_for(self.user, run)
             ),
             emit_progress=emit_progress,
-            model=resolve_inference_target(self.user, self.model_override).model,
+            model=target.model,
+            provider=target.provider,
         )
 
     async def _build_campaign_planner_for_run(

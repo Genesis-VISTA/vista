@@ -8,6 +8,8 @@ the driver deps route through the per-run hooks, and the monitor factory + setti
 import inspect
 import uuid
 
+import pytest
+
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.agents.campaign.agent_tools import CampaignDriverDeps
 from vista_backend.agents.campaign.wiring import build_default_monitor
@@ -92,3 +94,31 @@ def test_driver_deps_carry_the_resolved_model():
 
     own = ProjectAgent(project, user, uuid.uuid4(), "openai:chat-model")
     assert own._campaign_driver_deps().model == "openai:chat-model"
+    assert own._campaign_driver_deps().provider == "mag"
+
+
+@pytest.mark.anyio
+async def test_a_cycle_dispatched_from_the_chat_uses_the_runs_model(monkeypatch):
+    """
+    Launched on B, the chat moved to C: its next cycle still dispatches on B,
+    as the monitor's rebuild does. The chat's agent is rebuilt on C, so only
+    the run remembers B.
+    """
+    from types import SimpleNamespace
+
+    project = ProjectPublic(id=uuid.uuid4(), name="campaign-dispatch")
+    user = UserPublicWithConfig(
+        id=uuid.uuid4(), email="x@ornl.gov", inference_provider="mag"
+    )
+    moved = ProjectAgent(project, user, uuid.uuid4(), "openai:c")
+    run = SimpleNamespace(id=uuid.uuid4(), model="openai:b", provider="mag")
+
+    built: list[str] = []
+
+    async def planner(self, session, run, *, model=None):
+        built.append(model.model_name)
+
+    monkeypatch.setattr(ProjectAgent, "_build_campaign_planner_for_run", planner)
+    await moved._campaign_driver_deps().get_planner(None, run)
+
+    assert built == ["b"]

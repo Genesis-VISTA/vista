@@ -22,6 +22,7 @@ from ..db.schemas import (
     CampaignStepTable,
     CampaignUpdate,
     HpcJobTable,
+    InferenceProvider,
 )
 from ..utils.misc import now_iso
 
@@ -62,13 +63,15 @@ async def create_campaign(
     title: str | None = None,
     spec: dict | None = None,
     model: str | None = None,
+    provider: InferenceProvider | None = None,
 ) -> CampaignRunTable:
     """
     Create a new campaign run in the initial `gathering` status.
 
-    `model` is the launching agent's resolved model, kept so the monitor
-    rebuilds this run's planner on it rather than on whatever the chat or the
-    researcher's default has become.
+    `model` is the launching agent's resolved model and `provider` the
+    provider it was resolved on, kept so this run's planner is rebuilt on that
+    model rather than on whatever the chat or the researcher's default has
+    become (see `agent_tools.campaign_model_for`).
     """
     now = now_iso()
     run = CampaignRunTable(
@@ -82,6 +85,7 @@ async def create_campaign(
         plan=[],
         status="gathering",
         model=model,
+        provider=provider,
         created_at=now,
         updated_at=now,
     )

@@ -392,7 +392,7 @@ async def test_a_chat_campaign_that_lost_its_session_is_still_refused(session, a
 
 async def _planner_model(session, job, monkeypatch):
     """The `(user, override)` the monitor's planner rebuild asked a model for."""
-    from vista_backend.agents.campaign import wiring
+    from vista_backend.agents.campaign import agent_tools, wiring
 
     asked: list[tuple] = []
 
@@ -400,7 +400,7 @@ async def _planner_model(session, job, monkeypatch):
         asked.append((user, model))
         return "built"
 
-    monkeypatch.setattr(wiring, "build_model_for", build)
+    monkeypatch.setattr(agent_tools, "build_model_for", build)
     monkeypatch.setattr(wiring, "load_manifest", lambda _path: object())
     monkeypatch.setattr(wiring, "build_subagents", lambda *a, **kw: {})
     monkeypatch.setattr(wiring, "CampaignPlanner", lambda **kw: kw)
@@ -443,6 +443,43 @@ async def test_an_older_run_without_a_model_uses_the_users_default(
 ):
     run, _step, job = await _make_job(session, alice)
     assert run.model is None
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _user, model in asked] == [None]
+
+
+async def _launched_on_olcf(session, alice, *, now_on):
+    """A run launched on OLCF's `gpt-oss-120b`, whose user is now on `now_on`."""
+    from vista_backend.db.schemas import UserTable
+
+    run, _step, job = await _make_job(session, alice)
+    run.model, run.provider = "openai:gpt-oss-120b", "olcf"
+    session.add(run)
+    user = await session.get(UserTable, alice.id)
+    user.inference_provider = now_on
+    session.add(user)
+    await session.flush()
+    return job
+
+
+@pytest.mark.anyio
+async def test_a_run_keeps_its_model_while_its_user_stays_on_that_provider(
+    session, alice, monkeypatch
+):
+    job = await _launched_on_olcf(session, alice, now_on="olcf")
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _user, model in asked] == ["openai:gpt-oss-120b"]
+
+
+@pytest.mark.anyio
+async def test_after_a_provider_switch_a_run_follows_the_users_default(
+    session, alice, monkeypatch
+):
+    """OLCF's model name means nothing to i2, so the run moves to i2's default."""
+    job = await _launched_on_olcf(session, alice, now_on="i2")
 
     asked = await _planner_model(session, job, monkeypatch)
 

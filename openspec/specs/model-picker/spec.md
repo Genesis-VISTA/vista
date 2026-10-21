@@ -240,8 +240,9 @@ model name sent to the researcher's current provider, never a provider of its ow
 
 Report drafting, skill drafting and campaigns started from a chat SHALL use the model in
 effect for that chat when they start. Work that runs in the background SHALL keep that
-model until it finishes, even if the chat's model or the default changes meanwhile.
-Citation extraction is started by indexing a knowledge base, not by a chat, and SHALL use
+model until it finishes, even if the chat's model or the default changes meanwhile. A
+campaign whose researcher has since switched provider SHALL use their current default,
+since a model name means nothing on another provider. Citation extraction is started by indexing a knowledge base, not by a chat, and SHALL use
 the default.
 
 #### Scenario: Report from an overridden chat
@@ -256,3 +257,9 @@ the default.
 - **WHEN** the researcher changes chat 1's model to C while the campaign is still running
 - **THEN** the campaign's remaining steps, including those resumed by the background job
   monitor, use B
+
+#### Scenario: Campaign after a provider switch
+
+- **GIVEN** a campaign launched on provider P's model B
+- **WHEN** the researcher switches to provider Q while the campaign is still running
+- **THEN** the campaign's remaining steps use Q's current default, and the switch is logged

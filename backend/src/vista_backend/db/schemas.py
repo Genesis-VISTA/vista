@@ -1089,6 +1089,11 @@ class CampaignRunBase(SQLModel):
     ]
     model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
     """ The `provider:name` model the launching agent resolved, so a rebuild in the background uses it. Null on older runs: the user's default. """
+    provider: A[
+        InferenceProvider | None,
+        Field(default=None, sa_column=Column(String, nullable=True)),
+    ]
+    """ The provider `model` was resolved on. A model name means nothing on another one, so after a provider switch the run follows the user's default. """
 
 
 class CampaignRunPublic(CampaignRunBase):
