@@ -1,0 +1,12 @@
+{
+  "name": "vista-screencast",
+  "private": true,
+  "type": "module",
+  "description": "Capture, edit and replay VISTA sessions into screencasts: demos, tutorials and README clips.",
+  "bin": { "vista-screencast": "bin/vista-screencast.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "playwright": "1.62.1",
+    "yaml": "2.8.4"
+  }
+}

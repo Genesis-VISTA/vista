@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Card</title>
+<!--
+  Title and chapter cards. Query parameters: kind (intro | chapter | outro | custom),
+  kicker, title, sub, icon (a file: URL to VISTA's icon). The intro is "VISTA"
+  over what the name stands for; cards carry no other branding.
+-->
+<style>
+  :root { --ink: #e9f1fb; --muted: #b9cde3; --accent: #4fb3ff; --warm: #ff8a3d; --deep: #061626; }
+  html, body { margin: 0; height: 100%; background: var(--deep); overflow: hidden;
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif; color: var(--ink); }
+  .bg { position: fixed; inset: -20%;
+    background:
+      radial-gradient(40% 50% at 30% 40%, rgba(79,179,255,.28), transparent 70%),
+      radial-gradient(35% 45% at 75% 65%, rgba(255,138,61,.20), transparent 70%),
+      radial-gradient(60% 60% at 50% 50%, #0b2a4a, var(--deep));
+    animation: drift 9s ease-in-out infinite alternate; }
+  @keyframes drift { to { transform: translate(3%, -2%) scale(1.06); } }
+  .grid { position: fixed; inset: 0; opacity: .08;
+    background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px);
+    background-size: 64px 64px; mask-image: radial-gradient(circle at 50% 50%, #000 0, transparent 70%); }
+  .wrap { position: relative; height: 100%; display: grid; place-content: center; justify-items: center;
+    text-align: center; gap: 22px; padding: 0 120px; }
+  .icon { width: 96px; height: 96px; opacity: 0; animation: up .9s .05s cubic-bezier(.2,.8,.2,1) forwards; }
+  .icon:not([src]) { display: none; }
+  .kicker { font-size: 18px; letter-spacing: .32em; text-transform: uppercase; color: var(--accent);
+    opacity: 0; animation: up .9s .15s cubic-bezier(.2,.8,.2,1) forwards; }
+  .kicker:empty { display: none; }
+  /* background-clip: text paints only inside the box, so padding keeps descenders (the j of "job") whole */
+  h1 { margin: 0 0 -.15em; padding-bottom: .15em; font-size: 128px; font-weight: 800; letter-spacing: -.02em; line-height: 1;
+    background: linear-gradient(90deg, #fff, #bfe3ff 50%, #ffd1ad); -webkit-background-clip: text; background-clip: text; color: transparent;
+    opacity: 0; filter: blur(14px); animation: focus 1.2s .35s cubic-bezier(.2,.8,.2,1) forwards; }
+  body.chapter h1 { font-size: 76px; }
+  .sub { font-size: 28px; font-weight: 400; color: var(--muted); max-width: 1180px; line-height: 1.4;
+    opacity: 0; animation: up 1s .9s cubic-bezier(.2,.8,.2,1) forwards; }
+  .sub:empty { display: none; }
+  .rule { width: 0; height: 3px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--warm)); animation: grow 1.1s .7s cubic-bezier(.2,.8,.2,1) forwards; }
+  @keyframes up { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+  @keyframes focus { to { opacity: 1; filter: blur(0); } }
+  @keyframes grow { to { width: 220px; } }
+  body.out .wrap { animation: fade .6s ease-in forwards; }
+  @keyframes fade { to { opacity: 0; transform: scale(1.03); filter: blur(6px); } }
+</style>
+</head>
+<body>
+<div class="bg"></div><div class="grid"></div>
+<div class="wrap">
+  <img class="icon" id="i" alt="">
+  <div class="kicker" id="k"></div>
+  <h1 id="t"></h1>
+  <div class="rule"></div>
+  <div class="sub" id="s"></div>
+</div>
+<script>
+  const EXPANSION = "Visual Intelligence for Scientific & Tooling Assistant";
+  const q = new URLSearchParams(location.search);
+  const kind = q.get("kind") || "custom";
+  const preset = {
+    intro: { title: "VISTA", sub: EXPANSION },
+    outro: { title: "VISTA" },
+    chapter: { kicker: "Use case" },
+  }[kind] || {};
+  const pick = (name) => q.get(name) ?? preset[name] ?? "";
+  document.body.classList.add(kind);
+  document.getElementById("k").textContent = pick("kicker");
+  document.getElementById("t").textContent = pick("title");
+  document.getElementById("s").textContent = pick("sub");
+  if (q.get("icon") && kind !== "chapter") document.getElementById("i").src = q.get("icon");
+</script>
+</body>
+</html>
