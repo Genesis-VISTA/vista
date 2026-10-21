@@ -1372,17 +1372,22 @@ class TextRAG:
                 # Progress reporting must not break indexing.
                 pass
 
-        # Idempotency: if any text chunks for this source already exist
-        # in the DB, skip unless we're force-reindexing. We use the
-        # citation collection's deterministic id (`<stem>_citation`) as
-        # the cheap check.
-        cite_id = f"{pdf_path.stem}_citation"
+        # Idempotency: a file is identified by its `source` metadata (the full
+        # file name), not by id, so stores indexed under older id schemes
+        # still skip correctly. Skip unless we're force-reindexing.
+        filename = pdf_path.name
+        cite_id = f"{filename}_citation"
         if not self.force_reindex:
             try:
-                existing = self.citation_collection.get(ids=[cite_id])
+                existing = self.text_collection.get(
+                    where={"source": filename}, limit=1
+                )
                 if existing and existing.get("ids"):
                     result["status"] = "skipped"
-                    metas = existing.get("metadatas") or []
+                    cites = self.citation_collection.get(
+                        where={"source": filename}, limit=1
+                    )
+                    metas = (cites or {}).get("metadatas") or []
                     if metas:
                         result["citation"] = metas[0]
                         result["citation_status"] = "skipped"
@@ -1497,7 +1502,7 @@ class TextRAG:
                 embeddings = self.embed_text_batched(
                     texts, batch_size=8, progress_cb=_on_batch,
                 )
-                ids = [f"{pdf_path.stem}_text_{j}" for j in range(len(text_chunks))]
+                ids = [f"{filename}_text_{j}" for j in range(len(text_chunks))]
                 metadatas = [c["metadata"] for c in text_chunks]
 
                 _emit(
@@ -1505,6 +1510,11 @@ class TextRAG:
                     chunk_processed=total_chunks,
                     chunk_total=total_chunks,
                 )
+                # A forced re-index replaces the file's text rows wholesale,
+                # whatever id scheme wrote them. Done after the slow LLM and
+                # embed steps so a failure there leaves the old rows intact.
+                if self.force_reindex:
+                    self._delete_source_rows(filename, citations=False)
                 # Upsert so re-indexing replaces rather than errors.
                 self.text_collection.upsert(
                     embeddings=embeddings,
@@ -1517,9 +1527,15 @@ class TextRAG:
                     "  ✓ Indexed %d text chunks for %s",
                     len(text_chunks), pdf_path.name,
                 )
+            elif self.force_reindex:
+                # The file now yields no chunks: don't keep stale passages.
+                self._delete_source_rows(filename, citations=False)
 
             # --- (3) Citation row upsert (after chunks succeeded) ---
             if citation:
+                # Old citation rows go only when a new one is about to land.
+                if self.force_reindex:
+                    self._delete_source_rows(filename, texts=False)
                 doc_text = self._citation_to_document(citation)
                 doc_embedding = self.embed_text([doc_text])[0]
                 meta = self._citation_to_metadata(citation, pdf_path.name)
@@ -1539,6 +1555,8 @@ class TextRAG:
             if description:
                 # The description is the file's row in the citation collection.
                 citation = {"title": pdf_path.name, "abstract": description}
+                if self.force_reindex:
+                    self._delete_source_rows(filename, texts=False)
                 doc_text = self._citation_to_document(citation)
                 meta = self._citation_to_metadata(citation, pdf_path.name)
                 meta["record"] = DESCRIPTION_RECORDS[file_kind]
@@ -1562,6 +1580,40 @@ class TextRAG:
             _emit("done", status="failed", error=str(e))
 
         return result
+
+    def _delete_source_rows(
+        self, filename: str, *, texts: bool = True, citations: bool = True
+    ) -> int:
+        """Delete every row whose `source` is `filename` (text and/or citation)."""
+        removed = 0
+        colls = []
+        if texts:
+            colls.append(self.text_collection)
+        if citations:
+            colls.append(self.citation_collection)
+        for coll in colls:
+            found = coll.get(where={"source": filename})
+            ids = (found or {}).get("ids") or []
+            if ids:
+                coll.delete(ids=ids)
+                removed += len(ids)
+        return removed
+
+    def delete_source(self, filename: str) -> int:
+        """
+        Remove a file from the knowledge base: its chunks and citation row,
+        then rebuild `bm25_corpus.json` (if one exists) from what remains so
+        it no longer lists the deleted ids. Returns the number of rows removed.
+        """
+        removed = self._delete_source_rows(filename)
+        if self._bm25_corpus_path.exists():
+            if self.text_collection.count() == 0:
+                # Nothing left to index; _build_bm25_corpus would skip and
+                # leave the stale file behind.
+                self._delete_bm25_corpus_if_present()
+            else:
+                self._build_bm25_corpus()
+        return removed
 
     def index_pdfs(self):
         """Process all PDFs: index text chunks + extract citation metadata."""

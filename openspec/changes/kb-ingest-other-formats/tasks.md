@@ -16,12 +16,12 @@
 
 ## 2. Identity keyed on source (`build_rag.py`)
 
-- [ ] 2.1 Switch chunk and citation ids to `<filename>_text_<j>` / `<filename>_citation`. Verify in a new `backend/tests/test_build_rag_identity.py` (real Chroma in `tmp_path`, embedder stubbed to fixed vectors) that indexing `foo.pdf` and `foo.csv` leaves both files' chunks and citation rows present
-- [ ] 2.2 Replace the id-based skip check with `text_chunks.get(where={"source": ...}, limit=1)`, and make a forced re-index delete by source from both collections before writing. Verify in `test_build_rag_identity.py`:
+- [x] 2.1 Switch chunk and citation ids to `<filename>_text_<j>` / `<filename>_citation`. Verify in a new `backend/tests/test_build_rag_identity.py` (real Chroma in `tmp_path`, embedder stubbed to fixed vectors) that indexing `foo.pdf` and `foo.csv` leaves both files' chunks and citation rows present
+- [x] 2.2 Replace the id-based skip check with `text_chunks.get(where={"source": ...}, limit=1)`, and make a forced re-index delete by source from both collections before writing. Verify in `test_build_rag_identity.py`:
   - a second index of a CSV returns `skipped` with no embed call;
   - a store seeded with old-style `<stem>_...` rows for a PDF, re-indexed, ends with exactly one set of chunks and one citation row for it;
   - adding a new file to that old store embeds only the new file.
-- [ ] 2.3 Add a public `delete_source(filename)` that removes the file's rows from both collections and rebuilds `bm25_corpus.json` if it exists. Verify in `test_build_rag_identity.py` that after deletion no row has that source, and that an existing BM25 corpus no longer lists its ids
+- [x] 2.3 Add a public `delete_source(filename)` that removes the file's rows from both collections and rebuilds `bm25_corpus.json` if it exists. Verify in `test_build_rag_identity.py` that after deletion no row has that source, and that an existing BM25 corpus no longer lists its ids
 
 ## 3. Backend API and indexer
 

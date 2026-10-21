@@ -161,6 +161,9 @@ class _FakeCollection:
     def get(self, **_kwargs):
         return {"ids": []}
 
+    def delete(self, **_kwargs):
+        pass
+
     def upsert(self, **kwargs):
         self.upserts.append(kwargs)
 
@@ -205,8 +208,8 @@ def test_description_lands_in_summary_and_citation_row(tmp_path, monkeypatch):
     assert meta["title"] == "salts.csv"
     assert meta["abstract"] == "Densities of salts at several temperatures."
     assert meta["authors"] == "" and meta["doi"] == ""
-    assert row["ids"] == ["salts_citation"]
-    assert rag.text_collection.upserts[0]["ids"][0] == "salts_text_0"
+    assert row["ids"] == ["salts.csv_citation"]
+    assert rag.text_collection.upserts[0]["ids"][0] == "salts.csv_text_0"
 
 
 def test_text_file_description_is_a_note(tmp_path, monkeypatch):
