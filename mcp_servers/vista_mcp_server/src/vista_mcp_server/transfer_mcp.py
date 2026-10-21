@@ -86,6 +86,9 @@ async def hpc_list_files(
         cluster: "odo" or "frontier".
         path: Absolute path of the folder on the cluster.
         recursive: Also list everything below it. Stops after 200 folders.
+            Hidden folders (names starting with ".") and __pycache__ are listed
+            but not looked inside, marked "not walked"; list one by its own
+            path to see what it holds.
     """
     return await _list_files(get_vista_meta(ctx).user, cluster, path, recursive)
 
@@ -98,13 +101,19 @@ async def _list_files(cfg: UserConfig, cluster: TransferCluster, path: str, recu
         # The recursive walk reads a missing folder as an empty one, so ask once
         # whether it is there; a plain listing raises for that by itself.
         await globus.operation_stat(endpoint=collection_id, path=path)
-    entries = await globus.operation_ls(endpoint=collection_id, path=path, recursive=recursive)
+    # Hidden folders are mostly what a job's tools leave behind (`.cache/pip`,
+    # `.local`), and each folder walked is one more sequential Globus round trip.
+    entries = await globus.operation_ls(
+        endpoint=collection_id, path=path, recursive=recursive,
+        exclude_segments=("__pycache__",), skip_hidden=True,
+    )
     if not entries:
         return f"{path} on {cluster.title()} is empty."
     lines = [f"{len(entries)} entries under {path} on {cluster.title()}:"]
     for entry in entries:
         if entry.get("type") == "dir":
-            lines.append(f"dir   {'':>9}  {entry['path']}")
+            note = "  (not walked)" if entry.get("walked") is False else ""
+            lines.append(f"dir   {'':>9}  {entry['path']}{note}")
         else:
             lines.append(f"file  {_human_size(int(entry.get('size') or 0)):>9}  {entry['path']}")
     return "\n".join(lines)

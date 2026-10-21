@@ -36,13 +36,23 @@ uploads land only in the researcher's `transfers/` folder.
 ### Requirement: Listing a remote path
 The list tool SHALL take an absolute remote path and SHALL return, for each entry under it, its
 name, whether it is a file or a folder, its size, and its absolute path. It SHALL list the
-entries' contents too when asked to recurse. Any path the researcher's identity can read SHALL
-be listable; the system SHALL add no limit of its own on where. A relative path SHALL be
-refused without contacting the cluster.
+entries' contents too when asked to recurse. A recursive listing SHALL NOT look inside a folder
+below the listed path whose name starts with `.` or is `__pycache__`; it SHALL still list that
+folder, marked as not walked. Any path the researcher's identity can read SHALL be listable;
+the system SHALL add no limit of its own on where. A relative path SHALL be refused without
+contacting the cluster.
 
 #### Scenario: A project data folder
 - **WHEN** an agent lists `/lustre/orion/abc123/proj-shared/data` on Frontier, which holds `a.nc` (2 GB) and folder `runs/`
 - **THEN** the result names `a.nc` as a file of 2 GB at `/lustre/orion/abc123/proj-shared/data/a.nc` and `runs` as a folder
+
+#### Scenario: Hidden folders in a job's output
+- **WHEN** an agent recursively lists a job's output folder on Odo that holds `chart.png`, `.cache/pip/...` and `.local/...`
+- **THEN** the result lists `chart.png`, `.cache` and `.local`, marks `.cache` and `.local` as not walked, and lists nothing inside them
+
+#### Scenario: Asking for a hidden folder by name
+- **WHEN** an agent recursively lists `<job output>/.cache` itself
+- **THEN** its contents are listed
 
 #### Scenario: Relative path
 - **WHEN** an agent lists `data/runs` on Odo

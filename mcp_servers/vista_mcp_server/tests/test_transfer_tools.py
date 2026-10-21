@@ -157,6 +157,16 @@ async def test_a_recursive_listing_walks_an_existing_folder(globus):
     assert "/data/x/a" in text
 
 
+async def test_an_unwalked_folder_is_marked(globus):
+    globus.ls_entries["/out"] = [
+        {"name": ".cache", "type": "dir", "path": "/out/.cache", "walked": False},
+        {"name": "chart.png", "type": "file", "size": 9300, "path": "/out/chart.png"},
+    ]
+    text = await t._list_files(CFG, "odo", "/out", False)
+    assert "/out/.cache  (not walked)" in text
+    assert "/out/chart.png" in text
+
+
 async def test_a_plain_listing_of_a_missing_folder_is_missing(globus):
     with pytest.raises(ToolError, match="is not on"):
         await t._list_files(CFG, "odo", "/nowhere", False)

@@ -82,8 +82,9 @@ class FakeGlobusClient:
         recursive: bool = False,
         exclude_segments: tuple[str, ...] = (),
         max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
-        # exclude_segments/max_dirs bound the real client's recursive walk (one API
+        # exclude_segments/max_dirs/skip_hidden bound the real client's recursive walk (one API
         # round-trip per directory). Accepted here so callers can pass them; the fake
         # serves canned listings and has no traversal to prune.
         self.ls_calls.append((endpoint, path))

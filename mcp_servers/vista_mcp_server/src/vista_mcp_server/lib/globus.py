@@ -528,11 +528,13 @@ class GlobusClient:
         self, *, endpoint: str, path: str, recursive: bool = False,
         exclude_segments: tuple[str, ...] = (),
         max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
         """
         List entries under `path` on the given collection. Returns a list of dicts
         each with at least `name`, `type` ("file"/"dir"), `size`, plus a `path`
-        key injected by this wrapper holding the absolute path.
+        key injected by this wrapper holding the absolute path. A folder the walk
+        did not descend into also carries `walked: False`.
 
         On the Transfer API, because the HTTPS interface has no directory
         listing at all -- that division is why the Transfer half of this module
@@ -548,16 +550,24 @@ class GlobusClient:
           - `exclude_segments`: directory names never descended into. Filtering
             these out of the *results* afterwards does not help — the cost is the
             traversal, so they must be pruned from the queue.
+          - `skip_hidden`: also never descend into a folder whose name starts
+            with `.` -- the `.cache/pip` and `.local` trees a job's Python leaves
+            behind, which made one job folder list 1,818 entries to find a PNG.
           - `max_dirs`: hard ceiling on directories visited. On hitting it the walk
             stops and logs; callers get a partial listing rather than a hang.
+
+        `path` itself is always listed, hidden or not: asking for it is asking
+        to look inside.
         """
         return await asyncio.to_thread(
             self._operation_ls, endpoint, path, recursive, exclude_segments, max_dirs,
+            skip_hidden,
         )
 
     def _operation_ls(
         self, endpoint: str, path: str, recursive: bool,
         exclude_segments: tuple[str, ...] = (), max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         queue = [path]
@@ -599,7 +609,8 @@ class GlobusClient:
                 entry["path"] = full
                 results.append(entry)
                 if recursive and entry.get("type") == "dir":
-                    if name in exclude_segments:
+                    if name in exclude_segments or (skip_hidden and name.startswith(".")):
+                        entry["walked"] = False
                         continue  # prune: never pay for a venv / .git / __pycache__
                     queue.append(full)
             if not recursive:

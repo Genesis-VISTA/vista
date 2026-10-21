@@ -55,7 +55,8 @@ with the guidance in their descriptions. Every project has them, and no skill ne
   `server.py` unless `VISTA_MCP_DISABLE_SERVERS` names `transfer`.
 - `submit_job_mcp.py`: the download loop in `_get_olcf_job_outputs` becomes a shared helper,
   and `_job_output_paths` is generalised for both callers.
-- `lib/globus.py`: unchanged; listing, `stat`, download, upload and `mkdir -p` are reused.
+- `lib/globus.py`: listing, `stat`, download, upload and `mkdir -p` are reused; the
+  recursive listing gains an option to skip hidden folders.
 - `backend/src/vista_backend/agents/agents.py`: the three tool names join `HPC_TOOLS`, the
   list of tools the researcher's credentials are sent to.
 - Tests: new `mcp_servers/vista_mcp_server/tests/test_transfer_tools.py` with a fake Globus
