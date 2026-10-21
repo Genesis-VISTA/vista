@@ -15,7 +15,10 @@ See proposal.md for why. What exists:
   POSIX user, which comes from `GlobusClient.home_owner`.
 - The backend already sends `output_dir` and `uploads_dir` with every MCP call
   (`ProjectPaths` in `lib/user_config.py`), mapped in the sandbox to `/mnt/data/output` and
-  `/mnt/data/uploads`. No backend change is needed.
+  `/mnt/data/uploads`. It sends the researcher's credentials only to tools named in
+  `HPC_TOOLS` (`_build_vista_metadata` in `agents.py`), so the three new tool names have to
+  join that list. That one-line backend change is the only one: without it, every transfer
+  call reads as "Globus not connected" whatever the researcher has connected.
 - No VISTA tool asks the researcher for approval. The `requires_approval` hook in the backend
   (`agents.py`) is wired up but no tool registers it, and `submit_hpc_job` does not ask either.
 

@@ -11,7 +11,9 @@ The system SHALL offer agents three tools for Odo and Frontier: one that lists a
 one that downloads remote files, and one that uploads local files. Each SHALL take the cluster
 as a required argument whose only accepted values are `odo` and `frontier`. Each SHALL be
 authorized only by the researcher's Globus credential for that cluster (see
-hpc-job-submission, Researcher's own Globus credential), and SHALL need no S3M token. The tool
+hpc-job-submission, Researcher's own Globus credential), and SHALL need no S3M token. The
+system SHALL hand each transfer tool call the researcher's settings and credentials, as it
+does for the job tools, and SHALL NOT hand them to tools that are neither. The tool
 descriptions SHALL say to leave bulk data on the cluster for a job to process there, and that
 uploads land only in the researcher's `transfers/` folder.
 
@@ -22,6 +24,10 @@ uploads land only in the researcher's `transfers/` folder.
 #### Scenario: Globus not connected
 - **WHEN** a researcher with no Globus connection for Frontier, and no shared one, calls a transfer tool for Frontier
 - **THEN** the call fails, saying to connect Globus for Frontier in the VISTA user settings
+
+#### Scenario: A connected researcher's call carries the connection
+- **WHEN** a researcher who has connected Globus for Odo asks an agent to list an Odo folder
+- **THEN** the call uses their Odo Globus credential, and does not fail saying Globus is not connected
 
 #### Scenario: Present in every project
 - **WHEN** an agent's tools are listed in a project with no skills attached
