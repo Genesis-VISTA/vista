@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Annotated as A, Any, Optional
 
 import chromadb
+import chromadb.api.shared_system_client
 from chromadb.config import Settings as ChromaSettings
 from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan
@@ -73,6 +74,9 @@ class _KbHandle:
     text_collection: chromadb.Collection | None
     citation_collection: chromadb.Collection | None
     bm25: BM25Okapi | None = None
+    client: Any = None
+    # Stat signature of the store's files when this handle was opened.
+    signature: tuple = ()
 
 
 
@@ -118,6 +122,66 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
                 discovered.setdefault(slug, child.resolve())
 
     return [(slug, path) for slug, path in discovered.items()]
+
+
+def _store_signature(db_path: Path) -> tuple:
+    """
+    (mtime_ns, size) of the files a backend write touches, None if absent.
+
+    Chroma's SQLite is in rollback-journal mode here (no `-wal` file), so a
+    commit rewrites `chroma.sqlite3` and moves its mtime; the `-wal` entry
+    covers a build that does switch it on. `bm25_corpus.json` is rewritten
+    by every indexing run and by `delete_source`.
+    """
+    sig = []
+    for name in ("chroma.sqlite3", "chroma.sqlite3-wal", _BM25_CORPUS_FILENAME):
+        try:
+            st = (db_path / name).stat()
+            sig.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append(None)
+    return tuple(sig)
+
+
+def _evict_chroma_system(handle: "_KbHandle") -> None:
+    """
+    Stop and forget Chroma's cached System for this KB's path, and only that one.
+
+    chromadb keeps one System per persist path for the life of the process, so
+    a new `PersistentClient` on the same path would be handed the old System
+    and its in-memory HNSW index, ghosts and all. `client.close()` only stops
+    it when the refcount reaches zero, which the handle's own client does not
+    guarantee, and `SharedSystemClient.clear_system_cache()` would orphan every
+    other KB's handle, so drop this path's entries directly.
+    """
+    shared = chromadb.api.shared_system_client.SharedSystemClient
+    identifier = getattr(handle.client, "_identifier", str(handle.db_path))
+    with shared._refcount_lock:
+        system = shared._identifier_to_system.pop(identifier, None)
+        shared._identifier_to_refcount.pop(identifier, None)
+    if system is not None:
+        try:
+            system.stop()
+        except Exception as exc:  # noqa: BLE001 -- the new open is what matters
+            logger.warning("RAG: stopping stale ChromaDB system for %s: %s", handle.slug, exc)
+
+
+def _refresh_if_stale(handle: "_KbHandle") -> "_KbHandle":
+    """
+    Return `handle`, or a reopened one if the store changed on disk since it
+    was opened. The backend is a separate process that indexes into and
+    deletes from the same store, and this process's vector index doesn't see
+    that on its own.
+    """
+    if handle.db_path is None or _store_signature(handle.db_path) == handle.signature:
+        return handle
+    logger.info("RAG: %s changed on disk; reopening", handle.slug)
+    _evict_chroma_system(handle)
+    fresh = _open_kb(handle.slug, handle.db_path)
+    if fresh is None:
+        return handle
+    _kbs[handle.slug] = fresh
+    return fresh
 
 
 def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
@@ -176,12 +240,18 @@ def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
     # arXiv 2603.18034). 
     bm25 = _load_bm25_corpus(slug, db_path)
 
+    # Taken after opening, which itself touches the SQLite file. A backend
+    # write landing between the open and this stat goes unseen until the next one.
+    signature = _store_signature(db_path)
+
     return _KbHandle(
         slug=slug,
         db_path=db_path,
         text_collection=text_collection,
         citation_collection=citation_collection,
         bm25=bm25,
+        client=client,
+        signature=signature,
     )
 
 
@@ -321,7 +391,7 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
 
     if not kb_slug:
         if len(_kbs) == 1:
-            return next(iter(_kbs.values())), None
+            return _refresh_if_stale(next(iter(_kbs.values()))), None
         choices = ", ".join(sorted(_kbs))
         return None, (
             "ERROR: this MCP server hosts multiple Knowledge Bases; pass "
@@ -334,7 +404,7 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
         return None, (
             f"ERROR: unknown kb_slug {kb_slug!r}. Available KBs: {choices}."
         )
-    return handle, None
+    return _refresh_if_stale(handle), None
 
 
 def _get_citation_for_source(
@@ -585,6 +655,13 @@ def _hybrid_retrieve(
                 meta_by_id[str(cid)] = dict(meta or {})
                 doc_by_id[str(cid)] = str(doc or "")
             for hit in bm25_hits:
+                if hit.chunk_id not in meta_by_id:
+                    # In the corpus but no longer stored: a stale BM25 entry.
+                    logger.info(
+                        "RAG: dropped BM25 hit %s without a stored row for KB %r",
+                        hit.chunk_id, handle.slug,
+                    )
+                    continue
                 bm25_results.append(
                     RetrievalResult(
                         chunk_id=hit.chunk_id,
@@ -678,8 +755,22 @@ def _format_results(
     seen_sources: dict[str, Optional[dict]] = {}
     output_parts: list[str] = []
 
-    for idx, (doc, meta) in enumerate(zip(documents, metadatas), 1):
-        meta = meta or {}
+    # A hit whose row is gone (the index still lists its id) comes back with
+    # no document or metadata; never show it.
+    live = [(d, m) for d, m in zip(documents, metadatas) if d and m is not None]
+    if len(live) < len(documents):
+        logger.info(
+            "RAG: dropped %d hit(s) without a stored row for KB %r",
+            len(documents) - len(live), handle.slug,
+        )
+
+    if not live:
+        return (
+            f"No relevant passages found for the query in Knowledge Base "
+            f"{handle.slug!r}."
+        )
+
+    for idx, (doc, meta) in enumerate(live, 1):
         source = meta.get("source", "unknown")
         kind = meta.get("kind") or "pdf"
 
