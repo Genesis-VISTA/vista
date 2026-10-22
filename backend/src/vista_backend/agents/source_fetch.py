@@ -5,7 +5,7 @@ The agent's sandbox is the wrong place to reach a code host: it holds no
 credentials (and must not, since the agent can read anything in it), and on a
 network that re-signs HTTPS, such as ORNL's, it does not trust the proxy's
 certificate authority. The backend has both, as it does for
-`POST /skills/import`. So the agent asks for a repository by URL
+skill import (`agents/skill_repo`). So the agent asks for a repository by URL
 (`fetch_repository`), and the backend downloads it at a pinned commit into the
 agent's own workspace, where the sandbox reads it offline.
 

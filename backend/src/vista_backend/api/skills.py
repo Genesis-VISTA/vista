@@ -60,14 +60,45 @@ class SkillGenerateRequest(BaseModel):
 
 class SkillImportRequest(BaseModel):
     """
-    Body for `POST /skills/import`. `url` accepts either
-    `https://github.com/<owner>/<repo>` or
-    `https://github.com/<owner>/<repo>/tree/<ref>/<subpath>`.
+    Body for `POST /skills/import`: the URL of a repository on GitHub or any
+    GitLab holding one skill, or of one skill's folder in it
+    (`.../tree/<ref>/<path>`, `.../-/tree/<ref>/<path>`).
     """
 
     url: str
     project: str | None = None
     """ Name of a project to load the imported skill into. """
+    token: str | None = None
+    """ A token for this import only, sent to the URL's host and never stored. """
+    on_conflict: skills_service.OnConflict | None = None
+    rename_to: str | None = None
+
+
+class SkillScanRequest(BaseModel):
+    """Body for `POST /skills/import/scan`."""
+
+    url: str
+    token: str | None = None
+    """ A token for this scan only, sent to the URL's host and never stored. """
+
+
+class SkillBatchImportRequest(BaseModel):
+    """Body for `POST /skills/import/batch`: skills a scan of `url` listed."""
+
+    url: str
+    skills: list[skills_service.SkillChoice]
+    commit: str | None = None
+    """ The commit the scan saw, so the skills installed are the ones listed. """
+    project: str | None = None
+    token: str | None = None
+
+
+class SkillImportResultOut(BaseModel):
+    path: str
+    name: str | None
+    status: str
+    detail: str | None = None
+    skill: SkillListItem | None = None
 
 
 class SkillFromOutputRequest(BaseModel):
@@ -170,15 +201,74 @@ async def import_skill(
     body: SkillImportRequest, session: SessionDep, user: UserDep
 ) -> SkillDetail:
     """
-    Import a skill from a public GitHub repository, or a private one the user's
-    GitHub token in Settings can read, loaded into `body.project` if given.
+    Import the one skill a repository URL names, loaded into `body.project` if
+    given. A repository with several skills is refused (400) with their names;
+    scan it and import through `/skills/import/batch`. Private repositories need
+    `body.token`, or the user's Settings token for github.com or gitlab.com.
     Imported skills are private; the user can publish later via
     `PATCH /skills/{name}`.
     """
     project = await _target_project(session, user, body.project)
-    skill = await skills_service.import_skill(session, body.url, user.id, project)
+    skill = await skills_service.import_skill(
+        session,
+        body.url,
+        user.id,
+        project,
+        token=body.token,
+        on_conflict=body.on_conflict,
+        rename_to=body.rename_to,
+    )
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
+
+
+@router.post("/skills/import/scan")
+async def scan_skill_repository(
+    body: SkillScanRequest, session: SessionDep, user: UserDep
+) -> skills_service.RepoScan:
+    """
+    List the skills in a repository, or in the folder of it the URL links to:
+    name, description and what each reaches outside its folder, and whether its
+    name is taken. Imports nothing.
+    """
+    return await skills_service.scan_repository(
+        session, body.url, user.id, token=body.token
+    )
+
+
+@router.post("/skills/import/batch")
+async def import_skill_batch(
+    body: SkillBatchImportRequest, session: SessionDep, user: UserDep
+) -> list[SkillImportResultOut]:
+    """
+    Import the chosen skills of a scanned repository, each with what to do if
+    its name is taken (skip, overwrite a private skill, or rename). One result
+    per skill, in order; a failure does not stop the rest.
+    """
+    project = await _target_project(session, user, body.project)
+    results = await skills_service.import_repository_skills(
+        session,
+        body.url,
+        body.skills,
+        user.id,
+        project,
+        token=body.token,
+        commit=body.commit,
+    )
+    return [
+        SkillImportResultOut(
+            path=r.path,
+            name=r.name,
+            status=r.status,
+            detail=r.detail,
+            skill=SkillListItem.model_validate(
+                r.skill, from_attributes=True, update={"hpc_jobs": _hpc_jobs(r.skill)}
+            )
+            if r.skill is not None
+            else None,
+        )
+        for r in results
+    ]
 
 
 @router.post("/skills/import/upload", status_code=201)

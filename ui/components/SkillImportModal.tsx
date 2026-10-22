@@ -11,10 +11,53 @@ type Props = {
    */
   project: string | null;
   onCancel: () => void;
-  onImported: (skill: SkillSummary) => void;
+  /**
+   * Skills just imported. `done` is false when some of a repository's chosen
+   * skills were skipped or failed, so the modal stays open to say which.
+   */
+  onImported: (skills: SkillSummary[], done: boolean) => void;
 };
 
-type Source = "github" | "local" | "output";
+type Source = "repo" | "local" | "output";
+
+/** One skill found in a repository (backend `ScannedSkill`). */
+type ScannedSkill = {
+  path: string;
+  url: string;
+  name: string | null;
+  description: string | null;
+  error: string | null;
+  warnings: string[];
+  included: string[];
+  hpc_jobs: string[];
+  files: number;
+  exists: boolean;
+  replaceable: boolean;
+  /** Another skill in this repository has the same name. */
+  duplicate: boolean;
+};
+
+/** What `/api/skills/import/scan` found (backend `RepoScan`). */
+type RepoScan = {
+  url: string;
+  repository: string;
+  ref: string;
+  commit: string;
+  path: string;
+  skills: ScannedSkill[];
+};
+
+type OnConflict = "skip" | "overwrite" | "rename";
+type Choice = { on_conflict: OnConflict; rename_to: string };
+
+/** One chosen skill's outcome (backend `SkillImportResult`). */
+type ImportResult = {
+  path: string;
+  name: string | null;
+  status: "imported" | "overwritten" | "renamed" | "skipped" | "failed";
+  detail: string | null;
+  skill: SkillSummary | null;
+};
 
 /** A folder in the researcher's project output that holds a SKILL.md (backend `OutputSkill`). */
 type OutputSkill = {
@@ -43,8 +86,13 @@ function isIgnored(path: string): boolean {
 }
 
 export function SkillImportModal({ open, project, onCancel, onImported }: Props) {
-  const [source, setSource] = useState<Source>("github");
+  const [source, setSource] = useState<Source>("repo");
   const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [scan, setScan] = useState<RepoScan | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [choices, setChoices] = useState<Record<string, Choice>>({});
+  const [results, setResults] = useState<ImportResult[] | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [outputSkills, setOutputSkills] = useState<OutputSkill[] | null>(null);
   const [outputFolder, setOutputFolder] = useState<string | null>(null);
@@ -80,9 +128,12 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
 
   const folderName = files.length > 0 ? relativePath(files[0]).split("/")[0] : null;
   const picked = outputSkills?.find((s) => s.folder === outputFolder) ?? null;
+  const importable = scan?.skills.filter((s) => !s.error) ?? [];
   const canSubmit =
-    source === "github"
-      ? url.trim().length > 0
+    source === "repo"
+      ? scan
+        ? selected.size > 0
+        : url.trim().length > 0
       : source === "local"
         ? files.length > 0
         : picked !== null && !picked.error && (!picked.exists || picked.replaceable);
@@ -92,19 +143,93 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
     setFiles(Array.from(list ?? []).filter((file) => !isIgnored(relativePath(file))));
   }
 
+  function resetRepo() {
+    setScan(null);
+    setSelected(new Set());
+    setChoices({});
+    setResults(null);
+  }
+
+  function choiceFor(s: ScannedSkill): Choice {
+    // A name shared within the repository but free in the library can only be renamed.
+    const fallback: OnConflict = s.exists ? (s.replaceable ? "overwrite" : "skip") : "rename";
+    return choices[s.path] ?? { on_conflict: fallback, rename_to: "" };
+  }
+
+  async function postJson(path: string, body: unknown): Promise<unknown> {
+    const resp = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await readPayload(resp);
+    if (!resp.ok) throw new Error(errorDetail(resp, payload));
+    return payload;
+  }
+
+  async function importChosen(found: RepoScan, paths: string[]) {
+    const skills = paths.map((path) => {
+      const s = found.skills.find((x) => x.path === path)!;
+      if (!s.exists && !s.duplicate) return { path };
+      const c = choiceFor(s);
+      return c.on_conflict === "rename"
+        ? { path, on_conflict: c.on_conflict, rename_to: c.rename_to.trim() }
+        : { path, on_conflict: c.on_conflict };
+    });
+    const out = (await postJson("/api/skills/import/batch", {
+      url: found.url,
+      commit: found.commit,
+      project,
+      token: token.trim() || undefined,
+      skills,
+    })) as ImportResult[];
+    const imported = out.flatMap((r) => (r.skill ? [r.skill] : []));
+    const done = out.every((r) => r.skill !== null);
+    if (done) {
+      setUrl("");
+      setToken("");
+      resetRepo();
+    } else {
+      setResults(out);
+      // What is left to retry: the chosen skills that did not go in.
+      setSelected(new Set(out.filter((r) => r.status === "failed").map((r) => r.path)));
+    }
+    if (imported.length > 0 || done) onImported(imported, done);
+  }
+
+  /** Scan the URL; one skill that can go straight in does, otherwise list them. */
+  async function submitRepo() {
+    if (scan) {
+      await importChosen(scan, [...selected]);
+      return;
+    }
+    const found = (await postJson("/api/skills/import/scan", {
+      url: url.trim(),
+      token: token.trim() || undefined,
+    })) as RepoScan;
+    const only = found.skills.length === 1 ? found.skills[0] : null;
+    if (only && !only.error && !only.exists && only.warnings.length === 0) {
+      await importChosen(found, [only.path]);
+      return;
+    }
+    setScan(found);
+    // Of skills sharing a name, only the first is ticked: they cannot all go in under it.
+    const names = new Set<string>();
+    const ticked = found.skills.filter((s) => {
+      if (s.error || s.exists) return false;
+      if (s.name && names.has(s.name)) return false;
+      if (s.name) names.add(s.name);
+      return true;
+    });
+    setSelected(new Set(ticked.map((s) => s.path)));
+  }
+
   function request(): Promise<Response> {
     if (source === "output") {
       return fetch(`/api/projects/${encodeURIComponent(project ?? "")}/skills/from-output`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ folder: outputFolder, replace: picked?.exists ?? false }),
-      });
-    }
-    if (source === "github") {
-      return fetch("/api/skills/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), project }),
       });
     }
     const form = new FormData();
@@ -121,29 +246,21 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
     setBusy(true);
     setError(null);
     try {
-      const resp = await request();
-      const text = await resp.text();
-      let payload: unknown = null;
-      try {
-        payload = text ? JSON.parse(text) : null;
-      } catch {
-        payload = { error: text };
+      if (source === "repo") {
+        await submitRepo();
+        return;
       }
+      const resp = await request();
+      const payload = await readPayload(resp);
       if (!resp.ok) {
-        let detail = `Import failed (${resp.status}).`;
-        if (payload && typeof payload === "object") {
-          if ("detail" in payload) detail = String((payload as { detail: unknown }).detail);
-          else if ("error" in payload) detail = String((payload as { error: unknown }).error);
-        }
-        setError(detail);
+        setError(errorDetail(resp, payload));
         return;
       }
       if (source === "output") {
         setOutputSkills(null);
         setOutputFolder(null);
       }
-      onImported(payload as SkillSummary);
-      setUrl("");
+      onImported([payload as SkillSummary], true);
       setFiles([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed.");
@@ -192,7 +309,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
         </div>
         <div className="kb-tabs-row">
           <div className="kb-tabs" role="tablist" aria-label="Import source">
-            {tab("github", "GitHub URL")}
+            {tab("repo", "Repository")}
             {tab("local", "Local folder")}
             {project && tab("output", "From project output")}
           </div>
@@ -253,7 +370,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
                 HPC jobs) from your next message. Imported skills land private.
               </p>
             </>
-          ) : source === "github" ? (
+          ) : source === "repo" ? (
             <>
               <label className="skill-editor-label">
                 <span>Repository URL</span>
@@ -261,20 +378,55 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
                   key="url"
                   className="input"
                   autoFocus
-                  placeholder="https://github.com/owner/repo  or  .../tree/main/path/to/skill"
+                  placeholder="https://github.com/owner/repo  or  .../tree/main/path/to/skills"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => {
+                    setUrl(e.target.value);
+                    if (scan) resetRepo();
+                  }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void submit();
+                    if (e.key === "Enter" && !scan) void submit();
                   }}
                   disabled={busy}
                 />
               </label>
-              <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
-                Accepts a repo URL (SKILL.md at the root) or a tree URL into a
-                sub-directory (e.g. <code>github.com/anthropics/skills/tree/main/skills/docx</code>).
-                Imported skills land private; publish them from the /skills tab.
-              </p>
+              <label className="skill-editor-label">
+                <span>Access token (optional)</span>
+                <input
+                  key="token"
+                  className="input"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="For a private repository; used for this import only, not saved"
+                  value={token}
+                  onChange={(e) => {
+                    setToken(e.target.value);
+                    if (scan) resetRepo();
+                  }}
+                  disabled={busy}
+                />
+              </label>
+              {scan ? (
+                <RepoSkillList
+                  scan={scan}
+                  importable={importable}
+                  selected={selected}
+                  setSelected={setSelected}
+                  choiceFor={choiceFor}
+                  setChoice={(path, c) => setChoices((prev) => ({ ...prev, [path]: c }))}
+                  results={results}
+                  busy={busy}
+                />
+              ) : (
+                <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
+                  A GitHub or GitLab repository, or a folder in one (
+                  <code>/tree/&lt;branch&gt;/&lt;path&gt;</code>, GitLab&apos;s{" "}
+                  <code>/-/tree/…</code>). Every <code>SKILL.md</code> in it is found, and
+                  you choose which to import. Without a token here, your GitHub or
+                  gitlab.com token from Settings is used. Imported skills land private;
+                  publish them from the /skills tab.
+                </p>
+              )}
             </>
           ) : (
             <>
@@ -326,10 +478,192 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
               disabled={busy || !canSubmit}
               onClick={() => void submit()}
             >
-              {busy ? "Importing…" : source === "output" && picked?.exists ? "Replace" : "Import"}
+              {busy
+                ? source === "repo" && !scan
+                  ? "Looking…"
+                  : "Importing…"
+                : source === "output" && picked?.exists
+                  ? "Replace"
+                  : source === "repo" && scan
+                    ? `Import ${selected.size} skill${selected.size === 1 ? "" : "s"}`
+                    : "Import"}
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+async function readPayload(resp: Response): Promise<unknown> {
+  const text = await resp.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return { error: text };
+  }
+}
+
+function errorDetail(resp: Response, payload: unknown): string {
+  if (payload && typeof payload === "object") {
+    if ("detail" in payload) return String((payload as { detail: unknown }).detail);
+    if ("error" in payload) return String((payload as { error: unknown }).error);
+  }
+  return `Import failed (${resp.status}).`;
+}
+
+const STATUS_LABEL: Record<ImportResult["status"], string> = {
+  imported: "Imported",
+  overwritten: "Replaced",
+  renamed: "Imported as",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
+/** The skills a scan found, to choose from, with a conflict choice for each taken name. */
+function RepoSkillList({
+  scan,
+  importable,
+  selected,
+  setSelected,
+  choiceFor,
+  setChoice,
+  results,
+  busy,
+}: {
+  scan: RepoScan;
+  importable: ScannedSkill[];
+  selected: Set<string>;
+  setSelected: (s: Set<string>) => void;
+  choiceFor: (s: ScannedSkill) => Choice;
+  setChoice: (path: string, c: Choice) => void;
+  results: ImportResult[] | null;
+  busy: boolean;
+}) {
+  const allChosen = importable.length > 0 && importable.every((s) => selected.has(s.path));
+  const muted = { fontSize: 12, color: "var(--muted)" } as const;
+  function toggle(path: string, on: boolean) {
+    const next = new Set(selected);
+    if (on) next.add(path);
+    else next.delete(path);
+    setSelected(next);
+  }
+  return (
+    <div className="skill-editor-label">
+      <span>
+        {scan.skills.length} skill{scan.skills.length === 1 ? "" : "s"} in {scan.repository}
+        {scan.path ? `/${scan.path}` : ""} at {scan.ref}
+      </span>
+      {importable.length > 1 && (
+        <label className="skill-output-row">
+          <input
+            type="checkbox"
+            checked={allChosen}
+            disabled={busy}
+            onChange={(e) =>
+              setSelected(new Set(e.target.checked ? importable.map((s) => s.path) : []))
+            }
+          />
+          <span>Select all</span>
+        </label>
+      )}
+      <div className="skill-output-list" style={{ maxHeight: 320 }}>
+        {scan.skills.map((s) => {
+          const result = results?.find((r) => r.path === s.path);
+          const c = choiceFor(s);
+          return (
+            <div key={s.path} className="skill-output-row">
+              <input
+                type="checkbox"
+                aria-label={`Import ${s.name ?? s.path}`}
+                checked={selected.has(s.path)}
+                disabled={busy || Boolean(s.error)}
+                onChange={(e) => toggle(s.path, e.target.checked)}
+              />
+              <span style={{ minWidth: 0 }}>
+                <strong>{s.name ?? s.path}</strong>
+                {s.hpc_jobs.length > 0 && (
+                  <span className="skill-hpc" style={{ marginLeft: 8 }}>
+                    Runs HPC jobs: {s.hpc_jobs.join(", ")}
+                  </span>
+                )}
+                {s.description && <span className="skill-desc" style={{ display: "block" }}>{s.description}</span>}
+                <span style={{ display: "block", ...muted }}>
+                  <a href={s.url} target="_blank" rel="noreferrer">
+                    {s.path || "(repository root)"}
+                  </a>
+                  {" · "}
+                  {s.files} file{s.files === 1 ? "" : "s"}
+                </span>
+                {s.error && <span className="error" style={{ display: "block" }}>{s.error}</span>}
+                {s.included.length > 0 && (
+                  <span style={{ display: "block", ...muted }}>
+                    Also copied in: {s.included.join("; ")}
+                  </span>
+                )}
+                {s.warnings.map((w) => (
+                  <span key={w} style={{ display: "block", fontSize: 12, color: "var(--warning-ink)" }}>
+                    ⚠ {w}
+                  </span>
+                ))}
+                {s.exists && !s.error && (
+                  <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...muted }}>
+                    {s.name} is taken:
+                    <select
+                      className="input"
+                      style={{ width: "auto", padding: "2px 6px" }}
+                      value={c.on_conflict}
+                      disabled={busy}
+                      onChange={(e) => setChoice(s.path, { ...c, on_conflict: e.target.value as OnConflict })}
+                    >
+                      <option value="skip">Skip</option>
+                      {s.replaceable && <option value="overwrite">Replace my private skill</option>}
+                      <option value="rename">Import under another name</option>
+                    </select>
+                    {c.on_conflict === "rename" && (
+                      <input
+                        className="input"
+                        style={{ width: 180, padding: "2px 6px" }}
+                        placeholder={`${s.name}-2`}
+                        value={c.rename_to}
+                        disabled={busy}
+                        onChange={(e) => setChoice(s.path, { ...c, rename_to: e.target.value })}
+                      />
+                    )}
+                    {!s.replaceable && <span>(published, so it cannot be replaced)</span>}
+                  </span>
+                )}
+                {s.duplicate && !s.exists && !s.error && (
+                  <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", ...muted }}>
+                    Another skill here is also named {s.name}. Import only one, or import this one as:
+                    <input
+                      className="input"
+                      style={{ width: 180, padding: "2px 6px" }}
+                      aria-label={`New name for ${s.path}`}
+                      placeholder={`${s.name}-2`}
+                      value={c.rename_to}
+                      disabled={busy}
+                      onChange={(e) => setChoice(s.path, { on_conflict: "rename", rename_to: e.target.value })}
+                    />
+                  </span>
+                )}
+                {result && (
+                  <span
+                    style={{
+                      display: "block",
+                      fontSize: 12,
+                      color: result.status === "failed" ? "var(--danger-ink)" : "var(--muted)",
+                    }}
+                  >
+                    {STATUS_LABEL[result.status]}
+                    {result.status === "renamed" ? ` ${result.name}` : ""}
+                    {result.detail ? `: ${result.detail}` : ""}
+                  </span>
+                )}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
