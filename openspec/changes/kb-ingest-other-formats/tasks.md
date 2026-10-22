@@ -96,6 +96,6 @@
 
 ## 7. Release build inputs
 
-- [ ] 7.1 Regenerate the AI-safety store from this branch per `docs/releasing.md` § "Updating them": build without `--vector-store`, then extract `rag_db`. Verify with `./scripts/build_local_package.sh --check --payload <inputs>/vista-data --vector-store <new rag_db>`, and spot-check that its chunk ids use full file names and that citations look right in the explorer
+- [x] 7.1 Regenerate the AI-safety store from this branch per `docs/releasing.md` § "Updating them": build without `--vector-store`, then extract `rag_db`. Verify with `./scripts/build_local_package.sh --check --payload <inputs>/vista-data --vector-store <new rag_db>`, and spot-check that its chunk ids use full file names and that citations look right in the explorer
 - [ ] 7.2 **Ask Sam before pushing.** Commit the new `rag_db` to `Genesis-VISTA/vista-build-inputs`, push (never force), and record the full commit hash. Verify that `git ls-remote` shows the commit on its default branch
 - [ ] 7.3 Set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env` to that hash in this MR, and verify by re-running the `--check` from 7.1 against a fresh clone at that commit
