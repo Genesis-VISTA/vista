@@ -57,16 +57,16 @@
 
 ## 6. Hands-on test (manual, not in PR CI)
 
-- [x] 6.1 Add `scripts/make_kb_csv_fixture.py` (stdlib only; run with `uv run scripts/make_kb_csv_fixture.py <out-dir>`), which writes a synthetic KB with known values:
-  - `flibe_viscosity.csv`: T_K 773–1073 step 10, viscosity from a fixed formula;
+- [x] 6.1 Generate, outside the repo (a throwaway script, not committed), a synthetic KB with known values:
+  - `flibe_viscosity.csv`: T_K 773–1073 step 2, viscosity from a fixed formula;
   - `flinak_density.tsv`: tab-separated;
   - `salt_melting_points.csv`: a dozen salts with BOM and quoted names containing commas;
   - `lif_thermal_conductivity_long.csv`: 25,000 rows, past the window cap, with a marked value at row 20,000;
   - `measurement_notes.md`: says which file holds the FLiBe data;
   - `flibe_viscosity.txt`: the same stem as the CSV.
 
-  It also prints `expected.json`, holding the target values the run below checks. Verify that running it twice produces identical files.
-- [x] 6.2 Write the hands-on plan as `openspec/changes/kb-ingest-other-formats/hands-on.md`. It covers:
+  It also writes `expected.json`, holding the target values the run below checks. Verify that running it twice produces identical files.
+- [x] 6.2 Agree the hands-on plan with Sam. It covers:
   - **Setup:** create a KB `salt-fixture` from the fixture, attach it to a project, and confirm in the explorer that badges, descriptions and row counts are shown;
   - **Prompts to run:**
     - "What's FLiBe's viscosity at 923 K? Plot viscosity vs temperature."
@@ -80,7 +80,19 @@
     - deleting `flibe_viscosity.csv` makes searches stop returning it.
 
   Verify that the plan is reviewed by Sam.
-- [ ] 6.3 Run the hands-on plan against `./launch.sh logs` with a real model credential, and record the outcome per prompt in `hands-on.md`. Verify that every check passes, or that a failure is recorded with its cause
+- [x] 6.3 Run the hands-on plan against `./launch.sh logs` with a real model credential, and record the outcome per prompt below. Verify that every check passes, or that a failure is recorded with its cause
+
+  Outcome (2026-10-22, KB `salt-fixture`, project `salt-rag-testing`):
+  - **Setup:** passed. Badges, descriptions and row counts were right (TSV 151, CSV 12, the long CSV 25,000).
+  - **FLiBe at 923 K:** passed. 6.7808 mPa·s from the fetched CSV, with a plot. Search returned the summary and `rows 1-50`, but not `rows 51-100`, the window holding 923 K. Embeddings match numbers poorly, as design.md expects.
+  - **Comma-named salt:** passed. The summary and `rows 1-12` hits gave `LiF-BeF2, 2:1 (FLiBe)` at 732 K.
+  - **LiF row 20,000:** passed. The summary hit carried the truncation note, and the agent fetched the file and found 99.99 at 1349 K. Its plot covered all 25,000 rows.
+  - **Notes:** passed. `measurement_notes.md, passage 1 (Markdown)` named `flibe_viscosity.csv`.
+  - **Delete:** passed.
+    - After `flibe_viscosity.csv` was deleted, no hit named it, no blank hits appeared, and `fetch_kb_file` refused it. `flibe_viscosity.txt` was still found.
+    - The agent then recalled the published FLiBe correlation the fixture used, so this check can't tell recall from a leak.
+    - A copy fetched earlier stays in the project's `/mnt/data/work/kb/`, by design, like any working file.
+  - **Found during the run:** an earlier run had blank `unknown, page ?` hits after a delete, because the MCP server's Chroma handle was stale. This was fixed in `rag_mcp.py` (`_refresh_if_stale`) and passed on re-test.
 
 ## 7. Release build inputs
 
