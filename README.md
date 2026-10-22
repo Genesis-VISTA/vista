@@ -47,7 +47,8 @@ is installed, where it keeps its state, first-launch behaviour and Linux trouble
 - **Knowledge bases**: retrieval over indexed paper collections, with citations bound to the
   passages the agent read.
 - **Skills**: reusable instructions and scripts, written by hand, generated from a chat or
-  imported from GitHub, and shared through the Skill Hub. See
+  imported from GitHub, and shared by publishing them to a collaboration server and importing
+  them from its Skill Hub. See
   [skill onboarding](docs/skill-onboarding.md).
 - **Sandboxed code execution**: each agent session gets its own microVM for `run_bash` and file
   work, so analysis code never runs on your machine directly.

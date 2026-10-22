@@ -19,7 +19,13 @@ from ..agents.inference import (
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
+from ..services.collaboration import (
+    CollaborationError,
+    CollaborationRefused,
+    CollaborationUnavailable,
+)
 from ..services.project_agent import project_agent_pool
+from ..services.skill_collaboration import SkillConflict
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_runs import router as chat_runs_router
@@ -128,6 +134,32 @@ async def _missing_inference_credential(
     return JSONResponse(
         status_code=409,
         content={"detail": exc.detail, "code": "inference_not_configured"},
+    )
+
+
+@app.exception_handler(CollaborationError)
+async def _collaboration_error(
+    request: Request, exc: CollaborationError
+) -> JSONResponse:
+    """
+    A collaboration server that cannot be reached is 503, one that refused or
+    answered nonsense 502; `detail` is the sentence to show.
+    """
+    if isinstance(exc, CollaborationUnavailable):
+        status, code = 503, "collaboration_unavailable"
+    elif isinstance(exc, CollaborationRefused):
+        status, code = 502, "collaboration_refused"
+    else:
+        status, code = 502, "collaboration_error"
+    return JSONResponse(status_code=status, content={"detail": str(exc), "code": code})
+
+
+@app.exception_handler(SkillConflict)
+async def _skill_conflict(request: Request, exc: SkillConflict) -> JSONResponse:
+    """A publish or import that needs the researcher's choice: 409 with `code`."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.detail, "code": exc.code, **exc.extra},
     )
 
 

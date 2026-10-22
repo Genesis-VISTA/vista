@@ -187,7 +187,7 @@ def deployment_db_stats(db_path: Path) -> dict:
         stats = {
             "projects": q("SELECT COUNT(*) FROM project"),
             "skills": q("SELECT COUNT(*) FROM skill"),
-            "skills_published": q("SELECT COUNT(*) FROM skill WHERE is_public"),
+            "skills_shared": q("SELECT COUNT(*) FROM skill WHERE remote_id IS NOT NULL"),
             "knowledge_bases": q("SELECT COUNT(*) FROM knowledge_base"),
         }
         # Installs = project<->skill attachments (project.skills JSON lists).
@@ -248,7 +248,7 @@ def render_deployment(db: dict, usage: dict) -> str:
     if db:
         lines += ["", (
             f"Deployment: {db['projects']} projects, "
-            f"{db['skills']} skills ({db['skills_published']} published, "
+            f"{db['skills']} skills ({db['skills_shared']} shared, "
             f"{db['skill_installs']} installs), {db['knowledge_bases']} knowledge bases; "
             f"{usage['jobs_submitted']} jobs across {usage['campaigns']} campaigns."
         )]

@@ -146,7 +146,11 @@ backend reads its address from Settings, falling back to
 `VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets); with neither, publishing and
 importing are off and `GET /collaboration/status` says why. An unreachable server is never
 fatal. The UI's Publish and Import controls read `useCollaboration()` (`ui/lib/collaboration.ts`).
-Backend tests mount the server in-process (the `collab_server` fixture) through the backend's
+Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
+a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
+The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local
+library. A local skill records `origin_server`, `remote_id`, `remote_version` and `modified`;
+every write to its files must set `modified`. Backend tests mount the server in-process (the `collab_server` fixture) through the backend's
 dev extra, so run them with `--extra dev`.
 
 ### Frontend (UI)

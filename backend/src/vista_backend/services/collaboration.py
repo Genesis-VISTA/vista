@@ -342,8 +342,18 @@ class CollaborationClient:
             RemoteVersion, "POST", f"/items/{item_id}/versions", json=body
         )
 
-    async def download_blob(self, item_id: uuid.UUID, version: int, dest: Path) -> None:
-        """Stream a version's blob to `dest`, which appears only once complete."""
+    async def download_blob(
+        self,
+        item_id: uuid.UUID,
+        version: int,
+        dest: Path,
+        *,
+        max_bytes: int | None = None,
+    ) -> None:
+        """
+        Stream a version's blob to `dest`, which appears only once complete.
+        With `max_bytes`, a larger blob is refused before more of it is written.
+        """
         path = f"/items/{item_id}/versions/{version}/blob"
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -358,7 +368,15 @@ class CollaborationClient:
                         if response.is_error or response.is_redirect:
                             await response.aread()
                             self._check(response, "GET", path)
+                        received = 0
                         async for chunk in response.aiter_bytes():
+                            received += len(chunk)
+                            if max_bytes is not None and received > max_bytes:
+                                raise CollaborationError(
+                                    f"The collaboration server sent more than "
+                                    f"{max_bytes // (1024 * 1024)} MB for {path}; "
+                                    "refused."
+                                )
                             out.write(chunk)
                 except httpx.HTTPError as error:
                     raise self._unreachable(error) from error

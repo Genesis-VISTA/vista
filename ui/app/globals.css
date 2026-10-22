@@ -1379,7 +1379,7 @@ textarea.input {
   margin-top: 6px;
 }
 
-.skill-author {
+.skill-sharing {
   font-weight: 500;
 }
 
@@ -1405,15 +1405,43 @@ textarea.input {
   align-self: flex-start;
 }
 
-.skill-published {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--panel);
+.skill-section-title {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--muted);
-  border: 1px solid var(--line);
-  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.skill-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 20px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.skill-notice {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hub-unavailable {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
 }
 
 .upload-list {
@@ -4235,6 +4263,22 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: 999px;
   background: var(--panel);
   color: var(--muted);
+}
+
+.hub-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.hub-detail dt {
+  color: var(--muted);
+}
+
+.hub-detail dd {
+  margin: 0;
 }
 
 .hub-empty {

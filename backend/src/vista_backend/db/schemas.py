@@ -310,7 +310,8 @@ class IndexProgress(BaseModel):
 # Skills
 # Note, this is different than the models in agents/skills.py. agents/skills.py only handles the
 # skills spec directly (https://agentskills.io/specification). This database model handles storing
-# to location on disk, and some ownership metadata, in addition to mirroring the Skill spec metadata
+# to location on disk, provenance and collaboration state, in addition to mirroring the Skill spec
+# metadata
 #
 # TODO: Currently skills are still globably editable, and project just select a subset of skills.
 # We need to make skills scoped to a project, only editable by their creator, etc.
@@ -339,10 +340,26 @@ class SkillBase(SQLModel):
     models, but the API exposes it as `metadata` (matching create/patch input).
     """
 
-    # DB-only hub metadata (never written to SKILL.md).
-    author: str | None = None
+    # Provenance and collaboration state (never written to SKILL.md).
     repo_url: str | None = None
-    is_public: bool = False
+    """ The repository folder a GitHub or GitLab import came from. """
+    bundled: bool = False
+    """
+    Ships with VISTA (`db/skills/`), so every installation already has it: it
+    is never published or deleted, and an import never replaces it.
+    """
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this skill was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version these files were published as or imported from. """
+    modified: bool = False
+    """
+    Changed here since `remote_version`: set by every write to the skill's
+    files, cleared by a publish or an import. A skill never published is
+    modified from its creation, as everything in it is local.
+    """
 
 
 class SkillPublic(SkillBase):
@@ -376,9 +393,6 @@ class SkillUpdate(BaseModel):
     compatibility: str | None = None
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
-    author: str | None = None
-    repo_url: str | None = None
-    is_public: bool | None = None
 
 
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]

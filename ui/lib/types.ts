@@ -26,25 +26,35 @@ export type SkillSummary = {
   path: string;
   metadata?: Record<string, string | string[]>;
   tags?: string[];
-  author?: string | null;
+  /** The GitHub or GitLab folder it was imported from, if it was. */
   repoUrl?: string | null;
-  isPublic?: boolean;
   /**
    * HPC jobs the skill ships (`hpc_jobs/<job>/`). Loading it lets the agent
    * submit them, as `<skill>/<job>`, under the researcher's cluster credentials.
    */
   hpcJobs?: string[];
+} & SkillSharing;
+
+/** Where a skill here stands with the collaboration server. */
+export type SkillSharing = {
+  /** Ships with VISTA, so it is never published. */
+  bundled?: boolean;
+  /** The collaboration server `remoteId` lives on; null until published or imported. */
+  originServer?: string | null;
+  remoteId?: string | null;
+  /** The server's version these files were published as or imported from. */
+  remoteVersion?: number | null;
+  /** Changed here since `remoteVersion` (or never published). */
+  modified?: boolean;
 };
 
 export type SkillDetail = {
   slug: string;
   frontmatter: Record<string, unknown>;
   markdown: string;
-  author?: string | null;
   repoUrl?: string | null;
-  isPublic?: boolean;
   hpcJobs?: string[];
-};
+} & SkillSharing;
 
 export type ChatMessage = {
   id: string;

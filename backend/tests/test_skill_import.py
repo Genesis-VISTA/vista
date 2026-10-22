@@ -175,7 +175,7 @@ class TestUploadRoute:
             assert response.status_code == 201, response.text
             body = response.json()
             assert body["name"] == "demo-skill"
-            assert body["is_public"] is False
+            assert body["modified"] is True
             assert body["repo_url"] is None
             assert "Run `scripts/run.py`." in body["body"]
 
@@ -377,7 +377,7 @@ class TestImportFromOutput:
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["name"] == "demo-hpc"
-        assert body["is_public"] is False
+        assert body["modified"] is True
         assert body["hpc_jobs"] == ["hello"]
         assert "demo-hpc/hello" in body["body"]
 
@@ -493,24 +493,57 @@ class TestImportFromOutput:
         assert replaced.status_code == 201, replaced.text
         assert replaced.json()["hpc_jobs"] == ["hello", "second"]
         assert replaced.json()["description"].startswith("Fixed: what")
-        assert replaced.json()["is_public"] is False
+        assert replaced.json()["modified"] is True
         assert await self._project_skills(session, project) == ["demo-hpc"]
         # One copy on disk: the old folder went with the swap.
         assert len(list(settings.storage_dir.iterdir())) == 1
 
-    async def test_published_skill_is_never_replaced(self, session):
+    async def test_a_replace_rebuilds_every_project_that_loads_the_skill(
+        self, session, monkeypatch
+    ):
+        """Each project's skills volume holds the old files, not only the one
+        the folder was imported from."""
+        from vista_backend.services import project_agent
+
+        project, output, url = await self._setup(session)
+        _agent_writes_skill(output)
+        with api_client(session) as (client, _):
+            first = await client.post(url, json={"folder": "demo-hpc"})
+            assert first.status_code == 201, first.text
+            other = await seed_project(session, skills=["demo-hpc"])
+            rebuilt: list = []
+            monkeypatch.setattr(
+                project_agent,
+                "invalidate_agents",
+                lambda session, **kw: rebuilt.append(kw.get("project_id")),
+            )
+            replaced = await client.post(
+                url, json={"folder": "demo-hpc", "replace": True}
+            )
+        assert replaced.status_code == 201, replaced.text
+        assert {project.id, other.id} <= set(rebuilt)
+
+    async def test_bundled_skill_is_never_replaced(self, session):
         _, output, url = await self._setup(session)
         _agent_writes_skill(output)
         with api_client(session) as (client, _):
             first = await client.post(url, json={"folder": "demo-hpc"})
             assert first.status_code == 201, first.text
-            published = await client.patch("/skills/demo-hpc", json={"is_public": True})
-            assert published.status_code == 200, published.text
+            row = (
+                await session.exec(
+                    select(SkillTable).where(SkillTable.name == "demo-hpc")
+                )
+            ).one()
+            row.bundled = True
+            session.add(row)
+            await session.commit()
+            listed = await client.get(url)
+            assert listed.json()[0]["replaceable"] is False
             before = (await client.get("/skills/demo-hpc")).json()
             again = await client.post(url, json={"folder": "demo-hpc", "replace": True})
             after = (await client.get("/skills/demo-hpc")).json()
         assert again.status_code == 409, again.text
-        assert "published" in again.json()["detail"]
+        assert "bundled" in again.json()["detail"]
         assert after == before
 
 

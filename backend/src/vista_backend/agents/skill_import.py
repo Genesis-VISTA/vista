@@ -7,16 +7,16 @@ A local import receives the files of a folder the user picked in the browser,
 each with its path relative to that folder (see `import_skill_from_files`).
 
 Either way we copy the entire skill directory (SKILL.md plus any sibling
-scripts / references / assets) to the caller-provided destination directory,
-and `is_public` is forced to `false` so imports land private (the user can
-publish them via the /skills tab).
+scripts / references / assets) to the caller-provided destination directory.
+A skill imported from a collaboration server goes through
+`import_skill_from_files` too (`services/skill_collaboration.py`).
 """
 
 import os
 import shutil
 import stat
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from pydantic import ValidationError
@@ -79,7 +79,10 @@ def _is_ignored(path: PurePosixPath) -> bool:
 
 
 def import_skill_from_files(
-    files: Iterable[tuple[str, BinaryIO]], dest_dir: Path | str
+    files: Iterable[tuple[str, BinaryIO]],
+    dest_dir: Path | str,
+    *,
+    executable: Collection[str] = (),
 ) -> Skill:
     """
     Import a skill from uploaded files into `dest_dir` (which must not already exist).
@@ -90,11 +93,15 @@ def import_skill_from_files(
     directory it is stripped, so SKILL.md is expected at the root of the
     picked folder.
 
+    The files whose given path is in `executable` are made executable (0755);
+    every other file is written as the umask leaves it.
+
     Returns the imported `Skill`. Raises `SkillImportError` for any
     user-facing problem.
     """
-    entries = [(_clean_relpath(raw), stream) for raw, stream in files]
-    entries = [(path, stream) for path, stream in entries if not _is_ignored(path)]
+    marked = set(executable)
+    entries = [(_clean_relpath(raw), stream, raw in marked) for raw, stream in files]
+    entries = [entry for entry in entries if not _is_ignored(entry[0])]
     if not entries:
         raise SkillImportError("No files were uploaded.")
     if len(entries) > MAX_UPLOAD_FILES:
@@ -102,12 +109,14 @@ def import_skill_from_files(
             f"Too many files ({len(entries)}); a skill may have at most {MAX_UPLOAD_FILES}."
         )
 
-    tops = {path.parts[0] for path, _ in entries}
-    if len(tops) == 1 and all(len(path.parts) > 1 for path, _ in entries):
-        entries = [(PurePosixPath(*path.parts[1:]), stream) for path, stream in entries]
+    tops = {path.parts[0] for path, _, _ in entries}
+    if len(tops) == 1 and all(len(path.parts) > 1 for path, _, _ in entries):
+        entries = [
+            (PurePosixPath(*path.parts[1:]), stream, x) for path, stream, x in entries
+        ]
 
     seen: set[PurePosixPath] = set()
-    for path, _ in entries:
+    for path, _, _ in entries:
         if path in seen:
             raise SkillImportError(f"Duplicate file in upload: {str(path)!r}")
         seen.add(path)
@@ -116,7 +125,7 @@ def import_skill_from_files(
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         total = 0
-        for path, stream in entries:
+        for path, stream, is_executable in entries:
             target = root.joinpath(*path.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "wb") as out:
@@ -127,6 +136,8 @@ def import_skill_from_files(
                             f"Upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
                         )
                     out.write(chunk)
+            if is_executable:
+                target.chmod(0o755)
         return _install_skill(root, dest_dir, "the root of the uploaded folder")
 
 
@@ -201,8 +212,7 @@ def plain_files(source_dir: Path | str) -> list[tuple[str, Path]]:
             mode = (here / name).lstat().st_mode
             if stat.S_ISLNK(mode):
                 raise SkillImportError(
-                    f"{rel} is a symlink; a skill imported from the output folder "
-                    "may not contain symlinks."
+                    f"{rel} is a symlink, and a skill may not contain symlinks."
                 )
             if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                 raise SkillImportError(f"{rel} is not a regular file or folder.")

@@ -379,12 +379,7 @@ async def seed_db(engine: AsyncEngine) -> None:
             skill = read_skill(settings.data_dir / path)
             session.add(
                 build_skill_row(
-                    skill,
-                    path=path,
-                    author=skill.author or "VISTA Team",
-                    repo_url=None,
-                    is_public=True,
-                    now=now_iso(),
+                    skill, path=path, repo_url=None, now=now_iso(), bundled=True
                 )
             )
 
@@ -661,10 +656,9 @@ async def sync_bundled_skills(engine: AsyncEngine) -> list[str]:
                 build_skill_row(
                     read_skill(settings.data_dir / path),
                     path=path,
-                    author=skill.author or "VISTA Team",
                     repo_url=None,
-                    is_public=True,
                     now=now_iso(),
+                    bundled=True,
                 )
             )
             added.append(skill.name)

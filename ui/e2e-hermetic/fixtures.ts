@@ -123,10 +123,14 @@ export const SKILLS = [
     path: "skills/salt-analysis/SKILL.md",
     metadata: { version: "0.1.0", tags: ["Materials Design"] },
     tags: ["Materials Design"],
-    author: "VISTA Team",
     repoUrl: null,
-    isPublic: true,
+    hpcJobs: [],
     addedAt: 1767225600000,
+    bundled: true,
+    originServer: null,
+    remoteId: null,
+    remoteVersion: null,
+    modified: false,
   },
 ];
 
