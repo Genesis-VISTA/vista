@@ -303,3 +303,44 @@ async def test_start_campaign_requires_a_chat_session(session, alice):
     assert "active conversation" in captured["retry"]
     # No campaign was created in a stateless run.
     assert await campaign_service.list_campaigns(session, project_id=project.id) == []
+
+
+@pytest.mark.anyio
+async def test_start_campaign_records_the_launching_agents_model(session, alice):
+    from sqlmodel import select
+
+    from vista_backend.db.schemas import CampaignRunTable
+
+    project = ProjectTable(name="model-recording-driver")
+    session.add(project)
+    await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+
+    def driver(messages, info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart("started")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "start_campaign",
+                    {"planner_skill": "mock-planner", "domain": "mockdomain"},
+                )
+            ]
+        )
+
+    deps = CampaignDriverDeps(
+        project_id=project.id,
+        user_id=alice.id,
+        session_id=chat.id,
+        get_session=lambda: session,
+        get_planner=lambda _s, _r: _fake_planner_async(),
+        model="openai:chat-model",
+    )
+    agent = Agent(model=FunctionModel(driver))
+    register_campaign_tools(agent, deps)
+    await agent.run("go")
+
+    run = (await session.exec(select(CampaignRunTable))).one()
+    assert run.model == "openai:chat-model"

@@ -51,6 +51,7 @@ from ..agents.skills import (
 from ..config import settings
 from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
 from ..utils.misc import now_iso
+from . import chat_session as chat_session_service
 from ._helpers import ServiceUser, new_storage_path
 from .repo_tokens import user_repo_token
 
@@ -823,9 +824,25 @@ async def generate_draft(
     message_history: list[ModelMessage],
     hint: str | None,
     user: UserPublicWithConfig | None = None,
+    *,
+    session: AsyncSession | None = None,
+    chat_session_id: uuid.UUID | None = None,
 ) -> SkillDraft:
-    """Draft a SKILL.md from a chat conversation. Persists nothing."""
-    return await generate_skill_draft(message_history, hint, user)
+    """
+    Draft a SKILL.md from a chat conversation. Persists nothing.
+
+    With `chat_session_id` (and a `session` to look it up in), the draft is
+    written on that chat's own model. Skills belong to no project, so the chat
+    is checked against the user only.
+    """
+    model = None
+    if chat_session_id is not None:
+        if session is None or user is None:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        model = await chat_session_service.get_chat_model(
+            session, user_id=user.id, chat_session_id=chat_session_id
+        )
+    return await generate_skill_draft(message_history, hint, user, model)
 
 
 async def update_skill(

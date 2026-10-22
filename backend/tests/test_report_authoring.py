@@ -59,7 +59,9 @@ def seen(monkeypatch) -> list[list[ModelMessage]]:
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, DRAFT)])
 
     monkeypatch.setattr(
-        report_authoring, "build_model_for", lambda user: FunctionModel(respond)
+        report_authoring,
+        "build_model_for",
+        lambda user, model=None: FunctionModel(respond),
     )
     return calls
 

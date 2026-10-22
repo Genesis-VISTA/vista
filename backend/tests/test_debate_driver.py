@@ -1097,3 +1097,35 @@ async def test_a_peers_close_ends_the_debate(client, session, alice):
     posts = await debate_service.list_posts(session, run_id=run.id)
     assert run.status == "closed"
     assert debate_service.closed_by(posts) == "peer"
+
+
+@pytest.mark.anyio
+async def test_each_post_records_the_model_that_wrote_it(client, session, alice):
+    """
+    A debate continued with its Reviewer moved from A to C: the earlier rounds
+    say A, the new ones say C, and the roles that did not move say A throughout.
+    """
+    on_a = {role: "openai:a" for role in ROSTER}
+    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch.model_names = on_a
+    run_id = run.id
+    await orch.run(session, run)
+    earlier = {
+        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
+    }
+
+    orch.model_names = {**on_a, "reviewer": "openai:c"}
+    run = await debate_service.require_debate(session, run_id)
+    await orch.resume(session, run=run, extra_rounds=1)
+
+    models: dict[tuple[bool, str], set] = {}
+    for post in await debate_service.list_posts(session, run_id=run_id):
+        if post.sender == "human":
+            assert post.model is None
+            continue
+        key = (post.post_id in earlier, post.forum_role)
+        models.setdefault(key, set()).add(post.model)
+
+    assert models[(True, "reviewer")] == {"openai:a"}
+    assert models[(False, "reviewer")] == {"openai:c"}
+    assert models[(False, "proposer")] == {"openai:a"}

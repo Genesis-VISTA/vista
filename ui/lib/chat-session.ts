@@ -28,6 +28,8 @@ export type PersistedChatSession = PersistedChatSessionSummary & {
   run_unseen: boolean;
   /** The events of the last run, kept until the page has drawn them and acknowledged the run. */
   run_events: StoredRunEvent[] | null;
+  /** The chat's own model (`openai:<name>`); null follows the researcher's default. */
+  inference_model: string | null;
 };
 
 export class PersistedChatSessionError extends Error {
@@ -159,6 +161,11 @@ export async function savePersistedChatSession(
     latestResult?: ExecutionResult | null;
     /** The researcher has seen the last run: clears its unseen flag and stored events. */
     ackRun?: boolean;
+    /**
+     * The chat's own model. A string sets it, null clears it (follow the
+     * default), and leaving it out leaves it as it is.
+     */
+    inferenceModel?: string | null;
   }
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/session", {
@@ -171,6 +178,7 @@ export async function savePersistedChatSession(
       messages: payload.messages ?? null,
       latest_result: payload.latestResult ?? null,
       ack_run: payload.ackRun === true,
+      ...("inferenceModel" in payload ? { inference_model: payload.inferenceModel ?? null } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));

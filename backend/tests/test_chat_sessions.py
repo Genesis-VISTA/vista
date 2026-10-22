@@ -1,7 +1,14 @@
 import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlmodel import SQLModel
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from vista_backend.db.schemas import ChatSessionCreate, ChatSessionUpdate, ProjectCreate
+from vista_backend.db.schemas import (
+    ChatSessionCreate,
+    ChatSessionPublic,
+    ChatSessionUpdate,
+    ProjectCreate,
+)
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import project as project_service
 
@@ -361,3 +368,60 @@ async def test_ack_run_leaves_a_running_turn_alone(session, alice):
     )
 
     assert acked.run_state == "running"
+
+
+@pytest.mark.anyio
+async def test_chat_model_set_clear_and_untouched_round_trip(session, alice):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="chat-model-project", description=None, system_prompt=None),
+        alice,
+    )
+    chat = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=alice.id
+    )
+    assert chat.inference_model is None
+
+    async def update(**fields):
+        return await chat_session_service.update_chat_session(
+            session,
+            project_id=project.id,
+            user_id=alice.id,
+            chat_session_id=chat.id,
+            updates=ChatSessionUpdate(**fields),
+        )
+
+    row = await update(inference_model="openai:gpt-oss")
+    assert row.inference_model == "openai:gpt-oss"
+    assert ChatSessionPublic.model_validate(row).inference_model == "openai:gpt-oss"
+
+    # Absent from the update: untouched.
+    row = await update(title="Renamed")
+    assert row.inference_model == "openai:gpt-oss"
+
+    # Explicit null: back to following the default.
+    row = await update(inference_model=None)
+    assert row.inference_model is None
+
+
+def test_chat_model_column_reaches_an_existing_database(tmp_path):
+    from vista_backend.db import schemas  # noqa: F401  (registers the tables)
+    from vista_backend.db.db import _add_missing_columns
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+
+    def build() -> None:
+        with engine.begin() as conn:
+            SQLModel.metadata.create_all(conn)
+            _add_missing_columns(conn)
+
+    def columns() -> set[str]:
+        return {c["name"] for c in inspect(engine).get_columns("chat_session")}
+
+    build()
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE chat_session DROP COLUMN "inference_model"'))
+    assert "inference_model" not in columns()
+
+    build()
+    assert "inference_model" in columns()

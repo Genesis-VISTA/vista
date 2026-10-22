@@ -40,16 +40,24 @@ def _history() -> list[ModelMessage]:
 
 
 @pytest.fixture
-def seen(monkeypatch) -> list[list[ModelMessage]]:
+def built_with() -> list[str | None]:
+    """The model override each draft asked `build_model_for` for."""
+    return []
+
+
+@pytest.fixture
+def seen(monkeypatch, built_with) -> list[list[ModelMessage]]:
     calls: list[list[ModelMessage]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.append(messages)
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, DRAFT)])
 
-    monkeypatch.setattr(
-        skill_authoring, "build_model_for", lambda user: FunctionModel(respond)
-    )
+    def build(user, model=None):
+        built_with.append(model)
+        return FunctionModel(respond)
+
+    monkeypatch.setattr(skill_authoring, "build_model_for", build)
     return calls
 
 
@@ -77,3 +85,73 @@ async def test_hint_reaches_user_prompt(seen):
     prompt = last.parts[-1]
     assert isinstance(prompt, UserPromptPart)
     assert str(prompt.content).endswith("User hint: ## Summary\n\nThe report.")
+
+
+async def _chat(session, user, project, model):
+    from vista_backend.db.schemas import ChatSessionUpdate
+    from vista_backend.services import chat_session as chat_session_service
+
+    chat = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=user.id
+    )
+    await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        user_id=user.id,
+        chat_session_id=chat.id,
+        updates=ChatSessionUpdate(inference_model=model),
+    )
+    return chat
+
+
+async def _generate(session, user, **body):
+    from harness import api_client
+
+    with api_client(session) as (client, _):
+        return await client.post(
+            "/skills/generate",
+            json={"message_history": [], **body},
+            headers={"X-Vista-User-Email": user.email},
+        )
+
+
+@pytest.mark.anyio
+async def test_draft_from_an_overridden_chat_uses_its_model(session, seen, built_with):
+    from harness import seed_project, seed_user
+
+    alice = await seed_user(session)
+    project = await seed_project(session, alice, name="alices-project")
+    chat = await _chat(session, alice, project, "openai:chat-choice")
+
+    response = await _generate(session, alice, chat_session_id=str(chat.id))
+
+    assert response.status_code == 200, response.text
+    assert built_with == ["openai:chat-choice"]
+
+
+@pytest.mark.anyio
+async def test_draft_without_a_chat_uses_the_default(session, seen, built_with):
+    from harness import seed_user
+
+    alice = await seed_user(session)
+
+    assert (await _generate(session, alice)).status_code == 200
+    assert built_with == [None]
+
+
+@pytest.mark.anyio
+async def test_draft_with_a_missing_or_foreign_chat_is_a_404(session, seen, built_with):
+    import uuid
+
+    from harness import seed_project, seed_user
+
+    alice = await seed_user(session)
+    bob = await seed_user(session)
+    project = await seed_project(session, bob, name="bobs-project")
+    bobs = await _chat(session, bob, project, "openai:bobs")
+
+    for chat_id in (uuid.uuid4(), bobs.id):
+        response = await _generate(session, alice, chat_session_id=str(chat_id))
+        assert response.status_code == 404, response.text
+
+    assert seen == [] and built_with == []

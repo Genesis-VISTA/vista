@@ -273,16 +273,24 @@ DRAFT = {
 
 
 @pytest.fixture
-def fake_model(monkeypatch) -> list[list]:
+def built_with() -> list[str | None]:
+    """The model override each draft asked `build_model_for` for."""
+    return []
+
+
+@pytest.fixture
+def fake_model(monkeypatch, built_with) -> list[list]:
     calls: list[list] = []
 
     def respond(messages, info: AgentInfo) -> ModelResponse:
         calls.append(messages)
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, DRAFT)])
 
-    monkeypatch.setattr(
-        report_authoring, "build_model_for", lambda user: FunctionModel(respond)
-    )
+    def build(user, model=None):
+        built_with.append(model)
+        return FunctionModel(respond)
+
+    monkeypatch.setattr(report_authoring, "build_model_for", build)
     return calls
 
 
@@ -320,3 +328,73 @@ async def test_non_member_cannot_generate(session, uploads, owner, fake_model):
 
     assert response.status_code == 403
     assert fake_model == []
+
+
+async def _chat(session, user, project, model=None):
+    from vista_backend.db.schemas import ChatSessionUpdate
+    from vista_backend.services import chat_session as chat_session_service
+
+    chat = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user_id=user.id
+    )
+    if model is not None:
+        await chat_session_service.update_chat_session(
+            session,
+            project_id=project.id,
+            user_id=user.id,
+            chat_session_id=chat.id,
+            updates=ChatSessionUpdate(inference_model=model),
+        )
+    return chat
+
+
+async def _generate(session, project, user, **body):
+    with api_client(session) as (client, _):
+        return await client.post(
+            REPORTS.format(name=project.name) + "/generate",
+            json={"message_history": [], **body},
+            headers=_headers(user),
+        )
+
+
+async def test_draft_from_an_overridden_chat_uses_its_model(
+    session, uploads, owner, fake_model, built_with
+):
+    alice, project = owner
+    chat = await _chat(session, alice, project, "openai:chat-choice")
+
+    response = await _generate(session, project, alice, chat_session_id=str(chat.id))
+
+    assert response.status_code == 200, response.text
+    assert built_with == ["openai:chat-choice"]
+
+
+async def test_draft_without_a_chat_or_from_a_default_chat_uses_the_default(
+    session, uploads, owner, fake_model, built_with
+):
+    alice, project = owner
+    chat = await _chat(session, alice, project)
+
+    assert (await _generate(session, project, alice)).status_code == 200
+    response = await _generate(session, project, alice, chat_session_id=str(chat.id))
+
+    assert response.status_code == 200
+    assert built_with == [None, None]
+
+
+async def test_draft_with_a_missing_or_foreign_chat_is_a_404(
+    session, uploads, owner, fake_model, built_with
+):
+    alice, project = owner
+    bob = await seed_user(session)
+    bobs = await _chat(session, bob, project, "openai:bobs")
+    other_project = await seed_project(session, alice, name="alices-other-project")
+    elsewhere = await _chat(session, alice, other_project, "openai:elsewhere")
+
+    for chat_id in (uuid.uuid4(), bobs.id, elsewhere.id):
+        response = await _generate(
+            session, project, alice, chat_session_id=str(chat_id)
+        )
+        assert response.status_code == 404, response.text
+
+    assert fake_model == [] and built_with == []

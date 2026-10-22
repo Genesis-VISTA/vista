@@ -25,7 +25,7 @@ paths that actually reach the model.
 
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -190,12 +190,15 @@ def build_inference_model(
     )
 
 
-def build_model_for(user: "UserPublicWithConfig | None" = None) -> Model:
+def build_model_for(
+    user: "UserPublicWithConfig | None" = None, model: str | None = None
+) -> Model:
     """
     Build the model for `user`, applying the precedence in
-    `resolve_inference_target`. The convenience wrapper agents use.
+    `resolve_inference_target`. The convenience wrapper agents use; `model` is
+    the per-chat or per-role override.
     """
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(user, model)
     if target.model is None:
         return _no_model(target)
     return build_inference_model(
@@ -415,9 +418,15 @@ def _differs_from_i2() -> bool:
 
 def resolve_inference_target(
     user: "UserPublicWithConfig | None" = None,
+    model: str | None = None,
 ) -> InferenceTarget:
     """
     Decide which model, endpoint, and credential to use.
+
+    `model` is a `provider:name` override -- a chat's or a debate role's own
+    choice. It replaces the row's model and the provider's default; provider,
+    endpoint and key still come from the researcher's settings, so it can name
+    a model on a provider that has no default.
 
     1. The row names a provider: that preset's URL (Custom: the row's
        `inference_base_url`), that provider's key, and the row's model, else
@@ -435,7 +444,15 @@ def resolve_inference_target(
 
     Never raises: see the module docstring.
     """
+    target = _resolve_from_settings(user)
+    if model is None:
+        return target
+    return replace(target, model=model, model_is_default=False)
 
+
+def _resolve_from_settings(
+    user: "UserPublicWithConfig | None",
+) -> InferenceTarget:
     def row(field: str) -> str | None:
         return getattr(user, field, None) if user else None
 
@@ -520,7 +537,7 @@ def citation_credentials(user=None):
 
 
 def require_inference_credential(
-    user: "UserPublicWithConfig | None" = None,
+    user: "UserPublicWithConfig | None" = None, model: str | None = None
 ) -> InferenceTarget:
     """
     Resolve the target and refuse to continue without a credential or a model.
@@ -530,7 +547,7 @@ def require_inference_credential(
     arrives after the status line, where it can only surface as a broken
     stream.
     """
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(user, model)
     if target.uses_configured_endpoint and not target.has_credential:
         raise MissingInferenceCredential(target.model, target.base_url)
     if target.model is None:
