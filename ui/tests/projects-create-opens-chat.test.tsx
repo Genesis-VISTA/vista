@@ -63,7 +63,7 @@ beforeEach(() => {
       return json(row(body.name));
     }
     if (url === "/api/projects") return json(rows);
-    if (url.startsWith("/api/users/me")) return json({ id: "u1", email: "researcher@ornl.gov" });
+    if (url.startsWith("/api/settings")) return json({ install_id: "i1", email: "researcher@ornl.gov" });
     // Skills, knowledge bases, and the per-card stats.
     return json([]);
   });

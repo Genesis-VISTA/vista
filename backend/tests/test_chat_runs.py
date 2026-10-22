@@ -24,12 +24,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from harness import (
     api_client,
     call,
-    make_user,
+    make_local_settings,
     parse_sse,
     say,
     scripted_model,
     seed_project,
-    seed_user,
     step_model,
 )
 from vista_backend.agents.agents import ProjectAgent
@@ -44,10 +43,6 @@ EVENTS = "/projects/{name}/chat-sessions/{id}/run/events"
 STOP = "/projects/{name}/chat-sessions/{id}/run/stop"
 STATUS = "/projects/{name}/chat-runs/status"
 ELICITATION = "/projects/{name}/elicitation"
-
-
-def _headers(user) -> dict[str, str]:
-    return {"X-Vista-User-Email": user.email}
 
 
 class Turn:
@@ -67,7 +62,7 @@ def scripted_agent(project, model):
     and `ask` raises a form elicitation, as Lux's SSH login does.
     """
     turn = Turn()
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -108,16 +103,14 @@ def scripted_agent(project, model):
         yield agent, turn
 
 
-async def _conversation(session, project, user) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=user.id
-    )
+async def _conversation(session, project) -> uuid.UUID:
+    row = await chat_session_service.create_chat_session(session, project_id=project.id)
     row_id = row.id
     await session.commit()
     return row_id
 
 
-def _send(client, project, user, conversation, prompt="go", *, stream=True):
+def _send(client, project, conversation, prompt="go", *, stream=True):
     return asyncio.create_task(
         client.post(
             RUN.format(name=project.name),
@@ -126,7 +119,6 @@ def _send(client, project, user, conversation, prompt="go", *, stream=True):
                 "stream": stream,
                 "chat_session_id": str(conversation),
             },
-            headers=_headers(user),
         )
     )
 
@@ -157,16 +149,15 @@ async def _cancel(request: asyncio.Task) -> None:
 
 async def test_navigating_away_mid_run_completes_the_turn_and_saves_it(session, engine):
     """Scenario: Researcher navigates away mid-run."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, step_model([call("gate"), say("the answer")])) as (
         agent,
         turn,
     ):
         with api_client(session, agent=agent) as (client, _):
-            request = _send(client, project, alice, conversation)
+            request = _send(client, project, conversation)
             await _until(turn.at_gate.is_set)
 
             await _cancel(request)  # the page disconnects
@@ -188,22 +179,21 @@ async def test_navigating_away_mid_run_completes_the_turn_and_saves_it(session, 
 
 async def test_reattaching_replays_the_run_from_its_start(session):
     """Scenarios: Returning to a running conversation; Two views of one run."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, step_model([call("gate"), say("the answer")])) as (
         agent,
         turn,
     ):
         with api_client(session, agent=agent) as (client, _):
-            first = _send(client, project, alice, conversation)
+            first = _send(client, project, conversation)
             await _until(turn.at_gate.is_set)
             await _cancel(first)
 
             url = EVENTS.format(name=project.name, id=conversation)
-            window = asyncio.create_task(client.get(url, headers=_headers(alice)))
-            browser_tab = asyncio.create_task(client.get(url, headers=_headers(alice)))
+            window = asyncio.create_task(client.get(url))
+            browser_tab = asyncio.create_task(client.get(url))
             await asyncio.sleep(0.05)
             turn.gate.set()
             window_events, tab_events = await window, await browser_tab
@@ -227,22 +217,20 @@ async def test_a_send_while_busy_is_refused_and_the_running_turn_finishes(
     session, engine
 ):
     """Scenario: Send while busy."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, step_model([call("gate"), say("first answer")])) as (
         agent,
         turn,
     ):
         with api_client(session, agent=agent) as (client, _):
-            running = _send(client, project, alice, conversation, "first")
+            running = _send(client, project, conversation, "first")
             await _until(turn.at_gate.is_set)
 
             refused = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "second", "chat_session_id": str(conversation)},
-                headers=_headers(alice),
             )
             turn.gate.set()
             finished = await running
@@ -260,19 +248,16 @@ async def test_a_send_while_busy_is_refused_and_the_running_turn_finishes(
 
 async def test_the_next_turn_knows_about_a_job_submitted_before_a_stop(session, engine):
     """Scenario: Stop after a job was submitted."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(
         project, step_model([call("quick"), call("hang"), say("unreachable")])
     ) as (agent, turn):
         with api_client(session, agent=agent) as (client, _):
-            running = _send(client, project, alice, conversation, "submit it")
+            running = _send(client, project, conversation, "submit it")
             await _until(turn.at_hang.is_set)
-            stopped = await client.post(
-                STOP.format(name=project.name, id=conversation), headers=_headers(alice)
-            )
+            stopped = await client.post(STOP.format(name=project.name, id=conversation))
             response = await running
     assert stopped.status_code == 202
     states = [
@@ -298,7 +283,6 @@ async def test_the_next_turn_knows_about_a_job_submitted_before_a_stop(session, 
                     "user_prompt": "what did you submit?",
                     "chat_session_id": str(conversation),
                 },
-                headers=_headers(alice),
             )
 
     assert follow_up.status_code == 200
@@ -317,9 +301,8 @@ async def test_the_next_turn_knows_about_a_job_submitted_before_a_stop(session, 
 
 async def test_an_answered_prompt_is_not_shown_again_on_reattach(session):
     """Scenarios: Answered prompt is not replayed; Answer in one view clears the other."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(
         project, step_model([call("ask"), call("gate"), say("ok")])
@@ -328,7 +311,7 @@ async def test_an_answered_prompt_is_not_shown_again_on_reattach(session):
         turn,
     ):
         with api_client(session, agent=agent) as (client, _):
-            first = _send(client, project, alice, conversation)
+            first = _send(client, project, conversation)
             run = None
             async with asyncio.timeout(10):
                 while run is None or not run.pending:
@@ -338,7 +321,7 @@ async def test_an_answered_prompt_is_not_shown_again_on_reattach(session):
             url = EVENTS.format(name=project.name, id=conversation)
 
             # A second view is open while the prompt is still unanswered.
-            other_view = asyncio.create_task(client.get(url, headers=_headers(alice)))
+            other_view = asyncio.create_task(client.get(url))
             await asyncio.sleep(0.05)
 
             answered = await client.post(
@@ -348,12 +331,11 @@ async def test_an_answered_prompt_is_not_shown_again_on_reattach(session):
                     "action": "accept",
                     "content": {"password": "hunter2"},
                 },
-                headers=_headers(alice),
             )
             assert answered.status_code == 200
             await _until(turn.at_gate.is_set)
 
-            reattached = asyncio.create_task(client.get(url, headers=_headers(alice)))
+            reattached = asyncio.create_task(client.get(url))
             await asyncio.sleep(0.05)
             turn.gate.set()
             await first
@@ -398,17 +380,15 @@ async def test_unseen_outcomes_survive_an_app_restart(session, engine, monkeypat
     monkeypatch.setattr(api_module, "init_db", no_init)
     monkeypatch.setattr(api_module, "get_vista_mcp_server", lambda: _FakeMcpServer())
     monkeypatch.setattr(api_module.settings.campaigns, "monitor_enabled", False)
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    finished = await _conversation(session, project, alice)
-    killed = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    finished = await _conversation(session, project)
+    killed = await _conversation(session, project)
 
     with scripted_agent(project, step_model([say("done while away")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _):
             await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "hi", "chat_session_id": str(finished)},
-                headers=_headers(alice),
             )
             # A second conversation whose process died mid-turn (no grace period).
             async with AsyncSession(engine) as other:
@@ -419,9 +399,7 @@ async def test_unseen_outcomes_survive_an_app_restart(session, engine, monkeypat
 
             async with api_module.lifespan(api_module.app):  # the next launch
                 pass
-            status = await client.get(
-                STATUS.format(name=project.name), headers=_headers(alice)
-            )
+            status = await client.get(STATUS.format(name=project.name))
 
     assert sorted((s["status"], s["unseen"]) for s in status.json()) == [
         ("done", True),

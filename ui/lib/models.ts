@@ -14,7 +14,7 @@
  *                             name a model directly (the picker's
  *                             "Use another model…" entry).
  *   - `missing-credential`  — the backend's 409 for no/rejected credential,
- *                             same condition `ui/lib/user.ts` already knows
+ *                             same condition `ui/lib/settings.ts` already knows
  *                             how to surface elsewhere in the app.
  */
 

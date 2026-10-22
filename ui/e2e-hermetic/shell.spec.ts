@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { USER } from "./fixtures";
+import { SETTINGS } from "./fixtures";
 import { installStub, type Stub } from "./stub";
 
 /**
@@ -280,7 +280,7 @@ test.describe("HPC availability cards", () => {
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
       .poll(() => stub.requests())
-      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=odo");
+      .toContain("GET /api/settings/hpc-status?fresh=true&cluster=odo");
     expect(await stub.unstubbed()).toEqual([]);
 
     // Collapsed, each card still says which cluster and what state.
@@ -302,7 +302,7 @@ test.describe("HPC availability cards", () => {
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
       .poll(() => stub.requests())
-      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=lux");
+      .toContain("GET /api/settings/hpc-status?fresh=true&cluster=lux");
 
     await details.getByRole("button", { name: "Settings" }).click();
     const settings = page.getByRole("dialog", { name: "Settings" });
@@ -380,7 +380,7 @@ test.describe("HPC availability cards", () => {
   test("hiding a cluster in settings removes its card", async ({ page }) => {
     const stub = await installStub(page, {
       // What the backend answers once the hidden list is saved.
-      "PUT /api/users/me": { ...USER, hpc_hidden_clusters: ["perlmutter"] },
+      "PUT /api/settings": { ...SETTINGS, hpc_hidden_clusters: ["perlmutter"] },
     });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
@@ -396,13 +396,13 @@ test.describe("HPC availability cards", () => {
     await expect(settings.getByRole("status")).toHaveText("Show Perlmutter in sidebar saved.");
     await expect(rail.getByRole("button", { name: /^Perlmutter:/ })).toHaveCount(0);
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
-    expect(await stub.requests()).toContain("PUT /api/users/me");
+    expect(await stub.requests()).toContain("PUT /api/settings");
     // Exact: a nav entry's state, such as "Repositories, none saved", is not a Save button.
     await expect(settings.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
   });
 
   test("pasting a token saves it and rechecks only that cluster", async ({ page }) => {
-    const stub = await installStub(page, { "PUT /api/users/me": USER });
+    const stub = await installStub(page, { "PUT /api/settings": SETTINGS });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: /^Odo:/ }).click();
@@ -422,15 +422,15 @@ test.describe("HPC availability cards", () => {
     await expect(settings.getByRole("status")).toHaveText("Odo S3M token saved.");
     await expect
       .poll(() => stub.requests())
-      .toContain("GET /api/users/me/hpc-status?fresh=true&cluster=odo");
+      .toContain("GET /api/settings/hpc-status?fresh=true&cluster=odo");
     const requests = await stub.requests();
-    expect(requests.filter((r) => r === "PUT /api/users/me")).toHaveLength(1);
+    expect(requests.filter((r) => r === "PUT /api/settings")).toHaveLength(1);
     expect(requests.filter((r) => r.includes("fresh=true") && !r.endsWith("cluster=odo"))).toEqual([]);
   });
 
   test("a hidden cluster has no card", async ({ page }) => {
     await installStub(page, {
-      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["perlmutter"] },
+      "GET /api/settings": { ...SETTINGS, hpc_hidden_clusters: ["perlmutter"] },
     });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
@@ -440,7 +440,7 @@ test.describe("HPC availability cards", () => {
 
   test("with every cluster hidden the section is gone", async ({ page }) => {
     await installStub(page, {
-      "GET /api/users/me": { ...USER, hpc_hidden_clusters: ["frontier", "odo", "perlmutter", "lux"] },
+      "GET /api/settings": { ...SETTINGS, hpc_hidden_clusters: ["frontier", "odo", "perlmutter", "lux"] },
     });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });

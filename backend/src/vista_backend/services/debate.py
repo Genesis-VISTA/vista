@@ -58,7 +58,6 @@ async def create_debate(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     topic: str,
     thread_id: str,
     framing: str | None = None,
@@ -68,7 +67,6 @@ async def create_debate(
     now = now_iso()
     run = DebateRunTable(
         project_id=project_id,
-        user_id=user_id,
         topic=topic,
         framing=framing,
         thread_id=thread_id,
@@ -126,14 +124,11 @@ async def list_debates(
     session: AsyncSession,
     *,
     project_id: uuid.UUID | None = None,
-    user_id: uuid.UUID | None = None,
     statuses: tuple[DebateStatus, ...] | None = None,
 ) -> list[DebateRunTable]:
     stmt = select(DebateRunTable)
     if project_id is not None:
         stmt = stmt.where(DebateRunTable.project_id == project_id)
-    if user_id is not None:
-        stmt = stmt.where(DebateRunTable.user_id == user_id)
     if statuses is not None:
         stmt = stmt.where(col(DebateRunTable.status).in_(statuses))
     stmt = stmt.order_by(col(DebateRunTable.created_at).desc())
@@ -210,8 +205,9 @@ async def add_participant(
     participant: Participant,
     debate_role: str,
     granted_tools: list[str] | None = None,
+    model: str | None = None,
 ) -> DebateParticipantTable:
-    """Record a role on the debate's roster."""
+    """Record a role on the debate's roster, with its own model if it has one."""
     row = DebateParticipantTable(
         run_id=run_id,
         identity=participant.identity,
@@ -219,11 +215,30 @@ async def add_participant(
         forum_role=str(participant.role),
         active=True,
         granted_tools=granted_tools or [],
+        model=model,
     )
     session.add(row)
     await session.flush()
     await session.refresh(row)
     return row
+
+
+async def set_participant_models(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    models: dict[str, str | None],
+) -> None:
+    """
+    Change the model of the roles named in `models`; the other roles keep theirs.
+
+    A null value clears a role's choice, so it follows the default again.
+    """
+    for row in await list_active_participants(session, run_id=run_id):
+        if row.debate_role in models:
+            row.model = models[row.debate_role]
+            session.add(row)
+    await session.flush()
 
 
 async def record_granted_tools(
@@ -433,6 +448,30 @@ async def record_post_tools(
     await session.flush()
 
 
+async def record_post_model(
+    session: AsyncSession, *, run_id: uuid.UUID, post_id: str, model: str
+) -> None:
+    """
+    Record which model wrote a post the projection already created.
+
+    Like `record_post_tools`, ours to keep: the thread carries what was said,
+    not what said it.
+    """
+    row = (
+        await session.exec(
+            select(DebatePostTable).where(
+                DebatePostTable.run_id == run_id,
+                DebatePostTable.post_id == post_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return
+    row.model = model
+    session.add(row)
+    await session.flush()
+
+
 async def project_thread(
     session: AsyncSession,
     *,
@@ -498,6 +537,7 @@ async def project_thread(
             on_remote=None if published is False else True,
             votes=observed_votes,
             peer_votes=peer_votes,
+            model=None,
             # Spelled out for the same reason as `verdict=None` in create_debate:
             # a JSON `sa_column` does not carry its default into __init__.
             tools_used=[],

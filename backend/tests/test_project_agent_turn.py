@@ -30,7 +30,7 @@ from harness import (
     always_calls,
     call,
     make_project,
-    make_user,
+    make_local_settings,
     say,
     scripted_model,
     step_model,
@@ -61,7 +61,7 @@ async def test_turn_calls_tool_then_answers():
         ]
     )
 
-    with agent_under_test(project, make_user(), model) as (agent, mcp_fake):
+    with agent_under_test(project, make_local_settings(), model) as (agent, mcp_fake):
         events = [
             e async for e in agent.run_stream(user_prompt="How viscous is FLiBe?")
         ]
@@ -85,7 +85,7 @@ async def test_turn_emits_tool_call_and_result_events():
     project = make_project(tools=["*"], knowledge_bases=["msre-reports"])
     model = step_model([call("rag_search", query="salts"), say("done")])
 
-    with agent_under_test(project, make_user(), model) as (agent, _):
+    with agent_under_test(project, make_local_settings(), model) as (agent, _):
         events = [e async for e in agent.run_stream(user_prompt="hi")]
 
     assert any(isinstance(e, FunctionToolCallEvent) for e in events)
@@ -97,7 +97,7 @@ async def test_turn_logs_each_tool_call():
     project = make_project(tools=["*"])
     model = step_model([call("run_bash", command="echo hi"), say("done")])
 
-    with agent_under_test(project, make_user(), model) as (agent, _):
+    with agent_under_test(project, make_local_settings(), model) as (agent, _):
         events = [e async for e in agent.run_stream(user_prompt="hi")]
 
     logs = [e for e in events if isinstance(e, LogEvent)]
@@ -112,7 +112,7 @@ async def test_result_logs_match_the_streamed_log_events():
     project = make_project(tools=["*"])
     model = step_model([call("run_bash", command="echo hi"), say("done")])
 
-    with agent_under_test(project, make_user(), model) as (agent, _):
+    with agent_under_test(project, make_local_settings(), model) as (agent, _):
         events = [e async for e in agent.run_stream(user_prompt="hi")]
 
     result = next(e for e in events if isinstance(e, ProjectAgentResultEvent)).result
@@ -127,7 +127,7 @@ async def test_denied_tool_is_unavailable_to_a_model_that_asks_for_it():
     project = make_project(tools=["*", "!run_bash"])
     model = step_model([call("run_bash", command="rm -rf /"), say("could not")])
 
-    with agent_under_test(project, make_user(), model) as (agent, mcp_fake):
+    with agent_under_test(project, make_local_settings(), model) as (agent, mcp_fake):
         events = [e async for e in agent.run_stream(user_prompt="delete everything")]
 
     assert "run_bash" not in mcp_fake.names_called()
@@ -140,7 +140,7 @@ async def test_run_returns_the_same_result_as_the_stream():
         [call("display_file", uri="/mnt/data/output/plot.png"), say("here")]
     )
 
-    with agent_under_test(project, make_user(), model) as (agent, mcp_fake):
+    with agent_under_test(project, make_local_settings(), model) as (agent, mcp_fake):
         result = await agent.run(user_prompt="show me the plot")
 
     assert mcp_fake.names_called() == ["display_file"]
@@ -150,7 +150,7 @@ async def test_run_returns_the_same_result_as_the_stream():
 async def test_message_history_is_replayed_to_the_model():
     project = make_project(tools=["*"])
     first = step_model([say("first answer")])
-    with agent_under_test(project, make_user(), first) as (agent, _):
+    with agent_under_test(project, make_local_settings(), first) as (agent, _):
         prior = (await agent.run(user_prompt="first question")).new_messages
 
     seen: list[int] = []
@@ -159,7 +159,10 @@ async def test_message_history_is_replayed_to_the_model():
         seen.append(len(messages))
         return ModelResponse(parts=[TextPart("second answer")])
 
-    with agent_under_test(project, make_user(), scripted_model(driver)) as (agent, _):
+    with agent_under_test(project, make_local_settings(), scripted_model(driver)) as (
+        agent,
+        _,
+    ):
         await agent.run(user_prompt="second question", message_history=prior)
 
     # Prior turn's messages plus the new user prompt.
@@ -175,7 +178,7 @@ async def test_turn_stops_at_the_project_request_limit():
     project = make_project(tools=["*"], usage_limits={"request_limit": 3})
 
     with agent_under_test(
-        project, make_user(), always_calls("run_bash", command="ls")
+        project, make_local_settings(), always_calls("run_bash", command="ls")
     ) as (
         agent,
         mcp_fake,
@@ -194,7 +197,7 @@ async def test_tool_call_limit_is_enforced():
     project = make_project(tools=["*"], usage_limits={"tool_calls_limit": 2})
 
     with agent_under_test(
-        project, make_user(), always_calls("run_bash", command="ls")
+        project, make_local_settings(), always_calls("run_bash", command="ls")
     ) as (
         agent,
         mcp_fake,
@@ -210,7 +213,7 @@ async def test_default_project_has_no_usage_limit_and_completes():
     project = make_project(tools=["*"], usage_limits={})
     model = step_model([call("run_bash", command="ls"), say("done")])
 
-    with agent_under_test(project, make_user(), model) as (agent, _):
+    with agent_under_test(project, make_local_settings(), model) as (agent, _):
         result = await agent.run(user_prompt="hi")
 
     assert result.usage.requests == 2
@@ -241,7 +244,7 @@ def _elicit_toolset(agent_ref: dict, params: mcp.types.ElicitRequestParams):
 async def _run_with_elicitation(project, params, *, resolve):
     """Run a turn whose tool elicits, resolving the request as it streams."""
     agent_ref: dict = {}
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     agent_ref["agent"] = agent
     toolset = _elicit_toolset(agent_ref, params).filtered(
         lambda ctx, tool: agent._tool_allowed(tool.name)
@@ -326,7 +329,7 @@ async def test_declined_elicitation_is_reported_back_to_the_tool():
 async def test_elicitation_is_not_offered_when_disabled():
     """With elicitation off the callback is absent, so the MCP side gets a cancel."""
     project = make_project(tools=["*"])
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     toolset = FunctionToolset()
 
     seen: list[str] = []
@@ -348,7 +351,7 @@ async def test_elicitation_is_not_offered_when_disabled():
 async def test_tool_approval_event_is_emitted_and_approved():
     """`_request_tool_approval` is the R6 hook; here it is driven directly."""
     project = make_project(tools=["*"])
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -380,7 +383,7 @@ async def test_tool_approval_event_is_emitted_and_approved():
 
 
 async def test_tool_approval_fails_closed_without_an_approval_channel():
-    agent = ProjectAgent(make_project(), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(), make_local_settings(), uuid.uuid4())
     outcome = await agent._request_tool_approval(
         tool_name="risky", tool_call_id="call-1", args={}
     )
@@ -390,7 +393,7 @@ async def test_tool_approval_fails_closed_without_an_approval_channel():
 
 async def test_cancel_elicitations_releases_a_waiting_tool():
     project = make_project(tools=["*"])
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     params = mcp.types.ElicitRequestFormParams(
         message="Proceed?", requestedSchema={"type": "object", "properties": {}}
     )
@@ -421,6 +424,101 @@ async def test_cancel_elicitations_releases_a_waiting_tool():
 
 
 async def test_resolving_an_unknown_elicitation_raises():
-    agent = ProjectAgent(make_project(), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(), make_local_settings(), uuid.uuid4())
     with pytest.raises(KeyError):
         agent.resolve_elicitation("nope", "accept")
+
+
+# ---------------------------------------------------------------------------
+# A chat's own model
+# ---------------------------------------------------------------------------
+
+
+def _recording_models(monkeypatch):
+    """Build every model as a `FunctionModel` that records its model id."""
+    from vista_backend.agents import inference
+
+    used: list[str] = []
+
+    def build(model, *, api_key=None, base_url=None):
+        def respond(_messages, _info):
+            used.append(model)
+            return ModelResponse(parts=[TextPart("ok")])
+
+        return scripted_model(respond)
+
+    monkeypatch.setattr(inference, "build_inference_model", build)
+    return used
+
+
+async def _turn_model(project, local, override=None):
+    from harness import fake_mcp
+
+    agent = ProjectAgent(project, local, uuid.uuid4(), override)
+    filtered = fake_mcp().toolset.filtered(
+        lambda ctx, tool: agent._tool_allowed(tool.name)
+    )
+    with agent.agent.override(toolsets=[filtered]):
+        async for _ in agent.run_stream(user_prompt="hi"):
+            pass
+
+
+def _settings_on(default):
+    return make_local_settings().model_copy(
+        update={
+            "inference_provider": "mag",
+            "inference_mag_api_key": "k",
+            "inference_model": default,
+        }
+    )
+
+
+async def test_an_overridden_chat_uses_its_own_model_and_the_other_the_default(
+    monkeypatch,
+):
+    used = _recording_models(monkeypatch)
+    project, local = make_project(), _settings_on("openai:a")
+
+    await _turn_model(project, local)
+    assert used == ["openai:a"]
+
+    used.clear()
+    await _turn_model(project, local, "openai:b")
+    assert used == ["openai:b"]
+
+
+async def test_a_default_change_moves_only_the_chats_without_their_own_model(
+    monkeypatch,
+):
+    used = _recording_models(monkeypatch)
+    project = make_project()
+    moved = _settings_on("openai:a").model_copy(update={"inference_model": "openai:c"})
+
+    # A settings save evicts every agent, so both chats rebuild on the new row.
+    await _turn_model(project, moved)
+    await _turn_model(project, moved, "openai:b")
+
+    assert used == ["openai:c", "openai:b"]
+
+
+async def test_a_chats_own_model_lets_it_send_where_there_is_no_default():
+    from vista_backend.agents.inference import (
+        MissingInferenceModel,
+        require_inference_credential,
+    )
+
+    local = make_local_settings().model_copy(
+        update={
+            "inference_provider": "custom",
+            "inference_custom_api_key": "t",
+            "inference_base_url": "https://custom.example/v1",
+        }
+    )
+    agent = ProjectAgent(make_project(), local, uuid.uuid4())
+    with pytest.raises(MissingInferenceModel):
+        agent.run_stream(user_prompt="hi")
+    with pytest.raises(MissingInferenceModel):
+        require_inference_credential(local)
+
+    agent = ProjectAgent(make_project(), local, uuid.uuid4(), "openai:b")
+    agent.run_stream(user_prompt="hi")  # raises on the call if the guard refuses

@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 
 /**
  * Live HPC availability for the NavRail's cards and the settings modal's
- * cluster headers, from `GET /api/users/me/hpc-status`.
+ * cluster headers, from `GET /api/settings/hpc-status`.
  *
  * One store for the whole page, so the rail and the modal always show the
  * same answer and a recheck from either updates both. It fetches when the
@@ -165,7 +165,7 @@ async function load(opts: { fresh?: boolean; cluster?: HpcCluster } = {}): Promi
   const query = params.toString();
   set({ inFlight: opts.cluster ?? "all" });
   try {
-    const res = await fetch(`/api/users/me/hpc-status${query ? `?${query}` : ""}`, {
+    const res = await fetch(`/api/settings/hpc-status${query ? `?${query}` : ""}`, {
       headers: { accept: "application/json" },
       cache: "no-store",
     });

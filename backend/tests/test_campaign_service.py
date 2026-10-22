@@ -13,12 +13,11 @@ async def _make_project(session) -> ProjectTable:
     return project
 
 
-async def _make_campaign(session, alice, **overrides):
+async def _make_campaign(session, **overrides):
     project = await _make_project(session)
     return await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
         **overrides,
@@ -26,8 +25,8 @@ async def _make_campaign(session, alice, **overrides):
 
 
 @pytest.mark.anyio
-async def test_create_campaign_defaults_to_gathering(session, alice):
-    run = await _make_campaign(session, alice, title="FLiBe sweep")
+async def test_create_campaign_defaults_to_gathering(session):
+    run = await _make_campaign(session, title="FLiBe sweep")
     assert run.status == "gathering"
     assert run.title == "FLiBe sweep"
     assert run.spec == {}
@@ -36,8 +35,8 @@ async def test_create_campaign_defaults_to_gathering(session, alice):
 
 
 @pytest.mark.anyio
-async def test_get_and_require_campaign(session, alice):
-    run = await _make_campaign(session, alice)
+async def test_get_and_require_campaign(session):
+    run = await _make_campaign(session)
     assert (await campaign_service.get_campaign(session, run.id)).id == run.id
     assert (await campaign_service.require_campaign(session, run.id)).id == run.id
 
@@ -51,30 +50,31 @@ async def test_require_campaign_raises_when_missing(session):
 
 
 @pytest.mark.anyio
-async def test_list_campaigns_filters(session, alice, bob):
-    run_a = await _make_campaign(session, alice)
-    # A second campaign owned by bob in a different project.
-    project_b = ProjectTable(name="bob-project")
+async def test_list_campaigns_filters(session):
+    run_a = await _make_campaign(session)
+    # A second campaign in a different project.
+    project_b = ProjectTable(name="other-project")
     session.add(project_b)
     await session.flush()
     run_b = await campaign_service.create_campaign(
         session,
         project_id=project_b.id,
-        user_id=bob.id,
         domain="splash",
         planner_skill="splash-planner",
     )
 
-    by_user = await campaign_service.list_campaigns(session, user_id=alice.id)
-    assert [r.id for r in by_user] == [run_a.id]
+    by_project = await campaign_service.list_campaigns(
+        session, project_id=run_a.project_id
+    )
+    assert [r.id for r in by_project] == [run_a.id]
 
     all_runs = await campaign_service.list_campaigns(session)
     assert {r.id for r in all_runs} == {run_a.id, run_b.id}
 
 
 @pytest.mark.anyio
-async def test_status_transition_and_resumable_filter(session, alice):
-    run = await _make_campaign(session, alice)
+async def test_status_transition_and_resumable_filter(session):
+    run = await _make_campaign(session)
 
     updated = await campaign_service.set_status(
         session, run_id=run.id, status="running"
@@ -92,8 +92,8 @@ async def test_status_transition_and_resumable_filter(session, alice):
 
 
 @pytest.mark.anyio
-async def test_save_plan_and_update_spec(session, alice):
-    run = await _make_campaign(session, alice)
+async def test_save_plan_and_update_spec(session):
+    run = await _make_campaign(session)
     await campaign_service.save_plan(
         session, run_id=run.id, plan=[{"step": 1, "text": "grid sweep"}]
     )
@@ -106,8 +106,8 @@ async def test_save_plan_and_update_spec(session, alice):
 
 
 @pytest.mark.anyio
-async def test_steps_create_list_and_update(session, alice):
-    run = await _make_campaign(session, alice)
+async def test_steps_create_list_and_update(session):
+    run = await _make_campaign(session)
     neutronics = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="neutronics", candidate={"li6": 0.7}
     )
@@ -135,8 +135,8 @@ async def test_update_step_raises_when_missing(session):
 
 
 @pytest.mark.anyio
-async def test_record_job_and_open_jobs_lifecycle(session, alice):
-    run = await _make_campaign(session, alice)
+async def test_record_job_and_open_jobs_lifecycle(session):
+    run = await _make_campaign(session)
     step = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="neutronics"
     )
@@ -145,7 +145,6 @@ async def test_record_job_and_open_jobs_lifecycle(session, alice):
         session,
         job_id="job-100",
         step_id=step.id,
-        user_id=alice.id,
         cluster="frontier",
         job_name="neutronics",
         log_path="/o/log-100.out",

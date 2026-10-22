@@ -9,7 +9,7 @@ from ..agents.inference import (
 )
 from ..db.db import SessionDep
 from ..services import project as project_service
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 
 router = APIRouter()
 
@@ -48,21 +48,20 @@ def _models_urls(base_url: str) -> tuple[str, str]:
 
 @router.get("/projects/{project_name}/models", response_model=ModelsListResponse)
 async def list_models(
-    project_name: str, session: SessionDep, user: UserDep
+    project_name: str, session: SessionDep, local: LocalSettingsDep
 ) -> ModelsListResponse:
     """
     List the models available through the caller's configured inference
     endpoint.
 
     Scoped under a project path for consistency with the rest of the API
-    surface, but the result depends only on the signed-in researcher's own
-    inference configuration, not the project -- `project_name` here is an
-    access check (the same 404-if-not-visible every other project route
-    applies), not a filter.
+    surface, but the result depends only on the installation's inference
+    configuration, not the project -- `project_name` here is only checked to
+    exist (the same 404 every other project route gives), not a filter.
     """
-    await project_service.get_project_by_name(session, project_name, user)
+    await project_service.get_project_by_name(session, project_name)
 
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(local)
     if not target.uses_configured_endpoint:
         return ModelsListResponse(supported=False, models=[])
 

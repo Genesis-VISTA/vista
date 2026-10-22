@@ -664,7 +664,7 @@ async def test_roles_ask_for_their_answer_as_text_not_as_a_tool_call():
 @pytest.mark.anyio
 async def test_a_role_is_told_which_clusters_each_job_runs_on():
     """
-    Offered a flat list of the opener's clusters, a role named one the job had no
+    Offered a flat list of the reachable clusters, a role named one the job had no
     section for, was refused, and retried the identical call. It had not been given
     what it needed to choose correctly — the clusters differ per job, and a single
     joined list reads as "any of these work for any of those".

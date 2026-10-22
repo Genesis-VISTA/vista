@@ -15,7 +15,6 @@ export type CampaignStatus =
 export type CampaignRun = {
   id: string;
   project_id: string;
-  user_id: string;
   session_id: string | null;
   domain: string;
   planner_skill: string;
@@ -42,7 +41,6 @@ export type CampaignStep = {
 export type HpcJob = {
   job_id: string;
   step_id: string;
-  user_id: string;
   cluster: string;
   job_name: string | null;
   state: string;

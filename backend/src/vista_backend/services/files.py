@@ -1,5 +1,4 @@
 import re
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -12,21 +11,10 @@ from ..agents.agents import ProjectAgent
 from ..config import settings
 from ..utils.misc import path_is_under, write_file_unique
 from . import project as project_service
-from ._helpers import ServiceUser
 from .project_agent import get_project_agent_key, project_agent_pool
 
 
 FileKind = Literal["uploads", "outputs"]
-
-
-def _require_user_id(user: ServiceUser) -> uuid.UUID:
-    """Per-user file operations need a concrete user; the trusted "system"
-    caller has no agent workspace of its own."""
-    if user == "system":
-        raise HTTPException(
-            status_code=403, detail="File access requires an authenticated user"
-        )
-    return user.id
 
 
 class FileInfo(BaseModel):
@@ -70,12 +58,10 @@ def _get_file(files_dir: Path, name: str) -> Path:
 
 
 async def list_files(
-    session: AsyncSession, project_name: str, kind: FileKind, user: ServiceUser
+    session: AsyncSession, project_name: str, kind: FileKind
 ) -> list[FileInfo]:
-    project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=_require_user_id(user)
-    )
+    project = await project_service.get_project_by_name(session, project_name)
+    agent_key = await get_project_agent_key(session, project_id=project.id)
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         if not files_dir.exists():
@@ -100,14 +86,12 @@ async def list_files(
 
 
 async def save_uploads(
-    session: AsyncSession, project_name: str, files: list[UploadFile], user: ServiceUser
+    session: AsyncSession, project_name: str, files: list[UploadFile]
 ) -> list[str]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
-    project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=_require_user_id(user)
-    )
+    project = await project_service.get_project_by_name(session, project_name)
+    agent_key = await get_project_agent_key(session, project_id=project.id)
     async with project_agent_pool.get(agent_key) as agent:
         uploads_dir = agent.uploads_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -133,13 +117,10 @@ async def get_file_path(
     project_name: str,
     kind: FileKind,
     name: str,
-    user: ServiceUser,
 ) -> Path:
     """Resolve a single file's path, raising 404 if it is missing or invalid."""
-    project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=_require_user_id(user)
-    )
+    project = await project_service.get_project_by_name(session, project_name)
+    agent_key = await get_project_agent_key(session, project_id=project.id)
     async with project_agent_pool.get(agent_key) as agent:
         return _get_file(_kind_dir(agent, kind), name)
 
@@ -149,12 +130,9 @@ async def delete_file(
     project_name: str,
     kind: FileKind,
     name: str,
-    user: ServiceUser,
 ) -> None:
-    project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=_require_user_id(user)
-    )
+    project = await project_service.get_project_by_name(session, project_name)
+    agent_key = await get_project_agent_key(session, project_id=project.id)
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         path = _get_file(files_dir, name)

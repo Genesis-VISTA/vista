@@ -154,7 +154,7 @@ async def test_llm_credentials_reach_the_rag_instance(fake_rag, tmp_path):
     """
     The credential the caller resolved has to arrive at `TextRAG`, which is
     what puts it in front of the citation extractor. `knowledge_bases.py`
-    resolves it from the requesting user's row; without this hop a fresh
+    resolves it from the settings row; without this hop a fresh
     install indexes text and produces no citation metadata.
     """
     pdfs_dir = tmp_path / "pdfs"
@@ -180,14 +180,13 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     chain would otherwise extract with a model the researcher never chose.
     """
     from vista_backend.agents.inference import citation_credentials
-    from vista_backend.db.schemas import UserPublicWithConfig
+    from vista_backend.db.schemas import LocalSettingsPublic
 
     # `fake_rag` replaces the loader that would put `build_rag` on the path.
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
-    user = UserPublicWithConfig(
-        id=uuid.uuid4(),
-        email="researcher@example.org",
+    local = LocalSettingsPublic(
+        install_id=uuid.uuid4(),
         inference_provider="custom",
         inference_custom_api_key="custom-token",
         inference_base_url="https://custom.example/v1",
@@ -198,7 +197,7 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
         rag_db_path=str(tmp_path / "rag_db"),
         pdfs_dir=str(tmp_path / "pdfs"),
         filenames=["paper.pdf"],
-        llm_credentials=citation_credentials(user),
+        llm_credentials=citation_credentials(local),
     )
 
     assert results[0]["status"] == "indexed"

@@ -2,7 +2,7 @@
 Build the live MCP `invoke` closure used by the planner's `McpHpcTools` and the monitor.
 
 `build_invoke` is the testable core: it wraps a `call_tool(name, args, metadata)` callable and
-injects the per-user VISTA metadata the HPC tools need. In production that callable is an
+injects the VISTA metadata the HPC tools need. In production that callable is an
 MCPServer's `direct_call_tool`, which threads `metadata` as the request `_meta` (the same
 `{"vista": …}` channel `_make_mcp_process_tool_call` uses during an agent run) and returns the
 tool's already-unwrapped text result.
@@ -16,7 +16,7 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from ...config import settings
-from ...db.schemas import UserPublicWithConfig
+from ...db.schemas import LocalSettingsPublic
 from .hpc_tools import InvokeTool
 
 
@@ -24,17 +24,16 @@ from .hpc_tools import InvokeTool
 CallToolFn = Callable[[str, dict, dict | None], Awaitable[Any]]
 
 
-def project_paths_for(project_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, str]:
+def project_paths_for(project_id: uuid.UUID) -> dict[str, str]:
     """The sandbox-volume paths the HPC tools resolve log/output dirs against.
 
     Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): a single
-    per-(project, user) `volume_root = data_dir/volumes/{project_id}-{user_id}` holding the
-    skills volume plus `data/output` and `data/uploads` (shared across a user's chat sessions
-    in the project). The monitor rebuilds these paths from a job's DB row, so they must match
+    per-project `volume_root = data_dir/volumes/{project_id}` holding the skills volume plus
+    `data/output` and `data/uploads` (shared across the project's chat sessions). The monitor rebuilds these paths from a job's DB row, so they must match
     what the dispatching agent wrote — `test_project_paths_for_matches_project_agent` pins the
     two together.
     """
-    volume_root = settings.data_dir / "volumes" / f"{project_id}-{user_id}"
+    volume_root = settings.data_dir / "volumes" / str(project_id)
     return {
         "skills_dir": str(volume_root / "skills"),
         "output_dir": str(volume_root / "data" / "output"),
@@ -43,12 +42,15 @@ def project_paths_for(project_id: uuid.UUID, user_id: uuid.UUID) -> dict[str, st
 
 
 def build_metadata(
-    user: UserPublicWithConfig, project_paths: dict[str, str]
+    local: LocalSettingsPublic, project_paths: dict[str, str]
 ) -> dict[str, Any]:
-    """The `{"vista": {"user", "project_paths"}}` metadata the vista MCP HPC tools read."""
+    """
+    The `{"vista": {"user", "project_paths"}}` metadata the vista MCP HPC tools
+    read. `user` is the settings' credentials, under the name the server reads.
+    """
     return {
         "vista": {
-            "user": user.model_dump(mode="json"),
+            "user": local.model_dump(mode="json"),
             "project_paths": project_paths,
         }
     }
@@ -57,11 +59,11 @@ def build_metadata(
 def build_invoke(
     call_tool: CallToolFn,
     *,
-    user: UserPublicWithConfig,
+    local: LocalSettingsPublic,
     project_paths: dict[str, str],
 ) -> InvokeTool:
     """Wrap a metadata-aware `call_tool` into an `invoke(name, args) -> text` closure."""
-    metadata = build_metadata(user, project_paths)
+    metadata = build_metadata(local, project_paths)
 
     async def invoke(name: str, args: dict) -> str:
         result = await call_tool(name, args, metadata)
@@ -71,11 +73,13 @@ def build_invoke(
 
 
 def build_mcp_invoke(
-    user: UserPublicWithConfig, project_paths: dict[str, str]
+    local: LocalSettingsPublic, project_paths: dict[str, str]
 ) -> InvokeTool:
     """Live `invoke` over the vista MCP server (direct_call_tool threads metadata + unwraps text)."""
     # Local import: agents.agents pulls in the full agent stack; keep it off module-load.
     from ..agents import get_vista_mcp_server
 
     server = get_vista_mcp_server()
-    return build_invoke(server.direct_call_tool, user=user, project_paths=project_paths)
+    return build_invoke(
+        server.direct_call_tool, local=local, project_paths=project_paths
+    )

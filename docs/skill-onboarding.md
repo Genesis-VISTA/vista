@@ -2,7 +2,8 @@
 
 This doc covers everything around adding skills to VISTA: the on-disk layout
 and frontmatter schema, the three ways to get a new skill into your project
-(write by hand, generate from a chat, or import from GitHub), and how
+(write by hand, generate from a chat, or import from a GitHub or GitLab
+repository), and how
 publishing to the Skill Hub works.
 
 If you just want to consume an existing skill, see the Skill Hub at `/skill-hub`
@@ -102,30 +103,62 @@ Under the hood this calls `POST /skills/generate` (which does **not** write
 anything) followed by `POST /skills` with the active project's name, so the
 new skill is loaded into that project.
 
-### 3. Import from GitHub
+### 3. Import from a repository
 
-For skills hosted in a Git repository (yours or someone else's):
+For skills hosted in a Git repository on github.com or any GitLab (gitlab.com
+or self-hosted, e.g. `gitlab.osti.gov`), holding one skill or many:
 
 1. Go to `/skills` (the active project's skill tab — **not** the hub).
-2. Click **Import…**.
-3. Paste either:
-   - `https://github.com/<owner>/<repo>` — SKILL.md at the repo root, or
-   - `https://github.com/<owner>/<repo>/tree/<ref>/<subpath>` — SKILL.md inside
-     a sub-directory of a monorepo. Example:
-     `https://github.com/anthropics/skills/tree/main/skills/docx`.
-4. Click **Import**.
+2. Click **Import…** and stay on the **Repository** tab.
+3. Paste a repository or a folder in one:
+   - `https://github.com/<owner>/<repo>`
+   - `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
+   - `https://<gitlab-host>/<group>[/<subgroup>…]/<repo>`
+   - `https://<gitlab-host>/<group>/<repo>/-/tree/<ref>/<path>`
 
-The backend downloads the repo tarball via the GitHub API (no `git` binary
-required), validates that SKILL.md exists at the target path, copies the
-**entire** skill directory (SKILL.md + scripts + any other files) into
-`skills/<name>/`, forces `is_public:false`, and auto-fills `repo_url` from the
-source URL if the imported frontmatter didn't already set it.
+   A link to a `SKILL.md` itself (`/blob/…/SKILL.md`) means its folder.
+4. For a private repository, paste an access token (read access to the
+   repository is enough). It is sent only to the URL's host, for this import,
+   and is not saved. Leave it empty to use your GitHub or gitlab.com token from
+   **Settings → Repositories**; no Settings token is sent to any other host.
+5. Click **Import**.
 
-For private repos, save a GitHub token in **Settings → Repositories** (read
-access to the repository's contents is enough). Each researcher's own token is
-used for their imports. Without a token, public repos work but the API rate
-limit is 60 requests/hour per IP. Public repos look like 404s when you're
-unauthenticated and the repo is actually private.
+VISTA downloads the repository's archive over the host's API (no `git` binary),
+pinned to the commit its branch or tag points at, and finds the skills in it:
+
+- A `SKILL.md` at the linked folder (or the repository root) makes that folder
+  the one skill — a single-skill repository imports exactly as it always did.
+- Otherwise, if the repository has a `.claude-plugin/marketplace.json`, the
+  skill folders it lists (an entry that is a folder of skills means every skill
+  in it; a plugin hosted in another repository is left out).
+- Otherwise every folder below with a `SKILL.md`, at any depth, skipping
+  `.git`, `node_modules` and other dot-folders. A folder holding a `SKILL.md` is
+  one skill, including everything below it.
+
+One skill with no conflict is imported straight away. Otherwise the dialog lists
+every skill found — name, description, folder, file count and HPC jobs — to tick
+the ones to import (or **Select all**). Each skill's folder is copied whole.
+Beyond it, the dialog also shows:
+
+- **Also copied in** — the nearest `LICENSE`, `NOTICE`, `ATTRIBUTION` or
+  `COPYING` from the folders above it, when the skill has none of its own, and
+  any file a symlink in the skill points at elsewhere in the repository (copied
+  in as the file).
+- **⚠ warnings** — a symlink that leaves the repository (left out), or a
+  `../` path in the skill's Markdown that leads out of its folder. That file is
+  not imported; the skill may need it.
+- An error for a skill whose `SKILL.md` is malformed; it cannot be ticked, and
+  the rest still import.
+
+If a skill's name is already taken, choose **Skip**, **Replace my private
+skill** (not offered for a published one), or **Import under another name**,
+which rewrites only the `name:` line of its frontmatter. Skills in one
+repository that share a name are ticked only once; give the others a new name
+to import them too. Each skill is imported
+on its own and the dialog says what happened to each. An imported skill is
+private, loaded into the project, and its `repo_url` is its folder at the
+imported commit (or, for a single URL, the URL given). The upload limits apply
+to each skill: 2,000 files and 50 MB.
 
 ### 4. Have the agent write it (HPC skills)
 
@@ -147,7 +180,7 @@ subgroups included), or upload a `.zip` of a
 folder (or of a private repository) in chat and ask it to wrap that. For a URL, the agent calls the
 `fetch_repository` tool: VISTA's backend, not the sandbox, downloads the repository, pinned to the
 commit its branch or tag points at now, into the agent's `/mnt/data/work/<name>/`. That is the
-same route as **Import → GitHub URL**, so it works on networks whose HTTPS proxy the sandbox does
+same route as **Import → Repository**, so it works on networks whose HTTPS proxy the sandbox does
 not trust, and with a GitHub or gitlab.com token saved in **Settings → Repositories** it reads
 private repositories on that host without the token entering the sandbox (the agent can read
 whatever the token can, so scope it read-only). An upload is unpacked in the sandbox by
@@ -160,7 +193,7 @@ into `cluster_defaults.json`. A repository is not copied into the skill: its job
 folder's needed files are shipped in the job folder. Only github.com and gitlab.com are fetched (for another host, upload an archive). A private
 repository's needed files are shipped in the skill unless you confirm the cluster can clone it
 with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
-import it directly from GitHub or a local folder.
+import it directly from its repository or a local folder.
 
 **Software environments.** The skill tells the agent to prefer an environment you have already
 built on the cluster (its path goes in `cluster_defaults.json`), and to recommend pre-building one
@@ -316,17 +349,30 @@ slug is the directory name and must be unique).
 **`409 — Published skills cannot be unpublished`** — Publishing is one-way;
 delete the directory by hand if you need to remove a skill.
 
-**`400 — URL '…' is not a GitHub repo URL`** — The import endpoint only
-accepts `github.com` URLs in one of the two forms described above.
+**`… is not GitHub, and did not answer as a GitLab server`** — Import reads
+github.com and GitLab hosts only. Check the host; for anything else, download
+the folder and use **Local folder**.
 
-**`GitHub returned 404 for …`** — Either the repo really doesn't exist, or
-it's private and you haven't saved a GitHub token in Settings → Repositories
-(or that token can't read it).
+**`<host> has no public repository '…' (404)`** — Either the repository really
+doesn't exist, or it's private and no token was sent. Paste a token in the
+dialog, or save a GitHub or gitlab.com token in Settings → Repositories.
 
-**`No SKILL.md found at <subpath>`** — Double-check the tree URL points to a
-directory containing a SKILL.md (or skill.md). If you're pointing at a
-monorepo root that doesn't have a SKILL.md, use the `/tree/<ref>/<subpath>`
-form instead.
+**`<host> refused access (401/403)`** — The token was sent but is wrong,
+expired, or cannot read the repository. The message says whether it was the
+dialog's token or the Settings one.
+
+**`Could not reach <host>`** — The host is down, or not reachable from where
+the backend runs (VPN, proxy).
+
+**`No SKILL.md found in …`** — Neither the linked folder nor anything below it
+holds a `SKILL.md`. Check the branch and path in the URL.
+
+**`… holds N skills (…)`** — `POST /skills/import` takes one skill. In the
+dialog you choose among them; over the API, use `POST /skills/import/scan` and
+`POST /skills/import/batch`, or link one skill's folder.
+
+**`SKILL.md in <folder> is invalid: …`** — Its frontmatter is missing, is not
+valid YAML, or lacks a valid `name` or `description`; the message names the field.
 
 **Skill appears in `skills/` but not on `/skills`** — The skill's `name:`
 frontmatter must match the directory name. Backend logs `read_skill` parse

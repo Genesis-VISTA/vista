@@ -142,8 +142,9 @@ class ForumSettings(BaseModel):
     """
     Access token git sends to an `https://` `remote_url`. Not configuration either.
 
-    Filled in per project from `Project.forum_repo_token`. None leaves git to the
-    system's own credentials — an SSH key in the agent, or a credential helper.
+    Filled in per project from the user's Settings token for the forum's host
+    (`services/repo_tokens.repo_token`). None leaves git to the system's own
+    credentials — an SSH key in the agent, or a credential helper.
     """
 
     remote_token_source: str | None = None

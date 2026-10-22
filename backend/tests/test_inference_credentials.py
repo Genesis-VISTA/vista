@@ -1,8 +1,8 @@
 """
 The inference credential comes from the running application, not a file.
 
-On a packaged single-user install the researcher's key is pasted into the
-settings modal, so it lands on their user row rather than in the environment.
+On a packaged install the researcher's key is pasted into the settings modal,
+so it lands on the settings row rather than in the environment.
 These tests pin the resolution order, that the stored value is ciphertext on
 disk, that an absent key is a named condition rather than a traceback, and
 that a change takes effect without a restart.
@@ -17,7 +17,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel, select
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.agents.inference import (
@@ -34,10 +34,11 @@ from vista_backend.agents.inference import (
 )
 from vista_backend.config import settings
 from vista_backend.db.schemas import (
-    UserPublicWithConfig,
-    UserSelfUpdate,
-    UserTable,
+    LocalSettingsPublic,
+    LocalSettingsTable,
+    LocalSettingsUpdate,
 )
+from vista_backend.services import local_settings
 from vista_backend.utils.crypto import get_fernet
 
 pytestmark = pytest.mark.unit
@@ -52,10 +53,8 @@ async def _noop_cleanup(_agent: object) -> None:
     return None
 
 
-def _user(**overrides) -> UserPublicWithConfig:
-    return UserPublicWithConfig(
-        id=uuid.uuid4(), email="r@example.org", is_admin=True, **overrides
-    )
+def _local(**overrides) -> LocalSettingsPublic:
+    return LocalSettingsPublic(install_id=uuid.uuid4(), **overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -75,14 +74,14 @@ def _user(**overrides) -> UserPublicWithConfig:
 )
 def test_credential_precedence(monkeypatch, row_key, env_key, expected):
     """
-    The row wins because on a single-user install it is the only surface the
+    The row wins because it is the only surface the
     researcher can reach without editing files: a value typed into the
     settings modal has to beat a stale exported one.
     """
     monkeypatch.setattr(
         settings, "openai_api_key", SecretStr(env_key) if env_key else None
     )
-    target = resolve_inference_target(_user(inference_api_key=row_key))
+    target = resolve_inference_target(_local(inference_api_key=row_key))
     assert target.api_key == expected
     assert target.has_credential is (expected is not None)
 
@@ -91,12 +90,12 @@ def test_model_and_endpoint_precedence(monkeypatch):
     monkeypatch.setattr(settings, "model", "openai:server-default")
     monkeypatch.setattr(settings, "openai_base_url", "https://server.example/v1")
 
-    fallback = resolve_inference_target(_user())
+    fallback = resolve_inference_target(_local())
     assert fallback.model == "openai:server-default"
     assert fallback.base_url == "https://server.example/v1"
 
     overridden = resolve_inference_target(
-        _user(
+        _local(
             inference_provider="custom",
             inference_model="openai:user-choice",
             inference_base_url="https://user.example/v1",
@@ -115,7 +114,7 @@ def test_no_user_falls_back_to_settings(monkeypatch):
 def test_resolved_target_reaches_the_built_client(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     target = resolve_inference_target(
-        _user(
+        _local(
             inference_provider="custom",
             inference_model="openai:claude-sonnet",
             inference_base_url="https://user.example/v1",
@@ -182,7 +181,7 @@ def test_row_provider_picks_its_url_key_and_default(
     i2_settings, provider, base_url, key, model
 ):
     """Each provider uses its own key, so switching never loses another's."""
-    target = resolve_inference_target(_user(inference_provider=provider, **_ALL_KEYS))
+    target = resolve_inference_target(_local(inference_provider=provider, **_ALL_KEYS))
     assert target.provider == provider
     assert target.source == "user"
     assert target.base_url == base_url
@@ -195,11 +194,11 @@ def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
     """A compute token is not known to be accepted for inference."""
     cluster_tokens = dict(odo_s3m_token="odo-s3m", frontier_s3m_token="frontier-s3m")
     target = resolve_inference_target(
-        _user(inference_provider="olcf", **cluster_tokens)
+        _local(inference_provider="olcf", **cluster_tokens)
     )
     assert target.api_key is None
     target = resolve_inference_target(
-        _user(
+        _local(
             inference_provider="olcf",
             inference_olcf_api_key="olcf-key",
             **cluster_tokens,
@@ -210,7 +209,7 @@ def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
 
 def test_row_provider_uses_the_chosen_model(i2_settings):
     target = resolve_inference_target(
-        _user(inference_provider="mag", inference_model="openai:gpt-oss", **_ALL_KEYS)
+        _local(inference_provider="mag", inference_model="openai:gpt-oss", **_ALL_KEYS)
     )
     assert target.model == "openai:gpt-oss"
     assert target.model_is_default is False
@@ -219,14 +218,14 @@ def test_row_provider_uses_the_chosen_model(i2_settings):
 def test_i2_key_falls_back_to_the_environment(i2_settings, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", SecretStr("from-env"))
     assert (
-        resolve_inference_target(_user(inference_provider="i2")).api_key == "from-env"
+        resolve_inference_target(_local(inference_provider="i2")).api_key == "from-env"
     )
     # Not to another provider: the environment's key is i2's.
-    assert resolve_inference_target(_user(inference_provider="mag")).api_key is None
+    assert resolve_inference_target(_local(inference_provider="mag")).api_key is None
 
 
 def test_nothing_set_is_i2_with_its_default(i2_settings):
-    target = resolve_inference_target(_user())
+    target = resolve_inference_target(_local())
     assert target.provider == "i2"
     assert target.source == "default"
     assert target.model == "openai:claude-sonnet"
@@ -237,7 +236,7 @@ def test_nothing_set_is_i2_with_its_default(i2_settings):
 def test_existing_key_is_the_i2_key(i2_settings):
     """A key saved before providers existed keeps working, as i2's."""
     target = resolve_inference_target(
-        _user(inference_api_key="saved-before", inference_base_url="https://old/v1")
+        _local(inference_api_key="saved-before", inference_base_url="https://old/v1")
     )
     assert target.provider == "i2"
     assert target.api_key == "saved-before"
@@ -253,7 +252,7 @@ def test_configuration_differing_from_i2_is_custom_from_config(
     i2_settings, monkeypatch, field, value
 ):
     monkeypatch.setattr(settings, field, value)
-    target = resolve_inference_target(_user(inference_api_key="row-key"))
+    target = resolve_inference_target(_local(inference_api_key="row-key"))
     assert target.provider == "custom"
     assert target.source == "config"
     assert target.base_url == settings.openai_base_url
@@ -263,7 +262,7 @@ def test_configuration_differing_from_i2_is_custom_from_config(
 
 def test_a_chosen_provider_beats_the_configuration(i2_settings, monkeypatch):
     monkeypatch.setattr(settings, "openai_base_url", "https://dev.example/v1")
-    target = resolve_inference_target(_user(inference_provider="mag", **_ALL_KEYS))
+    target = resolve_inference_target(_local(inference_provider="mag", **_ALL_KEYS))
     assert target.provider == "mag"
     assert target.base_url == PROVIDER_PRESETS["mag"].base_url
 
@@ -271,7 +270,7 @@ def test_a_chosen_provider_beats_the_configuration(i2_settings, monkeypatch):
 def test_no_model_is_a_named_condition(i2_settings):
     with pytest.raises(MissingInferenceModel) as excinfo:
         require_inference_credential(
-            _user(
+            _local(
                 inference_provider="custom",
                 inference_custom_api_key="t",
                 inference_base_url="https://custom.example/v1",
@@ -289,7 +288,7 @@ def test_no_model_still_builds_an_agent_model(i2_settings):
     from pydantic_ai import Agent
 
     model = build_model_for(
-        _user(
+        _local(
             inference_provider="custom",
             inference_custom_api_key="t",
             inference_base_url="https://custom.example/v1",
@@ -297,6 +296,60 @@ def test_no_model_still_builds_an_agent_model(i2_settings):
     )
     with pytest.raises(MissingInferenceModel):
         Agent(model).run_sync("hi")
+
+
+# ---------------------------------------------------------------------------
+# A model override (a chat's or a debate role's own choice)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "row_model", [None, "openai:row-choice"], ids=["default", "row"]
+)
+def test_override_beats_the_row_and_the_provider_default(i2_settings, row_model):
+    local = _local(inference_provider="mag", inference_model=row_model, **_ALL_KEYS)
+    target = resolve_inference_target(local, "openai:chat-choice")
+    assert target.model == "openai:chat-choice"
+    assert target.model_is_default is False
+
+
+def test_override_keeps_provider_endpoint_and_key(i2_settings):
+    local = _local(inference_provider="mag", inference_model="openai:row", **_ALL_KEYS)
+    plain = resolve_inference_target(local)
+    target = resolve_inference_target(local, "openai:chat-choice")
+    assert (target.provider, target.base_url, target.api_key, target.source) == (
+        plain.provider,
+        plain.base_url,
+        plain.api_key,
+        plain.source,
+    )
+    assert target.api_key == "mag-key"
+
+
+def test_no_override_changes_nothing(i2_settings):
+    local = _local(inference_provider="mag", **_ALL_KEYS)
+    assert resolve_inference_target(local, None) == resolve_inference_target(local)
+
+
+def test_override_on_a_provider_with_no_default_passes_the_guard(i2_settings):
+    """A chat can name its own model where the researcher never set a default."""
+    local = _local(
+        inference_provider="custom",
+        inference_custom_api_key="t",
+        inference_base_url="https://custom.example/v1",
+    )
+    with pytest.raises(MissingInferenceModel):
+        require_inference_credential(local)
+    target = require_inference_credential(local, "openai:chat-choice")
+    assert target.model == "openai:chat-choice"
+
+
+def test_override_is_the_model_that_gets_built(i2_settings):
+    local = _local(inference_provider="mag", **_ALL_KEYS)
+    model = build_model_for(local, "openai:chat-choice")
+    assert model.model_name == "chat-choice"
+    assert str(model.client.base_url).rstrip("/") == PROVIDER_PRESETS["mag"].base_url
+    assert model.client.api_key == "mag-key"
 
 
 @pytest.mark.anyio
@@ -315,7 +368,7 @@ async def test_new_keys_are_not_plaintext_in_the_database_file(tmp_path, monkeyp
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         async with AsyncSession(engine) as s:
-            s.add(UserTable(email="r@example.org", is_admin=True, **secrets))
+            s.add(LocalSettingsTable(**secrets))
             await s.commit()
         await engine.dispose()
 
@@ -335,7 +388,7 @@ def test_missing_credential_names_the_setting(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
     with pytest.raises(MissingInferenceCredential) as excinfo:
-        require_inference_credential(_user())
+        require_inference_credential(_local())
     detail = excinfo.value.detail
     assert SETTINGS_LOCATION in detail
     assert "claude-sonnet" in detail
@@ -345,7 +398,7 @@ def test_missing_credential_names_the_setting(monkeypatch):
 
 def test_present_credential_passes_the_guard(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
-    target = require_inference_credential(_user(inference_api_key="row-key"))
+    target = require_inference_credential(_local(inference_api_key="row-key"))
     assert target.api_key == "row-key"
 
 
@@ -358,7 +411,7 @@ def test_guard_only_applies_to_our_endpoint(monkeypatch, model):
     demanding one would refuse work that would have succeeded.
     """
     monkeypatch.setattr(settings, "openai_api_key", None)
-    assert require_inference_credential(_user(inference_model=model)).api_key is None
+    assert require_inference_credential(_local(inference_model=model)).api_key is None
 
 
 # ---------------------------------------------------------------------------
@@ -383,20 +436,16 @@ async def test_key_is_not_plaintext_in_the_database_file(tmp_path, monkeypatch):
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         async with AsyncSession(engine) as s:
-            s.add(
-                UserTable(
-                    email="r@example.org",
-                    is_admin=True,
-                    inference_api_key=secret,
-                )
-            )
+            s.add(LocalSettingsTable(inference_api_key=secret))
             await s.commit()
         await engine.dispose()
 
         assert secret.encode() not in db_file.read_bytes()
 
         with sqlite3.connect(db_file) as raw:
-            (stored,) = raw.execute("SELECT inference_api_key FROM app_user").fetchone()
+            (stored,) = raw.execute(
+                "SELECT inference_api_key FROM local_settings"
+            ).fetchone()
         assert stored != secret
         assert Fernet(key.encode()).decrypt(stored.encode()).decode() == secret
     finally:
@@ -409,18 +458,17 @@ async def test_key_is_not_plaintext_in_the_database_file(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_updating_the_key_evicts_the_pooled_agent(session, alice, monkeypatch):
+async def test_updating_the_key_evicts_the_pooled_agent(session, monkeypatch):
     """
     The pool caches a built agent for 30 minutes, so without eviction a new
-    key would not be used until it expired. `update_user` already registers an
+    key would not be used until it expired. A settings update registers an
     after-commit invalidation; this pins that the inference key travels that
     same path.
     """
     from vista_backend.services import project_agent as project_agent_service
-    from vista_backend.services import user as user_service
 
     pool = project_agent_service.project_agent_pool
-    key = (None, uuid.uuid4(), alice.id)
+    key = (None, uuid.uuid4())
     # Populate the pool through its own API with a stand-in agent: building a
     # real one needs a live MCP server, and the eviction path under test does
     # not care what the value is.
@@ -431,46 +479,34 @@ async def test_updating_the_key_evicts_the_pooled_agent(session, alice, monkeypa
     assert key in pool.keys()
 
     try:
-        await user_service.update_user(
-            session,
-            alice.id,
-            UserSelfUpdate(inference_api_key="a-new-key"),
-            user="system",
+        await local_settings.update(
+            session, LocalSettingsUpdate(inference_api_key="a-new-key")
         )
         await session.commit()
 
         assert key not in pool.keys(), (
-            "committing a user update must evict that user's pooled agents, "
+            "committing a settings update must evict the pooled agents, "
             "or a new key is ignored until the 30-minute TTL expires"
         )
     finally:
         pool.delete(key)
 
-    row = (
-        await session.exec(select(UserTable).where(UserTable.id == alice.id))
-    ).first()
-    assert row is not None and row.inference_api_key == "a-new-key"
+    row = await local_settings.get(session)
+    assert row.inference_api_key == "a-new-key"
 
 
 @pytest.mark.anyio
-async def test_clearing_the_key_writes_null_not_empty_string(session, alice):
+async def test_clearing_the_key_writes_null_not_empty_string(session):
     """
     The modal sends `null` for a blanked field, and `""` must be coerced too —
     an empty-but-not-null key would satisfy `has_credential` and produce a
     provider 401 instead of the guidance message.
     """
-    from vista_backend.services import user as user_service
 
-    await user_service.update_user(
-        session, alice.id, UserSelfUpdate(inference_api_key="k"), user="system"
-    )
-    await user_service.update_user(
-        session, alice.id, UserSelfUpdate(inference_api_key=""), user="system"
-    )
-    row = (
-        await session.exec(select(UserTable).where(UserTable.id == alice.id))
-    ).first()
-    assert row is not None and row.inference_api_key is None
+    await local_settings.update(session, LocalSettingsUpdate(inference_api_key="k"))
+    await local_settings.update(session, LocalSettingsUpdate(inference_api_key=""))
+    row = await local_settings.get(session)
+    assert row.inference_api_key is None
 
 
 # ---------------------------------------------------------------------------
@@ -537,17 +573,15 @@ class TestHttpSurface:
     async def test_chat_with_no_credential_is_reported_not_crashed(
         self, session, monkeypatch, stream
     ):
-        from harness import api_client, seed_project, seed_user
+        from harness import api_client, seed_project
 
         self._no_credential(monkeypatch)
-        alice = await seed_user(session)
-        project = await seed_project(session, alice, name="alices-project")
+        project = await seed_project(session, name="the-project")
 
         with api_client(session) as (client, _):
             response = await client.post(
                 self.RUN.format(name=project.name),
                 json={"user_prompt": "hi", "stream": stream},
-                headers={"X-Vista-User-Email": alice.email},
             )
 
         assert response.status_code < 500, response.text
@@ -563,24 +597,21 @@ class TestHttpSurface:
     async def test_chat_with_no_model_is_reported_not_crashed(
         self, session, monkeypatch, stream
     ):
-        from harness import api_client, seed_project, seed_user
+        from harness import api_client, seed_project
 
         self._no_credential(monkeypatch)
-        alice = await seed_user(session)
-        row = await session.get(UserTable, alice.id)
-        assert row is not None
+        row = await local_settings.get(session)
         row.inference_provider = "custom"
         row.inference_custom_api_key = "custom-token"
         row.inference_base_url = "https://custom.example/v1"
         session.add(row)
         await session.flush()
-        project = await seed_project(session, alice, name="alices-project")
+        project = await seed_project(session, name="the-project")
 
         with api_client(session) as (client, _):
             response = await client.post(
                 self.RUN.format(name=project.name),
                 json={"user_prompt": "hi", "stream": stream},
-                headers={"X-Vista-User-Email": alice.email},
             )
 
         assert response.status_code == 409, response.text
@@ -600,31 +631,24 @@ class TestHttpSurface:
             api_client,
             say,
             seed_project,
-            seed_user,
             step_model,
         )
 
         self._no_credential(monkeypatch)
-        alice = await seed_user(session)
-        row = (
-            await session.exec(select(UserTable).where(UserTable.id == alice.id))
-        ).first()
-        assert row is not None
+        row = await local_settings.get(session)
         row.inference_api_key = "row-key"
         session.add(row)
         await session.flush()
-        # Re-read: `ProjectAgent` snapshots the user at construction, and in
-        # production the pool is evicted on every user write so the snapshot is
-        # always current. A stale object here would trip the agent's own guard.
-        alice = UserPublicWithConfig.model_validate(row)
+        # Re-read: `ProjectAgent` snapshots the settings at construction, and in
+        # production the pool is evicted on every settings write so the snapshot
+        # is always current. A stale object here would trip the agent's own guard.
+        local = LocalSettingsPublic.model_validate(row)
 
-        project = await seed_project(session, alice, name="alices-project")
-        with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
+        project = await seed_project(session, name="the-project")
+        with agent_under_test(project, local, step_model([say("done")])) as (agent, _):
             with api_client(session, agent=agent) as (client, _):
                 response = await client.post(
-                    self.RUN.format(name=project.name),
-                    json={"user_prompt": "hi"},
-                    headers={"X-Vista-User-Email": alice.email},
+                    self.RUN.format(name=project.name), json={"user_prompt": "hi"}
                 )
 
         assert response.status_code == 200, response.text
@@ -642,16 +666,13 @@ class TestHttpSurface:
         missing credential must not gate them — a researcher has to be able to
         look around before they have a key.
         """
-        from harness import api_client, seed_project, seed_user
+        from harness import api_client, seed_project
 
         self._no_credential(monkeypatch)
-        alice = await seed_user(session)
-        await seed_project(session, alice, name="alices-project")
+        await seed_project(session, name="the-project")
 
         with api_client(session) as (client, _):
-            response = await client.get(
-                path, headers={"X-Vista-User-Email": alice.email}
-            )
+            response = await client.get(path)
 
         assert response.status_code == 200, response.text
 
@@ -678,17 +699,16 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
         parse_sse,
         scripted_model,
         seed_project,
-        seed_user,
     )
     from vista_backend.agents.inference import rejected_credential_detail
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, name="alices-project")
+    local = await local_settings.get_public(session)
+    project = await seed_project(session, name="the-project")
 
     from vista_backend.services import chat_session as chat_session_service
 
     conversation = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     conversation_id = str(conversation.id)
     await session.commit()
@@ -696,16 +716,15 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
     def reject(messages, info):
         raise ModelHTTPError(status_code=401, model_name="claude-sonnet")
 
-    with agent_under_test(project, alice, scripted_model(reject)) as (agent, _):
+    with agent_under_test(project, local, scripted_model(reject)) as (agent, _):
         with api_client(session, agent=agent) as (client, _):
             response = await client.post(
-                "/projects/alices-project/agent/run",
+                "/projects/the-project/agent/run",
                 json={
                     "user_prompt": "hi",
                     "stream": True,
                     "chat_session_id": conversation_id,
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
 
     assert response.status_code == 200, response.text
@@ -728,21 +747,20 @@ async def test_rejected_credential_without_a_conversation_is_a_409(session):
     from pydantic_ai.exceptions import ModelHTTPError
 
     from harness import agent_under_test, api_client, scripted_model
-    from harness import seed_project, seed_user
+    from harness import seed_project
     from vista_backend.agents.inference import rejected_credential_detail
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, name="alices-project")
+    local = await local_settings.get_public(session)
+    project = await seed_project(session, name="the-project")
 
     def reject(messages, info):
         raise ModelHTTPError(status_code=403, model_name="claude-sonnet")
 
-    with agent_under_test(project, alice, scripted_model(reject)) as (agent, _):
+    with agent_under_test(project, local, scripted_model(reject)) as (agent, _):
         with api_client(session, agent=agent) as (client, _):
             response = await client.post(
-                "/projects/alices-project/agent/run",
+                "/projects/the-project/agent/run",
                 json={"user_prompt": "hi", "stream": False},
-                headers={"X-Vista-User-Email": alice.email},
             )
 
     assert response.status_code == 409, response.text
@@ -761,15 +779,15 @@ async def test_other_provider_errors_still_propagate(session):
     """
     from pydantic_ai.exceptions import ModelHTTPError
 
-    from harness import agent_under_test, scripted_model, seed_project, seed_user
+    from harness import agent_under_test, scripted_model, seed_project
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, name="alices-project")
+    local = await local_settings.get_public(session)
+    project = await seed_project(session, name="the-project")
 
     def outage(messages, info):
         raise ModelHTTPError(status_code=503, model_name="claude-sonnet")
 
-    with agent_under_test(project, alice, scripted_model(outage)) as (agent, _):
+    with agent_under_test(project, local, scripted_model(outage)) as (agent, _):
         with pytest.raises(ModelHTTPError) as excinfo:
             async for _ in agent.run_stream(user_prompt="hi"):
                 pass
@@ -895,7 +913,7 @@ class TestCitationCredentials:
     Citation extraction has to see a key entered in the settings modal.
 
     `build_rag` resolves its LLM from the process environment, which cannot
-    reach an encrypted value in the user's row. Without the carrier built here,
+    reach an encrypted value in the settings row. Without the carrier built here,
     a researcher on a fresh install uploads PDFs, gets searchable chunks, and
     silently gets no titles, authors, or DOIs.
     """
@@ -929,16 +947,14 @@ class TestCitationCredentials:
         from vista_backend.utils.indexer import has_llm_credentials
 
         self._scrubbed(monkeypatch)
-        user = UserPublicWithConfig(
-            id=uuid.uuid4(),
-            email="researcher@example.org",
-            is_admin=False,
+        local = LocalSettingsPublic(
+            install_id=uuid.uuid4(),
             inference_provider="custom",
             inference_custom_api_key="sk-from-the-settings-modal",
             inference_base_url="https://endpoint.example/v1",
             inference_model="openai:my-model",
         )
-        credentials = citation_credentials(user)
+        credentials = citation_credentials(local)
         assert credentials.is_usable is True
         assert has_llm_credentials(credentials) is True
         assert credentials.api_key == "sk-from-the-settings-modal"
@@ -954,15 +970,13 @@ class TestCitationCredentials:
 
         self._scrubbed(monkeypatch)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
-        user = UserPublicWithConfig(
-            id=uuid.uuid4(),
-            email="researcher@example.org",
-            is_admin=False,
+        local = LocalSettingsPublic(
+            install_id=uuid.uuid4(),
             inference_provider="custom",
             inference_custom_api_key="custom-token",
             inference_base_url="https://custom.example/v1",
         )
-        credentials = citation_credentials(user)
+        credentials = citation_credentials(local)
         assert credentials.disabled is True
         assert has_llm_credentials(credentials) is False
 
@@ -975,14 +989,12 @@ class TestCitationCredentials:
         from vista_backend.agents.inference import citation_credentials
 
         self._scrubbed(monkeypatch)
-        user = UserPublicWithConfig(
-            id=uuid.uuid4(),
-            email="researcher@example.org",
-            is_admin=False,
+        local = LocalSettingsPublic(
+            install_id=uuid.uuid4(),
             inference_api_key="sk-x",
             inference_model="openai:claude-sonnet",
         )
-        assert citation_credentials(user).model == "claude-sonnet"
+        assert citation_credentials(local).model == "claude-sonnet"
 
     def test_supplied_credential_beats_the_environment(self, monkeypatch):
         """
@@ -994,10 +1006,8 @@ class TestCitationCredentials:
 
         monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://environment.example/v1")
-        user = UserPublicWithConfig(
-            id=uuid.uuid4(),
-            email="researcher@example.org",
-            is_admin=False,
+        local = LocalSettingsPublic(
+            install_id=uuid.uuid4(),
             inference_provider="custom",
             inference_custom_api_key="sk-from-the-row",
             inference_base_url="https://row.example/v1",
@@ -1007,7 +1017,7 @@ class TestCitationCredentials:
         _get_text_rag_cls()  # puts the repo root on sys.path
         import build_rag
 
-        resolved = build_rag._resolve_llm_config(60.0, citation_credentials(user))
+        resolved = build_rag._resolve_llm_config(60.0, citation_credentials(local))
         assert resolved.model == "row-model"
         assert str(resolved.client.base_url).rstrip("/") == "https://row.example/v1"
 

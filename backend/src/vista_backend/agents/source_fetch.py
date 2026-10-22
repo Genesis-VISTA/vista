@@ -5,7 +5,7 @@ The agent's sandbox is the wrong place to reach a code host: it holds no
 credentials (and must not, since the agent can read anything in it), and on a
 network that re-signs HTTPS, such as ORNL's, it does not trust the proxy's
 certificate authority. The backend has both, as it does for
-`POST /skills/import`. So the agent asks for a repository by URL
+skill import (`agents/skill_repo`). So the agent asks for a repository by URL
 (`fetch_repository`), and the backend downloads it at a pinned commit into the
 agent's own workspace, where the sandbox reads it offline.
 
@@ -131,7 +131,9 @@ def _request(
     name = "GitHub" if host == "github" else "GitLab"
     req = urllib.request.Request(url, headers={"User-Agent": "vista-backend"})
     if token:
-        req.add_header("Authorization", f"Bearer {token}")
+        # Unredirected: urllib copies ordinary headers onto a redirect to any
+        # host, even plain http, and the token is for this host alone.
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         # The guard above restricts this to the GitHub and GitLab APIs over https.
         with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310

@@ -128,6 +128,8 @@ class DebateOrchestrator:
         runnable: dict[str, list[str]] | None = None,
         job_usage: dict[str, str] | None = None,
         knowledge_bases: list[str] | None = None,
+        models: dict[DebateRole, str | None] | None = None,
+        model_names: dict[str, str] | None = None,
     ) -> None:
         self.client = client
         self.roles = roles or RoleAgents()
@@ -136,6 +138,10 @@ class DebateOrchestrator:
         self.runnable = runnable or {}
         self.job_usage = job_usage or {}
         self.knowledge_bases = knowledge_bases or []
+        # Each role's own model where it has one: what `_add_roster` records.
+        self.models = models or {}
+        # The model each role resolves to, written on its posts.
+        self.model_names = model_names or {}
 
     # -- setup ------------------------------------------------------------- #
 
@@ -144,7 +150,6 @@ class DebateOrchestrator:
         session: AsyncSession,
         *,
         project_id: uuid.UUID,
-        user_id: uuid.UUID,
         topic: str,
         framing: str | None = None,
         rounds: int | None = None,
@@ -159,7 +164,6 @@ class DebateOrchestrator:
         run = await debate_service.create_debate(
             session,
             project_id=project_id,
-            user_id=user_id,
             topic=topic,
             thread_id=thread_id,
             framing=framing,
@@ -212,6 +216,7 @@ class DebateOrchestrator:
                 participant=Participant(identity=identity_for(role, run_id), role=role),
                 debate_role=role,
                 granted_tools=self.roles.granted.get(role, []),
+                model=self.models.get(role),
             )
 
     async def _participants(
@@ -444,6 +449,11 @@ class DebateOrchestrator:
                 post_id=post.id,
                 tools=[call.stored() for call in deps.tool_calls],
             )
+            model_name = self.model_names.get(participant.role)
+            if model_name:
+                await debate_service.record_post_model(
+                    session, run_id=run.id, post_id=post.id, model=model_name
+                )
         if self.on_post is not None:
             await self.on_post(post)
         return post

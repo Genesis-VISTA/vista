@@ -20,7 +20,6 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-ADMIN_EMAIL = "vista-test-admin@americansciencecloud.org"
 DEFAULT_BASE = "http://127.0.0.1:8001"
 
 
@@ -88,11 +87,8 @@ def live_http() -> httpx.Client:
     base = _base_url()
     with httpx.Client(base_url=base, timeout=600.0) as client:
         try:
-            # Cheap liveness: list projects as admin (dev header auth).
-            resp = client.get(
-                "/projects",
-                headers={"X-Vista-User-Email": ADMIN_EMAIL},
-            )
+            # Cheap liveness: list projects.
+            resp = client.get("/projects")
             if resp.status_code >= 500:
                 pytest.skip(f"backend unavailable at {base}: {resp.status_code}")
         except httpx.HTTPError as exc:
@@ -109,10 +105,8 @@ def test_golden_prompt_soft_tool_allowlist(
     live_http: httpx.Client, case: GoldenCase
 ) -> None:
     """Soft-assert preferred tools; wording of the final answer is ignored."""
-    headers = {"X-Vista-User-Email": ADMIN_EMAIL}
     resp = live_http.post(
         f"/projects/{case.project}/agent/run",
-        headers=headers,
         json={"user_prompt": case.prompt, "stream": False},
     )
     if resp.status_code == 404:

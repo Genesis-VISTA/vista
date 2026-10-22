@@ -157,18 +157,17 @@ def _scripted_planner_llm():
 
 
 @pytest.mark.anyio
-async def test_function_model_drives_full_campaign(session, alice):
+async def test_function_model_drives_full_campaign(session):
     project = ProjectTable(name="driver-project")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
 
     progress: list[str] = []
     deps = CampaignDriverDeps(
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         get_session=lambda: session,
         get_planner=lambda _s, _run: _fake_planner_async(),
@@ -208,22 +207,21 @@ async def _fake_planner_async() -> CampaignPlanner:
 
 
 @pytest.mark.anyio
-async def test_tools_reject_run_from_another_project(session, alice, bob):
-    # A campaign owned by bob in his own project...
-    bob_project = ProjectTable(name="bob-driver")
-    session.add(bob_project)
+async def test_tools_reject_run_from_another_project(session):
+    # A campaign in another project...
+    other_project = ProjectTable(name="other-driver")
+    session.add(other_project)
     await session.flush()
     other = await campaign_service.create_campaign(
         session,
-        project_id=bob_project.id,
-        user_id=bob.id,
+        project_id=other_project.id,
         domain="mockdomain",
         planner_skill="mock-planner",
     )
 
-    # ...is not addressable from alice's project's tools (access boundary).
-    alice_project = ProjectTable(name="alice-driver")
-    session.add(alice_project)
+    # ...is not addressable from this project's tools (project scope).
+    this_project = ProjectTable(name="this-driver")
+    session.add(this_project)
     await session.flush()
 
     captured = {}
@@ -244,8 +242,7 @@ async def test_tools_reject_run_from_another_project(session, alice, bob):
         )
 
     deps = CampaignDriverDeps(
-        project_id=alice_project.id,
-        user_id=alice.id,
+        project_id=this_project.id,
         session_id=None,
         get_session=lambda: session,
         get_planner=lambda _s, _r: _fake_planner_async(),
@@ -254,12 +251,12 @@ async def test_tools_reject_run_from_another_project(session, alice, bob):
     register_campaign_tools(agent, deps)
 
     await agent.run("status?")
-    # The tool raised ModelRetry because the run isn't in alice's project.
+    # The tool raised ModelRetry because the run isn't in this project.
     assert "not found in this project" in captured["retry"]
 
 
 @pytest.mark.anyio
-async def test_start_campaign_requires_a_chat_session(session, alice):
+async def test_start_campaign_requires_a_chat_session(session):
     # Multi-session: a stateless run (session_id=None) can't host a durable, resumable campaign.
     project = ProjectTable(name="stateless-driver")
     session.add(project)
@@ -291,7 +288,6 @@ async def test_start_campaign_requires_a_chat_session(session, alice):
 
     deps = CampaignDriverDeps(
         project_id=project.id,
-        user_id=alice.id,
         session_id=None,
         get_session=lambda: session,
         get_planner=lambda _s, _r: _fake_planner_async(),
@@ -303,3 +299,43 @@ async def test_start_campaign_requires_a_chat_session(session, alice):
     assert "active conversation" in captured["retry"]
     # No campaign was created in a stateless run.
     assert await campaign_service.list_campaigns(session, project_id=project.id) == []
+
+
+@pytest.mark.anyio
+async def test_start_campaign_records_the_launching_agents_model(session):
+    from sqlmodel import select
+
+    from vista_backend.db.schemas import CampaignRunTable
+
+    project = ProjectTable(name="model-recording-driver")
+    session.add(project)
+    await session.flush()
+    chat = await chat_session_service.get_or_create_chat_session(
+        session, project_id=project.id
+    )
+
+    def driver(messages, info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart("started")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "start_campaign",
+                    {"planner_skill": "mock-planner", "domain": "mockdomain"},
+                )
+            ]
+        )
+
+    deps = CampaignDriverDeps(
+        project_id=project.id,
+        session_id=chat.id,
+        get_session=lambda: session,
+        get_planner=lambda _s, _r: _fake_planner_async(),
+        model="openai:chat-model",
+    )
+    agent = Agent(model=FunctionModel(driver))
+    register_campaign_tools(agent, deps)
+    await agent.run("go")
+
+    run = (await session.exec(select(CampaignRunTable))).one()
+    assert run.model == "openai:chat-model"

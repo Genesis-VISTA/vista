@@ -185,9 +185,7 @@ def deployment_db_stats(db_path: Path) -> dict:
     try:
         q = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
         stats = {
-            "users": q("SELECT COUNT(*) FROM app_user"),
             "projects": q("SELECT COUNT(*) FROM project"),
-            "project_memberships": q("SELECT COUNT(*) FROM project_member"),
             "skills": q("SELECT COUNT(*) FROM skill"),
             "skills_published": q("SELECT COUNT(*) FROM skill WHERE is_public"),
             "knowledge_bases": q("SELECT COUNT(*) FROM knowledge_base"),
@@ -249,7 +247,7 @@ def render_deployment(db: dict, usage: dict) -> str:
         lines.append(f"| {key} | {value if value is not None else 'n/a'} |")
     if db:
         lines += ["", (
-            f"Deployment: {db['users']} users, {db['projects']} projects, "
+            f"Deployment: {db['projects']} projects, "
             f"{db['skills']} skills ({db['skills_published']} published, "
             f"{db['skill_installs']} installs), {db['knowledge_bases']} knowledge bases; "
             f"{usage['jobs_submitted']} jobs across {usage['campaigns']} campaigns."

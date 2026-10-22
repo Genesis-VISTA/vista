@@ -1,7 +1,14 @@
 import pytest
+from sqlalchemy import create_engine, inspect, text
+from sqlmodel import SQLModel
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
-from vista_backend.db.schemas import ChatSessionCreate, ChatSessionUpdate, ProjectCreate
+from vista_backend.db.schemas import (
+    ChatSessionCreate,
+    ChatSessionPublic,
+    ChatSessionUpdate,
+    ProjectCreate,
+)
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import project as project_service
 
@@ -13,32 +20,26 @@ def _kind(message):
 
 
 @pytest.mark.anyio
-async def test_create_and_list_chat_sessions_support_multiple_per_project(
-    session, alice
-):
+async def test_create_and_list_chat_sessions_support_multiple_per_project(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="session-project", description=None, system_prompt=None),
-        alice,
     )
 
     first = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         payload=ChatSessionCreate(title="First"),
     )
     second = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         payload=ChatSessionCreate(title="Second"),
     )
 
     listed = await chat_session_service.list_chat_sessions(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
 
     assert first.id != second.id
@@ -48,25 +49,20 @@ async def test_create_and_list_chat_sessions_support_multiple_per_project(
 
 
 @pytest.mark.anyio
-async def test_update_chat_session_persists_messages_but_ignores_history(
-    session, alice
-):
+async def test_update_chat_session_persists_messages_but_ignores_history(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="persist-project", description=None, system_prompt=None),
-        alice,
     )
 
     created = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
 
     updated = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=created.id,
         updates=ChatSessionUpdate(
             message_history=[
@@ -102,7 +98,6 @@ async def test_update_chat_session_persists_messages_but_ignores_history(
     reloaded = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=updated.id,
     )
 
@@ -113,32 +108,26 @@ async def test_update_chat_session_persists_messages_but_ignores_history(
 
 
 @pytest.mark.anyio
-async def test_update_chat_session_title_only_preserves_existing_history(
-    session, alice
-):
+async def test_update_chat_session_title_only_preserves_existing_history(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="rename-project", description=None, system_prompt=None),
-        alice,
     )
 
     created = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
 
     await chat_session_service.save_message_history(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=created.id,
         message_history=[ModelRequest(parts=[UserPromptPart(content="hello")])],
     )
     created = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=created.id,
         updates=ChatSessionUpdate(
             messages=[
@@ -154,7 +143,6 @@ async def test_update_chat_session_title_only_preserves_existing_history(
     renamed = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=created.id,
         updates=ChatSessionUpdate(title="Renamed conversation"),
     )
@@ -165,13 +153,10 @@ async def test_update_chat_session_title_only_preserves_existing_history(
 
 
 @pytest.mark.anyio
-async def test_effective_message_history_is_stateless_without_chat_session_id(
-    session, alice
-):
+async def test_effective_message_history_is_stateless_without_chat_session_id(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="history-project", description=None, system_prompt=None),
-        alice,
     )
 
     fallback = [
@@ -183,7 +168,6 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(
     effective = await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
-        user_id=alice.id,
         fallback_history=fallback,
     )
     assert len(effective) == 1
@@ -192,19 +176,16 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(
     listed = await chat_session_service.list_chat_sessions(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
     assert listed == []
 
     persisted_session = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
     await chat_session_service.save_message_history(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=persisted_session.id,
         message_history=[
             {
@@ -216,7 +197,6 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(
     persisted = await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=persisted_session.id,
         fallback_history=fallback,
     )
@@ -225,11 +205,10 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(
 
 
 @pytest.mark.anyio
-async def test_append_message_history_extends_existing_session_history(session, alice):
+async def test_append_message_history_extends_existing_session_history(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="append-project", description=None, system_prompt=None),
-        alice,
     )
 
     prior_history = [
@@ -248,13 +227,11 @@ async def test_append_message_history_extends_existing_session_history(session, 
     created = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
 
     await chat_session_service.append_message_history(
         session,
         project_id=project.id,
-        user_id=alice.id,
         prior_history=prior_history,
         new_messages=new_messages,
         chat_session_id=created.id,
@@ -263,7 +240,6 @@ async def test_append_message_history_extends_existing_session_history(session, 
     reloaded = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=created.id,
     )
     assert [message["kind"] for message in reloaded.message_history] == [
@@ -273,52 +249,44 @@ async def test_append_message_history_extends_existing_session_history(session, 
 
 
 @pytest.mark.anyio
-async def test_delete_chat_session_removes_only_target_session(session, alice):
+async def test_delete_chat_session_removes_only_target_session(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="delete-project", description=None, system_prompt=None),
-        alice,
     )
 
     first = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         payload=ChatSessionCreate(title="First"),
     )
     second = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         payload=ChatSessionCreate(title="Second"),
     )
 
     await chat_session_service.delete_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=first.id,
     )
 
     listed = await chat_session_service.list_chat_sessions(
         session,
         project_id=project.id,
-        user_id=alice.id,
     )
 
     assert [row.id for row in listed] == [second.id]
 
 
 @pytest.mark.anyio
-async def test_ack_run_clears_the_unseen_flag_and_stored_events(session, alice):
+async def test_ack_run_clears_the_unseen_flag_and_stored_events(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="ack-project", description=None, system_prompt=None),
-        alice,
     )
-    row = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
-    )
+    row = await chat_session_service.create_chat_session(session, project_id=project.id)
     row.run_state, row.run_unseen, row.run_events = "done", True, [{"event": "x"}]
     session.add(row)
     await session.flush()
@@ -326,7 +294,6 @@ async def test_ack_run_clears_the_unseen_flag_and_stored_events(session, alice):
     acked = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=row.id,
         updates=ChatSessionUpdate(ack_run=True),
     )
@@ -339,15 +306,12 @@ async def test_ack_run_clears_the_unseen_flag_and_stored_events(session, alice):
 
 
 @pytest.mark.anyio
-async def test_ack_run_leaves_a_running_turn_alone(session, alice):
+async def test_ack_run_leaves_a_running_turn_alone(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="ack-running", description=None, system_prompt=None),
-        alice,
     )
-    row = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
-    )
+    row = await chat_session_service.create_chat_session(session, project_id=project.id)
     row.run_state = "running"
     session.add(row)
     await session.flush()
@@ -355,9 +319,63 @@ async def test_ack_run_leaves_a_running_turn_alone(session, alice):
     acked = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
-        user_id=alice.id,
         chat_session_id=row.id,
         updates=ChatSessionUpdate(ack_run=True),
     )
 
     assert acked.run_state == "running"
+
+
+@pytest.mark.anyio
+async def test_chat_model_set_clear_and_untouched_round_trip(session):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="chat-model-project", description=None, system_prompt=None),
+    )
+    chat = await chat_session_service.create_chat_session(
+        session, project_id=project.id
+    )
+    assert chat.inference_model is None
+
+    async def update(**fields):
+        return await chat_session_service.update_chat_session(
+            session,
+            project_id=project.id,
+            chat_session_id=chat.id,
+            updates=ChatSessionUpdate(**fields),
+        )
+
+    row = await update(inference_model="openai:gpt-oss")
+    assert row.inference_model == "openai:gpt-oss"
+    assert ChatSessionPublic.model_validate(row).inference_model == "openai:gpt-oss"
+
+    # Absent from the update: untouched.
+    row = await update(title="Renamed")
+    assert row.inference_model == "openai:gpt-oss"
+
+    # Explicit null: back to following the default.
+    row = await update(inference_model=None)
+    assert row.inference_model is None
+
+
+def test_chat_model_column_reaches_an_existing_database(tmp_path):
+    from vista_backend.db import schemas  # noqa: F401  (registers the tables)
+    from vista_backend.db.db import _add_missing_columns
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+
+    def build() -> None:
+        with engine.begin() as conn:
+            SQLModel.metadata.create_all(conn)
+            _add_missing_columns(conn)
+
+    def columns() -> set[str]:
+        return {c["name"] for c in inspect(engine).get_columns("chat_session")}
+
+    build()
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE chat_session DROP COLUMN "inference_model"'))
+    assert "inference_model" not in columns()
+
+    build()
+    assert "inference_model" in columns()

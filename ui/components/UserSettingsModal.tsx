@@ -12,13 +12,13 @@ import {
 import { useSettingsAutosave, type FieldMark, type SaveOutcome } from "@/lib/settings-autosave";
 import {
   completeGlobusLogin,
-  fetchCurrentUserWithConfig,
+  fetchSettings,
   startGlobusLogin,
-  updateCurrentUser,
+  updateSettings,
   type GlobusCluster,
-  type UserPublicWithConfig,
-  type UserSelfUpdate,
-} from "@/lib/user";
+  type LocalSettings,
+  type LocalSettingsUpdate,
+} from "@/lib/settings";
 import { refreshAgentSettings, useAgentSettings } from "@/lib/agent-settings";
 import {
   HPC_CLUSTERS,
@@ -45,13 +45,15 @@ type Section = "appearance" | "profile" | "agent" | "repositories" | "compute" |
 const REPO_TOKEN_FIELDS = ["github_token", "gitlab_token"] as const;
 type RepoTokenField = (typeof REPO_TOKEN_FIELDS)[number];
 
-/** Every free-text field the modal edits, as named in `UserSelfUpdate`. */
+/** Every free-text field the modal edits, as named in `LocalSettingsUpdate`. */
 const TEXT_FIELDS = [
   "inference_api_key",
   "inference_mag_api_key",
   "inference_olcf_api_key",
   "inference_custom_api_key",
   "inference_base_url",
+  "display_name",
+  "email",
   "research_role",
   "research_institution",
   "nersc_account",
@@ -63,7 +65,7 @@ const TEXT_FIELDS = [
   "odo_s3m_token",
   "frontier_s3m_token",
   "nersc_iri_token",
-] as const satisfies ReadonlyArray<keyof UserSelfUpdate & keyof UserPublicWithConfig>;
+] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
 type TextField = (typeof TEXT_FIELDS)[number];
 
@@ -78,14 +80,14 @@ type Draft = {
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
   interests: string[];
-  preferredUnits: NonNullable<UserSelfUpdate["preferred_units"]>;
-  technicalDepth: NonNullable<UserSelfUpdate["technical_depth"]>;
-  evidencePreference: NonNullable<UserSelfUpdate["evidence_preference"]>;
+  preferredUnits: NonNullable<LocalSettingsUpdate["preferred_units"]>;
+  technicalDepth: NonNullable<LocalSettingsUpdate["technical_depth"]>;
+  evidencePreference: NonNullable<LocalSettingsUpdate["evidence_preference"]>;
   personalizeResponses: boolean;
   hidden: Set<HpcCluster>;
 };
 
-function draftFrom(user: UserPublicWithConfig): Draft {
+function draftFrom(user: LocalSettings): Draft {
   const text = {} as Record<TextField, string>;
   for (const field of TEXT_FIELDS) text[field] = user[field] ?? "";
   return {
@@ -102,7 +104,7 @@ function draftFrom(user: UserPublicWithConfig): Draft {
 }
 
 /** The fields the agent settings view reads, so a save refreshes the picker. */
-const AGENT_FIELDS: Array<keyof UserSelfUpdate> = [
+const AGENT_FIELDS: Array<keyof LocalSettingsUpdate> = [
   "inference_provider",
   "inference_api_key",
   "inference_mag_api_key",
@@ -121,7 +123,7 @@ const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
 
 /**
  * The settings each cluster's settings check reads (remote directory,
- * account). The backend recomputes that check from the user row on every
+ * account). The backend recomputes that check from the settings row on every
  * request, even from cache, so a plain refresh shows the change without
  * probing the facility again.
  */
@@ -139,6 +141,8 @@ function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
   if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (
+    field === "display_name" ||
+    field === "email" ||
     field.startsWith("research_") ||
     field === "preferred_units" ||
     field === "technical_depth" ||
@@ -174,6 +178,8 @@ const FIELD_LABELS: Record<string, string> = {
   inference_olcf_api_key: "OLCF Inference S3M token",
   inference_custom_api_key: "Custom endpoint API key",
   inference_base_url: "Inference endpoint",
+  display_name: "Name",
+  email: "Email",
   research_role: "Research role",
   research_institution: "Institution or laboratory",
   research_interests: "Research interests",
@@ -209,10 +215,9 @@ const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
  * The settings modal: four top-level areas (Appearance, Research profile,
  * Models & providers, and Compute) beside one section at a time.
  *
- * Fetches the full `UserPublicWithConfig` view (with decrypted tokens) on
- * open — the nav-rail's cached user is the light view, which intentionally
- * omits secrets. There is no Save: each field saves itself through a
- * single-field `PUT /users/me` (see `lib/settings-autosave.ts`), text after a
+ * Fetches the `LocalSettings` (with decrypted tokens) fresh on open, rather
+ * than reading the nav rail's cached copy. There is no Save: each field saves itself through a
+ * single-field `PUT /settings` (see `lib/settings-autosave.ts`), text after a
  * pause, a secret on blur or paste, a switch or choice at once, and closing
  * sends whatever is still pending. Each field marks its own save (a check, a
  * cross with the reason, or a spinner when slow), a section holding a failed
@@ -228,7 +233,7 @@ export function UserSettingsModal({
   onClose: () => void;
   initialCluster?: HpcCluster;
 }) {
-  const [user, setUser] = useState<UserPublicWithConfig | null>(null);
+  const [user, setUser] = useState<LocalSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -246,7 +251,7 @@ export function UserSettingsModal({
   const pasted = useRef(new Set<string>());
 
   async function saveField(field: string, value: unknown) {
-    await updateCurrentUser({ [field]: value } as UserSelfUpdate);
+    await updateSettings({ [field]: value } as LocalSettingsUpdate);
     // Fix a credential and see it straight away: recheck just that cluster
     // rather than wait for the next poll.
     const cluster = CREDENTIAL_CLUSTER[field];
@@ -260,7 +265,7 @@ export function UserSettingsModal({
     if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) {
       const token = field as RepoTokenField;
       setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [token]: "" } } : d));
-      setUser(await fetchCurrentUserWithConfig());
+      setUser(await fetchSettings());
     }
   }
 
@@ -280,7 +285,7 @@ export function UserSettingsModal({
     setLoading(true);
     setLoadError(null);
     try {
-      const loaded = await fetchCurrentUserWithConfig();
+      const loaded = await fetchSettings();
       const next = draftFrom(loaded);
       const seeded: Record<string, unknown> = { inference_provider: next.provider };
       for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
@@ -296,7 +301,7 @@ export function UserSettingsModal({
       setUser(loaded);
       setDraft(next);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load user.");
+      setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     } finally {
       setLoading(false);
     }
@@ -434,13 +439,13 @@ export function UserSettingsModal({
     autosave.edit("personalize_responses", personalizeResponses, "now");
   }
 
-  // Before the user loads, every cluster reads as shown: the list is the
+  // Before the settings load, every cluster reads as shown: the list is the
   // same either way, and only the "hidden" markers wait for it.
   const hidden = draft?.hidden ?? new Set<HpcCluster>();
 
   let content: ReactNode;
   if (section === "appearance") {
-    // The theme is this machine's, not the user row's, so it needs nothing
+    // The theme is this machine's, not the settings row's, so it needs nothing
     // loaded and applies at once.
     content = <AppearanceSection />;
   } else if (!user || !draft) {
@@ -804,6 +809,30 @@ function ResearchProfileSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body settings-profile-body">
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">About you</h3>
+            <p className="user-settings-hint">Not part of the profile VISTA personalizes responses with.</p>
+          </div>
+          <div className="settings-profile-grid">
+            <SavedField
+              label="Name"
+              field="display_name"
+              binding={bind("display_name", "text")}
+              placeholder="e.g. Ada Lovelace"
+              hint="Shown on your posts in the Hypothesis Lab."
+            />
+            <SavedField
+              label="Email"
+              field="email"
+              type="email"
+              binding={bind("email", "text")}
+              placeholder="e.g. you@ornl.gov"
+              hint="Where campaign job notifications go. Nothing is sent without it."
+            />
+          </div>
+        </div>
+
         <div className="settings-profile-switch">
           <span className="settings-profile-switch-icon" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1140,7 +1169,7 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
 
 /**
  * The inference provider and its credential. The options come from the
- * backend (`GET /users/me/inference`), never from a list of the interface's
+ * backend (`GET /settings/inference`), never from a list of the interface's
  * own; there is no Model field, since the model picker is the one place to
  * choose a model.
  */
@@ -1312,7 +1341,7 @@ function RepositoriesSection({
   bindToken,
   onRemove,
 }: {
-  user: UserPublicWithConfig;
+  user: LocalSettings;
   bindToken: (field: RepoTokenField) => FieldBinding;
   onRemove: (field: RepoTokenField) => void;
 }) {
@@ -1321,9 +1350,9 @@ function RepositoriesSection({
       <SectionHeader title="Repositories">
         <span className="user-settings-hint">
           Tokens VISTA uses to reach your private repositories. Importing a skill and the
-          agent&rsquo;s repository fetches always use the token here. A Hypothesis Lab forum uses
-          its project&rsquo;s own token if it has one, else the token here for the forum&rsquo;s
-          host, else your system git&rsquo;s credentials.
+          agent&rsquo;s repository fetches always use the token here, and so does a Hypothesis
+          Lab forum on github.com or gitlab.com. A forum on any other host uses your system
+          git&rsquo;s credentials: an SSH key or a credential helper.
         </span>
       </SectionHeader>
       <div className="settings-section-body">
@@ -1419,7 +1448,7 @@ function ClusterFields({
   bind,
 }: {
   cluster: HpcCluster;
-  user: UserPublicWithConfig;
+  user: LocalSettings;
   bind: Bind;
 }) {
   switch (cluster) {
@@ -1537,6 +1566,7 @@ function SavedField({
   field,
   binding,
   secret = false,
+  type,
   placeholder,
   hint,
 }: {
@@ -1544,6 +1574,8 @@ function SavedField({
   field: TextField;
   binding: FieldBinding;
   secret?: boolean;
+  /** The input's type, for a field that is not plain text; `secret` wins over it. */
+  type?: "email";
   placeholder: string;
   hint: ReactNode;
 }) {
@@ -1553,7 +1585,7 @@ function SavedField({
       <span className="settings-input-wrap" data-marked={binding.mark ? true : undefined}>
         <input
           className="input"
-          type={secret ? "password" : undefined}
+          type={secret ? "password" : type}
           placeholder={placeholder}
           autoComplete={secret ? "off" : undefined}
           spellCheck={false}
@@ -1721,7 +1753,7 @@ const CREDENTIAL_CLUSTER_FIELDS = new Set(Object.values(CREDENTIAL_CLUSTER));
  * here — which is the prompt to connect again, and the only honest answer.
  */
 function globusConnected(
-  user: UserPublicWithConfig,
+  user: LocalSettings,
   cluster: GlobusCluster,
 ): boolean {
   const transfer =
@@ -1743,7 +1775,7 @@ function globusConnected(
  * single-use, and the backend stores the result itself, so there is nothing
  * for a field save to carry, and it takes effect at once.
  *
- * `initiallyConnected` seeds the display from the loaded user and is not read
+ * `initiallyConnected` seeds the display from the loaded settings and is not read
  * again. Re-fetching after a connection would rebuild the modal's draft under
  * fields still being edited.
  */

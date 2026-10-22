@@ -289,45 +289,6 @@ text read from papers attached to the project.
 - **AND** the post SHALL record the full size and SHA-256
 - **AND** the full receipts SHALL remain readable on the posting install
 
-### Requirement: The project's forum remote is verified when saved
-
-Saving a project with a forum repository SHALL initialise that project's working
-repository and reach the remote before the save succeeds; an unreachable or
-unauthorised remote SHALL fail the save with git's error. Pushes and fetches
-to an `https://` remote SHALL use the project's access token when it has one,
-else the user's Settings token for the remote's host (github.com or gitlab.com),
-and the user's own git credentials otherwise; git MUST NOT prompt interactively.
-Pointing a project at a repository that already holds threads SHALL join them.
-
-#### Scenario: A typo in the repository URL
-
-- **WHEN** a user saves a project with a forum URL that does not resolve
-- **THEN** the save SHALL fail and show git's error in the dialog
-
-#### Scenario: Joining an existing forum
-
-- **GIVEN** a forum repository that already holds threads from another install
-- **WHEN** a user saves a project pointing at it
-- **THEN** those threads SHALL be listed for the project
-
-#### Scenario: A token that cannot push
-
-- **GIVEN** a private `https://` forum repository
-- **WHEN** a user saves the project with a token the forge refuses
-- **THEN** the save SHALL fail and show git's error in the dialog
-
-#### Scenario: The Settings token serves a project without its own
-
-- **GIVEN** a user with a GitHub token in Settings, and a project with no token of its own
-- **WHEN** they save the project with a private `https://github.com/` forum repository the token can write to
-- **THEN** the save SHALL succeed and debates SHALL publish to it
-
-#### Scenario: The project's token wins
-
-- **GIVEN** a user with a GitHub token in Settings, and a project with its own token
-- **WHEN** git fetches or pushes that project's `https://github.com/` forum
-- **THEN** git SHALL send the project's token, not the Settings one
-
 ### Requirement: Hermetic tests against real git
 
 PR CI SHALL exercise the forum client against real git, using temporary local
@@ -346,63 +307,6 @@ is disabled or git is absent.
 - **WHEN** the client tests run
 - **THEN** at least one test SHALL have two working repositories race a push to one bare remote and assert both posts land
 
-### Requirement: A project may hold an access token for its forum repository
-
-A project MAY store an access token for its forum repository. The token SHALL be
-stored encrypted and MUST NOT be returned by any API response or carried by the
-project model an agent is built from; responses SHALL say only whether one is
-stored. A save that leaves the token out SHALL keep the stored one, and an empty
-token SHALL remove it. Git SHALL receive the forum's token, whether the project's
-or the user's Settings token, only on commands that reach the remote, only for an
-`https://` remote, and scoped to that remote's URL. It MUST NOT appear in a
-command's arguments or in the repository's configuration. A project's token
-SHALL be used for its forum only, never for importing skills or fetching
-repositories.
-
-#### Scenario: The token is never read back
-
-- **WHEN** a user saves a project with a forum token
-- **THEN** the response SHALL say a token is stored and SHALL NOT contain it
-- **AND** the database SHALL hold it encrypted
-
-#### Scenario: Editing a project keeps its token
-
-- **GIVEN** a project with a stored forum token
-- **WHEN** a user saves the project without entering a token
-- **THEN** the stored token SHALL be kept
-
-#### Scenario: The token goes only to the forum repository
-
-- **GIVEN** a project with a token and an `https://` forum URL
-- **WHEN** git fetches or pushes the forum
-- **THEN** git SHALL send the token to that URL and to no other
-- **AND** a forum URL over plain `http://` or SSH SHALL receive no token
-
-#### Scenario: The dialog says which token applies
-
-- **GIVEN** a user with a GitHub token in Settings
-- **WHEN** they enter an `https://github.com/` forum URL with no project token
-- **THEN** the dialog SHALL say the Settings token will be used
-
-#### Scenario: The project token is an override
-
-- **WHEN** a user views the project dialog's token field
-- **THEN** it SHALL say that a token entered there overrides the Settings token for this
-  project's forum only, and is not used for importing skills or fetching repositories
-
-### Requirement: The project dialog helps make a forum token
-
-For an `https://` forum URL on GitHub or a GitLab server, the project dialog SHALL
-offer a link to that forge's token form, pre-filled for the repository with the
-permissions the forum needs, and the steps the form cannot pre-fill. For any
-other host it SHALL name those permissions instead.
-
-#### Scenario: A GitHub repository
-
-- **WHEN** a user enters a `https://github.com/<owner>/<repo>` forum URL and opens "Don't have a token?"
-- **THEN** the dialog SHALL link to GitHub's fine-grained token form for `<owner>` with Contents set to read and write
-- **AND** SHALL say to grant access to `<repo>` only
-
 ### Requirement: Viewing a debate survives a concurrent projection
 
 Copying a thread into the database SHALL treat a post another writer stored
@@ -420,25 +324,58 @@ is being read SHALL be logged and SHALL NOT fail the read.
 - **WHEN** the forum read behind a debate's refresh fails
 - **THEN** reading the debate SHALL still return it
 
-### Requirement: A failed publish names the credential it used
+### Requirement: The forum remote is verified when a project is saved
+
+Saving a project with a forum repository SHALL initialise that project's working
+repository and reach the remote before the save succeeds; an unreachable or
+unauthorised remote SHALL fail the save with git's error. Pushes and fetches
+to an `https://` remote SHALL use the user's Settings token for the remote's host
+(github.com or gitlab.com), and the user's own git credentials otherwise; git
+MUST NOT prompt interactively. A project SHALL NOT hold a token of its own.
+Pointing a project at a repository that already holds threads SHALL join them.
+
+#### Scenario: A typo in the repository URL
+
+- **WHEN** a user saves a project with a forum URL that does not resolve
+- **THEN** the save SHALL fail and show git's error in the dialog
+
+#### Scenario: Joining an existing forum
+
+- **GIVEN** a forum repository that already holds threads from another install
+- **WHEN** a user saves a project pointing at it
+- **THEN** those threads SHALL be listed for the project
+
+#### Scenario: A token that cannot push
+
+- **GIVEN** a private `https://github.com/` forum repository, and a GitHub token in Settings the forge refuses
+- **WHEN** a user saves the project
+- **THEN** the save SHALL fail and show git's error in the dialog
+
+#### Scenario: The Settings token serves the forum
+
+- **GIVEN** a user with a GitHub token in Settings
+- **WHEN** they save the project with a private `https://github.com/` forum repository the token can write to
+- **THEN** the save SHALL succeed and debates SHALL publish to it
+
+#### Scenario: Another host uses the system git
+
+- **GIVEN** a forum on an `https://` host other than github.com or gitlab.com
+- **WHEN** git fetches or pushes that forum
+- **THEN** git SHALL send no token, and the system git's credentials SHALL apply
+
+### Requirement: A failed publish names the Settings token or the system git
 
 When posts cannot be published to a project's forum, the Hypothesis Lab SHALL
 say why, from the most recent failed attempt: either the remote refused the
-credential, naming which one was sent (the project's token, the user's Settings
-token for the host, or the system git's credentials) and where to change it; or
-the remote could not be reached; or, when the cause is neither, git's message.
-A refused credential MUST NOT be reported as the forum being unreachable. The reason SHALL clear once a publish succeeds. The
-token itself MUST NOT appear in the message.
-
-#### Scenario: The project's token is refused
-
-- **GIVEN** a project whose own token cannot push to its forum
-- **WHEN** a debate's post fails to publish
-- **THEN** the lab SHALL say the project's token was refused and point to the project's settings
+credential, naming which one was sent (the Settings token for the host, or the
+system git's credentials) and where to change it; or that the remote could not
+be reached; or else git's message. A refused
+credential MUST NOT be reported as the forum being unreachable. The reason SHALL
+clear once a publish succeeds. The token itself MUST NOT appear in the message.
 
 #### Scenario: The Settings token is refused
 
-- **GIVEN** a project with no token of its own, and a GitHub Settings token that cannot push to its forum
+- **GIVEN** a GitHub Settings token that cannot push to the project's forum
 - **WHEN** a debate's post fails to publish
 - **THEN** the lab SHALL say the GitHub token from Settings was refused and point to Settings
 
@@ -446,7 +383,7 @@ token itself MUST NOT appear in the message.
 
 - **GIVEN** a forum reached with the system git's credentials
 - **WHEN** a post fails to publish because the remote refused them
-- **THEN** the lab SHALL say the system git's credentials were refused, and that a token can be added in Settings or on the project
+- **THEN** the lab SHALL say the system git's credentials were refused, and that a token can be added in Settings for github.com or gitlab.com, or an SSH key or credential helper set up for the system git
 
 #### Scenario: The forum is unreachable
 
@@ -458,3 +395,84 @@ token itself MUST NOT appear in the message.
 - **GIVEN** a failure reason on show
 - **WHEN** the next publish succeeds
 - **THEN** the reason SHALL no longer be shown
+
+#### Scenario: An old record naming the project's token
+
+- **GIVEN** a stored failure that names the project's token as the credential sent
+- **WHEN** the lab page loads
+- **THEN** no failure reason SHALL be shown
+
+### Requirement: Git receives the forum's token only on the way to its remote
+
+Git SHALL receive the forum's Settings token only on commands that reach the
+remote, only for an `https://` remote, and scoped to that remote's URL. It MUST
+NOT appear in a command's arguments or in the repository's configuration. The
+project dialog SHALL say which credential the forum will use: the Settings token
+for its host when one is saved, else the system git's credentials.
+
+#### Scenario: The token goes only to the forum repository
+
+- **GIVEN** a GitHub token in Settings and an `https://github.com/` forum URL
+- **WHEN** git fetches or pushes the forum
+- **THEN** git SHALL send the token to that URL and to no other
+- **AND** a forum URL over plain `http://` or SSH SHALL receive no token
+
+#### Scenario: The dialog says which credential applies
+
+- **GIVEN** a user with a GitHub token in Settings
+- **WHEN** they enter an `https://github.com/` forum URL in the project dialog
+- **THEN** the dialog SHALL say the Settings token will be used
+
+#### Scenario: The dialog names the system git elsewhere
+
+- **WHEN** a user enters an `https://` forum URL on a host other than github.com or gitlab.com, or an SSH URL on any host
+- **THEN** the dialog SHALL say the system git's credentials will be used, such as an SSH key or a credential helper
+- **AND** it SHALL offer no token field
+
+#### Scenario: Settings not loaded yet
+
+- **WHEN** the project dialog has not yet learned which tokens the user has saved in Settings
+- **THEN** it SHALL name no credential, rather than one that may be wrong
+### Requirement: Each debate role has its own model
+
+Opening a debate SHALL let the researcher choose a model for each role (Proposer, Reviewer
+and Referee) or leave a role on the default. A role left on the default SHALL use the
+researcher's default model as it is when each run of the debate starts. Continuing a debate
+SHALL offer the same choice, starting from the models the debate used last, and SHALL keep
+them unless the researcher changes them there. A role's model MUST NOT change while a run
+is in progress. Each role's model SHALL be a model name sent to the opener's provider. The
+debate view SHALL show each role's model, and each post a role writes SHALL record locally
+the model that wrote it.
+
+#### Scenario: A stronger Referee
+
+- **GIVEN** a researcher whose default is model A
+- **WHEN** they open a debate with the Referee set to model B and the other roles left on
+  the default
+- **THEN** the Proposer and Reviewer argue with A, and the verdict is written by B
+
+#### Scenario: Continue keeps the debate's models
+
+- **GIVEN** a concluded debate whose Referee used model B
+- **WHEN** the researcher continues it for 2 more rounds without changing the models
+- **THEN** the Referee's posts in the new rounds are written by B
+
+#### Scenario: Continue may change a role's model
+
+- **GIVEN** a concluded debate whose Reviewer used model A
+- **WHEN** the researcher continues it with the Reviewer set to model C
+- **THEN** the Reviewer's posts in the new rounds are written by C, and its earlier posts
+  still record A
+
+#### Scenario: Changing the default between runs
+
+- **GIVEN** a concluded debate whose Proposer was left on the default, which was A
+- **WHEN** the researcher changes the default to B and continues the debate
+- **THEN** the Continue form shows the Proposer on "Default (B)", and its new posts are
+  written by B
+
+#### Scenario: Each post shows its model
+
+- **WHEN** a researcher views a debate whose roles used different models
+- **THEN** the view names each role's model, and each role's post names the model that
+  wrote it

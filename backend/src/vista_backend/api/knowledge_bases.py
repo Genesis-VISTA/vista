@@ -31,7 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ..agents.inference import citation_credentials
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 from ..config import settings
 from ..db.db import SessionDep, commit_with_retry, get_engine
 from ..db.schemas import (
@@ -801,7 +801,7 @@ async def add_publications(
     files: list[UploadFile],
     background_tasks: BackgroundTasks,
     session: SessionDep,
-    user: UserDep,
+    local: LocalSettingsDep,
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
@@ -894,12 +894,12 @@ async def add_publications(
         rag_db_path=rag_db_path,
         pdfs_dir=pdfs_dir_str,
         filenames=list(added_names),
-        # Resolved here, inside the request, because the background task has no
-        # user. Without it citation extraction falls back to the process
+        # Resolved here, inside the request, because the background task does
+        # not read the settings. Without it citation extraction falls back to the process
         # environment, which cannot see a key entered in the settings modal --
         # so a fresh install would index this knowledge base and silently
         # produce no citation metadata.
-        llm_credentials=citation_credentials(user),
+        llm_credentials=citation_credentials(local),
     )
 
     return _public_with_progress(kb)

@@ -1,7 +1,7 @@
 """Service-layer tests for the campaign API's access boundary + state assembly.
 
-The routes are thin wrappers over these (project membership is the access boundary,
-enforced by project_service.get_project_by_name); the repo tests this logic at the
+The routes are thin wrappers over these (a campaign is scoped to its project, which
+project_service.get_project_by_name resolves); the repo tests this logic at the
 service layer.
 """
 
@@ -15,24 +15,23 @@ from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import project as project_service
 
 
-async def _project(session, user, name="api-campaign"):
-    return await project_service.create_project(session, ProjectCreate(name=name), user)
+async def _project(session, name="api-campaign"):
+    return await project_service.create_project(session, ProjectCreate(name=name))
 
 
 @pytest.mark.anyio
-async def test_list_campaigns_filters_by_chat_session(session, alice):
+async def test_list_campaigns_filters_by_chat_session(session):
     """The campaign UI lists campaigns for the active conversation via the session_id filter."""
-    project = await _project(session, alice)
+    project = await _project(session)
     chat_a = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     chat_b = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     run_a = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat_a.id,
         domain="splash",
         planner_skill="splash-planner",
@@ -40,7 +39,6 @@ async def test_list_campaigns_filters_by_chat_session(session, alice):
     await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat_b.id,
         domain="splash",
         planner_skill="splash-planner",
@@ -57,13 +55,12 @@ async def test_list_campaigns_filters_by_chat_session(session, alice):
 
 
 @pytest.mark.anyio
-async def test_require_campaign_in_project_enforces_project_scope(session, alice):
-    project = await _project(session, alice)
-    other = await _project(session, alice, name="other-project")
+async def test_require_campaign_in_project_enforces_project_scope(session):
+    project = await _project(session)
+    other = await _project(session, name="other-project")
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
     )
@@ -86,26 +83,25 @@ async def test_require_campaign_in_project_enforces_project_scope(session, alice
 
 
 @pytest.mark.anyio
-async def test_list_campaigns_scoped_to_project(session, alice):
-    p1 = await _project(session, alice, name="p1")
-    p2 = await _project(session, alice, name="p2")
+async def test_list_campaigns_scoped_to_project(session):
+    p1 = await _project(session, name="p1")
+    p2 = await _project(session, name="p2")
     r1 = await campaign_service.create_campaign(
-        session, project_id=p1.id, user_id=alice.id, domain="d", planner_skill="s"
+        session, project_id=p1.id, domain="d", planner_skill="s"
     )
     await campaign_service.create_campaign(
-        session, project_id=p2.id, user_id=alice.id, domain="d", planner_skill="s"
+        session, project_id=p2.id, domain="d", planner_skill="s"
     )
     in_p1 = await campaign_service.list_campaigns(session, project_id=p1.id)
     assert [r.id for r in in_p1] == [r1.id]
 
 
 @pytest.mark.anyio
-async def test_patch_campaign_applies_only_set_fields(session, alice):
-    project = await _project(session, alice)
+async def test_patch_campaign_applies_only_set_fields(session):
+    project = await _project(session)
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
         title="orig",
@@ -125,10 +121,10 @@ async def test_patch_campaign_applies_only_set_fields(session, alice):
 
 
 @pytest.mark.anyio
-async def test_list_jobs_for_run_spans_steps(session, alice):
-    project = await _project(session, alice)
+async def test_list_jobs_for_run_spans_steps(session):
+    project = await _project(session)
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, domain="d", planner_skill="s"
+        session, project_id=project.id, domain="d", planner_skill="s"
     )
     s1 = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="neutronics"
@@ -137,10 +133,10 @@ async def test_list_jobs_for_run_spans_steps(session, alice):
         session, run_id=run.id, cycle=0, kind="chemistry"
     )
     await campaign_service.record_job(
-        session, job_id="j1", step_id=s1.id, user_id=alice.id, cluster="odo"
+        session, job_id="j1", step_id=s1.id, cluster="odo"
     )
     await campaign_service.record_job(
-        session, job_id="j2", step_id=s2.id, user_id=alice.id, cluster="odo"
+        session, job_id="j2", step_id=s2.id, cluster="odo"
     )
 
     jobs = await campaign_service.list_jobs_for_run(session, run_id=run.id)

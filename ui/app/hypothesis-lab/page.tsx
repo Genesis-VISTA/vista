@@ -5,12 +5,17 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import DebateThread from "@/components/DebateThread";
 import DebateVerdict from "@/components/DebateVerdict";
+import { RoleModelSelects } from "@/components/RoleModelSelects";
 import {
+  DEBATE_ROLES,
   DebatePost,
   DebateRun,
   DebateState,
   ForumStatus,
+  RoleModels,
   acceptsPosts,
+  changedModels,
+  chosenModels,
   closeDebate,
   continueDebate,
   closedBy,
@@ -18,6 +23,8 @@ import {
   fetchDebate,
   forumWebUrl,
   isActive,
+  modelsOf,
+  noRoleModels,
   simulationStanding,
   watchesForPeerPosts,
   listDebates,
@@ -25,6 +32,8 @@ import {
   postToDebate,
   publishErrorNotice,
 } from "@/lib/debates";
+import { useAgentSettings } from "@/lib/agent-settings";
+import { displayModelName } from "@/lib/models";
 import { useActiveProject } from "@/lib/projects";
 
 const FINISHED_POLL_MS = 15_000;
@@ -193,6 +202,11 @@ function DebatesPage() {
   const [framing, setFraming] = useState("");
   const [rounds, setRounds] = useState(5);
   const [message, setMessage] = useState("");
+  const { settings: agentSettings } = useAgentSettings();
+  /** A model per role for the debate being opened; null is the default. */
+  const [roleModels, setRoleModels] = useState<RoleModels>(noRoleModels);
+  /** The same for Continue, starting from the models the selected debate used. */
+  const [continueModels, setContinueModels] = useState<RoleModels>(noRoleModels);
 
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
@@ -326,9 +340,11 @@ function DebatesPage() {
         topic: topic.trim(),
         framing: framing.trim() || null,
         rounds,
+        models: chosenModels(roleModels),
       });
       setTopic("");
       setFraming("");
+      setRoleModels(noRoleModels());
       setRuns((current) => [run, ...current]);
       setSelectedId(run.id);
     } catch (err) {
@@ -377,7 +393,12 @@ function DebatesPage() {
     if (!projectName || !state) return;
     setBusy(true);
     try {
-      const run = await continueDebate(projectName, state.run.id, moreRounds);
+      const run = await continueDebate(
+        projectName,
+        state.run.id,
+        moreRounds,
+        changedModels(continueModels, participantModels)
+      );
       // The response is the run as it stood when the request returned; the
       // orchestrator raises the budget from its own session a moment later. Show
       // it as arguing so the stream opens and the rest arrives live.
@@ -396,6 +417,32 @@ function DebatesPage() {
     [state]
   );
 
+  // The models the selected debate's roster recorded. Continue starts from
+  // them, so leaving the form alone keeps them.
+  const participantModels = useMemo(
+    () => modelsOf(state?.participants ?? []),
+    [state?.participants]
+  );
+  const participantModelsKey = JSON.stringify(participantModels);
+  useEffect(() => {
+    setContinueModels(participantModels);
+    // Only when the debate or its recorded models change, not on every re-read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.run.id, participantModelsKey]);
+
+  /** "Proposer <m> · Reviewer <m> · Referee <m>"; a role on the default says so. */
+  const rosterLine = DEBATE_ROLES.filter((role) =>
+    state?.participants.some((p) => p.debate_role === role)
+  )
+    .map((role) => {
+      const model = participantModels[role];
+      const shown = model
+        ? displayModelName(model)
+        : `Default (${agentSettings?.model ? displayModelName(agentSettings.model) : "default"})`;
+      return `${role[0].toUpperCase()}${role.slice(1)} ${shown}`;
+    })
+    .join(" · ");
+
   // Why posts are not reaching the forum. An error, so it is drawn as one, and
   // it sits on the open debate, whose posts are the ones marked "not yet
   // published", rather than at the top of the page where it read as one more
@@ -404,14 +451,6 @@ function DebatesPage() {
     <p className="debate-publish-error" role="alert">
       <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
       {publishErrorNotice(forum.publish_error).detail}
-      {forum.publish_error.reason === "refused" &&
-        forum.publish_error.credential !== "settings-github" &&
-        forum.publish_error.credential !== "settings-gitlab" && (
-          <>
-            {" "}
-            <Link href="/projects">Open Projects</Link>
-          </>
-        )}
       {forum.unpublished > 0 && (
         <>
           {" "}
@@ -586,6 +625,10 @@ function DebatesPage() {
             onChange={(e) => setRounds(Number(e.target.value))}
           />
         </label>
+        <div>
+          <span className="debate-open__hint">Model per role (optional)</span>
+          <RoleModelSelects value={roleModels} onChange={setRoleModels} />
+        </div>
         <button onClick={handleOpen} disabled={busy || !topic.trim()}>
           Open debate
         </button>
@@ -651,6 +694,10 @@ function DebatesPage() {
                     >
                       Continue the debate
                     </button>
+                    <RoleModelSelects
+                      value={continueModels}
+                      onChange={setContinueModels}
+                    />
                   </span>
                 )}
               </div>
@@ -693,6 +740,7 @@ function DebatesPage() {
                 </ul>
               )}
 
+              {rosterLine && <p className="debate-roster__models">{rosterLine}</p>}
               <ul className="debate-roster">
                 {state.participants.map((participant) => (
                   <li key={participant.id}>

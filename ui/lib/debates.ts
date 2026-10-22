@@ -26,7 +26,6 @@ export type PostableKind = "ASK" | "FINDING" | "RISK" | "PROPOSAL";
 export type DebateRun = {
   id: string;
   project_id: string;
-  user_id: string;
   topic: string;
   framing: string | null;
   thread_id: string;
@@ -62,7 +61,58 @@ export type DebateParticipant = {
   active: boolean;
   /** What this role was allowed to use. Empty means it had nothing to reach for. */
   granted_tools: string[];
+  /** This role's own model (`openai:<name>`); null follows the default. */
+  model: string | null;
 };
+
+export const DEBATE_ROLES = ["proposer", "reviewer", "referee"] as const;
+export type DebateRoleName = (typeof DEBATE_ROLES)[number];
+
+/** Each role's own model; null is a role on the default. */
+export type RoleModels = Record<DebateRoleName, string | null>;
+
+export const noRoleModels = (): RoleModels => ({
+  proposer: null,
+  reviewer: null,
+  referee: null,
+});
+
+/** The models a debate's roster recorded, one per role. */
+export function modelsOf(participants: DebateParticipant[]): RoleModels {
+  const models = noRoleModels();
+  for (const p of participants) {
+    if ((DEBATE_ROLES as readonly string[]).includes(p.debate_role)) {
+      models[p.debate_role as DebateRoleName] = p.model ?? null;
+    }
+  }
+  return models;
+}
+
+/** The roles with a model of their own, for opening a debate. Omitted roles use the default. */
+export function chosenModels(models: RoleModels): Partial<Record<DebateRoleName, string>> {
+  const chosen: Partial<Record<DebateRoleName, string>> = {};
+  for (const role of DEBATE_ROLES) {
+    const model = models[role];
+    if (model) chosen[role] = model;
+  }
+  return chosen;
+}
+
+/**
+ * The roles whose model differs from `original`, for continuing a debate. A
+ * role returned to the default is sent as null; an unchanged role is left out,
+ * so the backend leaves its row alone.
+ */
+export function changedModels(
+  current: RoleModels,
+  original: RoleModels
+): Partial<Record<DebateRoleName, string | null>> {
+  const changed: Partial<Record<DebateRoleName, string | null>> = {};
+  for (const role of DEBATE_ROLES) {
+    if (current[role] !== original[role]) changed[role] = current[role];
+  }
+  return changed;
+}
 
 /**
  * How much this install actually knows about where a post came from.
@@ -137,7 +187,8 @@ export type DebatePost = {
    */
   peer_votes: number;
   /**
-   * The VISTA account that wrote this, where this deployment authenticated them.
+   * Who wrote this, for a post this installation made: the name in its
+   * Settings at the time. Self-typed, not verified.
    *
    * Null on every post from outside, and that is not a gap to fill: every
    * install's operator posts as `human`, so a peer's post carries no name we
@@ -145,6 +196,12 @@ export type DebatePost = {
    */
   authored_by: string | null;
   round_index: number | null;
+  /**
+   * The model that wrote this post, as resolved at the time; null for a human or
+   * peer post and for one from before it was recorded. Ours, never the poster's
+   * claim.
+   */
+  model: string | null;
   /**
    * The tools the agent called for this post.
    *
@@ -243,25 +300,23 @@ export type ForumStatus = {
 /** Backend `PublishError`: why posts did not reach the forum. */
 export type PublishError = {
   reason: "refused" | "unreachable" | "failed";
-  credential: "project" | "settings-github" | "settings-gitlab" | "system-git";
+  credential: "settings-github" | "settings-gitlab" | "system-git";
   /** Git's own message. It never holds the token. */
   message: string;
   at: string;
 };
 
 const CREDENTIAL_NAMES: Record<PublishError["credential"], string> = {
-  project: "This project’s forum token",
   "settings-github": "Your GitHub token from Settings",
   "settings-gitlab": "Your gitlab.com token from Settings",
   "system-git": "Your system git’s credentials",
 };
 
 const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
-  project: "Replace or remove it in the project’s settings on the Projects page.",
-  "settings-github": "Replace it in Settings → Repositories, or give this project its own token.",
-  "settings-gitlab": "Replace it in Settings → Repositories, or give this project its own token.",
+  "settings-github": "Replace it in Settings → Repositories.",
+  "settings-gitlab": "Replace it in Settings → Repositories.",
   "system-git":
-    "Add a token in Settings → Repositories, or give this project its own token on the Projects page.",
+    "Add a token in Settings → Repositories for a github.com or gitlab.com forum; elsewhere, give your system git an SSH key or a credential helper that can push to it.",
 };
 
 /**
@@ -343,7 +398,13 @@ export async function fetchDebate(
 
 export async function openDebate(
   projectName: string,
-  body: { topic: string; framing?: string | null; rounds?: number | null }
+  body: {
+    topic: string;
+    framing?: string | null;
+    rounds?: number | null;
+    /** A model per role; a role left out uses the default. */
+    models?: Partial<Record<DebateRoleName, string>>;
+  }
 ): Promise<DebateRun> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(
@@ -385,14 +446,16 @@ export async function closeDebate(
 export async function continueDebate(
   projectName: string,
   runId: string,
-  rounds: number
+  rounds: number,
+  /** Roles to move to another model (null: back to the default); the rest keep theirs. */
+  models: Partial<Record<DebateRoleName, string | null>> = {}
 ): Promise<DebateRun> {
   const params = new URLSearchParams({ project_name: projectName, run_id: runId });
   return unwrap(
     await fetch(`/api/debates/continue?${params}`, {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ rounds }),
+      body: JSON.stringify({ rounds, models }),
     })
   );
 }
@@ -415,9 +478,9 @@ export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
 }
 
 /**
- * Who wrote a post, where that is actually known: the VISTA account this
- * deployment authenticated when the post was made. Null for everything else —
- * a peer's post carries no name we could believe.
+ * Who wrote a post, where this installation wrote it and its Settings named
+ * the researcher. Null for everything else — a peer's post carries no name we
+ * could believe.
  */
 export function authorOf(post: DebatePost): string | null {
   return post.authored_by ?? null;

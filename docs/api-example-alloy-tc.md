@@ -29,11 +29,11 @@ model in that loop, so waiting costs no tokens.
 
 1. **A running backend** — `./launch.sh` (default `http://localhost:8001`).
 2. **A model** — `VISTA_BACKEND_MODEL`. The agent needs one to plan the tool call.
-3. **HPC credentials on your user record.** Without them the agent stops mid-turn and
+3. **HPC credentials in Settings.** Without them the agent stops mid-turn and
    *elicits* them interactively, which a non-streaming client cannot answer:
 
    ```bash
-   curl -X PUT http://localhost:8001/users/me \
+   curl -X PUT http://localhost:8001/settings \
         -H 'Content-Type: application/json' \
         -d '{"odo_s3m_token": "<your Odo S3M token>"}'
    ```
@@ -41,11 +41,10 @@ model in that loop, so waiting costs no tokens.
    Each cluster has its own field: `odo_s3m_token` for Odo, `frontier_s3m_token` for
    Frontier (an S3M token is scoped to one OLCF project, so one token cannot cover both),
    and `nersc_iri_token` for Perlmutter. Check with
-   `curl 'http://localhost:8001/users/me?config=true'`. The script preflights this and
+   `curl http://localhost:8001/settings`. The script preflights this and
    exits with instructions rather than hanging.
 
-**Auth** is the dev-only `X-Vista-User-Email` header. Omit it to get the default dev
-user. In production the API returns **501** until SSO lands.
+**Auth**: none. VISTA is single-user, and the backend needs no identity header.
 
 ## The calls
 
@@ -145,11 +144,9 @@ lists MCP tools only.
 
 | Symptom | Cause |
 |---|---|
-| `{"detail":"Unauthorized"}` | `X-Vista-User-Email` names a user that doesn't exist. Omit the header for the default dev user. |
-| `{"detail":"..."}` 501 | Production mode — SSO is not implemented yet. |
 | Agent describes the job but no `job_id` | It planned without calling the tool, or submission failed. Read the `tool-return` parts and `logs`. |
 | `Multiple HPC clusters configured` | Pass `cluster` explicitly to any HPC tool. |
-| Turn stalls with no output | Missing credentials → the agent is waiting on an elicitation nothing will answer. Preflight `/users/me?config=true`. |
+| Turn stalls with no output | Missing credentials → the agent is waiting on an elicitation nothing will answer. Preflight `GET /settings`. |
 
 ## Reference
 

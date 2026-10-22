@@ -13,7 +13,6 @@ from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import project as project_service
 from ..services.project_agent import find_live_project_agent_key, project_agent_pool
-from ..services.auth import UserDep
 from palisade import TrustScorer
 from fastapi import APIRouter
 
@@ -69,7 +68,6 @@ class PalisadeReauthResponse(BaseModel):
 async def palisade_state(
     project_name: str,
     session: SessionDep,
-    user: UserDep,
 ) -> PalisadeStateResponse:
     """
     Return the current PALISADE trust state for the caller's session:
@@ -81,12 +79,10 @@ async def palisade_state(
     agent session, the initial (all-NORMAL) state is returned rather
     than spinning one up.
     """
-    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project_row = await project_service.get_project_by_name(session, project_name)
     project = ProjectPublic.model_validate(project_row)
 
-    key = await find_live_project_agent_key(
-        session, project_id=project.id, user_id=user.id
-    )
+    key = await find_live_project_agent_key(session, project_id=project.id)
     if key is not None:
         async with project_agent_pool.get(key) as agent:
             snapshot = agent.sidecar.trust_scorer.snapshot()
@@ -105,7 +101,6 @@ async def palisade_state(
 async def palisade_reauth(
     project_name: str,
     session: SessionDep,
-    user: UserDep,
 ) -> PalisadeReauthResponse:
     """
     Clear sticky high-stakes lock-in for the caller's session after a
@@ -116,12 +111,10 @@ async def palisade_reauth(
     a caller who can run the agent for this project can re-auth its
     trust state; there is no separate re-auth credential.
     """
-    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project_row = await project_service.get_project_by_name(session, project_name)
     project = ProjectPublic.model_validate(project_row)
 
-    key = await find_live_project_agent_key(
-        session, project_id=project.id, user_id=user.id
-    )
+    key = await find_live_project_agent_key(session, project_id=project.id)
     unlocked: tuple[str, ...] = ()
     if key is not None:
         async with project_agent_pool.get(key) as agent:

@@ -8,7 +8,7 @@ export const runtime = "nodejs";
  *
  * A thin pass-through of status and body: a missing or rejected inference
  * credential surfaces as the backend's own 409, which `ui/lib/models.ts`
- * already knows how to read (same shape `ui/lib/user.ts` reads elsewhere).
+ * already knows how to read (same shape `ui/lib/settings.ts` reads elsewhere).
  */
 export async function GET(
   _request: Request,

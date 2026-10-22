@@ -18,11 +18,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from harness import (
     api_client,
     call,
-    make_user,
+    make_local_settings,
     parse_sse,
     say,
     seed_project,
-    seed_user,
     step_model,
 )
 from vista_backend.agents.agents import ProjectAgent
@@ -39,14 +38,8 @@ STATUS = "/projects/{name}/chat-runs/status"
 SESSION = "/projects/{name}/chat-session"
 
 
-def _headers(user) -> dict[str, str]:
-    return {"X-Vista-User-Email": user.email}
-
-
-async def _conversation(session, project, user) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=user.id
-    )
+async def _conversation(session, project) -> uuid.UUID:
+    row = await chat_session_service.create_chat_session(session, project_id=project.id)
     row_id = row.id
     await session.commit()
     return row_id
@@ -56,7 +49,7 @@ async def _conversation(session, project, user) -> uuid.UUID:
 def scripted_agent(project, steps):
     """A real agent on a scripted model whose `hang` tool never returns."""
     hung = asyncio.Event()
-    agent = ProjectAgent(project, make_user(), uuid.uuid4())
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -76,13 +69,12 @@ def scripted_agent(project, steps):
         yield agent, hung
 
 
-async def _hung_turn(client, project, user, conversation_id, hung):
+async def _hung_turn(client, project, conversation_id, hung):
     """Start a turn that blocks in `hang`; returns its still-running request."""
     request = asyncio.create_task(
         client.post(
             RUN.format(name=project.name),
             json={"user_prompt": "submit", "chat_session_id": str(conversation_id)},
-            headers=_headers(user),
         )
     )
     async with asyncio.timeout(10):
@@ -91,83 +83,61 @@ async def _hung_turn(client, project, user, conversation_id, hung):
 
 
 async def test_a_send_while_busy_is_a_409_and_changes_nothing(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
-            first = await _hung_turn(client, project, alice, conversation, hung)
+            first = await _hung_turn(client, project, conversation, hung)
 
             busy = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "again", "chat_session_id": str(conversation)},
-                headers=_headers(alice),
             )
             assert busy.status_code == 409
             assert "already has a turn running" in busy.json()["detail"]
             assert busy.json()["code"] == "run_busy"
             assert chat_run.chat_run_registry.get(conversation) is not None
 
-            stopped = await client.post(
-                STOP.format(name=project.name, id=conversation), headers=_headers(alice)
-            )
+            stopped = await client.post(STOP.format(name=project.name, id=conversation))
             assert stopped.status_code == 202
             await first
 
 
 async def test_stop_is_404_when_nothing_is_running(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with api_client(session) as (client, _):
-        response = await client.post(
-            STOP.format(name=project.name, id=conversation), headers=_headers(alice)
-        )
+        response = await client.post(STOP.format(name=project.name, id=conversation))
 
     assert response.status_code == 404
 
 
-async def test_events_are_204_when_idle_and_404_for_a_stranger(session):
-    alice = await seed_user(session)
-    bob = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+async def test_events_are_204_when_idle_and_404_for_an_unknown_conversation(session):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with api_client(session) as (client, _):
-        idle = await client.get(
-            EVENTS.format(name=project.name, id=conversation), headers=_headers(alice)
-        )
-        stranger = await client.get(
-            EVENTS.format(name=project.name, id=conversation), headers=_headers(bob)
-        )
-        unknown = await client.get(
-            EVENTS.format(name=project.name, id=uuid.uuid4()), headers=_headers(alice)
-        )
+        idle = await client.get(EVENTS.format(name=project.name, id=conversation))
+        unknown = await client.get(EVENTS.format(name=project.name, id=uuid.uuid4()))
 
     assert idle.status_code == 204
-    assert stranger.status_code == 403
     assert unknown.status_code == 404
 
 
 async def test_events_replay_from_the_start_and_resume_after_a_seq(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
-            turn = await _hung_turn(client, project, alice, conversation, hung)
+            turn = await _hung_turn(client, project, conversation, hung)
             url = EVENTS.format(name=project.name, id=conversation)
-            watch_all = asyncio.create_task(client.get(url, headers=_headers(alice)))
-            watch_tail = asyncio.create_task(
-                client.get(url, params={"after": 3}, headers=_headers(alice))
-            )
+            watch_all = asyncio.create_task(client.get(url))
+            watch_tail = asyncio.create_task(client.get(url, params={"after": 3}))
             await asyncio.sleep(0.05)
-            await client.post(
-                STOP.format(name=project.name, id=conversation), headers=_headers(alice)
-            )
+            await client.post(STOP.format(name=project.name, id=conversation))
             everything, tail = await watch_all, await watch_tail
             await turn
 
@@ -187,25 +157,19 @@ async def test_events_replay_from_the_start_and_resume_after_a_seq(session):
 
 
 async def test_status_lists_working_then_done_unseen_then_nothing_once_acked(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    hung_conversation = await _conversation(session, project, alice)
-    quiet = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    hung_conversation = await _conversation(session, project)
+    quiet = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
-            turn = await _hung_turn(client, project, alice, hung_conversation, hung)
-            working = await client.get(
-                STATUS.format(name=project.name), headers=_headers(alice)
-            )
+            turn = await _hung_turn(client, project, hung_conversation, hung)
+            working = await client.get(STATUS.format(name=project.name))
             await client.post(
                 STOP.format(name=project.name, id=hung_conversation),
-                headers=_headers(alice),
             )
             await turn
-            after_stop = await client.get(
-                STATUS.format(name=project.name), headers=_headers(alice)
-            )
+            after_stop = await client.get(STATUS.format(name=project.name))
 
     assert working.json() == [
         {
@@ -222,20 +186,14 @@ async def test_status_lists_working_then_done_unseen_then_nothing_once_acked(ses
             await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "hi", "chat_session_id": str(quiet)},
-                headers=_headers(alice),
             )
-            done = await client.get(
-                STATUS.format(name=project.name), headers=_headers(alice)
-            )
+            done = await client.get(STATUS.format(name=project.name))
             await client.put(
                 SESSION.format(name=project.name),
                 params={"chat_session_id": str(quiet)},
                 json={"ack_run": True},
-                headers=_headers(alice),
             )
-            acked = await client.get(
-                STATUS.format(name=project.name), headers=_headers(alice)
-            )
+            acked = await client.get(STATUS.format(name=project.name))
 
     assert done.json() == [
         {"chat_session_id": str(quiet), "status": "done", "unseen": True}
@@ -244,23 +202,20 @@ async def test_status_lists_working_then_done_unseen_then_nothing_once_acked(ses
 
 
 async def test_the_chat_session_reports_run_state_and_ack_clears_the_events(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [say("finished")]) as (agent, _hung):
         with api_client(session, agent=agent) as (client, _):
             await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "hi", "chat_session_id": str(conversation)},
-                headers=_headers(alice),
             )
             params = {"chat_session_id": str(conversation)}
             before = (
                 await client.get(
                     SESSION.format(name=project.name),
                     params=params,
-                    headers=_headers(alice),
                 )
             ).json()
             after = (
@@ -268,7 +223,6 @@ async def test_the_chat_session_reports_run_state_and_ack_clears_the_events(sess
                     SESSION.format(name=project.name),
                     params=params,
                     json={"ack_run": True, "message_history": []},
-                    headers=_headers(alice),
                 )
             ).json()
 
@@ -284,40 +238,34 @@ async def test_the_chat_session_reports_run_state_and_ack_clears_the_events(sess
 
 
 async def test_a_running_conversation_reports_working(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
-            turn = await _hung_turn(client, project, alice, conversation, hung)
+            turn = await _hung_turn(client, project, conversation, hung)
             live = (
                 await client.get(
                     SESSION.format(name=project.name),
                     params={"chat_session_id": str(conversation)},
-                    headers=_headers(alice),
                 )
             ).json()
-            await client.post(
-                STOP.format(name=project.name, id=conversation), headers=_headers(alice)
-            )
+            await client.post(STOP.format(name=project.name, id=conversation))
             await turn
 
     assert live["run_status"] == "working"
 
 
 async def test_deleting_a_conversation_ends_its_run(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
-            turn = await _hung_turn(client, project, alice, conversation, hung)
+            turn = await _hung_turn(client, project, conversation, hung)
             deleted = await client.delete(
                 SESSION.format(name=project.name),
                 params={"chat_session_id": str(conversation)},
-                headers=_headers(alice),
             )
             await turn
 
@@ -355,9 +303,8 @@ def lifespan_env(engine, monkeypatch):
 async def test_startup_marks_a_running_row_interrupted_and_unseen(
     session, engine, lifespan_env
 ):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
     async with AsyncSession(engine) as other:
         row = await other.get(ChatSessionTable, conversation)
         assert row is not None
@@ -376,9 +323,8 @@ async def test_startup_marks_a_running_row_interrupted_and_unseen(
 async def test_shutdown_interrupts_a_running_turn_and_saves_its_history(
     session, engine, lifespan_env
 ):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    conversation = await _conversation(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("quick"), call("hang"), say("x")]) as (
         agent,
@@ -386,7 +332,7 @@ async def test_shutdown_interrupts_a_running_turn_and_saves_its_history(
     ):
         with api_client(session, agent=agent) as (client, _):
             async with api_module.lifespan(api_module.app):
-                turn = await _hung_turn(client, project, alice, conversation, hung)
+                turn = await _hung_turn(client, project, conversation, hung)
             await turn  # the lifespan exit stopped it
 
     async with AsyncSession(engine) as other:

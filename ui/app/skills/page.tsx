@@ -116,7 +116,7 @@ export default function SkillsPage() {
               type="button"
               className="button button-sm"
               onClick={() => setShowImport(true)}
-              title="Import a skill from a GitHub repository or a local folder into this project"
+              title="Import skills from a GitHub or GitLab repository, or a local folder, into this project"
               disabled={!projectName}
             >
               Import…
@@ -310,16 +310,14 @@ export default function SkillsPage() {
         open={showImport}
         project={projectName}
         onCancel={() => setShowImport(false)}
-        onImported={(skill) => {
-          // The backend loaded the new private skill into the active project;
-          // append it to the local catalog (de-dupe in case a refetch crossed
-          // paths with the import) and refetch the project to show it loaded.
-          setSkills((prev) => {
-            const without = prev.filter((s) => s.slug !== skill.slug);
-            return [skill, ...without];
-          });
+        onImported={(imported, done) => {
+          // The backend loaded the new private skills into the active project;
+          // append them to the local catalog (de-dupe in case a refetch crossed
+          // paths with the import) and refetch the project to show them loaded.
+          const slugs = new Set(imported.map((s) => s.slug));
+          setSkills((prev) => [...imported, ...prev.filter((s) => !slugs.has(s.slug))]);
           void refreshProjects();
-          setShowImport(false);
+          if (done) setShowImport(false);
         }}
       />
     </div>

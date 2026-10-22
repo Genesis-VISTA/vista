@@ -33,7 +33,7 @@ function stubUpstream() {
       }
       return res.end();
     }
-    if (req.url.startsWith("/users/me")) {
+    if (req.url.startsWith("/settings")) {
       res.writeHead(200, { "content-type": "application/json", "set-cookie": "s=secret" });
       return res.end(JSON.stringify({ email: "r@example.org", inference_api_key: "sk-not-real-0123456789abcdef" }));
     }
@@ -76,16 +76,16 @@ test("responses are recorded with the action count, scrubbed, and binaries kept"
   const src = mkdtempSync(path.join(os.tmpdir(), "vista-screencast-capture-"));
   const cap = await startCaptureServer({ src, backendUrl: up.url, mcpUrl: `${up.url}/mcp`, port: 0 });
   try {
-    const me = await (await fetch(`${cap.url}/users/me?config=true`, { headers: { cookie: "x=1" } })).json();
+    const me = await (await fetch(`${cap.url}/settings?probe=1`, { headers: { cookie: "x=1" } })).json();
     assert.equal(me.inference_api_key, "sk-not-real-0123456789abcdef", "the live UI still sees real values");
     await fetch(`${cap.url}/__screencast/action`, { method: "POST", body: JSON.stringify({ action: 2 }) });
     await (await fetch(`${cap.url}/knowledge-bases/kb/publications/a.pdf`)).arrayBuffer();
     assert.deepEqual(await (await fetch(`${cap.url}/mcp`, { method: "POST", body: "{}" })).json(), { from: "mcp" });
 
     const rows = readFileSync(path.join(src, "capture", "responses.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
-    const user = rows.find((r) => r.path === "/users/me");
+    const user = rows.find((r) => r.path === "/settings");
     assert.equal(user.action, 0);
-    assert.equal(user.query, "config=true");
+    assert.equal(user.query, "probe=1");
     assert.equal(user.body.inference_api_key, SCRUBBED);
     const pdf = rows.find((r) => r.path.endsWith(".pdf"));
     assert.equal(pdf.action, 2);

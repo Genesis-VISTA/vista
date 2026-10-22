@@ -7,6 +7,7 @@ import pytest
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
+from vista_backend.services import local_settings
 from vista_backend.services.campaign_monitor import (
     CampaignMonitor,
     format_job_notification,
@@ -17,19 +18,16 @@ from vista_backend.services.campaign_monitor import (
 )
 
 
-async def _make_job(
-    session, alice, *, kind="neutronics", job_id="job-1", notified=False
-):
+async def _make_job(session, *, kind="neutronics", job_id="job-1", notified=False):
     project = ProjectTable(name=f"monitor-{job_id}")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         domain="splash",
         planner_skill="splash-planner",
@@ -40,13 +38,18 @@ async def _make_job(
         session,
         job_id=job_id,
         step_id=step.id,
-        user_id=alice.id,
         cluster="frontier",
         job_name=kind,
     )
     if notified:
         await campaign_service.update_job(session, job_id=job_id, notified=True)
+    # Notifications go to the address in Settings.
+    (await local_settings.get(session)).email = SETTINGS_EMAIL
+    await session.flush()
     return run, step, job
+
+
+SETTINGS_EMAIL = "researcher@example.org"
 
 
 class _Emailer:
@@ -74,8 +77,8 @@ def test_state_classification():
 
 
 @pytest.mark.anyio
-async def test_pending_job_stays_open_and_unnotified(session, alice):
-    run, step, job = await _make_job(session, alice)
+async def test_pending_job_stays_open_and_unnotified(session):
+    run, step, job = await _make_job(session)
     emailer = _Emailer()
 
     async def poll(_session, j):
@@ -98,8 +101,8 @@ async def test_pending_job_stays_open_and_unnotified(session, alice):
 
 
 @pytest.mark.anyio
-async def test_completed_job_is_collected_emailed_and_closed(session, alice):
-    run, step, job = await _make_job(session, alice)
+async def test_completed_job_is_collected_emailed_and_closed(session):
+    run, step, job = await _make_job(session)
     emailer = _Emailer()
     collected = []
 
@@ -130,7 +133,7 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
     assert refreshed_step.status == "completed"
 
     assert len(emailer.sent) == 1
-    assert emailer.sent[0]["to"] == (await _user_email(session, alice))
+    assert emailer.sent[0]["to"] == SETTINGS_EMAIL
     assert "COMPLETED" in emailer.sent[0]["subject"]
 
     assert job.job_id not in {
@@ -139,7 +142,7 @@ async def test_completed_job_is_collected_emailed_and_closed(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failure_is_not_believed_on_one_reading(session, alice):
+async def test_a_failure_is_not_believed_on_one_reading(session):
     """
     A scheduler can report FAILED for a job it has not registered yet.
 
@@ -148,7 +151,7 @@ async def test_a_failure_is_not_believed_on_one_reading(session, alice):
     state also stops the watch, no later poll ever corrected it — one wrong
     answer was permanent. So the first sighting only records the state.
     """
-    run, step, job = await _make_job(session, alice)
+    run, step, job = await _make_job(session)
     emailer = _Emailer()
 
     calls = []
@@ -176,9 +179,9 @@ async def test_a_failure_is_not_believed_on_one_reading(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failure_the_next_poll_contradicts_is_dropped(session, alice):
+async def test_a_failure_the_next_poll_contradicts_is_dropped(session):
     """The whole point: the second reading is allowed to say something else."""
-    run, step, job = await _make_job(session, alice)
+    run, step, job = await _make_job(session)
     emailer = _Emailer()
     answers = iter([("FAILED", ""), ("RUNNING", ""), ("COMPLETED", "TBR=1.18")])
     collected = []
@@ -202,7 +205,7 @@ async def test_a_failure_the_next_poll_contradicts_is_dropped(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_confirmed_failure_is_collected_with_its_log(session, alice):
+async def test_a_confirmed_failure_is_collected_with_its_log(session):
     """
     A failed run goes to the collector too, carrying the status text.
 
@@ -211,7 +214,7 @@ async def test_a_confirmed_failure_is_collected_with_its_log(session, alice):
     typo". Recording the bare state left whoever was waiting with the word
     "failed" and nothing to go on.
     """
-    run, step, job = await _make_job(session, alice)
+    run, step, job = await _make_job(session)
     emailer = _Emailer()
     seen = []
 
@@ -245,8 +248,36 @@ async def test_a_confirmed_failure_is_collected_with_its_log(session, alice):
 
 
 @pytest.mark.anyio
-async def test_already_notified_job_is_not_reemailed(session, alice):
-    run, step, job = await _make_job(session, alice, notified=True)
+async def test_without_an_email_in_settings_nothing_is_sent_but_the_job_closes(session):
+    """
+    Settings may name no address. Then there is no one to tell, and the job is
+    marked notified all the same, or every poll would try again.
+    """
+    run, step, job = await _make_job(session)
+    (await local_settings.get(session)).email = None
+    await session.flush()
+    emailer = _Emailer()
+
+    async def poll(_session, j):
+        return "COMPLETED", "TBR=1.18"
+
+    async def collect(_session, j, raw, ok):
+        pass
+
+    monitor = CampaignMonitor(poll=poll, collect=collect, send_email=emailer)
+    await monitor.reconcile_once(session)
+
+    refreshed = await campaign_service.get_job(session, job.job_id)
+    assert refreshed.notified is True
+    assert emailer.sent == []
+    assert job.job_id not in {
+        j.job_id for j in await campaign_service.list_open_jobs(session)
+    }
+
+
+@pytest.mark.anyio
+async def test_already_notified_job_is_not_reemailed(session):
+    run, step, job = await _make_job(session, notified=True)
     emailer = _Emailer()
 
     async def poll(_session, j):
@@ -264,11 +295,11 @@ async def test_already_notified_job_is_not_reemailed(session, alice):
 
 
 @pytest.mark.anyio
-async def test_monitor_abandons_orphaned_job(session, alice):
+async def test_monitor_abandons_orphaned_job(session):
     # Multi-session: deleting the conversation backing a campaign sets run.session_id NULL
     # (FK SET NULL), detaching it from its sandbox. The monitor must abandon such jobs, not
     # poll them forever.
-    run, step, job = await _make_job(session, alice)
+    run, step, job = await _make_job(session)
     await campaign_service.update_campaign(session, run_id=run.id, session_id=None)
     emailer = _Emailer()
 
@@ -294,8 +325,8 @@ async def test_monitor_abandons_orphaned_job(session, alice):
 
 
 @pytest.mark.anyio
-async def test_resume_open_campaigns_lists_non_terminal(session, alice):
-    run, step, job = await _make_job(session, alice)
+async def test_resume_open_campaigns_lists_non_terminal(session):
+    run, step, job = await _make_job(session)
     resumable = await resume_open_campaigns(session)
     assert run.id in {r.id for r in resumable}
 
@@ -308,8 +339,8 @@ async def test_resume_open_campaigns_lists_non_terminal(session, alice):
 
 
 @pytest.mark.anyio
-async def test_format_job_notification(session, alice):
-    run, step, job = await _make_job(session, alice)
+async def test_format_job_notification(session):
+    run, step, job = await _make_job(session)
     subject, body = format_job_notification(
         run=run, job=job, state="COMPLETED", ok=True
     )
@@ -318,25 +349,18 @@ async def test_format_job_notification(session, alice):
     assert job.job_id in body
 
 
-async def _user_email(session, alice):
-    from vista_backend.db.schemas import UserTable
-
-    user = await session.get(UserTable, alice.id)
-    return user.email
-
-
 @pytest.mark.anyio
-async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session, alice):
+async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session):
     """
     The bug that made every debate-commissioned job fail on its first poll.
 
     A debate campaign has no chat session by design — its result goes to a forum
     thread, not a conversation. `_is_orphaned` says exactly that and exempts it.
     The exemption was written there and not in the path resolver, which refused
-    with "cannot resolve its sandbox volume" — for a path it derives from
-    project and user and never from a session.
+    with "cannot resolve its sandbox volume" — for a path it derives from the
+    project and never from a session.
     """
-    from vista_backend.agents.campaign.wiring import _job_run_user_paths
+    from vista_backend.agents.campaign.wiring import _job_context
     from vista_backend.agents.forum.simulation import DEBATE_DOMAIN
 
     project = ProjectTable(name=f"debate-poll-{uuid.uuid4().hex[:8]}")
@@ -345,7 +369,6 @@ async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session, a
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=None,
         domain=DEBATE_DOMAIN,
         planner_skill="",
@@ -358,30 +381,114 @@ async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session, a
         session,
         job_id=f"j-{uuid.uuid4().hex[:6]}",
         step_id=step.id,
-        user_id=alice.id,
         cluster="perlmutter",
         job_name="salt-neutronics-tbr",
     )
 
-    _run, user, paths = await _job_run_user_paths(session, job)
+    _run, _local, paths = await _job_context(session, job)
 
-    assert user.email == alice.email
-    assert paths["skills_dir"], "the paths come from project and user, not a session"
+    assert paths["skills_dir"], "the paths come from the project, not a session"
 
 
 @pytest.mark.anyio
-async def test_a_chat_campaign_that_lost_its_session_is_still_refused(session, alice):
+async def test_a_chat_campaign_that_lost_its_session_is_still_refused(session):
     """
     The guard still does its job for the case it was written for: a conversation
     was deleted, the planner cannot be rebuilt, and polling would achieve nothing.
     """
-    from vista_backend.agents.campaign.wiring import _job_run_user_paths
+    from vista_backend.agents.campaign.wiring import _job_context
 
-    _run, _step, job = await _make_job(
-        session, alice, job_id=f"c-{uuid.uuid4().hex[:6]}"
-    )
+    _run, _step, job = await _make_job(session, job_id=f"c-{uuid.uuid4().hex[:6]}")
     step = await campaign_service.get_step(session, job.step_id)
     await campaign_service.update_campaign(session, run_id=step.run_id, session_id=None)
 
     with pytest.raises(ValueError, match="no session_id"):
-        await _job_run_user_paths(session, job)
+        await _job_context(session, job)
+
+
+# --- the model a run was launched on ---------------------------------------
+
+
+async def _planner_model(session, job, monkeypatch):
+    """The `(settings, override)` the monitor's planner rebuild asked a model for."""
+    from vista_backend.agents.campaign import agent_tools, wiring
+
+    asked: list[tuple] = []
+
+    def build(local, model=None):
+        asked.append((local, model))
+        return "built"
+
+    monkeypatch.setattr(agent_tools, "build_model_for", build)
+    monkeypatch.setattr(wiring, "load_manifest", lambda _path: object())
+    monkeypatch.setattr(wiring, "build_subagents", lambda *a, **kw: {})
+    monkeypatch.setattr(wiring, "CampaignPlanner", lambda **kw: kw)
+    await wiring.build_planner_for_job(
+        session, job, invoke_builder=lambda local, paths: None
+    )
+    return asked
+
+
+@pytest.mark.anyio
+async def test_a_run_is_rebuilt_on_the_model_it_launched_on(session, monkeypatch):
+    """
+    Launched on B, the run is rebuilt on B after its chat has moved to C: the
+    run carries its own model across the background boundary.
+    """
+    from vista_backend.db.schemas import ChatSessionUpdate
+
+    run, _step, job = await _make_job(session)
+    run.model = "openai:b"
+    session.add(run)
+    await session.flush()
+    await chat_session_service.update_chat_session(
+        session,
+        project_id=run.project_id,
+        chat_session_id=run.session_id,
+        updates=ChatSessionUpdate(inference_model="openai:c"),
+    )
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _local, model in asked] == ["openai:b"]
+
+
+@pytest.mark.anyio
+async def test_an_older_run_without_a_model_uses_the_default(session, monkeypatch):
+    run, _step, job = await _make_job(session)
+    assert run.model is None
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _local, model in asked] == [None]
+
+
+async def _launched_on_olcf(session, *, now_on):
+    """A run launched on OLCF's `gpt-oss-120b`, with Settings now on `now_on`."""
+    run, _step, job = await _make_job(session)
+    run.model, run.provider = "openai:gpt-oss-120b", "olcf"
+    session.add(run)
+    (await local_settings.get(session)).inference_provider = now_on
+    await session.flush()
+    return job
+
+
+@pytest.mark.anyio
+async def test_a_run_keeps_its_model_while_settings_stay_on_that_provider(
+    session, monkeypatch
+):
+    job = await _launched_on_olcf(session, now_on="olcf")
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _local, model in asked] == ["openai:gpt-oss-120b"]
+
+
+@pytest.mark.anyio
+async def test_after_a_provider_switch_a_run_follows_the_default(session, monkeypatch):
+    """OLCF's model name means nothing to i2, so the run moves to i2's default."""
+    job = await _launched_on_olcf(session, now_on="i2")
+
+    asked = await _planner_model(session, job, monkeypatch)
+
+    assert [model for _local, model in asked] == [None]

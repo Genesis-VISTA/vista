@@ -17,21 +17,17 @@ import os
 
 import httpx
 import pytest
-from harness import api_client, seed_project, seed_user
+from harness import api_client, seed_project
 
 from vista_backend.agents.inference import SETTINGS_LOCATION, rejected_credential_detail
 from vista_backend.api import models as models_api
 from vista_backend.config import settings
-from vista_backend.db.schemas import UserSelfUpdate
-from vista_backend.services import user as user_service
+from vista_backend.db.schemas import LocalSettingsUpdate
+from vista_backend.services import local_settings
 
 pytestmark = pytest.mark.anyio
 
 MODELS = "/projects/{name}/models"
-
-
-def _headers(user) -> dict[str, str]:
-    return {"X-Vista-User-Email": user.email}
 
 
 # Captured before any test monkeypatches `models_api.httpx.AsyncClient` --
@@ -57,12 +53,10 @@ def _mock_client(handler):
     return factory
 
 
-async def _with_credential(session, user, *, model: str = "openai:claude-sonnet"):
-    return await user_service.update_user(
+async def _with_credential(session, *, model: str = "openai:claude-sonnet"):
+    return await local_settings.update(
         session,
-        user.id,
-        UserSelfUpdate(inference_model=model, inference_api_key="row-secret-key"),
-        user,
+        LocalSettingsUpdate(inference_model=model, inference_api_key="row-secret-key"),
     )
 
 
@@ -76,9 +70,8 @@ async def test_lists_models_from_the_configured_endpoint(session, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await _with_credential(session, alice)
+    project = await seed_project(session)
+    await _with_credential(session)
 
     seen_requests: list[httpx.Request] = []
 
@@ -97,9 +90,7 @@ async def test_lists_models_from_the_configured_endpoint(session, monkeypatch):
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 200
     assert response.json() == {
@@ -142,17 +133,14 @@ async def test_lists_models_with_or_without_v1(session, monkeypatch, base_url, a
     """The MAG preset ends in `/v1`; i2's does not. Both must list."""
     monkeypatch.setattr(settings, "openai_api_key", None)
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await user_service.update_user(
+    project = await seed_project(session)
+    await local_settings.update(
         session,
-        alice.id,
-        UserSelfUpdate(
+        LocalSettingsUpdate(
             inference_provider="custom",
             inference_base_url=base_url,
             inference_custom_api_key="custom-key",
         ),
-        alice,
     )
 
     seen: list[httpx.Request] = []
@@ -160,9 +148,7 @@ async def test_lists_models_with_or_without_v1(session, monkeypatch, base_url, a
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 200, response.text
     assert response.json()["models"] == [{"id": "m", "owned_by": None}]
@@ -176,13 +162,12 @@ async def test_lists_olcf_models_under_its_mid_path_v1(session, monkeypatch):
     """OLCF's base carries `/v1` mid-path, so its models are at `<base>/models`."""
     monkeypatch.setattr(settings, "openai_api_key", None)
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await user_service.update_user(
+    project = await seed_project(session)
+    await local_settings.update(
         session,
-        alice.id,
-        UserSelfUpdate(inference_provider="olcf", inference_olcf_api_key="s3m-token"),
-        alice,
+        LocalSettingsUpdate(
+            inference_provider="olcf", inference_olcf_api_key="s3m-token"
+        ),
     )
 
     seen: list[httpx.Request] = []
@@ -190,9 +175,7 @@ async def test_lists_olcf_models_under_its_mid_path_v1(session, monkeypatch):
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 200, response.text
     assert response.json()["models"] == [{"id": "m", "owned_by": None}]
@@ -207,13 +190,12 @@ async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
     """Listing works on MAG before a model is chosen."""
     monkeypatch.setattr(settings, "openai_api_key", None)
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await user_service.update_user(
+    project = await seed_project(session)
+    await local_settings.update(
         session,
-        alice.id,
-        UserSelfUpdate(inference_provider="mag", inference_mag_api_key="mag-token"),
-        alice,
+        LocalSettingsUpdate(
+            inference_provider="mag", inference_mag_api_key="mag-token"
+        ),
     )
 
     seen: list[httpx.Request] = []
@@ -225,9 +207,7 @@ async def test_lists_mag_models_before_a_model_is_chosen(session, monkeypatch):
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 200, response.text
     assert response.json()["supported"] is True
@@ -251,13 +231,10 @@ async def test_no_credential_reports_missing_credential(session, monkeypatch):
 
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
+    project = await seed_project(session)
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -279,19 +256,14 @@ async def test_unconfigured_provider_reports_unsupported(session, monkeypatch):
 
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await user_service.update_user(
+    project = await seed_project(session)
+    await local_settings.update(
         session,
-        alice.id,
-        UserSelfUpdate(inference_model="anthropic:claude-sonnet-4-5"),
-        alice,
+        LocalSettingsUpdate(inference_model="anthropic:claude-sonnet-4-5"),
     )
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 200
     assert response.json() == {"supported": False, "models": []}
@@ -307,9 +279,8 @@ async def test_rejected_credential_is_reported(session, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
 
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-    await _with_credential(session, alice)
+    project = await seed_project(session)
+    await _with_credential(session)
 
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "invalid_api_key"})
@@ -317,9 +288,7 @@ async def test_rejected_credential_is_reported(session, monkeypatch):
     monkeypatch.setattr(models_api.httpx, "AsyncClient", _mock_client(handler))
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name=project.name))
 
     assert response.status_code == 409
     assert response.json()["detail"] == rejected_credential_detail(
@@ -328,44 +297,25 @@ async def test_rejected_credential_is_reported(session, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Access control, matching every other project-scoped route
+# An unknown project, matching every other project-scoped route
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 async def test_missing_project_is_404(session, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
-    alice = await seed_user(session)
 
     with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name="no-such-project"), headers=_headers(alice)
-        )
+        response = await client.get(MODELS.format(name="no-such-project"))
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Project not found"
-
-
-@pytest.mark.unit
-async def test_non_member_cannot_list_models(session, monkeypatch):
-    monkeypatch.setattr(settings, "openai_api_key", None)
-    alice = await seed_user(session)
-    bob = await seed_user(session)
-    project = await seed_project(session, alice, name="alices-project")
-
-    with api_client(session) as (client, _):
-        response = await client.get(
-            MODELS.format(name=project.name), headers=_headers(bob)
-        )
-
-    assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------
 # Live: the real, running backend against the real configured gateway
 # ---------------------------------------------------------------------------
 
-ADMIN_EMAIL = "vista-test-admin@americansciencecloud.org"
 LIVE_PROJECT = "molten-salt"
 
 
@@ -381,10 +331,9 @@ def test_live_lists_models_from_the_real_gateway() -> None:
     VISTA_RUN_LIVE=1 (conftest.py) against a stack with a working credential.
     """
     base = _live_base_url()
-    headers = {"X-Vista-User-Email": ADMIN_EMAIL}
     try:
         with httpx.Client(base_url=base, timeout=30.0) as client:
-            response = client.get(MODELS.format(name=LIVE_PROJECT), headers=headers)
+            response = client.get(MODELS.format(name=LIVE_PROJECT))
     except httpx.HTTPError as exc:
         pytest.skip(f"backend unavailable at {base}: {exc}")
 

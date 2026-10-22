@@ -43,9 +43,7 @@ def api_client(
     """
     Yield an `(AsyncClient, FakeAgentPool)` pair bound to `session`.
 
-    Authentication runs for real: pass `headers={"X-Vista-User-Email": ...}` to
-    act as a seeded user, which is what makes the 401/403/404 assertions
-    meaningful.
+    Routes read the settings row in `session`'s database, as they do in the app.
     """
     pool = FakeAgentPool(agent=agent)
 

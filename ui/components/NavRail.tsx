@@ -10,7 +10,7 @@ import {
 import { useChatRunStatus } from "@/lib/chat-run-status";
 import { useActiveProject } from "@/lib/projects";
 import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
-import { useCurrentUser } from "@/lib/user";
+import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { UserSettingsModal } from "./UserSettingsModal";
@@ -163,7 +163,7 @@ export function NavRail() {
   const router = useRouter();
   const pathname = usePathname();
   const activeProject = useActiveProject();
-  const { user, loading: userLoading } = useCurrentUser();
+  const { settings, loading: settingsLoading } = useSettings();
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Set when settings were opened from a cluster's card, to expand only that section. */
@@ -196,13 +196,12 @@ export function NavRail() {
     return { onMouseEnter: show, onFocus: show, onMouseLeave: hide, onBlur: hide };
   }
 
-  // VISTA runs locally as a single user, so the rail ends in a settings
-  // button rather than an identity chip. `user` is still read because the
-  // settings modal edits that user's row — there is nothing to open until it
-  // has loaded.
-  const settingsHint = user
+  // VISTA runs locally for one researcher, so the rail ends in a settings
+  // button rather than an identity chip. There is nothing to open until the
+  // settings have loaded.
+  const settingsHint = settings
     ? "Settings"
-    : userLoading
+    : settingsLoading
       ? "Loading settings…"
       : "Settings unavailable";
 
@@ -292,9 +291,9 @@ export function NavRail() {
     ? `Chat, ${RUN_STATUS_LABELS[runSummary.status].toLowerCase()}`
     : "Chat";
 
-  // Nothing until the user has loaded, so a hidden cluster never flashes in.
-  const hidden = new Set(user?.hpc_hidden_clusters ?? []);
-  const visibleClusters: HpcCluster[] = user
+  // Nothing until the settings have loaded, so a hidden cluster never flashes in.
+  const hidden = new Set(settings?.hpc_hidden_clusters ?? []);
+  const visibleClusters: HpcCluster[] = settings
     ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
     : [];
 
@@ -404,7 +403,7 @@ export function NavRail() {
         />
       </nav>
 
-      {/* settingsHint changes as the user record loads, so it is the tooltip's
+      {/* settingsHint changes as the settings load, so it is the tooltip's
           text but not the accessible name: a name that differs between the
           server render and the first client one is a hydration mismatch. */}
       <button
@@ -414,7 +413,7 @@ export function NavRail() {
           setSettingsCluster(undefined);
           setSettingsOpen(true);
         }}
-        disabled={!user}
+        disabled={!settings}
         aria-label="Open settings"
         {...tipProps(settingsHint)}
       >

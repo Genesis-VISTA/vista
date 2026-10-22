@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from .inference import build_model_for
-from ..db.schemas import UserPublicWithConfig
+from ..db.schemas import LocalSettingsPublic
 
 
 class ConversationReport(BaseModel):
@@ -56,7 +56,8 @@ Output strictly:
 async def generate_report_draft(
     message_history: list[ModelMessage],
     hint: str | None = None,
-    user: UserPublicWithConfig | None = None,
+    local: LocalSettingsPublic | None = None,
+    model: str | None = None,
 ) -> ConversationReport:
     """
     Draft a report from a chat conversation.
@@ -66,15 +67,16 @@ async def generate_report_draft(
             through to the drafting agent so it sees the full transcript.
         hint: Optional user-supplied focus (e.g. "focus on the density results").
             Becomes part of the user prompt.
-        user: The signed-in user, whose settings row supplies the model,
+        local: The installation's settings, which supply the model,
             endpoint, and credential. Without it this falls back to `Settings`,
             which on an install configured only through the UI has no key.
+        model: The source chat's own `provider:name` model, if it has one.
 
     Returns:
         A `ConversationReport` the caller can edit before saving.
     """
     agent = Agent(
-        model=build_model_for(user),
+        model=build_model_for(local, model),
         # `instructions`, not `system_prompt`: PydanticAI drops a system prompt
         # when `message_history` is non-empty, and the chat history always is.
         instructions=_SYSTEM_PROMPT,

@@ -156,7 +156,7 @@ class ClusterChecks(BaseModel):
     settings: Check
     """
     The researcher's own settings a submission needs: the remote directory,
-    and the account on Perlmutter and Lux. Read from the user row, so it is
+    and the account on Perlmutter and Lux. Read from the settings row, so it is
     never cached.
     """
 
@@ -232,7 +232,7 @@ _PLAIN_ACCOUNT = re.compile(r"[A-Za-z0-9_-]+")
 """ The MCP server's rule for the Lux account (`UserConfig.require_lux_account`). """
 
 
-def settings_check(cluster: HpcCluster, user: Any) -> Check:
+def settings_check(cluster: HpcCluster, local: Any) -> Check:
     """Whether the researcher has set what a submission to `cluster` needs.
 
     Every cluster needs a remote directory, and Perlmutter and Lux an account
@@ -242,14 +242,14 @@ def settings_check(cluster: HpcCluster, user: Any) -> Check:
     """
     title = _TITLES[cluster]
     remote_dir: str | None = {
-        "odo": user.odo_remote_dir,
-        "frontier": user.frontier_remote_dir,
-        "perlmutter": user.nersc_remote_dir,
-        "lux": user.lux_remote_dir,
+        "odo": local.odo_remote_dir,
+        "frontier": local.frontier_remote_dir,
+        "perlmutter": local.nersc_remote_dir,
+        "lux": local.lux_remote_dir,
     }[cluster]
     account: str | None = {
-        "perlmutter": user.nersc_account,
-        "lux": user.lux_account,
+        "perlmutter": local.nersc_account,
+        "lux": local.lux_account,
     }.get(cluster)
     needs_account = cluster in ("perlmutter", "lux")
     account_label = "NERSC account" if cluster == "perlmutter" else "Lux account"
@@ -429,7 +429,7 @@ class _GlobusSource:
 
 
 def globus_source(
-    cluster: Literal["odo", "frontier"], user: Any
+    cluster: Literal["odo", "frontier"], local: Any
 ) -> _GlobusSource | None:
     """The Globus pair this cluster's file operations would use, or None.
 
@@ -439,11 +439,11 @@ def globus_source(
     lists a directory it cannot read.
     """
     own = (
-        (user.odo_globus_token, user.odo_globus_https_token)
+        (local.odo_globus_token, local.odo_globus_https_token)
         if cluster == "odo"
-        else (user.frontier_globus_token, user.frontier_globus_https_token)
+        else (local.frontier_globus_token, local.frontier_globus_https_token)
     )
-    for transfer, https in (own, (user.globus_token, user.globus_https_token)):
+    for transfer, https in (own, (local.globus_token, local.globus_https_token)):
         if transfer and https:
             return _GlobusSource(transfer, https)
     return None
@@ -552,42 +552,42 @@ class HpcStatusService:
         self._lux_probe = lux_probe
         self._now = now
         self._monotonic = monotonic
-        self._results: dict[
-            tuple[str, HpcCluster], tuple[float, str, ClusterStatus]
-        ] = {}
+        self._results: dict[HpcCluster, tuple[float, str, ClusterStatus]] = {}
         self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
         self._introspections: dict[str, tuple[float, dict]] = {}
         self._ssh_probes: dict[str, tuple[float, Check]] = {}
         self._ssh_inflight: dict[str, asyncio.Future[Check]] = {}
 
     async def status(
-        self, user: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
+        self, local: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
     ) -> HpcStatus:
-        """Every visible cluster's status for `user`.
+        """Every visible cluster's status for these settings.
 
         `fresh` reruns the checks instead of reusing a recent result: for every
         cluster, or with `cluster` for that one only. A hidden cluster is not
         checked at all.
         """
-        hidden: set[str] = set(user.hpc_hidden_clusters or [])
+        hidden: set[str] = set(local.hpc_hidden_clusters or [])
         visible: list[HpcCluster] = [c for c in CLUSTERS if c not in hidden]
         async with httpx.AsyncClient(
             timeout=HTTP_TIMEOUT, transport=self._transport
         ) as client:
             results = await asyncio.gather(
                 *(
-                    self._cluster(client, user, c, fresh=fresh and cluster in (None, c))
+                    self._cluster(
+                        client, local, c, fresh=fresh and cluster in (None, c)
+                    )
                     for c in visible
                 )
             )
         return HpcStatus(clusters=list(results))
 
     async def _cluster(
-        self, client: httpx.AsyncClient, user: Any, cluster: HpcCluster, *, fresh: bool
+        self, client: httpx.AsyncClient, local: Any, cluster: HpcCluster, *, fresh: bool
     ) -> ClusterStatus:
-        key = (str(user.id), cluster)
-        fingerprint = self._credential_fingerprint(user, cluster)
-        settings = settings_check(cluster, user)
+        key = cluster
+        fingerprint = self._credential_fingerprint(local, cluster)
+        settings = settings_check(cluster, local)
         cached = self._results.get(key)
         if (
             not fresh
@@ -595,7 +595,7 @@ class HpcStatusService:
             and cached[1] == fingerprint
             and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
-            # The settings come from the user row, not a facility, so a cached
+            # The settings come from the settings row, not a facility, so a cached
             # result always carries the current ones.
             checks = cached[2].checks.model_copy(update={"settings": settings})
             return cached[2].model_copy(
@@ -605,8 +605,8 @@ class HpcStatusService:
         olcf = cluster in ("odo", "frontier")
         facility, credential, globus = await asyncio.gather(
             self._facility(client, cluster, fresh=fresh),
-            self._credential(client, cluster, user),
-            self._globus(cluster, user) if olcf else _none(),
+            self._credential(client, cluster, local),
+            self._globus(cluster, local) if olcf else _none(),
         )
         checks = ClusterChecks(
             facility=facility, credential=credential, globus=globus, settings=settings
@@ -627,19 +627,19 @@ class HpcStatusService:
             return LUX_PROBE_FAILURE_TTL
         return RESULT_TTL
 
-    def _credential_fingerprint(self, user: Any, cluster: HpcCluster) -> str:
+    def _credential_fingerprint(self, local: Any, cluster: HpcCluster) -> str:
         """Changes whenever a credential this cluster's checks use changes."""
         if cluster == "lux":
             return _digest()  # no credential feeds Lux's checks
         if cluster == "perlmutter":
-            return _digest(user.nersc_iri_token)
-        s3m = user.odo_s3m_token if cluster == "odo" else user.frontier_s3m_token
+            return _digest(local.nersc_iri_token)
+        s3m = local.odo_s3m_token if cluster == "odo" else local.frontier_s3m_token
         own = (
-            (user.odo_globus_token, user.odo_globus_https_token)
+            (local.odo_globus_token, local.odo_globus_https_token)
             if cluster == "odo"
-            else (user.frontier_globus_token, user.frontier_globus_https_token)
+            else (local.frontier_globus_token, local.frontier_globus_https_token)
         )
-        return _digest(s3m, *own, user.globus_token, user.globus_https_token)
+        return _digest(s3m, *own, local.globus_token, local.globus_https_token)
 
     # --- facility ----------------------------------------------------------
 
@@ -844,17 +844,17 @@ class HpcStatusService:
         return 200, info
 
     async def _credential(
-        self, client: httpx.AsyncClient, cluster: HpcCluster, user: Any
+        self, client: httpx.AsyncClient, cluster: HpcCluster, local: Any
     ) -> Check:
         if cluster == "lux":
             # Nothing is stored to check; see LUX_SIGN_IN.
-            return Check(ok=True, message=LUX_SIGN_IN, project=user.lux_account)
+            return Check(ok=True, message=LUX_SIGN_IN, project=local.lux_account)
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
         token = {
-            "odo": user.odo_s3m_token,
-            "frontier": user.frontier_s3m_token,
-            "perlmutter": user.nersc_iri_token,
+            "odo": local.odo_s3m_token,
+            "frontier": local.frontier_s3m_token,
+            "perlmutter": local.nersc_iri_token,
         }[cluster]
         if not token:
             return Check(
@@ -936,9 +936,9 @@ class HpcStatusService:
 
     # --- Globus ------------------------------------------------------------
 
-    async def _globus(self, cluster: Literal["odo", "frontier"], user: Any) -> Check:
+    async def _globus(self, cluster: Literal["odo", "frontier"], local: Any) -> Check:
         title = _TITLES[cluster]
-        source = globus_source(cluster, user)
+        source = globus_source(cluster, local)
         if source is None:
             return Check(
                 ok=False,

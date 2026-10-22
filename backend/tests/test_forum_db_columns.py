@@ -17,7 +17,8 @@ from vista_backend.db.db import _add_missing_columns
 from vista_backend.db import schemas  # noqa: F401  (registers the tables)
 
 NEW_COLUMNS = {
-    "debate_post": {"published", "on_remote"},
+    "debate_post": {"published", "on_remote", "model"},
+    "debate_participant": {"model"},
     "debate_run": {"thread_missing"},
 }
 
@@ -74,9 +75,9 @@ def test_chat_session_run_columns_reach_an_existing_database(tmp_path):
     with engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO chat_session (id, user_id, project_id, title, "
+                "INSERT INTO chat_session (id, project_id, title, "
                 "message_history, messages, created_at, updated_at) VALUES "
-                "('a', 'u', 'p', 't', '[]', '[]', '', '')"
+                "('a', 'p', 't', '[]', '[]', '', '')"
             )
         )
         row = conn.execute(

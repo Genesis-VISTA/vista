@@ -68,17 +68,18 @@ async def test_the_box_columns_are_dropped_and_inserts_work_again(tmp_path):
     migrate = _script()
 
     async with engine.begin() as conn:
-        assert await migrate.reconcile(conn, dry_run=True) == (2, 5)
+        assert await migrate.reconcile(conn, dry_run=True) == (3, 5)
     assert "box_slug" in await _columns(engine, "debate_participant"), "dry run"
 
     async with engine.begin() as conn:
-        assert await migrate.reconcile(conn, dry_run=False) == (2, 5)
+        assert await migrate.reconcile(conn, dry_run=False) == (3, 5)
 
     participant = await _columns(engine, "debate_participant")
     post = await _columns(engine, "debate_post")
     assert not {"box_slug", "box_id", "policy_digest"} & participant
     assert not {"box_id", "policy_digest"} & post
-    assert {"published", "on_remote"} <= post
+    assert {"published", "on_remote", "model"} <= post
+    assert "model" in participant
 
     async with AsyncSession(engine) as session:
         session.add(

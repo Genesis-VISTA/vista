@@ -10,7 +10,7 @@ import type { Project } from "@/lib/projects";
 /*
  * Settings and the model picker together, with every store real and only
  * the network faked. The fake backend keeps one user row and answers
- * `/users/me/inference` from it the way `resolve_inference_target` does, so
+ * `/settings/inference` from it the way `resolve_inference_target` does, so
  * this covers the whole loop: a choice in Settings saves, the backend clears
  * the model, the store refreshes, and the picker's label follows.
  */
@@ -26,7 +26,6 @@ const PROJECT: Project = {
   skills: [],
   knowledgeBases: [],
   forumRepoUrl: "",
-  hasForumToken: false,
   tools: [],
   usageLimits: {},
 };
@@ -71,9 +70,9 @@ beforeEach(() => {
   useActiveProjectMock.mockReturnValue(PROJECT);
   puts = [];
   row = {
-    id: "u1",
+    install_id: "00000000-0000-4000-8000-000000000001",
+    display_name: null,
     email: "researcher@ornl.gov",
-    is_admin: false,
     hpc_hidden_clusters: [],
     inference_provider: null,
     // Chosen on i2 before the switch: it must not follow the researcher to MAG.
@@ -84,11 +83,11 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/users/me?config=true") return json(row);
-      if (url === "/api/users/me" && init?.method === "PUT") {
+      if (url === "/api/settings" && init?.method !== "PUT") return json(row);
+      if (url === "/api/settings" && init?.method === "PUT") {
         const update = JSON.parse(String(init.body)) as Record<string, unknown>;
         puts.push(update);
-        // As `PUT /users/me` does: a new provider clears the chosen model.
+        // As `PUT /settings` does: a new provider clears the chosen model.
         if (
           "inference_provider" in update &&
           !("inference_model" in update) &&
@@ -99,9 +98,9 @@ beforeEach(() => {
         row = { ...row, ...update };
         return json(row);
       }
-      if (url === "/api/users/me/inference") return json(inferenceView());
+      if (url === "/api/settings/inference") return json(inferenceView());
       if (url === "/api/projects/molten-salt/models") return json({ supported: true, models: [] });
-      if (url.startsWith("/api/users/me/hpc-status")) return json({ clusters: [] });
+      if (url.startsWith("/api/settings/hpc-status")) return json({ clusters: [] });
       throw new Error(`unexpected fetch ${init?.method ?? "GET"} ${url}`);
     }),
   );

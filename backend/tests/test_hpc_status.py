@@ -20,7 +20,7 @@ import globus_sdk
 from globus_sdk import AuthAPIError, TransferAPIError
 
 from vista_backend.config import HpcClusterSettings
-from vista_backend.db.schemas import UserPublicWithConfig
+from vista_backend.db.schemas import LocalSettingsPublic
 from vista_backend.services import hpc_status as hs
 from vista_backend.services.hpc_status import (
     Check,
@@ -211,13 +211,11 @@ SETTINGS = dict(
     lux_remote_dir="/lustre/orion/abc123/proj-shared/vista-lux",
     lux_account="abc123",
 )
-""" Everything a submission needs besides credentials. `user` sets it unless a test overrides it. """
+""" Everything a submission needs besides credentials. `local` sets it unless a test overrides it. """
 
 
-def user(**fields) -> UserPublicWithConfig:
-    return UserPublicWithConfig(
-        id=uuid.uuid4(), email="r@ornl.gov", **{**SETTINGS, **fields}
-    )
+def local(**fields) -> LocalSettingsPublic:
+    return LocalSettingsPublic(install_id=uuid.uuid4(), **{**SETTINGS, **fields})
 
 
 CONNECTED = dict(
@@ -331,14 +329,14 @@ def test_missing_settings_are_not_connected(facility, credential, settings, stat
     ],
 )
 def test_settings_check_names_what_is_missing(cluster, fields, reason, says):
-    check = hs.settings_check(cluster, user(**fields))
+    check = hs.settings_check(cluster, local(**fields))
     assert not check.ok
     assert check.reason == reason
     assert says in check.message
 
 
 def test_settings_check_passes_with_everything_set():
-    u = user()
+    u = local()
     assert hs.settings_check("odo", u) == Check(
         ok=True, message=SETTINGS["odo_remote_dir"]
     )
@@ -355,7 +353,7 @@ async def test_card_is_not_connected_without_a_remote_directory_even_when_cached
     """
     fac = healthy()
     service = make_service(fac)
-    u = user(**CONNECTED, frontier_remote_dir=None)
+    u = local(**CONNECTED, frontier_remote_dir=None)
     first = (await statuses(service, u))["frontier"]
     assert first.state == "not_connected"
     assert first.checks.credential.ok and first.checks.globus.ok
@@ -378,7 +376,7 @@ async def test_card_is_not_connected_without_a_remote_directory_even_when_cached
 @pytest.mark.anyio
 async def test_all_ready():
     fac, globus = healthy(), FakeGlobus()
-    result = await statuses(make_service(fac, globus), user(**CONNECTED))
+    result = await statuses(make_service(fac, globus), local(**CONNECTED))
     assert list(result) == ["frontier", "odo", "perlmutter", "lux"]
     assert {c: s.state for c, s in result.items()} == dict.fromkeys(result, "ready")
     assert result["perlmutter"].checks.globus is None
@@ -401,7 +399,7 @@ async def test_resolved_incident_is_ignored():
             "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
         }
     ]
-    result = await statuses(make_service(fac), user(**CONNECTED))
+    result = await statuses(make_service(fac), local(**CONNECTED))
     assert result["frontier"].state == "ready"
 
 
@@ -416,7 +414,7 @@ async def test_open_incident_is_degraded():
             "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
         }
     ]
-    frontier = (await statuses(make_service(fac), user(**CONNECTED)))["frontier"]
+    frontier = (await statuses(make_service(fac), local(**CONNECTED)))["frontier"]
     assert frontier.state == "degraded"
     assert frontier.checks.facility.incident.name == "Lustre maintenance"
 
@@ -432,7 +430,7 @@ async def test_future_incident_is_not_open_yet():
             "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
         }
     ]
-    assert (await statuses(make_service(fac), user(**CONNECTED)))[
+    assert (await statuses(make_service(fac), local(**CONNECTED)))[
         "frontier"
     ].state == "ready"
 
@@ -442,7 +440,7 @@ async def test_resource_down_outranks_a_rejected_token():
     fac = healthy()
     fac.status["odo"] = "down"
     fac.iri[(ODO, "odo-tok")] = 401
-    odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
+    odo = (await statuses(make_service(fac), local(**CONNECTED)))["odo"]
     assert odo.state == "degraded"
     assert "down" in odo.checks.facility.message
     assert odo.checks.credential.reason == "rejected"  # still reported in the details
@@ -452,7 +450,7 @@ async def test_resource_down_outranks_a_rejected_token():
 async def test_unreachable_facility_is_never_ready():
     fac = healthy()
     fac.down.add(NERSC)
-    pm = (await statuses(make_service(fac), user(**CONNECTED)))["perlmutter"]
+    pm = (await statuses(make_service(fac), local(**CONNECTED)))["perlmutter"]
     assert pm.checks.facility.reason == "unreachable"
     assert pm.state == "unverifiable"
 
@@ -461,18 +459,18 @@ async def test_unreachable_facility_is_never_ready():
 async def test_other_odo_resources_do_not_stand_in_for_odo():
     """Defiant is down on the same feed; only Odo's pinned id counts."""
     fac = healthy()
-    assert (await statuses(make_service(fac), user(**CONNECTED)))[
+    assert (await statuses(make_service(fac), local(**CONNECTED)))[
         "odo"
     ].state == "ready"
 
 
 @pytest.mark.anyio
-async def test_facility_feed_is_shared_across_users():
+async def test_facility_feed_is_shared_across_checks():
     fac = healthy()
     service = make_service(fac)
-    await service.status(user(**CONNECTED))
+    await service.status(local(**CONNECTED))
     before = sum("/status/" in str(r.url) for r in fac.calls)
-    await service.status(user(**CONNECTED))
+    await service.status(local(**CONNECTED))
     assert sum("/status/" in str(r.url) for r in fac.calls) == before
 
 
@@ -484,7 +482,7 @@ async def test_facility_feed_is_shared_across_users():
 @pytest.mark.anyio
 async def test_no_token_means_not_connected_and_no_authenticated_call():
     fac = healthy()
-    result = await statuses(make_service(fac), user())
+    result = await statuses(make_service(fac), local())
     # Lux has no credential to be missing; it is Ready once its login node answers.
     lux = result.pop("lux")
     assert lux.state == "ready"
@@ -499,7 +497,7 @@ async def test_rejected_token():
     fac = healthy()
     fac.iri[(NERSC, "pm-tok")] = 401
     fac.s3m["odo-tok"] = (401, None, {})
-    result = await statuses(make_service(fac), user(**CONNECTED))
+    result = await statuses(make_service(fac), local(**CONNECTED))
     assert result["perlmutter"].state == "rejected"
     assert result["odo"].state == "rejected"
 
@@ -510,7 +508,7 @@ async def test_token_for_any_project_is_reported_not_judged():
     account, and the card says which."""
     fac = healthy()
     fac.s3m["odo-tok"] = (200, "zzz999", {})
-    odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
+    odo = (await statuses(make_service(fac), local(**CONNECTED)))["odo"]
     assert odo.state == "ready"
     assert odo.checks.credential.project == "zzz999"
 
@@ -522,7 +520,7 @@ async def test_token_for_the_other_enclave_is_rejected_by_iri():
     fac = healthy()
     fac.s3m["fr-tok"] = (200, ODO_PROJECT, {})
     fac.iri[(FRONTIER, "fr-tok")] = 401  # what Frontier's IRI really answers
-    frontier = (await statuses(make_service(fac), user(**CONNECTED)))["frontier"]
+    frontier = (await statuses(make_service(fac), local(**CONNECTED)))["frontier"]
     assert frontier.state == "rejected"
 
 
@@ -535,7 +533,7 @@ async def test_token_not_active_yet():
         ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(start)},
     )
-    odo = (await statuses(make_service(fac), user(**CONNECTED)))["odo"]
+    odo = (await statuses(make_service(fac), local(**CONNECTED)))["odo"]
     assert odo.state == "rejected"
     assert odo.checks.credential.reason == "not_active"
     assert odo.checks.credential.active_from == start
@@ -549,7 +547,7 @@ async def test_delayed_start_in_the_past_is_fine():
         ODO_PROJECT,
         {"delayedStart": True, "delayDate": iso(NOW - timedelta(hours=2))},
     )
-    assert (await statuses(make_service(fac), user(**CONNECTED)))[
+    assert (await statuses(make_service(fac), local(**CONNECTED)))[
         "odo"
     ].state == "ready"
 
@@ -559,7 +557,7 @@ async def test_delayed_start_in_the_past_is_fine():
 async def test_unexpected_iri_answer_is_unverifiable(status):
     fac = healthy()
     fac.iri[(NERSC, "pm-tok")] = status
-    pm = (await statuses(make_service(fac), user(**CONNECTED)))["perlmutter"]
+    pm = (await statuses(make_service(fac), local(**CONNECTED)))["perlmutter"]
     assert pm.state == "unverifiable"
     assert pm.checks.credential.http_status == status
 
@@ -570,19 +568,19 @@ async def test_unexpected_iri_answer_is_unverifiable(status):
 
 
 def test_globus_source_order():
-    own = user(
+    own = local(
         odo_globus_token="o-gt",
         odo_globus_https_token="o-gh",
         globus_token="s-gt",
         globus_https_token="s-gh",
     )
     assert globus_source("odo", own).transfer == "o-gt"
-    shared = user(globus_token="s-gt", globus_https_token="s-gh")
+    shared = local(globus_token="s-gt", globus_https_token="s-gh")
     assert globus_source("odo", shared).transfer == "s-gt"
     # Half a pair does not count, and there is nothing after the shared pair.
-    half = user(odo_globus_token="o-gt")
+    half = local(odo_globus_token="o-gt")
     assert globus_source("odo", half) is None
-    half_and_shared = user(
+    half_and_shared = local(
         odo_globus_token="o-gt", globus_token="s-gt", globus_https_token="s-gh"
     )
     assert globus_source("odo", half_and_shared).transfer == "s-gt"
@@ -597,7 +595,7 @@ async def test_deployment_globus_variables_do_not_count(monkeypatch):
     monkeypatch.setenv("VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN", "dep-gh")
     fac, globus = healthy(), FakeGlobus()
     settings = HpcClusterSettings()
-    u = user(odo_s3m_token="odo-tok")
+    u = local(odo_s3m_token="odo-tok")
     odo = (await statuses(make_service(fac, globus, settings=settings), u))["odo"]
     assert odo.state == "globus_not_connected"
     assert globus.calls == []
@@ -605,7 +603,7 @@ async def test_deployment_globus_variables_do_not_count(monkeypatch):
 
 @pytest.mark.anyio
 async def test_globus_not_connected():
-    odo = (await statuses(make_service(healthy()), user(odo_s3m_token="odo-tok")))[
+    odo = (await statuses(make_service(healthy()), local(odo_s3m_token="odo-tok")))[
         "odo"
     ]
     assert odo.state == "globus_not_connected"
@@ -615,7 +613,7 @@ async def test_globus_not_connected():
 async def test_globus_session_expired():
     globus = FakeGlobus()
     globus.result = GlobusSessionExpired("401")
-    odo = (await statuses(make_service(healthy(), globus), user(**CONNECTED)))["odo"]
+    odo = (await statuses(make_service(healthy(), globus), local(**CONNECTED)))["odo"]
     assert odo.state == "globus_session_expired"
 
 
@@ -623,7 +621,7 @@ async def test_globus_session_expired():
 async def test_globus_failure_of_another_kind_is_unverifiable():
     globus = FakeGlobus()
     globus.result = RuntimeError("network")
-    odo = (await statuses(make_service(healthy(), globus), user(**CONNECTED)))["odo"]
+    odo = (await statuses(make_service(healthy(), globus), local(**CONNECTED)))["odo"]
     assert odo.state == "unverifiable"
 
 
@@ -635,7 +633,7 @@ NETWORK_ERROR = globus_sdk.NetworkError(
 async def _odo_globus(result: Exception, **kw):
     globus = FakeGlobus()
     globus.result = result
-    odo = (await statuses(make_service(healthy(), globus), user(**CONNECTED), **kw))[
+    odo = (await statuses(make_service(healthy(), globus), local(**CONNECTED), **kw))[
         "odo"
     ]
     return odo
@@ -901,7 +899,7 @@ def test_probe_gare_without_a_domain_is_still_session_expired(monkeypatch):
 @pytest.mark.anyio
 async def test_hidden_clusters_make_no_calls():
     fac = healthy()
-    u = user(**CONNECTED, hpc_hidden_clusters=["perlmutter"])
+    u = local(**CONNECTED, hpc_hidden_clusters=["perlmutter"])
     result = await statuses(make_service(fac), u)
     assert "perlmutter" not in result
     assert fac.calls_to(NERSC) == 0
@@ -911,7 +909,7 @@ async def test_hidden_clusters_make_no_calls():
 async def test_recent_result_is_reused_and_fresh_reruns():
     fac, clock = healthy(), Clock()
     service = make_service(fac, clock=clock)
-    u = user(**CONNECTED)
+    u = local(**CONNECTED)
     await service.status(u)
     n = len(fac.calls)
     await service.status(u)
@@ -928,7 +926,7 @@ async def test_recent_result_is_reused_and_fresh_reruns():
 async def test_single_cluster_recheck():
     fac = healthy()
     service = make_service(fac)
-    u = user(**CONNECTED)
+    u = local(**CONNECTED)
     await service.status(u)
     before = {b: fac.calls_to(b) for b in (ODO, FRONTIER, NERSC)}
     await service.status(u, fresh=True, cluster="odo")
@@ -941,7 +939,7 @@ async def test_single_cluster_recheck():
 async def test_saving_a_new_token_invalidates_the_cache():
     fac = healthy()
     service = make_service(fac)
-    u = user(**CONNECTED)
+    u = local(**CONNECTED)
     fac.iri[(NERSC, "pm-tok")] = 401
     assert (await statuses(service, u))["perlmutter"].state == "rejected"
     fac.iri[(NERSC, "pm-new")] = 200
@@ -956,7 +954,7 @@ async def test_no_secret_ever_appears_in_the_response():
     fac.iri[(NERSC, "pm-tok")] = 500
     globus = FakeGlobus()
     globus.result = GlobusSessionExpired("expired", log="token odo-gt refused")
-    u = user(**CONNECTED)
+    u = local(**CONNECTED)
     body = (await make_service(fac, globus).status(u)).model_dump_json()
     for secret in [*CONNECTED.values(), "Bearer"]:
         assert secret not in body, secret
@@ -964,13 +962,13 @@ async def test_no_secret_ever_appears_in_the_response():
 
 @pytest.mark.anyio
 async def test_route_passes_fresh_and_cluster_through(monkeypatch):
-    from vista_backend.api import users as users_api
+    from vista_backend.api import settings as settings_api
 
     fac = healthy()
     service = make_service(fac)
     monkeypatch.setattr(hs, "hpc_status_service", service)
-    u = user(**CONNECTED)
-    first = await users_api.get_hpc_status(u)
+    u = local(**CONNECTED)
+    first = await settings_api.get_hpc_status(u)
     assert [c.cluster for c in first.clusters] == [
         "frontier",
         "odo",
@@ -978,7 +976,7 @@ async def test_route_passes_fresh_and_cluster_through(monkeypatch):
         "lux",
     ]
     before = fac.calls_to(NERSC)
-    await users_api.get_hpc_status(u, fresh=True, cluster="odo")
+    await settings_api.get_hpc_status(u, fresh=True, cluster="odo")
     assert fac.calls_to(NERSC) == before
 
 
@@ -993,7 +991,7 @@ ONLY_LUX = dict(hpc_hidden_clusters=["frontier", "odo", "perlmutter"])
 @pytest.mark.anyio
 async def test_lux_names_the_researchers_account():
     fac, lux = healthy(), FakeLux()
-    u = user(**ONLY_LUX, lux_account="abc123")
+    u = local(**ONLY_LUX, lux_account="abc123")
     lx = (await statuses(make_service(fac, lux=lux), u))["lux"]
     assert lx.checks.credential.project == "abc123"
 
@@ -1001,7 +999,7 @@ async def test_lux_names_the_researchers_account():
 @pytest.mark.anyio
 async def test_lux_is_ready_when_its_login_node_answers_with_no_credential_at_all():
     fac, lux = healthy(), FakeLux()
-    result = await statuses(make_service(fac, lux=lux), user(**ONLY_LUX))
+    result = await statuses(make_service(fac, lux=lux), local(**ONLY_LUX))
     lx = result["lux"]
     assert lx.state == "ready"
     assert "lux.olcf.ornl.gov" in lx.checks.facility.message
@@ -1031,7 +1029,7 @@ async def test_lux_is_ready_when_its_login_node_answers_with_no_credential_at_al
 async def test_any_probe_failure_is_couldnt_verify_never_degraded(error, said):
     lux = FakeLux()
     lux.result = error
-    lx = (await statuses(make_service(healthy(), lux=lux), user(**ONLY_LUX)))["lux"]
+    lx = (await statuses(make_service(healthy(), lux=lux), local(**ONLY_LUX)))["lux"]
     assert lx.state == "unverifiable"
     assert lx.checks.facility.reason == "unreachable"
     assert said in lx.checks.facility.message
@@ -1040,17 +1038,17 @@ async def test_any_probe_failure_is_couldnt_verify_never_degraded(error, said):
 
 
 @pytest.mark.anyio
-async def test_lux_probe_is_shared_across_researchers_until_fresh_or_expired():
+async def test_lux_probe_is_shared_until_fresh_or_expired():
     lux, clock = FakeLux(), Clock()
     service = make_service(healthy(), lux=lux, clock=clock)
-    await service.status(user(**ONLY_LUX))
-    await service.status(user(**ONLY_LUX))  # another researcher, same minute
+    await service.status(local(**ONLY_LUX))
+    await service.status(local(**ONLY_LUX))  # again, same minute
     assert len(lux.calls) == 1
     clock.t += hs.LUX_PROBE_MIN_INTERVAL + 1
-    await service.status(user(**ONLY_LUX), fresh=True)
+    await service.status(local(**ONLY_LUX), fresh=True)
     assert len(lux.calls) == 2
     clock.t += hs.FACILITY_TTL + 1
-    await service.status(user(**ONLY_LUX))
+    await service.status(local(**ONLY_LUX))
     assert len(lux.calls) == 3
 
 
@@ -1058,7 +1056,7 @@ async def test_lux_probe_is_shared_across_researchers_until_fresh_or_expired():
 async def test_fresh_rechecks_do_not_probe_lux_more_than_every_few_seconds():
     lux, clock = FakeLux(), Clock()
     service = make_service(healthy(), lux=lux, clock=clock)
-    u = user(**ONLY_LUX)
+    u = local(**ONLY_LUX)
     for _ in range(5):  # a researcher mashing Recheck
         await service.status(u, fresh=True, cluster="lux")
     assert len(lux.calls) == 1
@@ -1080,7 +1078,7 @@ async def test_concurrent_requests_share_one_probe():
     lux = SlowLux()
     service = make_service(healthy(), lux=lux)
     pending = asyncio.gather(
-        *(service.status(user(**ONLY_LUX), fresh=True) for _ in range(4))
+        *(service.status(local(**ONLY_LUX), fresh=True) for _ in range(4))
     )
     await asyncio.sleep(0)
     release.set()
@@ -1094,7 +1092,7 @@ async def test_a_failed_probe_is_retried_after_a_few_seconds_not_a_minute():
     lux, clock = FakeLux(), Clock()
     lux.result = TimeoutError()
     service = make_service(healthy(), lux=lux, clock=clock)
-    u = user(**ONLY_LUX)
+    u = local(**ONLY_LUX)
     assert (await statuses(service, u))["lux"].state == "unverifiable"
     lux.result = None
     clock.t += hs.LUX_PROBE_FAILURE_TTL + 1  # well inside FACILITY_TTL and RESULT_TTL
@@ -1107,7 +1105,7 @@ async def test_no_configured_lux_host_is_couldnt_verify_and_the_other_clusters_s
     lux = FakeLux()
     settings = HpcClusterSettings.model_validate({"lux_ssh_hosts": []})
     result = await statuses(
-        make_service(healthy(), lux=lux, settings=settings), user(**CONNECTED)
+        make_service(healthy(), lux=lux, settings=settings), local(**CONNECTED)
     )
     assert result["lux"].state == "unverifiable"
     assert "VISTA_MCP_LUX_SSH_HOSTS" in result["lux"].checks.facility.message
@@ -1121,7 +1119,7 @@ async def test_an_unexpected_probe_error_is_couldnt_verify_not_a_500():
     lux.result = UnicodeError(
         "label empty or too long"
     )  # a host name IDNA can't encode
-    result = await statuses(make_service(healthy(), lux=lux), user(**CONNECTED))
+    result = await statuses(make_service(healthy(), lux=lux), local(**CONNECTED))
     assert result["lux"].state == "unverifiable"
     assert "UnicodeError" in result["lux"].checks.facility.message
     assert result["odo"].state == "ready"
@@ -1130,7 +1128,7 @@ async def test_an_unexpected_probe_error_is_couldnt_verify_not_a_500():
 @pytest.mark.anyio
 async def test_hidden_lux_is_not_probed():
     lux = FakeLux()
-    u = user(**CONNECTED, hpc_hidden_clusters=["lux"])
+    u = local(**CONNECTED, hpc_hidden_clusters=["lux"])
     result = await statuses(make_service(healthy(), lux=lux), u)
     assert "lux" not in result
     assert lux.calls == []
@@ -1142,7 +1140,7 @@ async def test_probe_uses_the_first_configured_host():
     settings = HpcClusterSettings.model_validate(
         {"lux_ssh_hosts": ["hub.example", "login.example"]}
     )
-    await make_service(healthy(), lux=lux, settings=settings).status(user(**ONLY_LUX))
+    await make_service(healthy(), lux=lux, settings=settings).status(local(**ONLY_LUX))
     assert lux.calls == ["hub.example"]
 
 

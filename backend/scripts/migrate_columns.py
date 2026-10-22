@@ -10,11 +10,12 @@ startup where it would be obvious.
 Three steps, all idempotent:
 
   - **Add** any column a table lacks (`ADD COLUMN`).
-  - **Drop** the columns the h5i-era forum wrote and nothing reads any more
-    (`RETIRED`). They matter because `debate_participant.box_slug` and `box_id`
-    were NOT NULL: on a branch tester's database every new participant insert
-    fails until they are gone. Startup never drops anything, so this is the only
-    place it happens.
+  - **Drop** the columns nothing reads any more (`RETIRED`): the h5i-era
+    forum's, and `project.forum_repo_token`. The h5i ones matter because
+    `debate_participant.box_slug` and `box_id` were NOT NULL: on a branch
+    tester's database every new participant insert fails until they are gone.
+    The token's matters because it still holds an encrypted secret. Startup
+    never drops anything, so this is the only place it happens.
   - **Move** the forum outbox out of this database. An early build of the git
     forum kept it in a `forum_outbox` table; it now lives in each project's
     `data/forum-git/<project-id>/outbox.db`. Rows are copied there (so posts
@@ -64,8 +65,13 @@ first request rather than at startup.
 RETIRED: dict[str, tuple[str, ...]] = {
     "debate_participant": ("box_slug", "box_id", "policy_digest"),
     "debate_post": ("box_id", "policy_digest"),
+    "project": ("forum_repo_token",),
 }
-"""Columns from the h5i forum's per-role boxes, removed with it."""
+"""
+Columns no model has any more: the h5i forum's per-role boxes, and the
+per-project forum token. Dropping the token's column is what erases a token
+saved before projects stopped holding one; nothing else reads or clears it.
+"""
 
 
 async def reconcile(conn: AsyncConnection, *, dry_run: bool) -> tuple[int, int]:

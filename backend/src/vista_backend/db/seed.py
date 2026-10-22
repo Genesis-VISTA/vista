@@ -13,10 +13,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from .schemas import (
     KnowledgeBaseTable,
-    ProjectMemberTable,
     ProjectTable,
     SkillTable,
-    UserTable,
 )
 from ..agents.skills import read_skill
 from ..services._helpers import new_storage_path
@@ -480,30 +478,6 @@ async def seed_db(engine: AsyncEngine) -> None:
                 )
             )
 
-        # Test users / memberships only outside prod.
-        if settings.env != "prod":
-            users = [
-                UserTable(
-                    id=uuid.UUID("2acb5d94-c542-42b5-a2fd-66f97cffd8d7"),
-                    email="vista-test-admin@americansciencecloud.org",
-                    is_admin=True,
-                ),
-                UserTable(
-                    id=uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b"),
-                    email="vista-test-user@americansciencecloud.org",
-                    is_admin=False,
-                ),
-            ]
-            session.add_all(users)
-            # Flush so ProjectMemberTable sees ids. TODO: Should maybe use sqlmodel.Relationship to
-            # make this automatic.
-            await session.flush()
-            # Add the non-admin test user to every default project.
-            session.add_all(
-                ProjectMemberTable(project_id=project.id, user_id=users[1].id)
-                for project in projects
-            )
-
         await session.commit()
 
 
@@ -511,7 +485,6 @@ AI_SAFETY_PROJECT_ID = uuid.UUID("5c0a4f3e-7b1d-4e8a-9a52-3d6f0c1b7e24")
 AI_SAFETY_KB_ID = uuid.UUID("a3e7c915-42d8-4b6f-8f0e-9d1b5c7a2e46")
 AI_SAFETY_SLUG = "ai-safety"
 AI_SAFETY_PROJECT_NAME = "ai-safety-autonomous-labs"
-TEST_USER_ID = uuid.UUID("7b2a0d62-08bf-47e2-b698-904ff47aef5b")
 
 
 async def _acquire_ai_safety_corpus() -> bool:
@@ -632,13 +605,6 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
                     usage_limits=dict(request_limit=50),
                 )
             )
-            if settings.env != "prod" and await session.get(UserTable, TEST_USER_ID):
-                await session.flush()
-                session.add(
-                    ProjectMemberTable(
-                        project_id=AI_SAFETY_PROJECT_ID, user_id=TEST_USER_ID
-                    )
-                )
         elif kb is not None and AI_SAFETY_SLUG not in project.knowledge_bases:
             existing = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
             assert existing is not None

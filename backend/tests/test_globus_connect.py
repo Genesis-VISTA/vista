@@ -11,7 +11,6 @@ checked is which half of the response gets stored and how failures are worded.
 """
 
 import time
-import uuid
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -26,16 +25,6 @@ def no_pending_flows():
     globus_auth._pending.clear()
     yield
     globus_auth._pending.clear()
-
-
-@pytest.fixture
-def alice():
-    return uuid.uuid4()
-
-
-@pytest.fixture
-def bob():
-    return uuid.uuid4()
 
 
 def query(url, key):
@@ -93,33 +82,33 @@ different from returning one without a refresh token."""
 
 
 class TestTheAuthorizationAddress:
-    def test_each_cluster_pins_its_own_sso_domain(self, alice):
+    def test_each_cluster_pins_its_own_sso_domain(self):
         """Odo and Frontier authenticate against different identity providers.
         An address that pinned the wrong one would send the researcher to a login
         that cannot grant what the other cluster needs."""
-        odo = globus_auth.start_login(alice, "odo")
-        frontier = globus_auth.start_login(alice, "frontier")
+        odo = globus_auth.start_login("odo")
+        frontier = globus_auth.start_login("frontier")
 
         assert query(odo, "session_required_single_domain") == "opensso.ccs.ornl.gov"
         assert query(frontier, "session_required_single_domain") == "sso.ccs.ornl.gov"
 
-    def test_the_verifier_never_leaves_the_server(self, alice):
+    def test_the_verifier_never_leaves_the_server(self):
         """The point of PKCE. A verifier the browser carried would make the code
         sufficient on its own."""
-        url = globus_auth.start_login(alice, "odo")
-        verifier = globus_auth._pending[(alice, "odo")].verifier
+        url = globus_auth.start_login("odo")
+        verifier = globus_auth._pending["odo"].verifier
 
         assert verifier not in url
         # Its hash is what travels, and only that.
         assert query(url, "code_challenge") is not None
         assert query(url, "code_challenge_method") == "S256"
 
-    def test_it_asks_for_transfer_and_the_collection_itself(self, alice):
+    def test_it_asks_for_transfer_and_the_collection_itself(self):
         """Two surfaces, two scopes. Transfer lists the cluster's directories;
         the collection's own `/https` scope is what moves the bytes, and it
         embeds that collection's UUID -- which is why the scope set cannot be
         one constant shared by both enclaves."""
-        scopes = query(globus_auth.start_login(alice, "odo"), "scope").split()
+        scopes = query(globus_auth.start_login("odo"), "scope").split()
 
         assert "urn:globus:auth:scope:transfer.api.globus.org:all" in scopes
         assert (
@@ -128,16 +117,14 @@ class TestTheAuthorizationAddress:
         )
         assert not any("gcp_install" in scope for scope in scopes)
 
-    def test_each_cluster_asks_for_its_own_collection(self, alice):
-        odo = set(query(globus_auth.start_login(alice, "odo"), "scope").split())
-        frontier = set(
-            query(globus_auth.start_login(alice, "frontier"), "scope").split()
-        )
+    def test_each_cluster_asks_for_its_own_collection(self):
+        odo = set(query(globus_auth.start_login("odo"), "scope").split())
+        frontier = set(query(globus_auth.start_login("frontier"), "scope").split())
 
         assert odo != frontier
         assert not any(globus_auth.collection_id("frontier") in s for s in odo)
 
-    def test_the_collection_follows_the_mcp_servers_setting(self, alice, monkeypatch):
+    def test_the_collection_follows_the_mcp_servers_setting(self, monkeypatch):
         """The scope names one collection; the MCP server sends the request to
         whichever collection it is configured for. Disagreement is invisible --
         every request comes back 401 and VISTA says to reconnect a credential
@@ -146,55 +133,55 @@ class TestTheAuthorizationAddress:
             globus_auth.COLLECTION_ID_ENV_VARS["odo"], "a-different-collection"
         )
 
-        scopes = query(globus_auth.start_login(alice, "odo"), "scope").split()
+        scopes = query(globus_auth.start_login("odo"), "scope").split()
 
         assert "https://auth.globus.org/scopes/a-different-collection/https" in scopes
 
-    def test_no_data_access_is_requested(self, alice):
+    def test_no_data_access_is_requested(self):
         """High-assurance GCSv5 mapped collections reject it -- their session
         requirement is what replaces it. Asking would fail the whole login with
         an UNKNOWN_SCOPE_ERROR that names nothing the researcher did."""
-        scopes = query(globus_auth.start_login(alice, "odo"), "scope").split()
+        scopes = query(globus_auth.start_login("odo"), "scope").split()
 
         assert not any("data_access" in scope for scope in scopes)
 
-    def test_refresh_tokens_are_requested(self, alice):
+    def test_refresh_tokens_are_requested(self):
         """An access token expires in an hour. Connecting once has to mean once."""
-        assert query(globus_auth.start_login(alice, "odo"), "access_type") == "offline"
+        assert query(globus_auth.start_login("odo"), "access_type") == "offline"
 
-    def test_starting_again_replaces_the_pending_flow(self, alice):
+    def test_starting_again_replaces_the_pending_flow(self):
         """Two live addresses differ only in their verifier, so a code from the
         older one fails in a way that describes nothing the researcher did."""
-        globus_auth.start_login(alice, "odo")
-        first = globus_auth._pending[(alice, "odo")].verifier
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
+        first = globus_auth._pending["odo"].verifier
+        globus_auth.start_login("odo")
 
-        assert globus_auth._pending[(alice, "odo")].verifier != first
+        assert globus_auth._pending["odo"].verifier != first
         assert len(globus_auth._pending) == 1
 
 
 class TestTheExchange:
-    def test_the_refresh_token_is_what_gets_stored(self, alice, monkeypatch):
+    def test_the_refresh_token_is_what_gets_stored(self, monkeypatch):
         """The access token is the one that expires in an hour. Storing it would
         work for exactly one session and then fail for a reason nobody could see."""
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
             lambda self, code: FakeResponse(transfer_tokens()),
         )
 
-        connection = globus_auth.complete_login(alice, "odo", "a-code")
+        connection = globus_auth.complete_login("odo", "a-code")
 
         assert connection.refresh_token == "the-refresh-token"
         assert connection.https_refresh_token == "the-https-refresh-token"
         assert connection.identity == "someone@ornl.gov"
 
-    def test_both_resource_servers_are_captured(self, alice, monkeypatch):
+    def test_both_resource_servers_are_captured(self, monkeypatch):
         """Reading only the top level would keep whichever of the two Globus
         happened to put there and lose the other, which is a credential that
         lists a directory and reads nothing in it."""
-        globus_auth.start_login(alice, "frontier")
+        globus_auth.start_login("frontier")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -203,14 +190,14 @@ class TestTheExchange:
             ),
         )
 
-        connection = globus_auth.complete_login(alice, "frontier", "x")
+        connection = globus_auth.complete_login("frontier", "x")
 
         assert connection.refresh_token == "the-refresh-token"
         assert connection.https_refresh_token == "frontier-https"
 
-    def test_the_identity_comes_from_the_signed_token(self, alice, monkeypatch):
+    def test_the_identity_comes_from_the_signed_token(self, monkeypatch):
         """Not from anything the researcher typed."""
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -219,10 +206,10 @@ class TestTheExchange:
             ),
         )
 
-        assert globus_auth.complete_login(alice, "odo", "x").identity == "real@ornl.gov"
+        assert globus_auth.complete_login("odo", "x").identity == "real@ornl.gov"
 
-    def test_a_response_with_no_refresh_token_is_refused(self, alice, monkeypatch):
-        globus_auth.start_login(alice, "odo")
+    def test_a_response_with_no_refresh_token_is_refused(self, monkeypatch):
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -230,11 +217,11 @@ class TestTheExchange:
         )
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "x")
+            globus_auth.complete_login("odo", "x")
         assert "lasting" in refusal.value.detail
 
-    def test_a_response_with_no_transfer_token_is_refused(self, alice, monkeypatch):
-        globus_auth.start_login(alice, "odo")
+    def test_a_response_with_no_transfer_token_is_refused(self, monkeypatch):
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -244,13 +231,13 @@ class TestTheExchange:
         )
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "x")
+            globus_auth.complete_login("odo", "x")
         assert "Globus Transfer" in refusal.value.detail
 
-    def test_a_response_with_no_collection_token_is_refused(self, alice, monkeypatch):
+    def test_a_response_with_no_collection_token_is_refused(self, monkeypatch):
         """Half a credential stored is worse than none: it reads as connected in
         the interface and fails on the first file the job produces."""
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -258,71 +245,61 @@ class TestTheExchange:
         )
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "x")
+            globus_auth.complete_login("odo", "x")
         assert "Odo's storage" in refusal.value.detail
 
-    def test_a_spent_flow_is_not_reusable(self, alice, monkeypatch):
+    def test_a_spent_flow_is_not_reusable(self, monkeypatch):
         """One code, one attempt. A second try on the same flow should say to
         start again rather than fail the same way twice."""
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
             lambda self, code: FakeResponse(transfer_tokens()),
         )
-        globus_auth.complete_login(alice, "odo", "a-code")
+        globus_auth.complete_login("odo", "a-code")
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "a-code")
+            globus_auth.complete_login("odo", "a-code")
         assert "expired" in refusal.value.detail
 
 
-class TestWhoseFlowIsWhose:
-    def test_one_researcher_cannot_complete_anothers(self, alice, bob):
-        """The flows are keyed by researcher, so Bob pasting a code while Alice
-        has one pending finds nothing of hers."""
-        globus_auth.start_login(alice, "odo")
-
-        with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(bob, "odo", "alices-code")
-        assert "expired" in refusal.value.detail
-        assert (alice, "odo") in globus_auth._pending
-
-    def test_the_clusters_do_not_share_a_flow(self, alice):
-        globus_auth.start_login(alice, "odo")
+class TestOneFlowPerCluster:
+    def test_the_clusters_do_not_share_a_flow(self):
+        globus_auth.start_login("odo")
 
         with pytest.raises(HTTPException):
-            globus_auth.complete_login(alice, "frontier", "a-code")
+            globus_auth.complete_login("frontier", "a-code")
 
 
 class TestExpiry:
-    def test_an_old_address_is_refused_with_what_to_do(self, alice, monkeypatch):
-        globus_auth.start_login(alice, "odo")
-        pending = globus_auth._pending[(alice, "odo")]
+    def test_an_old_address_is_refused_with_what_to_do(self, monkeypatch):
+        globus_auth.start_login("odo")
+        pending = globus_auth._pending["odo"]
         pending.started_at = time.time() - globus_auth.PENDING_TTL_SECONDS - 1
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "a-code")
+            globus_auth.complete_login("odo", "a-code")
         assert "Start it again" in refusal.value.detail
 
-    def test_an_expired_flow_is_not_kept(self, alice):
-        globus_auth.start_login(alice, "odo")
-        globus_auth._pending[(alice, "odo")].started_at = (
+    def test_an_expired_flow_is_not_kept(self):
+        globus_auth.start_login("odo")
+        globus_auth._pending["odo"].started_at = (
             time.time() - globus_auth.PENDING_TTL_SECONDS - 1
         )
 
-        globus_auth.start_login(alice, "frontier")
+        globus_auth.start_login("frontier")
 
-        assert (alice, "odo") not in globus_auth._pending
+        assert "odo" not in globus_auth._pending
 
-    def test_an_empty_code_says_so_before_asking_globus(self, alice):
-        globus_auth.start_login(alice, "odo")
+    def test_an_empty_code_says_so_before_asking_globus(self):
+        globus_auth.start_login("odo")
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "   ")
+            globus_auth.complete_login("odo", "   ")
         assert "Paste the code" in refusal.value.detail
         # Not spent: the researcher still has the address open.
-        assert (alice, "odo") in globus_auth._pending
+        assert "odo" in globus_auth._pending
 
 
 class TestGlobusRefusals:
@@ -354,10 +331,10 @@ class TestGlobusRefusals:
 
         return exchange
 
-    def test_a_stale_code_names_the_old_tab(self, alice, monkeypatch):
+    def test_a_stale_code_names_the_old_tab(self, monkeypatch):
         """By far the most common failure, and the one whose real cause the raw
         Globus message never mentions."""
-        globus_auth.start_login(alice, "odo")
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -365,12 +342,12 @@ class TestGlobusRefusals:
         )
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "stale")
+            globus_auth.complete_login("odo", "stale")
         assert refusal.value.status_code == 400
         assert "older Globus tab" in refusal.value.detail
 
-    def test_any_other_refusal_is_still_actionable(self, alice, monkeypatch):
-        globus_auth.start_login(alice, "odo")
+    def test_any_other_refusal_is_still_actionable(self, monkeypatch):
+        globus_auth.start_login("odo")
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -378,15 +355,15 @@ class TestGlobusRefusals:
         )
 
         with pytest.raises(HTTPException) as refusal:
-            globus_auth.complete_login(alice, "odo", "x")
+            globus_auth.complete_login("odo", "x")
         assert "Start it again" in refusal.value.detail
 
-    def test_a_rejected_code_leaves_the_address_usable(self, alice, monkeypatch):
+    def test_a_rejected_code_leaves_the_address_usable(self, monkeypatch):
         """A refused code is usually a half-copied one, so the flow survives and
         the researcher can paste the whole code into the address still on
         screen. Dropping it here would make a typo cost an entire login."""
-        globus_auth.start_login(alice, "odo")
-        verifier = globus_auth._pending[(alice, "odo")].verifier
+        globus_auth.start_login("odo")
+        verifier = globus_auth._pending["odo"].verifier
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -394,9 +371,9 @@ class TestGlobusRefusals:
         )
 
         with pytest.raises(HTTPException):
-            globus_auth.complete_login(alice, "odo", "half-a-cod")
+            globus_auth.complete_login("odo", "half-a-cod")
 
-        assert globus_auth._pending[(alice, "odo")].verifier == verifier
+        assert globus_auth._pending["odo"].verifier == verifier
 
         # And the retry with the whole code goes through on that same flow.
         monkeypatch.setattr(
@@ -404,5 +381,5 @@ class TestGlobusRefusals:
             "oauth2_exchange_code_for_tokens",
             lambda self, code: FakeResponse(transfer_tokens()),
         )
-        assert globus_auth.complete_login(alice, "odo", "half-a-code").refresh_token
-        assert (alice, "odo") not in globus_auth._pending
+        assert globus_auth.complete_login("odo", "half-a-code").refresh_token
+        assert "odo" not in globus_auth._pending

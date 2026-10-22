@@ -25,19 +25,18 @@ Prerequisites
 -------------
 - A running backend (``./launch.sh``; default http://localhost:8001).
 - A model configured (``VISTA_BACKEND_MODEL``) — the agent needs one to plan the call.
-- HPC credentials for the target cluster on your user record. Without them the agent
+- HPC credentials for the target cluster in Settings. Without them the agent
   would stop mid-turn and *elicit* them interactively, which a non-streaming API call
   cannot answer. Set them once (``frontier_s3m_token`` for Frontier; an S3M token is
   scoped to one OLCF project, so each OLCF cluster has its own):
 
-      curl -X PUT http://localhost:8001/users/me \
+      curl -X PUT http://localhost:8001/settings \
            -H 'Content-Type: application/json' \
            -d '{"odo_s3m_token": "<your Odo S3M token>"}'
 
   This script preflights that and tells you if it is missing.
 
-Auth is the dev-only ``X-Vista-User-Email`` header; in prod the API returns 501 until
-SSO lands.
+The backend is single-user and needs no identity header.
 """
 from __future__ import annotations
 
@@ -83,18 +82,17 @@ def parse_composition(text: str) -> dict[str, float]:
 class Vista:
     """Thin client over the handful of endpoints this example needs."""
 
-    def __init__(self, base_url: str, email: str, timeout: float = 900.0):
+    def __init__(self, base_url: str, timeout: float = 900.0):
         self._http = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
-        self._headers = {"X-Vista-User-Email": email}
 
-    def me(self) -> dict[str, Any]:
-        r = self._http.get("/users/me", params={"config": "true"}, headers=self._headers)
+    def settings(self) -> dict[str, Any]:
+        r = self._http.get("/settings")
         r.raise_for_status()
         return r.json()
 
     def new_chat_session(self, project: str, title: str) -> str:
         r = self._http.post(
-            f"/projects/{project}/chat-sessions", headers=self._headers, json={"title": title}
+            f"/projects/{project}/chat-sessions", json={"title": title}
         )
         r.raise_for_status()
         return r.json()["id"]
@@ -103,7 +101,6 @@ class Vista:
         """One agent turn. Returns the ProjectAgentResult."""
         r = self._http.post(
             f"/projects/{project}/agent/run",
-            headers=self._headers,
             json={"user_prompt": prompt, "stream": False, "chat_session_id": chat_session_id},
         )
         r.raise_for_status()
@@ -120,7 +117,6 @@ class Vista:
         """
         r = self._http.post(
             f"/projects/{project}/mcp/call",
-            headers=self._headers,
             json={"name": name, "arguments": arguments},
         )
         r.raise_for_status()
@@ -191,8 +187,6 @@ def poll_until_done(v: Vista, project: str, job_id: str, cluster: str,
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-url", default=DEFAULT_BASE)
-    p.add_argument("--user", default="vista-test-admin@americansciencecloud.org",
-                   help="Dev identity (X-Vista-User-Email).")
     p.add_argument("--project", default="alloy-design")
     p.add_argument("--composition", default="equimolar",
                    help="'equimolar' or 'Mo,Nb,Ta,W' fractions summing to 1.0.")
@@ -207,19 +201,19 @@ def main(argv: list[str] | None = None) -> int:
 
     comp = parse_composition(args.composition)
     pretty = ", ".join(f"{k.capitalize()}={v}" for k, v in comp.items())
-    v = Vista(args.base_url, args.user)
+    v = Vista(args.base_url)
 
     # --- preflight: credentials, or the agent will elicit mid-turn and stall ---
-    me = v.me()
+    settings = v.settings()
     field = CLUSTER_TOKEN_FIELD[args.cluster]
-    if not me.get(field):
-        print(f"!! Your user has no {field}, which {args.cluster} submission needs.")
-        print(f"!! Set it first:  curl -X PUT {args.base_url}/users/me "
+    if not settings.get(field):
+        print(f"!! Settings have no {field}, which {args.cluster} submission needs.")
+        print(f"!! Set it first:  curl -X PUT {args.base_url}/settings "
               f"-H 'Content-Type: application/json' -d '{{\"{field}\": \"<token>\"}}'")
         print("!! Without it the agent stops to elicit credentials, which this "
               "non-streaming client cannot answer.")
         return 2
-    print(f"==> user {me['email']} ({field} present)")
+    print(f"==> settings have {field}")
 
     session_id = args.chat_session or v.new_chat_session(
         args.project, f"Tc of MoNbTaW ({args.composition})"

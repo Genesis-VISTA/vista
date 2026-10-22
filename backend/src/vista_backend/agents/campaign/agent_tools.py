@@ -13,20 +13,48 @@ conversationally. `dispatch_cycle` launches HPC work and returns immediately —
 emails the user and fills in results as jobs finish.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.models import Model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...db.schemas import CampaignRunTable
+from ...db.schemas import CampaignRunTable, InferenceProvider, LocalSettingsPublic
 from ...services import campaign as campaign_service
+from ..inference import build_model_for, resolve_inference_target
 from .planner import CampaignPlanner
 
+logger = logging.getLogger(__name__)
 
 PlannerForRun = Callable[[AsyncSession, CampaignRunTable], Awaitable[CampaignPlanner]]
+
+
+def campaign_model_for(local: LocalSettingsPublic, run: CampaignRunTable) -> Model:
+    """
+    The model a campaign's planner is rebuilt on, in the chat and in the monitor.
+
+    The run keeps the model it launched on (`run.model`), whatever the chat or
+    the default has become since. Two exceptions follow the current default:
+    an older run that recorded no model, and a run launched before a switch
+    of provider, where the launch model's name means nothing.
+    """
+    model = run.model
+    if model is not None and run.provider is not None:
+        now_on = resolve_inference_target(local).provider
+        if now_on != run.provider:
+            logger.info(
+                "Campaign %s launched on %s (%s); settings are now on %s, so it uses the current default.",
+                run.id,
+                model,
+                run.provider,
+                now_on,
+            )
+            model = None
+    return build_model_for(local, model)
 
 
 def _noop(_msg: str) -> None:
@@ -38,12 +66,15 @@ class CampaignDriverDeps:
     """What the campaign tools need, injected so the driver isn't coupled to ProjectAgent."""
 
     project_id: uuid.UUID
-    user_id: uuid.UUID
     session_id: uuid.UUID | None
     """ The chat session driving the campaign; recorded on the run so the monitor can find its sandbox. """
     get_session: Callable[[], AsyncSession | None]
     get_planner: PlannerForRun
     emit_progress: Callable[[str], None] = _noop
+    model: str | None = None
+    """ The launching agent's resolved `provider:name`, recorded on each run it starts. """
+    provider: InferenceProvider | None = None
+    """ The provider `model` was resolved on, recorded beside it. """
 
 
 def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
@@ -77,7 +108,7 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             # reported back into the conversation after the long HPC wait.
             #
             # Not because the session keys the sandbox volume — it does not; that
-            # is `project_paths_for(project_id, user_id)`. Believing otherwise is
+            # is `project_paths_for(project_id)`. Believing otherwise is
             # what made the monitor refuse to poll debate-commissioned jobs, which
             # have no conversation by design, with a complaint about a volume it
             # could have resolved perfectly well.
@@ -89,11 +120,12 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         run = await campaign_service.create_campaign(
             _session(),
             project_id=deps.project_id,
-            user_id=deps.user_id,
             session_id=deps.session_id,
             domain=domain,
             planner_skill=planner_skill,
             title=title,
+            model=deps.model,
+            provider=deps.provider,
         )
         return (
             f"Started campaign. run_id={run.id} status={run.status}. "
@@ -131,7 +163,6 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             job_ids = await planner.dispatch_candidate(
                 session,
                 run_id=run.id,
-                user_id=deps.user_id,
                 candidate=candidate,
                 cycle=cycle,
                 cluster=cluster,

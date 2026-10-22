@@ -15,11 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.config import settings
 from vista_backend.db import seed as seed_module
-from vista_backend.db.schemas import (
-    KnowledgeBaseTable,
-    ProjectMemberTable,
-    ProjectTable,
-)
+from vista_backend.db.schemas import KnowledgeBaseTable, ProjectTable
 from vista_backend.db.seed import (
     AI_SAFETY_KB_ID,
     AI_SAFETY_PROJECT_ID,
@@ -121,8 +117,6 @@ async def test_fresh_db_gets_the_project_with_an_attached_indexed_kb(
             "AI Safety Papers",
             "ready",
         )
-        members = (await session.exec(select(ProjectMemberTable))).all()
-        assert [m.project_id for m in members] == [AI_SAFETY_PROJECT_ID]
     # The PDFs are copied for citation display.
     assert (env["data_dir"] / "knowledge-bases/ai-safety/pdfs/roadmap.pdf").is_file()
     assert await kb_slugs(engine) == ["ai-safety"]
