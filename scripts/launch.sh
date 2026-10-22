@@ -24,14 +24,16 @@ PROD=''
 NO_BUILD=false
 ELECTRON=''
 NO_ELECTRON=false
+COLLAB=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
     --no-build) NO_BUILD=true ;; # Skip the build step (e.g. baked into a container image).
     --electron) ELECTRON=true ;; # The default in logs mode; kept so existing invocations still work.
     --no-electron) NO_ELECTRON=true ;; # Services only; open http://localhost:3000 in a browser.
+    --collab) COLLAB=true ;; # Also a local collaboration server, for development and tests only.
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron] [--collab]" >&2; exit 1 ;;
   esac
 done
 
@@ -80,6 +82,29 @@ uv run python scripts/seed_db.py
 export VISTA_MCP_URL="http://localhost:8000/mcp"
 export VISTA_BACKEND_URL="http://localhost:8001"
 
+# --collab: a local collaboration server, and the backend pointed at it. Only
+# here, in a checkout: no package launcher, the Electron startup protocol or a
+# package starts one. The address is the backend's fallback, so one set in
+# Settings still wins, and nothing is written to the settings row.
+#
+# Both commands carry their settings inline rather than relying on exports: a
+# tmux pane in an already-running tmux server, or a macOS Terminal window, does
+# not inherit this script's environment. The server's host and port are pinned
+# too, since it also reads `.env` files of its own, which must not move it away
+# from the address the backend is given.
+COLLAB_CMD=''
+COLLAB_URL=''
+BACKEND_ENV=''
+if [[ "$COLLAB" == true ]]; then
+  COLLAB_PORT="${VISTA_COLLAB_PORT:-8002}"
+  COLLAB_URL="http://127.0.0.1:$COLLAB_PORT"
+  BACKEND_ENV="VISTA_BACKEND_COLLABORATION_SERVER_URL='$COLLAB_URL' "
+  COLLAB_CMD="
+    cd '$REPO_ROOT/collaboration_server' &&
+    VISTA_COLLAB_HOST=127.0.0.1 VISTA_COLLAB_PORT='$COLLAB_PORT' uv run vista-collaboration-server;
+  "
+fi
+
 
 # No Globus service here, and nothing to start: OLCF file operations are HTTPS
 # requests against the cluster's own collection, so VISTA no longer runs a
@@ -95,7 +120,7 @@ BACKEND_CMD="
   cd '$REPO_ROOT/backend' &&
   echo 'Waiting for MCP server...' &&
   until curl -s -o /dev/null '$VISTA_MCP_URL'; do sleep 1; done &&
-  uv run vista-backend;
+  ${BACKEND_ENV}uv run vista-backend;
 "
 
 if [[ "$PROD" == true ]]; then
@@ -164,12 +189,18 @@ case "$MODE" in
     tmux new-session -d -s vista-dev "$MCP_CMD; exec bash"
     tmux split-window -v "$BACKEND_CMD; exec bash"
     tmux split-window -h "$UI_CMD; exec bash"
+    if [[ -n "$COLLAB_CMD" ]]; then
+      tmux split-window -v "$COLLAB_CMD; exec bash"
+    fi
     tmux attach -t vista-dev
     ;;
   terminal)
     launch_terminal "Backend" "$BACKEND_CMD; exec bash"
     launch_terminal "UI Dev Server" "$UI_CMD; exec bash"
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
+    if [[ -n "$COLLAB_CMD" ]]; then
+      launch_terminal "Collaboration Server" "$COLLAB_CMD; exec bash"
+    fi
     ;;
   logs)
     LOG_DIR="$REPO_ROOT/logs"
@@ -209,11 +240,17 @@ case "$MODE" in
     echo "  MCP server: $LOG_DIR/mcp.log"
     echo "  Backend:    $LOG_DIR/backend.log"
     echo "  UI:         $LOG_DIR/ui.log"
+    if [[ -n "$COLLAB_CMD" ]]; then
+      echo "  Collab:     $LOG_DIR/collab.log ($COLLAB_URL)"
+    fi
     echo "Press Ctrl-C to stop all services."
 
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
     run_service ui "$LOG_DIR/ui.log" "$UI_CMD"
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"
+    if [[ -n "$COLLAB_CMD" ]]; then
+      run_service collab "$LOG_DIR/collab.log" "$COLLAB_CMD"
+    fi
 
     if [[ -n "$ELECTRON" ]]; then
       echo "  Window:     $LOG_DIR/window.log (close it to stop everything)"

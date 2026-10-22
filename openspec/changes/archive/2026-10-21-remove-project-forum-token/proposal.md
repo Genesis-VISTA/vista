@@ -1,7 +1,7 @@
 ## Why
 
 A project row holds one secret: `forum_repo_token`, an optional access token for its
-Hypothesis Lab forum. The collaboration server (see `PLAN.md`, Step 5) will publish projects,
+Hypothesis Lab forum. The collaboration server will publish projects,
 and a project that carries a credential cannot be published as-is. The token is also the
 only way a forum on a host other than github.com or gitlab.com gets a token, and that case
 is already served by the system git: an SSH key or a credential helper.

@@ -132,6 +132,23 @@ cd backend
 uv run vista-backend
 ```
 
+### Collaboration server
+Where researchers explicitly publish and import projects, skills and knowledge bases.
+A generic item/version API on :8002, bound to 127.0.0.1: authentication is a
+stub that trusts the `X-Vista-Install-Id` / `X-Vista-Display-Name` headers
+(`services/identity.py`, the one place auth plugs in later).
+```bash
+./launch.sh logs --collab      # also start it, and point the backend at it
+cd collaboration_server && uv run vista-collaboration-server
+```
+Development and tests only: no package, package launcher or Electron startup starts it. The
+backend reads its address from Settings, falling back to
+`VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets); with neither, publishing and
+importing are off and `GET /collaboration/status` says why. An unreachable server is never
+fatal. The UI's Publish and Import controls read `useCollaboration()` (`ui/lib/collaboration.ts`).
+Backend tests mount the server in-process (the `collab_server` fixture) through the backend's
+dev extra, so run them with `--extra dev`.
+
 ### Frontend (UI)
 Launches Next.js dev server on :3000
 ```bash
@@ -150,12 +167,13 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
 ./scripts/ci-local.sh backend test     # backend pytest only
 ./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
+./scripts/ci-local.sh collab           # collaboration server lint, typecheck, tests
 ./scripts/ci-local.sh electron         # window typecheck + routing tests
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
@@ -167,6 +185,7 @@ Or run pieces directly:
 ```bash
 cd mcp_servers/vista_mcp_server && uv run --extra dev pytest  # HPC/RAG MCP tests
 cd mcp_servers/dev_mcp_server && uv run pytest  # Sandbox/view tests
+cd collaboration_server && uv run --extra dev pytest  # Collaboration server tests
 cd ui && npm run lint                           # Frontend ESLint
 cd backend && uv run --extra dev pytest -vv     # Backend tests
 curl http://localhost:3000/api/projects         # Smoke test: UI and backend up

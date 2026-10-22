@@ -3,7 +3,7 @@
 `repo_token(url, user, project)` (`services/repo_tokens.py`) picks the token git sends to a
 forum: the project's `forum_repo_token`, else the user's Settings token for github.com or
 gitlab.com, else none (the system git's credentials). Only the forum passes a project.
-`PLAN.md` Step 1 removes the first branch so a project row holds no secret.
+This change removes the first branch so a project row holds no secret.
 
 ## Decisions
 
@@ -13,7 +13,7 @@ Startup leaves the column in existing databases: `create_all` never drops one. N
 it, but it may still hold an encrypted token, so `scripts/migrate_columns.py` lists it in
 `RETIRED` and its reconcile drops it. A researcher who relied on a project token for a
 GitHub or gitlab.com forum adds a Settings token; on any other host, an SSH key or a
-credential helper. No backwards compatibility is kept (consistent with `PLAN.md`).
+credential helper. No backwards compatibility is kept.
 
 ### D2: An old failure record naming `project` is ignored
 

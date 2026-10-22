@@ -8,6 +8,7 @@
 #   ./scripts/ci-local.sh backend          # lint + test backend
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
+#   ./scripts/ci-local.sh collab           # lint + typecheck + test collaboration_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
@@ -33,7 +34,7 @@ TARGETS=()
 ACTIONS=()
 
 usage() {
-  sed -n '2,21p' "$0" | sed -E 's/^# ?//'
+  sed -n '2,22p' "$0" | sed -E 's/^# ?//'
 }
 
 die() {
@@ -139,7 +140,42 @@ backend_test() {
   log "backend:test"
   (
     cd "$REPO_ROOT/backend"
-    uv sync --frozen --dev
+    # The dev extra carries the collaboration server, mounted in-process by the
+    # collaboration tests. Matches backend:test.
+    uv sync --frozen --extra dev
+    uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
+  )
+}
+
+# The collaboration server (collaboration_server/). Mirrors collab:lint,
+# collab:typecheck and collab:test.
+collab_lint() {
+  ensure_uv
+  local rc=0
+  run_job "collab:lint (ruff $RUFF_VERSION)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/collaboration_server"
+    uvx "ruff@${RUFF_VERSION}" check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
+  ' || rc=1
+  if [[ "$FAST" == true ]]; then
+    return "$rc"
+  fi
+  run_job "collab:typecheck" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/collaboration_server"
+    uv sync --frozen
+    uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
+  ' || rc=1
+  return "$rc"
+}
+
+collab_test() {
+  ensure_uv
+  log "collab:test"
+  (
+    cd "$REPO_ROOT/collaboration_server"
+    uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
   )
 }
@@ -318,7 +354,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|electron|install|launcher|docs|all)
+    backend|collab|ui|mcp|electron|install|launcher|docs|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -401,6 +437,12 @@ if want_target backend && want_action lint; then
 fi
 if want_target backend && want_action test; then
   run_section "backend test" backend_test
+fi
+if want_target collab && want_action lint; then
+  run_section "collab lint" collab_lint
+fi
+if want_target collab && want_action test; then
+  run_section "collab test" collab_test
 fi
 if want_target mcp && want_action lint; then
   run_section "mcp lint" mcp_lint

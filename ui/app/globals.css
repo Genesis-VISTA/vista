@@ -3455,6 +3455,17 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: currentColor;
 }
 
+/* Collaboration: whether the server answers, beside the field for its address. */
+.settings-collab-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .settings-provider-model {
   max-width: 100%;
   overflow: hidden;

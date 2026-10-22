@@ -41,6 +41,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.3",
+    # Mounted in-process by the collaboration tests (httpx ASGITransport). In the
+    # dev extra only, never the default `dev` group: the package build syncs that
+    # group, and the collaboration server is not part of a package.
+    "vista-collaboration-server",
 ]
 
 [project.scripts]
@@ -58,6 +62,7 @@ vista-backend = "vista_backend.api.api:main"
 # PALISADE_GITHUB_TOKEN in .gitlab-ci.yml.
 [tool.uv.sources]
 palisade = { git = "https://github.com/herronej/palisade_siege_agentic_security.git", tag = "v1.0.0" }
+vista-collaboration-server = { path = "../collaboration_server", editable = true }
 
 [build-system]
 requires = ["hatchling"]

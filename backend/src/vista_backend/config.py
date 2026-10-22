@@ -5,7 +5,7 @@ from pydantic import AliasChoices, BaseModel, Field, ByteSize, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
-from .utils.types import CommaSeparatedList, ResolvedPath, LogLevel
+from .utils.types import CommaSeparatedList, OptionalHttpUrl, ResolvedPath, LogLevel
 from palisade.config import PalisadeSettings
 from .metrics import MetricsSettings
 
@@ -253,6 +253,16 @@ class Settings(BaseSettings):
     credential is reported when inference is first attempted. On a single-user
     install this is normally supplied through the settings UI instead, which
     takes precedence over this value.
+    """
+
+    collaboration_server_url: OptionalHttpUrl = None
+    """
+    The collaboration server to use when the researcher has set none in
+    Settings, which takes precedence. For development: `./launch.sh --collab`
+    sets it to the local server it starts. With neither, publishing and
+    importing are off, with the reason shown. Validated like the Settings
+    field, so a malformed address stops the backend at startup, naming it;
+    a blank one (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset.
     """
 
     mcp_url: str = Field(

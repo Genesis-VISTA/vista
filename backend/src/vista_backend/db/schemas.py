@@ -10,6 +10,7 @@ from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
+from ..utils.types import OptionalHttpUrl
 
 # TODO: Remove SQLModel and simplify the duplicate models
 
@@ -457,6 +458,8 @@ class LocalSettingsUpdate(SQLModel):
 
     display_name: str | None = None
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: OptionalHttpUrl = None
+    """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -540,6 +543,7 @@ class LocalSettingsPublic(SQLModel):
     install_id: uuid.UUID
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
+    collaboration_server_url: str | None = None
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -614,6 +618,12 @@ class LocalSettingsTable(SQLModel, table=True):
     """ This installation's identity for the collaboration server. Never changes. """
     display_name: str | None = None
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: str | None = None
+    """
+    The collaboration server this installation publishes to and imports from.
+    `None` falls back to `Settings.collaboration_server_url`; with neither,
+    publishing and importing are off. Not a secret.
+    """
     email: str | None = None
     """ Where campaign notifications go; nothing is sent without it. """
     inference_model: str | None = None
