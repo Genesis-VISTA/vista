@@ -1,7 +1,7 @@
 ## 1. Safe file serving
 
-- [ ] 1.1 In `backend/src/vista_backend/api/files.py`, add `?preview=1` to the file GET: `inline` only for `png, jpg, jpeg, gif, webp, pdf` (by extension), `attachment` otherwise. Add `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'` to every file response. Verify in a new `backend/tests/test_files_api.py`: PNG and PDF previews are inline; `.html` and `.svg` are attachments with or without `preview`; both headers are on every response; path traversal is still 404
-- [ ] 1.2 In `ui/app/api/files/[kind]/[...name]/route.ts`, forward `preview` upstream and pass both safety headers through, setting them when the upstream response lacks them. Verify with a new `ui/tests/files-route.test.ts` against a stubbed upstream: the query is forwarded, the headers are always present, and the disposition passes through
+- [x] 1.1 In `backend/src/vista_backend/api/files.py`, add `?preview=1` to the file GET: `inline` only for `png, jpg, jpeg, gif, webp, pdf` (by extension), `attachment` otherwise. Add `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox; default-src 'none'` to every file response. Verify in a new `backend/tests/test_files_api.py`: PNG and PDF previews are inline; `.html` and `.svg` are attachments with or without `preview`; both headers are on every response; path traversal is still 404
+- [x] 1.2 In `ui/app/api/files/[kind]/[...name]/route.ts`, forward `preview` upstream and pass both safety headers through, setting them when the upstream response lacks them. Verify with a new `ui/tests/files-route.test.ts` against a stubbed upstream: the query is forwarded, the headers are always present, and the disposition passes through
 
 ## 2. Record of displayed files
 

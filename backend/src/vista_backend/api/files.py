@@ -9,6 +9,16 @@ from ..services.files import FileInfo, FileKind
 
 router = APIRouter()
 
+# Types a browser may show inline, decided by extension alone. HTML and SVG are
+# deliberately absent: they are active content and are only ever downloaded.
+INLINE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "pdf"})
+
+# Sent with every file response: no sniffing, and a CSP that sandboxes the document.
+FILE_SAFETY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
+
 
 class FileKindConvertor(Convertor):
     """
@@ -52,9 +62,17 @@ async def download_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
+    preview: bool = False,
 ) -> Response:
     path = await files_service.get_file_path(session, project_name, kind, name)
-    return FileResponse(path, filename=path.name, content_disposition_type="attachment")
+    extension = path.suffix.lstrip(".").lower()
+    inline = preview and extension in INLINE_EXTENSIONS
+    return FileResponse(
+        path,
+        filename=path.name,
+        content_disposition_type="inline" if inline else "attachment",
+        headers=FILE_SAFETY_HEADERS,
+    )
 
 
 @router.delete("/projects/{project_name}/{kind:file_kind}/{name:path}")
