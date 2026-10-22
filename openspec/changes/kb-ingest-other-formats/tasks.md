@@ -57,7 +57,7 @@
 
 ## 6. Hands-on test (manual, not in PR CI)
 
-- [ ] 6.1 Add `scripts/make_kb_csv_fixture.py` (stdlib only; run with `uv run scripts/make_kb_csv_fixture.py <out-dir>`), which writes a synthetic KB with known values:
+- [x] 6.1 Add `scripts/make_kb_csv_fixture.py` (stdlib only; run with `uv run scripts/make_kb_csv_fixture.py <out-dir>`), which writes a synthetic KB with known values:
   - `flibe_viscosity.csv`: T_K 773–1073 step 10, viscosity from a fixed formula;
   - `flinak_density.tsv`: tab-separated;
   - `salt_melting_points.csv`: a dozen salts with BOM and quoted names containing commas;
