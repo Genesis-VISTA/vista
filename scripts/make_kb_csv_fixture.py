@@ -36,7 +36,8 @@ def flinak_density(t_k: int) -> float:
 
 def lif_conductivity(row: int) -> tuple[int, float, str]:
     """(T_K, conductivity, flag) for a 1-based data row."""
-    t_k = 500 + (row - 1) % 600
+    # Above LiF's 1121 K melting point.
+    t_k = 1150 + (row - 1) % 600
     value = round(4.0 + 2000.0 / t_k + 0.0004 * (row % 7), 4)
     if row == MARKED_ROW:
         return t_k, MARKED_VALUE, "MARKED"
@@ -72,7 +73,8 @@ def write_csv(path: Path, header, rows, *, delimiter=",", encoding="utf-8") -> N
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
 
-    temps = list(range(773, 1074, 10))
+    # 2 K steps give 151 rows, so 923 K falls in the second row window.
+    temps = list(range(773, 1074, 2))
     write_csv(
         out / "flibe_viscosity.csv",
         ["T_K", "viscosity_mPa_s"],

@@ -66,7 +66,7 @@
   - `flibe_viscosity.txt`: the same stem as the CSV.
 
   It also prints `expected.json`, holding the target values the run below checks. Verify that running it twice produces identical files.
-- [ ] 6.2 Write the hands-on plan as `openspec/changes/kb-ingest-other-formats/hands-on.md`. It covers:
+- [x] 6.2 Write the hands-on plan as `openspec/changes/kb-ingest-other-formats/hands-on.md`. It covers:
   - **Setup:** create a KB `salt-fixture` from the fixture, attach it to a project, and confirm in the explorer that badges, descriptions and row counts are shown;
   - **Prompts to run:**
     - "What's FLiBe's viscosity at 923 K? Plot viscosity vs temperature."

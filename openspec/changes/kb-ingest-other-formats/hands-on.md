@@ -24,8 +24,8 @@ deterministic. In `expected.json`, rows are 1-based data rows, header not counte
 
 | File | Badge | Row count |
 |---|---|---|
-| `flibe_viscosity.csv` | CSV | 31 |
-| `flinak_density.tsv` | TSV | 31 |
+| `flibe_viscosity.csv` | CSV | 151 |
+| `flinak_density.tsv` | TSV | 151 |
 | `salt_melting_points.csv` | CSV | 12 |
 | `lif_thermal_conductivity_long.csv` | CSV | 25,000 (not 10,000) |
 | `flibe_viscosity.txt` | Text | - |
@@ -41,9 +41,9 @@ Open a new chat in the project for each prompt. For `rag_search` hit headers and
 
 | # | Prompt | `rag_search` should return | `fetch_kb_file` | Compare with `expected.json` | Plot |
 |---|---|---|---|---|---|
-| 1 | "What's FLiBe's viscosity at 923 K? Plot viscosity vs temperature." | `flibe_viscosity.csv, rows 1-31 (CSV)` (key `flibe_viscosity_923K_expected_hit`; the whole file is one window) or its `summary (CSV)` hit | Must call it for `flibe_viscosity.csv`: the plot needs all 31 rows | `flibe_viscosity_at_923K_mPa_s` = 6.7808 mPa s | Yes, 31 points |
+| 1 | "What's FLiBe's viscosity at 923 K? Plot viscosity vs temperature." | `flibe_viscosity.csv, rows 51-100 (CSV)` (key `flibe_viscosity_923K_expected_hit`; 923 K is data row 76) or its `summary (CSV)` hit | Must call it for `flibe_viscosity.csv`: the plot needs all 151 rows | `flibe_viscosity_at_923K_mPa_s` = 6.7808 mPa s | Yes, 151 points |
 | 2 | "What's the melting point of the salt with a comma in its name?" | `salt_melting_points.csv, rows 1-12 (CSV)` (key `comma_salt_expected_hit`) or its summary | Optional | `comma_salt_name` = `LiF-BeF2, 2:1 (FLiBe)` in one piece, `comma_salt_melting_point_K` = 732 | No |
-| 3 | "Plot LiF thermal conductivity across the whole dataset and report the value at row 20,000." | `lif_thermal_conductivity_long.csv` hits, windows only up to `rows 9951-10000`; the summary says 25,000 rows | Must call it: row 20,000 is past the index cap (10,000 rows), so search cannot contain it | `lif_row_20000`: row 20000, T = 699 K, conductivity 99.99 W/m K, flag `MARKED`; `lif_total_rows` = 25000 | Yes, all 25,000 rows, with the 99.99 outlier visible |
+| 3 | "Plot LiF thermal conductivity across the whole dataset and report the value at row 20,000." | `lif_thermal_conductivity_long.csv` hits, windows only up to `rows 9951-10000`; the summary says 25,000 rows | Must call it: row 20,000 is past the index cap (10,000 rows), so search cannot contain it | `lif_row_20000`: row 20000, T = 1349 K, conductivity 99.99 W/m K, flag `MARKED`; `lif_total_rows` = 25000 | Yes, all 25,000 rows, with the 99.99 outlier visible |
 | 4 | "Which file has FLiBe data, according to the notes?" | `measurement_notes.md, passage 1 (Markdown)` (key `notes_expected_hit`) | Optional | `notes_name_flibe_file` = `flibe_viscosity.csv` | No |
 
 Also check in every run: each non-PDF hit shows a `Full file: fetch_kb_file(...)`
