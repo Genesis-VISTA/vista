@@ -133,10 +133,12 @@ export function requestModelChoice(): void {
 /**
  * Whether a send has to wait for a model: the provider in effect has no
  * default and none is chosen. When it does, the picker is asked to open.
- * Before the first answer this says no, and the backend's own refusal is the
- * backstop.
+ * A chat with a model of its own (`chatModel`) never waits: it can send where
+ * the researcher has no default. Before the first answer this says no, and the
+ * backend's own refusal is the backstop.
  */
-export function holdSendWithoutModel(): boolean {
+export function holdSendWithoutModel(chatModel: string | null = null): boolean {
+  if (chatModel !== null) return false;
   const s = snapshot.settings;
   if (!s || s.model !== null) return false;
   requestModelChoice();

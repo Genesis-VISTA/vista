@@ -9,7 +9,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
-from ..db.schemas import ProjectPublic, ProjectTable, UserPublicWithConfig, UserTable
+from ..db.schemas import (
+    ChatSessionTable,
+    ProjectPublic,
+    ProjectTable,
+    UserPublicWithConfig,
+    UserTable,
+)
 from ..utils.ttl_pool import TTLPool
 from . import chat_session as chat_session_service
 
@@ -74,7 +80,11 @@ async def _build_project_agent(
             raise RuntimeError(f"Project {project_id} or user {user_id} not found")
         project = ProjectPublic.model_validate(project_row)
         user = UserPublicWithConfig.model_validate(user_row)
-    agent = ProjectAgent(project, user, session_id)
+        model_override = None
+        if session_id is not None:
+            chat_row = await session.get(ChatSessionTable, session_id)
+            model_override = chat_row.inference_model if chat_row else None
+    agent = ProjectAgent(project, user, session_id, model_override)
     await agent.__aenter__()
     return agent
 
@@ -124,33 +134,38 @@ def invalidate_agents(
     *,
     project_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    chat_session_id: uuid.UUID | None = None,
 ) -> None:
     """
     Register an agent pool eviction to run after the session commits.
 
+    Each given id narrows the match; an agent is evicted only when it matches
+    all of them:
+
     - project_id only: evict all agents for that project
     - user_id only: evict all agents for that user
-    - both: evict only the specific (project, user) pair
-    - neither: raises ValueError
+    - chat_session_id only: evict that one chat's agent
+    - several: evict agents matching every one given
+    - none: raises ValueError
     """
-    if project_id is None and user_id is None:
-        raise ValueError("At least one of project_id or user_id must be provided")
+    if project_id is None and user_id is None and chat_session_id is None:
+        raise ValueError(
+            "At least one of project_id, user_id or chat_session_id must be provided"
+        )
     session.info.setdefault("_pending_agent_invalidations", []).append(
-        (project_id, user_id)
+        (project_id, user_id, chat_session_id)
     )
 
 
 @event.listens_for(Session, "after_commit")
 def _flush_agent_invalidations(session: Session) -> None:
     pending: list[tuple] = session.info.pop("_pending_agent_invalidations", [])
-    for project_id, user_id in pending:
+    for project_id, user_id, chat_session_id in pending:
         for key in list(project_agent_pool.keys()):
             # key is (session_id, project_id, user_id)
-            if project_id is not None and user_id is not None:
-                match = key[1] == project_id and key[2] == user_id
-            elif project_id is not None:
-                match = key[1] == project_id
-            else:
-                match = key[2] == user_id
-            if match:
+            if (
+                (chat_session_id is None or key[0] == chat_session_id)
+                and (project_id is None or key[1] == project_id)
+                and (user_id is None or key[2] == user_id)
+            ):
                 project_agent_pool.delete(key)

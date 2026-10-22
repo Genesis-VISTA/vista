@@ -13,7 +13,7 @@ from ..db.schemas import ProjectPublic
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
 from ..services.chat_run import RunBusy, chat_run_registry
-from ..services.project_agent import get_project_agent_key, project_agent_pool
+from ..services.project_agent import ProjectAgentKey, project_agent_pool
 from ..agents.inference import require_inference_credential
 from ..services.auth import UserDep
 
@@ -79,18 +79,29 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
+    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project = ProjectPublic.model_validate(project_row)
+    # One lookup gives the chat's model and its pooled agent's key; an id that
+    # is not this user's chat in this project is a 404 before anything else.
+    chat_row = (
+        await chat_session_service.get_chat_session(
+            session,
+            project_id=project.id,
+            user_id=user.id,
+            chat_session_id=body.chat_session_id,
+        )
+        if body.chat_session_id
+        else None
+    )
     # Checked before either branch: in the streaming case the response status
     # is committed the moment `EventSourceResponse` is returned, so a raise
     # from inside the generator could only surface as a truncated stream.
-    require_inference_credential(user)
-
-    project_row = await project_service.get_project_by_name(session, project_name, user)
-    project = ProjectPublic.model_validate(project_row)
-    agent_key = await get_project_agent_key(
-        session,
-        project_id=project.id,
-        user_id=user.id,
-        chat_session_id=body.chat_session_id,
+    # The chat's own model counts, so it can send on a provider with no default.
+    require_inference_credential(user, chat_row.inference_model if chat_row else None)
+    agent_key: ProjectAgentKey = (
+        chat_row.id if chat_row else None,
+        project.id,
+        user.id,
     )
     effective_history = await chat_session_service.get_effective_message_history(
         session,

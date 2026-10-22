@@ -10,6 +10,7 @@ import {
   isObserved,
   isOperator,
 } from "@/lib/debates";
+import { displayModelName } from "@/lib/models";
 
 /**
  * One debate thread.
@@ -70,6 +71,14 @@ function Provenance({ post }: { post: DebatePost }) {
         </span>
       )}
       {role && <span className="debate-post__role">{role}</span>}
+      {post.model && (
+        <span
+          className="debate-post__model"
+          title="The model that wrote this post, recorded on this install."
+        >
+          {displayModelName(post.model)}
+        </span>
+      )}
       {!isObserved(post) && (
         <span
           className="debate-post__unverified"

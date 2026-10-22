@@ -48,6 +48,7 @@ from .inference import (
     RejectedInferenceCredential,
     build_model_for,
     require_inference_credential,
+    resolve_inference_target,
 )
 import mcp.client.session
 import mcp.shared.context
@@ -77,7 +78,11 @@ from palisade.quarantine import (
 from .eval_metrics import EvalMetricsCapability
 from . import source_fetch
 from .skills import to_prompt
-from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from .campaign.agent_tools import (
+    CampaignDriverDeps,
+    campaign_model_for,
+    register_campaign_tools,
+)
 from .campaign.hpc_tools import McpHpcTools
 from .campaign.manifest import load_manifest
 from .campaign.mcp_invoke import build_invoke
@@ -391,10 +396,14 @@ class ProjectAgent:
         project: ProjectPublic,
         user: UserPublicWithConfig,
         session_id: uuid.UUID | None = None,
+        model_override: str | None = None,
     ):
         self.project = project
         self.user = user
         self.session_id = session_id
+        # This chat's own `provider:name` model, loaded when the agent is
+        # pooled; changing it evicts the agent (see `update_chat_session`).
+        self.model_override = model_override
         # Id per project agent. A new ProjectAgent with the same input Project x User will have the
         # same id
         self.id = f"{project.id}-{user.id}"
@@ -518,7 +527,7 @@ class ProjectAgent:
         # -- see `agents.inference.resolve_inference_target`. Shared rather
         # than rebuilt per sub-agent so all four talk to the same endpoint
         # with the same credential, and so a single HTTP client is reused.
-        model = build_model_for(self.user)
+        model = build_model_for(self.user, self.model_override)
         if settings.palisade.quarantine_enabled:
             quarantine_agent = build_quarantine_agent(model)
             intent_extraction_agent = build_intent_extraction_agent(model)
@@ -586,7 +595,7 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
-        register_campaign_tools(agent, self._campaign_driver_deps(model))
+        register_campaign_tools(agent, self._campaign_driver_deps())
 
         @agent.tool_plain
         async def fetch_repository(url: str, ref: str | None = None) -> str:
@@ -622,7 +631,7 @@ class ProjectAgent:
 
         return agent
 
-    def _campaign_driver_deps(self, model: Model | None = None) -> CampaignDriverDeps:
+    def _campaign_driver_deps(self) -> CampaignDriverDeps:
         """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
 
         def emit_progress(message: str) -> None:
@@ -630,13 +639,11 @@ class ProjectAgent:
             if cb is not None:
                 cb(message)
 
-        # The same resolved `Model` the agent and its Q-LLM sub-agents use, so
-        # a campaign's parser agents reach the same endpoint with the same
-        # credential. `_build_agent` passes the one it already built; resolved
-        # here otherwise, so a caller that forgets cannot fall back to
-        # `Settings` alone -- which on a single-user install cannot see the key
-        # from the researcher's settings row.
-        campaign_model = model or build_model_for(self.user)
+        # What this agent resolved is recorded on the runs it starts. A run's
+        # planner is rebuilt on the run's own model, the same way the monitor
+        # rebuilds it (`campaign_model_for`), not on this agent's: the chat may
+        # have moved to another model since the campaign launched.
+        target = resolve_inference_target(self.user, self.model_override)
 
         return CampaignDriverDeps(
             project_id=self.project.id,
@@ -644,9 +651,11 @@ class ProjectAgent:
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
             get_planner=lambda session, run: self._build_campaign_planner_for_run(
-                session, run, model=campaign_model
+                session, run, model=campaign_model_for(self.user, run)
             ),
             emit_progress=emit_progress,
+            model=target.model,
+            provider=target.provider,
         )
 
     async def _build_campaign_planner_for_run(
@@ -1044,7 +1053,7 @@ class ProjectAgent:
         # stays current because `services.user.update_user` evicts this user's
         # agents after every commit, which is also what lets a key pasted into
         # the settings modal take effect without a restart.
-        require_inference_credential(self.user)
+        require_inference_credential(self.user, self.model_override)
 
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 

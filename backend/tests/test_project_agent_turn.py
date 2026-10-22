@@ -424,3 +424,98 @@ async def test_resolving_an_unknown_elicitation_raises():
     agent = ProjectAgent(make_project(), make_user(), uuid.uuid4())
     with pytest.raises(KeyError):
         agent.resolve_elicitation("nope", "accept")
+
+
+# ---------------------------------------------------------------------------
+# A chat's own model
+# ---------------------------------------------------------------------------
+
+
+def _recording_models(monkeypatch):
+    """Build every model as a `FunctionModel` that records its model id."""
+    from vista_backend.agents import inference
+
+    used: list[str] = []
+
+    def build(model, *, api_key=None, base_url=None):
+        def respond(_messages, _info):
+            used.append(model)
+            return ModelResponse(parts=[TextPart("ok")])
+
+        return scripted_model(respond)
+
+    monkeypatch.setattr(inference, "build_inference_model", build)
+    return used
+
+
+async def _turn_model(project, user, override=None):
+    from harness import fake_mcp
+
+    agent = ProjectAgent(project, user, uuid.uuid4(), override)
+    filtered = fake_mcp().toolset.filtered(
+        lambda ctx, tool: agent._tool_allowed(tool.name)
+    )
+    with agent.agent.override(toolsets=[filtered]):
+        async for _ in agent.run_stream(user_prompt="hi"):
+            pass
+
+
+def _user_on(default):
+    return make_user().model_copy(
+        update={
+            "inference_provider": "mag",
+            "inference_mag_api_key": "k",
+            "inference_model": default,
+        }
+    )
+
+
+async def test_an_overridden_chat_uses_its_own_model_and_the_other_the_default(
+    monkeypatch,
+):
+    used = _recording_models(monkeypatch)
+    project, user = make_project(), _user_on("openai:a")
+
+    await _turn_model(project, user)
+    assert used == ["openai:a"]
+
+    used.clear()
+    await _turn_model(project, user, "openai:b")
+    assert used == ["openai:b"]
+
+
+async def test_a_default_change_moves_only_the_chats_without_their_own_model(
+    monkeypatch,
+):
+    used = _recording_models(monkeypatch)
+    project = make_project()
+    moved = _user_on("openai:a").model_copy(update={"inference_model": "openai:c"})
+
+    # The user save evicts every agent, so both chats rebuild on the new row.
+    await _turn_model(project, moved)
+    await _turn_model(project, moved, "openai:b")
+
+    assert used == ["openai:c", "openai:b"]
+
+
+async def test_a_chats_own_model_lets_it_send_where_there_is_no_default():
+    from vista_backend.agents.inference import (
+        MissingInferenceModel,
+        require_inference_credential,
+    )
+
+    user = make_user().model_copy(
+        update={
+            "inference_provider": "custom",
+            "inference_custom_api_key": "t",
+            "inference_base_url": "https://custom.example/v1",
+        }
+    )
+    agent = ProjectAgent(make_project(), user, uuid.uuid4())
+    with pytest.raises(MissingInferenceModel):
+        agent.run_stream(user_prompt="hi")
+    with pytest.raises(MissingInferenceModel):
+        require_inference_credential(user)
+
+    agent = ProjectAgent(make_project(), user, uuid.uuid4(), "openai:b")
+    agent.run_stream(user_prompt="hi")  # raises on the call if the guard refuses

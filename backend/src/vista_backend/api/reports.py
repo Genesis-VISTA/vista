@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
@@ -21,6 +23,8 @@ class ReportGenerateRequest(BaseModel):
 
     message_history: list[ModelMessage] = Field(default_factory=list)
     hint: str | None = None
+    chat_session_id: uuid.UUID | None = None
+    """ The chat the draft is from; its own model, if it has one, writes the draft. """
 
 
 class ReportSaved(BaseModel):
@@ -38,7 +42,12 @@ async def generate_report(
     client edits the draft and then submits `POST /projects/{name}/reports`.
     """
     return await reports_service.generate_draft(
-        session, project_name, body.message_history, body.hint, user
+        session,
+        project_name,
+        body.message_history,
+        body.hint,
+        user,
+        body.chat_session_id,
     )
 
 

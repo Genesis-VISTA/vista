@@ -31,12 +31,12 @@ from ...services import skills as skills_service
 from ...services.forum_git import ForumClient, ForumDisabled
 from ..campaign.hpc_tools import McpHpcTools
 from ..campaign.mcp_invoke import build_mcp_invoke, project_paths_for
-from ..inference import build_model_for
+from ..inference import build_model_for, resolve_inference_target
 from . import simulation
-from .debate import DebateOrchestrator
+from .debate import ROSTER, DebateOrchestrator
 from .project_forum import build_client_for
 from .grounding import Grounding
-from .roles import RoleAgents
+from .roles import DebateRole, RoleAgents
 from .simulation import (
     SimulationCommissioner,
     clusters_for,
@@ -459,6 +459,12 @@ async def build_simulation(
     return commissioner, runnable
 
 
+async def models_for(session: AsyncSession, run) -> dict[DebateRole, str | None]:
+    """Each role's own model as recorded on the run's roster; null follows the default."""
+    rows = await debate_service.list_active_participants(session, run_id=run.id)
+    return {row.debate_role: row.model for row in rows}  # type: ignore[misc]
+
+
 async def opener_of(session: AsyncSession, run) -> UserPublicWithConfig | None:
     """
     The person who opened `run`, with their settings, or `None` if they are gone.
@@ -481,6 +487,7 @@ def build_orchestrator(
     runnable: dict[str, list[str]] | None = None,
     job_usage: dict[str, str] | None = None,
     knowledge_bases: list[str] | None = None,
+    models: dict[DebateRole, str | None] | None = None,
 ) -> DebateOrchestrator:
     """
     The orchestrator for one debate, on that debate's project's forum.
@@ -493,11 +500,28 @@ def build_orchestrator(
     `user` is the opener. Their inference key, endpoint and model win over the
     deployment's, as in their chat: on a single-user install the settings
     modal is where the key lives, and nothing exports it.
+
+    `models` is each role's own `provider:name`, where it has one; a role
+    without one uses the opener's default. Only the endpoint and key stay the
+    opener's.
     """
     grounding = grounding if grounding is not None else build_grounding(client)
+    models = models or {}
+    roles = RoleAgents(
+        model=build_model_for(user),
+        models={role: build_model_for(user, m) for role, m in models.items() if m},
+        toolsets=_toolsets(grounding),
+    )
+    names: dict[str, str] = {
+        role: target.model
+        for role in ROSTER
+        if (target := resolve_inference_target(user, models.get(role))).model
+    }
     return DebateOrchestrator(
         client=client,
-        roles=RoleAgents(model=build_model_for(user), toolsets=_toolsets(grounding)),
+        roles=roles,
+        models=models,
+        model_names=names,
         on_post=on_post,
         checkpoint=checkpoint,
         runnable=runnable,
@@ -541,6 +565,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
                 runnable=runnable,
                 job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
+                models=await models_for(session, run),
             ).resume(session, run=run, extra_rounds=extra_rounds)
             await session.commit()
         except Exception:
@@ -582,6 +607,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
                 runnable=runnable,
                 job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
+                models=await models_for(session, run),
             ).run(session, run)
             await session.commit()
         except Exception:
