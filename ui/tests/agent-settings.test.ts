@@ -54,7 +54,7 @@ describe("agent settings store", () => {
   it("loads on first subscribe and maps the view", async () => {
     const { result } = renderHook(() => useAgentSettings());
     await waitFor(() => expect(result.current.settings).not.toBeNull());
-    expect(fetchMock).toHaveBeenCalledWith("/api/users/me/inference", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("/api/settings/inference", expect.anything());
     expect(result.current.settings).toMatchObject({
       provider: "i2",
       model: "openai:claude-sonnet",

@@ -131,7 +131,9 @@ def _request(
     name = "GitHub" if host == "github" else "GitLab"
     req = urllib.request.Request(url, headers={"User-Agent": "vista-backend"})
     if token:
-        req.add_header("Authorization", f"Bearer {token}")
+        # Unredirected: urllib copies ordinary headers onto a redirect to any
+        # host, even plain http, and the token is for this host alone.
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         # The guard above restricts this to the GitHub and GitLab APIs over https.
         with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310

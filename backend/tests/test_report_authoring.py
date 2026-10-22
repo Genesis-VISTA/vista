@@ -61,7 +61,7 @@ def seen(monkeypatch) -> list[list[ModelMessage]]:
     monkeypatch.setattr(
         report_authoring,
         "build_model_for",
-        lambda user, model=None: FunctionModel(respond),
+        lambda local, model=None: FunctionModel(respond),
     )
     return calls
 

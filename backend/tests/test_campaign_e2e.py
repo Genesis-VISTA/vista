@@ -91,18 +91,18 @@ class _Emailer:
 
 
 @pytest.mark.anyio
-async def test_campaign_end_to_end(session, alice):
+async def test_campaign_end_to_end(session):
     # --- intake + plan -----------------------------------------------------
+    user_email = await _set_email(session)
     project = ProjectTable(name="e2e-project")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         domain="mockdomain",
         planner_skill="mock-planner",
@@ -118,7 +118,6 @@ async def test_campaign_end_to_end(session, alice):
     job_ids = await planner.dispatch_candidate(
         session,
         run_id=run.id,
-        user_id=alice.id,
         candidate={"x": 0.7},
         cycle=0,
         cluster="frontier",
@@ -161,7 +160,6 @@ async def test_campaign_end_to_end(session, alice):
 
     assert len(await campaign_service.list_open_jobs(session)) == 0
     assert len(emailer.sent) == 2
-    user_email = await _user_email(session, alice)
     assert all(m["to"] == user_email for m in emailer.sent)
 
     # --- user confirms exit -> no longer resumable -------------------------
@@ -169,7 +167,11 @@ async def test_campaign_end_to_end(session, alice):
     assert run.id not in {r.id for r in await resume_open_campaigns(session)}
 
 
-async def _user_email(session, alice):
-    from vista_backend.db.schemas import UserTable
+async def _set_email(session) -> str:
+    """Give Settings an address, so the monitor has somewhere to send."""
+    from vista_backend.services import local_settings
 
-    return (await session.get(UserTable, alice.id)).email
+    row = await local_settings.get(session)
+    row.email = "researcher@example.org"
+    await session.flush()
+    return row.email

@@ -192,7 +192,9 @@ def _open(
     if accept:
         req.add_header("Accept", accept)
     if token:
-        req.add_header("Authorization", f"Bearer {token}")
+        # Unredirected: urllib copies ordinary headers onto a redirect to any
+        # host, even plain http, and the token is for this host alone.
+        req.add_unredirected_header("Authorization", f"Bearer {token}")
     host = urllib.parse.urlsplit(url).netloc
     try:
         # https only, by the guard above.

@@ -13,7 +13,14 @@ import pytest
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from harness import agent_under_test, call, make_project, make_user, say, step_model
+from harness import (
+    agent_under_test,
+    call,
+    make_local_settings,
+    make_project,
+    say,
+    step_model,
+)
 from vista_backend.agents.agents import (
     ProjectAgent,
     ProjectAgentResultEvent,
@@ -44,7 +51,7 @@ def _toolset(started: asyncio.Event) -> FunctionToolset:
 
 async def test_cancelling_mid_tool_still_exposes_the_completed_tool_call():
     started = asyncio.Event()
-    agent = ProjectAgent(make_project(tools=["*"]), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     toolset = _toolset(started).filtered(
         lambda ctx, tool: agent._tool_allowed(tool.name)
     )
@@ -92,7 +99,7 @@ async def test_a_finished_turn_is_unchanged_by_capturing():
     capture = RunCapture()
 
     with agent_under_test(
-        make_project(tools=["*"]), make_user(), step_model([say("hello")])
+        make_project(tools=["*"]), make_local_settings(), step_model([say("hello")])
     ) as (agent, _):
         events = [e async for e in agent.run_stream(user_prompt="hi", capture=capture)]
 

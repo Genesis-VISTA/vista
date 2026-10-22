@@ -64,8 +64,8 @@ A key saved before provider choice existed SHALL be the AmSC i2 key.
 
 ### Requirement: Default model per provider
 
-Each provider option SHALL have its own default model, possibly none. AmSC i2's default
-SHALL be `claude-sonnet` and OLCF Inference's `gpt-oss-120b`; AmSC MAG and Custom SHALL
+Each provider option SHALL have its own default model, possibly none. AmSC i2's and AmSC
+MAG's default SHALL be `claude-sonnet` and OLCF Inference's `gpt-oss-120b`; Custom SHALL
 have none. When the researcher has not chosen a model, requests SHALL use the chosen
 provider's default. Changing provider SHALL clear the researcher's chosen model.
 
@@ -81,9 +81,9 @@ provider's default. Changing provider SHALL clear the researcher's chosen model.
 
 #### Scenario: Switching provider clears the model
 
-- **WHEN** a researcher who chose a model on AmSC i2 switches to AmSC MAG
-- **THEN** no model is chosen, and MAG's lack of a default is reported rather than the i2
-  model being sent to MAG
+- **WHEN** a researcher who chose a model on AmSC i2 switches to Custom
+- **THEN** no model is chosen, and Custom's lack of a default is reported rather than the
+  i2 model being sent to the custom endpoint
 
 ### Requirement: Providers are described to the interface
 
@@ -105,9 +105,9 @@ provider, its key, and the model chat would use. When the chosen provider has no
 indexing SHALL complete without citation extraction and SHALL say so, as it does when no
 key is configured.
 
-#### Scenario: Indexing on MAG with no model
+#### Scenario: Indexing on Custom with no model
 
-- **WHEN** a researcher on AmSC MAG with no model chosen indexes a paper
+- **WHEN** a researcher on Custom with no model chosen indexes a paper
 - **THEN** the text is indexed, citations are not extracted, and the researcher is told
   why
 

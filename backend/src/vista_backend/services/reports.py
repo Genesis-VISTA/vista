@@ -23,13 +23,12 @@ from ..config import settings
 from ..utils.misc import path_is_under, write_file_unique
 from . import chat_session as chat_session_service
 from . import project as project_service
-from ._helpers import ServiceUser
-from .files import _require_user_id
+from ..db.schemas import LocalSettingsPublic
 from .project_agent import get_project_agent_key, project_agent_pool
 
 
 REPORTS_DIR = "reports"
-""" Subdirectory of the user's project uploads that holds saved reports. """
+""" Subdirectory of the project's uploads that holds saved reports. """
 
 
 class ReportSave(BaseModel):
@@ -47,43 +46,36 @@ async def generate_draft(
     project_name: str,
     message_history: list[ModelMessage],
     hint: str | None,
-    user: ServiceUser,
+    local: LocalSettingsPublic,
     chat_session_id: uuid.UUID | None = None,
 ) -> ConversationReport:
     """
-    Draft a report from a chat in a project the user can access. Persists nothing.
+    Draft a report from a chat in a project. Persists nothing.
 
     With `chat_session_id`, the draft is written on that chat's own model.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     model = None
     if chat_session_id is not None:
         model = await chat_session_service.get_chat_model(
-            session,
-            user_id=_require_user_id(user),
-            chat_session_id=chat_session_id,
-            project_id=project.id,
+            session, chat_session_id=chat_session_id, project_id=project.id
         )
-    return await generate_report_draft(
-        message_history, hint, None if user == "system" else user, model
-    )
+    return await generate_report_draft(message_history, hint, local, model)
 
 
 async def save_report(
-    session: AsyncSession, project_name: str, report: ReportSave, user: ServiceUser
+    session: AsyncSession, project_name: str, report: ReportSave
 ) -> str:
     """
-    Write `report` into the user's project uploads and return its path relative
+    Write `report` into the project's uploads and return its path relative
     to the uploads directory (e.g. `reports/eutectic-sweep.md`).
 
     If a report from the same chat is already saved, it is overwritten in place
     under its existing filename; otherwise a new file is created, suffixed if
     another chat's report already has the name.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=_require_user_id(user)
-    )
+    project = await project_service.get_project_by_name(session, project_name)
+    agent_key = await get_project_agent_key(session, project_id=project.id)
     contents = _render(report).encode("utf-8")
     if len(contents) > settings.max_upload_size:
         raise HTTPException(

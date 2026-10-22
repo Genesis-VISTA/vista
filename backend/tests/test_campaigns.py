@@ -19,13 +19,12 @@ async def _make_project(session) -> ProjectTable:
     return project
 
 
-async def _make_run(session, project, user, **overrides) -> CampaignRunTable:
+async def _make_run(session, project, **overrides) -> CampaignRunTable:
     now = now_iso()
     run = CampaignRunTable(
         domain="splash",
         planner_skill="splash-planner",
         project_id=project.id,
-        user_id=user.id,
         created_at=now,
         updated_at=now,
         **overrides,
@@ -37,12 +36,11 @@ async def _make_run(session, project, user, **overrides) -> CampaignRunTable:
 
 
 @pytest.mark.anyio
-async def test_create_and_read_campaign_run(session, alice):
+async def test_create_and_read_campaign_run(session):
     project = await _make_project(session)
     run = await _make_run(
         session,
         project,
-        alice,
         title="FLiBe TBR sweep",
         spec={"variables": {"li6_enrichment": [0.5, 0.9]}, "platform": "frontier"},
         plan=[{"step": 1, "text": "neutronics + chemistry on grid"}],
@@ -57,7 +55,6 @@ async def test_create_and_read_campaign_run(session, alice):
     assert reloaded.domain == "splash"
     assert reloaded.planner_skill == "splash-planner"
     assert reloaded.project_id == project.id
-    assert reloaded.user_id == alice.id
     assert reloaded.session_id is None
     # JSON columns round-trip as native dict/list.
     assert reloaded.spec["platform"] == "frontier"
@@ -67,17 +64,17 @@ async def test_create_and_read_campaign_run(session, alice):
 
 
 @pytest.mark.anyio
-async def test_campaign_run_defaults_empty_spec_and_plan(session, alice):
+async def test_campaign_run_defaults_empty_spec_and_plan(session):
     project = await _make_project(session)
-    run = await _make_run(session, project, alice)
+    run = await _make_run(session, project)
     assert run.spec == {}
     assert run.plan == []
 
 
 @pytest.mark.anyio
-async def test_campaign_status_transition(session, alice):
+async def test_campaign_status_transition(session):
     project = await _make_project(session)
-    run = await _make_run(session, project, alice)
+    run = await _make_run(session, project)
 
     run.status = "running"
     run.updated_at = now_iso()
@@ -93,9 +90,9 @@ async def test_campaign_status_transition(session, alice):
 
 
 @pytest.mark.anyio
-async def test_steps_linked_to_run_and_queryable_by_cycle(session, alice):
+async def test_steps_linked_to_run_and_queryable_by_cycle(session):
     project = await _make_project(session)
-    run = await _make_run(session, project, alice)
+    run = await _make_run(session, project)
 
     for cycle, kind in [(0, "neutronics"), (0, "chemistry"), (1, "decision")]:
         session.add(
@@ -129,9 +126,9 @@ async def test_steps_linked_to_run_and_queryable_by_cycle(session, alice):
 
 
 @pytest.mark.anyio
-async def test_hpc_job_linked_to_step(session, alice):
+async def test_hpc_job_linked_to_step(session):
     project = await _make_project(session)
-    run = await _make_run(session, project, alice)
+    run = await _make_run(session, project)
     step = CampaignStepTable(
         run_id=run.id,
         cycle=0,
@@ -145,7 +142,6 @@ async def test_hpc_job_linked_to_step(session, alice):
     job = HpcJobTable(
         job_id="123456",
         step_id=step.id,
-        user_id=alice.id,
         cluster="frontier",
         job_name="neutronics",
         log_path="/remote/out/log-123456.out",
@@ -159,7 +155,6 @@ async def test_hpc_job_linked_to_step(session, alice):
         await session.exec(select(HpcJobTable).where(HpcJobTable.job_id == "123456"))
     ).one()
     assert reloaded.step_id == step.id
-    assert reloaded.user_id == alice.id
     assert reloaded.cluster == "frontier"
     assert reloaded.state == "submitted"
     assert reloaded.notified is False
@@ -167,9 +162,9 @@ async def test_hpc_job_linked_to_step(session, alice):
 
 
 @pytest.mark.anyio
-async def test_cascade_delete_run_removes_steps_and_jobs(session, alice):
+async def test_cascade_delete_run_removes_steps_and_jobs(session):
     project = await _make_project(session)
-    run = await _make_run(session, project, alice)
+    run = await _make_run(session, project)
     step = CampaignStepTable(
         run_id=run.id,
         cycle=0,
@@ -183,7 +178,6 @@ async def test_cascade_delete_run_removes_steps_and_jobs(session, alice):
         HpcJobTable(
             job_id="999",
             step_id=step.id,
-            user_id=alice.id,
             cluster="odo",
             submitted_at=now_iso(),
         )

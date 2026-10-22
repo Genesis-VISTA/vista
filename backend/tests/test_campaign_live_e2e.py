@@ -144,20 +144,19 @@ def _scripted_planner_llm():
 
 
 @pytest.mark.anyio
-async def test_live_path_dispatch_then_monitor_resume(
-    session, alice, tmp_path, monkeypatch
-):
+async def test_live_path_dispatch_then_monitor_resume(session, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
+    user_email = await _set_email(session)
     project = ProjectTable(name="live-e2e")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(project.id, alice.id)["skills_dir"])
+    skills_dir = Path(project_paths_for(project.id)["skills_dir"])
     (skills_dir / "mock-planner").mkdir(parents=True)
     (skills_dir / "mock-planner" / "campaign.yaml").write_text(
         MANIFEST_YAML, encoding="utf-8"
@@ -174,12 +173,12 @@ async def test_live_path_dispatch_then_monitor_resume(
             return "STATE=COMPLETED"
         return "outputs"
 
-    def fake_invoke_builder(user, paths):
+    def fake_invoke_builder(local, paths):
         return the_invoke
 
     # Dispatch planner: the real construction (manifest from disk + McpHpcTools), fake invoke/parser.
     async def get_planner(_session, run) -> CampaignPlanner:
-        paths = project_paths_for(run.project_id, run.user_id)
+        paths = project_paths_for(run.project_id)
         manifest = load_manifest(Path(paths["skills_dir"]) / run.planner_skill)
         subagents = build_subagents(
             manifest,
@@ -192,7 +191,6 @@ async def test_live_path_dispatch_then_monitor_resume(
     progress: list[str] = []
     deps = CampaignDriverDeps(
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         get_session=lambda: session,
         get_planner=get_planner,
@@ -247,7 +245,6 @@ async def test_live_path_dispatch_then_monitor_resume(
     assert {s.result["metrics"]["role"] for s in steps} == {"neutronics", "chemistry"}
     assert len(await campaign_service.list_open_jobs(session)) == 0
     assert len(emails) == 2
-    user_email = await _user_email(session, alice)
     assert all(e["to"] == user_email for e in emails)
 
     # --- user confirms exit -> no longer resumable ------------------------
@@ -255,7 +252,11 @@ async def test_live_path_dispatch_then_monitor_resume(
     assert run.id not in {r.id for r in await resume_open_campaigns(session)}
 
 
-async def _user_email(session, alice):
-    from vista_backend.db.schemas import UserTable
+async def _set_email(session) -> str:
+    """Give Settings an address, so the monitor has somewhere to send."""
+    from vista_backend.services import local_settings
 
-    return (await session.get(UserTable, alice.id)).email
+    row = await local_settings.get(session)
+    row.email = "researcher@example.org"
+    await session.flush()
+    return row.email

@@ -1,8 +1,8 @@
 """
 Debate API — open a debate, watch it argue, join it, end it.
 
-Debates are scoped under a project, so project membership is the access boundary
-(enforced by `project_service.get_project_by_name`), matching the campaign routes.
+Debates are scoped under a project (`project_service.get_project_by_name` 404s an
+unknown one), matching the campaign routes.
 Routes stay thin: the lifecycle is in `services/debate.py` and the argument is in
 `agents/forum/`.
 
@@ -29,12 +29,7 @@ from ..agents.forum.project_forum import (
     lab_enabled,
 )
 from ..agents.forum.debate import ROSTER
-from ..agents.forum.wiring import (
-    continue_debate_task,
-    models_for,
-    opener_of,
-    run_debate_task,
-)
+from ..agents.forum.wiring import continue_debate_task, models_for, run_debate_task
 from ..agents.inference import require_inference_credential
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
@@ -44,12 +39,11 @@ from ..db.schemas import (
     DebateRoleName,
     DebateRunPublic,
     DebateStatePublic,
-    UserTable,
     clean_role_models,
 )
-from ..services import debate as debate_service
+from ..services import debate as debate_service, local_settings
 from ..services import project as project_service
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 from ..services.forum_git import (
     POSTABLE_KINDS,
     ForumClient,
@@ -72,7 +66,7 @@ class PublishError(BaseModel):
 
     reason: Literal["refused", "unreachable", "failed"]
     """`refused`: the credential was turned away. `unreachable`: the forge was not reached."""
-    credential: Literal["project", "settings-github", "settings-gitlab", "system-git"]
+    credential: Literal["settings-github", "settings-gitlab", "system-git"]
     """Which credential was sent, so the page can say which one to fix."""
     message: str
     """Git's own message; it never holds the token, which git gets from the environment."""
@@ -101,9 +95,7 @@ class ForumStatus(BaseModel):
 
 
 @router.get("/{project_name}/forum/status")
-async def forum_status(
-    project_name: str, session: SessionDep, user: UserDep
-) -> ForumStatus:
+async def forum_status(project_name: str, session: SessionDep) -> ForumStatus:
     """
     This project's forum state, for the page to explain itself with.
 
@@ -115,14 +107,14 @@ async def forum_status(
     Never raises on a forum that is off or unreachable: this endpoint exists to
     report bad states, so failing on one would defeat it.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     git = git_status()
     if not lab_enabled(project):
         return ForumStatus(
             enabled=False, shared=False, git_ok=git.ok, git_reason=git.reason
         )
 
-    client = await _client(session, project, user)
+    client = await _client(session, project)
     url = forum_url_of(project)
     try:
         # The repository's own remote, not the project row's intention: they
@@ -200,17 +192,14 @@ _last_refresh: dict[str, float] = {}
 _refresh_locks: dict[str, asyncio.Lock] = {}
 
 
-async def _client(session: AsyncSession, project, user) -> ForumClient:
+async def _client(session: AsyncSession, project) -> ForumClient:
     """
-    This project's forum client, sending the token `user`'s forum should use.
+    This project's forum client, sending the token the forum should use.
 
-    Loads the user's row because the tokens are only there, not on the public
-    model `UserDep` gives. Raises `ForumDisabled` like `build_client_for`.
+    Loads the settings row because the tokens are only there, not on the public
+    model. Raises `ForumDisabled` like `build_client_for`.
     """
-    owner = await session.get(UserTable, user.id)
-    if owner is None:
-        raise ForumDisabled("the signed-in user no longer exists")
-    return build_client_for(project, owner)
+    return build_client_for(project, await local_settings.get(session))
 
 
 async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> bool:
@@ -283,27 +272,26 @@ class HumanPost(BaseModel):
 
 @router.post("/{project_name}/debates")
 async def open_debate(
-    project_name: str, body: DebateCreate, session: SessionDep, user: UserDep
+    project_name: str, body: DebateCreate, session: SessionDep, local: LocalSettingsDep
 ) -> DebateRunPublic:
     """
     Open a thread, attach the roster, and start arguing in the background.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     # Before anything is opened on the forum: without a key the debate could not
     # argue, and a 409 naming the setting beats a 500 from inside the provider.
     # Each role's own model counts, so a role can name one where there is no default.
     for role in ROSTER:
-        require_inference_credential(user, body.models.get(role))
+        require_inference_credential(local, body.models.get(role))
 
     from ..agents.forum.wiring import build_orchestrator
 
     try:
         run = await build_orchestrator(
-            await _client(session, project, user), user=user, models=body.models
+            await _client(session, project), local=local, models=body.models
         ).start(
             session,
             project_id=project.id,
-            user_id=user.id,
             topic=body.topic,
             framing=body.framing,
             rounds=body.rounds,
@@ -326,23 +314,21 @@ async def open_debate(
 
 
 @router.get("/{project_name}/debates")
-async def list_debates(
-    project_name: str, session: SessionDep, user: UserDep
-) -> list[DebateRunPublic]:
-    project = await project_service.get_project_by_name(session, project_name, user)
+async def list_debates(project_name: str, session: SessionDep) -> list[DebateRunPublic]:
+    project = await project_service.get_project_by_name(session, project_name)
     runs = await debate_service.list_debates(session, project_id=project.id)
     return [DebateRunPublic.model_validate(r) for r in runs]
 
 
 @router.get("/{project_name}/debates/{run_id}")
 async def get_debate(
-    project_name: str, run_id: uuid.UUID, session: SessionDep, user: UserDep
+    project_name: str, run_id: uuid.UUID, session: SessionDep
 ) -> DebateStatePublic:
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     project_id = project.id  # the refresh below commits, which expires `project`
     # Built before the refresh, for the same reason: a commit expires the project
     # row, and a client cannot be made from an expired one.
-    lab = await _client(session, project, user) if lab_enabled(project) else None
+    lab = await _client(session, project) if lab_enabled(project) else None
     run = await _require(session, run_id, project_id)
 
     # Read the forum here too, not only from the event stream.
@@ -382,7 +368,7 @@ async def post_to_debate(
     run_id: uuid.UUID,
     body: HumanPost,
     session: SessionDep,
-    user: UserDep,
+    local: LocalSettingsDep,
 ) -> DebatePostPublic:
     """
     Say something into a live debate, as the human.
@@ -395,12 +381,12 @@ async def post_to_debate(
     after the first CLOSED, so a post there would be written and never shown.
     A thread no longer on the forum takes none either.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     run = await _require(session, run_id, project.id)
     if run.thread_missing:
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
-    client = await _client(session, project, user)
+    client = await _client(session, project)
     try:
         post = await client.post_as_human(run.thread_id, body.body, kind=body.kind)
     except ForumDisabled as exc:
@@ -426,12 +412,15 @@ async def post_to_debate(
     if row is None:
         raise HTTPException(status_code=500, detail="The post did not reach the thread")
 
-    # We know who this was: the request was authenticated. The forum cannot carry
-    # that — the post says `human` and has nowhere to put a name — so it is
+    # We know who this was: the researcher at this installation. The forum cannot
+    # carry that — the post says `human` and has nowhere to put a name — so it is
     # recorded here, on the one path where it is knowledge rather than a claim.
-    await debate_service.record_author(
-        session, run_id=run.id, post_id=post.id, authored_by=user.email
-    )
+    # Only when Settings names them; otherwise there is nothing to record. Never
+    # the email: that is for notifications, and nothing says it would be shown.
+    if local.display_name:
+        await debate_service.record_author(
+            session, run_id=run.id, post_id=post.id, authored_by=local.display_name
+        )
     await session.refresh(row)
     return DebatePostPublic.model_validate(row)
 
@@ -452,7 +441,6 @@ async def continue_debate(
     run_id: uuid.UUID,
     body: ContinueDebate,
     session: SessionDep,
-    user: UserDep,
 ) -> DebateRunPublic:
     """
     Argue a finished debate for a few more rounds.
@@ -466,7 +454,7 @@ async def continue_debate(
     takes no more posts, so a roster there could not speak — and on one whose
     thread is no longer on the forum.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     run = await _require(session, run_id, project.id)
 
     if run.thread_missing:
@@ -488,17 +476,16 @@ async def continue_debate(
             status_code=503,
             detail=f"Project {project.name!r} has no Hypothesis Lab.",
         )
-    # The rounds run on the opener's settings (`opener_of`), who may not be the
-    # person continuing, so it is their credential that has to be there.
-    opener = await opener_of(session, run)
+    # The rounds run on the installation's settings, so its credential has to be there.
     if body.models:
         changes: dict[str, str | None] = {str(r): m for r, m in body.models.items()}
         await debate_service.set_participant_models(
             session, run_id=run.id, models=changes
         )
+    local = await local_settings.get_public(session)
     chosen = await models_for(session, run)
     for role in ROSTER:
-        require_inference_credential(opener, chosen.get(role))
+        require_inference_credential(local, chosen.get(role))
 
     payload = DebateRunPublic.model_validate(run)
     extra = body.rounds
@@ -509,7 +496,7 @@ async def continue_debate(
 
 @router.post("/{project_name}/debates/{run_id}/close")
 async def close_debate(
-    project_name: str, run_id: uuid.UUID, session: SessionDep, user: UserDep
+    project_name: str, run_id: uuid.UUID, session: SessionDep
 ) -> DebateRunPublic:
     """
     End a debate early.
@@ -519,13 +506,13 @@ async def close_debate(
     no. The status is set here so a client sees the change immediately rather
     than waiting for the loop to notice.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     run = await _require(session, run_id, project.id)
     if run.thread_missing:
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
     try:
-        await (await _client(session, project, user)).close_thread(run.thread_id)
+        await (await _client(session, project)).close_thread(run.thread_id)
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except ThreadMissing:
@@ -539,7 +526,7 @@ async def close_debate(
 
 @router.get("/{project_name}/debates/{run_id}/events")
 async def debate_events(
-    project_name: str, run_id: uuid.UUID, session: SessionDep, user: UserDep
+    project_name: str, run_id: uuid.UUID, session: SessionDep
 ) -> EventSourceResponse:
     """
     Follow a debate as it argues.
@@ -559,14 +546,14 @@ async def debate_events(
     "based on model alone" for the rest of the connection, and only corrected when
     the run ended and the client went back to fetching whole states.
     """
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     await _require(session, run_id, project.id)
     project_id = project.id
     # Resolved once, outside the generator: the project row belongs to the
     # request's session, which closes as soon as the response starts streaming.
     # `None` when this project has no lab — the stream still runs, it just has no
     # forum to re-read for peer posts.
-    forum = await _client(session, project, user) if lab_enabled(project) else None
+    forum = await _client(session, project) if lab_enabled(project) else None
 
     async def events() -> AsyncIterator[dict]:
         # post_id -> the payload last sent for it. The payload itself is the

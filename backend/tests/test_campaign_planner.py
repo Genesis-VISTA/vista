@@ -83,14 +83,13 @@ def _planner(hpc) -> CampaignPlanner:
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 
 
-async def _make_run(session, alice):
+async def _make_run(session):
     project = ProjectTable(name="planner-project")
     session.add(project)
     await session.flush()
     return await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="testdomain",
         planner_skill="test-planner",
     )
@@ -212,15 +211,14 @@ def test_build_subagents_threads_the_resolved_model_to_every_parser(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_dispatch_candidate_creates_a_step_and_job_per_role(session, alice):
-    run = await _make_run(session, alice)
+async def test_dispatch_candidate_creates_a_step_and_job_per_role(session):
+    run = await _make_run(session)
     hpc = FakeHpcTools()
     planner = _planner(hpc)
 
     job_ids = await planner.dispatch_candidate(
         session,
         run_id=run.id,
-        user_id=alice.id,
         candidate={"x": 0.5},
         cycle=0,
         cluster="frontier",
@@ -237,14 +235,13 @@ async def test_dispatch_candidate_creates_a_step_and_job_per_role(session, alice
 
 
 @pytest.mark.anyio
-async def test_collect_job_routes_to_role_subagent_and_completes_step(session, alice):
-    run = await _make_run(session, alice)
+async def test_collect_job_routes_to_role_subagent_and_completes_step(session):
+    run = await _make_run(session)
     hpc = FakeHpcTools()
     planner = _planner(hpc)
     await planner.dispatch_candidate(
         session,
         run_id=run.id,
-        user_id=alice.id,
         candidate={"x": 0.5},
         cycle=0,
     )
@@ -259,15 +256,15 @@ async def test_collect_job_routes_to_role_subagent_and_completes_step(session, a
 
 
 @pytest.mark.anyio
-async def test_collect_job_raises_for_unknown_role(session, alice):
-    run = await _make_run(session, alice)
+async def test_collect_job_raises_for_unknown_role(session):
+    run = await _make_run(session)
     planner = _planner(FakeHpcTools())
     # A step whose kind has no registered subagent.
     orphan = await campaign_service.add_step(
         session, run_id=run.id, cycle=0, kind="gamma"
     )
     job = await campaign_service.record_job(
-        session, job_id="orphan-1", step_id=orphan.id, user_id=alice.id, cluster="odo"
+        session, job_id="orphan-1", step_id=orphan.id, cluster="odo"
     )
     with pytest.raises(ValueError):
         await planner.collect_job(session, job=job)
@@ -402,7 +399,7 @@ def test_render_flags_with_bool_uses_store_true_style():
 
 
 @pytest.mark.anyio
-async def test_dispatch_candidate_submits_rendered_flags(session, alice):
+async def test_dispatch_candidate_submits_rendered_flags(session):
     """The rendered string is what actually reaches submit_hpc_job."""
     import yaml
 
@@ -432,12 +429,11 @@ async def test_dispatch_candidate_submits_rendered_flags(session, alice):
         ),
     )
     planner = CampaignPlanner(manifest=manifest, subagents=subagents)
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
 
     await planner.dispatch_candidate(
         session,
         run_id=run.id,
-        user_id=alice.id,
         candidate={"a": 1, "b": 2, "c": 3},
         cycle=0,
     )

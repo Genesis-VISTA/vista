@@ -2,11 +2,11 @@
 Wiring between the campaign monitor and the live MCP/planner boundary.
 
 These are the seams the monitor's `poll`/`collect` are built from, plus the per-job
-reconstruction the live monitor needs (each job carries its own owning user + campaign,
-so credentials and the planner are derived per job from the DB):
+reconstruction the live monitor needs (each job carries its own campaign, so the
+planner is derived per job from the DB, and credentials are read from Settings):
 
   - `parse_job_state`        — pull the job STATE out of get_hpc_job_status's text output.
-  - `build_invoke_for_job`   — the per-user MCP `invoke` for a job's owning user.
+  - `build_invoke_for_job`   — the MCP `invoke` for a job, with the Settings credentials.
   - `build_planner_for_job`  — reconstruct the job's campaign planner from its planner skill.
   - `build_status_poll`      — a monitor `poll(session, job)` that derives the invoke per job.
   - `build_collector`        — a monitor `collect(session, job, raw)` that delegates to the
@@ -25,13 +25,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from pydantic_ai.models import Model
 
-from ...db.schemas import (
-    HpcJobTable,
-    ProjectTable,
-    UserPublicWithConfig,
-    UserTable,
-)
-from ...services import campaign as campaign_service
+from ...db.schemas import HpcJobTable, LocalSettingsPublic, ProjectTable
+from ...services import campaign as campaign_service, local_settings
 from ..forum import simulation
 from ..forum.simulation import DEBATE_DOMAIN
 from ..forum.project_forum import build_client_for
@@ -56,14 +51,14 @@ def parse_job_state(status_text: str) -> str:
     return match.group(1).strip() if match else "UNKNOWN"
 
 
-# (user, project_paths) -> invoke; defaults to the live build_mcp_invoke.
-InvokeBuilder = Callable[[UserPublicWithConfig, dict], InvokeTool]
+# (settings, project_paths) -> invoke; defaults to the live build_mcp_invoke.
+InvokeBuilder = Callable[[LocalSettingsPublic, dict], InvokeTool]
 ParserFactory = Callable[[Path, str], ResultParser]
 PlannerProvider = Callable[[AsyncSession, HpcJobTable], Awaitable[CampaignPlanner]]
 
 
-async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
-    """Load (run, user, sandbox-volume paths) for a job — the per-job context for live wiring."""
+async def _job_context(session: AsyncSession, job: HpcJobTable):
+    """Load (run, settings, sandbox-volume paths) for a job — the per-job context for live wiring."""
     step = await campaign_service.get_step(session, job.step_id)
     if step is None:
         raise ValueError(f"Step {job.step_id} for job {job.job_id} not found")
@@ -80,12 +75,11 @@ async def _job_run_user_paths(session: AsyncSession, job: HpcJobTable):
         raise ValueError(
             f"Campaign {run.id} has no session_id; cannot resolve its sandbox volume."
         )
-    user_row = await session.get(UserTable, job.user_id)
-    if user_row is None:
-        raise ValueError(f"User {job.user_id} for job {job.job_id} not found")
-    user = UserPublicWithConfig.model_validate(user_row)
-    paths = project_paths_for(run.project_id, run.user_id)
-    return run, user, paths
+    # Read now, not when the job was dispatched, so a credential changed in
+    # Settings applies to the next poll.
+    local = await local_settings.get_public(session)
+    paths = project_paths_for(run.project_id)
+    return run, local, paths
 
 
 async def build_invoke_for_job(
@@ -94,9 +88,9 @@ async def build_invoke_for_job(
     *,
     invoke_builder: InvokeBuilder = build_mcp_invoke,
 ) -> InvokeTool:
-    """The MCP `invoke` for a job, bound to its owning user's credentials + sandbox paths."""
-    _run, user, paths = await _job_run_user_paths(session, job)
-    return invoke_builder(user, paths)
+    """The MCP `invoke` for a job, bound to the Settings credentials + its sandbox paths."""
+    _run, local, paths = await _job_context(session, job)
+    return invoke_builder(local, paths)
 
 
 async def build_planner_for_job(
@@ -110,23 +104,23 @@ async def build_planner_for_job(
     """
     Reconstruct the planner for a job's campaign from its planner skill + manifest.
 
-    With no explicit `model`, this resolves one from the job's own user row, so
+    With no explicit `model`, this resolves one from the settings row, so
     a parser built here reaches the same endpoint and credential as the agent
     that dispatched the job. The monitor runs in the background with no request
     context and never passes a model, which is the path that made this matter:
     without it the parser fell back to `Settings` alone and could not see a key
     entered in the settings modal.
     """
-    run, user, paths = await _job_run_user_paths(session, job)
+    run, local, paths = await _job_context(session, job)
     skills_dir = paths["skills_dir"]
     manifest = load_manifest(Path(skills_dir) / run.planner_skill)
-    hpc = McpHpcTools(invoke_builder(user, paths))
+    hpc = McpHpcTools(invoke_builder(local, paths))
     subagents = build_subagents(
         manifest,
         hpc=hpc,
         skills_dir=skills_dir,
         parser_factory=parser_factory,
-        model=model or campaign_model_for(user, run),
+        model=model or campaign_model_for(local, run),
     )
     return CampaignPlanner(manifest=manifest, subagents=subagents)
 
@@ -207,17 +201,8 @@ def build_debate_aware_collector(
                     job.job_id,
                 )
                 return
-            # Posted as the campaign's user, whose Settings token is the
-            # forum's fallback when the project has none of its own.
-            owner = await session.get(UserTable, run.user_id)
-            if owner is None:
-                logger.warning(
-                    "job %s: its campaign's user is gone, so its result has no "
-                    "one to post as",
-                    job.job_id,
-                )
-                return
-            client = build_client_for(project, owner)
+            # Pushed with the Settings token for the forum's host, if any.
+            client = build_client_for(project, await local_settings.get(session))
             # Failures are posted too. `post_result` has always written them
             # correctly — "did not complete", with the log attached — but the
             # monitor only ever called it on success, so a debate that lost a run

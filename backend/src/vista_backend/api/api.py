@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -18,7 +18,6 @@ from ..agents.inference import (
 )
 from ..config import settings
 from ..db.db import get_engine, init_db
-from ..services.auth import get_user
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
@@ -33,8 +32,8 @@ from .models import router as models_router
 from .palisade import router as palisade_router
 from .projects import router as projects_router
 from .reports import router as reports_router
+from .settings import router as settings_router
 from .skills import router as skills_router
-from .users import router as users_router
 
 
 @asynccontextmanager
@@ -101,7 +100,6 @@ app = FastAPI(
     title="vista-backend",
     version=settings.version,
     lifespan=lifespan,
-    dependencies=[Depends(get_user)],  # Require login for all routes
 )
 
 
@@ -144,7 +142,7 @@ app.include_router(projects_router)
 app.include_router(reports_router)
 app.include_router(skills_router)
 app.include_router(files_router)
-app.include_router(users_router)
+app.include_router(settings_router)
 
 # PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when

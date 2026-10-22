@@ -114,7 +114,7 @@ setting). Every other bundled skill is registered either way.
 ### When each default is seeded
 
 - **First run, empty database** (`seed_db`): the science projects if enabled,
-  the bundled skills, and the dev test users.
+  and the bundled skills.
 - **Every startup** (`sync_default_projects`): the AI-safety project and its
   knowledge base. This is what brings the project to a database that already
   exists. It inserts the project and the knowledge base if either is missing,

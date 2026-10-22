@@ -1,8 +1,8 @@
 """
 A debate's agents reach the model with the same credential a chat does.
 
-On a packaged single-user install the inference key is pasted into the
-settings modal, so it lives on the researcher's user row and nowhere in the
+On a packaged install the inference key is pasted into the settings modal,
+so it lives on the installation's settings row and nowhere in the
 environment. The Hypothesis Lab built its role agents with a bare
 `infer_model`, which reads only `OPENAI_API_KEY` / `OPENAI_BASE_URL`, so
 opening a debate there failed with a 500 from `OpenAIError: Missing
@@ -19,8 +19,8 @@ from pydantic import SecretStr
 from vista_backend.agents.forum.grounding import Grounding
 from vista_backend.agents.forum.roles import RoleAgents
 from vista_backend.config import settings
-from vista_backend.db.schemas import UserSelfUpdate
-from vista_backend.services import user as user_service
+from vista_backend.db.schemas import LocalSettingsUpdate
+from vista_backend.services import local_settings
 
 pytestmark = pytest.mark.unit
 
@@ -58,26 +58,24 @@ def test_roles_use_the_configured_credential_not_only_the_environment(
         assert str(client.base_url).rstrip("/") == "https://deployment.example/v1", role
 
 
-def test_the_orchestrator_uses_the_openers_settings(no_env_credential):
+def test_the_orchestrator_uses_the_settings(no_env_credential):
     """
-    The key, endpoint and model typed into the settings modal are the opener's,
-    and a debate's three roles use them.
+    The key, endpoint and model typed into the settings modal are the ones a
+    debate's three roles use.
     """
     from vista_backend.agents.forum.wiring import build_orchestrator
-    from vista_backend.db.schemas import UserPublicWithConfig
+    from vista_backend.db.schemas import LocalSettingsPublic
     import uuid
 
-    opener = UserPublicWithConfig(
-        id=uuid.uuid4(),
-        email="researcher@example.org",
-        is_admin=False,
+    local = LocalSettingsPublic(
+        install_id=uuid.uuid4(),
         inference_provider="custom",
         inference_custom_api_key="sk-from-the-settings-modal",
         inference_base_url="https://user.example/v1",
         inference_model="openai:user-model",
     )
 
-    orchestrator = build_orchestrator(object(), user=opener, grounding=Grounding())
+    orchestrator = build_orchestrator(object(), local=local, grounding=Grounding())
 
     for role in ROLES:
         model = getattr(orchestrator.roles, role).model
@@ -87,41 +85,30 @@ def test_the_orchestrator_uses_the_openers_settings(no_env_credential):
 
 
 @pytest.mark.anyio
-async def test_a_background_debate_finds_its_openers_settings(
-    no_env_credential, session, alice
-):
+async def test_a_background_debate_reads_the_settings(no_env_credential, session):
     """
     A debate argues in a background task that has only the run, so it has to
-    look the opener up again, credentials included.
+    read the settings again, credentials included.
     """
-    from types import SimpleNamespace
 
-    from vista_backend.agents.forum.wiring import opener_of
-
-    await user_service.update_user(
-        session,
-        alice.id,
-        UserSelfUpdate(inference_api_key="sk-alices-key"),
-        user="system",
+    await local_settings.update(
+        session, LocalSettingsUpdate(inference_api_key="sk-the-researchers-key")
     )
 
-    opener = await opener_of(session, SimpleNamespace(user_id=alice.id))
+    local = await local_settings.get_public(session)
 
-    assert opener is not None
-    assert opener.inference_api_key == "sk-alices-key"
+    assert local.inference_api_key == "sk-the-researchers-key"
 
 
-def _custom_opener():
+def _custom_settings():
     import uuid
 
-    from vista_backend.db.schemas import UserPublicWithConfig
+    from vista_backend.db.schemas import LocalSettingsPublic
 
-    return UserPublicWithConfig(
-        id=uuid.uuid4(),
-        email="researcher@example.org",
-        is_admin=False,
+    return LocalSettingsPublic(
+        install_id=uuid.uuid4(),
         inference_provider="custom",
-        inference_custom_api_key="sk-opener",
+        inference_custom_api_key="sk-settings",
         inference_base_url="https://user.example/v1",
         inference_model="openai:default-a",
     )
@@ -134,7 +121,7 @@ def test_a_role_with_its_own_model_runs_on_it_and_the_others_on_the_default(
 
     orchestrator = build_orchestrator(
         object(),
-        user=_custom_opener(),
+        local=_custom_settings(),
         grounding=Grounding(),
         models={"referee": "openai:referee-b"},
     )
@@ -145,9 +132,9 @@ def test_a_role_with_its_own_model_runs_on_it_and_the_others_on_the_default(
         "reviewer": "default-a",
         "referee": "referee-b",
     }
-    # Provider, endpoint and key stay the opener's.
+    # Provider, endpoint and key stay the settings'.
     referee = orchestrator.roles.referee.model
-    assert referee.client.api_key == "sk-opener"
+    assert referee.client.api_key == "sk-settings"
     assert str(referee.client.base_url).rstrip("/") == "https://user.example/v1"
     # What each post will record is the resolved model.
     assert orchestrator.model_names == {
@@ -158,9 +145,7 @@ def test_a_role_with_its_own_model_runs_on_it_and_the_others_on_the_default(
 
 
 @pytest.mark.anyio
-async def test_a_continued_debate_keeps_its_roles_models(
-    no_env_credential, session, alice
-):
+async def test_a_continued_debate_keeps_its_roles_models(no_env_credential, session):
     """
     The background task rebuilds the orchestrator from the stored roster, so
     continuing without changes runs the Referee on B again.
@@ -176,7 +161,6 @@ async def test_a_continued_debate_keeps_its_roles_models(
     run = await debate_service.create_debate(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="t",
         thread_id="thread",
         framing=None,
@@ -199,7 +183,7 @@ async def test_a_continued_debate_keeps_its_roles_models(
     }
 
     orchestrator = build_orchestrator(
-        object(), user=_custom_opener(), grounding=Grounding(), models=stored
+        object(), local=_custom_settings(), grounding=Grounding(), models=stored
     )
     assert orchestrator.roles.referee.model.model_name == "referee-b"
     assert orchestrator.roles.proposer.model.model_name == "default-a"

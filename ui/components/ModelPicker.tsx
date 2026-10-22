@@ -5,7 +5,7 @@ import { ModelMenu } from "@/components/ModelMenu";
 import { useActiveProject } from "@/lib/projects";
 import { savePersistedChatSession } from "@/lib/chat-session";
 import { refreshAgentSettings, useAgentSettings } from "@/lib/agent-settings";
-import { updateCurrentUser } from "@/lib/user";
+import { updateSettings } from "@/lib/settings";
 
 /** The open chat, as the picker needs it: which one, its own model, and who hears of a change. */
 export type ChatModelBinding = {
@@ -44,7 +44,7 @@ function DefaultModelPicker() {
       onChange={async (model) => {
         // The default has no "use default" to return to: only a model is chosen here.
         if (model === null) return;
-        await updateCurrentUser({ inference_model: model });
+        await updateSettings({ inference_model: model });
         await refreshAgentSettings();
       }}
     />

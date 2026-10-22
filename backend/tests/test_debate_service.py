@@ -53,14 +53,13 @@ def _post(pid: str, kind: str, body: str, sender: str, role: str, **extra) -> di
     }
 
 
-async def _make_run(session, alice, **overrides):
+async def _make_run(session, **overrides):
     project = ProjectTable(name=f"debate-{overrides.pop('slug', 'p')}")
     session.add(project)
     await session.flush()
     return await debate_service.create_debate(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="why does the knee move?",
         thread_id="t1",
         framing="Debate it.",
@@ -74,8 +73,8 @@ async def _make_run(session, alice, **overrides):
 
 
 @pytest.mark.anyio
-async def test_create_debate_starts_in_setting_up(session, alice):
-    run = await _make_run(session, alice)
+async def test_create_debate_starts_in_setting_up(session):
+    run = await _make_run(session)
     assert run.status == "setting_up"
     assert run.rounds == 5
     assert run.rounds_done == 0
@@ -83,17 +82,17 @@ async def test_create_debate_starts_in_setting_up(session, alice):
 
 
 @pytest.mark.anyio
-async def test_lookup_by_thread_id(session, alice):
+async def test_lookup_by_thread_id(session):
     """The way back from a forum id to the VISTA run that owns it."""
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     found = await debate_service.get_debate_by_thread(session, "t1")
     assert found is not None and found.id == run.id
     assert await debate_service.get_debate_by_thread(session, "nope") is None
 
 
 @pytest.mark.anyio
-async def test_project_scoping_is_the_access_boundary(session, alice):
-    run = await _make_run(session, alice)
+async def test_project_scoping_is_the_access_boundary(session):
+    run = await _make_run(session)
     other = ProjectTable(name="someone-elses")
     session.add(other)
     await session.flush()
@@ -108,8 +107,8 @@ async def test_project_scoping_is_the_access_boundary(session, alice):
 
 
 @pytest.mark.anyio
-async def test_verdict_converges_the_run(session, alice):
-    run = await _make_run(session, alice)
+async def test_verdict_converges_the_run(session):
+    run = await _make_run(session)
     verdict = {"claim": "network rigidity", "predictions": ["shear independence"]}
     updated = await debate_service.record_verdict(
         session, run_id=run.id, verdict=verdict
@@ -119,12 +118,12 @@ async def test_verdict_converges_the_run(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_debate_closed_early_keeps_a_null_verdict(session, alice):
+async def test_a_debate_closed_early_keeps_a_null_verdict(session):
     """
     A real outcome, not a failure: the human can stop a debate before the referee
     ever rules, and the record should say so rather than inventing a conclusion.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     closed = await debate_service.set_status(session, run_id=run.id, status="closed")
     assert closed.status == "closed"
     assert closed.verdict is None
@@ -136,8 +135,8 @@ async def test_a_debate_closed_early_keeps_a_null_verdict(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_participant_is_recorded_with_its_role(session, alice):
-    run = await _make_run(session, alice)
+async def test_a_participant_is_recorded_with_its_role(session):
+    run = await _make_run(session)
     row = await debate_service.add_participant(
         session,
         run_id=run.id,
@@ -157,8 +156,8 @@ async def test_a_participant_is_recorded_with_its_role(session, alice):
 
 
 @pytest.mark.anyio
-async def test_projection_keeps_the_lane_apart_from_the_post(session, alice):
-    run = await _make_run(session, alice)
+async def test_projection_keeps_the_lane_apart_from_the_post(session):
+    run = await _make_run(session)
     thread = _thread(
         _post(
             "p1",
@@ -180,12 +179,12 @@ async def test_projection_keeps_the_lane_apart_from_the_post(session, alice):
 
 
 @pytest.mark.anyio
-async def test_replaying_a_thread_converges(session, alice):
+async def test_replaying_a_thread_converges(session):
     """
     Called on every poll and after every reconnect, so it has to be idempotent —
     otherwise a dropped connection doubles the debate.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     thread = _thread(
         _post("p1", "TASK", "Debate it.", "human", "human"),
         _post("p2", "PROPOSAL", "claim", "vista-proposer", "worker"),
@@ -200,7 +199,7 @@ async def test_replaying_a_thread_converges(session, alice):
 
 @pytest.mark.anyio
 async def test_a_post_another_session_projected_first_is_not_a_conflict(
-    session, engine, alice, monkeypatch
+    session, engine, monkeypatch
 ):
     """
     Two writers project the same thread: the debate task, and whoever is watching.
@@ -212,7 +211,7 @@ async def test_a_post_another_session_projected_first_is_not_a_conflict(
     """
     from sqlmodel.ext.asyncio.session import AsyncSession
 
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     run_id = run.id
     await session.commit()
     thread = _thread(
@@ -248,12 +247,12 @@ async def test_a_post_another_session_projected_first_is_not_a_conflict(
 
 
 @pytest.mark.anyio
-async def test_a_late_vote_updates_an_old_post(session, alice):
+async def test_a_late_vote_updates_an_old_post(session):
     """
     Bodies are immutable, tallies are not. A peer can agree with something from
     three rounds ago, and the projection has to carry that back.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     proposal = _post("p1", "PROPOSAL", "claim", "vista-proposer", "worker")
 
     await debate_service.project_thread(
@@ -277,8 +276,8 @@ async def test_a_late_vote_updates_an_old_post(session, alice):
 
 
 @pytest.mark.anyio
-async def test_votes_are_stored_but_hidden_from_the_reading_view(session, alice):
-    run = await _make_run(session, alice)
+async def test_votes_are_stored_but_hidden_from_the_reading_view(session):
+    run = await _make_run(session)
     thread = _thread(
         _post("p1", "PROPOSAL", "claim", "vista-proposer", "worker"),
         votes=[
@@ -295,12 +294,12 @@ async def test_votes_are_stored_but_hidden_from_the_reading_view(session, alice)
 
 
 @pytest.mark.anyio
-async def test_only_agent_posts_are_labelled_with_a_round(session, alice):
+async def test_only_agent_posts_are_labelled_with_a_round(session):
     """
     The human's interjections and the framing and closing posts belong to no
     round, so labelling them would put words in a round that did not produce them.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     thread = _thread(
         _post("p1", "TASK", "Debate it.", "human", "human"),
         _post("p2", "PROPOSAL", "claim", "vista-proposer", "worker"),
@@ -323,11 +322,11 @@ async def test_only_agent_posts_are_labelled_with_a_round(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_replay_does_not_relabel_earlier_rounds(session, alice):
+async def test_a_replay_does_not_relabel_earlier_rounds(session):
     """
     Re-reading a thread mid-round 3 must not stamp round 3 onto round 1's posts.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     round0 = _post("p1", "PROPOSAL", "first", "vista-proposer", "worker")
     await debate_service.project_thread(
         session, run_id=run.id, thread=_thread(round0), round_index=0
@@ -346,12 +345,12 @@ async def test_a_replay_does_not_relabel_earlier_rounds(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_denied_post_is_projected_with_its_refusal(session, alice):
+async def test_a_denied_post_is_projected_with_its_refusal(session):
     """
     A recorded refusal is evidence, not a contribution; dropping it on the way
     into the DB would erase the difference.
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     thread = _thread(
         _post(
             "p1",
@@ -367,8 +366,8 @@ async def test_a_denied_post_is_projected_with_its_refusal(session, alice):
 
 
 @pytest.mark.anyio
-async def test_posts_are_ordered_by_forum_timestamp(session, alice):
-    run = await _make_run(session, alice)
+async def test_posts_are_ordered_by_forum_timestamp(session):
+    run = await _make_run(session)
     thread = _thread(
         _post("p3", "FINDING", "third", "vista-proposer", "worker"),
         _post("p1", "TASK", "first", "human", "human"),
@@ -397,7 +396,7 @@ def forum_client(client):
     return client
 
 
-async def _live_run(session, alice, client, *, topic="does the knee move?"):
+async def _live_run(session, client, *, topic="does the knee move?"):
     project = ProjectTable(name=f"refresh-{uuid.uuid4().hex[:8]}")
     session.add(project)
     await session.flush()
@@ -405,7 +404,6 @@ async def _live_run(session, alice, client, *, topic="does the knee move?"):
     return await debate_service.create_debate(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic=topic,
         thread_id=thread_id,
         rounds=2,
@@ -413,10 +411,8 @@ async def _live_run(session, alice, client, *, topic="does the knee move?"):
 
 
 @pytest.mark.anyio
-async def test_a_refresh_picks_up_a_post_made_outside_the_debate(
-    session, alice, forum_client
-):
-    run = await _live_run(session, alice, forum_client)
+async def test_a_refresh_picks_up_a_post_made_outside_the_debate(session, forum_client):
+    run = await _live_run(session, forum_client)
     await debate_service.set_status(session, run_id=run.id, status="debating")
     await debate_service.refresh_from_forum(session, forum_client, run)
 
@@ -433,8 +429,8 @@ async def test_a_refresh_picks_up_a_post_made_outside_the_debate(
 
 
 @pytest.mark.anyio
-async def test_a_refresh_is_idempotent(session, alice, forum_client):
-    run = await _live_run(session, alice, forum_client)
+async def test_a_refresh_is_idempotent(session, forum_client):
+    run = await _live_run(session, forum_client)
     first = await debate_service.refresh_from_forum(session, forum_client, run)
     second = await debate_service.refresh_from_forum(session, forum_client, run)
 
@@ -442,14 +438,12 @@ async def test_a_refresh_is_idempotent(session, alice, forum_client):
 
 
 @pytest.mark.anyio
-async def test_a_refresh_notices_the_thread_was_closed_elsewhere(
-    session, alice, forum_client
-):
+async def test_a_refresh_notices_the_thread_was_closed_elsewhere(session, forum_client):
     """
     A peer with push access can close a thread they did not open, so the
     forum's status can move without anything here deciding it did.
     """
-    run = await _live_run(session, alice, forum_client)
+    run = await _live_run(session, forum_client)
     await debate_service.set_status(session, run_id=run.id, status="debating")
     forum_client.peer_close(run.thread_id)
 
@@ -460,8 +454,8 @@ async def test_a_refresh_notices_the_thread_was_closed_elsewhere(
 
 
 @pytest.mark.anyio
-async def test_a_run_that_already_ended_is_not_reclosed(session, alice, forum_client):
-    run = await _live_run(session, alice, forum_client)
+async def test_a_run_that_already_ended_is_not_reclosed(session, forum_client):
+    run = await _live_run(session, forum_client)
     await debate_service.record_verdict(session, run_id=run.id, verdict={"r": 1})
     await forum_client.close_thread(run.thread_id)
 
@@ -512,12 +506,12 @@ def test_a_peers_closure_is_not_credited_to_the_operator():
 
 
 @pytest.mark.anyio
-async def test_our_votes_and_peers_votes_are_projected_apart(session, alice):
+async def test_our_votes_and_peers_votes_are_projected_apart(session):
     """
     Summed, a tally cannot answer the question a reader actually has: did this
     forum's own participants back it, or did outsiders?
     """
-    run = await _make_run(session, alice)
+    run = await _make_run(session)
     # Deliberately asymmetric. An earlier version had the peer votes cancel to
     # zero, which is also what you get if the split is broken and everything is
     # counted as ours — so the test passed against its own mutation.
@@ -550,8 +544,8 @@ async def test_our_votes_and_peers_votes_are_projected_apart(session, alice):
 
 
 @pytest.mark.anyio
-async def test_an_unpublished_post_is_projected_as_such(session, alice):
-    run = await _make_run(session, alice)
+async def test_an_unpublished_post_is_projected_as_such(session):
+    run = await _make_run(session)
     proposal = _post("p1", "PROPOSAL", "claim", "vista-proposer", "proposer")
     await debate_service.project_thread(
         session, run_id=run.id, thread=_thread(proposal, published={"p1": False})
@@ -569,10 +563,8 @@ async def test_an_unpublished_post_is_projected_as_such(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_peer_post_that_vanished_from_the_remote_is_kept_and_marked(
-    session, alice
-):
-    run = await _make_run(session, alice)
+async def test_a_peer_post_that_vanished_from_the_remote_is_kept_and_marked(session):
+    run = await _make_run(session)
     ours = _post("p1", "PROPOSAL", "claim", "vista-proposer", "proposer")
     theirs = _post("p2", "RISK", "objection", "their-agent", "reviewer")
     await debate_service.project_thread(
@@ -592,9 +584,9 @@ async def test_a_peer_post_that_vanished_from_the_remote_is_kept_and_marked(
 
 @pytest.mark.anyio
 async def test_a_missing_thread_is_recorded_once_and_not_read_again(
-    session, alice, forum_client, monkeypatch
+    session, forum_client, monkeypatch
 ):
-    run = await _live_run(session, alice, forum_client)
+    run = await _live_run(session, forum_client)
     await debate_service.set_status(session, run_id=run.id, status="debating")
     await debate_service.refresh_from_forum(session, forum_client, run)
     forum_client.delete_thread(run.thread_id)
@@ -617,9 +609,9 @@ async def test_a_missing_thread_is_recorded_once_and_not_read_again(
 
 @pytest.mark.anyio
 async def test_a_finished_debate_keeps_its_status_when_its_thread_goes(
-    session, alice, forum_client
+    session, forum_client
 ):
-    run = await _live_run(session, alice, forum_client)
+    run = await _live_run(session, forum_client)
     await debate_service.record_verdict(session, run_id=run.id, verdict={"r": 1})
     forum_client.delete_thread(run.thread_id)
     await debate_service.refresh_from_forum(session, forum_client, run)
@@ -628,7 +620,7 @@ async def test_a_finished_debate_keeps_its_status_when_its_thread_goes(
 
 
 @pytest.mark.anyio
-async def test_an_h5i_era_thread_id_reads_as_missing(session, alice, forum_client):
-    run = await _make_run(session, alice)  # thread_id "t1": not a thread here
+async def test_an_h5i_era_thread_id_reads_as_missing(session, forum_client):
+    run = await _make_run(session)  # thread_id "t1": not a thread here
     result = await debate_service.refresh_from_forum(session, forum_client, run)
     assert result.thread_missing

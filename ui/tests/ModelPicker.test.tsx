@@ -21,8 +21,8 @@ import type { Project } from "@/lib/projects";
 const { useActiveProjectMock } = vi.hoisted(() => ({ useActiveProjectMock: vi.fn() }));
 vi.mock("@/lib/projects", () => ({ useActiveProject: useActiveProjectMock }));
 
-const { updateCurrentUserMock } = vi.hoisted(() => ({ updateCurrentUserMock: vi.fn() }));
-vi.mock("@/lib/user", () => ({ updateCurrentUser: updateCurrentUserMock }));
+const { updateSettingsMock } = vi.hoisted(() => ({ updateSettingsMock: vi.fn() }));
+vi.mock("@/lib/settings", () => ({ updateSettings: updateSettingsMock }));
 
 const { savePersistedChatSessionMock } = vi.hoisted(() => ({
   savePersistedChatSessionMock: vi.fn(),
@@ -39,7 +39,6 @@ const PROJECT: Project = {
   skills: [],
   knowledgeBases: [],
   forumRepoUrl: "",
-  hasForumToken: false,
   tools: [],
   usageLimits: {},
 };
@@ -101,7 +100,7 @@ beforeEach(() => {
     },
   };
   modelFetches = 0;
-  updateCurrentUserMock.mockReset();
+  updateSettingsMock.mockReset();
   savePersistedChatSessionMock.mockReset();
   savePersistedChatSessionMock.mockImplementation(
     async (_project: string, update: { inferenceModel: string | null }) => ({
@@ -109,14 +108,14 @@ beforeEach(() => {
       inference_model: update.inferenceModel,
     }),
   );
-  updateCurrentUserMock.mockImplementation(async (update: { inference_model: string }) => {
+  updateSettingsMock.mockImplementation(async (update: { inference_model: string }) => {
     inference = { ...inference, model: update.inference_model, model_is_default: false };
     return {};
   });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url === "/api/users/me/inference") return json(200, inference);
+      if (url === "/api/settings/inference") return json(200, inference);
       if (url === "/api/projects/molten-salt/models") {
         modelFetches++;
         return json(models.status, models.body);
@@ -206,7 +205,7 @@ describe("ModelPicker menu", () => {
     await openPicker();
     await userEvent.click(await screen.findByRole("option", { name: "claude-opus" }));
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
     expect(await screen.findByRole("button", { name: /^Model: claude-opus\. / })).toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -218,7 +217,7 @@ describe("ModelPicker menu", () => {
     await userEvent.type(screen.getByLabelText("Model name"), "anthropic.claude-sonnet-v1:0");
     await userEvent.click(screen.getByRole("button", { name: "Use" }));
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+    expect(updateSettingsMock).toHaveBeenCalledWith({
       inference_model: "openai:anthropic.claude-sonnet-v1:0",
     });
     expect(
@@ -276,7 +275,7 @@ describe("ModelPicker menu", () => {
     await openPicker();
     await userEvent.type(await screen.findByRole("searchbox"), "claude{Enter}");
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
@@ -392,7 +391,7 @@ describe("ModelPicker in a chat", () => {
         inferenceModel: "openai:claude-opus",
       }),
     );
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     expect(
       await screen.findByRole("button", { name: /^Model: claude-opus · this chat\. / }),
     ).toBeInTheDocument();
@@ -409,7 +408,7 @@ describe("ModelPicker in a chat", () => {
         inferenceModel: null,
       }),
     );
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     expect(
       await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)\. / }),
     ).toBeInTheDocument();
@@ -426,7 +425,7 @@ describe("ModelPicker in a chat", () => {
     await userEvent.click(await screen.findByRole("option", { name: /claude-opus/ }));
 
     await waitFor(() => expect(savePersistedChatSessionMock).toHaveBeenCalled());
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     expect(holdSendWithoutModel("openai:claude-opus")).toBe(false);
   });
 

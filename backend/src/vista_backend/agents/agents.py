@@ -59,8 +59,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
-from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
-from ..services.repo_tokens import user_repo_token
+from ..db.schemas import LocalSettingsPublic, ProjectPublic, SkillTable
+from ..services.repo_tokens import settings_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
 from palisade import PalisadeSidecar
@@ -94,9 +94,9 @@ BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text
 )
 
 
-def research_profile_prompt(user: UserPublicWithConfig) -> str:
+def research_profile_prompt(local: LocalSettingsPublic) -> str:
     """Render the researcher's explicit, global personalization for the agent."""
-    if not user.personalize_responses:
+    if not local.personalize_responses:
         return ""
 
     labels: dict[str, str] = {
@@ -114,17 +114,17 @@ def research_profile_prompt(user: UserPublicWithConfig) -> str:
         return labels.get(value, value) if value else None
 
     facts: list[tuple[str, str | None]] = [
-        ("Role", user.research_role),
-        ("Institution or laboratory", user.research_institution),
+        ("Role", local.research_role),
+        ("Institution or laboratory", local.research_institution),
         (
             "Research interests",
-            ", ".join(user.research_interests) if user.research_interests else None,
+            ", ".join(local.research_interests) if local.research_interests else None,
         ),
-        ("Preferred units", label(user.preferred_units)),
-        ("Technical depth", label(user.technical_depth)),
+        ("Preferred units", label(local.preferred_units)),
+        ("Technical depth", label(local.technical_depth)),
         (
             "Evidence preference",
-            label(user.evidence_preference),
+            label(local.evidence_preference),
         ),
     ]
     lines = [f"- {name}: {value}" for name, value in facts if value]
@@ -259,12 +259,12 @@ def _reset_dir(path: Path) -> None:
     path.mkdir()
 
 
-def agent_volume_root(project_id: uuid.UUID | str, user_id: uuid.UUID | str) -> Path:
+def agent_volume_root(project_id: uuid.UUID | str) -> Path:
     """
-    The host folder mounted at `/mnt` in the sandbox of `user_id`'s agent in
-    `project_id`. Its `data/output` is the sandbox's `/mnt/data/output`.
+    The host folder mounted at `/mnt` in the sandbox of `project_id`'s agents.
+    Its `data/output` is the sandbox's `/mnt/data/output`.
     """
-    return settings.data_dir / "volumes" / f"{project_id}-{user_id}"
+    return settings.data_dir / "volumes" / str(project_id)
 
 
 def stage_skills(
@@ -367,7 +367,7 @@ def get_dev_mcp_server(
     """
     Launch an dev_mcp_server instance via STDIO for sandbox tools (run_bash, create_file, view).
 
-    This is intended to be called once per `ProjectAgent` so that each (user, project) pair gets an
+    This is intended to be called once per `ProjectAgent` so that each project gets an
     isolated sandbox.
     """
     dev_server_dir = settings.mcp_servers_path / "dev_mcp_server"
@@ -394,20 +394,20 @@ class ProjectAgent:
     def __init__(
         self,
         project: ProjectPublic,
-        user: UserPublicWithConfig,
+        local: LocalSettingsPublic,
         session_id: uuid.UUID | None = None,
         model_override: str | None = None,
     ):
         self.project = project
-        self.user = user
+        self.local = local
+        """ The installation's settings, as they were when this agent was pooled. """
         self.session_id = session_id
         # This chat's own `provider:name` model, loaded when the agent is
         # pooled; changing it evicts the agent (see `update_chat_session`).
         self.model_override = model_override
-        # Id per project agent. A new ProjectAgent with the same input Project x User will have the
-        # same id
-        self.id = f"{project.id}-{user.id}"
-        self.volume_root = agent_volume_root(project.id, user.id)
+        # Id per project agent. A new ProjectAgent for the same project will have the same id
+        self.id = str(project.id)
+        self.volume_root = agent_volume_root(project.id)
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
@@ -523,11 +523,11 @@ class ProjectAgent:
         intent_extraction_agent = None
         code_intent_extraction_agent = None
         # One `Model` for this agent and its Q-LLM sub-agents. Built from the
-        # user's settings row where they set one, falling back to `Settings`
+        # installation's settings row where they set one, falling back to `Settings`
         # -- see `agents.inference.resolve_inference_target`. Shared rather
         # than rebuilt per sub-agent so all four talk to the same endpoint
         # with the same credential, and so a single HTTP client is reused.
-        model = build_model_for(self.user, self.model_override)
+        model = build_model_for(self.local, self.model_override)
         if settings.palisade.quarantine_enabled:
             quarantine_agent = build_quarantine_agent(model)
             intent_extraction_agent = build_intent_extraction_agent(model)
@@ -564,7 +564,7 @@ class ProjectAgent:
         @agent.system_prompt
         def system_prompt(ctx: RunContext[None]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
-            profile = research_profile_prompt(self.user)
+            profile = research_profile_prompt(self.local)
             if profile:
                 parts.append(profile)
             if self.project.system_prompt:
@@ -607,10 +607,10 @@ class ProjectAgent:
             credentials and may not trust the network's proxy. Returns the folder
             and its SOURCE.json record (clone URL, commit, whether it is private).
             """
-            # The user's token for this host, read from their row now: it is not
-            # on `self.user`, so a token changed in Settings applies at once.
+            # The Settings token for this host, read from the row now: it is not
+            # on `self.local`, so a token changed in Settings applies at once.
             async with AsyncSession(get_engine()) as session:
-                token = await user_repo_token(session, url, self.user.id)
+                token = await settings_repo_token(session, url)
             try:
                 record = await asyncio.to_thread(
                     source_fetch.fetch_repository,
@@ -632,7 +632,7 @@ class ProjectAgent:
         return agent
 
     def _campaign_driver_deps(self) -> CampaignDriverDeps:
-        """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
+        """Deps for the campaign tools, bound to this agent's project + per-run hooks."""
 
         def emit_progress(message: str) -> None:
             cb = self._cur_progress_emitter
@@ -643,15 +643,14 @@ class ProjectAgent:
         # planner is rebuilt on the run's own model, the same way the monitor
         # rebuilds it (`campaign_model_for`), not on this agent's: the chat may
         # have moved to another model since the campaign launched.
-        target = resolve_inference_target(self.user, self.model_override)
+        target = resolve_inference_target(self.local, self.model_override)
 
         return CampaignDriverDeps(
             project_id=self.project.id,
-            user_id=self.user.id,
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
             get_planner=lambda session, run: self._build_campaign_planner_for_run(
-                session, run, model=campaign_model_for(self.user, run)
+                session, run, model=campaign_model_for(self.local, run)
             ),
             emit_progress=emit_progress,
             model=target.model,
@@ -669,7 +668,7 @@ class ProjectAgent:
         }
         invoke = build_invoke(
             self._mcp_servers[0].direct_call_tool,
-            user=self.user,
+            local=self.local,
             project_paths=project_paths,
         )
         manifest = load_manifest(self.skills_volume_dir / run.planner_skill)
@@ -739,11 +738,11 @@ class ProjectAgent:
     def _build_vista_metadata(self, name: str) -> dict[str, Any]:
         """
         Build the `vista` MCP request metadata for a tool call: project
-        sandbox paths always, per-user HPC credentials for HPC tools, and
+        sandbox paths always, the HPC credentials from Settings for HPC tools, and
         (when metrics are on) the run/session correlation ids the server-side
         probes join against (M3).
 
-        TODO Temporary scaffolding for getting per-user HPC credentials to the
+        TODO Temporary scaffolding for getting HPC credentials to the
         MCP server via MCP metadata. Later we'll launch isolated, per-project
         MCP server instances configured with the right env vars/headers, and
         move project_paths off metadata too.
@@ -782,7 +781,8 @@ class ProjectAgent:
             "cancel_hpc_job",
         }
         if name in HPC_TOOLS:
-            metadata["vista"]["user"] = self.user.model_dump(mode="json")
+            # Still `user` on the wire: the MCP server's `VistaMeta` reads it.
+            metadata["vista"]["user"] = self.local.model_dump(mode="json")
         if get_recorder().enabled:
             metadata["vista"]["metrics"] = {
                 "run_id": run_id_var.get(),
@@ -1049,11 +1049,11 @@ class ProjectAgent:
                 plain method returning an iterator, not an async generator, so
                 the raise happens on the call and not on first iteration.
         """
-        # `self.user` is the snapshot taken when this agent was pooled. It
-        # stays current because `services.user.update_user` evicts this user's
-        # agents after every commit, which is also what lets a key pasted into
+        # `self.local` is the snapshot taken when this agent was pooled. It
+        # stays current because `services.local_settings.update` evicts every
+        # agent after each commit, which is also what lets a key pasted into
         # the settings modal take effect without a restart.
-        require_inference_credential(self.user, self.model_override)
+        require_inference_credential(self.local, self.model_override)
 
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 

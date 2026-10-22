@@ -7,7 +7,7 @@ from pydantic_ai.messages import ModelMessage
 from ..agents.report_authoring import ConversationReport
 from ..db.db import SessionDep
 from ..services import reports as reports_service
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 from ..services.reports import ReportSave
 
 
@@ -35,7 +35,10 @@ class ReportSaved(BaseModel):
 
 @router.post("/projects/{project_name}/reports/generate")
 async def generate_report(
-    project_name: str, body: ReportGenerateRequest, session: SessionDep, user: UserDep
+    project_name: str,
+    body: ReportGenerateRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
 ) -> ConversationReport:
     """
     Draft a report from a chat conversation. Does NOT persist anything — the
@@ -46,18 +49,18 @@ async def generate_report(
         project_name,
         body.message_history,
         body.hint,
-        user,
+        local,
         body.chat_session_id,
     )
 
 
 @router.post("/projects/{project_name}/reports", status_code=201)
 async def save_report(
-    project_name: str, payload: ReportSave, session: SessionDep, user: UserDep
+    project_name: str, payload: ReportSave, session: SessionDep
 ) -> ReportSaved:
     """
-    Save a report to the user's project uploads under `reports/`, replacing the
+    Save a report to the project's uploads under `reports/`, replacing the
     report previously saved from the same chat.
     """
-    path = await reports_service.save_report(session, project_name, payload, user)
+    path = await reports_service.save_report(session, project_name, payload)
     return ReportSaved(path=path)

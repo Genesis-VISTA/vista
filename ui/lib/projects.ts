@@ -12,9 +12,9 @@
  */
 
 import { useEffect, useReducer, useSyncExternalStore } from "react";
-import type { ProjectCreate, ProjectPublic, UserPublic } from "./agent-events";
+import type { ProjectCreate, ProjectPublic } from "./agent-events";
 
-export type { ProjectCreate, ProjectPublic, UserPublic };
+export type { ProjectCreate, ProjectPublic };
 
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
 export interface Project {
@@ -35,14 +35,6 @@ export interface Project {
    * line of work.
    */
   forumRepoUrl: string;
-  /** Whether the project stores an access token for that repository. */
-  hasForumToken: boolean;
-  /**
-   * Only on a draft being saved: a new token, or "" to remove the stored one.
-   * Absent keeps it, which is what every save that is not editing it wants —
-   * the token is never read back, so there is nothing to echo.
-   */
-  forumRepoToken?: string;
   tools: string[];
   usageLimits: Record<string, unknown>;
 }
@@ -58,7 +50,6 @@ function fromPublic(p: ProjectPublic): Project {
     skills: Array.isArray(p.skills) ? p.skills : [],
     knowledgeBases: Array.isArray(p.knowledge_bases) ? p.knowledge_bases : [],
     forumRepoUrl: p.forum_repo_url ?? "",
-    hasForumToken: p.has_forum_token ?? false,
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
   };
@@ -73,7 +64,6 @@ export function toCreate(project: Omit<Project, "id">): ProjectCreate {
     skills: project.skills,
     knowledge_bases: project.knowledgeBases,
     forum_repo_url: project.forumRepoUrl.trim() || null,
-    forum_repo_token: project.forumRepoToken ?? null,
     tools: project.tools,
     usage_limits: project.usageLimits ?? {},
   };
@@ -281,27 +271,4 @@ export async function deleteProject(name: string): Promise<void> {
   const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
   await refreshProjects();
-}
-
-/* ------------------------------------------------------------------ */
-/*  Membership helpers                                                 */
-/* ------------------------------------------------------------------ */
-
-export async function listProjectMembers(name: string): Promise<UserPublic[]> {
-  const res = await fetch(
-    `/api/projects/${encodeURIComponent(name)}/members`,
-    { headers: { accept: "application/json" } }
-  );
-  if (!res.ok) throw new Error(await extractError(res));
-  const data = (await res.json()) as UserPublic[];
-  return Array.isArray(data) ? data : [];
-}
-
-export async function addProjectMember(name: string, email: string): Promise<void> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/members`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok && res.status !== 201) throw new Error(await extractError(res));
 }

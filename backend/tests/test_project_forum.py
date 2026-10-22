@@ -30,7 +30,7 @@ from vista_backend.agents.forum.project_forum import (
 )
 from vista_backend.config import ForumSettings
 from vista_backend.config import settings as app_settings
-from vista_backend.db.schemas import ProjectTable, UserTable
+from vista_backend.db.schemas import LocalSettingsTable, ProjectTable
 from vista_backend.services.forum_git import REPO_DIR, ForumClient, ForumDisabled
 from vista_backend.services.git_check import GitCheck
 
@@ -60,9 +60,9 @@ def forum_home(tmp_path, monkeypatch, git_ok):
 
 
 @pytest.fixture
-async def app_client(session, alice):
+async def app_client(session):
     """
-    An HTTP client over the real app, sharing the test's session and identity.
+    An HTTP client over the real app, sharing the test's session.
 
     Only what the project routes need: the save path is the whole point here.
     """
@@ -70,16 +70,11 @@ async def app_client(session, alice):
 
     from vista_backend.api.api import app
     from vista_backend.db.db import _get_session
-    from vista_backend.services.auth import get_user
 
     async def _session():
         yield session
 
-    async def _user():
-        return alice
-
     app.dependency_overrides[_get_session] = _session
-    app.dependency_overrides[get_user] = _user
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
@@ -90,9 +85,9 @@ def _project(url: str | None = "https://example.invalid/forum.git", name="salt")
     return ProjectTable(name=name, forum_repo_url=url)
 
 
-def _user(**tokens) -> UserTable:
-    """The user a forum publishes as: just the row, never saved, with any Settings tokens."""
-    return UserTable(email="researcher@example.org", **tokens)
+def _settings(**tokens) -> LocalSettingsTable:
+    """The settings a forum publishes with: just the row, never saved, with any tokens."""
+    return LocalSettingsTable(**tokens)
 
 
 def _body(name: str, url: str | None) -> dict:
@@ -122,7 +117,7 @@ def test_a_project_with_no_url_has_no_lab(forum_home):
     assert forum_config_for(_project(None)) is None
     assert not lab_enabled(_project(None))
     with pytest.raises(ForumDisabled):
-        build_client_for(_project(None), _user())
+        build_client_for(_project(None), _settings())
 
 
 def test_a_blank_url_counts_as_none(forum_home):
@@ -143,7 +138,7 @@ def test_no_lab_anywhere_without_git(forum_home, monkeypatch):
     monkeypatch.setattr(project_forum, "git_status", lambda: missing)
     assert not lab_enabled(_project())
     with pytest.raises(ForumDisabled, match="Git is not installed."):
-        build_client_for(_project(), _user())
+        build_client_for(_project(), _settings())
 
 
 def test_the_repository_comes_from_the_project_never_the_environment(
@@ -224,7 +219,7 @@ async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
     forum_home, forge
 ):
     project = _project(str(forge))
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
 
     assert (forum_root(project.id) / REPO_DIR / "HEAD").is_file(), "a bare repository"
     client = ForumClient(forum_config_for(project))  # type: ignore[arg-type]
@@ -234,9 +229,9 @@ async def test_ensure_forum_creates_the_repo_and_points_it_at_the_url(
 async def test_ensure_forum_is_idempotent(forum_home, forge):
     """Called on every save, and on first use. Twice must be the same as once."""
     project = _project(str(forge))
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
     config = (forum_root(project.id) / REPO_DIR / "config").read_text(encoding="utf-8")
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
     assert (forum_root(project.id) / REPO_DIR / "config").read_text(
         encoding="utf-8"
     ) == config
@@ -246,16 +241,16 @@ async def test_changing_the_url_moves_the_remote(forum_home, forge, tmp_path):
     other = tmp_path / "forge" / "other.git"
     subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
     project = _project(str(forge))
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
     project.forum_repo_url = str(other)
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
     client = ForumClient(forum_config_for(project))  # type: ignore[arg-type]
     assert await client.remote() == str(other)
 
 
 async def test_ensure_forum_does_nothing_for_a_project_with_no_lab(forum_home):
     project = _project(None)
-    await ensure_forum(project, _user())
+    await ensure_forum(project, _settings())
     assert not forum_root(project.id).exists(), "no URL, no directory"
 
 
@@ -268,7 +263,7 @@ async def test_an_unreachable_url_is_raised_with_gits_reason(forum_home, tmp_pat
     """
     typo = str(tmp_path / "no-such-forge" / "typo.git")
     with pytest.raises(ForumSetupError) as caught:
-        await ensure_forum(_project(typo), _user())
+        await ensure_forum(_project(typo), _settings())
 
     assert typo in str(caught.value)
     assert "does not appear to be a git repository" in str(caught.value), (
@@ -280,7 +275,7 @@ async def test_saving_without_git_says_the_lab_needs_it(forum_home, monkeypatch)
     missing = GitCheck(ok=False, reason="Git is not installed.")
     monkeypatch.setattr(project_forum, "git_status", lambda: missing)
     with pytest.raises(ForumSetupError, match="needs git. Git is not installed."):
-        await ensure_forum(_project(), _user())
+        await ensure_forum(_project(), _settings())
 
 
 async def test_joining_an_existing_forum_lists_its_threads(forum_home, forge, tmp_path):
@@ -297,8 +292,8 @@ async def test_joining_an_existing_forum_lists_its_threads(forum_home, forge, tm
     thread = await elsewhere.create_thread("already being argued", body="go")
 
     project = _project(str(forge))
-    await ensure_forum(project, _user())
-    client = build_client_for(project, _user())
+    await ensure_forum(project, _settings())
+    client = build_client_for(project, _settings())
     assert [t.id for t in await client.list_threads()] == [thread]
 
 
@@ -365,89 +360,50 @@ TOKEN = "glpat-not-a-real-token"
 HTTPS_URL = "https://forge.example.invalid/group/forum.git"
 
 
-async def test_a_token_is_stored_but_never_read_back(
-    forum_home, forge, app_client, session
-):
+async def test_a_project_holds_no_token(forum_home, forge, app_client):
     """
-    The token goes in and only the fact of it comes out.
-
-    Encrypted at rest like every other credential, and missing from the read
-    model, which an agent is built from.
+    A project row holds no secret, so it can be published as it is. A client that
+    still sends the old field has it ignored, not stored.
     """
-    from sqlalchemy import text
-
     body = {**_body("tokened", str(forge)), "forum_repo_token": TOKEN}
     resp = await app_client.post("/projects", json=body)
 
     assert resp.status_code == 201, resp.text
-    assert resp.json()["has_forum_token"] is True
-    assert TOKEN not in resp.text
-    stored = (
-        await session.exec(
-            text("SELECT forum_repo_token FROM project WHERE name = 'tokened'")
-        )
-    ).scalar_one()
-    assert stored and TOKEN not in stored, "encrypted at rest"
-    listed = await app_client.get("/projects")
-    assert TOKEN not in listed.text
-
-
-async def test_saving_without_a_token_keeps_it_and_blank_removes_it(
-    forum_home, forge, app_client
-):
-    """
-    A save replaces the whole project, and the dialog never has the token to send
-    back. Leaving it out has to mean "unchanged", or every edit would drop it.
-    """
-    body = {**_body("kept", str(forge)), "forum_repo_token": TOKEN}
-    await app_client.post("/projects", json=body)
-
-    body["description"] = "edited"
-    del body["forum_repo_token"]
-    kept = await app_client.put("/projects/kept", json=body)
-    assert kept.json()["has_forum_token"] is True
-
-    body["forum_repo_token"] = ""
-    removed = await app_client.put("/projects/kept", json=body)
-    assert removed.json()["has_forum_token"] is False
+    assert "forum_repo_token" not in resp.json()
+    assert "has_forum_token" not in resp.json()
+    assert not hasattr(ProjectTable, "forum_repo_token")
 
 
 GITHUB_FORUM = "https://github.com/o/forum.git"
 SETTINGS_TOKEN = "ghp_from_settings"
 
 
-def _forum_token(project, user=None) -> str | None:
-    config = forum_config_for(project, user)
+def _forum_token(project, local=None) -> str | None:
+    config = forum_config_for(project, local)
     assert config is not None
     return config.remote_token.get_secret_value() if config.remote_token else None
 
 
 @pytest.mark.parametrize(
-    ("url", "project_token", "user_tokens", "expected"),
+    ("url", "tokens", "expected"),
     [
-        # The project's own token wins, on any https host.
-        (GITHUB_FORUM, TOKEN, {"github_token": SETTINGS_TOKEN}, TOKEN),
-        (HTTPS_URL, TOKEN, {}, TOKEN),
-        # Without one, the user's Settings token for the forum's host.
-        (GITHUB_FORUM, None, {"github_token": SETTINGS_TOKEN}, SETTINGS_TOKEN),
-        # Not for another host: a GitHub token never goes to a self-hosted forum.
-        (HTTPS_URL, None, {"github_token": SETTINGS_TOKEN}, None),
+        # The Settings token for the forum's host.
+        (GITHUB_FORUM, {"github_token": SETTINGS_TOKEN}, SETTINGS_TOKEN),
+        # Not for another host: a GitHub token never goes to a self-hosted forum,
+        # which uses the system git's credentials.
+        (HTTPS_URL, {"github_token": SETTINGS_TOKEN}, None),
         # Nothing at all: git uses the system's credentials.
-        (GITHUB_FORUM, None, {}, None),
+        (GITHUB_FORUM, {}, None),
     ],
 )
-def test_which_token_a_forum_pushes_with(
-    forum_home, url, project_token, user_tokens, expected
-):
-    project = ProjectTable(name="t", forum_repo_url=url, forum_repo_token=project_token)
-    assert _forum_token(project, _user(**user_tokens)) == expected
+def test_which_token_a_forum_pushes_with(forum_home, url, tokens, expected):
+    project = ProjectTable(name="t", forum_repo_url=url)
+    assert _forum_token(project, _settings(**tokens)) == expected
 
 
-def test_without_a_user_a_forum_config_carries_no_token(forum_home):
-    """Only `lab_enabled` asks without a user, and it never reaches the remote."""
-    project = ProjectTable(
-        name="t", forum_repo_url=GITHUB_FORUM, forum_repo_token=TOKEN
-    )
+def test_without_settings_a_forum_config_carries_no_token(forum_home):
+    """Only `lab_enabled` asks without the settings, and it never reaches the remote."""
+    project = ProjectTable(name="t", forum_repo_url=GITHUB_FORUM)
     assert _forum_token(project) is None
 
 

@@ -12,9 +12,10 @@ import json
 import tarfile
 import urllib.error
 import urllib.parse
+import urllib.request
 
 import pytest
-from harness import api_client, seed_project, seed_user
+from harness import api_client, seed_project
 from sqlmodel import select
 
 from vista_backend.agents import skill_repo
@@ -26,7 +27,8 @@ from vista_backend.agents.skill_repo import (
 )
 from vista_backend.agents.skills import read_skill
 from vista_backend.config import settings
-from vista_backend.db.schemas import ProjectTable, SkillTable, UserTable
+from vista_backend.db.schemas import ProjectTable, SkillTable
+from vista_backend.services import local_settings
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
@@ -560,12 +562,9 @@ class TestSingleImport:
             monkeypatch,
             {"SKILL.md": skill_md("demo-skill"), "scripts/run.py": "print(1)\n"},
         )
-        alice = await seed_user(session)
         url = "https://github.com/acme/skills"
         with api_client(session) as (client, _):
-            response = await client.post(
-                IMPORT, json={"url": url}, headers={"X-Vista-User-Email": alice.email}
-            )
+            response = await client.post(IMPORT, json={"url": url})
         assert response.status_code == 201, response.text
         body = response.json()
         assert (body["name"], body["is_public"], body["repo_url"]) == (
@@ -579,14 +578,12 @@ class TestSingleImport:
 
     async def test_a_folder_link_imports_just_that_skill(self, session, monkeypatch):
         FakeHost(monkeypatch, MULTI)
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={
                     "url": "https://github.com/acme/skills/tree/main/skills/vllm-skill"
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 201, response.text
         assert response.json()["name"] == "vllm-skill"
@@ -597,12 +594,10 @@ class TestSingleImport:
         self, session, monkeypatch
     ):
         FakeHost(monkeypatch, MULTI)
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 400
         assert "holds 3 skills" in response.json()["detail"]
@@ -610,14 +605,12 @@ class TestSingleImport:
 
     async def test_a_taken_name_is_a_409(self, session, monkeypatch):
         FakeHost(monkeypatch, {"SKILL.md": skill_md("demo-skill")})
-        alice = await seed_user(session)
-        headers = {"X-Vista-User-Email": alice.email}
         with api_client(session) as (client, _):
             first = await client.post(
-                IMPORT, json={"url": "https://github.com/acme/skills"}, headers=headers
+                IMPORT, json={"url": "https://github.com/acme/skills"}
             )
             again = await client.post(
-                IMPORT, json={"url": "https://github.com/acme/skills"}, headers=headers
+                IMPORT, json={"url": "https://github.com/acme/skills"}
             )
         assert first.status_code == 201
         assert again.status_code == 409
@@ -625,12 +618,10 @@ class TestSingleImport:
 
     async def test_malformed_skill_md_is_a_400(self, session, monkeypatch):
         FakeHost(monkeypatch, {"SKILL.md": "---\nname: x\n---\n"})
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 400
         assert "SKILL.md in the repository root is invalid" in response.json()["detail"]
@@ -645,12 +636,10 @@ class TestSingleImport:
             private=True,
             token="t",
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://git.example.org/g/r"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 403
         assert "Add a token for it in the import dialog" in response.json()["detail"]
@@ -660,15 +649,34 @@ class TestSingleImport:
             raise urllib.error.URLError("connection refused")
 
         monkeypatch.setattr(skill_repo.urllib.request, "urlopen", urlopen)
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://git.example.org/g/r"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 502
         assert "Could not reach git.example.org" in response.json()["detail"]
+
+
+def test_a_redirect_does_not_carry_the_token(monkeypatch):
+    """urllib copies ordinary headers onto a redirect to any host, even plain http."""
+    sent: list[urllib.request.Request] = []
+
+    def urlopen(req, timeout):
+        sent.append(req)
+        raise urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(skill_repo.urllib.request, "urlopen", urlopen)
+    with pytest.raises(SkillRepoError):
+        skill_repo._open("https://git.example.org/api/v4/projects/g%2Fr", "t", None)
+
+    [req] = sent
+    assert req.get_header("Authorization") == "Bearer t"
+    redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+        req, None, 302, "Found", {}, "http://elsewhere.example/x"
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") is None
 
 
 @pytest.mark.anyio
@@ -684,23 +692,20 @@ class TestTokens:
             private=True,
             token="glpat-once",
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://git.example.org/g/r", "token": "glpat-once"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 201, response.text
         assert {r.get_header("Authorization") for r in host.requests} == {
             "Bearer glpat-once"
         }
-        user = await session.get(UserTable, alice.id)
-        assert user is not None
-        assert (user.github_token, user.gitlab_token) == (None, None)
+        row = await local_settings.get(session)
+        assert (row.github_token, row.gitlab_token) == (None, None)
 
-    async def test_the_settings_token_and_never_the_projects(
-        self, session, alice, monkeypatch
+    async def test_importing_into_a_project_uses_the_settings_token(
+        self, session, monkeypatch
     ):
         """The project is where the skill lands, not where its token comes from."""
         host = FakeHost(
@@ -709,41 +714,29 @@ class TestTokens:
             private=True,
             token="ghp_users",
         )
-        row = await session.get(UserTable, alice.id)
-        assert row is not None
+        row = await local_settings.get(session)
         row.github_token = "ghp_users"
         session.add(row)
-        await seed_project(session, alice, name="tokened")
-        project = (
-            await session.exec(
-                select(ProjectTable).where(ProjectTable.name == "tokened")
-            )
-        ).one()
-        project.forum_repo_token = "github_pat_forum"
-        session.add(project)
+        await seed_project(session, name="tokened")
         await session.commit()
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://github.com/acme/skills", "project": "tokened"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 201, response.text
         assert {r.get_header("Authorization") for r in host.requests} == {
             "Bearer ghp_users"
         }
 
-    async def test_no_settings_token_goes_to_another_host(
-        self, session, alice, monkeypatch
-    ):
+    async def test_no_settings_token_goes_to_another_host(self, session, monkeypatch):
         host = FakeHost(
             monkeypatch,
             {"SKILL.md": skill_md("x")},
             host="git.example.org",
             project="g/r",
         )
-        row = await session.get(UserTable, alice.id)
-        assert row is not None
+        row = await local_settings.get(session)
         row.github_token, row.gitlab_token = "ghp_x", "glpat_x"
         session.add(row)
         await session.commit()
@@ -751,7 +744,6 @@ class TestTokens:
             response = await client.post(
                 IMPORT,
                 json={"url": "https://git.example.org/g/r"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 201, response.text
         assert all(r.get_header("Authorization") is None for r in host.requests)
@@ -761,12 +753,10 @@ class TestTokens:
 class TestScanAndBatch:
     async def test_scan_lists_each_skill(self, session, monkeypatch):
         FakeHost(monkeypatch, MULTI)
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 SCAN,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -788,8 +778,7 @@ class TestScanAndBatch:
 
     async def test_import_several_into_a_project(self, session, monkeypatch):
         FakeHost(monkeypatch, MULTI)
-        alice = await seed_user(session)
-        await seed_project(session, alice, name="lux")
+        await seed_project(session, name="lux")
         with api_client(session) as (client, _):
             response = await client.post(
                 BATCH,
@@ -803,7 +792,6 @@ class TestScanAndBatch:
                         {"path": "skills/broken"},
                     ],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         results = response.json()
@@ -826,25 +814,21 @@ class TestScanAndBatch:
 
     @pytest.fixture
     async def installed(self, session, monkeypatch):
-        """alice, with a private `vllm-skill` already installed from elsewhere."""
+        """A private `vllm-skill` already installed from elsewhere."""
         FakeHost(monkeypatch, {"SKILL.md": skill_md("vllm-skill", "The old one.")})
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 IMPORT,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 201
         FakeHost(monkeypatch, MULTI)
-        return alice
 
-    async def _batch(self, session, alice, choice: dict):
+    async def _batch(self, session, choice: dict):
         with api_client(session) as (client, _):
             scan = await client.post(
                 SCAN,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
             vllm = next(
                 s for s in scan.json()["skills"] if s["path"] == "skills/vllm-skill"
@@ -856,19 +840,18 @@ class TestScanAndBatch:
                     "url": "https://github.com/acme/skills",
                     "skills": [{"path": "skills/vllm-skill", **choice}],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         [result] = response.json()
         return result
 
     async def test_conflict_without_a_choice_fails(self, session, installed):
-        result = await self._batch(session, installed, {})
+        result = await self._batch(session, {})
         assert result["status"] == "failed"
         assert "skip, overwrite or rename" in result["detail"]
 
     async def test_conflict_skip(self, session, installed):
-        result = await self._batch(session, installed, {"on_conflict": "skip"})
+        result = await self._batch(session, {"on_conflict": "skip"})
         assert result["status"] == "skipped"
         row = await _skill(session, "vllm-skill")
         assert row is not None and row.description == "The old one."
@@ -877,7 +860,7 @@ class TestScanAndBatch:
         old = await _skill(session, "vllm-skill")
         assert old is not None
         old_path = settings.data_dir / old.path
-        result = await self._batch(session, installed, {"on_conflict": "overwrite"})
+        result = await self._batch(session, {"on_conflict": "overwrite"})
         assert result["status"] == "overwritten"
         session.expire_all()
         row = await _skill(session, "vllm-skill")
@@ -888,7 +871,7 @@ class TestScanAndBatch:
 
     async def test_conflict_rename(self, session, installed):
         result = await self._batch(
-            session, installed, {"on_conflict": "rename", "rename_to": "vllm-lux"}
+            session, {"on_conflict": "rename", "rename_to": "vllm-lux"}
         )
         assert (result["status"], result["name"]) == ("renamed", "vllm-lux")
         renamed = await _skill(session, "vllm-lux")
@@ -912,7 +895,6 @@ class TestScanAndBatch:
                         {"path": "skills/vllm-skill", "on_conflict": "overwrite"}
                     ],
                 },
-                headers={"X-Vista-User-Email": installed.email},
             )
         [result] = response.json()
         assert result["status"] == "failed"
@@ -926,7 +908,6 @@ class TestScanAndBatch:
                 "b/SKILL.md": skill_md("same"),
             },
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 BATCH,
@@ -934,7 +915,6 @@ class TestScanAndBatch:
                     "url": "https://github.com/acme/skills",
                     "skills": [{"path": "a"}, {"path": "b"}],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 409
         assert "would all be named same" in response.json()["detail"]
@@ -951,12 +931,10 @@ class TestScanAndBatch:
                 "c/SKILL.md": skill_md("other"),
             },
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 SCAN,
                 json={"url": "https://github.com/acme/skills"},
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         flags = {s["path"]: s["duplicate"] for s in response.json()["skills"]}
@@ -972,7 +950,6 @@ class TestScanAndBatch:
                 "b/SKILL.md": skill_md("same", "The second."),
             },
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 BATCH,
@@ -983,7 +960,6 @@ class TestScanAndBatch:
                         {"path": "b"},
                     ],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         assert [(r["name"], r["status"]) for r in response.json()] == [
@@ -1003,7 +979,6 @@ class TestScanAndBatch:
             monkeypatch,
             {"a/SKILL.md": skill_md("solo"), "b/SKILL.md": skill_md("pair")},
         )
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 BATCH,
@@ -1013,7 +988,6 @@ class TestScanAndBatch:
                         {"path": "a", "on_conflict": "rename", "rename_to": " "}
                     ],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 200, response.text
         assert [(r["name"], r["status"]) for r in response.json()] == [
@@ -1022,7 +996,6 @@ class TestScanAndBatch:
 
     async def test_a_path_the_repository_does_not_hold(self, session, monkeypatch):
         FakeHost(monkeypatch, MULTI)
-        alice = await seed_user(session)
         with api_client(session) as (client, _):
             response = await client.post(
                 BATCH,
@@ -1030,7 +1003,6 @@ class TestScanAndBatch:
                     "url": "https://github.com/acme/skills",
                     "skills": [{"path": "skills/nope"}],
                 },
-                headers={"X-Vista-User-Email": alice.email},
             )
         assert response.status_code == 400
         assert "No skill at 'skills/nope'" in response.json()["detail"]

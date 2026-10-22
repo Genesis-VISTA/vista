@@ -23,17 +23,10 @@ pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
 
 @pytest.fixture
-async def kb_client(engine, session, alice, tmp_path, monkeypatch):
+async def kb_client(engine, tmp_path, monkeypatch):
     from vista_backend.api import knowledge_bases as kb_api
     from vista_backend.api.api import app
     from vista_backend.db.db import get_engine
-    from vista_backend.services.auth import get_user
-
-    # `alice` is flushed but not committed, which holds the write lock.
-    await session.commit()
-
-    async def _user():
-        return alice
 
     async def _index_publications(*, rag_db_path, pdfs_dir, filenames, **_):
         kb_api.indexer._clear_progress(rag_db_path)
@@ -53,7 +46,6 @@ async def kb_client(engine, session, alice, tmp_path, monkeypatch):
     monkeypatch.setattr(kb_api, "get_engine", lambda: engine)
     monkeypatch.setattr(kb_api.indexer, "index_publications", _index_publications)
     app.dependency_overrides[get_engine] = lambda: engine
-    app.dependency_overrides[get_user] = _user
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

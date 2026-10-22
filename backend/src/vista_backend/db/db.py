@@ -146,6 +146,12 @@ async def init_db() -> None:
         await conn.run_sync(_add_missing_columns)
 
     await seed_db(engine)
+    # After seeding, so seed_db's empty-database check still sees an empty one.
+    from ..services import local_settings
+
+    async with AsyncSession(engine) as session:
+        await local_settings.ensure(session)
+        await session.commit()
     # The AI-safety default reaches first runs and upgrades alike, after seed_db so
     # its empty-database check is unaffected.
     await sync_default_projects(engine)

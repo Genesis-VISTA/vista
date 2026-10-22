@@ -451,14 +451,6 @@ function DebatesPage() {
     <p className="debate-publish-error" role="alert">
       <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
       {publishErrorNotice(forum.publish_error).detail}
-      {forum.publish_error.reason === "refused" &&
-        forum.publish_error.credential !== "settings-github" &&
-        forum.publish_error.credential !== "settings-gitlab" && (
-          <>
-            {" "}
-            <Link href="/projects">Open Projects</Link>
-          </>
-        )}
       {forum.unpublished > 0 && (
         <>
           {" "}

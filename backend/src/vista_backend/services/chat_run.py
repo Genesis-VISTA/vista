@@ -95,7 +95,6 @@ class RunEvent:
 class ChatRun:
     chat_session_id: uuid.UUID
     project_id: uuid.UUID
-    user_id: uuid.UUID
     agent_key: ProjectAgentKey
     user_prompt: str
     prior_history: list[ModelMessage]
@@ -189,7 +188,6 @@ class ChatRunRegistry:
         *,
         chat_session_id: uuid.UUID,
         project_id: uuid.UUID,
-        user_id: uuid.UUID,
         agent_key: ProjectAgentKey,
         user_prompt: str,
         prior_history: list[ModelMessage],
@@ -205,7 +203,6 @@ class ChatRunRegistry:
         run = ChatRun(
             chat_session_id=chat_session_id,
             project_id=project_id,
-            user_id=user_id,
             agent_key=agent_key,
             user_prompt=user_prompt,
             prior_history=prior_history,
@@ -394,7 +391,6 @@ async def _write_row(
         row = await chat_session_service.get_chat_session_optional(
             db,
             project_id=run.project_id,
-            user_id=run.user_id,
             chat_session_id=run.chat_session_id,
         )
         if row is None:  # The conversation was deleted while the run was going.

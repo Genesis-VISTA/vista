@@ -25,7 +25,7 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from ...config import ForumSettings, settings
-from ...db.schemas import ProjectTable, UserTable
+from ...db.schemas import LocalSettingsTable, ProjectTable
 from ...services.forum_git import ForumClient, ForumDisabled
 from ...services.git_check import git_status
 from ...services.repo_tokens import repo_token
@@ -68,7 +68,7 @@ def forum_url_of(project: ProjectTable) -> str | None:
 
 
 def forum_config_for(
-    project: ProjectTable, user: UserTable | None = None
+    project: ProjectTable, local: LocalSettingsTable | None = None
 ) -> ForumSettings | None:
     """
     This project's forum settings, or None when the project has no lab.
@@ -80,15 +80,15 @@ def forum_config_for(
     client that refuses rather than one quietly working in some other project's
     forum.
 
-    The token is `repo_token`'s choice for the forum's URL: the project's own,
-    else `user`'s Settings token for the host. Without a `user` there is no token
+    The token is `repo_token`'s choice for the forum's URL: the Settings token
+    for the host, if any. Without `local` there is no token
     at all, which only `lab_enabled` relies on — it asks whether a lab exists,
     and never talks to the remote.
     """
     url = forum_url_of(project)
     if url is None or not settings.forum.enabled or not git_status().ok:
         return None
-    token = repo_token(url, user, project) if user is not None else None
+    token = repo_token(url, local) if local is not None else None
     return settings.forum.model_copy(
         update={
             "repo_root": forum_root(project.id),
@@ -99,13 +99,13 @@ def forum_config_for(
     )
 
 
-def build_client_for(project: ProjectTable, user: UserTable) -> ForumClient:
+def build_client_for(project: ProjectTable, local: LocalSettingsTable) -> ForumClient:
     """
-    A forum client scoped to this project, sending the token `user`'s forum
-    should use. Raises when the project has no lab. `user` is the row, not the
-    public model, because the tokens are only on the row.
+    A forum client scoped to this project, sending the token the forum should
+    use. Raises when the project has no lab. `local` is the settings row, not
+    the public model, because the tokens are only on the row.
     """
-    config = forum_config_for(project, user)
+    config = forum_config_for(project, local)
     if config is None:
         git = git_status()
         why = (
@@ -122,7 +122,7 @@ def lab_enabled(project: ProjectTable) -> bool:
     return forum_config_for(project) is not None
 
 
-async def ensure_forum(project: ProjectTable, user: UserTable) -> None:
+async def ensure_forum(project: ProjectTable, local: LocalSettingsTable) -> None:
     """
     Make this project's forum exist and point at its repository. Idempotent.
 
@@ -139,7 +139,7 @@ async def ensure_forum(project: ProjectTable, user: UserTable) -> None:
     git = git_status()
     if not git.ok:
         raise ForumSetupError(f"The Hypothesis Lab needs git. {git.reason}")
-    config = forum_config_for(project, user)
+    config = forum_config_for(project, local)
     assert config is not None and config.remote_url is not None
 
     client = client_factory(config)

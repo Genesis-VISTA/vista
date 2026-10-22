@@ -13,14 +13,14 @@ import pytest
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.agents.campaign.agent_tools import CampaignDriverDeps
 from vista_backend.agents.campaign.wiring import build_default_monitor
-from vista_backend.db.schemas import ProjectPublic, UserPublicWithConfig
+from vista_backend.db.schemas import LocalSettingsPublic, ProjectPublic
 from vista_backend.services.campaign_monitor import CampaignMonitor
 
 
-def _project_agent() -> tuple[ProjectAgent, ProjectPublic, UserPublicWithConfig]:
+def _project_agent() -> tuple[ProjectAgent, ProjectPublic, LocalSettingsPublic]:
     project = ProjectPublic(id=uuid.uuid4(), name="campaign-pa")
-    user = UserPublicWithConfig(id=uuid.uuid4(), email="x@ornl.gov")
-    return ProjectAgent(project, user, uuid.uuid4()), project, user
+    local = LocalSettingsPublic(install_id=uuid.uuid4(), email="x@ornl.gov")
+    return ProjectAgent(project, local, uuid.uuid4()), project, local
 
 
 def test_run_stream_accepts_db_session_param():
@@ -29,15 +29,14 @@ def test_run_stream_accepts_db_session_param():
 
 def test_project_agent_builds_with_campaign_tools_wired():
     # Construction runs _build_agent -> register_campaign_tools without error.
-    pa, project, user = _project_agent()
+    pa, project, _local = _project_agent()
     deps = pa._campaign_driver_deps()
     assert isinstance(deps, CampaignDriverDeps)
     assert deps.project_id == project.id
-    assert deps.user_id == user.id
 
 
 def test_driver_deps_route_through_per_run_hooks():
-    pa, _project, _user = _project_agent()
+    pa, _project, _local = _project_agent()
     deps = pa._campaign_driver_deps()
 
     # Session getter reflects the per-run slot set in run_stream.
@@ -82,17 +81,17 @@ def test_campaign_settings_default_off():
 def test_driver_deps_carry_the_resolved_model():
     """What the launching agent resolved, default or the chat's own, is recorded on its runs."""
     project = ProjectPublic(id=uuid.uuid4(), name="campaign-model")
-    user = UserPublicWithConfig(
-        id=uuid.uuid4(),
+    local = LocalSettingsPublic(
+        install_id=uuid.uuid4(),
         email="x@ornl.gov",
         inference_provider="mag",
         inference_model="openai:default-model",
     )
 
-    default = ProjectAgent(project, user, uuid.uuid4())
+    default = ProjectAgent(project, local, uuid.uuid4())
     assert default._campaign_driver_deps().model == "openai:default-model"
 
-    own = ProjectAgent(project, user, uuid.uuid4(), "openai:chat-model")
+    own = ProjectAgent(project, local, uuid.uuid4(), "openai:chat-model")
     assert own._campaign_driver_deps().model == "openai:chat-model"
     assert own._campaign_driver_deps().provider == "mag"
 
@@ -107,10 +106,10 @@ async def test_a_cycle_dispatched_from_the_chat_uses_the_runs_model(monkeypatch)
     from types import SimpleNamespace
 
     project = ProjectPublic(id=uuid.uuid4(), name="campaign-dispatch")
-    user = UserPublicWithConfig(
-        id=uuid.uuid4(), email="x@ornl.gov", inference_provider="mag"
+    local = LocalSettingsPublic(
+        install_id=uuid.uuid4(), email="x@ornl.gov", inference_provider="mag"
     )
-    moved = ProjectAgent(project, user, uuid.uuid4(), "openai:c")
+    moved = ProjectAgent(project, local, uuid.uuid4(), "openai:c")
     run = SimpleNamespace(id=uuid.uuid4(), model="openai:b", provider="mag")
 
     built: list[str] = []

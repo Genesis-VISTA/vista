@@ -1,7 +1,6 @@
-"""Shared fixtures for backend tests: an in-memory DB session and seed users."""
+"""Shared fixtures for backend tests: an in-memory DB session and its settings row."""
 
 import os
-import uuid
 
 os.environ.setdefault("VISTA_BACKEND_MODEL", "test")
 
@@ -11,7 +10,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from vista_backend.db.schemas import UserPublicWithConfig, UserTable
+from vista_backend.db.schemas import LocalSettingsPublic, LocalSettingsTable
 
 
 def pytest_collection_modifyitems(
@@ -88,6 +87,10 @@ async def engine(tmp_path_factory):
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    # Like `init_db`: every database has its one settings row.
+    async with AsyncSession(engine) as s:
+        s.add(LocalSettingsTable())
+        await s.commit()
     yield engine
     await engine.dispose()
 
@@ -99,28 +102,12 @@ async def session(engine):
         yield s
 
 
-async def _make_user(session: AsyncSession, *, is_admin: bool) -> UserPublicWithConfig:
-    row = UserTable(
-        id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", is_admin=is_admin
-    )
-    session.add(row)
-    await session.flush()
-    return UserPublicWithConfig.model_validate(row)
-
-
 @pytest.fixture
-async def admin(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=True)
+async def local(session) -> LocalSettingsPublic:
+    """The installation's settings, as the `LocalSettingsDep` routes get them."""
+    from vista_backend.services import local_settings
 
-
-@pytest.fixture
-async def alice(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=False)
-
-
-@pytest.fixture
-async def bob(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=False)
+    return await local_settings.get_public(session)
 
 
 @pytest.fixture

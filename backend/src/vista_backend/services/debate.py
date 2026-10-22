@@ -58,7 +58,6 @@ async def create_debate(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     topic: str,
     thread_id: str,
     framing: str | None = None,
@@ -68,7 +67,6 @@ async def create_debate(
     now = now_iso()
     run = DebateRunTable(
         project_id=project_id,
-        user_id=user_id,
         topic=topic,
         framing=framing,
         thread_id=thread_id,
@@ -126,14 +124,11 @@ async def list_debates(
     session: AsyncSession,
     *,
     project_id: uuid.UUID | None = None,
-    user_id: uuid.UUID | None = None,
     statuses: tuple[DebateStatus, ...] | None = None,
 ) -> list[DebateRunTable]:
     stmt = select(DebateRunTable)
     if project_id is not None:
         stmt = stmt.where(DebateRunTable.project_id == project_id)
-    if user_id is not None:
-        stmt = stmt.where(DebateRunTable.user_id == user_id)
     if statuses is not None:
         stmt = stmt.where(col(DebateRunTable.status).in_(statuses))
     stmt = stmt.order_by(col(DebateRunTable.created_at).desc())

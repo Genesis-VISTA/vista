@@ -9,22 +9,21 @@
  */
 
 export const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
-export const USER_ID = "00000000-0000-4000-8000-000000000002";
 export const SESSION_ID = "00000000-0000-4000-8000-000000000003";
 
 const NOW = "2026-01-01T00:00:00+00:00";
 
-export const USER = {
-  id: USER_ID,
+export const SETTINGS = {
+  install_id: "00000000-0000-4000-8000-000000000002",
+  display_name: null,
   email: "hermetic@example.invalid",
-  is_admin: false,
   hpc_hidden_clusters: [] as string[],
 };
 
 const OK = (message: string) => ({ ok: true, reason: null, message });
 
 /**
- * `GET /users/me/hpc-status`: one cluster in each of three different states,
+ * `GET /settings/hpc-status`: one cluster in each of three different states,
  * so the rail's cards are distinguishable by more than their names.
  */
 export const HPC_STATUS = {
@@ -146,7 +145,6 @@ export const KNOWLEDGE_BASES = [KNOWLEDGE_BASE];
 
 export const CHAT_SESSION_SUMMARY = {
   id: SESSION_ID,
-  user_id: USER_ID,
   project_id: PROJECT_ID,
   title: "Density of FLiBe",
   created_at: NOW,
@@ -179,7 +177,7 @@ export const MODELS = {
 };
 
 /**
- * `GET /users/me/inference`: a fresh install, on AmSC i2 with its default
+ * `GET /settings/inference`: a fresh install, on AmSC i2 with its default
  * model and a key, so the picker reads "Default (claude-sonnet)" and a send
  * is never held for want of a model.
  */
@@ -200,9 +198,9 @@ export const INFERENCE = {
 };
 
 export const ROUTES: Record<string, unknown> = {
-  "GET /api/users/me": USER,
-  "GET /api/users/me/inference": INFERENCE,
-  "GET /api/users/me/hpc-status": HPC_STATUS,
+  "GET /api/settings": SETTINGS,
+  "GET /api/settings/inference": INFERENCE,
+  "GET /api/settings/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
   "GET /api/projects/molten-salt/models": MODELS,
   "GET /api/skills": SKILLS,

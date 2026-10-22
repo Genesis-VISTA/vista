@@ -17,13 +17,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
 from ...db.db import get_engine
-from ...db.schemas import (
-    DebateRunTable,
-    ProjectTable,
-    UserPublicWithConfig,
-    UserTable,
-)
-from ...services import debate as debate_service
+from ...db.schemas import DebateRunTable, LocalSettingsPublic, ProjectTable
+from ...services import debate as debate_service, local_settings
 from ...services.files import _get_file, _kind_dir
 from ...services.project_agent import get_project_agent_key, project_agent_pool
 from ...utils.misc import path_is_under
@@ -56,16 +51,12 @@ async def client_for_run(session: AsyncSession, run: DebateRunTable) -> ForumCli
     Every path into the forum goes through a project, because that is where the
     repository is chosen. A debate whose project has since had its lab turned off
     raises `ForumDisabled` here rather than posting into a forum nobody agreed to.
-    It pushes as the user who opened the debate: their Settings token is the
-    fallback when the project has none of its own.
+    It pushes with the Settings token for the forum's host, if any.
     """
     project = await session.get(ProjectTable, run.project_id)
     if project is None:
         raise ForumDisabled(f"debate {run.id} has no project to find a forum through")
-    opener = await session.get(UserTable, run.user_id)
-    if opener is None:
-        raise ForumDisabled(f"debate {run.id} has no user to publish as")
-    return build_client_for(project, opener)
+    return build_client_for(project, await local_settings.get(session))
 
 
 async def _read_skill_body(name: str) -> str:
@@ -87,7 +78,7 @@ def build_grounding(client: ForumClient) -> Grounding:
     """
     What a debate may look at, with no run in hand.
 
-    Knowledge-base search needs a live MCP connection and the opener's metadata,
+    Knowledge-base search needs a live MCP connection and the settings' metadata,
     so it is wired by `build_run_grounding` instead. Prefer that wherever a run
     exists: without it the Reviewer gets `prior_debates` and nothing else, which
     is a debate arguing from the model alone.
@@ -101,22 +92,21 @@ async def build_run_grounding(
     """
     What *this* debate may look at, including its project's knowledge bases.
 
-    `rag_search` runs over the vista MCP server and needs the opener's metadata,
+    `rag_search` runs over the vista MCP server and needs the settings' metadata,
     exactly like the HPC tools do — so like them it can only be built once a run
     exists. The knowledge bases are the project's own; a debate is scoped to a
     project, so there is no second list to keep in step with what the project is
     for.
 
     Falls back to the run-less grounding when the project has no knowledge bases
-    or the opener cannot be resolved. A search tool over an empty corpus is worse
+    or is gone. A search tool over an empty corpus is worse
     than no search tool: it answers "nothing found" to every question, and the
     role reads that as evidence of absence.
     """
     grounding = build_grounding(client)
 
     project = await session.get(ProjectTable, run.project_id)
-    user_row = await session.get(UserTable, run.user_id)
-    if project is None or user_row is None:
+    if project is None:
         return grounding
 
     kbs = list(project.knowledge_bases or [])
@@ -128,8 +118,8 @@ async def build_run_grounding(
         )
         return grounding
 
-    user = UserPublicWithConfig.model_validate(user_row)
-    invoke = build_mcp_invoke(user, project_paths_for(run.project_id, run.user_id))
+    local = await local_settings.get_public(session)
+    invoke = build_mcp_invoke(local, project_paths_for(run.project_id))
     default_kb = kbs[0] if len(kbs) == 1 else None
 
     async def rag(query: str, kb_slug: str | None, n_results: int) -> str:
@@ -171,7 +161,7 @@ def _upload_reader(run: DebateRunTable):
         async with AsyncSession(get_engine()) as session:
             try:
                 agent_key = await get_project_agent_key(
-                    session, project_id=run.project_id, user_id=run.user_id
+                    session, project_id=run.project_id
                 )
                 async with project_agent_pool.get(agent_key) as agent:
                     uploads_dir = _kind_dir(agent, "uploads")
@@ -295,32 +285,28 @@ async def build_simulation(
 
     Returns `(commissioner, runnable)` — a mapping from each job to the clusters it
     can actually run on here, which is the intersection of the project's skills,
-    the jobs on disk, and the opener's credentials. A mapping rather than the two
+    the jobs on disk, and the credentials in Settings. A mapping rather than the two
     lists it used to be: those could not express that a neutronics job runs on odo
     and perlmutter while a chemistry job runs only on frontier, so the default was
     `clusters[0]` — alphabetical — and it picked the one cluster the job could not
     use.
 
     `None` when this debate cannot submit anything — no simulation skills on the project, or no HPC credentials
-    on the person who opened it. The tool is then not granted at all, for the
+    in Settings. The tool is then not granted at all, for the
     reason the usage-limit bug taught: a model handed a tool that can only fail
     keeps calling it until its budget is gone.
 
-    Credentials are the opener's, because the job runs against their allocation.
+    Credentials are the researcher's, from Settings, because the job runs against
+    their allocation.
     """
     project = await session.get(ProjectTable, run.project_id)
-    user_row = await session.get(UserTable, run.user_id)
-    if project is None or user_row is None:
+    if project is None:
         return None, {}
 
-    user = UserPublicWithConfig.model_validate(user_row)
-    clusters = clusters_for(user)
+    local = await local_settings.get_public(session)
+    clusters = clusters_for(local)
     if not clusters:
-        logger.info(
-            "debate %s: no HPC — %s has no cluster credentials configured",
-            run.id,
-            user.email,
-        )
+        logger.info("debate %s: no HPC — no cluster credentials are configured", run.id)
         return None, {}
 
     runnable = runnable_simulations(
@@ -333,10 +319,9 @@ async def build_simulation(
         offered = runnable_jobs(list(project.skills or []), settings.hpc_jobs_catalog)
         if offered:
             logger.info(
-                "debate %s: no HPC — %s can reach %s, and no job in %s has a "
+                "debate %s: no HPC — VISTA can reach %s, and no job in %s has a "
                 "section for any of them",
                 run.id,
-                user.email,
                 ", ".join(clusters),
                 ", ".join(offered),
             )
@@ -357,15 +342,8 @@ async def build_simulation(
     bind = session.bind
     sessions = lambda: AsyncSession(bind)  # noqa: E731
 
-    hpc = McpHpcTools(
-        build_mcp_invoke(user, project_paths_for(run.project_id, run.user_id))
-    )
-    run_id, project_id, user_id, thread_id = (
-        run.id,
-        run.project_id,
-        run.user_id,
-        run.thread_id,
-    )
+    hpc = McpHpcTools(build_mcp_invoke(local, project_paths_for(run.project_id)))
+    run_id, project_id, thread_id = run.id, run.project_id, run.thread_id
 
     async def commissioner(
         *,
@@ -383,7 +361,7 @@ async def build_simulation(
                 f"{', '.join(sorted(runnable))}."
             )
         # Validated against where *this job* can run, not against every cluster the
-        # opener can reach. Those are different sets, and the difference is what
+        # settings can reach. Those are different sets, and the difference is what
         # sent a neutronics job to frontier — a cluster it has no section for — and
         # launched nothing.
         allowed = runnable[job]
@@ -411,7 +389,6 @@ async def build_simulation(
                 own,
                 debate_run_id=run_id,
                 project_id=project_id,
-                user_id=user_id,
                 thread_id=thread_id,
                 participant=participant,
                 hpc=hpc,
@@ -465,22 +442,10 @@ async def models_for(session: AsyncSession, run) -> dict[DebateRole, str | None]
     return {row.debate_role: row.model for row in rows}  # type: ignore[misc]
 
 
-async def opener_of(session: AsyncSession, run) -> UserPublicWithConfig | None:
-    """
-    The person who opened `run`, with their settings, or `None` if they are gone.
-
-    A debate argues in a background task that has only the run, so the opener
-    is looked up again for their inference key, endpoint and model, the same
-    ones their chat uses.
-    """
-    user_row = await session.get(UserTable, run.user_id)
-    return UserPublicWithConfig.model_validate(user_row) if user_row else None
-
-
 def build_orchestrator(
     client: ForumClient,
     *,
-    user: UserPublicWithConfig | None = None,
+    local: LocalSettingsPublic | None = None,
     on_post=None,
     checkpoint=None,
     grounding: Grounding | None = None,
@@ -497,25 +462,25 @@ def build_orchestrator(
     project names the repository. Passing it in is what makes forgetting to
     scope a type error instead of a post in the wrong room.
 
-    `user` is the opener. Their inference key, endpoint and model win over the
-    deployment's, as in their chat: on a single-user install the settings
-    modal is where the key lives, and nothing exports it.
+    `local` is the installation's settings. Their inference key, endpoint and
+    model win over the deployment's, as in chat: the settings modal is where the
+    key lives, and nothing exports it.
 
     `models` is each role's own `provider:name`, where it has one; a role
-    without one uses the opener's default. Only the endpoint and key stay the
-    opener's.
+    without one uses the settings' default. Only the endpoint and key stay the
+    settings'.
     """
     grounding = grounding if grounding is not None else build_grounding(client)
     models = models or {}
     roles = RoleAgents(
-        model=build_model_for(user),
-        models={role: build_model_for(user, m) for role, m in models.items() if m},
+        model=build_model_for(local),
+        models={role: build_model_for(local, m) for role, m in models.items() if m},
         toolsets=_toolsets(grounding),
     )
     names: dict[str, str] = {
         role: target.model
         for role in ROSTER
-        if (target := resolve_inference_target(user, models.get(role))).model
+        if (target := resolve_inference_target(local, models.get(role))).model
     }
     return DebateOrchestrator(
         client=client,
@@ -559,7 +524,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
 
             await build_orchestrator(
                 client,
-                user=await opener_of(session, run),
+                local=await local_settings.get_public(session),
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,
@@ -601,7 +566,7 @@ async def run_debate_task(run_id: uuid.UUID) -> None:
             # so without this the live view only goes live once it is over.
             await build_orchestrator(
                 client,
-                user=await opener_of(session, run),
+                local=await local_settings.get_public(session),
                 checkpoint=_commit,
                 grounding=grounding,
                 runnable=runnable,

@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.toolsets.function import FunctionToolset
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from harness import call, make_project, make_user, say, seed_project, seed_user
+from harness import call, make_local_settings, make_project, say, seed_project
 from harness import scripted_model, step_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.db.schemas import ChatSessionTable
@@ -47,7 +47,7 @@ async def _until(condition, timeout: float = 10) -> None:
 
 
 class Env:
-    """A project, a researcher, and scripted agents keyed by conversation."""
+    """A project and scripted agents keyed by conversation."""
 
     def __init__(self, engine, session, stack: ExitStack) -> None:
         self.engine = engine
@@ -59,14 +59,14 @@ class Env:
 
     async def conversation(self, steps, history=None) -> tuple[ChatSessionTable, tuple]:
         row = await chat_session_service.create_chat_session(
-            self.session, project_id=self.project.id, user_id=self.user.id
+            self.session, project_id=self.project.id
         )
         if history:
             row.message_history = chat_session_service.dump_message_history(history)
         await self.session.commit()
         await self.session.refresh(row)
         self.session.expunge(row)  # later commits must not expire it
-        agent = ProjectAgent(make_project(tools=["*"]), make_user(), row.id)
+        agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), row.id)
         toolset = self._toolset(agent).filtered(
             lambda ctx, tool: agent._tool_allowed(tool.name)
         )
@@ -74,7 +74,7 @@ class Env:
             agent.agent.override(model=step_model(steps), toolsets=[toolset])
         )
         self.agents[row.id] = agent
-        return row, (row.id, self.project.id, self.user.id)
+        return row, (row.id, self.project.id)
 
     def _toolset(self, agent: ProjectAgent) -> FunctionToolset:
         toolset = FunctionToolset()
@@ -112,7 +112,6 @@ class Env:
         return await self.registry.start(
             chat_session_id=row.id,
             project_id=self.project.id,
-            user_id=self.user.id,
             agent_key=key,
             user_prompt=prompt,
             prior_history=chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
@@ -142,9 +141,7 @@ async def env(engine, session, monkeypatch):
     with ExitStack() as stack:
         holder = Env(engine, session, stack)
         monkeypatch.setattr(chat_run, "chat_run_registry", holder.registry)
-        user = await seed_user(session)
-        holder.user = user
-        holder.project = await seed_project(session, user)
+        holder.project = await seed_project(session)
         await session.commit()
         yield holder
 

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from harness import FakeAgentPool, api_client, seed_project, seed_user
+from harness import FakeAgentPool, api_client, seed_project
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -23,10 +23,6 @@ from vista_backend.services import reports as reports_service
 pytestmark = [pytest.mark.anyio, pytest.mark.unit]
 
 REPORTS = "/projects/{name}/reports"
-
-
-def _headers(user) -> dict[str, str]:
-    return {"X-Vista-User-Email": user.email}
 
 
 def _report(chat_session_id: uuid.UUID, **overrides) -> dict:
@@ -59,10 +55,8 @@ def uploads(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-async def owner(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, name="salts")
-    return alice, project
+async def project(session):
+    return await seed_project(session, name="salts")
 
 
 # ---------------------------------------------------------------------------
@@ -70,15 +64,13 @@ async def owner(session):
 # ---------------------------------------------------------------------------
 
 
-async def test_first_save_writes_header_and_body(session, uploads, owner):
-    alice, project = owner
+async def test_first_save_writes_header_and_body(session, uploads, project):
     chat = uuid.uuid4()
 
     with api_client(session) as (client, _):
         response = await client.post(
             REPORTS.format(name=project.name),
             json=_report(chat),
-            headers=_headers(alice),
         )
 
     assert response.status_code == 201
@@ -91,18 +83,14 @@ async def test_first_save_writes_header_and_body(session, uploads, owner):
     assert body.strip().startswith("## Summary")
 
 
-async def test_saved_report_is_listed_with_uploads(session, uploads, owner):
-    alice, project = owner
+async def test_saved_report_is_listed_with_uploads(session, uploads, project):
 
     with api_client(session) as (client, _):
         await client.post(
             REPORTS.format(name=project.name),
             json=_report(uuid.uuid4()),
-            headers=_headers(alice),
         )
-        listing = await client.get(
-            f"/projects/{project.name}/uploads", headers=_headers(alice)
-        )
+        listing = await client.get(f"/projects/{project.name}/uploads")
 
     assert listing.status_code == 200
     assert [f["name"] for f in listing.json()] == [
@@ -111,23 +99,20 @@ async def test_saved_report_is_listed_with_uploads(session, uploads, owner):
 
 
 async def test_resave_from_same_chat_replaces_and_keeps_filename(
-    session, uploads, owner
+    session, uploads, project
 ):
-    alice, project = owner
     chat = uuid.uuid4()
 
     with api_client(session) as (client, _):
         await client.post(
             REPORTS.format(name=project.name),
             json=_report(chat),
-            headers=_headers(alice),
         )
         response = await client.post(
             REPORTS.format(name=project.name),
             json=_report(
                 chat, title="Revised", slug="something-else", body="## Summary\n\nv2"
             ),
-            headers=_headers(alice),
         )
 
     assert response.json() == {"path": "reports/lif-naf-eutectic-density.md"}
@@ -139,21 +124,18 @@ async def test_resave_from_same_chat_replaces_and_keeps_filename(
     assert "v2" in body
 
 
-async def test_resave_after_delete_creates_new_file(session, uploads, owner):
-    alice, project = owner
+async def test_resave_after_delete_creates_new_file(session, uploads, project):
     chat = uuid.uuid4()
 
     with api_client(session) as (client, _):
         first = await client.post(
             REPORTS.format(name=project.name),
             json=_report(chat),
-            headers=_headers(alice),
         )
         (uploads / first.json()["path"]).unlink()
         second = await client.post(
             REPORTS.format(name=project.name),
             json=_report(chat, slug="fresh-start"),
-            headers=_headers(alice),
         )
 
     assert second.json() == {"path": "reports/fresh-start.md"}
@@ -161,20 +143,17 @@ async def test_resave_after_delete_creates_new_file(session, uploads, owner):
 
 
 async def test_slug_collision_with_another_chat_gets_unique_name(
-    session, uploads, owner
+    session, uploads, project
 ):
-    alice, project = owner
 
     with api_client(session) as (client, _):
         first = await client.post(
             REPORTS.format(name=project.name),
             json=_report(uuid.uuid4()),
-            headers=_headers(alice),
         )
         second = await client.post(
             REPORTS.format(name=project.name),
             json=_report(uuid.uuid4(), title="Other chat"),
-            headers=_headers(alice),
         )
 
     assert first.json()["path"] == "reports/lif-naf-eutectic-density.md"
@@ -193,30 +172,26 @@ async def test_slug_collision_with_another_chat_gets_unique_name(
     ],
 )
 async def test_unsafe_slug_stays_inside_reports(
-    session, uploads, owner, slug, expected
+    session, uploads, project, slug, expected
 ):
-    alice, project = owner
 
     with api_client(session) as (client, _):
         response = await client.post(
             REPORTS.format(name=project.name),
             json=_report(uuid.uuid4(), slug=slug),
-            headers=_headers(alice),
         )
 
     assert response.json() == {"path": expected}
     assert (uploads / expected).is_file()
 
 
-async def test_header_with_yaml_syntax_round_trips(session, uploads, owner):
-    alice, project = owner
+async def test_header_with_yaml_syntax_round_trips(session, uploads, project):
     title = 'Density: "LiF-NaF" at 1000 K --- #1'
 
     with api_client(session) as (client, _):
         response = await client.post(
             REPORTS.format(name=project.name),
             json=_report(uuid.uuid4(), title=title, summary="a: b\n---\nc"),
-            headers=_headers(alice),
         )
 
     header, _ = _split(uploads / response.json()["path"])
@@ -224,8 +199,7 @@ async def test_header_with_yaml_syntax_round_trips(session, uploads, owner):
     assert header["summary"] == "a: b --- c"
 
 
-async def test_malformed_report_files_are_skipped(session, uploads, owner):
-    alice, project = owner
+async def test_malformed_report_files_are_skipped(session, uploads, project):
     chat = uuid.uuid4()
     reports_dir = uploads / "reports"
     reports_dir.mkdir(parents=True)
@@ -237,26 +211,10 @@ async def test_malformed_report_files_are_skipped(session, uploads, owner):
         response = await client.post(
             REPORTS.format(name=project.name),
             json=_report(chat),
-            headers=_headers(alice),
         )
 
     assert response.json() == {"path": "reports/lif-naf-eutectic-density.md"}
     assert (reports_dir / "notes.md").read_text(encoding="utf-8") == "no header here"
-
-
-async def test_non_member_cannot_save(session, uploads, owner):
-    _, project = owner
-    bob = await seed_user(session)
-
-    with api_client(session) as (client, _):
-        response = await client.post(
-            REPORTS.format(name=project.name),
-            json=_report(uuid.uuid4()),
-            headers=_headers(bob),
-        )
-
-    assert response.status_code == 403
-    assert not uploads.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +244,7 @@ def fake_model(monkeypatch, built_with) -> list[list]:
         calls.append(messages)
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, DRAFT)])
 
-    def build(user, model=None):
+    def build(local, model=None):
         built_with.append(model)
         return FunctionModel(respond)
 
@@ -295,15 +253,13 @@ def fake_model(monkeypatch, built_with) -> list[list]:
 
 
 async def test_generate_returns_draft_and_persists_nothing(
-    session, uploads, owner, fake_model
+    session, uploads, project, fake_model
 ):
-    alice, project = owner
 
     with api_client(session) as (client, _):
         response = await client.post(
             REPORTS.format(name=project.name) + "/generate",
             json={"message_history": [], "hint": "focus on density"},
-            headers=_headers(alice),
         )
 
     assert response.status_code == 200
@@ -315,86 +271,62 @@ async def test_generate_returns_draft_and_persists_nothing(
     assert not uploads.exists()
 
 
-async def test_non_member_cannot_generate(session, uploads, owner, fake_model):
-    _, project = owner
-    bob = await seed_user(session)
-
-    with api_client(session) as (client, _):
-        response = await client.post(
-            REPORTS.format(name=project.name) + "/generate",
-            json={"message_history": []},
-            headers=_headers(bob),
-        )
-
-    assert response.status_code == 403
-    assert fake_model == []
-
-
-async def _chat(session, user, project, model=None):
+async def _chat(session, project, model=None):
     from vista_backend.db.schemas import ChatSessionUpdate
     from vista_backend.services import chat_session as chat_session_service
 
     chat = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=user.id
+        session, project_id=project.id
     )
     if model is not None:
         await chat_session_service.update_chat_session(
             session,
             project_id=project.id,
-            user_id=user.id,
             chat_session_id=chat.id,
             updates=ChatSessionUpdate(inference_model=model),
         )
     return chat
 
 
-async def _generate(session, project, user, **body):
+async def _generate(session, project, **body):
     with api_client(session) as (client, _):
         return await client.post(
             REPORTS.format(name=project.name) + "/generate",
             json={"message_history": [], **body},
-            headers=_headers(user),
         )
 
 
 async def test_draft_from_an_overridden_chat_uses_its_model(
-    session, uploads, owner, fake_model, built_with
+    session, uploads, project, fake_model, built_with
 ):
-    alice, project = owner
-    chat = await _chat(session, alice, project, "openai:chat-choice")
+    chat = await _chat(session, project, "openai:chat-choice")
 
-    response = await _generate(session, project, alice, chat_session_id=str(chat.id))
+    response = await _generate(session, project, chat_session_id=str(chat.id))
 
     assert response.status_code == 200, response.text
     assert built_with == ["openai:chat-choice"]
 
 
 async def test_draft_without_a_chat_or_from_a_default_chat_uses_the_default(
-    session, uploads, owner, fake_model, built_with
+    session, uploads, project, fake_model, built_with
 ):
-    alice, project = owner
-    chat = await _chat(session, alice, project)
+    chat = await _chat(session, project)
 
-    assert (await _generate(session, project, alice)).status_code == 200
-    response = await _generate(session, project, alice, chat_session_id=str(chat.id))
+    assert (await _generate(session, project)).status_code == 200
+    response = await _generate(session, project, chat_session_id=str(chat.id))
 
     assert response.status_code == 200
     assert built_with == [None, None]
 
 
-async def test_draft_with_a_missing_or_foreign_chat_is_a_404(
-    session, uploads, owner, fake_model, built_with
+async def test_draft_with_a_missing_or_another_projects_chat_is_a_404(
+    session, uploads, project, fake_model, built_with
 ):
-    alice, project = owner
-    bob = await seed_user(session)
-    bobs = await _chat(session, bob, project, "openai:bobs")
-    other_project = await seed_project(session, alice, name="alices-other-project")
-    elsewhere = await _chat(session, alice, other_project, "openai:elsewhere")
+    other_project = await seed_project(session, name="other-project")
+    elsewhere = await _chat(session, other_project, "openai:elsewhere")
 
-    for chat_id in (uuid.uuid4(), bobs.id, elsewhere.id):
-        response = await _generate(
-            session, project, alice, chat_session_id=str(chat_id)
-        )
+    for chat_id in (uuid.uuid4(), elsewhere.id):
+        response = await _generate(session, project, chat_session_id=str(chat_id))
         assert response.status_code == 404, response.text
 
     assert fake_model == [] and built_with == []

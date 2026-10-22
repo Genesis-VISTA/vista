@@ -13,8 +13,8 @@ A user SHALL be able to save a GitHub token and a gitlab.com token in the
 Settings window. Each SHALL be stored encrypted and MUST NOT be returned by any
 API response; the Settings window SHALL show only whether each is saved, and
 SHALL let the user replace or remove it. Saving other settings SHALL keep both.
-VISTA SHALL read repository tokens from nowhere else: no environment variable
-or `.env` setting SHALL supply one.
+VISTA SHALL read repository tokens from nowhere else: no environment variable,
+`.env` setting or project SHALL supply one.
 
 #### Scenario: A saved token is never shown again
 
@@ -30,9 +30,9 @@ or `.env` setting SHALL supply one.
 #### Scenario: Settings explains which token wins
 
 - **WHEN** a user opens the Repositories section of Settings
-- **THEN** it SHALL say that a Hypothesis Lab forum uses the project's own token if it has
-  one, else this Settings token for the forum's host, else the system git's credentials
-- **AND** that skill import and repository fetches always use the Settings token
+- **THEN** it SHALL say that skill import, repository fetches and a Hypothesis Lab forum on
+  the token's host use this Settings token, and that a forum elsewhere uses the system git's
+  credentials
 
 #### Scenario: The environment supplies nothing
 
@@ -45,10 +45,9 @@ or `.env` setting SHALL supply one.
 Importing a skill from GitHub, and the agent's `fetch_repository`, SHALL send the
 user's Settings token for the URL's host — the GitHub token to the GitHub API,
 the gitlab.com token to the gitlab.com API — and SHALL send none to any other
-host. A project's forum token SHALL NOT be used for either. A token SHALL NOT
-reach the code-execution sandbox. Without a token for the host, only public
-repositories SHALL be reachable, and a refusal SHALL say to add the token in
-Settings.
+host. A token SHALL NOT reach the code-execution sandbox. Without a token for the
+host, only public repositories SHALL be reachable, and a refusal SHALL say to add
+the token in Settings.
 
 #### Scenario: Importing from a private GitHub repository
 
@@ -70,6 +69,6 @@ Settings.
 
 #### Scenario: A project's forum token is not borrowed
 
-- **GIVEN** a project with a forum token, and no GitHub token in Settings
+- **GIVEN** a project with an `https://github.com/` forum, and no GitHub token in Settings
 - **WHEN** the agent in that project fetches a private GitHub repository
-- **THEN** no token SHALL be sent
+- **THEN** no token SHALL be sent, since a project holds none

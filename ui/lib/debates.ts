@@ -26,7 +26,6 @@ export type PostableKind = "ASK" | "FINDING" | "RISK" | "PROPOSAL";
 export type DebateRun = {
   id: string;
   project_id: string;
-  user_id: string;
   topic: string;
   framing: string | null;
   thread_id: string;
@@ -62,7 +61,7 @@ export type DebateParticipant = {
   active: boolean;
   /** What this role was allowed to use. Empty means it had nothing to reach for. */
   granted_tools: string[];
-  /** This role's own model (`openai:<name>`); null follows the opener's default. */
+  /** This role's own model (`openai:<name>`); null follows the default. */
   model: string | null;
 };
 
@@ -188,7 +187,8 @@ export type DebatePost = {
    */
   peer_votes: number;
   /**
-   * The VISTA account that wrote this, where this deployment authenticated them.
+   * Who wrote this, for a post this installation made: the name in its
+   * Settings at the time. Self-typed, not verified.
    *
    * Null on every post from outside, and that is not a gap to fill: every
    * install's operator posts as `human`, so a peer's post carries no name we
@@ -300,25 +300,23 @@ export type ForumStatus = {
 /** Backend `PublishError`: why posts did not reach the forum. */
 export type PublishError = {
   reason: "refused" | "unreachable" | "failed";
-  credential: "project" | "settings-github" | "settings-gitlab" | "system-git";
+  credential: "settings-github" | "settings-gitlab" | "system-git";
   /** Git's own message. It never holds the token. */
   message: string;
   at: string;
 };
 
 const CREDENTIAL_NAMES: Record<PublishError["credential"], string> = {
-  project: "This project’s forum token",
   "settings-github": "Your GitHub token from Settings",
   "settings-gitlab": "Your gitlab.com token from Settings",
   "system-git": "Your system git’s credentials",
 };
 
 const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
-  project: "Replace or remove it in the project’s settings on the Projects page.",
-  "settings-github": "Replace it in Settings → Repositories, or give this project its own token.",
-  "settings-gitlab": "Replace it in Settings → Repositories, or give this project its own token.",
+  "settings-github": "Replace it in Settings → Repositories.",
+  "settings-gitlab": "Replace it in Settings → Repositories.",
   "system-git":
-    "Add a token in Settings → Repositories, or give this project its own token on the Projects page.",
+    "Add a token in Settings → Repositories for a github.com or gitlab.com forum; elsewhere, give your system git an SSH key or a credential helper that can push to it.",
 };
 
 /**
@@ -480,9 +478,9 @@ export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
 }
 
 /**
- * Who wrote a post, where that is actually known: the VISTA account this
- * deployment authenticated when the post was made. Null for everything else —
- * a peer's post carries no name we could believe.
+ * Who wrote a post, where this installation wrote it and its Settings named
+ * the researcher. Null for everything else — a peer's post carries no name we
+ * could believe.
  */
 export function authorOf(post: DebatePost): string | null {
   return post.authored_by ?? null;

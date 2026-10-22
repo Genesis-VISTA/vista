@@ -22,7 +22,7 @@ import {
   type ReportDraft,
   type ReportSavePayload,
 } from "@/components/ReportModal";
-import { extractError } from "@/lib/user";
+import { extractError } from "@/lib/settings";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { fileLinkProps } from "@/lib/file-links";
 import {

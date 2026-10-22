@@ -5,7 +5,6 @@ from starlette.convertors import Convertor, register_url_convertor
 from ..db.db import SessionDep
 from ..services import files as files_service
 from ..services.files import FileInfo, FileKind
-from ..services.auth import UserDep
 
 
 router = APIRouter()
@@ -34,9 +33,8 @@ async def list_files(
     project_name: str,
     kind: FileKind,
     session: SessionDep,
-    user: UserDep,
 ) -> list[FileInfo]:
-    return await files_service.list_files(session, project_name, kind, user)
+    return await files_service.list_files(session, project_name, kind)
 
 
 @router.post("/projects/{project_name}/uploads")
@@ -44,9 +42,8 @@ async def upload_files(
     project_name: str,
     files: list[UploadFile],
     session: SessionDep,
-    user: UserDep,
 ) -> list[str]:
-    return await files_service.save_uploads(session, project_name, files, user)
+    return await files_service.save_uploads(session, project_name, files)
 
 
 @router.get("/projects/{project_name}/{kind:file_kind}/{name:path}")
@@ -55,9 +52,8 @@ async def download_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
-    user: UserDep,
 ) -> Response:
-    path = await files_service.get_file_path(session, project_name, kind, name, user)
+    path = await files_service.get_file_path(session, project_name, kind, name)
     return FileResponse(path, filename=path.name, content_disposition_type="attachment")
 
 
@@ -67,7 +63,6 @@ async def delete_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
-    user: UserDep,
 ):
-    await files_service.delete_file(session, project_name, kind, name, user)
+    await files_service.delete_file(session, project_name, kind, name)
     return {"ok": True}

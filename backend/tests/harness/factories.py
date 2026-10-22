@@ -1,15 +1,10 @@
-"""Minimal `Project` / `User` builders for agent tests."""
+"""Minimal `Project` / settings builders for agent tests."""
 
 import uuid
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from vista_backend.db.schemas import (
-    ProjectCreate,
-    ProjectPublic,
-    UserPublicWithConfig,
-    UserTable,
-)
+from vista_backend.db.schemas import ProjectCreate, ProjectPublic, LocalSettingsPublic
 from vista_backend.services import project as project_service
 
 
@@ -34,20 +29,18 @@ def make_project(
     )
 
 
-def make_user(
+def make_local_settings(
     *,
     email: str | None = None,
-    is_admin: bool = False,
     odo_s3m_token: str | None = None,
     frontier_s3m_token: str | None = None,
     nersc_iri_token: str | None = None,
     odo_remote_dir: str | None = None,
-) -> UserPublicWithConfig:
-    """An in-memory `UserPublicWithConfig`, for tests that never touch the DB."""
-    return UserPublicWithConfig(
-        id=uuid.uuid4(),
-        email=email or f"{uuid.uuid4().hex[:8]}@ornl.gov",
-        is_admin=is_admin,
+) -> LocalSettingsPublic:
+    """An in-memory `LocalSettingsPublic`, for tests that never touch the DB."""
+    return LocalSettingsPublic(
+        install_id=uuid.uuid4(),
+        email=email,
         odo_s3m_token=odo_s3m_token,
         frontier_s3m_token=frontier_s3m_token,
         nersc_iri_token=nersc_iri_token,
@@ -55,23 +48,8 @@ def make_user(
     )
 
 
-async def seed_user(
-    session: AsyncSession, *, email: str | None = None, is_admin: bool = False
-) -> UserPublicWithConfig:
-    """Insert a user row and return its public view."""
-    row = UserTable(
-        id=uuid.uuid4(),
-        email=email or f"{uuid.uuid4().hex[:8]}@ornl.gov",
-        is_admin=is_admin,
-    )
-    session.add(row)
-    await session.flush()
-    return UserPublicWithConfig.model_validate(row)
-
-
 async def seed_project(
     session: AsyncSession,
-    owner: UserPublicWithConfig,
     *,
     name: str | None = None,
     system_prompt: str | None = None,
@@ -80,10 +58,7 @@ async def seed_project(
     tools: list[str] | None = None,
     usage_limits: dict | None = None,
 ) -> ProjectPublic:
-    """
-    Insert a project row owned by `owner` (who becomes its only member) and
-    return its public view.
-    """
+    """Insert a project row and return its public view."""
     row = await project_service.create_project(
         session,
         ProjectCreate(
@@ -94,6 +69,5 @@ async def seed_project(
             tools=tools if tools is not None else ["*"],
             usage_limits=usage_limits or {},
         ),
-        owner,
     )
     return ProjectPublic.model_validate(row)

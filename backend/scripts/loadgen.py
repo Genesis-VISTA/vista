@@ -17,10 +17,8 @@ Two transcript modes:
     configured server-side; adds the M2 client timing and M5 agent_run /
     E12b events. Not deterministic.
 
-Multi-tenancy (E15): `--users N` provisions N distinct dev identities
-(admin creates them; each gets its own project) and runs their campaigns
-concurrently, selecting identity via the dev-only `X-Vista-User-Email`
-header.
+VISTA is single-user, so there is one identity and one project; the
+multi-tenancy experiment (E15) no longer exists.
 
 HPC realism: start the MCP server with `VISTA_MCP_HPC_DRY_RUN=true`
 (and `VISTA_MCP_HPC_QUEUE_DELAY_S=<seconds>` for E7b). loadgen verifies
@@ -29,7 +27,6 @@ real clusters by accident.
 
 Usage (from backend/, with the stack running via ./launch.sh):
   uv run python scripts/loadgen.py --concurrency 8 --campaigns 16
-  uv run python scripts/loadgen.py --users 4 --concurrency 4        # E15
   uv run python scripts/loadgen.py --queue-delay 300 --poll         # E7b
 """
 
@@ -45,11 +42,10 @@ from dataclasses import dataclass, field
 import httpx
 
 SEED = 42
-ADMIN_EMAIL = "vista-test-admin@americansciencecloud.org"
 
 # Canned transcripts: deterministic tool sequences standing in for the two
 # hosted campaigns. HPC tools pass `cluster` explicitly because /mcp/call
-# does not carry per-user credential metadata (dry-run needs none anyway).
+# does not carry the settings' credential metadata (dry-run needs none anyway).
 TRANSCRIPTS: dict[str, list[dict]] = {
     "alloy": [
         {"tool": "rag_search", "args": {"query": "refractory high-entropy alloy transition temperature"}},
@@ -73,7 +69,7 @@ class CallResult:
 @dataclass
 class CampaignResult:
     app: str
-    user: str
+    project: str
     ok: bool
     calls: list[CallResult] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -99,22 +95,19 @@ def _state_from_text(text: str) -> str | None:
 
 
 class Client:
-    """Thin API wrapper that pins an identity via the dev header."""
+    """Thin API wrapper over the backend's HTTP API."""
 
-    def __init__(self, http: httpx.AsyncClient, email: str) -> None:
+    def __init__(self, http: httpx.AsyncClient) -> None:
         self._http = http
-        self._headers = {"X-Vista-User-Email": email}
-        self.email = email
 
     async def available_tools(self, project: str) -> set[str]:
-        resp = await self._http.get(f"/projects/{project}/mcp/tools", headers=self._headers)
+        resp = await self._http.get(f"/projects/{project}/mcp/tools")
         resp.raise_for_status()
         return {t["name"] for t in resp.json()}
 
     async def call_tool(self, project: str, tool: str, args: dict) -> tuple[bool, str]:
         resp = await self._http.post(
             f"/projects/{project}/mcp/call",
-            headers=self._headers,
             json={"name": tool, "arguments": args},
         )
         resp.raise_for_status()
@@ -127,7 +120,6 @@ class Client:
     async def run_agent(self, project: str, prompt: str) -> tuple[bool, str]:
         resp = await self._http.post(
             f"/projects/{project}/agent/run",
-            headers=self._headers,
             json={"user_prompt": prompt, "stream": False},
             timeout=600,
         )
@@ -135,21 +127,9 @@ class Client:
         return True, json.dumps(resp.json())[:200]
 
 
-async def ensure_user(http: httpx.AsyncClient, email: str) -> None:
-    """Create a dev user (idempotent), as admin."""
-    resp = await http.post(
-        "/users",
-        headers={"X-Vista-User-Email": ADMIN_EMAIL},
-        json={"email": email, "is_admin": False},
-    )
-    if resp.status_code not in (201, 409, 400):
-        resp.raise_for_status()
-
-
 async def ensure_project(client: Client, name: str) -> None:
     resp = await client._http.post(
         "/projects",
-        headers=client._headers,
         json={"name": name, "tools": ["*"], "skills": [], "knowledge_bases": []},
     )
     if resp.status_code not in (201, 409, 400):
@@ -160,7 +140,7 @@ async def run_campaign(
     client: Client, project: str, app: str, *, mode: str, poll: bool,
     queue_delay: float, available: set[str] | None = None,
 ) -> CampaignResult:
-    result = CampaignResult(app=app, user=client.email, ok=True)
+    result = CampaignResult(app=app, project=project, ok=True)
     try:
         if mode == "agent":
             ok, _ = await client.run_agent(project, f"Run a short {app} screening step.")
@@ -215,33 +195,19 @@ async def main_async(args: argparse.Namespace) -> None:
     rng = random.Random(SEED)
     apps = list(TRANSCRIPTS)
 
-    # Build the (email, project) tenant set. One identity (the admin) by
-    # default; --users provisions N distinct tenants for E15.
-    emails = [ADMIN_EMAIL] if args.users <= 1 else [
-        f"loadgen-user-{i}@example.com" for i in range(args.users)
-    ]
-
     async with httpx.AsyncClient(base_url=args.base_url, timeout=60) as http:
-        for email in emails:
-            if email != ADMIN_EMAIL:
-                await ensure_user(http, email)
+        # One project, and the tools it can actually reach, so the replay adapts
+        # to the deployment (e.g. skips rag_search when no KB is configured).
+        client = Client(http)
+        project = args.project
+        await ensure_project(client, project)
+        tools = await client.available_tools(project) if args.mode == "tools" else set()
 
-        # Each tenant gets its own project (isolation under concurrency), and
-        # we snapshot the tools it can actually reach so the replay adapts to
-        # the deployment (e.g. skips rag_search when no KB is configured).
-        tenants: list[tuple[Client, str, set[str]]] = []
-        for i, email in enumerate(emails):
-            client = Client(http, email)
-            project = args.project if len(emails) == 1 else f"{args.project}-{i}"
-            await ensure_project(client, project)
-            tools = await client.available_tools(project) if args.mode == "tools" else set()
-            tenants.append((client, project, tools))
-
-        # Assign campaigns round-robin across tenants, deterministically.
-        jobs: list[tuple[Client, str, set[str], str]] = []
-        for n in range(args.campaigns):
-            client, project, tools = tenants[n % len(tenants)]
-            jobs.append((client, project, tools, apps[rng.randrange(len(apps))]))
+        # Pick each campaign's app deterministically.
+        jobs: list[tuple[Client, str, set[str], str]] = [
+            (client, project, tools, apps[rng.randrange(len(apps))])
+            for _ in range(args.campaigns)
+        ]
 
         sem = asyncio.Semaphore(args.concurrency)
         wall_start = time.monotonic()
@@ -266,8 +232,7 @@ def _report(args: argparse.Namespace, results: list[CampaignResult], wall: float
     call_ms = sorted(c.ms for r in results for c in r.calls)
     p95 = call_ms[int(len(call_ms) * 0.95)] if call_ms else 0.0
     print(f"# loadgen ({args.mode} mode), seed={SEED}")
-    print(f"- tenants: {min(args.users, n) if args.users > 1 else 1}, "
-          f"concurrency: {args.concurrency}")
+    print(f"- concurrency: {args.concurrency}")
     print(f"- campaigns: {n} ({ok} ok, {n - ok} failed)")
     print(f"- wall time: {wall:.1f}s  throughput: {n / wall:.2f} campaigns/s")
     if args.poll:
@@ -279,7 +244,7 @@ def _report(args: argparse.Namespace, results: list[CampaignResult], wall: float
         print(f"- skipped tools (unavailable in project): {', '.join(sorted(skipped))}")
     for r in results:
         if r.error:
-            print(f"  ! {r.user}/{r.app}: {r.error}")
+            print(f"  ! {r.project}/{r.app}: {r.error}")
     print("\nMetrics events were written to the server's metrics JSONL; "
           "summarize with: uv run python scripts/metrics_report.py")
 
@@ -291,7 +256,6 @@ def main() -> None:
     parser.add_argument("--mode", choices=["tools", "agent"], default="tools")
     parser.add_argument("--campaigns", type=int, default=8, help="total campaigns to replay")
     parser.add_argument("--concurrency", type=int, default=4, help="E6: concurrent campaigns")
-    parser.add_argument("--users", type=int, default=1, help="E15: distinct tenant identities")
     parser.add_argument("--poll", action="store_true",
                         help="poll HPC jobs to completion (needs server dry-run)")
     parser.add_argument("--queue-delay", type=float, default=0.0,

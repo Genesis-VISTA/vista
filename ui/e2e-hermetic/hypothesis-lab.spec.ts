@@ -104,7 +104,6 @@ const NOW = "2026-01-01T00:00:00+00:00";
 const RUN = {
   id: RUN_ID,
   project_id: "00000000-0000-4000-8000-000000000001",
-  user_id: "00000000-0000-4000-8000-000000000002",
   topic: "Why does the knee move?",
   framing: null,
   thread_id: "thread-1",

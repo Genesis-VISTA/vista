@@ -851,7 +851,7 @@ access token. So one name serves both.
 
 def _token_config(env: dict[str, str], config: ForumSettings) -> dict[str, str]:
     """
-    The environment that makes git send the project's token to its remote, or none.
+    The environment that makes git send the forum's token to its remote, or none.
 
     Passed as `GIT_CONFIG_*` variables, not as a `-c` argument or inside the URL:
     an argument is visible to every process on the machine and lands in

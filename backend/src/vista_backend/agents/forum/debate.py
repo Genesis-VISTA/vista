@@ -150,7 +150,6 @@ class DebateOrchestrator:
         session: AsyncSession,
         *,
         project_id: uuid.UUID,
-        user_id: uuid.UUID,
         topic: str,
         framing: str | None = None,
         rounds: int | None = None,
@@ -165,7 +164,6 @@ class DebateOrchestrator:
         run = await debate_service.create_debate(
             session,
             project_id=project_id,
-            user_id=user_id,
             topic=topic,
             thread_id=thread_id,
             framing=framing,

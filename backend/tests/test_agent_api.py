@@ -2,9 +2,9 @@
 HTTP / SSE contract for `POST /projects/{name}/agent/run` (testing roadmap
 Milestone B).
 
-The route is exercised in-process against the real FastAPI app, real auth, and
+The route is exercised in-process against the real FastAPI app and
 a real `ProjectAgent` driven by a scripted model — only the MCP boundary and
-the agent pool are faked. That locks the streaming event kinds, the authz
+the agent pool are faked. That locks the streaming event kinds, the error
 answers, and chat-session persistence against regressions.
 """
 
@@ -23,7 +23,6 @@ from harness import (
     say,
     scripted_model,
     seed_project,
-    seed_user,
     step_model,
 )
 from vista_backend.services import chat_session as chat_session_service
@@ -33,86 +32,27 @@ pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 RUN = "/projects/{name}/agent/run"
 
 
-def _headers(user) -> dict[str, str]:
-    return {"X-Vista-User-Email": user.email}
-
-
 # ---------------------------------------------------------------------------
-# Authorization
+# Missing project
 # ---------------------------------------------------------------------------
-
-
-async def test_non_member_cannot_run_the_agent(session):
-    alice = await seed_user(session)
-    bob = await seed_user(session)
-    project = await seed_project(session, alice, name="alices-project")
-
-    with api_client(session) as (client, _):
-        response = await client.post(
-            RUN.format(name=project.name),
-            json={"user_prompt": "hi"},
-            headers=_headers(bob),
-        )
-
-    assert response.status_code == 403
-    assert "do not have access" in response.json()["detail"]
 
 
 async def test_missing_project_is_404(session):
-    alice = await seed_user(session)
-
     with api_client(session) as (client, _):
         response = await client.post(
             RUN.format(name="no-such-project"),
             json={"user_prompt": "hi"},
-            headers=_headers(alice),
         )
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Project not found"
 
 
-async def test_unknown_user_is_401(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
-
-    with api_client(session) as (client, _):
-        response = await client.post(
-            RUN.format(name=project.name),
-            json={"user_prompt": "hi"},
-            headers={"X-Vista-User-Email": "nobody@example.com"},
-        )
-
-    assert response.status_code == 401
-
-
-async def test_admin_may_run_an_agent_they_are_not_a_member_of(session):
-    alice = await seed_user(session)
-    admin = await seed_user(session, is_admin=True)
-    project = await seed_project(session, alice)
-
-    model = step_model([say("hello")])
-    with agent_under_test(project, admin, model) as (agent, _):
-        with api_client(session, agent=agent) as (client, _pool):
-            response = await client.post(
-                RUN.format(name=project.name),
-                json={"user_prompt": "hi"},
-                headers=_headers(admin),
-            )
-
-    assert response.status_code == 200
-
-
-async def test_authz_is_checked_before_the_agent_pool_is_touched(session):
-    alice = await seed_user(session)
-    bob = await seed_user(session)
-    project = await seed_project(session, alice)
-
+async def test_a_missing_project_is_found_before_the_agent_pool_is_touched(session):
     with api_client(session) as (client, pool):
         await client.post(
-            RUN.format(name=project.name),
+            RUN.format(name="no-such-project"),
             json={"user_prompt": "hi"},
-            headers=_headers(bob),
         )
 
     assert pool.keys == []
@@ -123,19 +63,15 @@ async def test_authz_is_checked_before_the_agent_pool_is_touched(session):
 # ---------------------------------------------------------------------------
 
 
-async def test_non_streaming_turn_returns_a_result(session):
-    alice = await seed_user(session)
-    project = await seed_project(
-        session, alice, tools=["*"], knowledge_bases=["msre-reports"]
-    )
+async def test_non_streaming_turn_returns_a_result(session, local):
+    project = await seed_project(session, tools=["*"], knowledge_bases=["msre-reports"])
 
     model = step_model([call("rag_search", query="FLiBe"), say("FLiBe is a salt.")])
-    with agent_under_test(project, alice, model) as (agent, mcp_fake):
+    with agent_under_test(project, local, model) as (agent, mcp_fake):
         with api_client(session, agent=agent) as (client, _):
             response = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "What is FLiBe?"},
-                headers=_headers(alice),
             )
 
     assert response.status_code == 200
@@ -145,19 +81,17 @@ async def test_non_streaming_turn_returns_a_result(session):
     assert any("FLiBe is a salt." in json.dumps(m) for m in body["new_messages"])
 
 
-async def test_agent_pool_key_includes_project_and_user(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice)
+async def test_agent_pool_key_includes_project_and_user(session, local):
+    project = await seed_project(session)
 
-    with agent_under_test(project, alice, step_model([say("hi")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("hi")])) as (agent, _):
         with api_client(session, agent=agent) as (client, pool):
             await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "hi"},
-                headers=_headers(alice),
             )
 
-    assert pool.keys == [(None, project.id, alice.id)]
+    assert pool.keys == [(None, project.id)]
 
 
 # ---------------------------------------------------------------------------
@@ -165,15 +99,12 @@ async def test_agent_pool_key_includes_project_and_user(session):
 # ---------------------------------------------------------------------------
 
 
-async def test_streaming_turn_emits_the_documented_event_kinds(session):
-    alice = await seed_user(session)
-    project = await seed_project(
-        session, alice, tools=["*"], knowledge_bases=["msre-reports"]
-    )
+async def test_streaming_turn_emits_the_documented_event_kinds(session, local):
+    project = await seed_project(session, tools=["*"], knowledge_bases=["msre-reports"])
 
-    chat_session_id = await _new_chat_session(session, project, alice)
+    chat_session_id = await _new_chat_session(session, project)
     model = step_model([call("rag_search", query="FLiBe"), say("FLiBe is a salt.")])
-    with agent_under_test(project, alice, model) as (agent, _):
+    with agent_under_test(project, local, model) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
@@ -182,7 +113,6 @@ async def test_streaming_turn_emits_the_documented_event_kinds(session):
                     "stream": True,
                     "chat_session_id": str(chat_session_id),
                 },
-                headers=_headers(alice),
             )
 
     assert response.status_code == 200
@@ -198,13 +128,12 @@ async def test_streaming_turn_emits_the_documented_event_kinds(session):
     assert "agent_run_result" in kinds
 
 
-async def test_streaming_event_names_match_the_payload_event_kind(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+async def test_streaming_event_names_match_the_payload_event_kind(session, local):
+    project = await seed_project(session, tools=["*"])
 
-    chat_session_id = await _new_chat_session(session, project, alice)
+    chat_session_id = await _new_chat_session(session, project)
 
-    with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("done")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
@@ -213,20 +142,18 @@ async def test_streaming_event_names_match_the_payload_event_kind(session):
                     "stream": True,
                     "chat_session_id": str(chat_session_id),
                 },
-                headers=_headers(alice),
             )
 
     for name, data in parse_sse(response.text):
         assert json.loads(data)["event_kind"] == name
 
 
-async def test_streaming_result_event_carries_the_run_result(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+async def test_streaming_result_event_carries_the_run_result(session, local):
+    project = await seed_project(session, tools=["*"])
 
-    chat_session_id = await _new_chat_session(session, project, alice)
+    chat_session_id = await _new_chat_session(session, project)
 
-    with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("done")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
@@ -235,7 +162,6 @@ async def test_streaming_result_event_carries_the_run_result(session):
                     "stream": True,
                     "chat_session_id": str(chat_session_id),
                 },
-                headers=_headers(alice),
             )
 
     name, data = next(e for e in parse_sse(response.text) if e[0] == "agent_run_result")
@@ -252,11 +178,10 @@ async def test_streaming_result_event_carries_the_run_result(session):
 _HISTORY = TypeAdapter(list[ModelMessage])
 
 
-async def _history(session, project, user, chat_session_id) -> list[ModelMessage]:
+async def _history(session, project, chat_session_id) -> list[ModelMessage]:
     return await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
-        user_id=user.id,
         fallback_history=[],
         chat_session_id=chat_session_id,
     )
@@ -266,22 +191,18 @@ def _history_text(history: list[ModelMessage]) -> str:
     return _HISTORY.dump_json(history).decode()
 
 
-async def _new_chat_session(session, project, user) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=user.id
-    )
+async def _new_chat_session(session, project) -> uuid.UUID:
+    row = await chat_session_service.create_chat_session(session, project_id=project.id)
     return row.id
 
 
 async def test_unknown_chat_session_is_404(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+    project = await seed_project(session, tools=["*"])
 
     with api_client(session) as (client, _):
         response = await client.post(
             RUN.format(name=project.name),
             json={"user_prompt": "hi", "chat_session_id": str(uuid.uuid4())},
-            headers=_headers(alice),
         )
 
     assert response.status_code == 404
@@ -292,9 +213,8 @@ async def test_a_turn_reads_its_chat_once_for_the_model_and_the_agent(
     session, monkeypatch
 ):
     """The chat's model and its pooled agent's key come from one lookup."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    chat_session_id = await _new_chat_session(session, project, alice)
+    project = await seed_project(session, tools=["*"])
+    chat_session_id = await _new_chat_session(session, project)
 
     lookups: list[uuid.UUID] = []
     real = chat_session_service.get_chat_session_optional
@@ -316,18 +236,16 @@ async def test_a_turn_reads_its_chat_once_for_the_model_and_the_agent(
         await client.post(
             RUN.format(name=project.name),
             json={"user_prompt": "hi", "chat_session_id": str(chat_session_id)},
-            headers=_headers(alice),
         )
 
     assert lookups == [chat_session_id]
 
 
-async def test_completed_turn_appends_to_the_chat_session(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    chat_session_id = await _new_chat_session(session, project, alice)
+async def test_completed_turn_appends_to_the_chat_session(session, local):
+    project = await seed_project(session, tools=["*"])
+    chat_session_id = await _new_chat_session(session, project)
 
-    with agent_under_test(project, alice, step_model([say("first")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("first")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
@@ -335,24 +253,22 @@ async def test_completed_turn_appends_to_the_chat_session(session):
                     "user_prompt": "first question",
                     "chat_session_id": str(chat_session_id),
                 },
-                headers=_headers(alice),
             )
 
     assert response.status_code == 200
-    history = await _history(session, project, alice, chat_session_id)
+    history = await _history(session, project, chat_session_id)
     assert history, "the completed turn did not persist any history"
     blob = _history_text(history)
     assert "first question" in blob
     assert "first" in blob
 
 
-async def test_second_turn_extends_the_existing_history(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    chat_session_id = await _new_chat_session(session, project, alice)
+async def test_second_turn_extends_the_existing_history(session, local):
+    project = await seed_project(session, tools=["*"])
+    chat_session_id = await _new_chat_session(session, project)
 
     for prompt, answer in (("first question", "first"), ("second question", "second")):
-        with agent_under_test(project, alice, step_model([say(answer)])) as (agent, _):
+        with agent_under_test(project, local, step_model([say(answer)])) as (agent, _):
             with api_client(session, agent=agent) as (client, _pool):
                 await client.post(
                     RUN.format(name=project.name),
@@ -360,21 +276,19 @@ async def test_second_turn_extends_the_existing_history(session):
                         "user_prompt": prompt,
                         "chat_session_id": str(chat_session_id),
                     },
-                    headers=_headers(alice),
                 )
 
-    history = await _history(session, project, alice, chat_session_id)
+    history = await _history(session, project, chat_session_id)
     blob = _history_text(history)
     assert "first question" in blob
     assert "second question" in blob
 
 
-async def test_streaming_turn_also_appends_history(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
-    chat_session_id = await _new_chat_session(session, project, alice)
+async def test_streaming_turn_also_appends_history(session, local):
+    project = await seed_project(session, tools=["*"])
+    chat_session_id = await _new_chat_session(session, project)
 
-    with agent_under_test(project, alice, step_model([say("streamed")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("streamed")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             await client.post(
                 RUN.format(name=project.name),
@@ -383,43 +297,38 @@ async def test_streaming_turn_also_appends_history(session):
                     "stream": True,
                     "chat_session_id": str(chat_session_id),
                 },
-                headers=_headers(alice),
             )
 
-    history = await _history(session, project, alice, chat_session_id)
+    history = await _history(session, project, chat_session_id)
     assert history
 
 
-async def test_stateless_turn_does_not_create_a_session(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+async def test_stateless_turn_does_not_create_a_session(session, local):
+    project = await seed_project(session, tools=["*"])
 
-    with agent_under_test(project, alice, step_model([say("done")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("done")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             response = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "hi"},
-                headers=_headers(alice),
             )
 
     assert response.status_code == 200
     sessions = await chat_session_service.list_chat_sessions(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     assert sessions == []
 
 
-async def test_message_history_from_the_body_is_used_when_stateless(session):
+async def test_message_history_from_the_body_is_used_when_stateless(session, local):
     """Legacy clients without a session id still get their history replayed."""
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+    project = await seed_project(session, tools=["*"])
 
-    with agent_under_test(project, alice, step_model([say("first")])) as (agent, _):
+    with agent_under_test(project, local, step_model([say("first")])) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             first = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "first question"},
-                headers=_headers(alice),
             )
     prior = first.json()["new_messages"]
 
@@ -429,12 +338,11 @@ async def test_message_history_from_the_body_is_used_when_stateless(session):
         seen.append(_HISTORY.dump_json(messages).decode())
         return ModelResponse(parts=[TextPart("second")])
 
-    with agent_under_test(project, alice, scripted_model(driver)) as (agent, _):
+    with agent_under_test(project, local, scripted_model(driver)) as (agent, _):
         with api_client(session, agent=agent) as (client, _pool):
             second = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "second question", "message_history": prior},
-                headers=_headers(alice),
             )
 
     assert second.status_code == 200
@@ -445,14 +353,12 @@ async def test_message_history_from_the_body_is_used_when_stateless(session):
 
 
 async def test_streaming_without_a_conversation_is_refused(session):
-    alice = await seed_user(session)
-    project = await seed_project(session, alice, tools=["*"])
+    project = await seed_project(session, tools=["*"])
 
     with api_client(session) as (client, _):
         response = await client.post(
             RUN.format(name=project.name),
             json={"user_prompt": "hi", "stream": True},
-            headers=_headers(alice),
         )
 
     assert response.status_code == 400

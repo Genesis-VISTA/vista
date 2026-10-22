@@ -13,7 +13,14 @@ import tarfile
 import pytest
 from pydantic_ai.messages import FunctionToolResultEvent
 
-from harness import agent_under_test, call, make_project, make_user, say, step_model
+from harness import (
+    agent_under_test,
+    call,
+    make_local_settings,
+    make_project,
+    say,
+    step_model,
+)
 from vista_backend.agents import source_fetch
 from vista_backend.agents.source_fetch import SourceFetchError, parse_remote
 from vista_backend.config import settings
@@ -157,6 +164,31 @@ class TestParseRemote:
             with pytest.raises(SourceFetchError, match="Refusing to fetch"):
                 source_fetch._request(url, "gitlab")
 
+    def test_a_redirect_does_not_carry_the_token(self, monkeypatch):
+        """urllib copies ordinary headers onto a redirect to any host, even plain http."""
+        import urllib.error
+        import urllib.request
+
+        sent: list[urllib.request.Request] = []
+
+        def urlopen(req, timeout):
+            sent.append(req)
+            raise urllib.error.URLError("stop here")
+
+        monkeypatch.setattr(source_fetch.urllib.request, "urlopen", urlopen)
+        with pytest.raises(SourceFetchError):
+            source_fetch._request(
+                "https://api.github.com/repos/o/r", "github", token="t"
+            )
+
+        [req] = sent
+        assert req.get_header("Authorization") == "Bearer t"
+        redirected = urllib.request.HTTPRedirectHandler().redirect_request(
+            req, None, 302, "Found", {}, "http://elsewhere.example/x"
+        )
+        assert redirected is not None
+        assert redirected.get_header("Authorization") is None
+
 
 class TestFetchRepository:
     def test_gitlab_subfolder_pinned_to_a_commit(self, tmp_path, apis):
@@ -209,25 +241,23 @@ class TestFetchRepository:
         } == {None}
 
     @pytest.mark.anyio
-    async def test_the_agent_sends_each_host_its_own_token_and_never_the_forums(
-        self, session, alice
-    ):
+    async def test_the_agent_sends_each_host_its_own_token(self, session):
         """
-        Which token a fetch gets is `user_repo_token`'s choice, from the user's row:
-        GitHub's to GitHub, gitlab.com's to gitlab.com, and a project's forum token
-        to neither, since no project is ever passed.
+        Which token a fetch gets is `settings_repo_token`'s choice, from the
+        settings row: GitHub's to GitHub, gitlab.com's to gitlab.com, and none
+        to any other host.
         """
-        from vista_backend.db.schemas import UserTable
-        from vista_backend.services.repo_tokens import user_repo_token
+        from vista_backend.services import local_settings
+        from vista_backend.services.repo_tokens import settings_repo_token
 
-        row = await session.get(UserTable, alice.id)
+        row = await local_settings.get(session)
         row.github_token, row.gitlab_token = "ghp_users", "glpat-users"
         session.add(row)
         await session.flush()
 
-        github = await user_repo_token(session, "https://github.com/o/melt", alice.id)
-        gitlab = await user_repo_token(session, "https://gitlab.com/g/r", alice.id)
-        other = await user_repo_token(session, "https://code.example.org/g/r", alice.id)
+        github = await settings_repo_token(session, "https://github.com/o/melt")
+        gitlab = await settings_repo_token(session, "https://gitlab.com/g/r")
+        other = await settings_repo_token(session, "https://code.example.org/g/r")
 
         assert github is not None and github.value == "ghp_users"
         assert gitlab is not None and gitlab.value == "glpat-users"
@@ -276,7 +306,7 @@ async def test_agent_tool_fetches_into_its_own_workspace(
 ):
     """The agent asks by URL; the files land where its sandbox sees /mnt/data/work."""
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    # The tool reads the user's token through its own session; keep that off the
+    # The tool reads the Settings token through its own session; keep that off the
     # real database, which CI does not have (and a dev checkout should not touch).
     monkeypatch.setattr("vista_backend.agents.agents.get_engine", lambda: engine)
     project = make_project(tools=["*"])
@@ -289,7 +319,7 @@ async def test_agent_tool_fetches_into_its_own_workspace(
             say("fetched"),
         ]
     )
-    with agent_under_test(project, make_user(), model) as (agent, _):
+    with agent_under_test(project, make_local_settings(), model) as (agent, _):
         events = [
             e async for e in agent.run_stream(user_prompt="wrap the frontier script")
         ]
@@ -311,7 +341,10 @@ async def test_agent_tool_error_is_a_retry_not_a_crash(
     model = step_model(
         [call("fetch_repository", url="https://bitbucket.org/o/r"), say("cannot")]
     )
-    with agent_under_test(make_project(tools=["*"]), make_user(), model) as (agent, _):
+    with agent_under_test(make_project(tools=["*"]), make_local_settings(), model) as (
+        agent,
+        _,
+    ):
         events = [e async for e in agent.run_stream(user_prompt="wrap it")]
     retry = [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)]
     assert retry and "not a github.com or gitlab.com repository URL" in str(retry[0])

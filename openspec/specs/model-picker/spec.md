@@ -184,9 +184,9 @@ When the researcher has not chosen a model and their provider has no default, se
 message SHALL NOT start a turn. The message SHALL stay in the composer, the picker SHALL
 open, and it SHALL say a model must be chosen first.
 
-#### Scenario: First message on MAG
+#### Scenario: First message on Custom
 
-- **WHEN** a researcher on AmSC MAG with no model chosen sends a message
+- **WHEN** a researcher on Custom with no model chosen sends a message
 - **THEN** no turn starts, their message is still in the composer, and the picker opens
   asking them to choose a model
 

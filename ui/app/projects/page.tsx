@@ -6,16 +6,13 @@ import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import { AppTopBar } from "@/components/AppTopBar";
 import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
-import { forumTokenFallback, forumTokenHelp, type SettingsTokens } from "@/lib/forum-token-help";
-import { fetchCurrentUserWithConfig } from "@/lib/user";
+import { forumCredential, type SettingsTokens } from "@/lib/forum-credential";
+import { fetchSettings } from "@/lib/settings";
 import {
   type Project,
-  type UserPublic,
   activateProject,
-  addProjectMember,
   createProject,
   deleteProject,
-  listProjectMembers,
   notifyActiveProjectChanged,
   toCreate,
   updateProject,
@@ -30,8 +27,7 @@ type ProjectDraft = Omit<Project, "id">;
 type ModalState =
   | { mode: "closed" }
   | { mode: "create" }
-  | { mode: "edit"; project: Project }
-  | { mode: "members"; project: Project };
+  | { mode: "edit"; project: Project };
 
 export default function ProjectsPage() {
   // useSearchParams forces this page out of static prerender; wrap in
@@ -158,7 +154,6 @@ function ProjectsPageContent() {
               active={activeName === project.name}
               onOpen={() => open(project)}
               onEdit={() => setModal({ mode: "edit", project })}
-              onMembers={() => setModal({ mode: "members", project })}
               onDelete={() => void removeProject(project)}
             />
           ))}
@@ -189,12 +184,6 @@ function ProjectsPageContent() {
         />
       )}
 
-      {modal.mode === "members" && (
-        <MembersModal
-          project={modal.project}
-          onClose={() => setModal({ mode: "closed" })}
-        />
-      )}
     </div>
   );
 }
@@ -204,14 +193,12 @@ function ProjectCard({
   active,
   onOpen,
   onEdit,
-  onMembers,
   onDelete,
 }: {
   project: Project;
   active: boolean;
   onOpen: () => void;
   onEdit: () => void;
-  onMembers: () => void;
   onDelete: () => void;
 }) {
   const stats = useProjectStats(project.name);
@@ -254,9 +241,6 @@ function ProjectCard({
         <button type="button" className="button ghost button-sm" onClick={onEdit}>
           Edit
         </button>
-        <button type="button" className="button ghost button-sm" onClick={onMembers}>
-          Members
-        </button>
         <button type="button" className="button ghost button-sm" onClick={onDelete}>
           Delete
         </button>
@@ -284,183 +268,13 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
   );
 }
 
-function MembersModal({
-  project,
-  onClose,
-}: {
-  project: Project;
-  onClose: () => void;
-}) {
-  const [members, setMembers] = useState<UserPublic[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [email, setEmail] = useState("");
-  const [addError, setAddError] = useState("");
-  const [adding, setAdding] = useState(false);
-
-  async function loadMembers() {
-    setLoading(true);
-    setLoadError("");
-    try {
-      setMembers(await listProjectMembers(project.name));
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load members.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadMembers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.name]);
-
-  async function addMember() {
-    const trimmed = email.trim();
-    if (!trimmed) {
-      setAddError("Email is required.");
-      return;
-    }
-    setAdding(true);
-    setAddError("");
-    try {
-      await addProjectMember(project.name, trimmed);
-      setEmail("");
-      await loadMembers();
-    } catch (e) {
-      setAddError(e instanceof Error ? e.message : "Failed to add member.");
-    } finally {
-      setAdding(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal project-modal"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label={`Members of ${project.name}`}
-      >
-        <div className="panel-header">
-          <div className="panel-title">Members — {project.name}</div>
-          <button type="button" className="button ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        <div className="modal-body">
-          <div className="project-modal-label">
-            <div>Add member</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                className="input"
-                type="email"
-                value={email}
-                placeholder="user@example.com"
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void addMember();
-                  }
-                }}
-                disabled={adding}
-                autoFocus
-                style={{ flex: 1 }}
-              />
-              <button
-                type="button"
-                className="button"
-                onClick={() => void addMember()}
-                disabled={adding}
-              >
-                {adding ? "Adding…" : "Add"}
-              </button>
-            </div>
-          </div>
-
-          {addError && (
-            <div className="error" style={{ fontSize: 12 }}>
-              {addError}
-            </div>
-          )}
-
-          <div className="project-modal-label">
-            <div>Current members</div>
-            {loadError ? (
-              <div className="error" style={{ fontSize: 12 }}>
-                {loadError}{" "}
-                <button
-                  type="button"
-                  className="button ghost button-xs"
-                  onClick={() => void loadMembers()}
-                >
-                  Retry
-                </button>
-              </div>
-            ) : loading ? (
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading members…</div>
-            ) : members.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>No members yet.</div>
-            ) : (
-              <div className="project-modal-skill-list">
-                {members.map((m) => (
-                  <div key={m.id} className="project-modal-skill-item">
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{m.email}</div>
-                      {m.is_admin && (
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>admin</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** What an empty token field means, by what the forum will fall back to. */
-const FALLBACK_NOTES = {
-  "settings-github": "Left empty, your GitHub token from Settings will be used.",
-  "settings-gitlab": "Left empty, your gitlab.com token from Settings will be used.",
-  "system-git": "Left empty, your system git’s credentials will be used.",
+/** Which credential the forum publishes with, said under its URL. */
+const CREDENTIAL_NOTES = {
+  "settings-github": "Publishes with your GitHub token from Settings → Repositories.",
+  "settings-gitlab": "Publishes with your gitlab.com token from Settings → Repositories.",
+  "system-git":
+    "Publishes with your system git’s credentials: an SSH key or a credential helper. For an https:// forum on github.com or gitlab.com, you can add a token in Settings → Repositories instead.",
 } as const;
-
-/** "Don't have a token?": the forge's token form, pre-filled, and what to do there. */
-function ForumTokenHelpDetails({ repoUrl }: { repoUrl: string }) {
-  const help = forumTokenHelp(repoUrl);
-  return (
-    <details className="project-modal-token-help">
-      <summary>Don&rsquo;t have a token?</summary>
-      {help ? (
-        <>
-          <p>
-            <a href={help.url} target="_blank" rel="noreferrer">
-              Create a {help.forge} token for this repository
-            </a>{" "}
-            — the form opens filled in. Then:
-          </p>
-          <ol>
-            {help.steps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
-          <p>Saving the project checks the token can reach the repository.</p>
-        </>
-      ) : (
-        <p>
-          Make an access token that can read and write this repository: on GitHub,
-          a fine-grained token with Contents set to Read and write; on GitLab, a
-          token with the read_repository and write_repository scopes.
-        </p>
-      )}
-    </details>
-  );
-}
 
 function ProjectModal({
   mode,
@@ -485,26 +299,20 @@ function ProjectModal({
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
-  // Write-only: the saved token never comes back, so the field starts empty and
-  // empty means "keep it".
-  const [forumRepoToken, setForumRepoToken] = useState("");
-  const [removeForumToken, setRemoveForumToken] = useState(false);
-  const hasForumToken = initial?.hasForumToken ?? false;
-  // Which Settings tokens exist, to say what an empty field falls back to.
+  // Which Settings tokens exist, to say which credential the forum publishes with.
   const [settingsTokens, setSettingsTokens] = useState<SettingsTokens | null>(null);
   useEffect(() => {
     let live = true;
-    fetchCurrentUserWithConfig()
+    fetchSettings()
       .then((u) => live && setSettingsTokens(u))
       .catch(() => live && setSettingsTokens(null));
     return () => {
       live = false;
     };
   }, []);
-  const fallback =
-    hasForumToken && !removeForumToken
-      ? null
-      : forumTokenFallback(forumRepoUrl, settingsTokens);
+  // Unknown until Settings has loaded: saying "system git" meanwhile would be
+  // wrong for anyone with a token saved.
+  const credential = settingsTokens ? forumCredential(forumRepoUrl, settingsTokens) : null;
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -564,8 +372,6 @@ function ProjectModal({
         skills: Array.from(skills),
         knowledgeBases: Array.from(kbs),
         forumRepoUrl: forumRepoUrl.trim(),
-        hasForumToken,
-        forumRepoToken: removeForumToken ? "" : forumRepoToken.trim() || undefined,
         // New projects inherit every available MCP tool. Keep an existing
         // project's saved patterns intact when editing it.
         tools: mode === "create" ? [] : splitTags(toolsRaw),
@@ -697,56 +503,9 @@ function ProjectModal({
               project&rsquo;s debates, so it is the guest list for the room. The
               repository must already exist; saving checks it can be reached and
               pulls in any threads it already holds.
+              {credential && <> {CREDENTIAL_NOTES[credential]}</>}
             </span>
           </label>
-
-          {forumRepoUrl.trim().startsWith("https://") && (
-            <label className="project-modal-label">
-              Use a different token for this forum{" "}
-              <span style={{ color: "var(--muted)", fontWeight: 400 }}>
-                (optional; a GitHub or GitLab token that can push to it)
-              </span>
-              <input
-                className="input"
-                type="password"
-                autoComplete="off"
-                value={forumRepoToken}
-                disabled={removeForumToken}
-                onChange={(e) => setForumRepoToken(e.target.value)}
-                placeholder={
-                  hasForumToken ? "Saved — type a new one to replace it" : "Leave blank to use the default"
-                }
-              />
-              <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
-                Overrides your token in Settings → Repositories for this project&rsquo;s forum
-                only. It is never used for importing skills or fetching repositories.
-                {fallback && !forumRepoToken.trim() && (
-                  <> {FALLBACK_NOTES[fallback]}</>
-                )}
-              </span>
-              {hasForumToken && (
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 12,
-                    fontWeight: 400,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={removeForumToken}
-                    onChange={(e) => setRemoveForumToken(e.target.checked)}
-                  />
-                  Remove the saved token
-                </span>
-              )}
-            </label>
-          )}
-          {forumRepoUrl.trim().startsWith("https://") && !removeForumToken && (
-            <ForumTokenHelpDetails repoUrl={forumRepoUrl} />
-          )}
 
           {mode === "edit" && (
             <label className="project-modal-label">

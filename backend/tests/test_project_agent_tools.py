@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo
 
-from harness import agent_under_test, make_project, make_user, scripted_model
+from harness import agent_under_test, make_local_settings, make_project, scripted_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.config import settings
 from vista_backend.metrics import get_recorder
@@ -22,8 +22,10 @@ from vista_backend.metrics import get_recorder
 pytestmark = pytest.mark.unit
 
 
-def _agent(project=None, user=None) -> ProjectAgent:
-    return ProjectAgent(project or make_project(), user or make_user(), uuid.uuid4())
+def _agent(project=None, local=None) -> ProjectAgent:
+    return ProjectAgent(
+        project or make_project(), local or make_local_settings(), uuid.uuid4()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -130,11 +132,11 @@ def test_vista_metadata_maps_sandbox_files_to_project_download_urls():
     }
 
 
-def test_vista_metadata_paths_are_scoped_per_project_and_user():
-    """Volume paths key on (project, user) so one tenant cannot read another's."""
-    user = make_user()
-    a = _agent(make_project(), user)
-    b = _agent(make_project(), user)
+def test_vista_metadata_paths_are_scoped_per_project():
+    """Volume paths key on the project, so one project cannot read another's."""
+    local = make_local_settings()
+    a = _agent(make_project(), local)
+    b = _agent(make_project(), local)
     assert a.volume_root != b.volume_root
     assert (
         a._build_vista_metadata("display_file")["vista"]["project_paths"]
@@ -151,14 +153,17 @@ def test_vista_metadata_paths_are_scoped_per_project_and_user():
         "cancel_hpc_job",
     ],
 )
-def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
-    user = make_user(
+def test_vista_metadata_attaches_settings_credentials_for_hpc_tools(tool):
+    local = make_local_settings(
         odo_s3m_token="odo-s3m-secret",
         frontier_s3m_token="frontier-s3m-secret",
         nersc_iri_token="iri-secret",
         odo_remote_dir="/odo/proj/vista",
     )
-    metadata = _agent(make_project(), user)._build_vista_metadata(tool)["vista"]["user"]
+    # Still `user` on the wire: the MCP server reads that key.
+    metadata = _agent(make_project(), local)._build_vista_metadata(tool)["vista"][
+        "user"
+    ]
     assert metadata["odo_s3m_token"] == "odo-s3m-secret"
     assert metadata["frontier_s3m_token"] == "frontier-s3m-secret"
     # The legacy single token is never sent: the MCP server no longer falls
@@ -166,13 +171,14 @@ def test_vista_metadata_attaches_user_credentials_for_hpc_tools(tool):
     assert "s3m_token" not in metadata
     assert metadata["nersc_iri_token"] == "iri-secret"
     assert metadata["odo_remote_dir"] == "/odo/proj/vista"
-    assert metadata["id"] == str(user.id)
 
 
 @pytest.mark.parametrize("tool", ["rag_search", "display_file", "run_bash"])
 def test_vista_metadata_withholds_credentials_from_non_hpc_tools(tool):
-    user = make_user(odo_s3m_token="s3m-secret", nersc_iri_token="iri-secret")
-    metadata = _agent(make_project(), user)._build_vista_metadata(tool)
+    local = make_local_settings(
+        odo_s3m_token="s3m-secret", nersc_iri_token="iri-secret"
+    )
+    metadata = _agent(make_project(), local)._build_vista_metadata(tool)
     assert "user" not in metadata["vista"]
     assert "s3m-secret" not in str(metadata)
 
@@ -188,7 +194,7 @@ def test_vista_metadata_omits_metrics_when_the_recorder_is_off():
 # ---------------------------------------------------------------------------
 
 
-def _tools_offered_to_model(project, user) -> list[str]:
+def _tools_offered_to_model(project, local) -> list[str]:
     seen: list[list[str]] = []
 
     def driver(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -196,7 +202,7 @@ def _tools_offered_to_model(project, user) -> list[str]:
         return ModelResponse(parts=[TextPart("ok")])
 
     async def run() -> list[str]:
-        with agent_under_test(project, user, scripted_model(driver)) as (agent, _):
+        with agent_under_test(project, local, scripted_model(driver)) as (agent, _):
             async for _ in agent.run_stream(user_prompt="hi"):
                 pass
         return seen[0]
@@ -207,7 +213,7 @@ def _tools_offered_to_model(project, user) -> list[str]:
 @pytest.mark.anyio
 async def test_denied_tools_are_not_offered_to_the_model():
     project = make_project(tools=["*", "!run_bash"], knowledge_bases=["kb"])
-    offered = await _tools_offered_to_model(project, make_user())
+    offered = await _tools_offered_to_model(project, make_local_settings())
     assert "run_bash" not in offered
     assert "rag_search" in offered
 
@@ -215,7 +221,7 @@ async def test_denied_tools_are_not_offered_to_the_model():
 @pytest.mark.anyio
 async def test_allow_list_limits_the_tools_offered_to_the_model():
     project = make_project(tools=["display_file"], knowledge_bases=["kb"])
-    offered = await _tools_offered_to_model(project, make_user())
+    offered = await _tools_offered_to_model(project, make_local_settings())
     assert "display_file" in offered
     assert "rag_search" not in offered
     assert "submit_hpc_job" not in offered
@@ -224,7 +230,7 @@ async def test_allow_list_limits_the_tools_offered_to_the_model():
 @pytest.mark.anyio
 async def test_rag_search_is_hidden_from_the_model_without_a_knowledge_base():
     project = make_project(tools=["*"], knowledge_bases=[])
-    offered = await _tools_offered_to_model(project, make_user())
+    offered = await _tools_offered_to_model(project, make_local_settings())
     assert "rag_search" not in offered
     assert "submit_hpc_job" in offered
 

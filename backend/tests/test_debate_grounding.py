@@ -260,17 +260,14 @@ async def test_a_project_with_knowledge_bases_gets_literature_search(tmp_path, s
     from the model alone while a corpus sat indexed beside it.
     """
     from vista_backend.agents.forum import wiring
-    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
     project = ProjectTable(name="salts", knowledge_bases=["molten-salts"])
-    user = UserTable(email="scientist@example.com")
     session.add(project)
-    session.add(user)
     await session.flush()
 
     run = DebateRunTable(
         project_id=project.id,
-        user_id=user.id,
         topic="t",
         thread_id="abc",
         rounds=1,
@@ -292,7 +289,7 @@ async def test_a_project_with_knowledge_bases_gets_literature_search(tmp_path, s
     import vista_backend.agents.forum.wiring as w
 
     original = w.build_mcp_invoke
-    w.build_mcp_invoke = lambda user, paths: fake_invoke  # type: ignore[assignment]
+    w.build_mcp_invoke = lambda local, paths: fake_invoke  # type: ignore[assignment]
     try:
         grounding = await wiring.build_run_grounding(
             session, run, ForumClient(_settings(tmp_path))
@@ -325,16 +322,13 @@ async def test_a_project_with_no_knowledge_bases_gets_no_search_tool(tmp_path, s
     found" to every question, and a role reads that as evidence of absence.
     """
     from vista_backend.agents.forum import wiring
-    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
     project = ProjectTable(name="bare", knowledge_bases=[])
-    user = UserTable(email="scientist2@example.com")
     session.add(project)
-    session.add(user)
     await session.flush()
     run = DebateRunTable(
         project_id=project.id,
-        user_id=user.id,
         topic="t",
         thread_id="abc",
         rounds=1,
@@ -362,16 +356,13 @@ async def test_a_slug_the_project_does_not_list_is_refused(tmp_path, session):
     unlisted slug through would let a debate read another project's corpus.
     """
     from vista_backend.agents.forum import wiring
-    from vista_backend.db.schemas import DebateRunTable, ProjectTable, UserTable
+    from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
     project = ProjectTable(name="salts2", knowledge_bases=["molten-salts"])
-    user = UserTable(email="scientist3@example.com")
     session.add(project)
-    session.add(user)
     await session.flush()
     run = DebateRunTable(
         project_id=project.id,
-        user_id=user.id,
         topic="t",
         thread_id="abc",
         rounds=1,
@@ -393,7 +384,7 @@ async def test_a_slug_the_project_does_not_list_is_refused(tmp_path, session):
     import vista_backend.agents.forum.wiring as w
 
     original = w.build_mcp_invoke
-    w.build_mcp_invoke = lambda user, paths: fake_invoke  # type: ignore[assignment]
+    w.build_mcp_invoke = lambda local, paths: fake_invoke  # type: ignore[assignment]
     try:
         grounding = await wiring.build_run_grounding(
             session, run, ForumClient(_settings(tmp_path))
@@ -527,7 +518,6 @@ async def test_a_role_cannot_read_outside_the_projects_uploads(tmp_path, monkeyp
 
     run = DebateRunTable(
         project_id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
         topic="t",
         thread_id="abc",
         rounds=1,

@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 
 /**
  * The researcher's inference provider and model in effect, from
- * `GET /api/users/me/inference`.
+ * `GET /api/settings/inference`.
  *
  * One store for the whole page, the same pattern as `lib/hpc-status.ts`, so
  * the chat-header picker and Settings always show the same answer: whichever
@@ -98,7 +98,7 @@ export async function refreshAgentSettings(): Promise<void> {
   const id = ++request;
   loaded = true;
   try {
-    const res = await fetch("/api/users/me/inference", {
+    const res = await fetch("/api/settings/inference", {
       headers: { accept: "application/json" },
       cache: "no-store",
     });

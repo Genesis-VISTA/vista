@@ -49,11 +49,11 @@ from ..agents.skills import (
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import ProjectTable, SkillTable, SkillUpdate, UserPublicWithConfig
+from ..db.schemas import LocalSettingsPublic, ProjectTable, SkillTable, SkillUpdate
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
-from ._helpers import ServiceUser, new_storage_path
-from .repo_tokens import user_repo_token
+from ._helpers import new_storage_path
+from .repo_tokens import settings_repo_token
 
 
 logger = logging.getLogger(__name__)
@@ -189,16 +189,16 @@ class _SentToken(BaseModel):
 
 
 async def _import_token(
-    session: AsyncSession, url: str, user_id: uuid.UUID, token: str | None
+    session: AsyncSession, url: str, token: str | None
 ) -> _SentToken | None:
     """
     The token a repository import sends: the one given with the request, for
-    this import only, else the user's Settings token for the URL's host (never
-    a project's forum token). Either goes only to the URL's own host.
+    this import only, else the Settings token for the URL's host. Either goes
+    only to the URL's own host.
     """
     if token and token.strip():
         return _SentToken(value=token.strip(), from_request=True)
-    saved = await user_repo_token(session, url, user_id)
+    saved = await settings_repo_token(session, url)
     return _SentToken(value=saved.value, from_request=False) if saved else None
 
 
@@ -281,10 +281,10 @@ def _scan(
 
 
 async def scan_repository(
-    session: AsyncSession, url: str, user_id: uuid.UUID, token: str | None = None
+    session: AsyncSession, url: str, token: str | None = None
 ) -> RepoScan:
     """List the skills a repository URL holds, without importing any."""
-    sent = await _import_token(session, url, user_id, token)
+    sent = await _import_token(session, url, token)
     async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
@@ -463,7 +463,6 @@ async def import_repository_skills(
     session: AsyncSession,
     url: str,
     choices: list[SkillChoice],
-    user_id: uuid.UUID,
     project: ProjectTable | None = None,
     *,
     token: str | None = None,
@@ -482,7 +481,7 @@ async def import_repository_skills(
     paths = [c.path for c in choices]
     if len(set(paths)) != len(paths):
         raise HTTPException(status_code=400, detail="A skill was chosen twice.")
-    sent = await _import_token(session, url, user_id, token)
+    sent = await _import_token(session, url, token)
     async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
@@ -538,7 +537,6 @@ async def import_repository_skills(
 async def import_skill(
     session: AsyncSession,
     url: str,
-    user_id: uuid.UUID,
     project: ProjectTable | None = None,
     *,
     token: str | None = None,
@@ -552,7 +550,7 @@ async def import_skill(
     several skills is refused with their list: import those through
     `import_repository_skills`.
     """
-    sent = await _import_token(session, url, user_id, token)
+    sent = await _import_token(session, url, token)
     async with _work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
@@ -661,20 +659,15 @@ _OUTPUT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 async def _project_output_dir(
-    session: AsyncSession, project_name: str, user: ServiceUser
+    session: AsyncSession, project_name: str
 ) -> tuple[ProjectTable, Path]:
-    """The project, and the caller's own output folder in it (the sandbox's `/mnt/data/output`)."""
+    """The project, and its output folder (the sandbox's `/mnt/data/output`)."""
     # Imported here: the agent modules import the seed, which imports this module.
     from ..agents.agents import agent_volume_root
     from . import project as project_service
 
-    if user == "system":
-        raise HTTPException(
-            status_code=403,
-            detail="Importing from output requires an authenticated user",
-        )
-    project = await project_service.get_project_by_name(session, project_name, user)
-    output = agent_volume_root(project.id, user.id) / "data" / "output"
+    project = await project_service.get_project_by_name(session, project_name)
+    output = agent_volume_root(project.id) / "data" / "output"
     # The sandbox can replace either with a symlink to anywhere on this machine.
     if output.parent.is_symlink() or output.is_symlink():
         raise HTTPException(
@@ -684,13 +677,13 @@ async def _project_output_dir(
 
 
 async def list_output_skills(
-    session: AsyncSession, project_name: str, user: ServiceUser
+    session: AsyncSession, project_name: str
 ) -> list[OutputSkill]:
     """
-    The top-level folders of the caller's output folder in `project_name` that
+    The top-level folders of the project's output folder in `project_name` that
     hold a SKILL.md, i.e. the skills the agent wrote to `/mnt/data/output/<skill>/`.
     """
-    _, output = await _project_output_dir(session, project_name, user)
+    _, output = await _project_output_dir(session, project_name)
     if not output.is_dir():
         return []
     library = {row.name: row for row in await list_skills(session)}
@@ -739,12 +732,11 @@ async def import_skill_from_output(
     session: AsyncSession,
     project_name: str,
     folder: str,
-    user: ServiceUser,
     *,
     replace: bool = False,
 ) -> SkillTable:
     """
-    Import `/mnt/data/output/<folder>/` from the caller's sandbox in
+    Import `/mnt/data/output/<folder>/` from the sandbox in
     `project_name` as a private skill, and load it into that project.
 
     Same validation and limits as a folder upload, plus no symlinks. Loading
@@ -755,7 +747,7 @@ async def import_skill_from_output(
     """
     from .project_agent import invalidate_agents
 
-    project, output = await _project_output_dir(session, project_name, user)
+    project, output = await _project_output_dir(session, project_name)
     source = output / folder
     if (
         # The name is one plain path part, so `source` is lexically inside
@@ -823,7 +815,7 @@ async def import_skill_from_output(
 async def generate_draft(
     message_history: list[ModelMessage],
     hint: str | None,
-    user: UserPublicWithConfig | None = None,
+    local: LocalSettingsPublic | None = None,
     *,
     session: AsyncSession | None = None,
     chat_session_id: uuid.UUID | None = None,
@@ -833,16 +825,16 @@ async def generate_draft(
 
     With `chat_session_id` (and a `session` to look it up in), the draft is
     written on that chat's own model. Skills belong to no project, so the chat
-    is checked against the user only.
+    is looked up by its id alone.
     """
     model = None
     if chat_session_id is not None:
-        if session is None or user is None:
+        if session is None:
             raise HTTPException(status_code=404, detail="Chat session not found")
         model = await chat_session_service.get_chat_model(
-            session, user_id=user.id, chat_session_id=chat_session_id
+            session, chat_session_id=chat_session_id
         )
-    return await generate_skill_draft(message_history, hint, user, model)
+    return await generate_skill_draft(message_history, hint, local, model)
 
 
 async def update_skill(

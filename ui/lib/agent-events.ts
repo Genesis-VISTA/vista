@@ -184,17 +184,8 @@ export type ProjectPublic = {
   knowledge_bases: string[];
   /** Git remote the project's Hypothesis Lab publishes to; null means no lab. */
   forum_repo_url: string | null;
-  /** Whether the project stores a forum access token; the token is never read back. */
-  has_forum_token?: boolean;
   tools: string[];
   usage_limits: Record<string, unknown>;
-};
-
-/** Backend `UserPublic` — returned by `GET /projects/{name}/members`. */
-export type UserPublic = {
-  id: string;
-  email: string;
-  is_admin: boolean;
 };
 
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */
@@ -205,8 +196,6 @@ export type ProjectCreate = {
   skills: string[];
   knowledge_bases: string[];
   forum_repo_url: string | null;
-  /** Write-only: null keeps the stored token, "" removes it, a value replaces it. */
-  forum_repo_token?: string | null;
   tools: string[];
   usage_limits: Record<string, unknown>;
 };
