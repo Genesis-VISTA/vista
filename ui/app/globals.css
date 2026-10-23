@@ -6739,8 +6739,8 @@ textarea.input:focus {
 .artifact-item-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
+  align-items: center;
+  gap: 6px 10px;
   font-size: 13px;
 }
 
@@ -6764,26 +6764,15 @@ textarea.input:focus {
   font-size: 12px;
 }
 
+/* The same small outlined buttons as the Files page's row actions. */
 .artifact-item-actions {
   display: inline-flex;
-  gap: 10px;
+  gap: 6px;
   margin-left: auto;
-  font-size: 12px;
 }
 
-.artifact-item-actions a,
-.artifact-item-link {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--brand);
-  font: inherit;
-  cursor: pointer;
-}
-
-.artifact-item-actions a:hover,
-.artifact-item-link:hover {
-  text-decoration: underline;
+.artifact-item-actions .button {
+  white-space: nowrap;
 }
 
 /* The turn a link from the feed or the Files page opened. The ring is drawn

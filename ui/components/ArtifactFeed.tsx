@@ -64,9 +64,11 @@ function FeedItem({
         )}
         <span className="artifact-item-actions">
           {item.status !== "missing" && (
-            <Link href={filesHref(item.kind, item.path)}>Open in Files</Link>
+            <Link className="button ghost button-xs" href={filesHref(item.kind, item.path)}>
+              Open in Files
+            </Link>
           )}
-          <button type="button" className="artifact-item-link" onClick={() => onJumpToTurn(item)}>
+          <button type="button" className="button ghost button-xs" onClick={() => onJumpToTurn(item)}>
             Show in conversation
           </button>
         </span>
