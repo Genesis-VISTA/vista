@@ -6,6 +6,7 @@ import {
   type RunPrompt,
 } from "@/lib/run-renderer";
 import { readSseStream, type SseEvent } from "@/lib/run-stream";
+import type { DisplayedFile } from "@/lib/displayed-files";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 
 /** A host that keeps the page's state in plain variables. */
@@ -18,6 +19,8 @@ function makeHost(initial: ChatMessage[] = []) {
     logs: [] as string[],
     prompts: [] as RunPrompt[],
     resolved: [] as string[],
+    shown: [] as DisplayedFile[],
+    finished: 0,
   };
   const host: RunHost = {
     setMessages: (update) => {
@@ -42,6 +45,12 @@ function makeHost(initial: ChatMessage[] = []) {
       state.resolved.push(id);
     },
     scrollToLatest: () => {},
+    showFile: (file) => {
+      state.shown.unshift(file);
+    },
+    runFinished: () => {
+      state.finished += 1;
+    },
   };
   return { state, host };
 }
@@ -128,6 +137,77 @@ describe("run renderer: a live send", () => {
       },
     });
     expect(state.latestResult).toMatchObject({ ok: true, stdout: "3 passages" });
+  });
+});
+
+describe("run renderer: displayed files", () => {
+  const call = (id: string, tool = "display_file") => ({
+    event_kind: "function_tool_call",
+    part: { part_kind: "tool-call", tool_name: tool, args: "{}", tool_call_id: id },
+  });
+  const returned = (id: string, content: unknown) => ({
+    event_kind: "function_tool_result",
+    part: { part_kind: "tool-return", tool_name: "display_file", tool_call_id: id, content },
+  });
+
+  it("gives the step bubble the call's id", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("run_started", runStarted("run-1"));
+    renderer.dispatch("function_tool_call", call("call-1"));
+    expect(state.messages[0]).toMatchObject({ intermediate: true, run_id: "run-1", tool_call_id: "call-1" });
+  });
+
+  it("leaves tool_call_id off a step whose call has none", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("function_tool_call", {
+      part: { part_kind: "tool-call", tool_name: "rag_search", args: "{}" },
+    });
+    expect("tool_call_id" in state.messages[0]).toBe(false);
+  });
+
+  it("yields a provisional feed item for a successful display_file", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("run_started", runStarted("run-1"));
+    renderer.dispatch("function_tool_call", call("call-1"));
+    renderer.dispatch(
+      "function_tool_result",
+      returned("call-1", {
+        uri: "/api/files/outputs/run%201/plot.png?project_name=molten-salt",
+        mime_type: "image/png",
+        filename: "plot.png",
+      }),
+    );
+    expect(state.shown).toHaveLength(1);
+    expect(state.shown[0]).toMatchObject({
+      kind: "outputs",
+      path: "run 1/plot.png",
+      name: "plot.png",
+      mime_type: "image/png",
+      run_id: "run-1",
+      tool_call_id: "call-1",
+      status: "current",
+    });
+  });
+
+  it("yields nothing for a display_file that failed, or for other tools", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("run_started", runStarted("run-1"));
+    renderer.dispatch("function_tool_result", returned("call-1", { error: "Could not resolve /x" }));
+    renderer.dispatch("function_tool_result", {
+      part: { part_kind: "tool-return", tool_name: "rag_search", tool_call_id: "c2", content: "3 passages" },
+    });
+    expect(state.shown).toEqual([]);
+  });
+
+  it("tells the host when the run has finished", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("run_finished", { event_kind: "run_finished", state: "done" });
+    expect(state.finished).toBe(1);
   });
 });
 

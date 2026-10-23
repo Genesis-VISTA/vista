@@ -14,8 +14,8 @@ type Props = {
   /** Path inside the kind, as listed (may be nested). */
   path: string;
   name: string;
-  /** Listed size in bytes, for the truncation note. */
-  size: number;
+  /** Listed size in bytes, for the truncation note; omitted where it isn't known. */
+  size?: number;
   projectName: string | null;
 };
 
@@ -74,12 +74,14 @@ function useCappedText(url: string, enabled: boolean): { data: Loaded | null; er
   return { data: current?.data ?? null, error: current?.error ?? null };
 }
 
-function TruncationNote({ loaded, size }: { loaded: Loaded; size: number }) {
+function TruncationNote({ loaded, size }: { loaded: Loaded; size?: number }) {
   if (!loaded.truncated) return null;
   const kib = (n: number) => `${Math.round(n / 1024).toLocaleString("en-US")} KiB`;
+  // Only a listed size larger than what was read gives a total worth stating.
+  const total = size !== undefined && size > loaded.bytesRead ? ` of ${kib(size)}` : "";
   return (
     <p className="muted" role="note">
-      Showing the first {kib(loaded.bytesRead)} of {kib(Math.max(size, loaded.bytesRead))}. Download the file for the rest.
+      Showing the first {kib(loaded.bytesRead)}{total}. Download the file for the rest.
     </p>
   );
 }
@@ -93,7 +95,7 @@ function prettyJson(text: string, truncated: boolean): string {
   }
 }
 
-function CsvTable({ name, loaded, size }: { name: string; loaded: Loaded; size: number }) {
+function CsvTable({ name, loaded, size }: { name: string; loaded: Loaded; size?: number }) {
   const parsed = parseDelimited(loaded.text, delimiterFor(name));
   return (
     <>

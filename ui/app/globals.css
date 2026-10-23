@@ -6712,3 +6712,102 @@ textarea.input:focus {
 @media (prefers-reduced-motion: reduce) {
   .debate-working__pulse { animation: none; opacity: 0.9; }
 }
+
+/* The artifacts feed: the files the agent showed in this conversation, newest first. */
+.artifact-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.artifact-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.artifact-item-name,
+.artifact-item-toggle {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.artifact-item-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-item-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.artifact-item-actions {
+  display: inline-flex;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.artifact-item-actions a,
+.artifact-item-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand);
+  font: inherit;
+  cursor: pointer;
+}
+
+.artifact-item-actions a:hover,
+.artifact-item-link:hover {
+  text-decoration: underline;
+}
+
+/* The turn a link from the feed or the Files page opened. */
+.turn-highlight {
+  animation: turn-highlight 2.4s ease-out;
+}
+
+@keyframes turn-highlight {
+  0%,
+  60% {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-highlight {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+}
+
+.chat-notice {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}

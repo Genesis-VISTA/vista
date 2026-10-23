@@ -74,6 +74,13 @@ describe("FilePreview", () => {
     expect(await screen.findByRole("note")).toHaveTextContent(/first 1,024 KiB of 1,029 KiB/);
   });
 
+  it("states no total when the size isn't known, as in the Artifacts feed", async () => {
+    stubFetch(new Uint8Array(1_048_576 + 5000).fill(97));
+    render(<FilePreview {...base} path="big.log" name="big.log" />);
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent("Showing the first 1,024 KiB. Download the file for the rest.");
+  });
+
   it("shows no note for a small text file", async () => {
     stubFetch("hello");
     render(<FilePreview {...base} path="a.txt" name="a.txt" size={5} />);
