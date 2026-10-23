@@ -89,8 +89,10 @@ function FilesPageInner() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const [deleting, setDeleting] = useState("");
-  /** Folders the researcher flipped from their default (open only above the selection). */
-  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
+  /** Open folders, as `kind:path`. Clicks flip one; a selection opens the folders above it. */
+  const [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(new Set());
+  /** The selection whose folders were last opened, so each selection opens them once. */
+  const [openedFor, setOpenedFor] = useState("");
   const projectQuery = projectName
     ? `?project_name=${encodeURIComponent(projectName)}`
     : "";
@@ -145,20 +147,25 @@ function FilesPageInner() {
   const selectedFile = selected
     ? (listing[selected.kind].find((f) => f.name === selected.path) ?? null)
     : null;
-  const openByDefault = useMemo(
-    () => new Set(selected ? ancestorFolders(selected.path).map((p) => `${selected.kind}:${p}`) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected?.kind, selected?.path],
-  );
+  // A new selection (a click or the URL) opens the folders above it and closes
+  // none: folders the researcher opened stay open. Adjusted while rendering
+  // rather than in an effect, so the tree never paints with them shut.
+  const selectionKey = selected ? `${selected.kind}:${selected.path}` : "";
+  if (selectionKey !== openedFor) {
+    setOpenedFor(selectionKey);
+    if (selected) {
+      const ancestors = ancestorFolders(selected.path).map((p) => `${selected.kind}:${p}`);
+      setOpenFolders((prev) => new Set([...prev, ...ancestors]));
+    }
+  }
 
   function isOpen(kind: FileKind, path: string): boolean {
-    const key = `${kind}:${path}`;
-    return openByDefault.has(key) !== toggled.has(key);
+    return openFolders.has(`${kind}:${path}`);
   }
 
   function toggleFolder(kind: FileKind, path: string) {
     const key = `${kind}:${path}`;
-    setToggled((prev) => {
+    setOpenFolders((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);

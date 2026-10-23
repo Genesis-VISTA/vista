@@ -157,4 +157,25 @@ describe("Files page", () => {
     );
     expect(screen.getAllByText(/Shown in/)).toHaveLength(1);
   });
+
+  it("keeps folders the researcher opened open when a file inside them is selected", async () => {
+    outputs = [
+      { name: "folder-a/nestd/deep file.txt", size: 5, modifiedAt: "2026-01-01T00:00:00Z", shown_in: null },
+    ];
+    const view = render(<FilesPage />);
+    await advance(0);
+    const folder = (name: string) => screen.getByRole("button", { name });
+
+    act(() => folder("folder-a").click());
+    act(() => folder("nestd").click());
+    act(() => screen.getByRole("button", { name: /^deep file\.txt/ }).click());
+    // The router is mocked, so feed the replaced URL back as the page would see it.
+    search.current = String(replace.mock.calls.at(-1)?.[0]).split("?")[1];
+    view.rerender(<FilesPage />);
+    await advance(0);
+
+    expect(folder("folder-a")).toHaveAttribute("aria-expanded", "true");
+    expect(folder("nestd")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("preview")).toHaveTextContent("folder-a/nestd/deep file.txt");
+  });
 });
