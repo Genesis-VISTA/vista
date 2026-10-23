@@ -69,8 +69,8 @@ python3 -m pip install --quiet pyyaml   # numpy/pandas/matplotlib are already pr
 ```
 
 Everything below that does **not** say "GPU" runs here, from this directory. Write all
-artifacts under `/mnt/data/output/...` and print `Plot saved to <path>` for any image so
-the UI auto-displays it.
+artifacts under `/mnt/data/output/...`, then call `display_file` with the sandbox path of
+any image or file you want the user to see; saving or printing a path does not display it.
 
 ## The workflow
 

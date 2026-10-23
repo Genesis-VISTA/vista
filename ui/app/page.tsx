@@ -36,7 +36,6 @@ import {
 } from "@/lib/projects";
 import { writePendingDestination } from "@/lib/pending-destination";
 import {
-  extractPlotPath,
   extractPredictionSummary,
   extractReferences,
   formatResultSummary,
