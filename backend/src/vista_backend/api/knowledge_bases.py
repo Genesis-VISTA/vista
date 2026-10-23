@@ -691,15 +691,19 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
     orphaned directories can be cleaned up manually — that's a strictly
     better failure mode than leaving the DB out of sync with disk.
     """
-    if kb_service.kb_lock(slug).locked():
-        # Its files are being packed or replaced: deleting them now would fail
-        # the publish or import and leave its folder half there.
-        raise HTTPException(
-            status_code=409,
-            detail=f"{slug} is being published or imported; delete it once that "
-            "has finished.",
-        )
+    # Its files may be being packed or replaced: deleting them meanwhile would
+    # fail the publish or import and leave its folder half there.
+    async with kb_service.kb_writing(slug, "delete it"):
+        await _delete_knowledge_base(slug, session)
+
+
+async def _delete_knowledge_base(slug: str, session: SessionDep) -> None:
+    """`delete_knowledge_base` under the slug's lock."""
     pdfs_dir_str, rag_db_path_str = await kb_service.delete_kb(session, slug)
+    if not await commit_with_retry(session, context="delete_knowledge_base"):
+        raise HTTPException(
+            status_code=503, detail="Database is busy; try the delete again."
+        )
     pdfs_dir = Path(pdfs_dir_str)
     rag_db_path = Path(rag_db_path_str)
 
@@ -801,7 +805,18 @@ async def add_publications(
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
+    async with kb_service.kb_writing(slug, "add papers"):
+        return await _add_publications(slug, files, background_tasks, session, local)
 
+
+async def _add_publications(
+    slug: str,
+    files: list[UploadFile],
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> dict[str, Any]:
+    """`add_publications` under the slug's lock."""
     kb = await kb_service.get_kb(session, slug)
     pdfs_dir = Path(kb.pdfs_dir)
     pdfs_dir.mkdir(parents=True, exist_ok=True)
@@ -952,8 +967,14 @@ async def delete_publication(
     """
     Delete a PDF, its passages and citation from the index, and its entry,
     so `rag_search` no longer returns it. Refused while the knowledge base
-    is indexing, which writes the same index.
+    is indexing, which writes the same index, or being published or imported.
     """
+    async with kb_service.kb_writing(slug, "delete the paper"):
+        await _delete_publication(slug, filename, session)
+
+
+async def _delete_publication(slug: str, filename: str, session: SessionDep) -> None:
+    """`delete_publication` under the slug's lock."""
     kb = await kb_service.get_kb(session, slug)
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
@@ -988,6 +1009,10 @@ async def delete_publication(
     kb.updated_at = _now_iso()
     kb.modified = True
     session.add(kb)
+    if not await commit_with_retry(session, context="delete_publication"):
+        raise HTTPException(
+            status_code=503, detail="Database is busy; try the delete again."
+        )
 
 
 # ---------------------------------------------------------------------------

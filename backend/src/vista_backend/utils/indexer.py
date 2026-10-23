@@ -26,6 +26,7 @@ Indexing semantics mirror the old subprocess design:
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import time
@@ -68,6 +69,18 @@ def _get_build_rag():
 
     import sys
 
+    repo_root = _build_rag_file().parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    import build_rag  # type: ignore[import-not-found]
+
+    _build_rag = build_rag
+    return _build_rag
+
+
+def _build_rag_file() -> Path:
+    """Where `build_rag.py` is; see `_get_build_rag`."""
     from ..config import settings
 
     here = Path(__file__).resolve()
@@ -83,13 +96,7 @@ def _get_build_rag():
             f"VISTA_BUILD_RAG_DIR to the directory containing it, or run from a "
             f"checkout where the repo root holds `build_rag.py`."
         )
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-
-    import build_rag  # type: ignore[import-not-found]
-
-    _build_rag = build_rag
-    return _build_rag
+    return repo_root / "build_rag.py"
 
 
 # ---------------------------------------------------------------------------
@@ -832,13 +839,29 @@ class StoreFormat(BaseModel):
     chromadb: str
 
 
+@functools.cache
 def _store_format() -> StoreFormat:
+    """
+    Read from `build_rag.py`'s source rather than by importing it, which
+    would load chromadb, torch and the embedding library into the backend
+    for two strings: a publish or import needs only these.
+    """
+    import ast
     from importlib.metadata import version
 
-    build_rag = _get_build_rag()
+    tree = ast.parse(_build_rag_file().read_text(encoding="utf-8"))
+    constants = {
+        target.id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
     return StoreFormat(
-        embedding_model=build_rag.TEXT_MODEL,
-        embedding_revision=build_rag.TEXT_MODEL_REVISION,
+        embedding_model=constants["TEXT_MODEL"],
+        embedding_revision=constants["TEXT_MODEL_REVISION"],
         chromadb=version("chromadb"),
     )
 
@@ -846,7 +869,6 @@ def _store_format() -> StoreFormat:
 async def store_format() -> StoreFormat:
     """
     The embedding model and revision this installation indexes with, and its
-    chromadb version. Imports `build_rag` (and so chromadb and the embedding
-    library) on first use, in a thread.
+    chromadb version. Read once, in a thread.
     """
     return await asyncio.to_thread(_store_format)

@@ -409,10 +409,18 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
     A slug that isn't registered triggers one rescan first: the KB may have
     been created and indexed in the UI since the server started. One that is
     is checked against its folder first (`_refresh_kb`): it may have been
-    replaced, deleted or reindexed since it was opened.
+    replaced, deleted or reindexed since it was opened. Without a slug, only
+    the KB that would be searched is reopened; the others need only still be
+    there, for the list of choices.
     """
-    for slug in [kb_slug] if kb_slug else list(_kbs):
-        _refresh_kb(slug)
+    if kb_slug:
+        _refresh_kb(kb_slug)
+    else:
+        for slug in list(_kbs):
+            if _store_path(settings.knowledge_bases_dir / slug) is None:
+                _refresh_kb(slug)  # drops it
+        if len(_kbs) == 1:
+            _refresh_kb(next(iter(_kbs)))
     if not _kbs or (kb_slug and kb_slug not in _kbs):
         _register_new_kbs()
 

@@ -1,6 +1,8 @@
 import asyncio
 import os
 import shutil
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,6 +53,29 @@ def kb_lock(slug: str) -> asyncio.Lock:
     different stores, and each would remove the other's.
     """
     return _locks.setdefault(slug, asyncio.Lock())
+
+
+@asynccontextmanager
+async def kb_writing(slug: str, doing: str) -> AsyncIterator[None]:
+    """
+    Hold the slug's lock (`kb_lock`) for any other change to the knowledge
+    base's row or files, through its commit, so a publish or import cannot
+    interleave with it: an import commits a new store and publications, which
+    a change read before it and committed after would write back over.
+    Refused (409) while a publish or import holds it, rather than waited for,
+    as those take minutes. `doing` is a verb phrase ("delete it").
+    """
+    lock = kb_lock(slug)
+    # Nothing is awaited between the check and taking the lock, which an
+    # unheld asyncio.Lock gives at once: no publish or import can come between.
+    if lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail=f"{slug} is being published or imported; {doing} once that "
+            "has finished.",
+        )
+    async with lock:
+        yield
 
 
 def read_current(kb_dir: Path) -> str | None:

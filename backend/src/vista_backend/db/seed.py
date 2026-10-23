@@ -20,6 +20,7 @@ from .schemas import (
 )
 from ..agents.skills import read_skill
 from ..services._helpers import new_storage_path
+from ..services.knowledge_base import write_current
 from ..services.skills import build_skill_row
 from ..utils.misc import now_iso
 
@@ -354,7 +355,14 @@ def seed_item_id(
 
 
 def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTable:
-    """A seeded knowledge base's row, unchanged since seeding, its `seed_item` set."""
+    """
+    A seeded knowledge base's row, unchanged since seeding, its `seed_item` set.
+    Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
+    an import, kept by a deletion that could not remove its store, or by a
+    database deleted without its data) must not name another store instead,
+    as the MCP server prefers the one it names.
+    """
+    write_current(kb_dir, None)
     pdfs_dir = kb_dir / "pdfs"
     return KnowledgeBaseTable(
         id=kb_id,

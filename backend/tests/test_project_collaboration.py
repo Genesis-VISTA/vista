@@ -986,6 +986,40 @@ async def test_a_knowledge_base_this_vista_cannot_search_stops_the_import_first(
     assert await _project(session, "salt-lab") is None
 
 
+async def test_a_project_import_fetches_each_knowledge_base_version_once(
+    collab_server, session, tmp_path, monkeypatch
+):
+    calls: list[tuple[str, uuid.UUID]] = []
+    get_item, get_version = (
+        CollaborationClient.get_item,
+        CollaborationClient.get_version,
+    )
+
+    async def counted_item(self, item_id):
+        calls.append(("item", item_id))
+        return await get_item(self, item_id)
+
+    async def counted_version(self, item_id, version):
+        calls.append(("version", item_id))
+        return await get_version(self, item_id, version)
+
+    await _use_server(session)
+    async with _other_install() as other:
+        kb_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")
+    item_id = await _publish_project_elsewhere(
+        knowledge_bases=[
+            KnowledgeBaseRef(slug="salt-papers", remote_id=kb_id, version=1)
+        ]
+    )
+    monkeypatch.setattr(CollaborationClient, "get_item", counted_item)
+    monkeypatch.setattr(CollaborationClient, "get_version", counted_version)
+    with api_client(session) as (client, _):
+        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
+    assert res.status_code == 200, res.text
+    assert [k["status"] for k in res.json()["knowledge_bases"]] == ["imported"]
+    assert [kind for kind, i in calls if i == kb_id] == ["version"]
+
+
 async def test_a_newer_copy_of_a_knowledge_base_is_kept(
     collab_server, session, tmp_path
 ):

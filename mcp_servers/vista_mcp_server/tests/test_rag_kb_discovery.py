@@ -6,6 +6,7 @@ indexed in the UI answered "unknown kb_slug" until the stack was restarted,
 and the agent fell back to whatever other KB it was offered.
 """
 
+import shutil
 import chromadb
 import pytest
 from chromadb.config import Settings as ChromaSettings
@@ -241,3 +242,27 @@ def test_a_store_only_read_elsewhere_is_not_reopened(data_dir):
     assert (db_path / "chroma.sqlite3").stat().st_mtime_ns != before
 
     assert rag_mcp._resolve_kb("salt-papers")[0] is handle
+
+
+def test_without_a_slug_only_the_kb_searched_is_reopened(data_dir):
+    """Choosing among several reopens none; a deleted one leaves the choices."""
+    for slug in ("salt-papers", "alloy-papers", "gone-papers"):
+        _make_kb(data_dir, slug)
+    rag_mcp._register_new_kbs()
+    handles = dict(rag_mcp._kbs)
+    for slug in ("salt-papers", "alloy-papers"):
+        _corpus(data_dir / "knowledge-bases" / slug / "rag_db", "reindexed")
+    shutil.rmtree(data_dir / "knowledge-bases" / "gone-papers")
+
+    handle, err = rag_mcp._resolve_kb(None)
+
+    assert handle is None
+    assert "alloy-papers, salt-papers." in err
+    assert sorted(rag_mcp._kbs) == ["alloy-papers", "salt-papers"]
+    assert all(rag_mcp._kbs[s] is handles[s] for s in rag_mcp._kbs)
+
+    # With one left, it is the one searched, and so is brought up to date.
+    shutil.rmtree(data_dir / "knowledge-bases" / "alloy-papers")
+    handle, err = rag_mcp._resolve_kb(None)
+    assert err is None and handle is not None
+    assert handle.slug == "salt-papers" and handle is not handles["salt-papers"]

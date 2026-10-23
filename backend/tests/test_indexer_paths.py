@@ -209,3 +209,14 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     assert results[0]["status"] == "indexed"
     assert results[0]["citation_status"] == "disabled"
     assert fake_rag[0].extract_citations is False
+
+
+def test_the_store_format_is_build_rags_without_importing_it():
+    """Read from its source, so a publish or import loads no embedding library."""
+    indexer._store_format.cache_clear()
+    got = indexer._store_format()
+    build_rag = indexer._get_build_rag()
+    assert (got.embedding_model, got.embedding_revision) == (
+        build_rag.TEXT_MODEL,
+        build_rag.TEXT_MODEL_REVISION,
+    )

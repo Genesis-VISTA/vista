@@ -737,16 +737,18 @@ async def _plan_knowledge_bases(
     url: str,
     project: str,
     refs: list[KnowledgeBaseRef],
-) -> list[KbPlan]:
+) -> tuple[list[KbPlan], dict[uuid.UUID, RemoteVersion]]:
     """
     What the import will do about each knowledge base, checked before anything
     is imported: a version this VISTA would download must be one whose index
     it can search (else `409`), a copy it would update must not be indexing
     (`409`), and all it would download must fit on the disk (`507`), else the
-    whole import is refused.
+    whole import is refused. Also returns each version to download, by item,
+    so the import does not fetch it again.
     """
     plans: list[KbPlan] = []
     fetch: list[KnowledgeBaseRef] = []
+    fetched: dict[uuid.UUID, RemoteVersion] = {}
     for ref in refs:
         copy = await linked_knowledge_base(session, url, ref.remote_id)
         if copy is None:
@@ -765,9 +767,9 @@ async def _plan_knowledge_bases(
         download = 0
         async with client_for(local) as client:
             for ref in fetch:
-                kb_manifest = manifest_of(
-                    await client.get_version(ref.remote_id, ref.version)
-                )
+                remote = await client.get_version(ref.remote_id, ref.version)
+                fetched[ref.remote_id] = remote
+                kb_manifest = manifest_of(remote)
                 if kb_manifest is None:
                     raise CollaborationError(
                         f"{project} searches {ref.slug}, whose version {ref.version} "
@@ -783,7 +785,7 @@ async def _plan_knowledge_bases(
                     ) from e
                 download += kb_manifest.archive_size
         check_space(download, f"Importing {project}'s knowledge bases")
-    return plans
+    return plans, fetched
 
 
 async def _import_knowledge_bases(
@@ -793,6 +795,7 @@ async def _import_knowledge_bases(
     project: str,
     refs: list[KnowledgeBaseRef],
     plans: list[KbPlan],
+    fetched: dict[uuid.UUID, RemoteVersion],
 ) -> tuple[list[str], list[KnowledgeBaseOutcome]]:
     """
     Make each referenced knowledge base available here, as `plans` says;
@@ -814,6 +817,7 @@ async def _import_knowledge_bases(
                         ref.remote_id,
                         version=ref.version,
                         rename_to=await _free_slug(session, ref.slug),
+                        planned=fetched[ref.remote_id],
                     )
                 ).knowledge_base
                 outcome = KnowledgeBaseOutcome(slug=kb.slug, status="imported")
@@ -823,7 +827,11 @@ async def _import_knowledge_bases(
                 slug, here, modified = copy.slug, copy.remote_version, copy.modified
                 if plan == "update":
                     await import_knowledge_base(
-                        session, local, ref.remote_id, version=ref.version
+                        session,
+                        local,
+                        ref.remote_id,
+                        version=ref.version,
+                        planned=fetched[ref.remote_id],
                     )
                     outcome = KnowledgeBaseOutcome(slug=slug, status="updated")
                 elif plan == "unchanged":
@@ -976,13 +984,15 @@ async def import_project(
         ) from e
 
     kb_refs = list({ref.remote_id: ref for ref in manifest.knowledge_bases}.values())
-    kb_plans = await _plan_knowledge_bases(session, local, url, name, kb_refs)
+    kb_plans, kb_fetched = await _plan_knowledge_bases(
+        session, local, url, name, kb_refs
+    )
     skills, outcomes, diverged = await _import_skills(
         session, local, url, name, manifest.skills
     )
     fields.skills = skills
     fields.knowledge_bases, kb_outcomes = await _import_knowledge_bases(
-        session, local, url, name, kb_refs, kb_plans
+        session, local, url, name, kb_refs, kb_plans, kb_fetched
     )
 
     if existing is None:

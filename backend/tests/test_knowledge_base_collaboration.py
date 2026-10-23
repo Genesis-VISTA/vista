@@ -721,6 +721,50 @@ async def test_a_knowledge_base_being_imported_or_published_is_not_deleted(sessi
     assert await _kb(session, "salt-papers") is not None
 
 
+async def test_papers_are_not_changed_while_publishing_or_importing(session):
+    from vista_backend.services.knowledge_base import kb_lock
+
+    kb_dir = await _seed_kb(session)
+    async with kb_lock("salt-papers"):
+        with api_client(session) as (client, _):
+            added = await client.post(
+                "/knowledge-bases/salt-papers/publications",
+                files=[("files", ("b.pdf", b"%PDF-1.4 b", "application/pdf"))],
+            )
+            deleted = await client.delete(
+                "/knowledge-bases/salt-papers/publications/a.pdf"
+            )
+    for res in (added, deleted):
+        assert res.status_code == 409, res.text
+        assert "being published or imported" in res.json()["detail"]
+    assert sorted(p.name for p in (kb_dir / "pdfs").iterdir()) == ["a.pdf"]
+    kb = await _kb(session, "salt-papers")
+    assert kb is not None
+    assert [p["filename"] for p in kb.publications] == ["a.pdf"]
+
+
+async def test_deleting_a_paper_holds_the_lock_until_it_is_committed(
+    session, monkeypatch
+):
+    from vista_backend.services.knowledge_base import kb_lock
+
+    held: list[bool] = []
+
+    async def delete_source(rag_db_path, filename):
+        held.append(kb_lock("salt-papers").locked())
+
+    monkeypatch.setattr(indexer, "delete_source", delete_source)
+    await _seed_kb(session)
+    with api_client(session) as (client, _):
+        res = await client.delete("/knowledge-bases/salt-papers/publications/a.pdf")
+    assert res.status_code == 204, res.text
+    assert held == [True]
+    assert not kb_lock("salt-papers").locked()
+    # Committed by the route itself, inside the lock.
+    kb = await _kb(session, "salt-papers")
+    assert kb is not None and kb.publications == []
+
+
 async def test_publishing_checks_the_disk_before_packing(
     collab_server, session, monkeypatch
 ):

@@ -781,6 +781,7 @@ async def import_knowledge_base(
     version: int | None = None,
     rename_to: str | None = None,
     replace_modified: bool = False,
+    planned: RemoteVersion | None = None,
 ) -> KnowledgeBaseImportResult:
     """
     Import a version (by default the head) of a knowledge base on the server
@@ -792,22 +793,32 @@ async def import_knowledge_base(
     downloading. Otherwise a new knowledge base is made, with an id of its own,
     under the item's slug or `rename_to`; one in use is `name_taken`. A version
     whose index this VISTA cannot search is refused before it is downloaded.
+
+    `planned` is that version, fetched already by a caller that checked it (a
+    project import), so it is not fetched again.
     """
     url = required_url(local)
     async with client_for(local) as client:
-        item = await client.get_item(item_id)
-        if item.kind != KB_KIND:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{item.name} on the collaboration server is a {item.kind}, "
-                "not a knowledge base.",
-            )
-        number = version if version is not None else item.head_version
-        remote = await client.get_version(item_id, number)
-        manifest = manifest_of(remote)
+        if planned is not None:
+            remote, manifest = planned, manifest_of(planned)
+            number = planned.version
+            # An item's name is its publisher's slug, which the manifest records.
+            item_name = manifest.slug if manifest is not None else str(item_id)
+        else:
+            item = await client.get_item(item_id)
+            if item.kind != KB_KIND:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{item.name} on the collaboration server is a "
+                    f"{item.kind}, not a knowledge base.",
+                )
+            item_name = item.name
+            number = version if version is not None else item.head_version
+            remote = await client.get_version(item_id, number)
+            manifest = manifest_of(remote)
         if manifest is None or remote.blob_ref is None:
             raise CollaborationError(
-                f"Version {number} of {item.name} on the collaboration server is "
+                f"Version {number} of {item_name} on the collaboration server is "
                 "not a knowledge base this VISTA can import."
             )
         first = await linked_knowledge_base(session, url, item_id)
@@ -815,7 +826,7 @@ async def import_knowledge_base(
             slug = first.slug
         else:
             chosen = (rename_to or "").strip()
-            slug = chosen or item.name
+            slug = chosen or item_name
             _check_slug(slug, chosen=bool(chosen))
         async with kb_lock(slug):
             # What another request committed while this one waited.
@@ -826,7 +837,7 @@ async def import_knowledge_base(
             ):
                 raise HTTPException(
                     status_code=409,
-                    detail=f"{item.name} was imported or deleted here meanwhile; "
+                    detail=f"{item_name} was imported or deleted here meanwhile; "
                     "import it again.",
                 )
             return await _import(
@@ -834,7 +845,7 @@ async def import_knowledge_base(
                 client,
                 url=url,
                 item_id=item_id,
-                item_name=item.name,
+                item_name=item_name,
                 number=number,
                 blob_ref=remote.blob_ref,
                 manifest=manifest,
