@@ -17,6 +17,12 @@ type Props = {
   /** Listed size in bytes, for the truncation note; omitted where it isn't known. */
   size?: number;
   projectName: string | null;
+  /**
+   * Which version of the file this is (its modified time, or the display that
+   * showed it). It goes into the preview URL, because a page reuses an image it
+   * has already loaded from the same URL even after the file has changed.
+   */
+  version?: string;
 };
 
 type Renderer = "image" | "text" | "csv" | "markdown" | "html" | "pdf" | "none";
@@ -40,11 +46,12 @@ export function rendererFor(name: string): Renderer {
   return "none";
 }
 
-function fileUrl({ kind, path, projectName }: Props, preview: boolean): string {
+function fileUrl({ kind, path, projectName, version }: Props, preview: boolean): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
   const params: string[] = [];
   if (projectName) params.push(`project_name=${encodeURIComponent(projectName)}`);
   if (preview) params.push("preview=1");
+  if (preview && version) params.push(`v=${encodeURIComponent(version)}`);
   return `/api/files/${kind}/${encoded}${params.length ? `?${params.join("&")}` : ""}`;
 }
 

@@ -441,6 +441,7 @@ function FilesPageInner() {
                       name={selected.path.split("/").pop() ?? selected.path}
                       size={selectedFile.size}
                       projectName={projectName}
+                      version={selectedFile.modifiedAt}
                     />
                   ) : selected && loaded && !isLoading ? (
                     <div className="chat-bubble">

@@ -38,6 +38,20 @@ describe("FilePreview", () => {
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).not.toContain("preview");
   });
 
+  it("gives each version of a file its own image URL, so a re-plot isn't the old picture", () => {
+    const { unmount } = render(<FilePreview {...base} path="p.png" name="p.png" version="t1" />);
+    const first = screen.getByRole("img").getAttribute("src");
+    unmount();
+    render(<FilePreview {...base} path="p.png" name="p.png" version="t2" />);
+    const second = screen.getByRole("img").getAttribute("src");
+    expect(first).toContain("preview=1&v=t1");
+    expect(second).toContain("preview=1&v=t2");
+    // Download is the file as it is now, so it carries no version.
+    expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(
+      "/api/files/outputs/p.png?project_name=p%20q",
+    );
+  });
+
   it("opens a PDF with a button, not inline", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     render(<FilePreview {...base} path="r.pdf" name="r.pdf" size={10} />);

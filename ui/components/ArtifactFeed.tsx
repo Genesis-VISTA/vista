@@ -21,10 +21,18 @@ export function artifactElementId(item: Pick<DisplayedFile, "run_id" | "tool_cal
   return `artifact-${item.run_id}-${item.tool_call_id}`;
 }
 
+/**
+ * The image for one display. The display's id is part of the URL: a page reuses
+ * an image it has already loaded from the same URL, so a re-plot to the same path
+ * would otherwise show the old figure under the new display.
+ */
 function fileSrc(item: DisplayedFile, projectName: string | null): string {
   const encoded = item.path.split("/").map(encodeURIComponent).join("/");
-  const query = projectName ? `?project_name=${encodeURIComponent(projectName)}` : "";
-  return `/api/files/${item.kind}/${encoded}${query}`;
+  const params = new URLSearchParams();
+  if (projectName) params.set("project_name", projectName);
+  params.set("preview", "1");
+  params.set("v", item.tool_call_id);
+  return `/api/files/${item.kind}/${encoded}?${params.toString()}`;
 }
 
 function FeedItem({
@@ -93,6 +101,7 @@ function FeedItem({
           path={item.path}
           name={item.name}
           projectName={projectName}
+          version={item.tool_call_id}
         />
       )}
     </li>
