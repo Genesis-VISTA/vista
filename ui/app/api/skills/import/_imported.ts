@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Agent, fetch } from "undici";
 import { backendUrl, backendHeaders } from "../../_backend";
 
 /** A skill row as the backend returns it (`SkillListItem`). */
@@ -84,9 +85,11 @@ export async function postBackend(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  let upstream: Response;
+  let upstream: Awaited<ReturnType<typeof fetch>>;
   try {
     upstream = await fetch(backendUrl(path), {
+      // A knowledge base's publish or import answers only when it has all been moved.
+      dispatcher: new Agent({ headersTimeout: 60 * 60 * 1000 }),
       method: "POST",
       headers: await backendHeaders({
         "content-type": "application/json",
