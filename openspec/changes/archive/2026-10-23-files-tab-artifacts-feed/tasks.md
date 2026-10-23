@@ -37,5 +37,5 @@
 ## 7. Verification
 
 - [x] 7.1 Run `./scripts/ci-local.sh lint` and `./scripts/ci-local.sh backend ui mcp test`; all pass
-- [ ] 7.2 Manual (not PR CI; needs a live provider and the sandbox): `./launch.sh logs`. Ask the agent to plot something and confirm it calls `display_file`, the feed shows it, and Files shows it under Outputs with "Shown in". Re-run the plot and confirm the earlier item reads "file has changed on disk". Follow "Shown in" from Files and land on the turn and its Activity step. Preview a log, a CSV, a markdown file, an HTML file containing a `<script>` (it must not run) and a PDF
+- [x] 7.2 Manual (not PR CI; needs a live provider and the sandbox): `./launch.sh logs`. Ask the agent to plot something and confirm it calls `display_file`, the feed shows it, and Files shows it under Outputs with "Shown in". Re-run the plot and confirm the earlier item reads "file has changed on disk". Follow "Shown in" from Files and land on the turn and its Activity step. Preview a log, a CSV, a markdown file, an HTML file containing a `<script>` (it must not run) and a PDF
 - [x] 7.3 Run `openspec validate files-tab-artifacts-feed --strict`; it passes
