@@ -40,6 +40,7 @@ from vista_backend.services.knowledge_base_collaboration import (
     KB_KIND,
     ArchiveError,
     incompatibility,
+    pack_knowledge_base,
     unpack_knowledge_base,
 )
 from vista_backend.utils import indexer
@@ -585,6 +586,20 @@ def test_an_archive_without_an_index_is_an_empty_knowledge_base(tmp_path):
     unpack_knowledge_base(archive, tmp_path / "out", has_index=False)
     assert (tmp_path / "out" / "pdfs" / "a.pdf").is_file()
     assert list((tmp_path / "out" / "rag_db").iterdir()) == []
+
+
+def test_an_archive_carries_every_format_a_knowledge_base_holds(tmp_path):
+    pdfs = tmp_path / "pdfs"
+    pdfs.mkdir()
+    for name in ("a.pdf", "t.csv", "t.tsv", "n.txt", "n.md", "run.sh"):
+        (pdfs / name).write_bytes(b"x")
+    archive = tmp_path / "kb.tar"
+    files, _ = pack_knowledge_base(pdfs, None, archive)
+    assert files == 5
+
+    unpack_knowledge_base(archive, tmp_path / "out", has_index=False)
+    got = sorted(p.name for p in (tmp_path / "out" / "pdfs").iterdir())
+    assert got == ["a.pdf", "n.md", "n.txt", "t.csv", "t.tsv"]
 
 
 # ---------------------------------------------------------------------------

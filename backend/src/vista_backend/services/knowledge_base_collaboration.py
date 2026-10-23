@@ -3,7 +3,8 @@ Knowledge bases on the collaboration server: publishing one, listing the
 server's, and importing one.
 
 A knowledge base is an item of kind `knowledge-base`, named by its slug. Each
-version's blob is a tar of its PDFs (`pdfs/`) and its built index (`rag_db/`),
+version's blob is a tar of its files (`pdfs/`: PDFs, tables and notes, every
+format `indexer.ACCEPTED_SUFFIXES` names) and its built index (`rag_db/`),
 so an importer searches it at once without indexing anything: indexing stays
 local, and needs the publisher's embedding model. The manifest says what the
 version is (name, description, the publications' metadata) and what built the
@@ -131,11 +132,11 @@ class KnowledgeBaseManifest(BaseModel):
     name: str
     description: str | None = None
     publications: list[Publication] = []
-    """ The publisher's entries: each PDF's citation and indexing state. """
+    """ The publisher's entries: each file's citation and indexing state. """
     build_status: KnowledgeBaseBuildStatus = "ready"
     last_built_at: str | None = None
     files: int = 0
-    """ The PDFs in the archive. """
+    """ The files in the archive. """
     size: int = 0
     """ Their total bytes. """
     archive_size: int = Field(ge=0)
@@ -329,14 +330,17 @@ async def _incoming() -> AsyncIterator[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _pdfs(pdfs_dir: Path) -> list[tuple[str, Path]]:
-    """Every PDF under `pdfs_dir`, as (path relative to it, path). Links are left out."""
+def _files(pdfs_dir: Path) -> list[tuple[str, Path]]:
+    """
+    Every file under `pdfs_dir` a knowledge base holds (`indexer.ACCEPTED_SUFFIXES`),
+    as (path relative to it, path). Links are left out.
+    """
     found = []
     if pdfs_dir.is_dir():
         for path in sorted(pdfs_dir.rglob("*")):
             if path.is_symlink() or not path.is_file():
                 continue
-            if path.suffix.lower() != ".pdf":
+            if path.suffix.lower() not in indexer.ACCEPTED_SUFFIXES:
                 continue
             found.append((path.relative_to(pdfs_dir).as_posix(), path))
     return found
@@ -357,20 +361,20 @@ def pack_knowledge_base(
     pdfs_dir: Path, store: Path | None, archive: Path
 ) -> tuple[int, int]:
     """
-    Write the PDFs under `pdfs_dir` and the store snapshot `store` (None for
+    Write the files under `pdfs_dir` and the store snapshot `store` (None for
     a knowledge base with no index yet) to `archive`, an uncompressed tar
     (PDFs and vectors hardly compress), as `pdfs/…` and `rag_db/…`. Returns
-    the number of PDFs and their total size. Blocking.
+    the number of files and their total size. Blocking.
     """
-    pdfs = _pdfs(pdfs_dir)
+    files = _files(pdfs_dir)
     with tarfile.open(archive, "w") as tar:
-        for rel, path in pdfs:
+        for rel, path in files:
             _add(tar, path, f"pdfs/{rel}")
         if store is not None:
             for path in sorted(store.rglob("*")):
                 if path.is_file():
                     _add(tar, path, f"rag_db/{path.relative_to(store).as_posix()}")
-    return len(pdfs), sum(path.stat().st_size for _, path in pdfs)
+    return len(files), sum(path.stat().st_size for _, path in files)
 
 
 class ArchiveError(Exception):
@@ -396,8 +400,8 @@ def _member_path(member: tarfile.TarInfo) -> PurePosixPath:
             f"{member.name} is a link or a special file; a knowledge base holds "
             "only files and folders."
         )
-    if path.parts[0] == "pdfs" and path.suffix.lower() != ".pdf":
-        raise ArchiveError(f"{member.name} is not a PDF.")
+    if path.parts[0] == "pdfs" and path.suffix.lower() not in indexer.ACCEPTED_SUFFIXES:
+        raise ArchiveError(f"{member.name} is not a file a knowledge base holds.")
     return path
 
 
@@ -405,7 +409,7 @@ def unpack_knowledge_base(archive: Path, dest: Path, *, has_index: bool) -> None
     """
     Unpack `archive`, already checked against its version's digest by
     `download_blob`, into `dest`, which must not exist: only files under
-    `pdfs/` (PDFs) and `rag_db/`, and with `has_index` a store
+    `pdfs/` (`indexer.ACCEPTED_SUFFIXES`) and `rag_db/`, and with `has_index` a store
     (`rag_db/chroma.sqlite3`) among them. `dest` always ends up with both
     folders. Raises `ArchiveError`. Blocking.
     """
@@ -516,7 +520,7 @@ async def publish_knowledge_base(
     as_new: bool = False,
 ) -> KnowledgeBasePublishResult:
     """
-    Publish the knowledge base's PDFs and index as the next version of its
+    Publish the knowledge base's files and index as the next version of its
     item on the server in effect, or as a new item if it has none there (or
     `as_new`). Refused while it is indexing.
 
@@ -566,7 +570,7 @@ async def _publish(
     here = await indexer.store_format()
     # A knowledge base nothing has been indexed into has no store yet.
     has_index = (Path(row.rag_db_path) / "chroma.sqlite3").is_file()
-    # The snapshot and the archive are copies of the PDFs and the store, on
+    # The snapshot and the archive are copies of the files and the store, on
     # the disk that holds the database too.
     check_space(
         await asyncio.to_thread(_bytes_to_pack, Path(row.pdfs_dir), row.rag_db_path),
@@ -719,10 +723,10 @@ def _check_slug(slug: str, *, chosen: bool) -> None:
 
 
 def _bytes_to_pack(pdfs_dir: Path, rag_db_path: str) -> int:
-    """What a publish packs: the PDFs and the store, in bytes. Blocking."""
+    """What a publish packs: the files and the store, in bytes. Blocking."""
     store = Path(rag_db_path)
     stored = sum(p.stat().st_size for p in store.rglob("*") if p.is_file())
-    return stored + sum(path.stat().st_size for _, path in _pdfs(pdfs_dir))
+    return stored + sum(path.stat().st_size for _, path in _files(pdfs_dir))
 
 
 def check_space(archive_bytes: int, what: str) -> None:
@@ -753,7 +757,7 @@ async def check_importable(manifest: KnowledgeBaseManifest) -> None:
 
 def _remove_stores(kb_dir: Path, keep: str, old: list[Path]) -> None:
     """
-    Remove what an import replaced: the old PDFs and store (`old`), every
+    Remove what an import replaced: the old files and store (`old`), every
     `store-*` folder but `keep`, and the canonical `pdfs/` and `rag_db/`,
     which `CURRENT` now overrides. Only inside `kb_dir`, and best effort: one
     the MCP server still has open (on Windows) stays until a later import or
@@ -785,7 +789,7 @@ async def import_knowledge_base(
 ) -> KnowledgeBaseImportResult:
     """
     Import a version (by default the head) of a knowledge base on the server
-    in effect: its PDFs and index, ready to search.
+    in effect: its files and index, ready to search.
 
     The copy here from the same item is updated in place, keeping its slug;
     with local changes, that needs `replace_modified`, else
@@ -936,7 +940,7 @@ async def _import(
             )
             status: ImportStatus = "imported"
         else:
-            # A PDF added or deleted, or indexing begun, while downloading.
+            # A file added or deleted, or indexing begun, while downloading.
             await reread(session, existing)
             if kb_content(existing) != before or indexer.get_progress(
                 existing.rag_db_path
