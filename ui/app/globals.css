@@ -1685,6 +1685,8 @@ textarea.input {
 
 .chat-bubble.assistant {
   white-space: normal;
+  /* Eases the room a turn highlight makes in and out, rather than jumping. */
+  transition: padding 0.3s ease;
 }
 
 .chat-bubble.assistant > :first-child {
@@ -6789,6 +6791,14 @@ textarea.input:focus {
    its edge. */
 .turn-highlight {
   animation: turn-highlight 2.4s ease-out;
+}
+
+/* An answer has no box of its own and spans the row, so while it is the turn
+   being pointed at it shrinks to its text, with room for the ring. */
+.chat-bubble.turn-highlight {
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: var(--r-control);
 }
 
 @keyframes turn-highlight {
