@@ -5,11 +5,11 @@
 
 ## 2. Record of displayed files
 
-- [ ] 2.1 Add `DisplayedFileTable` (`displayed_file`) to `backend/src/vista_backend/db/schemas.py` with the columns and indexes in design.md §2, and FKs cascading on project and chat. Verify in `backend/tests/test_chat_sessions.py` that `init_db` creates it on an existing DB, and that deleting a chat deletes its rows while its files stay on disk
-- [ ] 2.2 Add a sandbox-path → `(kind, path)` mapper for `/mnt/data/output/` and `/mnt/data/uploads/` that accepts the URI forms `resolve_uri` accepts. Verify with unit cases that mirror `mcp_servers/vista_mcp_server/tests/test_display_file.py` (bare path, `file://`, `file://localhost`, percent-encoding, `..` refused, other prefixes → none)
+- [x] 2.1 Add `DisplayedFileTable` (`displayed_file`) to `backend/src/vista_backend/db/schemas.py` with the columns and indexes in design.md §2, and FKs cascading on project and chat. Verify in `backend/tests/test_chat_sessions.py` that `init_db` creates it on an existing DB, and that deleting a chat deletes its rows while its files stay on disk
+- [x] 2.2 Add a sandbox-path → `(kind, path)` mapper for `/mnt/data/output/` and `/mnt/data/uploads/` that accepts the URI forms `resolve_uri` accepts. Verify with unit cases that mirror `mcp_servers/vista_mcp_server/tests/test_display_file.py` (bare path, `file://`, `file://localhost`, percent-encoding, `..` refused, other prefixes → none)
 - [ ] 2.3 In `ChatRegistry._drive` (`services/chat_run.py`), pair `display_file` calls with their results by `tool_call_id` (name matched after the last `__`). On a result with no `error`, stat the host file and hold a pending record; write pending records in the run's common tail. Verify in `backend/tests/test_chat_run.py`, with the `fake_mcp` `display_file` stub and a `FunctionModel`: a successful display records chat, run, tool call, kind, path, size and `mtime_ns`; an `{error}` result records nothing; a stopped run still writes what it displayed; a file overwritten later in the same run reads as `changed`
-- [ ] 2.4 Add the status function (`current` / `changed` / `missing` from size and `mtime_ns`) and `GET /projects/{p}/chat-sessions/{id}/displayed-files` (newest first, with `name`, `mime_type` and `status`). Verify in `backend/tests/test_chat_run_api.py`: order, each status, a chat from another project → 404, and no rows for a chat that displayed nothing
-- [ ] 2.5 Add `shown_in` to `FileInfo` in `services/files.py`, filled from the newest record for the path only when it is `current`, with the chat title read at listing time. Verify in `test_files_api.py`: unchanged → `shown_in` set; overwritten → null; displayed in two chats → the newer; never displayed → null
+- [x] 2.4 Add the status function (`current` / `changed` / `missing` from size and `mtime_ns`) and `GET /projects/{p}/chat-sessions/{id}/displayed-files` (newest first, with `name`, `mime_type` and `status`). Verify in `backend/tests/test_chat_run_api.py`: order, each status, a chat from another project → 404, and no rows for a chat that displayed nothing
+- [x] 2.5 Add `shown_in` to `FileInfo` in `services/files.py`, filled from the newest record for the path only when it is `current`, with the chat title read at listing time. Verify in `test_files_api.py`: unchanged → `shown_in` set; overwritten → null; displayed in two chats → the newer; never displayed → null
 
 ## 3. Agent guidance
 
@@ -17,6 +17,7 @@
 
 ## 4. Shared preview component
 
+- [ ] 4.0 Spike (throwaway, outside the repo) whether Chromium's PDF viewer renders a PDF sent with `Content-Security-Policy: sandbox; default-src 'none'`: in an Electron child window with VISTA's `webPreferences`, and in Chrome. If it doesn't, drop `sandbox` from the CSP for PDFs only (keep `nosniff`) in `api/files.py` and the UI proxy's defaults, record the decision in design.md §4, and verify with updated cases in `test_files_api.py` and `files-route.test.ts`
 - [ ] 4.1 Add `ui/lib/csv-preview.ts` (quoted fields, CRLF, TSV, first 500 rows plus an omitted count) and a capped stream reader (1 MiB, then cancel). Verify with `ui/tests/csv-preview.test.ts` and `ui/tests/capped-read.test.ts`
 - [ ] 4.2 Add `ui/components/FilePreview.tsx` with the renderers in design.md §5 (`<img>` for images including SVG, text/JSON, CSV table, markdown with no raw HTML and images as links, HTML through `SandboxedHtmlCard`, PDF as "Open PDF", otherwise download only). Verify with `ui/tests/FilePreview.test.tsx`: each type picks its renderer; a `<script>` in HTML and markdown is not executed or rendered; a markdown image renders as a link; the truncation note appears past the cap
 

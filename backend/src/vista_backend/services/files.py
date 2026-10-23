@@ -1,7 +1,6 @@
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel
@@ -11,10 +10,8 @@ from ..agents.agents import ProjectAgent
 from ..config import settings
 from ..utils.misc import path_is_under, write_file_unique
 from . import project as project_service
+from .displayed_files import FileKind, ShownIn, newest_records, shown_in
 from .project_agent import get_project_agent_key, project_agent_pool
-
-
-FileKind = Literal["uploads", "outputs"]
 
 
 class FileInfo(BaseModel):
@@ -22,6 +19,8 @@ class FileInfo(BaseModel):
     size: int
     created: datetime
     modified: datetime
+    shown_in: ShownIn | None = None
+    """ The chat that displayed this file, while the file is as it was shown. """
 
 
 def _kind_dir(agent: ProjectAgent, kind: FileKind) -> Path:
@@ -67,18 +66,21 @@ async def list_files(
         if not files_dir.exists():
             return []
 
+        newest = await newest_records(session, project.id, kind)
         files: list[FileInfo] = []
         for file in files_dir.rglob("*"):
             # Skip any symlink that escapes files_dir
             if not file.is_file() or not path_is_under(files_dir, file):
                 continue
             stat = file.stat()
+            name = file.relative_to(files_dir).as_posix()
             files.append(
                 FileInfo(
-                    name=file.relative_to(files_dir).as_posix(),
+                    name=name,
                     size=stat.st_size,
                     created=datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc),
                     modified=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    shown_in=shown_in(newest.get(name), stat.st_size, stat.st_mtime_ns),
                 )
             )
         files.sort(key=lambda f: f.modified, reverse=True)

@@ -5,7 +5,7 @@ Data models / schemas
 import re
 import uuid
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Boolean, Column, String, false, true
+from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
 from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
@@ -906,6 +906,36 @@ class ChatSessionTable(ChatSessionBase, table=True):
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+
+
+class DisplayedFileTable(SQLModel, table=True):
+    """
+    One `display_file` call that succeeded in a chat run. Append-only: every display adds a
+    row. The file's size and `mtime_ns` are taken at display time, so a later write to the
+    file reads as "changed".
+    """
+
+    __tablename__: str = "displayed_file"
+    __table_args__ = (
+        Index("ix_displayed_file_project_kind_path", "project_id", "kind", "path"),
+        Index("ix_displayed_file_chat_shown_at", "chat_session_id", "shown_at"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    run_id: str
+    """ `ChatRun.run_id` hex, as on the UI's bubbles. """
+    tool_call_id: str
+    kind: str
+    """ `uploads` or `outputs`. """
+    path: str
+    """ Relative POSIX path, as the files API names it. """
+    shown_at: str
+    size: int
+    mtime_ns: int
 
 
 # ---------------------------------------------------------------------------

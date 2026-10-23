@@ -9,13 +9,16 @@ a turn that hangs is started as a background request and ended with Stop.
 import asyncio
 import json
 import uuid
+import os
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.toolsets.function import FunctionToolset
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import (
+    FakeAgentPool,
     api_client,
     call,
     make_local_settings,
@@ -26,8 +29,12 @@ from harness import (
 )
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.api import api as api_module
-from vista_backend.db.schemas import ChatSessionTable
-from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.db.schemas import ChatSessionTable, DisplayedFileTable
+from vista_backend.services import (
+    chat_run,
+    chat_session as chat_session_service,
+    displayed_files as displayed_files_service,
+)
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -341,3 +348,149 @@ async def test_shutdown_interrupts_a_running_turn_and_saves_its_history(
         assert (row.run_state, row.run_unseen) == ("interrupted", True)
         assert "job 42 submitted" in json.dumps(row.message_history)
         assert "Interrupted when VISTA quit." in json.dumps(row.message_history)
+
+
+# -- displayed files ---------------------------------------------------------
+
+DISPLAYED = "/projects/{name}/chat-sessions/{id}/displayed-files"
+
+
+@pytest.fixture
+def file_dirs(tmp_path, monkeypatch):
+    uploads_dir = tmp_path / "uploads"
+    output_dir = tmp_path / "output"
+    uploads_dir.mkdir()
+    output_dir.mkdir()
+    agent = SimpleNamespace(uploads_dir=uploads_dir, output_dir=output_dir)
+    monkeypatch.setattr(
+        displayed_files_service, "project_agent_pool", FakeAgentPool(agent=agent)
+    )
+    return uploads_dir, output_dir
+
+
+def _row(project, chat_id, kind, file, shown_at):
+    """A record of `file` as it is now; call before changing or removing the file."""
+    stat = file.stat()
+    return DisplayedFileTable(
+        project_id=project.id,
+        chat_session_id=chat_id,
+        run_id="run1",
+        tool_call_id=f"call-{shown_at}",
+        kind=kind,
+        path=file.name,
+        shown_at=shown_at,
+        size=stat.st_size,
+        mtime_ns=stat.st_mtime_ns,
+    )
+
+
+async def _displayed(session, project, chat_id):
+    with api_client(session) as (client, _):
+        return await client.get(DISPLAYED.format(name=project.name, id=chat_id))
+
+
+async def test_displayed_files_are_newest_first_with_each_status(session, file_dirs):
+    uploads_dir, output_dir = file_dirs
+    project = await seed_project(session)
+    chat_id = await _conversation(session, project)
+    current = output_dir / "plot.png"
+    current.write_bytes(b"data")
+    changed = uploads_dir / "table.csv"
+    changed.write_bytes(b"a,b")
+    gone = output_dir / "gone.txt"
+    gone.write_bytes(b"x")
+    session.add(_row(project, chat_id, "uploads", changed, "2026-01-01T10:00:02"))
+    session.add(_row(project, chat_id, "outputs", gone, "2026-01-01T10:00:01"))
+    session.add(_row(project, chat_id, "outputs", current, "2026-01-01T10:00:03"))
+    await session.commit()
+    changed.write_bytes(b"a,b,c,d")
+    gone.unlink()
+
+    response = await _displayed(session, project, chat_id)
+
+    assert response.status_code == 200
+    items = response.json()
+    assert [(i["path"], i["status"]) for i in items] == [
+        ("plot.png", "current"),
+        ("table.csv", "changed"),
+        ("gone.txt", "missing"),
+    ]
+    assert items[0] == {
+        "kind": "outputs",
+        "path": "plot.png",
+        "name": "plot.png",
+        "mime_type": "image/png",
+        "run_id": "run1",
+        "tool_call_id": "call-2026-01-01T10:00:03",
+        "shown_at": "2026-01-01T10:00:03",
+        "status": "current",
+    }
+    assert items[1]["kind"] == "uploads"
+
+
+async def test_a_nested_path_is_named_by_its_last_segment(session, file_dirs):
+    _, output_dir = file_dirs
+    project = await seed_project(session)
+    chat_id = await _conversation(session, project)
+    nested = output_dir / "run1" / "spectrum.weird"
+    nested.parent.mkdir()
+    nested.write_bytes(b"x")
+    row = _row(project, chat_id, "outputs", nested, "2026-01-01T10:00:00")
+    row.path = "run1/spectrum.weird"
+    session.add(row)
+    await session.commit()
+
+    (item,) = (await _displayed(session, project, chat_id)).json()
+
+    assert item["name"] == "spectrum.weird"
+    assert item["path"] == "run1/spectrum.weird"
+    assert item["mime_type"] == "application/octet-stream"
+    assert item["status"] == "current"
+
+
+async def test_a_same_size_rewrite_with_another_mtime_is_changed(session, file_dirs):
+    _, output_dir = file_dirs
+    project = await seed_project(session)
+    chat_id = await _conversation(session, project)
+    plot = output_dir / "plot.png"
+    plot.write_bytes(b"data")
+    session.add(_row(project, chat_id, "outputs", plot, "2026-01-01T10:00:00"))
+    await session.commit()
+    mtime_ns = plot.stat().st_mtime_ns
+    os.utime(plot, ns=(mtime_ns + 1_000_000, mtime_ns + 1_000_000))
+
+    (item,) = (await _displayed(session, project, chat_id)).json()
+
+    assert item["status"] == "changed"
+
+
+async def test_a_chat_that_displayed_nothing_has_no_rows(session, file_dirs):
+    project = await seed_project(session)
+    chat_id = await _conversation(session, project)
+
+    response = await _displayed(session, project, chat_id)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_displayed_files_only_list_that_chats_rows(session, file_dirs):
+    _, output_dir = file_dirs
+    project = await seed_project(session)
+    mine = await _conversation(session, project)
+    other = await _conversation(session, project)
+    plot = output_dir / "plot.png"
+    plot.write_bytes(b"data")
+    session.add(_row(project, other, "outputs", plot, "2026-01-01T10:00:00"))
+    await session.commit()
+
+    assert (await _displayed(session, project, mine)).json() == []
+
+
+async def test_a_chat_of_another_project_is_404(session, file_dirs):
+    project = await seed_project(session)
+    elsewhere = await seed_project(session)
+    chat_id = await _conversation(session, elsewhere)
+
+    assert (await _displayed(session, project, chat_id)).status_code == 404
+    assert (await _displayed(session, project, uuid.uuid4())).status_code == 404

@@ -379,3 +379,75 @@ def test_chat_model_column_reaches_an_existing_database(tmp_path):
 
     build()
     assert "inference_model" in columns()
+
+
+def test_displayed_file_table_reaches_an_existing_database(tmp_path):
+    from vista_backend.db import schemas  # noqa: F401  (registers the tables)
+    from vista_backend.db.db import _add_missing_columns
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+
+    def build() -> None:
+        with engine.begin() as conn:
+            SQLModel.metadata.create_all(conn)
+            _add_missing_columns(conn)
+
+    build()
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE displayed_file"))
+    assert "displayed_file" not in inspect(engine).get_table_names()
+
+    build()
+    inspector = inspect(engine)
+    assert "displayed_file" in inspector.get_table_names()
+    indexed = {
+        tuple(i["column_names"]) for i in inspector.get_indexes("displayed_file")
+    }
+    assert ("project_id", "kind", "path") in indexed
+    assert ("chat_session_id", "shown_at") in indexed
+
+
+@pytest.mark.anyio
+async def test_deleting_a_chat_deletes_its_displayed_rows_not_its_files(
+    session, tmp_path
+):
+    from sqlmodel import select
+
+    from vista_backend.db.schemas import DisplayedFileTable
+
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="shown-project", description=None, system_prompt=None),
+    )
+    gone = await chat_session_service.create_chat_session(
+        session, project_id=project.id, payload=ChatSessionCreate(title="Gone")
+    )
+    kept = await chat_session_service.create_chat_session(
+        session, project_id=project.id, payload=ChatSessionCreate(title="Kept")
+    )
+    plot = tmp_path / "plot.png"
+    plot.write_bytes(b"data")
+    project_id, gone_id, kept_id = project.id, gone.id, kept.id
+    for chat_id in (gone_id, kept_id):
+        session.add(
+            DisplayedFileTable(
+                project_id=project_id,
+                chat_session_id=chat_id,
+                run_id="r",
+                tool_call_id="t",
+                kind="outputs",
+                path="plot.png",
+                shown_at="2026-01-01T00:00:00",
+                size=4,
+                mtime_ns=1,
+            )
+        )
+    await session.commit()
+
+    await chat_session_service.delete_chat_session(
+        session, project_id=project_id, chat_session_id=gone_id
+    )
+
+    rows = (await session.exec(select(DisplayedFileTable))).all()
+    assert [row.chat_session_id for row in rows] == [kept_id]
+    assert plot.read_bytes() == b"data"
