@@ -49,7 +49,12 @@ describe("FilePreview", () => {
   it("offers only download for an unknown type", () => {
     render(<FilePreview {...base} path="a.bin" name="a.bin" size={10} />);
     expect(screen.getByText("No preview for this type.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Download" })).toBeInTheDocument();
+    // One Download, as the main (filled) action rather than the bar's ghost one.
+    const [download, ...others] = screen.getAllByRole("link", { name: "Download" });
+    expect(others).toHaveLength(0);
+    expect(download).toHaveClass("button");
+    expect(download).not.toHaveClass("ghost");
+    expect(download.getAttribute("href")).not.toContain("preview");
   });
 
   it("pretty-prints whole JSON in a pre", async () => {

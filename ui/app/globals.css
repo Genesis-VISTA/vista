@@ -1588,6 +1588,19 @@ textarea.input {
   gap: 8px;
 }
 
+.file-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 12px;
+  text-align: center;
+}
+
+.file-preview-empty .button {
+  text-decoration: none;
+}
+
 .file-preview-name {
   min-width: 0;
   overflow: hidden;

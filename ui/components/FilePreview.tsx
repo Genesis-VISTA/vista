@@ -148,7 +148,15 @@ export default function FilePreview(props: Props) {
       </button>
     );
   } else if (renderer === "none") {
-    body = <p className="muted">No preview for this type.</p>;
+    // Download is all there is to do, so it is the main action, not the bar's.
+    body = (
+      <div className="file-preview-empty">
+        <p className="muted">No preview for this type.</p>
+        <a className="button" href={downloadUrl} {...fileLinkProps(downloadUrl)}>
+          Download
+        </a>
+      </div>
+    );
   } else if (error) {
     body = <p className="error">{error}</p>;
   } else if (!data) {
@@ -202,9 +210,11 @@ export default function FilePreview(props: Props) {
     <div className="file-preview">
       <div className="file-preview-bar">
         <span className="file-preview-name">{name}</span>
-        <a className="button ghost button-sm" href={downloadUrl} {...fileLinkProps(downloadUrl)}>
-          Download
-        </a>
+        {renderer !== "none" && (
+          <a className="button ghost button-sm" href={downloadUrl} {...fileLinkProps(downloadUrl)}>
+            Download
+          </a>
+        )}
       </div>
       {body}
     </div>
