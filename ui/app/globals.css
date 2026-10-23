@@ -6784,7 +6784,9 @@ textarea.input:focus {
   text-decoration: underline;
 }
 
-/* The turn a link from the feed or the Files page opened. */
+/* The turn a link from the feed or the Files page opened. The ring is drawn
+   inside the bubble: the chat list scrolls, so one drawn outside is clipped at
+   its edge. */
 .turn-highlight {
   animation: turn-highlight 2.4s ease-out;
 }
@@ -6792,17 +6794,17 @@ textarea.input:focus {
 @keyframes turn-highlight {
   0%,
   60% {
-    box-shadow: 0 0 0 3px var(--accent);
+    box-shadow: inset 0 0 0 3px var(--accent);
   }
   100% {
-    box-shadow: 0 0 0 3px transparent;
+    box-shadow: inset 0 0 0 3px transparent;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .turn-highlight {
     animation: none;
-    box-shadow: 0 0 0 3px var(--accent);
+    box-shadow: inset 0 0 0 3px var(--accent);
   }
 }
 
