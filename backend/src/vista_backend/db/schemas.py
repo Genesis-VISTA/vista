@@ -93,13 +93,35 @@ class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
 
-class ProjectPublic(ProjectBase):
+class ProjectSharing(SQLModel):
+    """
+    Where a project stands with the collaboration server. Never set through
+    `ProjectCreate`: publishing and importing set it, and every write to the
+    project's own fields sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this project was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version this project was published as or imported from. """
+    modified: bool = True
+    """
+    Its own fields (`ProjectCreate`'s) changed here since `remote_version`:
+    set by every write to them, cleared by a publish or an import. A change to
+    a skill it loads is the skill's own `modified`, not this. True for a
+    project never published, seeded ones included: all of it is local.
+    """
+
+
+class ProjectPublic(ProjectBase, ProjectSharing):
     """Project fields the user can read"""
 
     id: uuid.UUID
 
 
-class ProjectTable(ProjectBase, table=True):
+class ProjectTable(ProjectBase, ProjectSharing, table=True):
     """Project SQL model"""
 
     __tablename__: str = "project"

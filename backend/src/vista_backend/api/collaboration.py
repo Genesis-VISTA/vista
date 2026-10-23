@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from ..db.db import SessionDep
-from ..services import collaboration, skill_collaboration
+from ..services import collaboration, project_collaboration, skill_collaboration
 from ..services.local_settings import LocalSettingsDep
 from .skills import SkillListItem, list_item, target_project
 
@@ -77,3 +77,51 @@ async def import_skill(
         project=project,
     )
     return RemoteSkillImportResult(status=status, skill=list_item(skill))
+
+
+@router.get("/projects")
+async def list_projects(
+    session: SessionDep, local: LocalSettingsDep, manifests: bool = True
+) -> list[project_collaboration.RemoteProject]:
+    """
+    The collaboration server's projects, oldest first, each with this
+    installation's copy of it, if any, and its newest version's manifest
+    (`manifests=false` leaves that out, for one request to the server).
+    """
+    return await project_collaboration.list_remote_projects(
+        session, local, manifests=manifests
+    )
+
+
+class RemoteProjectImportRequest(BaseModel):
+    """Body for `POST /collaboration/projects/{item_id}/import`."""
+
+    version: int | None = Field(default=None, ge=1)
+    """ The version to import; the newest by default. """
+    rename_to: str | None = None
+    """ The name for a new project whose own is taken here. """
+    replace_modified: bool = False
+    """ Replace the changes made here to the copy already imported. """
+
+
+@router.post("/projects/{item_id}/import")
+async def import_project(
+    item_id: uuid.UUID,
+    body: RemoteProjectImportRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> project_collaboration.ProjectImportResult:
+    """
+    Import a project from the collaboration server with the skill versions it
+    loads, updating the copy already here if there is one. 409 with `code` when
+    the copy here has changes of its own (`modified`) or the name is another
+    project's (`name_taken`), checked before anything is imported.
+    """
+    return await project_collaboration.import_project(
+        session,
+        local,
+        item_id,
+        version=body.version,
+        rename_to=body.rename_to,
+        replace_modified=body.replace_modified,
+    )

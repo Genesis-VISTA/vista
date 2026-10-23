@@ -42,7 +42,9 @@ Writes need `X-Vista-Install-Id`; reads do not.
 
 The server reads neither manifests nor blobs. What VISTA keeps in them, per kind, is the
 backend's business: a `skill` version's blob is the skill's folder as a gzipped tar and its
-manifest is read from the SKILL.md (`backend/src/vista_backend/services/skill_collaboration.py`).
+manifest is read from the SKILL.md (`backend/src/vista_backend/services/skill_collaboration.py`);
+a `project` version has no blob, and its manifest holds the project's fields and references
+to the skill versions it loads (`backend/src/vista_backend/services/project_collaboration.py`).
 
 ## Test
 

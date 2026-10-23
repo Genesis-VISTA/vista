@@ -30,7 +30,7 @@ from typing import Any, Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.skill_import import (
@@ -55,10 +55,11 @@ from ._helpers import new_storage_path
 from .collaboration import (
     CollaborationError,
     CollaborationRefused,
-    RemoteItem,
     RemoteVersion,
+    SharingConflict,
     VersionConflict,
     client_for,
+    list_with_heads,
     server_url,
 )
 from .skills import (
@@ -76,8 +77,6 @@ SKILL_KIND = "skill"
 MANIFEST_FORMAT = 1
 """ Bumped when a manifest or the archive's layout changes meaning. """
 ARCHIVE_NAME = "skill.tar.gz"
-HEAD_FETCHES = 8
-""" How many head versions a listing asks for at once. """
 MAX_ARCHIVE_BYTES = MAX_UPLOAD_BYTES + 16 * 1024 * 1024
 """
 The most a download may be: the files an import takes, plus room for the tar
@@ -86,11 +85,8 @@ cannot fill the disk before the import's own limits are reached.
 """
 
 
-class SkillConflict(Exception):
-    """
-    A publish or import that needs the researcher's choice first. `code` says
-    which choice; the API answers 409 with it, `detail` and `extra`.
-    """
+class SkillConflict(SharingConflict):
+    """A skill's publish or import that needs the researcher's choice first."""
 
     def __init__(
         self,
@@ -98,10 +94,7 @@ class SkillConflict(Exception):
         code: Literal["version_conflict", "remote_missing", "modified", "name_taken"],
         **extra: Any,
     ):
-        super().__init__(detail)
-        self.detail = detail
-        self.code = code
-        self.extra = extra
+        super().__init__(detail, code, **extra)
 
 
 class SkillManifest(SkillMetadata):
@@ -297,38 +290,18 @@ async def list_remote_skills(
     its head says about it. Without, the listing is one request: enough for
     the head version of each.
 
-    The heads are asked for one by one (design D2): the server's listing
-    carries no manifests. A head that cannot be fetched leaves its skill
-    without a manifest rather than failing the listing.
+    The heads are asked for one by one (`list_with_heads`, design D2): the
+    server's listing carries no manifests. A head that cannot be fetched
+    leaves its skill without a manifest rather than failing the listing.
     """
     url, _ = server_url(local)
-    async with client_for(local) as client:
-        items = await client.list_items(SKILL_KIND)
-        heads: list[RemoteVersion | BaseException | None] = [None] * len(items)
-        if manifests:
-            limit = asyncio.Semaphore(HEAD_FETCHES)
-
-            async def head(item: RemoteItem) -> RemoteVersion:
-                async with limit:
-                    return await client.get_version(item.id, item.head_version)
-
-            heads = list(
-                await asyncio.gather(
-                    *(head(item) for item in items), return_exceptions=True
-                )
-            )
-    for error in heads:
-        if isinstance(error, BaseException) and not isinstance(
-            error, CollaborationError
-        ):
-            raise error
+    listed_items = await list_with_heads(local, SKILL_KIND, heads=manifests)
 
     rows = list((await session.exec(select(SkillTable))).all())
     linked = {r.remote_id: r for r in rows if r.remote_id and r.origin_server == url}
     names = {r.name for r in rows}
     listed = []
-    for item, version in zip(items, heads):
-        fetched = version if isinstance(version, RemoteVersion) else None
+    for item, fetched in listed_items:
         copy = linked.get(item.id)
         listed.append(
             RemoteSkill(
@@ -430,7 +403,7 @@ async def publish_skill(
                 SKILL_KIND, name, manifest=manifest, blob_ref=blob_ref
             )
             remote_id, remote_version = item.id, item.head_version
-    await _reread(session, row)
+    await reread(session, row)
     row.origin_server = url
     row.remote_id = remote_id
     row.remote_version = remote_version
@@ -441,7 +414,7 @@ async def publish_skill(
     return row
 
 
-async def _reread(session: AsyncSession, row: SkillTable) -> None:
+async def reread(session: AsyncSession, row: SQLModel) -> None:
     """
     Read `row` again in a new transaction, so a write another request committed
     while this one was talking to the server is seen. Nothing may be pending.
@@ -458,9 +431,10 @@ async def _reread(session: AsyncSession, row: SkillTable) -> None:
 ImportStatus = Literal["imported", "updated", "unchanged"]
 
 
-async def _linked(
+async def linked_skill(
     session: AsyncSession, url: str | None, item_id: uuid.UUID
 ) -> SkillTable | None:
+    """The skill here published as, or imported from, item `item_id` on `url`."""
     return (
         await session.exec(
             select(SkillTable).where(
@@ -527,7 +501,7 @@ async def import_skill(
             )
         manifest = _manifest(remote)
 
-        existing = await _linked(session, url, item_id)
+        existing = await linked_skill(session, url, item_id)
         if existing is not None:
             if existing.remote_version == number and not existing.modified:
                 if project is not None:
@@ -565,7 +539,7 @@ async def import_skill(
         row.remote_id = item_id
         status: ImportStatus = "imported"
     else:
-        await _reread(session, existing)
+        await reread(session, existing)
         if existing.updated_at != edited_at:
             await asyncio.to_thread(shutil.rmtree, dest, ignore_errors=True)
             raise _changed_here(existing, number)

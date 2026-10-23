@@ -605,6 +605,7 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
             assert existing is not None
             # A new list: SQLAlchemy does not see an in-place append to a JSON column.
             existing.knowledge_bases = [*existing.knowledge_bases, AI_SAFETY_SLUG]
+            existing.modified = True
             session.add(existing)
         await session.commit()
 

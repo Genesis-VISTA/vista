@@ -133,6 +133,7 @@ def load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
         *project.skills,
         name,
     ]  # a new list, so the JSON column is marked dirty
+    project.modified = True
     session.add(project)
     invalidate_agents(session, project_id=project.id)
 

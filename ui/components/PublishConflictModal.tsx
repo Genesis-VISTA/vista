@@ -7,23 +7,26 @@ import type { SkillSummary } from "@/lib/types";
 export type Conflict = { skill: SkillSummary; refusal: SharingRefusal };
 
 /**
- * The server's head moved past the version this skill was published as, or the
- * skill is gone from the server: the researcher decides what happens next.
+ * The server's head moved past the version this skill or project was published
+ * as, or it is gone from the server: the researcher decides what happens next.
  */
 export function PublishConflictModal({
-  conflict,
+  name,
+  noun,
+  refusal,
   onCancel,
   onTakeServers,
   onPublishOnTop,
   onPublishAsNew,
 }: {
-  conflict: Conflict;
+  name: string;
+  noun: "skill" | "project";
+  refusal: SharingRefusal;
   onCancel: () => void;
   onTakeServers: () => void;
   onPublishOnTop: (head: number) => void;
   onPublishAsNew: () => void;
 }) {
-  const { skill, refusal } = conflict;
   const head = refusal.code === "version_conflict" ? refusal.headVersion : null;
   return (
     <div className="modal-backdrop" onClick={onCancel}>
@@ -53,7 +56,7 @@ export function PublishConflictModal({
               </>
             )}
             <button type="button" className="button" onClick={onPublishAsNew}>
-              Publish {skill.slug} as a new skill
+              Publish {name} as a new {noun}
             </button>
           </div>
         </div>

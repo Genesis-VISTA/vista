@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -5,6 +7,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import ProjectCreate, ProjectTable
 from .project_agent import invalidate_agents
+
+
+def project_content(project: ProjectTable) -> dict[str, Any]:
+    """
+    The project's own fields, the ones `ProjectCreate` sets, as JSON: what a
+    write changes and `modified` tracks.
+    """
+    return ProjectCreate.model_validate(project, from_attributes=True).model_dump(
+        mode="json"
+    )
 
 
 async def list_projects(session: AsyncSession) -> list[ProjectTable]:
@@ -27,6 +39,7 @@ async def get_project_by_name(session: AsyncSession, name: str) -> ProjectTable:
 
 
 async def create_project(session: AsyncSession, payload: ProjectCreate) -> ProjectTable:
+    # `modified` by default: never published, so all of it is local.
     new = ProjectTable.model_validate(payload)
     session.add(new)
     try:
@@ -44,8 +57,12 @@ async def update_project(
     session: AsyncSession, name: str, updates: ProjectCreate
 ) -> ProjectTable:
     project = await get_project_by_name(session, name)
+    before = project_content(project)
     for key, value in updates.model_dump().items():
         setattr(project, key, value)
+    # Only a real change: the UI saves the whole project to load one skill.
+    if project_content(project) != before:
+        project.modified = True
     session.add(project)
     try:
         await session.flush()

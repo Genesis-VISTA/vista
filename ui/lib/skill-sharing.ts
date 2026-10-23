@@ -51,6 +51,8 @@ export type SharingCode =
   | "remote_missing"
   | "modified"
   | "name_taken"
+  | "name_invalid"
+  | "skill_conflict"
   | "collaboration_unavailable"
   | "collaboration_refused"
   | "collaboration_error";
@@ -62,6 +64,8 @@ export type SharingRefusal = {
   code: SharingCode | null;
   /** With `version_conflict`: the server's newest version. */
   headVersion: number | null;
+  /** With a project's `skill_conflict`: the skill that needs a choice first. */
+  skill?: string | null;
 };
 
 export type Published = { ok: true; skill: SkillSummary };
@@ -71,7 +75,8 @@ export type Imported = {
   skill: SkillSummary;
 };
 
-async function refusal(res: Response): Promise<SharingRefusal> {
+/** A refused publish or import, read from the backend's `{detail, code, …}`. */
+export async function refusal(res: Response): Promise<SharingRefusal> {
   let body: Record<string, unknown> = {};
   try {
     body = (await res.json()) as Record<string, unknown>;
@@ -85,10 +90,12 @@ async function refusal(res: Response): Promise<SharingRefusal> {
     detail: typeof detail === "string" && detail ? detail : `Request failed (${res.status}).`,
     code: typeof body.code === "string" ? (body.code as SharingCode) : null,
     headVersion: typeof body.head_version === "number" ? body.head_version : null,
+    ...(typeof body.skill === "string" ? { skill: body.skill } : {}),
   };
 }
 
-async function post(url: string, body: unknown): Promise<Response | SharingRefusal> {
+/** POST a JSON body; a request that cannot be sent is a refusal with status 0. */
+export async function post(url: string, body: unknown): Promise<Response | SharingRefusal> {
   try {
     return await fetch(url, {
       method: "POST",
@@ -141,12 +148,21 @@ export async function publishSkill(
   return { ok: true, skill: (await res.json()) as SkillSummary };
 }
 
-/** Import a skill's newest version from the server, loading it into `project` if given. */
+/**
+ * Import a skill from the server, `version` or the newest, loading it into
+ * `project` if given.
+ */
 export async function importRemoteSkill(
   id: string,
-  opts: { renameTo?: string; replaceModified?: boolean; project?: string | null } = {},
+  opts: {
+    version?: number;
+    renameTo?: string;
+    replaceModified?: boolean;
+    project?: string | null;
+  } = {},
 ): Promise<Imported | SharingRefusal> {
   const res = await post(`/api/collaboration/skills/${encodeURIComponent(id)}/import`, {
+    version: opts.version ?? null,
     rename_to: opts.renameTo ?? null,
     replace_modified: opts.replaceModified ?? false,
     project: opts.project ?? null,

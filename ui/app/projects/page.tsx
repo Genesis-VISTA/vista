@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { KnowledgeBaseSummary, SkillSummary } from "@/lib/types";
 import { AppTopBar } from "@/components/AppTopBar";
@@ -8,9 +9,25 @@ import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
 import { forumCredential, type SettingsTokens } from "@/lib/forum-credential";
 import { fetchSettings } from "@/lib/settings";
+import { useCollaboration } from "@/lib/collaboration";
+import {
+  importRemoteProject,
+  importSummary,
+  isProjectOnServer,
+  listRemoteProjects,
+  projectSharingLabel,
+  publishProject,
+  type ProjectImported,
+} from "@/lib/project-sharing";
+import type { SharingRefusal } from "@/lib/skill-sharing";
+import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { PublishConflictModal } from "@/components/PublishConflictModal";
+import { ProjectImportModal } from "@/components/ProjectImportModal";
 import {
   type Project,
+  type ProjectFields,
   activateProject,
+  projectNameError,
   createProject,
   deleteProject,
   notifyActiveProjectChanged,
@@ -22,7 +39,7 @@ import {
 } from "@/lib/projects";
 
 /** Project draft used by the create/edit modal (no `id` until persisted). */
-type ProjectDraft = Omit<Project, "id">;
+type ProjectDraft = ProjectFields;
 
 type ModalState =
   | { mode: "closed" }
@@ -54,17 +71,42 @@ function ProjectsPageContent() {
   const [modal, setModal] = useState<ModalState>(
     shouldOpenNew ? { mode: "create" } : { mode: "closed" }
   );
+  const collab = useCollaboration();
+  const serverUrl = collab.status?.reachable ? collab.status.url : null;
+  const [notice, setNotice] = useState<{ text: string; skill?: string } | null>(null);
+  const [busyName, setBusyName] = useState<string | null>(null);
+  const [pendingPublish, setPendingPublish] = useState<Project | null>(null);
+  const [conflict, setConflict] = useState<{ project: Project; refusal: SharingRefusal } | null>(
+    null
+  );
+  const [showImport, setShowImport] = useState(false);
+  /** The server's newest version of each item, by id, for "version N available". */
+  const [heads, setHeads] = useState<Record<string, number>>({});
+
+  const refreshHeads = useCallback(() => {
+    listRemoteProjects({ manifests: false })
+      .then((remote) => setHeads(Object.fromEntries(remote.map((r) => [r.id, r.head_version]))))
+      .catch(() => setHeads({}));
+  }, []);
 
   useEffect(() => {
+    if (collab.available) refreshHeads();
+  }, [collab.available, refreshHeads]);
+
+  const refreshSkillCatalog = useCallback(() => {
     fetch("/api/skills")
       .then((res) => res.json())
       .then((data) => setSkillCatalog(Array.isArray(data) ? data : []))
       .catch(() => setSkillCatalog([]));
+  }, []);
+
+  useEffect(() => {
+    refreshSkillCatalog();
     fetch("/api/knowledge-bases")
       .then((res) => res.json())
       .then((data) => setKbCatalog(Array.isArray(data) ? data : []))
       .catch(() => setKbCatalog([]));
-  }, []);
+  }, [refreshSkillCatalog]);
 
   // Strip `?new=1` from the URL after we've used it so refreshes don't
   // re-open the modal and the URL stays clean.
@@ -96,6 +138,66 @@ function ProjectsPageContent() {
     setModal({ mode: "closed" });
   }
 
+  async function publish(project: Project, opts: { onTopOf?: number; asNew?: boolean } = {}) {
+    setBusyName(project.name);
+    setNotice(null);
+    try {
+      const result = await publishProject(project.name, opts);
+      if (result.ok) {
+        const skills = result.skillsPublished.length
+          ? `, after publishing ${result.skillsPublished.join(", ")}`
+          : "";
+        setNotice({
+          text:
+            result.status === "unchanged"
+              ? `Nothing new to publish: ${project.name} is version ${result.project.remoteVersion} on the server.`
+              : `Published ${project.name} as version ${result.project.remoteVersion}${skills}.`,
+        });
+        await refresh();
+        refreshHeads();
+        return;
+      }
+      if (result.code === "version_conflict" || result.code === "remote_missing") {
+        setConflict({ project, refusal: result });
+        return;
+      }
+      setNotice({ text: result.detail, skill: result.skill ?? undefined });
+    } finally {
+      setBusyName(null);
+    }
+  }
+
+  /** Replace the project here with the server's version `version`, the one the researcher was shown. */
+  async function takeServers(project: Project, version?: number) {
+    if (!project.remoteId) return;
+    setBusyName(project.name);
+    setNotice(null);
+    try {
+      const result = await importRemoteProject(project.remoteId, {
+        version,
+        replaceModified: true,
+      });
+      if (result.ok) imported(result);
+      else setNotice({ text: result.detail });
+    } finally {
+      setBusyName(null);
+    }
+  }
+
+  function imported(result: ProjectImported) {
+    setShowImport(false);
+    const what =
+      result.status === "unchanged"
+        ? `${result.project.name} is already here at version ${result.project.remoteVersion}.`
+        : `Imported ${result.project.name} version ${result.project.remoteVersion}.`;
+    const more = importSummary(result);
+    setNotice({ text: more ? `${what} ${more}` : what });
+    // The import may have brought skills, which the project dialog lists.
+    refreshSkillCatalog();
+    void refresh();
+    refreshHeads();
+  }
+
   async function removeProject(project: Project) {
     const ok = window.confirm(
       `Delete project "${project.name}"? This cannot be undone.`
@@ -113,8 +215,29 @@ function ProjectsPageContent() {
       <AppTopBar title="Projects" showProject={false} />
       <div className="app-page-body">
       <p className="page-lede">
-        Pick a project to scope the chat session with its system prompt, skills, and tools.
+        Pick a project to scope the chat session with its system prompt, skills, and tools.{" "}
+        <button
+          type="button"
+          className="button ghost button-sm"
+          disabled={!collab.available}
+          title={collab.available ? "Import a project from the collaboration server" : (collab.reason ?? undefined)}
+          onClick={() => setShowImport(true)}
+        >
+          Import from the collaboration server
+        </button>
       </p>
+
+      {notice && (
+        <div className="hub-count" role="status" style={{ marginBottom: 12 }}>
+          {notice.text}
+          {notice.skill && (
+            <>
+              {" "}
+              <Link href="/skills">Open the Skills page</Link>
+            </>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="error" style={{ marginBottom: 12, fontSize: 13 }}>
@@ -152,9 +275,21 @@ function ProjectsPageContent() {
               key={project.id}
               project={project}
               active={activeName === project.name}
+              sharing={projectSharingLabel(
+                project,
+                serverUrl,
+                project.remoteId ? heads[project.remoteId] : undefined
+              )}
+              onServer={isProjectOnServer(project, serverUrl)}
+              publishing={busyName === project.name}
+              publishDisabledReason={collab.available ? null : collab.reason}
               onOpen={() => open(project)}
               onEdit={() => setModal({ mode: "edit", project })}
               onDelete={() => void removeProject(project)}
+              onPublish={() => {
+                if (isProjectOnServer(project, serverUrl)) void publish(project);
+                else setPendingPublish(project);
+              }}
             />
           ))}
           <button
@@ -184,6 +319,47 @@ function ProjectsPageContent() {
         />
       )}
 
+      <PublishConfirmModal
+        open={pendingPublish !== null}
+        title="Publish project"
+        message={pendingPublish
+          ? `Publish "${pendingPublish.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts skills that are not on the server, or have changed, are published first. Anyone who can reach that server can see and import them. A published version stays there; you can publish newer ones.`
+          : ""}
+        confirmLabel="Publish"
+        onCancel={() => setPendingPublish(null)}
+        onConfirm={() => {
+          if (!pendingPublish) return;
+          const project = pendingPublish;
+          setPendingPublish(null);
+          void publish(project);
+        }}
+      />
+
+      {conflict && (
+        <PublishConflictModal
+          name={conflict.project.name}
+          noun="project"
+          refusal={conflict.refusal}
+          onCancel={() => setConflict(null)}
+          onTakeServers={() => {
+            setConflict(null);
+            void takeServers(conflict.project, conflict.refusal.headVersion ?? undefined);
+          }}
+          onPublishOnTop={(head) => {
+            setConflict(null);
+            void publish(conflict.project, { onTopOf: head });
+          }}
+          onPublishAsNew={() => {
+            setConflict(null);
+            void publish(conflict.project, { asNew: true });
+          }}
+        />
+      )}
+
+      {showImport && (
+        <ProjectImportModal onClose={() => setShowImport(false)} onImported={imported} />
+      )}
+
     </div>
   );
 }
@@ -191,15 +367,27 @@ function ProjectsPageContent() {
 function ProjectCard({
   project,
   active,
+  sharing,
+  onServer,
+  publishing,
+  publishDisabledReason,
   onOpen,
   onEdit,
   onDelete,
+  onPublish,
 }: {
   project: Project;
   active: boolean;
+  /** Where it stands with the collaboration server. */
+  sharing: string;
+  onServer: boolean;
+  publishing: boolean;
+  /** Why Publish is off; null when it can be used. */
+  publishDisabledReason: string | null;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onPublish: () => void;
 }) {
   const stats = useProjectStats(project.name);
 
@@ -229,6 +417,7 @@ function ProjectCard({
         </div>
       )}
       <div className="project-card-desc">{project.description || "No description."}</div>
+      <div className="project-card-sharing">{sharing}</div>
 
       <ChipRow label="Skills" items={project.skills} />
       <ChipRow label="Knowledge Bases" items={project.knowledgeBases} />
@@ -240,6 +429,21 @@ function ProjectCard({
         </button>
         <button type="button" className="button ghost button-sm" onClick={onEdit}>
           Edit
+        </button>
+        <button
+          type="button"
+          className="button ghost button-sm"
+          disabled={publishing || publishDisabledReason !== null}
+          title={publishDisabledReason ?? "Publish this project and its skills to the collaboration server"}
+          onClick={onPublish}
+        >
+          {publishing
+            ? "Publishing…"
+            : !onServer
+              ? "Publish"
+              : project.modified
+                ? "Publish changes"
+                : "Republish"}
         </button>
         <button type="button" className="button ghost button-sm" onClick={onDelete}>
           Delete
@@ -291,7 +495,7 @@ function ProjectModal({
   kbCatalog: KnowledgeBaseSummary[];
   existingNames: Set<string>;
   onCancel: () => void;
-  onSave: (draft: Omit<Project, "id">) => Promise<void>;
+  onSave: (draft: ProjectFields) => Promise<void>;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -338,18 +542,9 @@ function ProjectModal({
   async function commit() {
     const trimmedName = name.trim();
     const trimmedDesc = description.trim();
-    if (!trimmedName) {
-      setError("Name is required.");
-      return;
-    }
-    if (trimmedName.length < 2) {
-      setError("Name must be at least 2 characters.");
-      return;
-    }
-    // The name is used as the URL path segment for CRUD routes, so restrict it
-    // to characters that round-trip cleanly without percent-encoding surprises.
-    if (!/^[\w ._-]+$/.test(trimmedName)) {
-      setError("Name may only contain letters, numbers, spaces, '.', '_', and '-'.");
+    const nameError = projectNameError(trimmedName);
+    if (nameError) {
+      setError(nameError);
       return;
     }
     if (mode === "create" && existingNames.has(trimmedName)) {

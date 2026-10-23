@@ -39,7 +39,10 @@ Markdown file under [system_prompts/](../backend/src/vista_backend/db/system_pro
 
 The schema lives in
 [backend/src/vista_backend/db/schemas.py](../backend/src/vista_backend/db/schemas.py).
-The on-the-wire shape (`ProjectPublic`) adds `id` (a server-assigned UUID);
+The on-the-wire shape (`ProjectPublic`) adds `id` (a server-assigned UUID)
+and the project's collaboration state (`origin_server`, `remote_id`,
+`remote_version`, `modified`; see
+[Publishing and importing](#publishing-and-importing-through-a-collaboration-server));
 the frontend `Project` type in [ui/lib/projects.ts](../ui/lib/projects.ts)
 camel-cases everything (`systemPrompt`, `usageLimits`).
 
@@ -189,6 +192,52 @@ doesn't dangle.
 If you delete the active project, the pointer is cleared and you land back at
 "no active project".
 
+## Publishing and importing through a collaboration server
+
+Projects are shared the way skills are (see the
+[skill onboarding doc](skill-onboarding.md#publishing-and-importing-through-a-collaboration-server)):
+explicitly, through the collaboration server set in **Settings → Collaboration**.
+Without one that answers, Publish and Import say why and do nothing.
+
+**Publishing.** Each card on `/projects` says where the project stands (*Not
+published*, *Version 2*, *Differs here from version 2*, *Version 3
+available*), and **Publish** sends it. The skills it loads go first: each one
+that is not on the server, or has changed since its version, is published, and
+the project's version names them by item and version. Skills bundled with
+VISTA are named as bundled and never published. Knowledge bases are named by
+slug only; they are not published yet. A project that loads a skill not on
+this computer is not published until the skill is removed from it. If a skill
+needs a choice (someone published it since your version), the project is not
+published, and the page points you to `/skills` to resolve it.
+
+The project's own conflicts work as a skill's do: if someone published the
+project since your version, you choose **Use the server's version**, **Publish
+mine as version N**, or **Publish as a new project**, and nothing has been
+published yet. A save that changes the project, or loading a skill into it,
+marks it changed; a save that changes nothing does not.
+
+**Importing.** **Import from the collaboration server** lists the server's
+projects. **Import** brings the project and the skills it loads:
+
+- a skill version not here is imported, under the first free `<name>-<n>` if
+  another skill has its name (a renamed copy still counts as that version);
+- a copy of the skill that is older and unchanged here is updated to that version;
+- a newer copy, or one changed here, is kept as it is; a publish from here then
+  publishes that copy first and names it;
+- a bundled skill this VISTA does not ship stays named in the project, but loads
+  nothing, and a publish from here names it as bundled again; if a different
+  skill here has its name, it is left out and the project is marked as
+  differing here;
+- knowledge bases are kept by slug, whether or not this computer has them;
+  importing them comes later.
+
+The page says which of these happened. The imported project gets an id of its
+own, and a name the projects page would accept: if the server's is not one, you
+are asked for another. A copy of the same project here is updated in place, and if it was changed
+here you are asked first. A different project with the same name asks for a new
+name. If its Hypothesis Lab's repository cannot be reached from here, the
+project is imported anyway, and the page gives the reason.
+
 ## How a project drives the agent
 
 When you send a chat message, the frontend posts to
@@ -224,6 +273,9 @@ the Next.js proxies in [ui/app/api/projects/](../ui/app/api/projects).
 | `POST`   | `/projects`                   | Create. 409 on duplicate `name`.                                 |
 | `PUT`    | `/projects/{name}`            | Full overwrite. 409 if the new name collides with another row.   |
 | `DELETE` | `/projects/{name}`            | Hard delete. 204 on success.                                     |
+| `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills first. |
+| `GET`    | `/collaboration/projects`     | The server's projects, with any copy here.                       |
+| `POST`   | `/collaboration/projects/{id}/import` | Import with its skills (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/projects/{name}/agent/run`  | Run one agent turn (stateless; pass `message_history`).           |
 
 ## Troubleshooting

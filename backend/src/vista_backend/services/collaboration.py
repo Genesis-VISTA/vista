@@ -13,6 +13,7 @@ The server trusts the identity headers sent here (`install_id` and the display
 name from the settings row). That is a stub, like the server's side of it.
 """
 
+import asyncio
 import functools
 import os
 import tempfile
@@ -39,6 +40,8 @@ DISPLAY_NAME_HEADER = "X-Vista-Display-Name"
 STATUS_TIMEOUT = httpx.Timeout(5.0)
 """ How long the status check waits: it is shown in Settings, so it must be quick. """
 TRANSFER_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
+HEAD_FETCHES = 8
+""" How many head versions a listing asks for at once. """
 
 transport: httpx.AsyncBaseTransport | None = None
 """
@@ -74,6 +77,20 @@ class VersionConflict(CollaborationRefused):
     def __init__(self, message: str, head_version: int):
         super().__init__(message, 409)
         self.head_version = head_version
+
+
+class SharingConflict(Exception):
+    """
+    A publish or import that needs the researcher's choice first. `code` says
+    which choice; the API answers 409 with it, `detail` and `extra`. Each kind
+    subclasses it with the codes it can raise.
+    """
+
+    def __init__(self, detail: str, code: str, **extra: Any):
+        super().__init__(detail)
+        self.detail = detail
+        self.code = code
+        self.extra = extra
 
 
 class CollaborationStatus(BaseModel):
@@ -402,6 +419,40 @@ def client_for(
         display_name=local.display_name,
         timeout=timeout,
     )
+
+
+async def list_with_heads(
+    local: LocalSettingsPublic, kind: str, *, heads: bool = True
+) -> list[tuple[RemoteItem, RemoteVersion | None]]:
+    """
+    The server's items of `kind`, each with its head version when `heads`.
+
+    The server's listing carries no manifests, so the heads are asked for one
+    by one, `HEAD_FETCHES` at a time. A head that cannot be fetched is None
+    rather than failing the listing; without `heads` every head is None and
+    the listing is one request.
+    """
+    async with client_for(local) as client:
+        items = await client.list_items(kind)
+        if not heads:
+            return [(item, None) for item in items]
+        limit = asyncio.Semaphore(HEAD_FETCHES)
+
+        async def head(item: RemoteItem) -> RemoteVersion:
+            async with limit:
+                return await client.get_version(item.id, item.head_version)
+
+        fetched = await asyncio.gather(
+            *(head(item) for item in items), return_exceptions=True
+        )
+    listed: list[tuple[RemoteItem, RemoteVersion | None]] = []
+    for item, version in zip(items, fetched):
+        if isinstance(version, BaseException) and not isinstance(
+            version, CollaborationError
+        ):
+            raise version
+        listed.append((item, version if isinstance(version, RemoteVersion) else None))
+    return listed
 
 
 async def status(local: LocalSettingsPublic) -> CollaborationStatus:

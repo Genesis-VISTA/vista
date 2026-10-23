@@ -102,6 +102,10 @@ export const PROJECTS = [
     knowledge_bases: ["molten-salt-papers"],
     tools: ["rag_search"],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
   {
     id: "00000000-0000-4000-8000-000000000004",
@@ -112,6 +116,10 @@ export const PROJECTS = [
     knowledge_bases: [],
     tools: [],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
 ];
 

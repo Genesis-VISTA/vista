@@ -99,13 +99,16 @@ export default function SkillsPage() {
     }
   }
 
-  /** Replace the files here with the server's newest version. */
-  async function takeServers(skill: SkillSummary) {
+  /**
+   * Replace the files here with the server's version `version` (the one the
+   * researcher was shown), or its newest.
+   */
+  async function takeServers(skill: SkillSummary, version?: number) {
     if (!skill.remoteId) return;
     setBusySlug(skill.slug);
     setNotice(null);
     try {
-      const result = await importRemoteSkill(skill.remoteId, { replaceModified: true });
+      const result = await importRemoteSkill(skill.remoteId, { version, replaceModified: true });
       if (result.ok) {
         replaceSkill(result.skill);
         setNotice(`${skill.slug} is now the server's version ${result.skill.remoteVersion}.`);
@@ -442,11 +445,13 @@ export default function SkillsPage() {
       />
       {conflict && (
         <PublishConflictModal
-          conflict={conflict}
+          name={conflict.skill.slug}
+          noun="skill"
+          refusal={conflict.refusal}
           onCancel={() => setConflict(null)}
           onTakeServers={() => {
             setConflict(null);
-            void takeServers(conflict.skill);
+            void takeServers(conflict.skill, conflict.refusal.headVersion ?? undefined);
           }}
           onPublishOnTop={(head) => {
             setConflict(null);

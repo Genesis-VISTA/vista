@@ -41,6 +41,10 @@ const PROJECT: Project = {
   forumRepoUrl: "",
   tools: [],
   usageLimits: {},
+  originServer: null,
+  remoteId: null,
+  remoteVersion: null,
+  modified: true,
 };
 
 const PROVIDERS = [

@@ -3101,6 +3101,11 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.5;
 }
 
+.project-card-sharing {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .project-card-row {
   display: flex;
   flex-direction: column;

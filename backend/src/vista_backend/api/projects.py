@@ -1,9 +1,15 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..db.db import SessionDep
 from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable
-from ..services import local_settings, project as project_service
+from ..services import (
+    local_settings,
+    project as project_service,
+    project_collaboration,
+)
+from ..services.local_settings import LocalSettingsDep
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -63,3 +69,33 @@ async def update_project(
 @router.delete("/{project_name}", status_code=204)
 async def delete_project(project_name: str, session: SessionDep) -> None:
     await project_service.delete_project(session, project_name)
+
+
+class ProjectPublishRequest(BaseModel):
+    """Body for `POST /projects/{name}/publish`; empty for an ordinary publish."""
+
+    on_top_of: int | None = Field(default=None, ge=1)
+    """
+    Publish over this head, which a refused publish reported, rather than over
+    the version the project was last published as or imported from.
+    """
+    as_new: bool = False
+    """ Publish as a new project on the server, not as a version of its own. """
+
+
+@router.post("/{project_name}/publish")
+async def publish_project(
+    project_name: str,
+    body: ProjectPublishRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> project_collaboration.ProjectPublishResult:
+    """
+    Publish the project to the collaboration server, after the skills it loads
+    that are not there or have changed. 409 with `code` when the server's head
+    has moved on (`version_conflict`, with `head_version`), the item is gone
+    (`remote_missing`), or a skill needs a choice first (`skill_conflict`).
+    """
+    return await project_collaboration.publish_project(
+        session, local, project_name, on_top_of=body.on_top_of, as_new=body.as_new
+    )

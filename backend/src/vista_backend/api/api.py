@@ -23,9 +23,9 @@ from ..services.collaboration import (
     CollaborationError,
     CollaborationRefused,
     CollaborationUnavailable,
+    SharingConflict,
 )
 from ..services.project_agent import project_agent_pool
-from ..services.skill_collaboration import SkillConflict
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_runs import router as chat_runs_router
@@ -154,8 +154,8 @@ async def _collaboration_error(
     return JSONResponse(status_code=status, content={"detail": str(exc), "code": code})
 
 
-@app.exception_handler(SkillConflict)
-async def _skill_conflict(request: Request, exc: SkillConflict) -> JSONResponse:
+@app.exception_handler(SharingConflict)
+async def _sharing_conflict(request: Request, exc: SharingConflict) -> JSONResponse:
     """A publish or import that needs the researcher's choice: 409 with `code`."""
     return JSONResponse(
         status_code=409,

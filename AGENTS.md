@@ -150,8 +150,13 @@ Skills are items of kind `skill` (`services/skill_collaboration.py`): a version 
 a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
 The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local
 library. A local skill records `origin_server`, `remote_id`, `remote_version` and `modified`;
-every write to its files must set `modified`. Backend tests mount the server in-process (the `collab_server` fixture) through the backend's
-dev extra, so run them with `--extra dev`.
+every write to its files must set `modified`. Projects are items of kind `project`
+(`services/project_collaboration.py`): a manifest built field by field from `ProjectPublic`
+(never the row) that references skill versions, published after the skills it loads and
+imported with them; `/projects` publishes and imports. A project records the same four fields,
+and every write that changes its `ProjectCreate` fields must set `modified`. Backend tests
+mount the server in-process (the `collab_server` fixture) through the backend's dev extra, so
+run them with `--extra dev`.
 
 ### Frontend (UI)
 Launches Next.js dev server on :3000
