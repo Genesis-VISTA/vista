@@ -13,7 +13,7 @@
 
 ## 3. Agent guidance
 
-- [ ] 3.1 Edit `run_bash`'s description in `mcp_servers/dev_mcp_server/src/dev_mcp_server/server.py` (drop the "automatically displayed" line and the salt-analysis key paths; point to `display_file`), `display_file`'s description in `mcp_servers/vista_mcp_server/src/vista_mcp_server/display_file_mcp.py`, and `backend/src/vista_backend/agents/base_system_prompt.md:4`, as design.md §9 says. Verify that `grep -rn "automatically displayed" mcp_servers backend/src` finds nothing, and that `./scripts/ci-local.sh mcp test` and `backend/tests/test_skills_prompt.py` pass
+- [x] 3.1 Edit `run_bash`'s description in `mcp_servers/dev_mcp_server/src/dev_mcp_server/server.py` (drop the "automatically displayed" line and the salt-analysis key paths; point to `display_file`), `display_file`'s description in `mcp_servers/vista_mcp_server/src/vista_mcp_server/display_file_mcp.py`, and `backend/src/vista_backend/agents/base_system_prompt.md:4`, as design.md §9 says. Verify that `grep -rn "automatically displayed" mcp_servers backend/src` finds nothing, and that `./scripts/ci-local.sh mcp test` and `backend/tests/test_skills_prompt.py` pass
 
 ## 4. Shared preview component
 
