@@ -115,29 +115,30 @@ run, or before this capability existed, SHALL have no record.
 
 - **WHEN** a chat whose run displayed `run1/plot.png` is deleted
 - **THEN** its records SHALL be gone
-- **AND** `run1/plot.png` SHALL still exist and be listed on the Files page with no "shown in"
+- **AND** `run1/plot.png` SHALL still exist and be listed on the Files page with no "Show in chat"
 
 ### Requirement: Shown-in reflects the file as it is
 
 A displayed file SHALL count as unchanged only while its size and modification time equal
 those recorded; otherwise it is changed, or missing if it no longer exists. The Files page
-SHALL show, for an unchanged file, "shown in" with the chat it was most recently displayed in
-and a link to that turn. It SHALL show nothing for a changed file or a file with no record.
+SHALL offer, for an unchanged file, a "Show in chat" action that opens the turn of the chat it
+was most recently displayed in. It SHALL offer nothing for a changed file or a file with no
+record.
 
 #### Scenario: Unchanged file links to its chat
 
 - **WHEN** `run1/plot.png` is displayed in chat "Phase diagram" and is not modified afterwards
-- **THEN** the Files page SHALL show it as shown in "Phase diagram", linking to that turn
+- **THEN** the Files page SHALL offer "Show in chat" for it, opening that turn of "Phase diagram"
 
 #### Scenario: Overwritten file loses its link
 
 - **WHEN** a displayed file is rewritten so that its size or modification time changes
-- **THEN** the Files page SHALL show no "shown in" for it
+- **THEN** the Files page SHALL offer no "Show in chat" for it
 
 #### Scenario: Most recent display wins
 
 - **WHEN** an unchanged file was displayed in two chats
-- **THEN** "shown in" SHALL name the chat that displayed it most recently
+- **THEN** "Show in chat" SHALL open the chat that displayed it most recently
 
 ### Requirement: Agent guidance for showing a file
 

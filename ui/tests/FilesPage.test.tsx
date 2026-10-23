@@ -151,11 +151,9 @@ describe("Files page", () => {
     await advance(0);
 
     expect(screen.getByTestId("preview")).toHaveTextContent("run1/plot.png");
-    expect(screen.getByRole("link", { name: "My chat" })).toHaveAttribute(
-      "href",
-      "/?chat=c1&run=r1&step=t1",
-    );
-    expect(screen.getAllByText(/Shown in/)).toHaveLength(1);
+    const [show, ...others] = screen.getAllByRole("link", { name: "Show in chat" });
+    expect(others).toHaveLength(0);
+    expect(show).toHaveAttribute("href", "/?chat=c1&run=r1&step=t1");
   });
 
   it("keeps folders the researcher opened open when a file inside them is selected", async () => {

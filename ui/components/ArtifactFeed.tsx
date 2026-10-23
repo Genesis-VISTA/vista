@@ -9,10 +9,17 @@ import { filesHref } from "@/lib/files-tree";
 type Props = {
   items: DisplayedFile[];
   projectName: string | null;
+  /** Element ids the page is pointing at; a card among them is highlighted. */
+  highlighted?: readonly string[];
   onZoom: (image: { src: string; alt: string }) => void;
   /** Scroll the conversation to the turn that displayed this file. */
   onJumpToTurn: (item: DisplayedFile) => void;
 };
+
+/** The DOM id of a feed card, which a jump to its turn scrolls to and highlights. */
+export function artifactElementId(item: Pick<DisplayedFile, "run_id" | "tool_call_id">): string {
+  return `artifact-${item.run_id}-${item.tool_call_id}`;
+}
 
 function fileSrc(item: DisplayedFile, projectName: string | null): string {
   const encoded = item.path.split("/").map(encodeURIComponent).join("/");
@@ -23,14 +30,20 @@ function fileSrc(item: DisplayedFile, projectName: string | null): string {
 function FeedItem({
   item,
   projectName,
+  highlighted,
   onZoom,
   onJumpToTurn,
 }: { item: DisplayedFile } & Omit<Props, "items">) {
   const [open, setOpen] = useState(false);
   const isImage = item.mime_type.startsWith("image/");
+  const id = artifactElementId(item);
 
   return (
-    <li className="artifact-item" data-status={item.status}>
+    <li
+      id={id}
+      className={`artifact-item${highlighted?.includes(id) ? " turn-highlight" : ""}`}
+      data-status={item.status}
+    >
       {item.status === "current" && isImage ? (
         <button
           type="button"

@@ -28,7 +28,7 @@ is gone from view, and nothing leads from a file back to the conversation that p
 - **VISTA records each displayed file** against its chat, turn and tool call, with the file's
   size and modification time. The agent never sees this record. A file that has since changed
   on disk or gone shows "file has changed on disk" or "file no longer exists" in the feed,
-  without a preview, and the Files page shows "shown in" only for a file that is unchanged.
+  without a preview, and the Files page offers "Show in chat" only for a file that is unchanged.
 - **Chats can be opened by URL** at a turn (`/?chat=<id>&run=<run_id>`), which highlights
   that turn's answer and scrolls Activity to the step that displayed the file.
 - **The agent is told plainly how to show a file.** `run_bash` stops claiming that saved plots

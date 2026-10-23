@@ -186,6 +186,19 @@ test.describe("opening a conversation at a turn", () => {
   test.beforeEach(async ({ page }) => {
     stub = await installStub(page, {
       "GET /api/chat/session": { ...CHAT_SESSION, messages: MESSAGES },
+      // What run-1 displayed: a CSV, so the card needs no image fetch.
+      "GET /api/chat/displayed-files": [
+        {
+          kind: "outputs",
+          path: "run1/density.csv",
+          name: "density.csv",
+          mime_type: "text/csv",
+          run_id: "run-1",
+          tool_call_id: "call-1",
+          shown_at: "2026-01-01T00:00:00+00:00",
+          status: "current",
+        },
+      ],
     });
     // The project is active once it has been opened; the link then names a conversation.
     await page.goto("/projects");
@@ -204,18 +217,20 @@ test.describe("opening a conversation at a turn", () => {
     stub = null;
   });
 
-  test("selects the chat, highlights the turn's answer and the step, and clears the URL", async ({ page }) => {
+  test("selects the chat, highlights the turn's answer and the file's card, and clears the URL", async ({ page }) => {
+    // Leave Artifacts first, so the jump has to bring it back.
+    await page.getByRole("tab", { name: /Activity/ }).click();
     await page.goto(`/?chat=${SESSION_ID}&run=run-1&step=call-1`);
 
     await expect(page.locator(".chat-session-banner")).toBeVisible();
     const answer = page.locator("#msg-a-run-1");
     await expect(answer).toHaveClass(/turn-highlight/);
     await expect(answer).toBeInViewport();
-    // The step is in Activity, which is now the tab on show.
-    await expect(page.getByRole("tab", { name: /Activity/ })).toHaveAttribute("aria-selected", "true");
-    const step = page.locator("#msg-s-run-1");
-    await expect(step).toHaveClass(/turn-highlight/);
-    await expect(step).toBeInViewport();
+    // The file the link came from is in Artifacts, which is now the tab on show.
+    await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
+    const card = page.locator("#artifact-run-1-call-1");
+    await expect(card).toHaveClass(/turn-highlight/);
+    await expect(card).toBeInViewport();
     // Only the named run's bubbles.
     await expect(page.locator("#msg-a-run-2")).not.toHaveClass(/turn-highlight/);
 
@@ -251,12 +266,11 @@ test.describe("opening a conversation at a turn", () => {
     await expect.poll(() => new URL(page.url()).search).toBe("");
   });
 
-  test("a step from before steps carried an id falls back to the turn", async ({ page }) => {
+  test("a display with no card in the feed falls back to the turn", async ({ page }) => {
     await page.goto(`/?chat=${SESSION_ID}&run=run-4&step=call-4`);
 
     await expect(page.locator("#msg-a-run-4")).toHaveClass(/turn-highlight/);
-    // Nothing in Activity matches, so the tab does not move.
-    await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
-    await expect(page.locator(".activity-step.turn-highlight")).toHaveCount(0);
+    // run-4 recorded nothing, so no card is pointed at.
+    await expect(page.locator(".artifact-item.turn-highlight")).toHaveCount(0);
   });
 });

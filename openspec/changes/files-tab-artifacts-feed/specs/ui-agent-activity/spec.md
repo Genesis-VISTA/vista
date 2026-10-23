@@ -39,14 +39,20 @@ and references) SHALL keep showing from the latest result, as before.
 ### Requirement: Open a conversation at a turn
 
 A conversation SHALL be openable by URL naming the conversation and, optionally, a run.
-Opening a run SHALL scroll to and highlight that turn's answer and scroll the Activity tab to
-the step that displayed the file the user came from, if one is named.
+Opening a run SHALL scroll to and highlight that turn's answer, and, when the URL names the
+display the user came from, show the Artifacts tab with that file's card scrolled to and
+highlighted.
 
 #### Scenario: Jump from the Files page
 
-- **WHEN** the user follows "shown in" for a file on the Files page
+- **WHEN** the user follows "Show in chat" for a file on the Files page
 - **THEN** chat SHALL open that conversation, scroll to and highlight the turn that displayed the file
-- **AND** the Activity tab SHALL be scrolled to that turn's `display_file` step
+- **AND** the Artifacts tab SHALL be shown, with that file's card scrolled to and highlighted
+
+#### Scenario: Display with no card
+
+- **WHEN** the URL names a display the conversation's feed has no record of
+- **THEN** only the turn SHALL be highlighted
 
 #### Scenario: Unknown run
 

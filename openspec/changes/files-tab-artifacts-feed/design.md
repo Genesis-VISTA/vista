@@ -148,7 +148,9 @@ renderer by extension:
 - **Refresh:** the page subscribes to `useChatRunStatus` and reloads the listing when any
   chat in the project leaves `working`. That is the same poll the nav rail already runs, so
   no new endpoint is needed.
-- **"Shown in"** renders as a link to `/?chat=<id>&run=<run_id>&step=<tool_call_id>`.
+- **"Show in chat"** is a row action beside Download and Delete, linking to
+  `/?chat=<id>&run=<run_id>&step=<tool_call_id>`. It names no chat (the title is only its
+  tooltip): titles are the first words of a prompt and don't tell chats apart well yet.
 
 ### 7. Artifacts feed
 
@@ -164,20 +166,25 @@ renderer by extension:
   - `missing` shows the name and "file no longer exists", without a Files link.
 - **Non-file results** (HTML `ui`, prediction summary, references) keep coming from
   `latestResult` and render above the feed, as today.
+- **A chat with no records**, which is every chat from before this change, still shows its
+  `latestResult` figure once the feed has loaded empty, so its Artifacts tab doesn't go blank.
 
 ### 8. Opening a chat at a turn
 
 - **Reading the URL.** The chat page reads `chat`, `run` and `step` once on load. A `chat`
   that belongs to the active project becomes the selected chat, written to localStorage as
-  selecting it would be. Then the URL params are cleared with `router.replace`, so a reload
-  doesn't re-jump.
+  selecting it would be. Then the URL params are cleared with
+  `window.history.replaceState`, so a reload doesn't re-jump. (`router.replace("/")` did
+  nothing in the production build after a full load with a query string; Next documents
+  `replaceState` as updating `useSearchParams`.)
 - **Highlighting the turn.** Bubbles get `id="msg-<id>"`. The jump scrolls to and briefly
-  highlights the turn's final answer (the last non-intermediate bubble with that `run_id`),
-  and selects Activity.
-- **Finding the step.** Activity scrolls to its step for `step`. That needs the step bubble
-  to carry the `tool_call_id`, so `run-renderer.ts` adds an optional `tool_call_id` to the
-  `function_tool_call` step bubble it already persists. Bubbles from before this change lack
-  it, and the jump falls back to the turn only.
+  highlights the turn's final answer (the last non-intermediate assistant bubble with that
+  `run_id`).
+- **Finding the file.** `step` names the display (`tool_call_id`). Once the chat's feed has
+  loaded, the jump shows the Artifacts tab and scrolls to and highlights the card with that
+  `run_id` and `tool_call_id` (`id="artifact-<run>-<call>"`). A display with no card, such
+  as one from before records were kept, highlights the turn only. Step bubbles also carry
+  their call's `tool_call_id` (`run-renderer.ts`), for a later jump into Activity.
 - **Fallbacks.** An unknown `run` opens the chat at its end. An unknown `chat` shows a one-line
   "Conversation not found" note and behaves as a plain `/`.
 

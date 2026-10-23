@@ -282,6 +282,16 @@ function FilesPageInner() {
             </span>
           </button>
           <div className="files-row-actions">
+            {/* Chat titles don't tell conversations apart well yet, so this names none. */}
+            {file.shown_in && (
+              <Link
+                className="button ghost button-xs"
+                href={shownInHref(file.shown_in)}
+                title={`Shown in ${file.shown_in.chat_title}`}
+              >
+                Show in chat
+              </Link>
+            )}
             <a
               className="button ghost button-xs"
               href={downloadHref}
@@ -301,12 +311,6 @@ function FilesPageInner() {
             </button>
           </div>
         </div>
-        {file.shown_in && (
-          <div className="files-shown-in" style={indent}>
-            Shown in{" "}
-            <Link href={shownInHref(file.shown_in)}>{file.shown_in.chat_title}</Link>
-          </div>
-        )}
       </li>
     );
   }

@@ -1538,17 +1538,6 @@ textarea.input {
   flex: 0 0 auto;
 }
 
-.files-shown-in {
-  padding-right: 8px;
-  padding-bottom: 5px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.files-shown-in a {
-  color: var(--brand);
-}
-
 .files-preview-pane {
   min-width: 0;
   position: sticky;

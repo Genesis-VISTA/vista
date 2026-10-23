@@ -69,7 +69,7 @@ import {
 import { readRefusedSend } from "@/lib/refused-send";
 import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
 import { RunStatusDot } from "@/components/RunStatusDot";
-import ArtifactFeed from "@/components/ArtifactFeed";
+import ArtifactFeed, { artifactElementId } from "@/components/ArtifactFeed";
 import { fetchDisplayedFiles, mergeFeed, type DisplayedFile } from "@/lib/displayed-files";
 
 type WorkspaceTab = "artifacts" | "activity" | "jobs";
@@ -278,6 +278,8 @@ function ChatPage() {
   const [recordedFiles, setRecordedFiles] = useState<DisplayedFile[]>([]);
   const [provisionalFiles, setProvisionalFiles] = useState<DisplayedFile[]>([]);
   const [feedLoaded, setFeedLoaded] = useState(false);
+  /** The conversation the loaded feed belongs to, so a jump never reads another's. */
+  const [feedLoadedFor, setFeedLoadedFor] = useState<string | null>(null);
   const [feedRefresh, setFeedRefresh] = useState(0);
   const feedItems = useMemo(
     () => mergeFeed(provisionalFiles, recordedFiles),
@@ -497,6 +499,7 @@ function ChatPage() {
     setRecordedFiles([]);
     setProvisionalFiles([]);
     setFeedLoaded(false);
+    setFeedLoadedFor(null);
   }, [activeProject?.name, activeChatSessionId]);
 
   // Read the record of displayed files on open, on a switch, and when a run finishes.
@@ -510,10 +513,13 @@ function ChatPage() {
         // What the run showed is in the record now.
         setProvisionalFiles([]);
         setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
       })
       .catch(() => {
         // Keep what is shown; the next run or switch reads it again.
-        if (!controller.signal.aborted) setFeedLoaded(true);
+        if (controller.signal.aborted) return;
+        setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
       });
     return () => controller.abort();
   }, [activeProject?.name, activeChatSessionId, feedRefresh]);
@@ -565,27 +571,37 @@ function ChatPage() {
     ) {
       return;
     }
+    // A link that names the display waits for the feed, so its card can be shown too.
+    if (pendingJump.stepId && feedLoadedFor !== pendingJump.chat) return;
     setPendingJump(null);
     const answer = pendingJump.runId ? findTurnAnswer(messages, pendingJump.runId) : null;
     if (!answer) return;
-    // A bubble from before steps carried their call's id has none to match: the turn alone.
-    const step = pendingJump.stepId
-      ? messages.find(
-          (m) =>
-            m.intermediate &&
-            m.run_id === pendingJump.runId &&
-            m.tool_call_id === pendingJump.stepId
+    // The file the researcher came from, in the feed; none for a display from
+    // before they were recorded, which opens the turn alone.
+    const card = pendingJump.stepId
+      ? feedItems.find(
+          (f) => f.run_id === pendingJump.runId && f.tool_call_id === pendingJump.stepId
         )
       : undefined;
-    if (step) setWorkspaceTab("activity");
-    setTurnFocus({ ids: step ? [answer.id, step.id] : [answer.id] });
-  }, [pendingJump, activeProject?.name, activeChatSessionId, isSessionHydrated, messages]);
+    if (card) setWorkspaceTab("artifacts");
+    setTurnFocus({
+      ids: card ? [`msg-${answer.id}`, artifactElementId(card)] : [`msg-${answer.id}`],
+    });
+  }, [
+    pendingJump,
+    activeProject?.name,
+    activeChatSessionId,
+    isSessionHydrated,
+    messages,
+    feedLoadedFor,
+    feedItems,
+  ]);
 
   useEffect(() => {
     if (!turnFocus) return;
     const frame = requestAnimationFrame(() => {
       for (const id of turnFocus.ids) {
-        document.getElementById(`msg-${id}`)?.scrollIntoView({ block: "center" });
+        document.getElementById(id)?.scrollIntoView({ block: "center" });
       }
     });
     const timer = window.setTimeout(() => setTurnFocus(null), 2600);
@@ -1638,7 +1654,7 @@ function ChatPage() {
                   <div
                     key={msg.id}
                     id={`msg-${msg.id}`}
-                    className={`chat-bubble ${msg.role}${turnFocus?.ids.includes(msg.id) ? " turn-highlight" : ""}`}
+                    className={`chat-bubble ${msg.role}${turnFocus?.ids.includes(`msg-${msg.id}`) ? " turn-highlight" : ""}`}
                   >
                     {msg.role === "assistant" ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
@@ -1807,7 +1823,7 @@ function ChatPage() {
                 <div
                   key={step.id}
                   id={`msg-${step.id}`}
-                  className={`activity-step${turnFocus?.ids.includes(step.id) ? " turn-highlight" : ""}`}
+                  className="activity-step"
                   data-expanded={expanded}
                 >
                   <span className="activity-step-dot" aria-hidden="true" />
@@ -1971,6 +1987,7 @@ function ChatPage() {
               <ArtifactFeed
                 items={feedItems}
                 projectName={activeProject?.name ?? null}
+                highlighted={turnFocus?.ids ?? []}
                 onZoom={setLightbox}
                 onJumpToTurn={(item) => {
                   if (!activeChatSessionId) return;

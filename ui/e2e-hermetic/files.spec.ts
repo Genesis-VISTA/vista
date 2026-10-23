@@ -120,17 +120,16 @@ test.describe("files page", () => {
     expect(await page.evaluate(() => history.length)).toBe(before);
   });
 
-  test("Shown in links to the turn that displayed the file, and only for such files", async ({ page }) => {
+  test("Show in chat links to the turn that displayed the file, and only for such files", async ({ page }) => {
     await openMoltenSalt(page);
     await page.goto("/files?kind=outputs&path=run1/plot.png");
 
-    const link = page.locator(".files-shown-in").getByRole("link", { name: "Density of FLiBe" });
-    await expect(link).toHaveAttribute(
-      "href",
-      `/?chat=${SESSION_ID}&run=run-1&step=call-1`,
-    );
-    // The other two outputs were never shown, so only one row says so.
-    await expect(page.locator(".files-shown-in")).toHaveCount(1);
+    const links = page.getByRole("link", { name: "Show in chat" });
+    // The other outputs were never shown, so only one row offers it.
+    await expect(links).toHaveCount(1);
+    await expect(links).toHaveAttribute("href", `/?chat=${SESSION_ID}&run=run-1&step=call-1`);
+    // The title names the chat for whoever hovers; the button itself does not.
+    await expect(links).toHaveAttribute("title", "Shown in Density of FLiBe");
   });
 
   test("has no dataset catalog", async ({ page }) => {
