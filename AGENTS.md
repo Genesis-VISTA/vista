@@ -132,6 +132,44 @@ cd backend
 uv run vista-backend
 ```
 
+### Collaboration server
+Where researchers explicitly publish and import projects, skills and knowledge bases.
+A generic item/version API on :8002, bound to 127.0.0.1: authentication is a
+stub that trusts the `X-Vista-Install-Id` / `X-Vista-Display-Name` headers
+(`services/identity.py`, the one place auth plugs in later).
+```bash
+./launch.sh logs --collab      # also start it, and point the backend at it
+cd collaboration_server && uv run vista-collaboration-server
+```
+Development and tests only: no package, package launcher or Electron startup starts it. The
+backend reads its address from Settings, falling back to
+`VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets); with neither, publishing and
+importing are off and `GET /collaboration/status` says why. An unreachable server is never
+fatal. The UI's Publish and Import controls read `useCollaboration()` (`ui/lib/collaboration.ts`).
+Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
+a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
+The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local
+library. A local skill records `origin_server`, `remote_id`, `remote_version` and `modified`;
+every write to its files must set `modified`. Projects are items of kind `project`
+(`services/project_collaboration.py`): a manifest built field by field from `ProjectPublic`
+(never the row) that references skill versions, published after the skills it loads and
+imported with them; `/projects` publishes and imports. A project records the same four fields,
+and every write that changes its `ProjectCreate` fields must set `modified`. Knowledge bases
+are items of kind `knowledge-base` (`services/knowledge_base_collaboration.py`): a tar of the
+PDFs and a snapshot of the index (SQLite backup API, under the indexer's lock), sent through
+the server's streamed upload (`POST /blobs/stream`); a project references them and recurses
+into them.
+An import never writes over a store: it unpacks into `<slug>/store-<id>/` and points
+`<slug>/CURRENT` at it. The MCP server, which has no database, finds stores on disk
+(`rag_mcp._store_path`) and checks each one's folder before every search (`_refresh_kb`), so
+nothing has to tell it about a replaced, reindexed or deleted store. Its signal is the BM25
+corpus, so any code that writes a store must rewrite the corpus afterwards
+(`build_rag.write_bm25_corpus`); `chroma.sqlite3` is no signal, as merely opening a store
+writes it. Close ChromaDB clients
+(`client.close()` or `with`) rather than dropping them: one left open serves a store rebuilt
+at its path from the old one. Backend tests mount the server in-process (the `collab_server`
+fixture) through the backend's dev extra, so run them with `--extra dev`.
+
 ### Frontend (UI)
 Launches Next.js dev server on :3000
 ```bash
@@ -150,12 +188,13 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
 ./scripts/ci-local.sh backend test     # backend pytest only
 ./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
+./scripts/ci-local.sh collab           # collaboration server lint, typecheck, tests
 ./scripts/ci-local.sh electron         # window typecheck + routing tests
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
@@ -167,6 +206,7 @@ Or run pieces directly:
 ```bash
 cd mcp_servers/vista_mcp_server && uv run --extra dev pytest  # HPC/RAG MCP tests
 cd mcp_servers/dev_mcp_server && uv run pytest  # Sandbox/view tests
+cd collaboration_server && uv run --extra dev pytest  # Collaboration server tests
 cd ui && npm run lint                           # Frontend ESLint
 cd backend && uv run --extra dev pytest -vv     # Backend tests
 curl http://localhost:3000/api/projects         # Smoke test: UI and backend up

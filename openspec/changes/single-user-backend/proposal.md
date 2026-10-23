@@ -4,7 +4,7 @@ VISTA is a desktop app with one researcher per install, but the backend still ca
 multi-user scaffolding of the website it was once planned as: a dev-header identity and a
 production `501` in `services/auth.py`, an `app_user` table with admin `/users` CRUD, and
 project membership. None of it protects anything on a laptop, and all of it is in the way of
-the collaboration server (`PLAN.md`, Step 3 on), whose identity is the install, not a login.
+the collaboration server, whose identity is the install, not a login.
 
 ## What Changes
 

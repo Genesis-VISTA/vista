@@ -28,6 +28,10 @@ const PROJECT: Project = {
   forumRepoUrl: "",
   tools: [],
   usageLimits: {},
+  originServer: null,
+  remoteId: null,
+  remoteVersion: null,
+  modified: true,
 };
 
 const PRESETS = [
@@ -101,6 +105,16 @@ beforeEach(() => {
       if (url === "/api/settings/inference") return json(inferenceView());
       if (url === "/api/projects/molten-salt/models") return json({ supported: true, models: [] });
       if (url.startsWith("/api/settings/hpc-status")) return json({ clusters: [] });
+      if (url === "/api/collaboration/status") {
+        return json({
+          configured: false,
+          reachable: false,
+          reason: "No collaboration server is set.",
+          url: null,
+          source: null,
+          server_version: null,
+        });
+      }
       throw new Error(`unexpected fetch ${init?.method ?? "GET"} ${url}`);
     }),
   );

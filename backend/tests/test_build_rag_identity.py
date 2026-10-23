@@ -9,7 +9,6 @@ the LLM calls stubbed.
 
 import hashlib
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -186,32 +185,11 @@ def test_delete_source_removes_rows_from_both_collections(tmp_path, monkeypatch)
     assert rag.delete_source("missing.pdf") == 0
 
 
-def _bm25_importable(monkeypatch) -> bool:
-    """vista_mcp_server is not a backend dependency; borrow its source tree."""
-    try:
-        import vista_mcp_server.bm25  # noqa: F401
-
-        return True
-    except ImportError:
-        pass
-    src = REPO_ROOT / "mcp_servers" / "vista_mcp_server" / "src"
-    if not (src / "vista_mcp_server" / "bm25.py").exists():
-        return False
-    monkeypatch.syspath_prepend(str(src))
-    try:
-        import vista_mcp_server.bm25  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 def test_delete_source_rebuilds_bm25_corpus(tmp_path, monkeypatch):
-    if not _bm25_importable(monkeypatch):
-        pytest.skip("vista_mcp_server.bm25 not importable")
     rag = _rag(tmp_path, monkeypatch)
     rag.index_single_file(_pdf(tmp_path / "foo.pdf"))
     rag.index_single_file(_csv(tmp_path / "foo.csv"))
-    rag._build_bm25_corpus()
+    rag.write_bm25_corpus()
     corpus = Path(rag.db_path) / "bm25_corpus.json"
 
     def corpus_ids():
@@ -233,22 +211,6 @@ def test_delete_source_without_corpus_file_writes_none(tmp_path, monkeypatch):
     rag.index_single_file(_pdf(tmp_path / "foo.pdf"))
     rag.delete_source("foo.pdf")
     assert not (Path(rag.db_path) / "bm25_corpus.json").exists()
-
-
-def test_bm25_unavailable_degrades_with_warning(tmp_path, monkeypatch, caplog):
-    rag = _rag(tmp_path, monkeypatch)
-    rag.index_single_file(_pdf(tmp_path / "foo.pdf"))
-    rag.index_single_file(_csv(tmp_path / "foo.csv"))
-    corpus = Path(rag.db_path) / "bm25_corpus.json"
-    corpus.write_text("{}", encoding="utf-8")
-    monkeypatch.setitem(sys.modules, "vista_mcp_server.bm25", None)  # import fails
-
-    with caplog.at_level(logging.WARNING):
-        removed = rag.delete_source("foo.pdf")
-
-    assert removed == 2
-    assert "cannot import vista_mcp_server.bm25" in caplog.text
-    assert _ids(rag.text_collection, "foo.pdf") == []
 
 
 @pytest.mark.parametrize("mode", ["failed", "disabled"])

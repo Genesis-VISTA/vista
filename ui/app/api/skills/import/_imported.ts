@@ -1,16 +1,38 @@
 import { NextResponse } from "next/server";
+import { Agent, fetch } from "undici";
 import { backendUrl, backendHeaders } from "../../_backend";
 
+/** A skill row as the backend returns it (`SkillListItem`). */
 export type BackendSkill = {
   name: string;
   description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  allowed_tools?: string | null;
+  // The AgentSkills-spec `metadata` dict; tags live under its `tags` key.
   metadata?: Record<string, string | string[]> | null;
-  author?: string | null;
   repo_url?: string | null;
-  is_public?: boolean;
+  bundled?: boolean;
+  origin_server?: string | null;
+  remote_id?: string | null;
+  remote_version?: number | null;
+  modified?: boolean;
+  // HPC jobs the skill's folder ships under `hpc_jobs/` (read from disk).
   hpc_jobs?: string[];
   created_at?: string;
+  updated_at?: string;
 };
+
+/** The collaboration fields of a backend skill, as the UI names them. */
+export function toSharing(skill: BackendSkill) {
+  return {
+    bundled: skill.bundled ?? false,
+    originServer: skill.origin_server ?? null,
+    remoteId: skill.remote_id ?? null,
+    remoteVersion: skill.remote_version ?? null,
+    modified: skill.modified ?? false,
+  };
+}
 
 /**
  * Relay the backend's reply to a single-skill import (repository URL or
@@ -45,11 +67,10 @@ export function toSummary(skill: BackendSkill) {
     path: `skills/${skill.name}/SKILL.md`,
     metadata: skill.metadata ?? undefined,
     tags,
-    author: skill.author ?? null,
     repoUrl: skill.repo_url ?? null,
-    isPublic: skill.is_public ?? false,
     hpcJobs: skill.hpc_jobs ?? [],
     addedAt: Number.isFinite(createdAt) ? createdAt : null,
+    ...toSharing(skill),
   };
 }
 
@@ -64,9 +85,11 @@ export async function postBackend(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  let upstream: Response;
+  let upstream: Awaited<ReturnType<typeof fetch>>;
   try {
     upstream = await fetch(backendUrl(path), {
+      // A knowledge base's publish or import answers only when it has all been moved.
+      dispatcher: new Agent({ headersTimeout: 60 * 60 * 1000 }),
       method: "POST",
       headers: await backendHeaders({
         "content-type": "application/json",

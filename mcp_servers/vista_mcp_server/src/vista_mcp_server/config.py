@@ -160,12 +160,13 @@ class AppSettings(BaseSettings):
     @property
     def knowledge_bases_dir(self) -> Path:
         """
-        Root directory the MCP server scans at startup to discover the
-        Knowledge Bases available to `rag_search`. Each immediate
-        subdirectory whose name is a valid KB slug and that contains a
-        `rag_db/` subfolder (or whose own directory is itself a ChromaDB
-        store) is registered as a KB. The agent then names the KB it wants
-        via the tool's `kb_slug` argument.
+        Root directory the MCP server scans to discover the Knowledge
+        Bases available to `rag_search`. Each immediate subdirectory whose
+        name is a valid KB slug and that holds a ChromaDB store is
+        registered as a KB: the store its `CURRENT` file names (an imported
+        knowledge base), else its `rag_db/` subfolder, else the directory
+        itself. The agent then names the KB it wants via the tool's
+        `kb_slug` argument. See `rag_mcp._store_path`.
 
         Derived from `data_dir`, matching the backend's
         `knowledge_bases_dir` so the two services agree on layout out of
@@ -191,8 +192,8 @@ class AppSettings(BaseSettings):
     Sentence-transformers model used to encode `rag_search` queries.
 
     Ungated (MIT) and 640-dimension, so a fresh install needs no HuggingFace
-    account. Kept byte-identical to `build_rag.TextRAG.__init__`'s
-    `text_model` default, which is the *indexing* encoder: a Chroma
+    account. Kept byte-identical to `build_rag.TEXT_MODEL`, which is the
+    *indexing* encoder: a Chroma
     collection locks to the dimension of its first insert, so the two names
     must never diverge. Change one, change the other.
     """
@@ -205,8 +206,7 @@ class AppSettings(BaseSettings):
     Pinned so a new upload to the model's `main` cannot change the weights
     under a store built with the old ones, and so the package build stages
     exactly this snapshot. Kept byte-identical to
-    `build_rag.TextRAG.__init__`'s `text_model_revision` default, for the
-    same reason as the name. Change the model, change both revisions.
+    `build_rag.TEXT_MODEL_REVISION`, for the same reason as the name. Change the model, change both revisions.
     """
 
     rag_query_instruction: str = (

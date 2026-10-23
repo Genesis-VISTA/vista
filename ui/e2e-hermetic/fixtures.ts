@@ -16,6 +16,7 @@ const NOW = "2026-01-01T00:00:00+00:00";
 export const SETTINGS = {
   install_id: "00000000-0000-4000-8000-000000000002",
   display_name: null,
+  collaboration_server_url: null,
   email: "hermetic@example.invalid",
   hpc_hidden_clusters: [] as string[],
 };
@@ -101,6 +102,10 @@ export const PROJECTS = [
     knowledge_bases: ["molten-salt-papers"],
     tools: ["rag_search"],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
   {
     id: "00000000-0000-4000-8000-000000000004",
@@ -111,6 +116,10 @@ export const PROJECTS = [
     knowledge_bases: [],
     tools: [],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
 ];
 
@@ -122,10 +131,14 @@ export const SKILLS = [
     path: "skills/salt-analysis/SKILL.md",
     metadata: { version: "0.1.0", tags: ["Materials Design"] },
     tags: ["Materials Design"],
-    author: "VISTA Team",
     repoUrl: null,
-    isPublic: true,
+    hpcJobs: [],
     addedAt: 1767225600000,
+    bundled: true,
+    originServer: null,
+    remoteId: null,
+    remoteVersion: null,
+    modified: false,
   },
 ];
 
@@ -139,6 +152,10 @@ export const KNOWLEDGE_BASE = {
   build_status: "ready",
   publication_count: 0,
   publications: [],
+  origin_server: null,
+  remote_id: null,
+  remote_version: null,
+  modified: true,
 };
 
 export const KNOWLEDGE_BASES = [KNOWLEDGE_BASE];
@@ -197,7 +214,22 @@ export const INFERENCE = {
   keys_set: { i2: true, mag: false, olcf: false, custom: false },
 };
 
+/**
+ * `GET /collaboration/status`: no collaboration server set, as on a fresh
+ * install, so Publish and Import would be off with this reason.
+ */
+export const COLLABORATION_STATUS = {
+  configured: false,
+  reachable: false,
+  reason:
+    "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.",
+  url: null,
+  source: null,
+  server_version: null,
+};
+
 export const ROUTES: Record<string, unknown> = {
+  "GET /api/collaboration/status": COLLABORATION_STATUS,
   "GET /api/settings": SETTINGS,
   "GET /api/settings/inference": INFERENCE,
   "GET /api/settings/hpc-status": HPC_STATUS,

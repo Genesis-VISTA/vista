@@ -352,9 +352,9 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
                               {s.error
                                 ? s.error
                                 : s.exists && !s.replaceable
-                                  ? `A published skill is named ${s.name}; rename this one.`
+                                  ? `A skill bundled with VISTA is named ${s.name}; rename this one.`
                                   : s.exists
-                                    ? `Replaces your private skill ${s.name}.`
+                                    ? `Replaces your skill ${s.name}.`
                                     : `New skill ${s.name}.`}
                             </span>
                           </span>
@@ -367,7 +367,8 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
               <p style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>
                 Imports the folder the agent wrote, checked like a local folder, and
                 loads it into this project, so the agent can use it (and submit its
-                HPC jobs) from your next message. Imported skills land private.
+                HPC jobs) from your next message. Imported skills stay on this computer
+                until you publish them from the Skills page.
               </p>
             </>
           ) : source === "repo" ? (
@@ -423,8 +424,8 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
                   <code>/tree/&lt;branch&gt;/&lt;path&gt;</code>, GitLab&apos;s{" "}
                   <code>/-/tree/…</code>). Every <code>SKILL.md</code> in it is found, and
                   you choose which to import. Without a token here, your GitHub or
-                  gitlab.com token from Settings is used. Imported skills land private;
-                  publish them from the /skills tab.
+                  gitlab.com token from Settings is used. Imported skills stay on this
+                  computer until you publish them from the Skills page.
                 </p>
               )}
             </>
@@ -467,7 +468,8 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
                   ? `${folderName}: ${files.length} file${files.length === 1 ? "" : "s"} selected.`
                   : "Pick the folder that holds SKILL.md at its top level."}{" "}
                 Scripts, references and assets beside it are imported too.
-                Imported skills land private; publish them from the /skills tab.
+                Imported skills stay on this computer until you publish them from
+                the Skills page.
               </p>
             </>
           )}
@@ -617,7 +619,7 @@ function RepoSkillList({
                       onChange={(e) => setChoice(s.path, { ...c, on_conflict: e.target.value as OnConflict })}
                     >
                       <option value="skip">Skip</option>
-                      {s.replaceable && <option value="overwrite">Replace my private skill</option>}
+                      {s.replaceable && <option value="overwrite">Replace my skill</option>}
                       <option value="rename">Import under another name</option>
                     </select>
                     {c.on_conflict === "rename" && (
@@ -630,7 +632,7 @@ function RepoSkillList({
                         onChange={(e) => setChoice(s.path, { ...c, rename_to: e.target.value })}
                       />
                     )}
-                    {!s.replaceable && <span>(published, so it cannot be replaced)</span>}
+                    {!s.replaceable && <span>(bundled with VISTA, so it cannot be replaced)</span>}
                   </span>
                 )}
                 {s.duplicate && !s.exists && !s.error && (

@@ -1,23 +1,10 @@
 import { NextResponse } from "next/server";
 import { backendUrl, backendHeaders } from "../../_backend";
+import { toSharing, type BackendSkill } from "../import/_imported";
 
 export const runtime = "nodejs";
 
-type BackendSkillDetail = {
-  name: string;
-  description: string;
-  license?: string | null;
-  compatibility?: string | null;
-  allowed_tools?: string | null;
-  metadata?: Record<string, string | string[]> | null;
-  author?: string | null;
-  repo_url?: string | null;
-  is_public?: boolean;
-  hpc_jobs?: string[];
-  created_at?: string;
-  updated_at?: string;
-  body: string;
-};
+type BackendSkillDetail = BackendSkill & { body: string };
 
 export async function GET(
   _request: Request,
@@ -138,17 +125,13 @@ function reshape(slug: string, detail: BackendSkillDetail) {
   // Tags now live inside `metadata` (under a `tags` key), so they round-trip
   // into the frontmatter via the line above; no separate `tags` field anymore.
   if (detail.metadata != null) frontmatter.metadata = detail.metadata;
-  if (detail.author != null) frontmatter.author = detail.author;
-  if (detail.repo_url != null) frontmatter.repo_url = detail.repo_url;
-  if (detail.is_public != null) frontmatter.is_public = detail.is_public;
 
   return {
     slug,
     frontmatter,
     markdown: detail.body ?? "",
-    author: detail.author ?? null,
     repoUrl: detail.repo_url ?? null,
-    isPublic: detail.is_public ?? false,
     hpcJobs: detail.hpc_jobs ?? [],
+    ...toSharing(detail),
   };
 }

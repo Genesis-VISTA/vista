@@ -10,6 +10,7 @@ from pydantic_ai import UsageLimits
 from pydantic import BaseModel, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
+from ..utils.types import OptionalHttpUrl
 
 # TODO: Remove SQLModel and simplify the duplicate models
 
@@ -92,13 +93,35 @@ class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
 
-class ProjectPublic(ProjectBase):
+class ProjectSharing(SQLModel):
+    """
+    Where a project stands with the collaboration server. Never set through
+    `ProjectCreate`: publishing and importing set it, and every write to the
+    project's own fields sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this project was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version this project was published as or imported from. """
+    modified: bool = True
+    """
+    Its own fields (`ProjectCreate`'s) changed here since `remote_version`:
+    set by every write to them, cleared by a publish or an import. A change to
+    a skill it loads is the skill's own `modified`, not this. True for a
+    project never published, seeded ones included: all of it is local.
+    """
+
+
+class ProjectPublic(ProjectBase, ProjectSharing):
     """Project fields the user can read"""
 
     id: uuid.UUID
 
 
-class ProjectTable(ProjectBase, table=True):
+class ProjectTable(ProjectBase, ProjectSharing, table=True):
     """Project SQL model"""
 
     __tablename__: str = "project"
@@ -125,7 +148,8 @@ class ProjectTable(ProjectBase, table=True):
 # Lowercase letters, digits, and dashes only. 1–80 chars. Must start and
 # end with an alphanumeric character. Matches the URL-safe slug convention
 # used by Projects and Skills elsewhere in the codebase.
-_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$"
+_SLUG_RE = re.compile(SLUG_PATTERN)
 
 
 def is_valid_slug(slug: str) -> bool:
@@ -257,6 +281,28 @@ class KnowledgeBaseBase(SQLModel):
     """ ISO timestamp of the most recent successful indexer run. """
 
 
+class KnowledgeBaseSharing(SQLModel):
+    """
+    Where a knowledge base stands with the collaboration server. Never set
+    through `KnowledgeBaseCreate` or `KnowledgeBaseUpdate`: publishing and
+    importing set it, and every write to the knowledge base sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this knowledge base was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version its PDFs and index were published as or imported from. """
+    modified: bool = True
+    """
+    Changed here since `remote_version`: set by a change of name or
+    description and by adding or deleting a PDF, cleared by a publish or an
+    import. True for one never published, except a seeded one, which is
+    False until changed (see `KnowledgeBaseTable.seed_item`).
+    """
+
+
 class KnowledgeBaseCreate(SQLModel):
     """
     Fields the user can set when creating a Knowledge Base via the API.
@@ -277,13 +323,13 @@ class KnowledgeBaseUpdate(SQLModel):
     description: str | None = None
 
 
-class KnowledgeBasePublic(KnowledgeBaseBase):
+class KnowledgeBasePublic(KnowledgeBaseBase, KnowledgeBaseSharing):
     id: uuid.UUID
     created_at: str
     updated_at: str
 
 
-class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
+class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """Knowledge Base SQL model."""
 
     __tablename__: str = "knowledge_base"
@@ -294,6 +340,12 @@ class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
     """ ISO timestamp set at row insert time. """
     updated_at: str = Field(default="")
     """ ISO timestamp updated on every write. """
+    seed_item: uuid.UUID | None = None
+    """
+    For a seeded knowledge base, the collaboration item it is, unchanged, on
+    any server (`seed.seed_item_id`); None for any other. That item is only
+    ever VISTA's seed: changed here, it is published as an item of its own.
+    """
 
 
 class IndexProgress(BaseModel):
@@ -316,7 +368,8 @@ class IndexProgress(BaseModel):
 # Skills
 # Note, this is different than the models in agents/skills.py. agents/skills.py only handles the
 # skills spec directly (https://agentskills.io/specification). This database model handles storing
-# to location on disk, and some ownership metadata, in addition to mirroring the Skill spec metadata
+# to location on disk, provenance and collaboration state, in addition to mirroring the Skill spec
+# metadata
 #
 # TODO: Currently skills are still globably editable, and project just select a subset of skills.
 # We need to make skills scoped to a project, only editable by their creator, etc.
@@ -345,10 +398,26 @@ class SkillBase(SQLModel):
     models, but the API exposes it as `metadata` (matching create/patch input).
     """
 
-    # DB-only hub metadata (never written to SKILL.md).
-    author: str | None = None
+    # Provenance and collaboration state (never written to SKILL.md).
     repo_url: str | None = None
-    is_public: bool = False
+    """ The repository folder a GitHub or GitLab import came from. """
+    bundled: bool = False
+    """
+    Ships with VISTA (`db/skills/`), so every installation already has it: it
+    is never published or deleted, and an import never replaces it.
+    """
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this skill was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version these files were published as or imported from. """
+    modified: bool = False
+    """
+    Changed here since `remote_version`: set by every write to the skill's
+    files, cleared by a publish or an import. A skill never published is
+    modified from its creation, as everything in it is local.
+    """
 
 
 class SkillPublic(SkillBase):
@@ -382,9 +451,6 @@ class SkillUpdate(BaseModel):
     compatibility: str | None = None
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
-    author: str | None = None
-    repo_url: str | None = None
-    is_public: bool | None = None
 
 
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
@@ -464,6 +530,8 @@ class LocalSettingsUpdate(SQLModel):
 
     display_name: str | None = None
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: OptionalHttpUrl = None
+    """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -547,6 +615,7 @@ class LocalSettingsPublic(SQLModel):
     install_id: uuid.UUID
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
+    collaboration_server_url: str | None = None
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -621,6 +690,12 @@ class LocalSettingsTable(SQLModel, table=True):
     """ This installation's identity for the collaboration server. Never changes. """
     display_name: str | None = None
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: str | None = None
+    """
+    The collaboration server this installation publishes to and imports from.
+    `None` falls back to `Settings.collaboration_server_url`; with neither,
+    publishing and importing are off. Not a secret.
+    """
     email: str | None = None
     """ Where campaign notifications go; nothing is sent without it. """
     inference_model: str | None = None

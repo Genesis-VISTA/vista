@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
 import { setThemeChoice } from "@/lib/theme";
 import type { AgentSettings } from "@/lib/agent-settings";
+import type { CollaborationStatus, CollaborationView } from "@/lib/collaboration";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { LocalSettings } from "@/lib/settings";
+import { DEBOUNCE_MS } from "@/lib/settings-autosave";
 
 const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock } = vi.hoisted(() => ({
   fetchSettingsMock: vi.fn(),
@@ -40,10 +42,49 @@ vi.mock("@/lib/agent-settings", () => ({
   refreshAgentSettings: refreshAgentSettingsMock,
 }));
 
+const { useCollaborationMock, refreshCollaborationMock } = vi.hoisted(() => ({
+  useCollaborationMock: vi.fn(),
+  refreshCollaborationMock: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/collaboration", () => ({
+  useCollaboration: useCollaborationMock,
+  refreshCollaborationStatus: refreshCollaborationMock,
+}));
+
+const NOT_SET =
+  "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.";
+
+function collaborationView(
+  status: Partial<CollaborationStatus> | null = {},
+  error: string | null = null,
+): CollaborationView {
+  const full: CollaborationStatus | null =
+    status === null
+      ? null
+      : {
+          configured: false,
+          reachable: false,
+          reason: NOT_SET,
+          url: null,
+          source: null,
+          server_version: null,
+          ...status,
+        };
+  return {
+    status: full,
+    checking: false,
+    available: Boolean(full?.reachable),
+    reason: full?.reachable ? null : (full?.reason ?? "Checking the collaboration server…"),
+    error,
+    refresh: refreshCollaborationMock,
+  };
+}
+
 function settingsRow(overrides: Partial<LocalSettings> = {}): LocalSettings {
   return {
     install_id: "00000000-0000-4000-8000-000000000001",
     display_name: null,
+    collaboration_server_url: null,
     email: "researcher@ornl.gov",
     inference_model: null,
     inference_base_url: null,
@@ -126,6 +167,8 @@ beforeEach(() => {
   recheckMock.mockClear();
   refreshMock.mockClear();
   refreshAgentSettingsMock.mockClear();
+  refreshCollaborationMock.mockClear();
+  useCollaborationMock.mockReturnValue(collaborationView());
   useHpcStatusMock.mockReturnValue(statusView());
   useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null, modelChoiceRequest: 0 });
 });
@@ -153,7 +196,7 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists five focused sections and opens on Research profile", async () => {
+  it("lists six focused sections and opens on Research profile", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
@@ -166,6 +209,7 @@ describe("UserSettingsModal navigation", () => {
       "Research profile",
       "Models and providers",
       "Repositories",
+      "Collaboration",
       "Compute",
     ]);
 
@@ -224,6 +268,108 @@ describe("UserSettingsModal navigation", () => {
     expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: "/odo/vista" });
     await openOn("Odo");
     expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue("/odo/vista");
+  });
+});
+
+describe("UserSettingsModal collaboration", () => {
+  it("says no server is set, and why Publish and Import are off", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, not set");
+
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText(/^Collaboration server/)).toHaveValue("");
+    expect(section).toHaveTextContent(NOT_SET);
+  });
+
+  it("saves the address and checks the server again", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    await userEvent.type(within(section).getByLabelText(/^Collaboration server/), "http://127.0.0.1:8002");
+    // Not on a pause in typing: half an address would be saved and checked.
+    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 200));
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    await userEvent.tab();
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_server_url: "http://127.0.0.1:8002" });
+    // The answer about the old address is dropped, not shown as current.
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith({ forget: true }));
+  });
+
+  it("says when a check could not be made, beside the last answer", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView(
+        {
+          configured: true,
+          reachable: true,
+          reason: null,
+          url: "http://127.0.0.1:8002",
+          source: "settings",
+          server_version: "0.1.0",
+        },
+        "request failed (502)",
+      ),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
+    expect(section).toHaveTextContent("Couldn't check again: request failed (502); this is the last answer.");
+  });
+
+  it("shows a connected server", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "settings",
+        server_version: "0.1.0",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, connected");
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText(/^Collaboration server/)).toHaveValue("http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
+  });
+
+  it("shows why a configured server is unreachable, and checks again on request", async () => {
+    const reason = "The collaboration server at http://x:8002 is not answering (Connection refused).";
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reason, url: "http://x:8002", source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://x:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, unreachable");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(reason);
+    await userEvent.click(within(section).getByRole("button", { name: "Check again" }));
+    expect(refreshCollaborationMock).toHaveBeenCalled();
+  });
+
+  it("names the installation's own server when the researcher has set none", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "config",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    const field = within(section).getByLabelText(/^Collaboration server/);
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("This installation's configuration uses http://127.0.0.1:8002");
   });
 });
 

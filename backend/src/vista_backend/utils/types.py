@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated as A, Literal, TypeVar
 from pydantic import AfterValidator, BeforeValidator
 from pydantic_settings import NoDecode
+import httpx
 
 
 def _validate_resolved_path(path: str | Path):
@@ -50,3 +51,32 @@ CommaSeparatedList = A[
 A list read from `a,b` or `["a", "b"]`. The same parsing as the MCP server's
 type of this name, so a `VISTA_MCP_*` list setting means the same in both.
 """
+
+
+def _validate_http_url(v: str) -> str:
+    """
+    An `http(s)://` address with a host, without a trailing slash so paths join
+    onto it one way. Parsed by httpx, which is what will send to it: an address
+    `urlparse` accepts can still be one httpx refuses (`http://host:abc`).
+    """
+    v = v.strip().rstrip("/")
+    try:
+        url = httpx.URL(v)
+    except httpx.InvalidURL:
+        url = None
+    if url is None or url.scheme not in ("http", "https") or not url.host:
+        raise ValueError("enter the server's address, like http://127.0.0.1:8002")
+    return v
+
+
+HttpUrl = A[str, AfterValidator(_validate_http_url)]
+"""
+A server address: the collaboration server's, in Settings and in the
+configuration alike, so both are held to the same rule.
+"""
+
+OptionalHttpUrl = A[
+    HttpUrl | None,
+    BeforeValidator(lambda v: None if isinstance(v, str) and not v.strip() else v),
+]
+""" An `HttpUrl` or nothing: blank, or only whitespace, means nothing. """

@@ -186,6 +186,14 @@ export type ProjectPublic = {
   forum_repo_url: string | null;
   tools: string[];
   usage_limits: Record<string, unknown>;
+  /** The collaboration server `remote_id` lives on; null until published or imported. */
+  origin_server?: string | null;
+  /** The item on `origin_server` this project was published as or imported from. */
+  remote_id?: string | null;
+  /** The item's version this project was published as or imported from. */
+  remote_version?: number | null;
+  /** Its own fields changed here since `remote_version`. */
+  modified?: boolean;
 };
 
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */

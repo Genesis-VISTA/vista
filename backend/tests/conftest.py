@@ -111,6 +111,36 @@ async def local(session) -> LocalSettingsPublic:
 
 
 @pytest.fixture
+async def collab_server(tmp_path, monkeypatch):
+    """
+    A real collaboration server on a throwaway data directory, mounted
+    in-process: every backend client talks to it through `httpx.ASGITransport`,
+    whatever address it is given. That transport runs no lifespan, so it is
+    entered here. Yields the app.
+
+    Needs the backend's dev extra (`uv run --extra dev pytest`), which carries
+    the collaboration server as a path dependency.
+    """
+    import httpx
+    from vista_backend.services import collaboration
+    from vista_collaboration_server.api.app import create_app
+    from vista_collaboration_server.config import CollabSettings
+
+    data_dir = tmp_path / "collaboration-server"
+    # The database URL too: a `VISTA_COLLAB_DATABASE_URL` in the environment or
+    # a `.env` would otherwise point the test at a developer's real database.
+    app = create_app(
+        CollabSettings(
+            data_dir=data_dir,
+            database_url=f"sqlite+aiosqlite:///{data_dir / 'collaboration.db'}",
+        )
+    )
+    async with app.router.lifespan_context(app):
+        monkeypatch.setattr(collaboration, "transport", httpx.ASGITransport(app=app))
+        yield app
+
+
+@pytest.fixture
 def git_ok(monkeypatch):
     """Treat this host as having a usable git, whatever it has."""
     from vista_backend.agents.forum import project_forum

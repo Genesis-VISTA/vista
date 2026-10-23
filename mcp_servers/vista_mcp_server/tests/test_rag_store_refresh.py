@@ -48,6 +48,16 @@ elif action == "add":
         documents=["brand new text"],
         metadatas=[{"source": "new.md", "kind": "markdown", "chunk_id": 0}],
     )
+
+# Every backend write rewrites the BM25 corpus afterwards, in one step
+# (`build_rag.write_bm25_corpus`); that rewrite is what `rag_search` notices.
+import json, os
+rows = col.get(include=["documents"])
+docs = [{"id": i, "text": d} for i, d in zip(rows["ids"], rows["documents"])]
+tmp = os.path.join(path, ".bm25.tmp")
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump({"version": 1, "documents": docs}, f)
+os.replace(tmp, os.path.join(path, "bm25_corpus.json"))
 """
 
 

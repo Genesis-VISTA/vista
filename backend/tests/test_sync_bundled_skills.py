@@ -61,8 +61,8 @@ async def test_skill_bundled_after_seeding_is_registered_once(engine):
 
     assert await sync_bundled_skills(engine) == ["llm-pretraining"]
     row = (await _skills(engine))["llm-pretraining"]
-    assert row.is_public
-    assert row.author == "VISTA Team"
+    assert row.bundled
+    assert not row.modified
     copied = settings.data_dir / row.path
     assert (copied / "SKILL.md").is_file()
     assert (copied / "scripts" / "plot_training.py").is_file()

@@ -31,7 +31,7 @@ async def kb_client(engine, tmp_path, monkeypatch):
     from vista_backend.db.db import get_engine
 
     async def _index_publications(*, rag_db_path, pdfs_dir, filenames, **_):
-        kb_api.indexer._clear_progress(rag_db_path)
+        kb_api.indexer.clear_progress(rag_db_path)
         return [
             {
                 "filename": f,
@@ -151,11 +151,10 @@ async def test_delete_removes_the_files_index_rows(kb_client, monkeypatch):
 
     deleted: list[str] = []
 
-    async def _delete_rows(rag_db_path, pdfs_dir, filename):
-        deleted.append(filename)
-        return 2
+    async def _delete_rows(rag_db_path, source):
+        deleted.append(source)
 
-    monkeypatch.setattr(kb_api.indexer, "delete_publication_rows", _delete_rows)
+    monkeypatch.setattr(kb_api.indexer, "delete_source", _delete_rows)
     await _make_kb(kb_client)
     await kb_client.post(
         "/knowledge-bases/papers/publications",
