@@ -1,56 +1,8 @@
 import { NextResponse } from "next/server";
 import { backendUrl, backendHeaders } from "../_backend";
+import { toSummary, type BackendSkill } from "./import/_imported";
 
 export const runtime = "nodejs";
-
-type BackendSkill = {
-  name: string;
-  description: string;
-  license?: string | null;
-  compatibility?: string | null;
-  allowed_tools?: string | null;
-  // The AgentSkills-spec `metadata` dict is the only freeform field left after
-  // the DB migration; tags live under its `tags` key (see `tagsOf`).
-  metadata?: Record<string, string | string[]> | null;
-  author?: string | null;
-  repo_url?: string | null;
-  is_public?: boolean;
-  // HPC jobs the skill's folder ships under `hpc_jobs/` (read from disk).
-  hpc_jobs?: string[];
-  created_at?: string;
-  updated_at?: string;
-  body?: string;
-};
-
-/** Pull display tags out of the spec `metadata` dict (stored under `tags`). */
-function tagsOf(skill: BackendSkill): string[] {
-  const tags = skill.metadata?.tags;
-  return Array.isArray(tags) ? tags : [];
-}
-
-/** Parse an ISO-8601 timestamp into epoch millis, or null if absent/unparseable. */
-function toEpoch(iso?: string): number | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : null;
-}
-
-/** Reshape a backend skill into the SkillSummary envelope the UI consumes. */
-function toSummary(skill: BackendSkill) {
-  return {
-    slug: skill.name,
-    name: skill.name,
-    description: skill.description,
-    path: `skills/${skill.name}/SKILL.md`,
-    metadata: skill.metadata ?? undefined,
-    tags: tagsOf(skill),
-    author: skill.author ?? null,
-    repoUrl: skill.repo_url ?? null,
-    isPublic: skill.is_public ?? false,
-    hpcJobs: skill.hpc_jobs ?? [],
-    addedAt: toEpoch(skill.created_at),
-  };
-}
 
 /**
  * Proxy + reshape for the backend's `GET /skills`.
@@ -81,7 +33,7 @@ export async function GET() {
 
 /**
  * Create a new skill. Body shape matches the backend `SkillCreate` model —
- * `{ name, description, body, author?, repo_url?, metadata?, is_public? }`.
+ * `{ name, description, body, metadata?, project? }`.
  * The UI still sends a top-level `tags: string[]`; we fold it into the spec
  * `metadata` dict (under `tags`) here so the rest of the UI's tag handling is
  * unchanged. Backend rejects malformed slugs (400) and duplicate names (409).

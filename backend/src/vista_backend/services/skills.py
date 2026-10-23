@@ -63,12 +63,14 @@ def build_skill_row(
     skill: Skill,
     *,
     path: str,
-    author: str | None,
     repo_url: str | None,
-    is_public: bool,
     now: str,
+    bundled: bool = False,
 ) -> SkillTable:
-    """Build a SkillTable row, mirroring spec metadata from the parsed skill."""
+    """
+    Build a SkillTable row, mirroring spec metadata from the parsed skill. A
+    new skill is `modified`, all of it being local, unless it is bundled.
+    """
     return SkillTable(
         name=skill.name,
         path=path,
@@ -77,12 +79,21 @@ def build_skill_row(
         compatibility=skill.compatibility,
         allowed_tools=skill.allowed_tools,
         skill_metadata=skill.metadata,
-        author=author,
         repo_url=repo_url,
-        is_public=is_public,
+        bundled=bundled,
+        modified=not bundled,
         created_at=now,
         updated_at=now,
     )
+
+
+def mirror_spec(row: SkillTable, skill: Skill) -> None:
+    """Copy the spec metadata of a parsed SKILL.md onto its row."""
+    row.description = skill.description
+    row.license = skill.license
+    row.compatibility = skill.compatibility
+    row.allowed_tools = skill.allowed_tools
+    row.skill_metadata = skill.metadata
 
 
 async def list_skills(session: AsyncSession) -> list[SkillTable]:
@@ -108,7 +119,7 @@ async def get_skill_detail(session: AsyncSession, name: str) -> tuple[SkillTable
     return skill, read_skill(settings.data_dir / skill.path).body
 
 
-def _load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
+def load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
     """
     Add skill `name` to `project.skills` in the pending transaction, and rebuild
     the project's agents once it commits, so their next turn sees the skill.
@@ -122,42 +133,106 @@ def _load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
         *project.skills,
         name,
     ]  # a new list, so the JSON column is marked dirty
+    project.modified = True
     session.add(project)
     invalidate_agents(session, project_id=project.id)
+
+
+async def invalidate_loading_projects(session: AsyncSession, name: str) -> None:
+    """
+    Rebuild, once the transaction commits, the agents of every project that
+    loads skill `name`: their skills volume holds its old files.
+    """
+    from .project_agent import invalidate_agents
+
+    for loaded in (await session.exec(select(ProjectTable))).all():
+        if name in loaded.skills:
+            invalidate_agents(session, project_id=loaded.id)
+
+
+def is_name_clash(error: IntegrityError) -> bool:
+    """Whether a failed commit broke the unique skill name, and nothing else."""
+    message = str(error.orig)
+    return "skill.name" in message or "uq_skill_name" in message
+
+
+def name_in_use(name: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=f"Name already in use: {name}")
+
+
+async def commit_skill_files(
+    session: AsyncSession,
+    row: SkillTable,
+    *,
+    old_path: str | None = None,
+    project: ProjectTable | None = None,
+) -> None:
+    """
+    Commit `row`, whose files are already in their own new folder (`row.path`),
+    loading it into `project` in the same commit.
+
+    `old_path` is the folder a kept row's files were in: the projects that load
+    the skill are rebuilt, and the old folder is removed once the commit lands.
+    A failed commit removes the new folder instead (it belongs to this row
+    alone) and re-raises; a caller tells a name clash apart with
+    `is_name_clash`.
+    """
+    new_path = row.path
+    if old_path is not None:
+        # Asked before the row is added: the query would flush it, outside the
+        # cleanup below.
+        await invalidate_loading_projects(session, row.name)
+    session.add(row)
+    if project is not None:
+        load_into(session, project, row.name)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        await asyncio.to_thread(
+            shutil.rmtree, settings.data_dir / new_path, ignore_errors=True
+        )
+        raise
+    if old_path is not None:
+        await asyncio.to_thread(
+            shutil.rmtree, settings.data_dir / old_path, ignore_errors=True
+        )
+    await session.refresh(row)
+    if project is not None:
+        await session.refresh(project)
+
+
+def replace_files(row: SkillTable, skill: Skill, path: str) -> str:
+    """
+    Point a kept row at a new folder of files (`path`) holding `skill`, marking
+    it modified, and return the folder it had. Commit it with
+    `commit_skill_files`.
+    """
+    old_path = row.path
+    row.path = path
+    mirror_spec(row, skill)
+    row.modified = True
+    row.updated_at = now_iso()
+    return old_path
 
 
 async def _insert_skill_row(
     session: AsyncSession, row: SkillTable, project: ProjectTable | None = None
 ) -> None:
-    """
-    Insert and commit a freshly built skill row, loading it into `project` in
-    the same commit, and remove its just-written folder if the commit fails.
-    The uuid folder belongs solely to this row, so cleanup can never clobber
-    another skill's files.
-    """
-    session.add(row)
-    if project is not None:
-        _load_into(session, project, row.name)
+    """Commit a freshly built skill row (see `commit_skill_files`); a taken name is 409."""
+    name = row.name
     try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        shutil.rmtree(settings.data_dir / row.path, ignore_errors=True)
-        if isinstance(e, IntegrityError):
-            raise HTTPException(
-                status_code=409, detail=f"Name already in use: {row.name}"
-            )
+        await commit_skill_files(session, row, project=project)
+    except IntegrityError as e:
+        if is_name_clash(e):
+            raise name_in_use(name) from e
         raise
-    await session.refresh(row)
 
 
 async def create_skill(
     session: AsyncSession,
     *,
     spec: Skill,
-    author: str | None = None,
-    repo_url: str | None = None,
-    is_public: bool = False,
     project: ProjectTable | None = None,
 ) -> SkillTable:
     """
@@ -166,18 +241,11 @@ async def create_skill(
     `project`, the skill is loaded into it.
     """
     if await get_skill_optional(session, spec.name) is not None:
-        raise HTTPException(status_code=409, detail=f"Name already in use: {spec.name}")
+        raise name_in_use(spec.name)
 
     path = new_storage_path()
     skill = write_skill(settings.data_dir / path, spec)
-    row = build_skill_row(
-        skill,
-        path=path,
-        author=author,
-        repo_url=repo_url,
-        is_public=is_public,
-        now=now_iso(),
-    )
+    row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
     await _insert_skill_row(session, row, project)
     return row
 
@@ -240,7 +308,7 @@ class ScannedSkill(BaseModel):
     exists: bool = False
     """ A skill with this name is already in the library. """
     replaceable: bool = False
-    """ It exists and is private, so it may be overwritten. """
+    """ It exists and is not bundled with VISTA, so it may be overwritten. """
     duplicate: bool = False
     """ Another skill in this scan has the same name: import one, or rename. """
 
@@ -256,7 +324,7 @@ class RepoScan(BaseModel):
 
 
 @asynccontextmanager
-async def _work_dir() -> AsyncIterator[Path]:
+async def work_dir() -> AsyncIterator[Path]:
     """
     A temporary folder, removed off the event loop: it can hold a whole
     unpacked repository.
@@ -285,7 +353,7 @@ async def scan_repository(
 ) -> RepoScan:
     """List the skills a repository URL holds, without importing any."""
     sent = await _import_token(session, url, token)
-    async with _work_dir() as tmp:
+    async with work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, None, Path(tmp)
@@ -309,7 +377,7 @@ async def scan_repository(
                 hpc_jobs=info.hpc_jobs,
                 files=info.files,
                 exists=existing is not None,
-                replaceable=existing is not None and not existing.is_public,
+                replaceable=existing is not None and not existing.bundled,
                 duplicate=counts[info.name] > 1 if info.name else False,
             )
         )
@@ -356,7 +424,6 @@ async def _install_staged(
     project: ProjectTable | None,
 ) -> SkillImportResult:
     """Install one staged skill, applying the choice for a taken name. Commits."""
-    from .project_agent import invalidate_agents
 
     def result(status, detail=None, skill=None, name=None) -> SkillImportResult:
         return SkillImportResult(
@@ -392,10 +459,10 @@ async def _install_staged(
         if choice.on_conflict == "rename":
             return result("failed", "Give a new name to rename it to.")
         if choice.on_conflict == "overwrite":
-            if existing.is_public:
+            if existing.bundled:
                 return result(
                     "failed",
-                    f"{name} is a published skill and cannot be overwritten; "
+                    f"{name} is bundled with VISTA and cannot be overwritten; "
                     "skip it or rename this one.",
                 )
             status = "overwritten"
@@ -413,49 +480,17 @@ async def _install_staged(
 
     old_path: str | None = None
     if existing is None:
-        row = build_skill_row(
-            skill,
-            path=path,
-            author=None,
-            repo_url=repo_url,
-            is_public=False,
-            now=now_iso(),
-        )
+        row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
     else:
-        row, old_path = existing, existing.path
-        row.path = path
-        row.description = skill.description
-        row.license = skill.license
-        row.compatibility = skill.compatibility
-        row.allowed_tools = skill.allowed_tools
-        row.skill_metadata = skill.metadata
+        row = existing
+        old_path = replace_files(row, skill, path)
         row.repo_url = repo_url
-        row.updated_at = now_iso()
-    session.add(row)
-    if project is not None:
-        _load_into(session, project, skill.name)
-    if old_path is not None:
-        # Projects that load it hold the old files in their skills volume.
-        for loaded in (await session.exec(select(ProjectTable))).all():
-            if skill.name in loaded.skills:
-                invalidate_agents(session, project_id=loaded.id)
     try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        await asyncio.to_thread(shutil.rmtree, dest, ignore_errors=True)
+        await commit_skill_files(session, row, old_path=old_path, project=project)
+    except IntegrityError as e:
+        if not is_name_clash(e):
+            raise
         return result("failed", f"Name already in use: {skill.name}", name=skill.name)
-    except Exception:
-        await session.rollback()
-        await asyncio.to_thread(shutil.rmtree, dest, ignore_errors=True)
-        raise
-    if old_path is not None:
-        await asyncio.to_thread(
-            shutil.rmtree, settings.data_dir / old_path, ignore_errors=True
-        )
-    await session.refresh(row)
-    if project is not None:
-        await session.refresh(project)
     return result(status, skill=row, name=skill.name)
 
 
@@ -472,7 +507,7 @@ async def import_repository_skills(
     Import the chosen skills from a repository URL, each on its own: one that
     fails or is skipped does not stop the rest. With `commit` (from a scan),
     that commit is installed, so the skills are those that were listed.
-    Imported skills are private and record their folder's URL as `repo_url`.
+    Imported skills record their folder's URL as `repo_url`.
     """
     if not choices:
         raise HTTPException(
@@ -482,7 +517,7 @@ async def import_repository_skills(
     if len(set(paths)) != len(paths):
         raise HTTPException(status_code=400, detail="A skill was chosen twice.")
     sent = await _import_token(session, url, token)
-    async with _work_dir() as tmp:
+    async with work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, commit, Path(tmp)
@@ -545,13 +580,13 @@ async def import_skill(
 ) -> SkillTable:
     """
     Import the one skill a repository URL names (SKILL.md at its root, or in the
-    folder it links to). Private (`is_public=False`), recording the source `url`
-    as its `repo_url`; given a `project`, loaded into it. A repository holding
+    folder it links to), recording the source `url` as its `repo_url`; given a
+    `project`, loaded into it. A repository holding
     several skills is refused with their list: import those through
     `import_repository_skills`.
     """
     sent = await _import_token(session, url, token)
-    async with _work_dir() as tmp:
+    async with work_dir() as tmp:
         try:
             fetched, staged = await asyncio.to_thread(
                 _scan, url, sent.value if sent else None, None, Path(tmp)
@@ -597,8 +632,8 @@ async def import_skill_upload(
 ) -> SkillTable:
     """
     Import a skill from a folder uploaded by the browser. `paths[i]` is
-    `files[i]`'s path relative to the picked folder. Private, like a GitHub
-    import, but with no `repo_url`. Given a `project`, the skill is loaded into it.
+    `files[i]`'s path relative to the picked folder. Like a GitHub import, but
+    with no `repo_url`. Given a `project`, the skill is loaded into it.
     """
     if len(paths) != len(files):
         raise HTTPException(
@@ -633,9 +668,7 @@ async def _register_imported(
             status_code=409, detail=f"Name already in use: {skill.name}"
         )
 
-    row = build_skill_row(
-        skill, path=path, author=None, repo_url=repo_url, is_public=False, now=now_iso()
-    )
+    row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
     await _insert_skill_row(session, row, project)
     return row
 
@@ -652,7 +685,7 @@ class OutputSkill(BaseModel):
     exists: bool = False
     """ A skill with this name is already in the library. """
     replaceable: bool = False
-    """ It exists and is private, so importing with `replace` swaps its files. """
+    """ It exists and is not bundled, so importing with `replace` swaps its files. """
 
 
 _OUTPUT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -722,7 +755,7 @@ async def list_output_skills(
                 error=error,
                 hpc_jobs=skill_hpc_jobs(folder),
                 exists=existing is not None,
-                replaceable=existing is not None and not existing.is_public,
+                replaceable=existing is not None and not existing.bundled,
             )
         )
     return found
@@ -737,16 +770,15 @@ async def import_skill_from_output(
 ) -> SkillTable:
     """
     Import `/mnt/data/output/<folder>/` from the sandbox in
-    `project_name` as a private skill, and load it into that project.
+    `project_name` as a skill, and load it into that project.
 
     Same validation and limits as a folder upload, plus no symlinks. Loading
     means adding it to `Project.skills`, the list the agent's skills volume is
     built from, and evicting the project's agents so the next message stages
     it. A name already in use is refused unless `replace` is set and that skill
-    is private; then the row is kept and its files are swapped.
+    is not bundled; then the row is kept, its files are swapped and it is
+    marked modified, and every project that loads it is rebuilt.
     """
-    from .project_agent import invalidate_agents
-
     project, output = await _project_output_dir(session, project_name)
     source = output / folder
     if (
@@ -767,48 +799,27 @@ async def import_skill_from_output(
     old_path: str | None = None
     existing = await get_skill_optional(session, skill.name)
     if existing is None:
-        row = build_skill_row(
-            skill, path=path, author=None, repo_url=None, is_public=False, now=now_iso()
-        )
-    elif replace and not existing.is_public:
-        row, old_path = existing, existing.path
-        row.path = path
-        row.description = skill.description
-        row.license = skill.license
-        row.compatibility = skill.compatibility
-        row.allowed_tools = skill.allowed_tools
-        row.skill_metadata = skill.metadata
-        row.updated_at = now_iso()
+        row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
+    elif replace and not existing.bundled:
+        row = existing
+        old_path = replace_files(row, skill, path)
     else:
         shutil.rmtree(settings.data_dir / path, ignore_errors=True)
-        if existing.is_public:
-            detail = f"Name already in use by a published skill: {skill.name}"
+        if existing.bundled:
+            detail = f"Name already in use by a skill bundled with VISTA: {skill.name}"
         else:
             detail = (
                 f"Name already in use: {skill.name}. Import it with Replace to "
-                "swap the existing private skill's files for these."
+                "swap the existing skill's files for these."
             )
         raise HTTPException(status_code=409, detail=detail)
 
-    session.add(row)
-    _load_into(session, project, skill.name)
-    if old_path is not None:
-        # Already loaded, so `_load_into` left the agents alone, but their
-        # skills volume holds the old files: rebuild it on their next turn.
-        invalidate_agents(session, project_id=project.id)
     try:
-        await session.commit()
-    except Exception as e:
-        await session.rollback()
-        shutil.rmtree(settings.data_dir / path, ignore_errors=True)
-        if isinstance(e, IntegrityError):
-            raise HTTPException(
-                status_code=409, detail=f"Name already in use: {skill.name}"
-            )
+        await commit_skill_files(session, row, old_path=old_path, project=project)
+    except IntegrityError as e:
+        if is_name_clash(e):
+            raise name_in_use(skill.name) from e
         raise
-    if old_path is not None:
-        shutil.rmtree(settings.data_dir / old_path, ignore_errors=True)
-    await session.refresh(row)
     return row
 
 
@@ -845,21 +856,15 @@ async def update_skill(
     body: str | None = None,
 ) -> SkillTable:
     """
-    Partial update.
+    Partial update of the SKILL.md. Any change marks the skill modified.
     """
     skill = await get_skill(session, name)
     data = updates.model_dump(exclude_unset=True)
 
-    # Reject disallowed transitions up front, before touching disk, so a
-    # rejected PATCH never leaves a rewritten SKILL.md behind.
-    for field in ("description", "is_public"):
-        if field in data and data[field] is None:
-            raise HTTPException(status_code=422, detail=f"{field} cannot be null")
-    if data.get("is_public") is False and skill.is_public:
-        # Publish is one-way: once listed on the hub a skill can't be hidden again.
-        raise HTTPException(
-            status_code=409, detail="Published skills cannot be unpublished."
-        )
+    # Rejected up front, before touching disk, so a rejected PATCH never leaves
+    # a rewritten SKILL.md behind.
+    if "description" in data and data["description"] is None:
+        raise HTTPException(status_code=422, detail="description cannot be null")
 
     spec_updates = {
         k: data[k]
@@ -895,18 +900,8 @@ async def update_skill(
             raise HTTPException(status_code=422, detail=str(e))
         skill_md_path.write_text(skill_to_markdown(merged), encoding="utf-8")
         # Re-sync mirrored spec metadata from the regenerated document.
-        skill.description = merged.description
-        skill.license = merged.license
-        skill.compatibility = merged.compatibility
-        skill.allowed_tools = merged.allowed_tools
-        skill.skill_metadata = merged.metadata
-
-    if "is_public" in data:
-        skill.is_public = data["is_public"]
-    if "author" in data:
-        skill.author = data["author"]
-    if "repo_url" in data:
-        skill.repo_url = data["repo_url"]
+        mirror_spec(skill, merged)
+        skill.modified = True
 
     skill.updated_at = now_iso()
     session.add(skill)
@@ -923,13 +918,20 @@ async def update_skill(
 
 async def delete_skill(session: AsyncSession, name: str) -> None:
     """
-    Delete the skill row, and remove its on-disk directory. Published
-    skills are protected (they're listed on the hub).
+    Delete the skill row, and remove its on-disk directory. What was published
+    of it stays on the collaboration server.
+
+    A bundled skill is refused: it ships with VISTA, so deleting it would at
+    best last until the next startup, and one whose assets come from vista-data
+    (`SKILL_ASSETS`) is only ever fetched by the first seeding, so it would
+    never come back.
     """
     skill = await get_skill(session, name)
-    if skill.is_public:
+    if skill.bundled:
         raise HTTPException(
-            status_code=409, detail="Published skills cannot be deleted."
+            status_code=409,
+            detail=f"{name} is bundled with VISTA and cannot be deleted; unload it "
+            "from the projects that use it instead.",
         )
     directory = settings.data_dir / skill.path
     await session.delete(skill)

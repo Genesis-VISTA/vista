@@ -122,6 +122,26 @@ async def test_fresh_db_gets_the_project_with_an_attached_indexed_kb(
     assert await kb_slugs(engine) == ["ai-safety"]
 
 
+async def test_a_kb_seeded_again_ignores_a_current_file_left_behind(
+    env, engine, no_indexing
+):
+    """
+    A deletion that could not remove an imported store (on Windows, while the
+    MCP server holds it open) leaves `CURRENT` naming it. Seeded again, the
+    knowledge base is the store just seeded, not that one.
+    """
+    kb_dir = env["data_dir"] / "knowledge-bases" / "ai-safety"
+    (kb_dir / "store-old" / "rag_db").mkdir(parents=True)
+    (kb_dir / "CURRENT").write_text("store-old", encoding="utf-8")
+    add_ai_safety(env["payload"], env["data_dir"])
+    await boot(engine)
+
+    assert not (kb_dir / "CURRENT").exists()
+    async with AsyncSession(engine) as session:
+        kb = await session.get(KnowledgeBaseTable, AI_SAFETY_KB_ID)
+    assert kb is not None and kb.rag_db_path == str(kb_dir / "rag_db")
+
+
 async def test_no_client_seeds_the_project_without_a_kb(
     env, engine, monkeypatch, caplog
 ):

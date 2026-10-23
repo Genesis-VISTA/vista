@@ -1,14 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 
 export type SkillDraftFields = {
   name: string;
   description: string;
   body: string;
-  author: string;
-  repoUrl: string;
   tags: string;
 };
 
@@ -16,10 +13,7 @@ export type SkillSavedPayload = {
   name: string;
   description: string;
   body: string;
-  author?: string;
-  repoUrl?: string;
   tags: string[];
-  isPublic: boolean;
 };
 
 type Props = {
@@ -39,8 +33,6 @@ const EMPTY: SkillDraftFields = {
   name: "",
   description: "",
   body: "",
-  author: "",
-  repoUrl: "",
   tags: "",
 };
 
@@ -53,7 +45,6 @@ export function SkillEditorModal({
 }: Props) {
   const [fields, setFields] = useState<SkillDraftFields>(EMPTY);
   const [saving, setSaving] = useState(false);
-  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
   // Sync initial → fields whenever the modal opens or the draft arrives.
   useEffect(() => {
@@ -66,20 +57,17 @@ export function SkillEditorModal({
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
-  async function submit(publish: boolean) {
+  async function submit() {
     setSaving(true);
     try {
       await onSave({
         name: fields.name.trim(),
         description: fields.description.trim(),
         body: fields.body,
-        author: fields.author.trim() || undefined,
-        repoUrl: fields.repoUrl.trim() || undefined,
         tags: fields.tags
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
-        isPublic: publish,
       });
     } finally {
       setSaving(false);
@@ -130,26 +118,6 @@ export function SkillEditorModal({
                   onChange={(e) => update("description", e.target.value)}
                 />
               </label>
-              <div className="skill-editor-row">
-                <label className="skill-editor-label">
-                  <span>Author (optional)</span>
-                  <input
-                    className="input"
-                    placeholder="Your name"
-                    value={fields.author}
-                    onChange={(e) => update("author", e.target.value)}
-                  />
-                </label>
-                <label className="skill-editor-label">
-                  <span>Repo URL (optional)</span>
-                  <input
-                    className="input"
-                    placeholder="https://..."
-                    value={fields.repoUrl}
-                    onChange={(e) => update("repoUrl", e.target.value)}
-                  />
-                </label>
-              </div>
               <label className="skill-editor-label">
                 <span>Tags (comma separated)</span>
                 <input
@@ -173,36 +141,16 @@ export function SkillEditorModal({
                   type="button"
                   className="button"
                   disabled={disableSave}
-                  onClick={() => void submit(false)}
+                  onClick={() => void submit()}
+                  title="Save to this computer; publish it from the Skills page"
                 >
-                  {saving ? "Saving…" : "Save (private)"}
-                </button>
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={disableSave}
-                  onClick={() => setShowPublishConfirm(true)}
-                  title="Save and publish to the Skill Hub (permanent)"
-                >
-                  Save & publish
+                  {saving ? "Saving…" : "Save"}
                 </button>
               </div>
             </>
           )}
         </div>
       </div>
-      <PublishConfirmModal
-        open={showPublishConfirm}
-        title="Publish skill to Skill Hub"
-        message={"Save & publish this skill to the Skill Hub?\n\nPublishing is permanent - once published, a skill cannot be made private again."}
-        confirmLabel="Save & publish"
-        busy={saving}
-        onCancel={() => setShowPublishConfirm(false)}
-        onConfirm={() => {
-          setShowPublishConfirm(false);
-          void submit(true);
-        }}
-      />
     </div>
   );
 }

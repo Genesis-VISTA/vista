@@ -4,6 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toCreate, updateProject, useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
+import { KnowledgeBaseImportModal } from "@/components/KnowledgeBaseImportModal";
+import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { PublishConflictModal } from "@/components/PublishConflictModal";
+import { useCollaboration } from "@/lib/collaboration";
+import {
+  formatSize,
+  importRemoteKnowledgeBase,
+  isKnowledgeBaseOnServer,
+  kbSharingLabel,
+  listRemoteKnowledgeBases,
+  publishKnowledgeBase,
+  type KnowledgeBaseImported,
+} from "@/lib/kb-sharing";
+import type { SharingRefusal } from "@/lib/skill-sharing";
 import type {
   IndexProgress,
   KnowledgeBase,
@@ -14,12 +28,6 @@ import type {
 /* ---------------------------------------------------------------------- */
 /*  Helpers                                                               */
 /* ---------------------------------------------------------------------- */
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function formatDate(iso?: string | null): string {
   if (!iso) return "—";
@@ -122,6 +130,20 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
   const [filter, setFilter] = useState("");
   const [topMessage, setTopMessage] = useState("");
   const [topError, setTopError] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const collab = useCollaboration();
+  /** The server's newest version of each item, by id, for "version N available". */
+  const [heads, setHeads] = useState<Record<string, number>>({});
+
+  const refreshHeads = useCallback(() => {
+    listRemoteKnowledgeBases({ manifests: false })
+      .then((remote) => setHeads(Object.fromEntries(remote.map((r) => [r.id, r.head_version]))))
+      .catch(() => setHeads({}));
+  }, []);
+
+  useEffect(() => {
+    if (collab.available) refreshHeads();
+  }, [collab.available, refreshHeads]);
 
   /**
    * Project scoping. `/knowledge-bases/project` restricts the list to the
@@ -285,6 +307,47 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
     await loadList();
   }
 
+  async function handleShared(kb: KnowledgeBase) {
+    await handleUpdated(kb);
+    refreshHeads();
+  }
+
+  async function handleImported(result: KnowledgeBaseImported) {
+    setShowImport(false);
+    const kb = result.knowledgeBase;
+    await loadList();
+    refreshHeads();
+    setSelectedSlug(kb.slug);
+    if (selectedSlug === kb.slug) void loadDetail(kb.slug);
+    flashMessage(
+      result.status === "unchanged"
+        ? `${kb.name} is already here at version ${kb.remote_version}.`
+        : `Imported ${kb.name} (${kb.slug}) version ${kb.remote_version}.`
+    );
+  }
+
+  const importButton = (
+    <button
+      type="button"
+      className="button ghost button-sm"
+      disabled={!collab.available}
+      title={
+        collab.available
+          ? "Import a knowledge base from the collaboration server"
+          : (collab.reason ?? undefined)
+      }
+      onClick={() => setShowImport(true)}
+    >
+      Import
+    </button>
+  );
+  const importModal = showImport && (
+    <KnowledgeBaseImportModal
+      onClose={() => setShowImport(false)}
+      onImported={(result) => void handleImported(result)}
+    />
+  );
+
   // Project-scoped layout: tabs across the top, single detail panel
   // below. No left list column, no search box, no per-KB list-item
   // cards. The set of KBs is small and known (the project's
@@ -315,6 +378,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
               >
                 {isLoadingList ? "…" : "Refresh"}
               </button>
+              {importButton}
               <button
                 type="button"
                 className="button button-sm"
@@ -395,6 +459,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
                 ) : selected ? (
                   <KbDetailView
                     kb={selected}
+                    head={selected.remote_id ? heads[selected.remote_id] : undefined}
+                    onShared={handleShared}
                     onUpdated={handleUpdated}
                     onDeleted={() => void handleDeleted(selected.slug)}
                     onError={flashError}
@@ -421,6 +487,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
             onCreated={handleCreated}
           />
         )}
+        {importModal}
       </div>
     );
   }
@@ -447,6 +514,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
             >
               {isLoadingList ? "…" : "Refresh"}
             </button>
+            {importButton}
             <button
               type="button"
               className="button button-sm"
@@ -516,6 +584,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
           ) : selected ? (
             <KbDetailView
               kb={selected}
+              head={selected.remote_id ? heads[selected.remote_id] : undefined}
+              onShared={handleShared}
               onUpdated={handleUpdated}
               onDeleted={() => void handleDeleted(selected.slug)}
               onError={flashError}
@@ -537,6 +607,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
           onCreated={handleCreated}
         />
       )}
+      {importModal}
     </div>
   );
 }
@@ -583,12 +654,18 @@ function KbListItem({
 
 function KbDetailView({
   kb,
+  head,
+  onShared,
   onUpdated,
   onDeleted,
   onError,
   onMessage,
 }: {
   kb: KnowledgeBase;
+  /** The collaboration server's newest version of it, if known. */
+  head?: number;
+  /** It was published or imported: the list and the server's heads follow. */
+  onShared: (kb: KnowledgeBase) => void;
   onUpdated: (kb: KnowledgeBase) => void;
   onDeleted: () => void;
   onError: (msg: string) => void;
@@ -705,6 +782,59 @@ function KbDetailView({
   );
 
   const status = buildStatusLabel(kb.build_status);
+
+  const collab = useCollaboration();
+  const serverUrl = collab.status?.reachable ? collab.status.url : null;
+  const onServer = isKnowledgeBaseOnServer(kb, serverUrl);
+  const [publishing, setPublishing] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const [conflict, setConflict] = useState<SharingRefusal | null>(null);
+  const publishOff = !collab.available
+    ? collab.reason
+    : indexingInProgress
+      ? "Publish once indexing has finished."
+      : null;
+
+  async function publish(opts: { onTopOf?: number; asNew?: boolean } = {}) {
+    setPublishing(true);
+    try {
+      const result = await publishKnowledgeBase(kb.slug, opts);
+      if (result.ok) {
+        onShared(result.knowledgeBase);
+        onMessage(
+          result.status === "unchanged"
+            ? `Nothing new to publish: ${kb.name} is version ${result.knowledgeBase.remote_version} on the server.`
+            : `Published ${kb.name} as version ${result.knowledgeBase.remote_version}.`
+        );
+        return;
+      }
+      if (result.code === "version_conflict" || result.code === "remote_missing") {
+        setConflict(result);
+        return;
+      }
+      onError(result.detail);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  /** Replace it here with the server's version `version`, the one the researcher was shown. */
+  async function takeServers(version?: number) {
+    if (!kb.remote_id) return;
+    setPublishing(true);
+    try {
+      const result = await importRemoteKnowledgeBase(kb.remote_id, {
+        version,
+        replaceModified: true,
+      });
+      if (result.ok) {
+        onShared(result.knowledgeBase);
+        onMessage(`${kb.name} is now version ${result.knowledgeBase.remote_version}.`);
+      } else onError(result.detail);
+    } finally {
+      setPublishing(false);
+    }
+  }
 
   async function saveMeta() {
     setSavingMeta(true);
@@ -881,6 +1011,9 @@ function KbDetailView({
                 </span>
                 <span>Created: {formatDate(kb.created_at)}</span>
                 <span>Last built: {formatDate(kb.last_built_at)}</span>
+                <span>
+                  {kbSharingLabel(kb, serverUrl, head)}
+                </span>
               </div>
               {kb.shared_with_mcp && (
                 <div
@@ -921,10 +1054,64 @@ function KbDetailView({
                 >
                   Delete KB
                 </button>
+                <button
+                  type="button"
+                  className="button ghost button-sm"
+                  disabled={publishing || publishOff !== null}
+                  title={
+                    publishOff ??
+                    "Publish its PDFs and index to the collaboration server"
+                  }
+                  onClick={() => {
+                    if (onServer) void publish();
+                    else setConfirmPublish(true);
+                  }}
+                >
+                  {publishing
+                    ? "Publishing…"
+                    : !onServer
+                      ? "Publish"
+                      : kb.modified
+                        ? "Publish changes"
+                        : "Republish"}
+                </button>
               </div>
             </>
           )}
         </div>
+
+        <PublishConfirmModal
+          open={confirmPublish}
+          title="Publish knowledge base"
+          message={`Publish "${kb.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts PDFs and its index are uploaded, which can take a while for a large one. Anyone who can reach that server can see and import them. A published version stays there; you can publish newer ones.`}
+          confirmLabel="Publish"
+          onCancel={() => setConfirmPublish(false)}
+          onConfirm={() => {
+            setConfirmPublish(false);
+            void publish();
+          }}
+        />
+        {conflict && (
+          <PublishConflictModal
+            name={kb.name}
+            noun="knowledge base"
+            refusal={conflict}
+            onCancel={() => setConflict(null)}
+            onTakeServers={() => {
+              const version = conflict.headVersion ?? undefined;
+              setConflict(null);
+              void takeServers(version);
+            }}
+            onPublishOnTop={(version) => {
+              setConflict(null);
+              void publish({ onTopOf: version });
+            }}
+            onPublishAsNew={() => {
+              setConflict(null);
+              void publish({ asNew: true });
+            }}
+          />
+        )}
 
         {/* ---- Publications ---- */}
         <div className="kb-pubs-header">
@@ -1380,7 +1567,7 @@ function PublicationItem({
           <dl className="pub-fields">
             <Field label="Filename" value={publication.filename} mono />
             {hasPdf && publication.size > 0 && (
-              <Field label="Size" value={formatBytes(publication.size)} />
+              <Field label="Size" value={formatSize(publication.size)} />
             )}
             {hasPdf && (
               <Field label="Added" value={formatDate(publication.added_at)} />
@@ -1729,7 +1916,7 @@ function CreateKbModal({
                   <div key={f.name} className="kb-create-file-row">
                     <div className="kb-create-file-name">{f.name}</div>
                     <span className="kb-create-file-size">
-                      {formatBytes(f.size)}
+                      {formatSize(f.size)}
                     </span>
                     <button
                       type="button"

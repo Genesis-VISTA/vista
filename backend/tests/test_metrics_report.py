@@ -10,6 +10,7 @@ this test, not the paper deadline.
 import importlib.util
 import json
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -171,7 +172,7 @@ def deployment_db(tmp_path):
                     name="alloy-design",
                     description="d",
                     path="skills/alloy-design",
-                    is_public=True,
+                    remote_id=uuid.uuid4(),
                 ),
             ]
         )
@@ -185,7 +186,7 @@ def test_deployment_db_stats_pins_schema(deployment_db):
     assert stats == {
         "projects": 1,
         "skills": 2,
-        "skills_published": 1,
+        "skills_shared": 1,
         "knowledge_bases": 0,
         "skill_installs": 2,
     }
@@ -233,7 +234,7 @@ def test_render_deployment(deployment_db, tmp_path):
     )
     assert "| projects | 1 |" in md
     assert "| jobs_per_facility | unknown: 1 |" in md
-    assert "Deployment: 1 projects, 2 skills (1 published, 2 installs)" in md
+    assert "Deployment: 1 projects, 2 skills (1 shared, 2 installs)" in md
 
 
 def test_render_markdown_smoke(logs):

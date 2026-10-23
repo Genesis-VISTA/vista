@@ -19,10 +19,17 @@ from ..agents.inference import (
 from ..config import settings
 from ..db.db import get_engine, init_db
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
+from ..services.collaboration import (
+    CollaborationError,
+    CollaborationRefused,
+    CollaborationUnavailable,
+    SharingConflict,
+)
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_runs import router as chat_runs_router
+from .collaboration import router as collaboration_router
 from .debate import router as debate_router
 from .chat_sessions import router as chat_sessions_router
 from .files import router as files_router
@@ -58,6 +65,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from ..services.repo_tokens import check_legacy_token_env
 
     check_legacy_token_env()
+
+    # Nothing a publish or import was working on survives a restart.
+    from ..services.knowledge_base_collaboration import clear_incoming
+
+    await asyncio.to_thread(clear_incoming)
 
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
@@ -130,11 +142,38 @@ async def _missing_inference_credential(
     )
 
 
+@app.exception_handler(CollaborationError)
+async def _collaboration_error(
+    request: Request, exc: CollaborationError
+) -> JSONResponse:
+    """
+    A collaboration server that cannot be reached is 503, one that refused or
+    answered nonsense 502; `detail` is the sentence to show.
+    """
+    if isinstance(exc, CollaborationUnavailable):
+        status, code = 503, "collaboration_unavailable"
+    elif isinstance(exc, CollaborationRefused):
+        status, code = 502, "collaboration_refused"
+    else:
+        status, code = 502, "collaboration_error"
+    return JSONResponse(status_code=status, content={"detail": str(exc), "code": code})
+
+
+@app.exception_handler(SharingConflict)
+async def _sharing_conflict(request: Request, exc: SharingConflict) -> JSONResponse:
+    """A publish or import that needs the researcher's choice: 409 with `code`."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.detail, "code": exc.code, **exc.extra},
+    )
+
+
 app.include_router(agent_router)
 app.include_router(campaign_router)
 app.include_router(debate_router)
 app.include_router(chat_sessions_router)
 app.include_router(chat_runs_router)
+app.include_router(collaboration_router)
 app.include_router(mcp_router)
 app.include_router(knowledge_bases_router)
 app.include_router(models_router)

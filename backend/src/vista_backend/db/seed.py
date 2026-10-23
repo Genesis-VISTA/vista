@@ -1,9 +1,11 @@
+import json
 import logging
 import shutil
 import uuid
 from pathlib import Path
 from contextlib import nullcontext
 from urllib.parse import quote
+from typing import Any
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -18,6 +20,7 @@ from .schemas import (
 )
 from ..agents.skills import read_skill
 from ..services._helpers import new_storage_path
+from ..services.knowledge_base import write_current
 from ..services.skills import build_skill_row
 from ..utils.misc import now_iso
 
@@ -260,7 +263,9 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
             f"{kb_dir / 'pdfs'}."
         )
 
-    client = chromadb.PersistentClient(
+    # Closed when done: an open client would stay this process's client for
+    # the path (`indexer.invalidate_rag_cache`).
+    client: Any = chromadb.PersistentClient(
         path=str(rag_db), settings=ChromaSettings(anonymized_telemetry=False)
     )
     try:
@@ -269,6 +274,8 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
         raise RuntimeError(
             f"Knowledge base {corpus} has an unreadable vector store: {exc}"
         ) from exc
+    finally:
+        client.close()
 
     if count == 0:
         raise RuntimeError(
@@ -318,6 +325,58 @@ async def _science_enabled(client) -> bool:
     if _from_payload():
         return await client.has("molten-salt-papers") and await client.has("mstdb")
     return settings.seed_science_projects
+
+
+MOLTEN_SALT_KB_ID = uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b")
+SEED_ITEM_NAMESPACE = uuid.UUID("0f6c1f4e-5d2a-4b8e-9c3d-7a1e2b4c6d8f")
+""" The namespace of `seed_item_id`'s ids. Never changed: it would orphan every published seed. """
+
+
+def seed_item_id(
+    kb_id: uuid.UUID, name: str, description: str | None, pdfs_dir: Path
+) -> uuid.UUID:
+    """
+    The collaboration item a seeded knowledge base is, on any server.
+
+    Every installation seeds the same corpus under the same fixed id, so the
+    item's id is derived from that id and what was seeded (name, description,
+    and the PDFs by path and size), the same everywhere. The first to publish
+    the seed creates the item under that id; every other installation's seed
+    is linked to it, uploading and downloading nothing. A corpus that changed
+    between releases derives another.
+    """
+    pdfs = sorted(
+        (path.relative_to(pdfs_dir).as_posix(), path.stat().st_size)
+        for path in pdfs_dir.rglob("*")
+        if path.suffix.lower() == ".pdf" and path.is_file() and not path.is_symlink()
+    )
+    key = json.dumps([str(kb_id), name, description, pdfs])
+    return uuid.uuid5(SEED_ITEM_NAMESPACE, key)
+
+
+def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTable:
+    """
+    A seeded knowledge base's row, unchanged since seeding, its `seed_item` set.
+    Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
+    an import, kept by a deletion that could not remove its store, or by a
+    database deleted without its data) must not name another store instead,
+    as the MCP server prefers the one it names.
+    """
+    write_current(kb_dir, None)
+    pdfs_dir = kb_dir / "pdfs"
+    return KnowledgeBaseTable(
+        id=kb_id,
+        pdfs_dir=str(pdfs_dir),
+        rag_db_path=str(kb_dir / "rag_db"),
+        shared_with_mcp=True,
+        publications=[],
+        build_status="ready",
+        modified=False,
+        seed_item=seed_item_id(
+            kb_id, fields["name"], fields.get("description"), pdfs_dir
+        ),
+        **fields,
+    )
 
 
 async def seed_db(engine: AsyncEngine) -> None:
@@ -379,12 +438,7 @@ async def seed_db(engine: AsyncEngine) -> None:
             skill = read_skill(settings.data_dir / path)
             session.add(
                 build_skill_row(
-                    skill,
-                    path=path,
-                    author=skill.author or "VISTA Team",
-                    repo_url=None,
-                    is_public=True,
-                    now=now_iso(),
+                    skill, path=path, repo_url=None, now=now_iso(), bundled=True
                 )
             )
 
@@ -458,8 +512,9 @@ async def seed_db(engine: AsyncEngine) -> None:
         if science:
             _assert_knowledge_base_indexed(molten_salt_kb_dir)
             session.add(
-                KnowledgeBaseTable(
-                    id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
+                _seeded_kb(
+                    MOLTEN_SALT_KB_ID,
+                    molten_salt_kb_dir,
                     slug=molten_salt_kb_dir.name,
                     name="Molten Salt Papers",
                     description=(
@@ -467,11 +522,6 @@ async def seed_db(engine: AsyncEngine) -> None:
                         "phase behavior, and tritium breeding. Shares its PDF folder and "
                         "ChromaDB index with the MCP server's rag_search tool."
                     ),
-                    pdfs_dir=str(molten_salt_kb_dir / "pdfs"),
-                    rag_db_path=str(molten_salt_kb_dir / "rag_db"),
-                    shared_with_mcp=True,
-                    publications=[],
-                    build_status="ready",
                     last_built_at=now,
                     created_at=now,
                     updated_at=now,
@@ -559,8 +609,9 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
     if kb is None and await _acquire_ai_safety_corpus():
         kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
         now = now_iso()
-        kb = KnowledgeBaseTable(
-            id=AI_SAFETY_KB_ID,
+        kb = _seeded_kb(
+            AI_SAFETY_KB_ID,
+            kb_dir,
             slug=AI_SAFETY_SLUG,
             name="AI Safety Papers",
             description=(
@@ -570,11 +621,6 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
                 "privacy in autonomous driving. Shares its PDF folder and ChromaDB "
                 "index with the MCP server's rag_search tool."
             ),
-            pdfs_dir=str(kb_dir / "pdfs"),
-            rag_db_path=str(kb_dir / "rag_db"),
-            shared_with_mcp=True,
-            publications=[],
-            build_status="ready",
             last_built_at=now,
             created_at=now,
             updated_at=now,
@@ -610,6 +656,7 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
             assert existing is not None
             # A new list: SQLAlchemy does not see an in-place append to a JSON column.
             existing.knowledge_bases = [*existing.knowledge_bases, AI_SAFETY_SLUG]
+            existing.modified = True
             session.add(existing)
         await session.commit()
 
@@ -661,10 +708,9 @@ async def sync_bundled_skills(engine: AsyncEngine) -> list[str]:
                 build_skill_row(
                     read_skill(settings.data_dir / path),
                     path=path,
-                    author=skill.author or "VISTA Team",
                     repo_url=None,
-                    is_public=True,
                     now=now_iso(),
+                    bundled=True,
                 )
             )
             added.append(skill.name)

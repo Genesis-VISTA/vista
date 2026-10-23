@@ -567,10 +567,10 @@ class TestSingleImport:
             response = await client.post(IMPORT, json={"url": url})
         assert response.status_code == 201, response.text
         body = response.json()
-        assert (body["name"], body["is_public"], body["repo_url"]) == (
+        assert (body["name"], body["repo_url"], body["modified"]) == (
             "demo-skill",
-            False,
             url,
+            True,
         )
         row = await _skill(session, "demo-skill")
         assert row is not None
@@ -880,10 +880,10 @@ class TestScanAndBatch:
         old = await _skill(session, "vllm-skill")
         assert old is not None and old.description == "The old one."
 
-    async def test_a_published_skill_cannot_be_overwritten(self, session, installed):
+    async def test_a_bundled_skill_cannot_be_overwritten(self, session, installed):
         row = await _skill(session, "vllm-skill")
         assert row is not None
-        row.is_public = True
+        row.bundled = True
         session.add(row)
         await session.commit()
         with api_client(session) as (client, _):
@@ -898,7 +898,7 @@ class TestScanAndBatch:
             )
         [result] = response.json()
         assert result["status"] == "failed"
-        assert "published" in result["detail"]
+        assert "bundled" in result["detail"]
 
     async def test_two_choices_with_one_name_are_refused(self, session, monkeypatch):
         FakeHost(

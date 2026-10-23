@@ -114,7 +114,7 @@ for its host when one is saved, else the system git's credentials.
 ### Requirement: A project may hold an access token for its forum repository
 
 **Reason**: A project row must hold no secret so it can be published to the collaboration
-server as-is (`PLAN.md`, Step 1).
+server as-is.
 **Migration**: Save a GitHub or gitlab.com token in Settings → Repositories; for other hosts,
 give the system git an SSH key or a credential helper. The token-scoping rules move to
 "Git receives the forum's token only on the way to its remote".

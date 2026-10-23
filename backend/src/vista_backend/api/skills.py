@@ -9,21 +9,19 @@ from ..agents.skill_authoring import SkillDraft
 from ..agents.skills import Skill, skill_hpc_jobs
 from ..config import settings
 from ..db.db import SessionDep
-from ..db.schemas import ProjectTable, SkillPublic, SkillUpdate
+from ..db.schemas import ProjectTable, SkillPublic, SkillTable, SkillUpdate
 from ..services import project as project_service
-from ..services.local_settings import LocalSettingsDep
+from ..services import skill_collaboration
 from ..services import skills as skills_service
+from ..services.local_settings import LocalSettingsDep
 
 
 router = APIRouter()
 
 
 class SkillCreate(Skill):
-    """The full AgentSkills spec (`Skill`, incl. `body`) plus DB-only hub metadata."""
+    """The full AgentSkills spec (`Skill`, incl. `body`) and where to load it."""
 
-    author: str | None = None
-    repo_url: str | None = None
-    is_public: bool = False
     project: str | None = None
     """ Name of a project to load the new skill into. """
 
@@ -109,7 +107,19 @@ class SkillFromOutputRequest(BaseModel):
 
     folder: str
     replace: bool = False
-    """ Swap the files of an existing private skill of the same name. """
+    """ Swap the files of an existing skill of the same name, unless it is bundled. """
+
+
+class SkillPublishRequest(BaseModel):
+    """Body for `POST /skills/{name}/publish`; empty for an ordinary publish."""
+
+    on_top_of: int | None = Field(default=None, ge=1)
+    """
+    Publish over this head, which a refused publish reported, rather than over
+    the version the skill was last published as or imported from.
+    """
+    as_new: bool = False
+    """ Publish as a new skill on the server, not as a version of its own. """
 
 
 class SkillPatch(SkillUpdate):
@@ -124,7 +134,14 @@ def _hpc_jobs(skill) -> list[str]:
     return skill_hpc_jobs(settings.data_dir / skill.path)
 
 
-async def _target_project(session: SessionDep, name: str | None) -> ProjectTable | None:
+def list_item(skill: SkillTable) -> SkillListItem:
+    """A skill row as the API lists it: its metadata and the HPC jobs on disk."""
+    return SkillListItem.model_validate(
+        skill, from_attributes=True, update={"hpc_jobs": _hpc_jobs(skill)}
+    )
+
+
+async def target_project(session: SessionDep, name: str | None) -> ProjectTable | None:
     """
     The project a new skill is loaded into, checked before anything is written so
     a missing or forbidden project leaves no skill behind.
@@ -144,12 +161,7 @@ def _detail(skill, body: str) -> SkillDetail:
 async def list_skills(session: SessionDep) -> list[SkillListItem]:
     """List skill metadata from the DB (no SKILL.md reads), plus each skill's HPC jobs."""
     rows = await skills_service.list_skills(session)
-    return [
-        SkillListItem.model_validate(
-            row, from_attributes=True, update={"hpc_jobs": _hpc_jobs(row)}
-        )
-        for row in rows
-    ]
+    return [list_item(row) for row in rows]
 
 
 @router.get("/skills/{name}")
@@ -160,16 +172,9 @@ async def get_skill(name: str, session: SessionDep) -> SkillDetail:
 
 @router.post("/skills", status_code=201)
 async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail:
-    """Create a new skill (private by default), loaded into `payload.project` if given."""
-    project = await _target_project(session, payload.project)
-    skill = await skills_service.create_skill(
-        session,
-        spec=payload,
-        author=payload.author,
-        repo_url=payload.repo_url,
-        is_public=payload.is_public,
-        project=project,
-    )
+    """Create a new skill, loaded into `payload.project` if given."""
+    project = await target_project(session, payload.project)
+    skill = await skills_service.create_skill(session, spec=payload, project=project)
     # Read the body back from the written SKILL.md rather than echoing the raw request
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
@@ -199,10 +204,8 @@ async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDe
     given. A repository with several skills is refused (400) with their names;
     scan it and import through `/skills/import/batch`. Private repositories need
     `body.token`, or the Settings token for github.com or gitlab.com.
-    Imported skills are private; the researcher can publish later via
-    `PATCH /skills/{name}`.
     """
-    project = await _target_project(session, body.project)
+    project = await target_project(session, body.project)
     skill = await skills_service.import_skill(
         session,
         body.url,
@@ -233,10 +236,11 @@ async def import_skill_batch(
 ) -> list[SkillImportResultOut]:
     """
     Import the chosen skills of a scanned repository, each with what to do if
-    its name is taken (skip, overwrite a private skill, or rename). One result
+    its name is taken (skip, overwrite a skill not bundled with VISTA, or
+    rename). One result
     per skill, in order; a failure does not stop the rest.
     """
-    project = await _target_project(session, body.project)
+    project = await target_project(session, body.project)
     results = await skills_service.import_repository_skills(
         session,
         body.url,
@@ -251,11 +255,7 @@ async def import_skill_batch(
             name=r.name,
             status=r.status,
             detail=r.detail,
-            skill=SkillListItem.model_validate(
-                r.skill, from_attributes=True, update={"hpc_jobs": _hpc_jobs(r.skill)}
-            )
-            if r.skill is not None
-            else None,
+            skill=list_item(r.skill) if r.skill is not None else None,
         )
         for r in results
     ]
@@ -272,10 +272,10 @@ async def import_skill_upload(
     Import a skill from a local folder the browser uploaded. Multipart body:
     one `files` part per file and a matching `paths` field (in the same order)
     giving each file's path relative to the picked folder. SKILL.md must be at
-    the folder's root. Imported skills are private, as with a GitHub import. An
-    optional `project` field names a project to load the skill into.
+    the folder's root. An optional `project` field names a project to load the
+    skill into.
     """
-    target = await _target_project(session, project)
+    target = await target_project(session, project)
     skill = await skills_service.import_skill_upload(session, files, paths, target)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
@@ -300,8 +300,7 @@ async def import_output_skill(
 ) -> SkillDetail:
     """
     Import a skill from the output folder in this project, with the
-    same checks as a folder upload, and load it into the project. Private, as
-    with any import.
+    same checks as a folder upload, and load it into the project.
     """
     skill = await skills_service.import_skill_from_output(
         session, project_name, body.folder, replace=body.replace
@@ -317,6 +316,25 @@ async def patch_skill(
     skill = await skills_service.update_skill(session, name, payload, body=payload.body)
     _, body_text = await skills_service.get_skill_detail(session, skill.name)
     return _detail(skill, body_text)
+
+
+@router.post("/skills/{name}/publish")
+async def publish_skill(
+    name: str,
+    body: SkillPublishRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> SkillListItem:
+    """
+    Publish the skill to the collaboration server: its next version there, or a
+    new skill if it has none. 409 with `code` when the server's head has moved
+    on (`version_conflict`, with `head_version`) or the skill is gone from it
+    (`remote_missing`); 503 without a server that answers.
+    """
+    skill = await skill_collaboration.publish_skill(
+        session, local, name, on_top_of=body.on_top_of, as_new=body.as_new
+    )
+    return list_item(skill)
 
 
 @router.delete("/skills/{name}", status_code=204)

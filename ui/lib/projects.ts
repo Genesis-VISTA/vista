@@ -16,8 +16,20 @@ import type { ProjectCreate, ProjectPublic } from "./agent-events";
 
 export type { ProjectCreate, ProjectPublic };
 
+/**
+ * Where a project stands with the collaboration server. Set by publishing and
+ * importing, never by a save; a save that changes the project sets `modified`.
+ */
+export interface ProjectSharing {
+  originServer: string | null;
+  remoteId: string | null;
+  remoteVersion: number | null;
+  /** Changed here since `remoteVersion` (always true for one never published). */
+  modified: boolean;
+}
+
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
-export interface Project {
+export interface Project extends ProjectSharing {
   /** Backend uuid — stable internal identity (not used as the CRUD key). */
   id: string;
   /** Backend `name` — the CRUD key (`{project_name}` on all project routes),
@@ -39,9 +51,28 @@ export interface Project {
   usageLimits: Record<string, unknown>;
 }
 
+/**
+ * Why `name` (already trimmed) cannot be a project's name, or null when it can.
+ * The name is the path segment of every project route, so it is limited to
+ * characters that round-trip cleanly; the backend refuses an imported name by
+ * the same rule.
+ */
+export function projectNameError(name: string): string | null {
+  if (!name) return "Name is required.";
+  if (name.length < 2) return "Name must be at least 2 characters.";
+  if (name.length > 80) return "Name must be at most 80 characters.";
+  if (!/^[\w ._-]+$/.test(name)) {
+    return "Name may only contain letters, numbers, spaces, '.', '_', and '-'.";
+  }
+  return null;
+}
+
+/** The fields a save sets: a project without its id and collaboration state. */
+export type ProjectFields = Omit<Project, "id" | keyof ProjectSharing>;
+
 export const ACTIVE_PROJECT_KEY = "vista.activeProject.v1";
 
-function fromPublic(p: ProjectPublic): Project {
+export function fromPublic(p: ProjectPublic): Project {
   return {
     id: p.id,
     name: p.name,
@@ -52,11 +83,15 @@ function fromPublic(p: ProjectPublic): Project {
     forumRepoUrl: p.forum_repo_url ?? "",
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
+    originServer: p.origin_server ?? null,
+    remoteId: p.remote_id ?? null,
+    remoteVersion: p.remote_version ?? null,
+    modified: p.modified ?? true,
   };
 }
 
 /** Build a `ProjectCreate` body from a frontend `Project` (full overwrite). */
-export function toCreate(project: Omit<Project, "id">): ProjectCreate {
+export function toCreate(project: ProjectFields): ProjectCreate {
   return {
     name: project.name,
     description: project.description || null,

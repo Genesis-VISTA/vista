@@ -162,6 +162,76 @@ def query_prompt(instruction: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Embedding model
+# ---------------------------------------------------------------------------
+# Ungated (MIT) and 640-dimension. Kept byte-identical to
+# `vista_mcp_server.config.Settings.rag_model`, which is the *query* encoder:
+# a Chroma collection locks to the dimension of its first insert, so the two
+# names must never diverge. Change one, change the other.
+TEXT_MODEL = "microsoft/harrier-oss-v1-270m"
+# The Hugging Face commit of `TEXT_MODEL`, kept byte-identical to
+# `Settings.rag_model_revision` for the same reason: a store embedded with one
+# snapshot is queried with the other. A published knowledge base records both,
+# and an import refuses a store embedded with anything else.
+TEXT_MODEL_REVISION = "31de22b673913c7d658c0f03f792d77c2dcf8ebd"
+
+
+# ---------------------------------------------------------------------------
+# BM25 corpus
+# ---------------------------------------------------------------------------
+# The lexical half of hybrid retrieval (`vista_mcp_server.bm25`), written next
+# to each ChromaDB store. Format v1 of `BM25Okapi.to_dict`, without the
+# optional `tokens`: the MCP server tokenizes each chunk itself when it loads
+# the file, so the tokenizer exists in one place only and the backend, which
+# cannot import the MCP server's package, writes the same file.
+BM25_CORPUS_FILENAME = "bm25_corpus.json"
+
+
+def write_bm25_corpus(text_collection: Any, db_path: str | Path) -> int | None:
+    """
+    Write `<db_path>/bm25_corpus.json` from every chunk in `text_collection`,
+    replacing the file in one step so a reader never sees half of it. An empty
+    collection removes the file. Returns the number of chunks written, or None
+    when the collection could not be read or the file not written (logged:
+    hybrid retrieval then degrades to vector-only for this store).
+    """
+    path = Path(db_path) / BM25_CORPUS_FILENAME
+    try:
+        raw = text_collection.get(include=["documents"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("BM25: could not read text_chunks for corpus build: %s", exc)
+        return None
+    ids = raw.get("ids") or []
+    docs = raw.get("documents") or []
+    if len(ids) != len(docs):
+        log.warning(
+            "BM25: text_chunks is malformed (ids=%d docs=%d); skipping corpus build",
+            len(ids), len(docs),
+        )
+        return None
+    try:
+        if not ids:
+            path.unlink(missing_ok=True)
+            return 0
+        payload = {
+            "version": 1,
+            "k1": 1.5,
+            "b": 0.75,
+            "documents": [
+                {"id": str(i), "text": str(d or "")} for i, d in zip(ids, docs)
+            ],
+        }
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        log.warning("BM25: could not write corpus to %s: %s", path, exc)
+        return None
+    log.info("BM25: wrote corpus to %s (%d chunks)", path, len(ids))
+    return len(ids)
+
+
+# ---------------------------------------------------------------------------
 # Azure OpenAI helper
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -730,16 +800,9 @@ class TextRAG:
         self,
         pdf_folder: str,
         db_path: str = "./chroma_db",
-        # Ungated (MIT) and 640-dimension. Kept byte-identical to
-        # `vista_mcp_server.config.Settings.rag_model`, which is the *query*
-        # encoder: a Chroma collection locks to the dimension of its first
-        # insert, so the two names must never diverge. Change one, change
-        # the other.
-        text_model: str = "microsoft/harrier-oss-v1-270m",
-        # The Hugging Face commit of `text_model`, kept byte-identical to
-        # `Settings.rag_model_revision` for the same reason: a store embedded
-        # with one snapshot is queried with the other.
-        text_model_revision: str = "31de22b673913c7d658c0f03f792d77c2dcf8ebd",
+        # See `TEXT_MODEL` and `TEXT_MODEL_REVISION` above.
+        text_model: str = TEXT_MODEL,
+        text_model_revision: str = TEXT_MODEL_REVISION,
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
@@ -1292,7 +1355,7 @@ class TextRAG:
 
         # Build the BM25 corpus file from the text_chunks we just
         # wrote to ChromaDB. 
-        self._build_bm25_corpus()
+        self.write_bm25_corpus()
 
         log.info("=" * 50)
         log.info("Indexing complete!")
@@ -1311,7 +1374,7 @@ class TextRAG:
         Filesystem location of the per-KB BM25 corpus file.
 
         """
-        return Path(self.db_path) / "bm25_corpus.json"
+        return Path(self.db_path) / BM25_CORPUS_FILENAME
 
     def _delete_bm25_corpus_if_present(self) -> None:
         """Drop the BM25 corpus file ahead of a force-reindex."""
@@ -1332,68 +1395,15 @@ class TextRAG:
                 self._bm25_corpus_path,
             )
             return
-        self._build_bm25_corpus()
+        self.write_bm25_corpus()
 
-    def _build_bm25_corpus(self) -> None:
+    def write_bm25_corpus(self) -> None:
         """
-        Scan the ChromaDB `text_chunks` collection and write a
-        BM25 corpus file alongside it.
-
+        Scan the ChromaDB `text_chunks` collection and write a BM25 corpus
+        file alongside it (`write_bm25_corpus`). The backend calls it after
+        each run of `index_single_pdf`, which writes none itself.
         """
-        try:
-            from vista_mcp_server.bm25 import BM25Okapi, tokenize  # noqa: WPS433
-        except ImportError as exc:
-            log.warning(
-                "BM25: cannot import vista_mcp_server.bm25 (%s); "
-                "skipping corpus build. The MCP server's hybrid retrieval "
-                "will degrade to vector-only until this is fixed.",
-                exc,
-            )
-            return
-
-        try:
-            raw = self.text_collection.get(include=["documents"])
-        except Exception as exc:  # noqa: BLE001
-            log.warning("BM25: could not read text_chunks for corpus build: %s", exc)
-            return
-
-        ids = raw.get("ids") or []
-        docs = raw.get("documents") or []
-        if not ids or not docs or len(ids) != len(docs):
-            log.warning(
-                "BM25: text_chunks collection is empty or malformed "
-                "(ids=%d docs=%d); skipping corpus build",
-                len(ids), len(docs),
-            )
-            return
-
-        log.info("BM25: building corpus over %d chunks", len(ids))
-        index = BM25Okapi()
-        # Pre-tokenize once so the on-disk corpus already has
-        # tokens cached -- the MCP server then skips re-tokenization
-        # at startup, which keeps cold-start time bounded by I/O
-        # rather than CPU on large KBs.
-        documents = list(zip([str(i) for i in ids], [str(d) for d in docs]))
-        pre_tokenized = [tokenize(text) for _, text in documents]
-        index.add_documents(documents, pre_tokenized=pre_tokenized)
-
-        try:
-            payload = index.to_dict()
-            self._bm25_corpus_path.write_text(
-                json.dumps(payload, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            log.info(
-                "BM25: wrote corpus to %s (%d chunks)",
-                self._bm25_corpus_path,
-                len(documents),
-            )
-        except OSError as exc:
-            log.warning(
-                "BM25: could not write corpus to %s: %s",
-                self._bm25_corpus_path,
-                exc,
-            )
+        write_bm25_corpus(self.text_collection, self.db_path)
 
     def query(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search text chunks collection."""

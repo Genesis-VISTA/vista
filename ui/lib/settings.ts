@@ -16,6 +16,12 @@ export type LocalSettings = {
   install_id: string;
   /** What the collaboration server will show for this installation. */
   display_name: string | null;
+  /**
+   * The collaboration server to publish to and import from, as the researcher
+   * set it; null when they have not (the installation's configuration may still
+   * name one: see `lib/collaboration.ts`).
+   */
+  collaboration_server_url: string | null;
   /** Where campaign notifications go. */
   email: string | null;
   /** Clusters left out of the NavRail's HPC section. `[]` shows them all. */
@@ -88,6 +94,8 @@ export type LocalSettings = {
  */
 export type LocalSettingsUpdate = {
   display_name?: string | null;
+  /** An `http(s)://` address; `null` or `""` clears it. */
+  collaboration_server_url?: string | null;
   email?: string | null;
   inference_model?: string | null;
   inference_base_url?: string | null;

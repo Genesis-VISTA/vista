@@ -43,11 +43,13 @@ is installed, where it keeps its state, first-launch behaviour and Linux trouble
 - **Chat with a scientific agent** backed by the inference endpoint you choose (AmSC i2, AmSC
   MAG, OLCF Inference or your own).
 - **Projects** scope what the agent knows and can do: its system prompt, skills, tools and
-  usage limits. See [project onboarding](docs/project-onboarding.md).
+  usage limits. Shared, with the skills and knowledge bases they use, by publishing them to a
+  collaboration server and importing them. See [project onboarding](docs/project-onboarding.md).
 - **Knowledge bases**: retrieval over indexed paper collections, with citations bound to the
-  passages the agent read.
+  passages the agent read; shared with their index, so an importer searches them at once.
 - **Skills**: reusable instructions and scripts, written by hand, generated from a chat or
-  imported from GitHub, and shared through the Skill Hub. See
+  imported from GitHub, and shared by publishing them to a collaboration server and importing
+  them from its Skill Hub. See
   [skill onboarding](docs/skill-onboarding.md).
 - **Sandboxed code execution**: each agent session gets its own microVM for `run_bash` and file
   work, so analysis code never runs on your machine directly.

@@ -32,10 +32,22 @@ import {
   type HpcDisplayState,
 } from "@/lib/hpc-status";
 import { useTheme, type ThemeChoice } from "@/lib/theme";
+import {
+  refreshCollaborationStatus,
+  useCollaboration,
+  type CollaborationView,
+} from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
-/** What the modal can show: the four top-level areas, or one cluster's section. */
-type Section = "appearance" | "profile" | "agent" | "repositories" | "compute" | HpcCluster;
+/** What the modal can show: the top-level areas, or one cluster's section. */
+type Section =
+  | "appearance"
+  | "profile"
+  | "agent"
+  | "repositories"
+  | "collaboration"
+  | "compute"
+  | HpcCluster;
 
 /**
  * The repository tokens, which unlike every field in `TEXT_FIELDS` are
@@ -54,6 +66,7 @@ const TEXT_FIELDS = [
   "inference_base_url",
   "display_name",
   "email",
+  "collaboration_server_url",
   "research_role",
   "research_institution",
   "nersc_account",
@@ -140,6 +153,7 @@ const SETTING_FIELDS = new Set([
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
   if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
+  if (field.startsWith("collaboration_")) return "collaboration";
   if (
     field === "display_name" ||
     field === "email" ||
@@ -180,6 +194,7 @@ const FIELD_LABELS: Record<string, string> = {
   inference_base_url: "Inference endpoint",
   display_name: "Name",
   email: "Email",
+  collaboration_server_url: "Collaboration server",
   research_role: "Research role",
   research_institution: "Institution or laboratory",
   research_interests: "Research interests",
@@ -200,7 +215,14 @@ const FIELD_LABELS: Record<string, string> = {
   gitlab_token: "gitlab.com token",
 };
 
-type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
+/**
+ * When a field saves: `debounce` after a pause in typing; `on-blur` when it
+ * loses focus, or at once on a paste. Secrets and the collaboration server's
+ * address save on blur, since half of either is worse than none (a partial
+ * address would be saved and checked, and fail).
+ */
+type SaveWhen = "debounce" | "on-blur";
+type Bind = (field: TextField, when: SaveWhen) => FieldBinding;
 type ProfileChoiceField = "preferred_units" | "technical_depth" | "evidence_preference";
 
 const PROFILE_DRAFT_KEYS = {
@@ -212,8 +234,9 @@ const PROFILE_DRAFT_KEYS = {
 const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
 
 /**
- * The settings modal: four top-level areas (Appearance, Research profile,
- * Models & providers, and Compute) beside one section at a time.
+ * The settings modal: its top-level areas (Appearance, Research profile,
+ * Models & providers, Repositories, Collaboration and Compute) beside one
+ * section at a time.
  *
  * Fetches the `LocalSettings` (with decrypted tokens) fresh on open, rather
  * than reading the nav rail's cached copy. There is no Save: each field saves itself through a
@@ -260,6 +283,8 @@ export function UserSettingsModal({
     if (field === HIDDEN_FIELD || SETTING_FIELDS.has(field)) void refreshHpcStatus();
     // The picker's label and list follow the provider, endpoint and key.
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
+    // Publish and Import follow the server address wherever they are shown.
+    if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
     // A repository token never comes back, so what to show is "saved" or not:
     // read that from the server, and empty the field it was typed into.
     if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) {
@@ -358,7 +383,7 @@ export function UserSettingsModal({
     if (failure) setFocusTarget(failure.id);
   }
 
-  const bind: Bind = (field, kind) => {
+  const bind: Bind = (field, when) => {
     const error = autosave.errors[field];
     return {
       error,
@@ -369,10 +394,10 @@ export function UserSettingsModal({
         onChange: (e) => {
           const value = e.target.value;
           setDraft((d) => (d ? { ...d, text: { ...d.text, [field]: value } } : d));
-          const how = kind === "text" ? "debounce" : pasted.current.delete(field) ? "now" : "hold";
+          const how = when === "debounce" ? "debounce" : pasted.current.delete(field) ? "now" : "hold";
           autosave.edit(field, blankToNull(value), how);
         },
-        onPaste: kind === "secret" ? () => void pasted.current.add(field) : undefined,
+        onPaste: when === "on-blur" ? () => void pasted.current.add(field) : undefined,
         onBlur: () => autosave.commit(field),
         "aria-invalid": error ? true : undefined,
         "aria-describedby": error ? `${fieldId(field)}-error` : undefined,
@@ -486,6 +511,8 @@ export function UserSettingsModal({
     );
   } else if (section === "repositories") {
     content = <RepositoriesSection user={user} bindToken={bindToken} onRemove={removeToken} />;
+  } else if (section === "collaboration") {
+    content = <CollaborationSection bind={bind} />;
   } else if (section === "compute") {
     content = (
       <ComputeSection
@@ -628,6 +655,8 @@ function SettingsNav({
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
   const clusterFailed = HPC_CLUSTERS.some((cluster) => failed.has(cluster));
+  const collaboration = useCollaboration();
+  const collaborationNote = collaborationLabel(collaboration);
   const computeCurrent = section === "compute" || HPC_CLUSTERS.includes(section as HpcCluster);
 
   return (
@@ -682,6 +711,22 @@ function SettingsNav({
         </svg>
         <span className="settings-nav-name">Repositories</span>
         <span className="settings-nav-note">{repoTokens ? `${repoTokens} saved` : "None"}</span>
+      </NavEntry>
+      <NavEntry
+        label={`Collaboration, ${collaborationNote.toLowerCase()}`}
+        current={section === "collaboration"}
+        failed={failed.has("collaboration")}
+        onClick={() => onChoose("collaboration")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="9" cy="8" r="3" />
+          <circle cx="17" cy="10" r="2.5" />
+          <path d="M3 20a6 6 0 0 1 12 0M14.5 20a4.5 4.5 0 0 1 7-3.7" />
+        </svg>
+        <span className="settings-nav-name">Collaboration</span>
+        <span className={`settings-nav-note${collaboration.status?.configured && !collaboration.available ? " hpc-word--warn" : ""}`}>
+          {collaborationNote}
+        </span>
       </NavEntry>
       <NavEntry
         label={`Compute, ${ready} of ${visible.length} ready`}
@@ -818,7 +863,7 @@ function ResearchProfileSection({
             <SavedField
               label="Name"
               field="display_name"
-              binding={bind("display_name", "text")}
+              binding={bind("display_name", "debounce")}
               placeholder="e.g. Ada Lovelace"
               hint="Shown on your posts in the Hypothesis Lab."
             />
@@ -826,7 +871,7 @@ function ResearchProfileSection({
               label="Email"
               field="email"
               type="email"
-              binding={bind("email", "text")}
+              binding={bind("email", "debounce")}
               placeholder="e.g. you@ornl.gov"
               hint="Where campaign job notifications go. Nothing is sent without it."
             />
@@ -870,14 +915,14 @@ function ResearchProfileSection({
             <SavedField
               label="Role"
               field="research_role"
-              binding={bind("research_role", "text")}
+              binding={bind("research_role", "debounce")}
               placeholder="e.g. Computational materials scientist"
               hint="Your scientific or technical role."
             />
             <SavedField
               label="Institution or laboratory"
               field="research_institution"
-              binding={bind("research_institution", "text")}
+              binding={bind("research_institution", "debounce")}
               placeholder="e.g. Oak Ridge National Laboratory"
               hint="Optional organizational context."
             />
@@ -1294,7 +1339,7 @@ function AgentSection({
           <SavedField
             label="Inference endpoint"
             field="inference_base_url"
-            binding={bind("inference_base_url", "text")}
+            binding={bind("inference_base_url", "debounce")}
             placeholder="https://gateway.example/v1"
             hint="Any OpenAI-compatible endpoint."
           />
@@ -1305,7 +1350,7 @@ function AgentSection({
             key={keyField}
             label={copy.label}
             field={keyField}
-            binding={bind(keyField, "secret")}
+            binding={bind(keyField, "on-blur")}
             secret
             placeholder="API key"
             hint={copy.hint}
@@ -1442,6 +1487,74 @@ function RepoTokenField({
   );
 }
 
+/** The collaboration server's state in a word or two, for the navigation. */
+function collaborationLabel(view: CollaborationView): string {
+  if (!view.status) return view.checking ? "Checking" : "Unknown";
+  if (!view.status.configured) return "Not set";
+  return view.available ? "Connected" : "Unreachable";
+}
+
+/**
+ * Where to publish to and import from: the server's address, and whether it
+ * answers. The status line is the same answer every Publish and Import control
+ * reads (`useCollaboration`), so the reason a control is off is visible here.
+ */
+function CollaborationSection({ bind }: { bind: Bind }) {
+  const view = useCollaboration();
+  const { status, checking, available, reason, error, refresh } = view;
+  const binding = bind("collaboration_server_url", "on-blur");
+  const fromConfig = status?.source === "config" && !binding.inputProps.value;
+  const dot = checking ? "checking" : available ? "ready" : "not_connected";
+  return (
+    <section className="settings-section" aria-label="Collaboration">
+      <SectionHeader title="Collaboration">
+        <span className="user-settings-hint">
+          Publish projects, skills and knowledge bases to a collaboration server, and import what
+          others have published. Nothing leaves this computer until you publish it.
+        </span>
+      </SectionHeader>
+      <div className="settings-section-body">
+        <SavedField
+          label="Collaboration server"
+          field="collaboration_server_url"
+          binding={binding}
+          placeholder={fromConfig && status?.url ? status.url : "https://collab.example.org"}
+          hint={
+            fromConfig ? (
+              <>
+                This installation&apos;s configuration uses <code>{status?.url}</code>. An address
+                here takes its place.
+              </>
+            ) : (
+              <>
+                The server&apos;s address. It has no sign-in yet: anyone who can reach it can read
+                and change everything on it.
+              </>
+            )
+          }
+        />
+        <div className="settings-collab-status">
+          <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
+          <span aria-live="polite">
+            {available && status
+              ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
+              : reason}
+            {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
+          </span>
+          <button
+            type="button"
+            className="button ghost button-xs"
+            onClick={() => void refresh()}
+            disabled={checking}
+          >
+            Check again
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ClusterFields({
   cluster,
   user,
@@ -1458,13 +1571,13 @@ function ClusterFields({
           <S3mTokenField
             label="Odo S3M token"
             field="odo_s3m_token"
-            binding={bind("odo_s3m_token", "secret")}
+            binding={bind("odo_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
           <SavedField
             label="Odo remote directory"
             field="odo_remote_dir"
-            binding={bind("odo_remote_dir", "text")}
+            binding={bind("odo_remote_dir", "debounce")}
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Odo" />}
           />
@@ -1482,13 +1595,13 @@ function ClusterFields({
           <S3mTokenField
             label="Frontier S3M token"
             field="frontier_s3m_token"
-            binding={bind("frontier_s3m_token", "secret")}
+            binding={bind("frontier_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
           <SavedField
             label="Frontier remote directory"
             field="frontier_remote_dir"
-            binding={bind("frontier_remote_dir", "text")}
+            binding={bind("frontier_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Frontier" />}
           />
@@ -1506,14 +1619,14 @@ function ClusterFields({
           <SavedField
             label="NERSC account"
             field="nersc_account"
-            binding={bind("nersc_account", "text")}
+            binding={bind("nersc_account", "debounce")}
             placeholder="e.g. m1234"
             hint="NERSC project account for Slurm submission."
           />
           <SavedField
             label="NERSC remote directory"
             field="nersc_remote_dir"
-            binding={bind("nersc_remote_dir", "text")}
+            binding={bind("nersc_remote_dir", "debounce")}
             placeholder="/pscratch/sd/<u>/<user>/.vista"
             hint={
               <>
@@ -1525,7 +1638,7 @@ function ClusterFields({
           <SavedField
             label="NERSC IRI token"
             field="nersc_iri_token"
-            binding={bind("nersc_iri_token", "secret")}
+            binding={bind("nersc_iri_token", "on-blur")}
             secret
             placeholder="Globus access token"
             hint="Globus access token for NERSC IRI. Stored encrypted at rest."
@@ -1538,14 +1651,14 @@ function ClusterFields({
           <SavedField
             label="Lux account"
             field="lux_account"
-            binding={bind("lux_account", "text")}
+            binding={bind("lux_account", "debounce")}
             placeholder="e.g. abc123"
             hint="Required for Lux. The OLCF project Lux jobs are charged to."
           />
           <SavedField
             label="Lux remote directory"
             field="lux_remote_dir"
-            binding={bind("lux_remote_dir", "text")}
+            binding={bind("lux_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
           />

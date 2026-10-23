@@ -11,6 +11,7 @@ A checkout runs three services and a window:
 | Backend (FastAPI + PydanticAI: the agent loop, projects, skills) | `backend` | 8001 | `uv run vista-backend` |
 | UI (Next.js, a thin proxy to the backend) | `ui` | 3000 | `npm run dev` |
 | Window (Electron) | `electron` | — | `./launch.sh` starts it |
+| Collaboration server (optional, development only) | `collaboration_server` | 8002 | `uv run vista-collaboration-server` |
 
 The sandbox tools (`dev_mcp_server`: `run_bash`, `create_file`, `view`) are not a service: the
 backend launches one per agent over STDIO.
@@ -119,6 +120,19 @@ rather than falling back. Start the services alone and use a browser at <http://
 `./launch.sh terminal` starts the three services in separate terminal windows instead, and
 `./launch.sh tmux` in a tmux session. Neither opens the VISTA window or owns the services'
 lifetime, so stop each service yourself.
+
+### With a collaboration server
+
+```bash
+./launch.sh logs --collab
+```
+
+also starts a local collaboration server, logging to `logs/collab.log`, and points the backend
+at it with `VISTA_BACKEND_COLLABORATION_SERVER_URL`; an address set under Settings →
+Collaboration takes its place. `--collab` works in every mode. The server keeps its data in
+`data/collaboration-server/` (`VISTA_COLLAB_DATA_DIR`), listens on `127.0.0.1:8002`
+(`VISTA_COLLAB_HOST`, `VISTA_COLLAB_PORT`), and has no sign-in yet, so anyone who can reach it
+can read and write everything on it. Packages never start one.
 
 ### By hand
 

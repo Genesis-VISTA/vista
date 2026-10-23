@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SkillEditorModal, type SkillDraftFields } from "@/components/SkillEditorModal";
@@ -7,8 +7,6 @@ const DRAFT: SkillDraftFields = {
   name: "salt-density",
   description: "Predict molten salt density",
   body: "# Salt density\n\nRun the MSTDB lookup.",
-  author: "",
-  repoUrl: "",
   tags: "",
 };
 
@@ -21,11 +19,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof SkillEditorModal>>
   return { onSave, onCancel, ...utils };
 }
 
-const save = () => screen.getByRole("button", { name: /Save \(private\)/ });
-const publish = () => screen.getByRole("button", { name: "Save & publish" });
-// Once the confirmation opens, its buttons share labels with the editor's,
-// so scope every query to the dialog under test.
-const confirmDialog = () => within(screen.getByRole("dialog", { name: "Publish skill to Skill Hub" }));
+const save = () => screen.getByRole("button", { name: "Save" });
 
 describe("SkillEditorModal", () => {
   it("renders nothing when closed", () => {
@@ -59,7 +53,6 @@ describe("SkillEditorModal", () => {
     setup();
     await userEvent.clear(screen.getByLabelText(label));
     expect(save()).toBeDisabled();
-    expect(publish()).toBeDisabled();
   });
 
   it("treats whitespace as empty", async () => {
@@ -69,9 +62,8 @@ describe("SkillEditorModal", () => {
     expect(save()).toBeDisabled();
   });
 
-  it("saves privately, trimming and splitting what the user typed", async () => {
+  it("saves, trimming and splitting what the user typed", async () => {
     const { onSave } = setup();
-    await userEvent.type(screen.getByLabelText(/Author/), "  Sam Baumann  ");
     await userEvent.type(screen.getByLabelText(/Tags/), " Materials Design , Frontier ,, ");
     await userEvent.click(save());
 
@@ -80,35 +72,15 @@ describe("SkillEditorModal", () => {
       name: "salt-density",
       description: "Predict molten salt density",
       body: "# Salt density\n\nRun the MSTDB lookup.",
-      author: "Sam Baumann",
-      repoUrl: undefined,
       tags: ["Materials Design", "Frontier"],
-      isPublic: false,
     });
   });
 
-  // Publishing cannot be undone, so it must take a second, explicit yes.
-  it("does not publish until the confirmation is accepted", async () => {
-    const { onSave } = setup();
-    await userEvent.click(publish());
-    expect(onSave).not.toHaveBeenCalled();
-    expect(confirmDialog().getByText(/cannot be made private again/)).toBeInTheDocument();
-
-    await userEvent.click(confirmDialog().getByRole("button", { name: "Save & publish" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0]).toMatchObject({ name: "salt-density", isPublic: true });
-  });
-
-  it("saves nothing when the publish confirmation is dismissed", async () => {
-    const { onSave } = setup();
-    await userEvent.click(publish());
-    // The confirmation carries a Cancel in its header and another in its
-    // action row; a user would reach for the second.
-    const cancels = confirmDialog().getAllByRole("button", { name: "Cancel" });
-    expect(cancels).toHaveLength(2);
-    await userEvent.click(cancels[1]);
-    expect(onSave).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog", { name: "Publish skill to Skill Hub" })).not.toBeInTheDocument();
+  // Publishing goes to a collaboration server, from the Skills page; the
+  // editor only saves to this computer.
+  it("offers no publish", () => {
+    setup();
+    expect(screen.queryByRole("button", { name: /publish/i })).not.toBeInTheDocument();
   });
 
   it("cancels from the header and from the backdrop", async () => {

@@ -2,7 +2,8 @@
 #
 # Stages:
 #   lint     — ruff (lint + format), ESLint, TypeScript type-check, bandit security scan
-#   test     — pytest (backend + vista_mcp_server + dev_mcp_server); hermetic only;
+#   test     — pytest (backend + collaboration_server + vista_mcp_server +
+#              dev_mcp_server); hermetic only;
 #              each job publishes a JUnit XML report for pipelines/MRs
 #   nightly  — scheduled / manual validation lane (Milestone D); never blocks MRs
 #
@@ -91,6 +92,15 @@ variables:
     paths:
       - .uv-cache/
 
+.cache-uv-collab: &cache-uv-collab
+  cache:
+    key:
+      prefix: uv-collab
+      files:
+        - collaboration_server/uv.lock
+    paths:
+      - .uv-cache/
+
 .cache-npm-ui: &cache-npm-ui
   cache:
     key:
@@ -160,7 +170,9 @@ backend:test:
     - git config --global url."https://x-access-token:${PALISADE_GITHUB_TOKEN}@${PALISADE_REPO}".insteadOf "https://${PALISADE_REPO}"
   script:
     - cd backend
-    - uv sync --frozen --dev
+    # The dev extra, not just the dev group: it carries the collaboration server,
+    # which the collaboration tests mount in-process.
+    - uv sync --frozen --extra dev
     # Hermetic PR CI: exclude live / real-HPC / microsandbox-marked tests
     - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
       --junitxml=junit.xml
@@ -168,6 +180,50 @@ backend:test:
     when: always
     reports:
       junit: backend/junit.xml
+    expire_in: 1 week
+
+# ─── Collaboration server ───────────────────────────────────────────────────
+#
+# collaboration_server/: where researchers publish and import. Development and
+# tests only so far -- no package ships it. The backend's own collaboration
+# tests also mount it in-process (backend:test, through the dev extra).
+
+collab:lint:
+  stage: lint
+  <<: [*python-image, *cache-uv-collab]
+  script:
+    - cd collaboration_server
+    - uvx ruff@${RUFF_VERSION} check src/ tests/
+    - uvx ruff@${RUFF_VERSION} format --check src/ tests/
+
+# Required gate, like backend:typecheck: the baseline is clean.
+collab:typecheck:
+  stage: lint
+  <<: [*python-image, *cache-uv-collab]
+  before_script:
+    # libatomic: pyright's bundled Node.js binary needs it, absent in bookworm-slim
+    - apt-get update -qq && apt-get install -y --no-install-recommends libatomic1
+  script:
+    - cd collaboration_server
+    - uv sync --frozen
+    - uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
+
+# Required job — must NOT set allow_failure.
+collab:test:
+  stage: test
+  variables:
+    # With the pytest config, fails text I/O that relies on the locale's encoding.
+    PYTHONWARNDEFAULTENCODING: "1"
+  <<: [*python-image, *cache-uv-collab]
+  script:
+    - cd collaboration_server
+    - uv sync --frozen --extra dev
+    - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
+      --junitxml=junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: collaboration_server/junit.xml
     expire_in: 1 week
 
 # ─── vista_mcp_server ───────────────────────────────────────────────────────

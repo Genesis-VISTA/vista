@@ -710,8 +710,6 @@ export default function HomePage() {
           name: "",
           description: "",
           body: "",
-          author: "",
-          repoUrl: "",
           tags: "",
         });
         return;
@@ -725,8 +723,6 @@ export default function HomePage() {
         name: draft.name_suggestion ?? "",
         description: draft.description_suggestion ?? "",
         body: draft.body ?? "",
-        author: "",
-        repoUrl: "",
         tags: "",
       });
     } catch (err) {
@@ -735,8 +731,6 @@ export default function HomePage() {
         name: "",
         description: "",
         body: "",
-        author: "",
-        repoUrl: "",
         tags: "",
       });
     }
@@ -751,10 +745,7 @@ export default function HomePage() {
         name: payload.name,
         description: payload.description,
         body: payload.body,
-        author: payload.author,
-        repo_url: payload.repoUrl,
         tags: payload.tags,
-        is_public: payload.isPublic,
         // Load it into the active project, so the agent has it next turn.
         project: activeProject?.name ?? null,
       }),
